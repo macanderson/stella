@@ -61,6 +61,8 @@ use stella_protocol::{
 use crate::candidate::{
     CandidateScore, CandidateSummary, score_from_verification, select_best_candidate,
 };
+use crate::candidate_narration::{candidate_start_notice, candidate_winner_notice};
+use crate::candidate_steering::SteeringFanOut;
 use crate::plan::{PlanStep, build_planner_prompt, parse_plan, plan_repair_prompt};
 use crate::ports::{
     ApprovalGate, CandidateWorkspace, CandidateWorkspacePort, ContextRecallPort,
@@ -1234,18 +1236,6 @@ impl<'a> Pipeline<'a> {
         budget: &mut BudgetGuard,
         total: &mut f64,
     ) -> Vec<CandidateResult> {
-        let mut engine = Engine::with_sleeper(
-            worker.provider,
-            self.tools,
-            self.config.engine.clone(),
-            self.sleeper,
-        );
-        if let Some((hooks, runner)) = self.hooks {
-            engine = engine.with_hooks(hooks, runner);
-        }
-        if let Some(steering) = self.steering {
-            engine = engine.with_steering(steering);
-        }
         let surface = CandidateSurface {
             diagnostics: self.diagnostics,
             tests: self.tests,
@@ -1254,8 +1244,25 @@ impl<'a> Pipeline<'a> {
             hook_runner: None,
             workspace: None,
         };
+        // One mirror, one cursor per candidate — see `candidate_steering`.
+        let fan = self.steering.map(SteeringFanOut::new);
         let mut results: Vec<CandidateResult> = Vec::with_capacity(n as usize);
-        for _ in 0..n {
+        for i in 0..n {
+            self.emit_text(candidate_start_notice(i, n, false));
+            // Per candidate, because its steering view is (cheap: no provider setup).
+            let mut engine = Engine::with_sleeper(
+                worker.provider,
+                self.tools,
+                self.config.engine.clone(),
+                self.sleeper,
+            );
+            if let Some((hooks, runner)) = self.hooks {
+                engine = engine.with_hooks(hooks, runner);
+            }
+            let view = fan.as_ref().map(|fan| fan.candidate());
+            if let Some(view) = view.as_ref() {
+                engine = engine.with_steering(view);
+            }
             results.push(
                 self.run_candidate(
                     goal,
@@ -1345,6 +1352,7 @@ impl<'a> Pipeline<'a> {
                 .await;
             let best_idx = best_index(&candidates);
             let ran = executed_count(&candidates);
+            self.emit_text(candidate_winner_notice(best_idx, n, ran));
             return Ok((
                 candidates
                     .into_iter()
@@ -1399,7 +1407,10 @@ impl<'a> Pipeline<'a> {
         // that never got a workspace.
         let mut workspaces: Vec<Option<Box<dyn CandidateWorkspace>>> =
             Vec::with_capacity(n as usize);
+        // One mirror, one cursor per candidate — see `candidate_steering`.
+        let fan = self.steering.map(SteeringFanOut::new);
         for i in 0..n {
+            self.emit_text(candidate_start_notice(i, n, true));
             let ws = match port.create().await {
                 Ok(ws) => ws,
                 Err(e) => {
@@ -1449,8 +1460,9 @@ impl<'a> Pipeline<'a> {
                 if let Some((hooks, runner)) = self.hooks {
                     engine = engine.with_hooks(hooks, surface.hook_runner.unwrap_or(runner));
                 }
-                if let Some(steering) = self.steering {
-                    engine = engine.with_steering(steering);
+                let view = fan.as_ref().map(|fan| fan.candidate());
+                if let Some(view) = view.as_ref() {
+                    engine = engine.with_steering(view);
                 }
                 self.run_candidate(
                     goal,
@@ -1476,6 +1488,7 @@ impl<'a> Pipeline<'a> {
         // Counted before the winner is moved out — the report is about the
         // whole fan-out, not the one result that survives it.
         let ran = executed_count(&candidates);
+        self.emit_text(candidate_winner_notice(best_idx, n, ran));
         // Winner adoption + cleanup. An aborted winner adopts nothing — an
         // aborted best-of-N run leaves the real tree untouched.
         let mut adopt_failure: Option<WorkspaceError> = None;
@@ -2436,6 +2449,14 @@ impl<'a> Pipeline<'a> {
             to: fb.to.clone(),
             reason: fb.reason.clone(),
         });
+    }
+
+    /// Emit a narration line when there is one — see `candidate_narration`,
+    /// which returns `None` for a single-candidate run.
+    fn emit_text(&self, notice: Option<String>) {
+        if let Some(delta) = notice {
+            self.emit(AgentEvent::Text { delta });
+        }
     }
 
     /// A non-fatal degradation the user should see (witness discarded,

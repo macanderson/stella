@@ -45,6 +45,7 @@ use clap::ValueEnum;
 use contextgraph_conformance::{ProviderTarget, run_conformance};
 use contextgraph_host::{
     ConsentDecision, ConsentRecord, ContextProvider, Host, HostError, ProviderResult,
+    refuse_insecure_transport,
 };
 use contextgraph_types::{
     Capabilities, ConsentReceipt, ContextFrame, ContextQuery, ContextQueryResult, DataFlow,
@@ -311,19 +312,21 @@ pub enum Admission {
     NonConformant { id: String, failures: String },
     /// The transport could not be established (spawn failed, handshake
     /// refused, endpoint unreachable).
-    ///
-    /// Also where a **C7** refusal would land if it reached here — a plaintext
-    /// `http://` URL to a non-loopback provider, which `contextgraph-host`
-    /// refuses before any bytes leave the machine. In practice it does not
-    /// reach here: [`conformance_refusal`] connects first, so the same refusal
-    /// surfaces as [`Self::NonConformant`] with the C7 message in the failing
-    /// `handshake` check's evidence. That is safe but misattributing — it blames
-    /// the provider for what is an operator typo. Reporting it honestly needs
-    /// CGP to export its loopback rule (today `is_loopback_host` is private to
-    /// `contextgraph-host::http`), because the alternative — reimplementing
-    /// "which hosts are loopback" in Stella — would duplicate a normative
-    /// protocol rule in the host, where the two copies can drift.
     Unreachable { id: String, error: String },
+    /// The provider is configured at a plaintext `http://` URL whose host is not
+    /// loopback, so workspace content would cross the network in cleartext. The
+    /// host refuses the transport before any bytes leave the machine (**C7**).
+    ///
+    /// Its own outcome rather than an [`Self::Unreachable`] or a
+    /// [`Self::NonConformant`], because the cause is neither: the endpoint is
+    /// very likely answering fine, and the provider has done nothing wrong. It is
+    /// an operator typo, one scheme character wide, and both other labels would
+    /// send someone to debug the wrong thing — a network, or somebody else's
+    /// provider.
+    ///
+    /// Carries the peer host, never a credential: the host keeps credentials out
+    /// of this error by contract (**C8**), and Stella sends none anyway.
+    InsecureTransport { id: String, host: String },
     /// The provider declares off-machine egress scopes with no recorded
     /// consent.
     ///
@@ -345,6 +348,7 @@ impl Admission {
             | Self::Misconfigured { id, .. }
             | Self::NonConformant { id, .. }
             | Self::Unreachable { id, .. }
+            | Self::InsecureTransport { id, .. }
             | Self::NeedsEgressConsent { id, .. } => id,
         }
     }
@@ -368,6 +372,11 @@ impl Admission {
             Self::Unreachable { id, error } => {
                 Some(format!("context provider `{id}` is unreachable: {error}"))
             }
+            Self::InsecureTransport { id, host } => Some(format!(
+                "context provider `{id}` refused: `{host}` is not on this machine and its URL is \
+                 plaintext `http://`, so workspace content would cross the network unencrypted — \
+                 use `https://` (CGP C7)"
+            )),
             Self::NeedsEgressConsent { id, scopes } => Some(format!(
                 "context provider `{id}` refused: it sends workspace content off this machine \
                  under scope(s) {} — add them to `context_providers.{id}.egress_consent` to allow it",
@@ -395,13 +404,23 @@ pub async fn register_external_providers(
     admissions
 }
 
-/// Admit one configured provider: validate → conformance-gate → connect →
-/// consent-gate.
+/// Admit one configured provider: validate → transport-security → conformance-gate
+/// → connect → consent-gate.
 ///
-/// The order matters. Conformance runs on its **own** connection, before the
-/// session host holds one, so a provider that fails is never registered even
-/// transiently — "refuse before it serves a turn" is only true if the refusal
-/// happens before registration, not after.
+/// The order matters twice over.
+///
+/// Conformance runs on its **own** connection, before the session host holds one,
+/// so a provider that fails is never registered even transiently — "refuse before
+/// it serves a turn" is only true if the refusal happens before registration.
+///
+/// And the transport-security check runs before *conformance*, because the
+/// conformance suite is not a passive inspection: it connects and sends sample
+/// queries. Probing a plaintext non-loopback endpoint would put those on the wire
+/// in cleartext. `contextgraph-host` refuses that connection either way — the
+/// suite calls the same `add_http`, so C7 is never actually breached — but then
+/// the failure arrives as a failed `handshake` *check*, and the operator is told
+/// their provider is non-conformant when what is wrong is one character of their
+/// own URL. Checking first buys the honest label.
 async fn admit_external_provider(
     host: &mut Host,
     id: &str,
@@ -419,6 +438,9 @@ async fn admit_external_provider(
             };
         }
     };
+    if let Some(refusal) = transport_security_refusal(id, &endpoint) {
+        return refusal;
+    }
     if let Some(refusal) = conformance_refusal(id, conformance_target(&endpoint)).await {
         return refusal;
     }
@@ -432,6 +454,43 @@ async fn admit_external_provider(
         }
     }
     grant_declared_egress_consent(host, id, config)
+}
+
+/// Classify an endpoint against the protocol's transport-security rule (**C7**)
+/// before anything connects to it, returning the refusal to report or `None` when
+/// the endpoint is safe to probe.
+///
+/// The rule itself is [`refuse_insecure_transport`] — CGP's, called here, not
+/// reimplemented here. That is the whole point of asking upstream to export it:
+/// "which hosts count as loopback" is a normative decision with edge cases
+/// (`[::1]`, all of `127.0.0.0/8` rather than just `127.0.0.1`, the casing of
+/// `LOCALHOST`, and the `127.0.0.1.example.com` prefix trap), and a second
+/// implementation living in Stella would be a second answer, free to drift from
+/// the one the host enforces. A host may consult a protocol rule; it should not
+/// keep its own copy.
+///
+/// A stdio endpoint has no transport to secure — the bytes never touch a network
+/// — so it passes untouched.
+fn transport_security_refusal(id: &str, endpoint: &ProviderEndpoint) -> Option<Admission> {
+    let ProviderEndpoint::Http { url } = endpoint else {
+        return None;
+    };
+    match refuse_insecure_transport(id, url) {
+        Ok(()) => None,
+        Err(HostError::InsecureTransport { host, .. }) => Some(Admission::InsecureTransport {
+            id: id.to_string(),
+            host,
+        }),
+        // The rule also rejects a URL it cannot parse. That is a config error,
+        // not a security verdict: telling an operator to add TLS to a string
+        // that is not a URL would point them at the wrong line. Previously such
+        // a URL passed `target()` (which only checks non-emptiness) and failed
+        // later as `Unreachable`, which was just as misleading.
+        Err(error) => Some(Admission::Misconfigured {
+            id: id.to_string(),
+            reason: error.to_string(),
+        }),
+    }
 }
 
 /// The conformance suite's view of a validated endpoint.
@@ -803,6 +862,27 @@ fn host_dropped(
 /// `ContextRecall` event already records frame-granular identities locally.
 /// What survives is counts, costs, and a timestamp — no titles, no bodies, no
 /// query text, so the event stays content-free (AGENTS.md invariant 3, #466).
+///
+/// **UR1 still holds through the sibling field**, which is worth stating because
+/// dropping a field the spec names looks like a violation and is not one. UR1
+/// requires a billed total to be walkable back to the exact `(provider id, frame
+/// id, content_digest)` triples behind it. Each `ContextFrameRef` on the same
+/// event carries all three: `provider`, `id`, and `content_digest` — the last of
+/// which used to be thrown away here and was restored precisely so a reference
+/// resolves to a revision rather than a row (#713). `id` and `content_digest`
+/// being `Option` is not a hole in the walk: a candidate frame that was never
+/// materialized has no id, and a frame whose provider declared no digest is
+/// *not verifiable* by §1 and must be re-queried rather than reused — so the
+/// absence is the meaningful answer, and CGP's own `FrameId.content_digest` is
+/// equally optional for the same reason.
+///
+/// What is genuinely **not** emitted anywhere is a §14 `AttributionReport`: what
+/// each served frame went on to do. That is not a projection loss — there is no
+/// source for it at this point in the turn, since `cited` is only observable
+/// after the model has answered. See
+/// `the_ledger_names_the_same_three_attribution_observations_as_the_protocol` for
+/// the vocabulary alignment that is in place and the store migration that
+/// frame-keyed attribution is waiting on.
 fn to_context_usage(report: &UsageReport) -> ContextUsage {
     ContextUsage {
         budget_requested: report.budget_requested,

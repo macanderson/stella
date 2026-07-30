@@ -39,20 +39,36 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use stella_core::bus::{HookBus, HookDecision, names as hook_names};
+use stella_core::records::Registry as RecordRegistry;
 use stella_core::rules::{
     LoadRulesOptions, ProposedAction, Rule, RuleFile, RuleSource, evaluate_guards, load_rules,
 };
 use stella_tools::ToolRegistry;
 
 /// One immutable rule snapshot resolved at session assembly. Cloning this
-/// value clones only the [`Arc`], so prompt rendering, the parent registry,
+/// value clones only the [`Arc`]s, so prompt rendering, the parent registry,
 /// and every candidate registry observe the exact same source resolution.
+///
+/// Two views of one resolution, never two resolutions: `rules` is the flat
+/// [`Rule`] list the tool boundary evaluates, and `records` is the record
+/// registry the prompt renders from. Both come out of a single
+/// [`stella_core::records::registry::load`] call, so the tier a rule advertises
+/// in the prompt is the tier it actually has at the boundary.
 #[derive(Clone, Default)]
-pub(crate) struct ResolvedRules(Arc<[Rule]>);
+pub(crate) struct ResolvedRules {
+    rules: Arc<[Rule]>,
+    records: Arc<RecordRegistry>,
+}
 
 impl ResolvedRules {
     pub(crate) fn as_slice(&self) -> &[Rule] {
-        &self.0
+        &self.rules
+    }
+
+    /// The record registry behind this resolution — what the prompt renders and
+    /// what `stella context explain` looks records up in.
+    pub(crate) fn registry(&self) -> &RecordRegistry {
+        &self.records
     }
 }
 
@@ -64,10 +80,30 @@ impl std::ops::Deref for ResolvedRules {
     }
 }
 
+impl From<Vec<Rule>> for ResolvedRules {
+    /// A rules-only resolution, for the tests and callers that construct a rule
+    /// list directly. The record registry is empty, so nothing renders through the
+    /// record channels — which is correct: there were no records.
+    fn from(rules: Vec<Rule>) -> Self {
+        Self {
+            rules: rules.into(),
+            records: Arc::new(RecordRegistry::default()),
+        }
+    }
+}
+
+/// The rule-file extensions the loader reads.
+///
+/// `.md` is the legacy markdown rule; `.toml` is the context-record surface ADR
+/// 0011 ratified. Both are read from the same directories in the same order, so
+/// there is one precedence order rather than one per format — see
+/// [`stella_core::records::registry`].
+const RULE_EXTENSIONS: &[&str] = &["md", "toml"];
+
 /// The production [`RuleSource`]: real `std::fs` reads over each directory
-/// in `dirs`, in the given order — every `.md` file's contents, name-sorted
-/// within a directory, absent directories skipped silently (exactly the
-/// contract the port documents).
+/// in `dirs`, in the given order — every `.md` and `.toml` file's contents,
+/// name-sorted within a directory, absent directories skipped silently (exactly
+/// the contract the port documents).
 pub(crate) struct FsRuleSource;
 
 impl RuleSource for FsRuleSource {
@@ -80,7 +116,11 @@ impl RuleSource for FsRuleSource {
             let mut paths: Vec<PathBuf> = entries
                 .flatten()
                 .map(|entry| entry.path())
-                .filter(|path| path.extension().and_then(|x| x.to_str()) == Some("md"))
+                .filter(|path| {
+                    path.extension()
+                        .and_then(|x| x.to_str())
+                        .is_some_and(|ext| RULE_EXTENSIONS.contains(&ext))
+                })
                 .collect();
             paths.sort();
             for path in paths {
@@ -164,14 +204,45 @@ pub(crate) fn load_workspace_rules(
     }
     let user_rules_dir =
         crate::settings::user_home_dir().map(|home| home.join(".stella").join("rules"));
-    ResolvedRules(
-        load_rules_from_with_authority(
-            workspace_root,
-            user_rules_dir,
-            authority.project_prompts_allowed,
-        )
-        .into(),
-    )
+    let markdown = load_rules_from_with_authority(
+        workspace_root,
+        user_rules_dir,
+        authority.project_prompts_allowed,
+    );
+    let records = crate::context_records::load_session_registry(workspace_root, authority);
+    ResolvedRules {
+        rules: boundary_rules(markdown, &records).into(),
+        records: Arc::new(records),
+    }
+}
+
+/// The rules the tool boundary evaluates: the markdown rules exactly as the trust-
+/// tier merge resolved them, plus the guards TOML records earned.
+///
+/// The split is deliberate and the reason is blast radius. The markdown path carries
+/// an invariant with teeth — a user-global hard guard is *monotonic*, and a project
+/// rule with the same id can never remove it — and that invariant is enforced by
+/// [`merge_rule_trust_tiers`] over `Vec<Rule>`. Re-expressing it inside the record
+/// registry's lineage merge would mean rewriting security-relevant merge logic to
+/// add a feature, so the markdown result is passed through untouched and only the
+/// **non-legacy** entries (real TOML records, which no session has depended on yet)
+/// contribute new guards.
+///
+/// One known asymmetry, and it fails safe: a markdown rule named `foo` and a TOML
+/// record with lineage `ctx.foo` merge in the *prompt* (the registry keeps one), while
+/// both of their guards stay armed at the boundary. The result is more restrictive
+/// than the prompt implies rather than less, which is the direction to be wrong in.
+fn boundary_rules(markdown: Vec<Rule>, records: &RecordRegistry) -> Vec<Rule> {
+    let mut rules = markdown;
+    rules.extend(
+        records
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| !entry.is_legacy_markdown())
+            .filter_map(|(index, _)| records.rules.get(index).cloned()),
+    );
+    rules
 }
 
 /// Phase 3 (#714): every rule already on disk, for the miner's dedup check.
@@ -318,7 +389,7 @@ pub(crate) fn attach_rule_guards(registry: &ToolRegistry, rules: &ResolvedRules)
     if rules.as_slice().iter().all(|rule| rule.guard.is_none()) {
         return;
     }
-    let rules = Arc::clone(&rules.0);
+    let rules = Arc::clone(&rules.rules);
     let bus = HookBus::new(format!("rules-{}", std::process::id()));
     bus.on_blocking(hook_names::TOOL_CALL_REQUESTED, move |event| {
         let tool = canonical_tool(event.payload["tool"].as_str().unwrap_or_default());
@@ -547,7 +618,7 @@ mod tests {
         let registry = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
         let rules =
             load_rules_from_with_authority(root.path(), Some(user.path().join("rules")), true);
-        attach_rule_guards(&registry, &ResolvedRules(rules.into()));
+        attach_rule_guards(&registry, &ResolvedRules::from(rules));
 
         let denied = registry
             .execute(
@@ -585,7 +656,7 @@ mod tests {
         assert_eq!(rules.len(), 2, "both trust-tier guards must remain active");
 
         let registry = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
-        attach_rule_guards(&registry, &ResolvedRules(rules.into()));
+        attach_rule_guards(&registry, &ResolvedRules::from(rules));
         for path in ["user-only/blocked.txt", "project-only/blocked.txt"] {
             let output = registry
                 .execute(
@@ -770,6 +841,121 @@ mod tests {
             .execute("bash", &serde_json::json!({"command": "echo ok"}))
             .await;
         assert!(!allowed.is_error(), "a non-matching command runs normally");
+    }
+
+    /// #890's acceptance criterion, through the real tool boundary: a kept,
+    /// human-approved `guard_deny_command` record blocks a matching Bash call.
+    ///
+    /// The unit tests prove the guard *arms*. This proves the arming reaches
+    /// `ToolRegistry::execute` and denies the call with text the model can act on —
+    /// which is the only claim that matters, and the one that would silently stop
+    /// being true if the record path and the markdown path ever diverged.
+    #[tokio::test]
+    async fn an_approved_toml_record_blocks_a_matching_bash_call() {
+        let root = tempfile::tempdir().unwrap();
+        write_rule(
+            &root.path().join(".stella/rules"),
+            "ctx.acme.web.no-force-push.toml",
+            "schema = \"context-record/v0.1\"\nset_id = \"acme.web\"\n\
+             \n[defaults]\norigin = \"user\"\nstatus = \"active\"\n\
+             \n[[record]]\nlineage_id = \"ctx.acme.web.no-force-push\"\n\
+             kind = \"constraint\"\nstatement = \"Never force-push to a shared branch.\"\n\
+             \n[record.steering]\nforce = \"must\"\n\
+             \n[record.enforcement]\nmode = \"hard\"\nguard_tool = \"Bash\"\n\
+             guard_deny_command = \"git push --force*\"\n\
+             \n[record.truth]\nbasis = \"decree\"\nverified_by = \"mac\"\n",
+        );
+
+        let registry = ToolRegistry::with_backends_and_options(
+            root.path().to_path_buf(),
+            None,
+            None,
+            stella_tools::RegistryOptions::default(),
+        );
+        let rules = load_workspace_rules(root.path(), &trusted_project_authority());
+        attach_rule_guards(&registry, &rules);
+
+        let denied = registry
+            .execute(
+                "bash",
+                &serde_json::json!({"command": "git push --force origin main"}),
+            )
+            .await;
+        let ToolOutput::Error { message } = denied else {
+            panic!("an approved TOML guard must block the call: {denied:?}");
+        };
+        assert!(
+            message.contains("no-force-push"),
+            "the block must cite the handle, so the model can name what stopped it: {message}"
+        );
+        assert!(
+            message.contains("Never force-push to a shared branch."),
+            "and carry the statement so it can self-correct: {message}"
+        );
+
+        let allowed = registry
+            .execute("bash", &serde_json::json!({"command": "echo ok"}))
+            .await;
+        assert!(
+            !allowed.is_error(),
+            "a non-matching command must run normally: {allowed:?}"
+        );
+    }
+
+    /// The same record with an untrusted origin must not block, through the same
+    /// wired boundary. An inferred or imported claim may advise; it may never deny.
+    #[tokio::test]
+    async fn an_imported_record_does_not_block_through_the_wired_boundary() {
+        let root = tempfile::tempdir().unwrap();
+        write_rule(
+            &root.path().join(".stella/rules"),
+            "ctx.acme.web.no-force-push.toml",
+            "schema = \"context-record/v0.1\"\nset_id = \"acme.web\"\n\
+             \n[defaults]\norigin = \"imported\"\nstatus = \"active\"\n\
+             \n[[record]]\nlineage_id = \"ctx.acme.web.no-force-push\"\n\
+             kind = \"constraint\"\nstatement = \"Never force-push to a shared branch.\"\n\
+             \n[record.steering]\nforce = \"must\"\n\
+             \n[record.enforcement]\nmode = \"hard\"\nguard_tool = \"Bash\"\n\
+             guard_deny_command = \"git push --force*\"\n\
+             \n[record.truth]\nbasis = \"decree\"\nverified_by = \"mac\"\n",
+        );
+
+        let registry = ToolRegistry::with_backends_and_options(
+            root.path().to_path_buf(),
+            None,
+            None,
+            stella_tools::RegistryOptions::default(),
+        );
+        let rules = load_workspace_rules(root.path(), &trusted_project_authority());
+        attach_rule_guards(&registry, &rules);
+
+        // The command itself fails (this tempdir is not a repository) — what matters
+        // is that the failure is git's and not the guard's. Asserting "no error at
+        // all" would make this test about whether `git push` can run.
+        let allowed = registry
+            .execute(
+                "bash",
+                &serde_json::json!({"command": "git push --force origin main"}),
+            )
+            .await;
+        let message = match &allowed {
+            ToolOutput::Error { message } => message.clone(),
+            _ => String::new(),
+        };
+        assert!(
+            !message.contains("no-force-push"),
+            "an imported record must never start blocking, however it is committed: {message}"
+        );
+        // And the statement still steers — the refusal is about enforcement, not
+        // about whether the claim is policy.
+        assert!(
+            rules
+                .registry()
+                .render(stella_core::records::Channel::Cached, None)
+                .text
+                .contains("Never force-push"),
+            "the record must still reach the prompt"
+        );
     }
 
     // Phase 0: representative `.stella/rules/*.md` fixtures must parse under the

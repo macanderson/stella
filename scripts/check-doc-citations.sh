@@ -12,8 +12,12 @@
 #
 # The section half is not hypothetical either. When that document was vendored,
 # 22 of the 23 citations pointed at §1, §2 or §4 and resolved cleanly, but the
-# §3.5 one did not: the document has no §3 at all, and the claim it was making
+# §3.5 one did not: the document had no §3 at all, and the claim it was making
 # is stated in §4. A path-only check would have called that citation fine.
+# (§3 has since been written upstream and re-vendored, so §3 citations now
+# resolve — the anecdote is history, not current state. The check is generic and
+# never named §3: it compares each cited section against the headings the
+# document actually has, whatever those are at the pinned rev.)
 #
 # The `§N` check is skipped for any document with no numbered `## N.` headings,
 # so prose docs that never adopted the convention are not failed for it.

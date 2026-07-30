@@ -90,6 +90,17 @@
   --stella-cta-fg: var(--stella-paper);
   --stella-cta-bg-hover: var(--stella-brand-ink-deep);
 
+  /* The other three mode-aware component tokens. They live beside
+   * `--stella-accent` because they flip with the theme for the same reason it
+   * does, and this file spends all three: `mark` on the logo cursor, `rule` on
+   * table and diagram strokes, `faint` on de-emphasised captions. An undefined
+   * custom property is invalid at computed-value time — it does not error, it
+   * silently falls back — so a missing definition here renders as a plausible
+   * wrong colour instead of failing the build. */
+  --stella-mark: var(--stella-gold-ink); /* the logo cursor — 5.5:1 on paper */
+  --stella-rule: var(--stella-paper-hairline-contrast); /* 3.3:1 — structural */
+  --stella-faint: var(--stella-ink-tertiary); /* 4.7:1 on paper */
+
   /* Light mode — paper ground, ink type. Accent text is ink; the brand accent
    * appears here only as a fill with an ink label on it. */
   --color-fd-background: var(--stella-paper);
@@ -129,6 +140,15 @@
   --stella-cta-bg: var(--stella-brand-bright);
   --stella-cta-fg: var(--stella-ink-primary);
   --stella-cta-bg-hover: var(--stella-brand-deep);
+
+  /* Dark counterparts of the three component tokens the light block sets.
+   * `rule` is the one that must clear 3:1 — it is the only seam here allowed to
+   * carry structure on its own, which is exactly what `hairline-contrast`
+   * exists for; `hairline` and `hairline-strong` measure 1.2:1 and 1.4:1 and
+   * stay decorative (BRAND.md). */
+  --stella-mark: var(--stella-gold); /* the logo cursor — 11.9:1 on ground */
+  --stella-rule: var(--stella-hairline-contrast); /* 3.1:1 — structural */
+  --stella-faint: var(--stella-text-tertiary); /* 4.8:1 on ground */
 
   --color-fd-background: var(--stella-ground);
   --color-fd-foreground: var(--stella-text-primary); /* 18.1:1 */

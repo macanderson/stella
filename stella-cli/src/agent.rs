@@ -309,6 +309,7 @@ async fn run_pipeline_one_shot(
         // is refused with a reason (#453).
         m.register_external_providers(|message| eprintln!("  {} {message}", "!".yellow()))
             .await;
+        prompt::attach_record_channel(m, &active_rules);
     }
     if let Some(m) = &memory {
         // Phase 2 (#713): the one-shot path recalled and reported nothing, so
@@ -729,6 +730,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         // recall, or are refused with a reason (#453).
         m.register_external_providers(|message| println!("  {} {message}", "!".yellow()))
             .await;
+        prompt::attach_record_channel(m, &active_rules);
     }
     // Custom extensions: ⚡ commands/skills invocable as `/name args`, custom
     // agents behind `/agents`. Reloaded after `/init`, which may adopt new
@@ -865,6 +867,10 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                         true,
                         &cfg.authority,
                     );
+                    // The re-opened session loses the channel with its other state.
+                    if let Some(m) = &mut memory {
+                        prompt::attach_record_channel(m, &active_rules);
+                    }
                     // `/init` may also have adopted new custom
                     // commands/skills/agents — make them invocable now, and
                     // report anything that failed to load.

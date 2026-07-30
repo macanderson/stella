@@ -398,8 +398,58 @@ fn system_prompt_carries_the_workspace_rules_section() {
     );
     assert!(prompt.contains("## Workspace rules"));
     assert!(
-        prompt.contains("Never force-push.  [enforced]"),
-        "a guarded rule must render with the enforced marker: {prompt}"
+        prompt.contains("### Must"),
+        "records group by force so a fact and a constraint stop looking identical: {prompt}"
+    );
+    assert!(
+        prompt.contains("- Never force-push. ^no-force-push [enforced]"),
+        "a guarded rule must render with its citable handle and the enforced marker: {prompt}"
+    );
+}
+
+/// An untrusted checkout must not steer through the TOML record surface either.
+///
+/// The markdown half of this is covered by
+/// `untrusted_project_prompt_sources_are_absent_from_the_system_prompt`. This is the
+/// record half, and it is a separate test because the two formats reach the prompt
+/// through different code: the record path filters the rule directories itself, and
+/// an early version of it collapsed "read the user's rules" and "read the
+/// repository's rules" into one flag — which loaded an untrusted repository's
+/// records into the privileged prompt while every markdown test still passed.
+#[test]
+fn an_untrusted_project_record_is_absent_from_the_system_prompt() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let rules_dir = root.path().join(".stella/rules");
+    std::fs::create_dir_all(&rules_dir).unwrap();
+    std::fs::write(
+        rules_dir.join("acme.web.toml"),
+        "schema = \"context-record/v0.1\"\nset_id = \"acme.web\"\n\
+         \n[[record]]\nlineage_id = \"ctx.acme.web.marker\"\nkind = \"rule\"\n\
+         statement = \"PROJECT_RECORD_AUTHORITY_MARKER\"\n\
+         \n[record.steering]\nforce = \"must\"\n",
+    )
+    .unwrap();
+
+    let mut cfg = cfg_for("zai");
+    cfg.workspace_root = root.path().to_path_buf();
+    cfg.authority.project_prompts_allowed = false;
+    let untrusted = crate::rules::load_workspace_rules(root.path(), &cfg.authority);
+    let prompt = build_system_prompt(&cfg, root.path(), &untrusted);
+    assert!(
+        !prompt.contains("PROJECT_RECORD_AUTHORITY_MARKER"),
+        "an untrusted project record reached the privileged system prompt: {prompt}"
+    );
+    assert!(
+        untrusted.registry().entries.is_empty(),
+        "and it must not even be loaded — a record that loads is a record that can arm a guard"
+    );
+
+    cfg.authority.project_prompts_allowed = true;
+    let trusted = crate::rules::load_workspace_rules(root.path(), &cfg.authority);
+    assert!(
+        build_system_prompt(&cfg, root.path(), &trusted)
+            .contains("PROJECT_RECORD_AUTHORITY_MARKER"),
+        "explicit repository trust must restore it"
     );
 }
 
@@ -982,7 +1032,7 @@ async fn candidate_rules_reuse_the_parent_snapshot_after_source_removal() {
     std::fs::remove_file(&rule_path).unwrap();
     let prompt = build_system_prompt(&cfg, root.path(), &parent_rules);
     assert!(
-        prompt.contains("Original session guard.  [enforced]"),
+        prompt.contains("Original session guard. ^protect-session [enforced]"),
         "prompt rendering diverged from the parent rule snapshot: {prompt}"
     );
     let ws_ports = workspace_ports(

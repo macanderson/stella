@@ -149,19 +149,11 @@ fn plan_from(
 /// dotenv file. Never returns the home directory (or above), and never crosses
 /// above the enclosing git repository root — env stays scoped to one project.
 fn find_base(start: &Path, home: Option<&Path>) -> Option<PathBuf> {
-    // `start` comes from `current_dir()`, which is `getcwd` — already free of
-    // symlinks. `$HOME` is not: `/home` symlinked onto another volume is a
-    // routine layout, and there the raw string compare below never matched, so
-    // the "`~/.env` never leaks into every session" guarantee silently did not
-    // hold for those users. Resolve it once so the two are comparable; an
-    // unresolvable `$HOME` (deleted, or a bare name) falls back to the literal,
-    // which is exactly the previous behaviour.
-    let home = home.map(|home| std::fs::canonicalize(home).unwrap_or_else(|_| home.to_path_buf()));
     let mut dir = start;
     loop {
         // The home directory (and anything above it) is never a project scope:
         // we don't want a stray `~/.env` to leak into every session.
-        if home.as_deref() == Some(dir) {
+        if home.is_some_and(|home| is_same_dir(home, dir)) {
             return None;
         }
         if dir_has_env_file(dir) {
@@ -174,6 +166,30 @@ fn find_base(start: &Path, home: Option<&Path>) -> Option<PathBuf> {
             return None;
         }
         dir = dir.parent()?;
+    }
+}
+
+/// Whether two paths name the same directory, comparing through symlinks.
+///
+/// `$HOME` is routinely a symlink (`/home` mounted onto another volume), so a
+/// raw string compare silently failed to recognise it and let `~/.env` leak
+/// into every session for those users. Resolving only `$HOME` traded that for
+/// the mirror-image bug: whenever the *other* side was itself unresolved — any
+/// caller not handing us a `getcwd` result, which on macOS includes every
+/// `/var/...` temp path, since `/var` is a symlink to `/private/var` — the
+/// comparison stopped matching and `~/.env` leaked again.
+///
+/// So resolve both sides. The cheap literal compare stays first for the
+/// overwhelmingly common already-equal case; canonicalisation only runs when it
+/// could change the answer. A path that cannot be resolved (deleted, or a bare
+/// name) is not equal to anything it did not already equal literally.
+fn is_same_dir(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
     }
 }
 
@@ -634,14 +650,14 @@ mod tests {
     #[test]
     fn home_directory_is_never_a_project_scope() {
         let tmp = tempfile::tempdir().unwrap();
-        // Canonicalized, like `a_symlinked_home_is_still_never_a_project_scope`
-        // below. `find_base` documents `start` as `getcwd` — already resolved —
-        // and canonicalizes only `home`, so a raw `tempfile` path fails this on
-        // macOS, where the temp root is always a symlink (`/var` →
-        // `/private/var`): the guard compares `/var/folders/…` against
-        // `/private/var/folders/…`, never matches, and returns the directory it
-        // exists to refuse. Linux `/tmp` is not a symlink, so the raw path
-        // passed in CI and failed for every macOS dev.
+        // Canonicalized for the same reason `a_symlinked_home_is_still_never_a
+        // _project_scope` does it: `find_base` documents that `start` arrives
+        // already resolved (it is `getcwd`) and resolves only `$HOME` itself. Hand
+        // it an *un*resolved `start` and the two sides are no longer comparable —
+        // on macOS `tempdir()` returns `/var/folders/…`, which canonicalizes to
+        // `/private/var/folders/…`, so the home guard compared those two spellings
+        // and missed. That made this test fail on macOS while the behaviour it
+        // checks was correct: production `start` is always resolved.
         let home = std::fs::canonicalize(tmp.path()).unwrap();
         write(&home, ".env", "HOME_LEVEL=nope\n");
         // Running *in* $HOME must not load `~/.env`.
@@ -671,6 +687,31 @@ mod tests {
         fs::create_dir_all(&project).unwrap();
         write(&project, ".env.local", "K=1\n");
         assert_eq!(find_base(&project, Some(&link)), Some(project));
+    }
+
+    /// The mirror of [`a_symlinked_home_is_still_never_a_project_scope`], and
+    /// the case that regressed: `$HOME` resolved but `start` reached through a
+    /// symlink. Resolving only the `$HOME` side fixed one direction and broke
+    /// this one, so `~/.env` leaked for any caller not handing us a `getcwd`
+    /// result. Both sides have to be resolved before they are compared.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_start_is_still_recognised_as_home() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real = std::fs::canonicalize(tmp.path()).unwrap().join("real-home");
+        fs::create_dir_all(&real).unwrap();
+        write(&real, ".env", "HOME_LEVEL=nope\n");
+        let link = std::fs::canonicalize(tmp.path()).unwrap().join("home-link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        // `$HOME` is the real path this time; `start` arrives via the symlink.
+        assert_eq!(
+            find_base(&link, Some(&real)),
+            None,
+            "a start path reached through a symlink is still $HOME"
+        );
+        // And with BOTH sides unresolved — the plain equality that always worked.
+        assert_eq!(find_base(&link, Some(&link)), None);
     }
 
     // Loaded::file_for (stella config's "which file, which name")

@@ -477,8 +477,10 @@ async fn the_plane_fans_out_and_kind_routes_across_registered_providers() {
 // cleanly turns this suite red.
 
 use contextgraph_conformance::{
-    CHECK_FRAME_VALIDITY, CHECK_VERIFY_HONESTY, CheckStatus, ConformanceReport, ProviderTarget,
-    run_conformance, sample_query,
+    CCHECK_BUDGET_BOUND, CCHECK_DETERMINISM, CCHECK_QUARANTINE, CCHECK_TOTAL_PARTITION,
+    CHECK_FRAME_VALIDITY, CHECK_VERIFY_HONESTY, CheckStatus, ComposingHost, Composition,
+    ConformanceReport, ExcludedFrame, ProviderTarget, run_composition_conformance, run_conformance,
+    sample_query,
 };
 
 /// Render a report's failures for a panic message, so a red run names the
@@ -751,6 +753,112 @@ async fn a_disabled_provider_is_never_reached() {
     );
 }
 
+/// An `http://` provider that is not on this machine is refused for **C7**, with
+/// the peer named and the operator pointed at their own URL.
+///
+/// The refusal has to be its own outcome. `contextgraph-host` would refuse this
+/// connection regardless — the conformance suite calls the same `add_http`, so no
+/// cleartext query ever leaves the machine either way — but before the C7
+/// pre-flight the refusal arrived as a failed `handshake` check and Stella
+/// reported `NonConformant`, i.e. blamed a remote provider for one character of
+/// local config. The assertion below is about the *label*, because the label is
+/// the entire fix.
+///
+/// The port is `:9` (discard) so that if the pre-flight ever regressed and
+/// something did try to connect, the test would fail on a distinguishable
+/// outcome rather than hanging on a real endpoint.
+#[tokio::test]
+async fn a_plaintext_remote_provider_is_refused_as_insecure_not_as_non_conformant() {
+    let mut host = Host::new();
+    let mut configured = ContextProviderSettings::new();
+    configured.insert(
+        "remote".to_string(),
+        ExternalContextProvider {
+            transport: ContextTransport::Http,
+            url: Some("http://cgp.example.com:9/query".to_string()),
+            enabled: true,
+            ..Default::default()
+        },
+    );
+    let admissions = register_external_providers(&mut host, &configured).await;
+    match &admissions[0] {
+        Admission::InsecureTransport { id, host: peer } => {
+            assert_eq!(id, "remote");
+            assert_eq!(peer, "cgp.example.com");
+        }
+        other => panic!("expected a C7 InsecureTransport refusal, got {other:?}"),
+    }
+    // The operator-facing line names the fix, not the mechanism.
+    let refusal = admissions[0].refusal().expect("a refusal explains itself");
+    assert!(refusal.contains("https://"), "{refusal}");
+    assert!(refusal.contains("C7"), "{refusal}");
+    assert!(
+        host.provider_ids().is_empty(),
+        "a provider refused for transport security must not be registered"
+    );
+}
+
+/// The C7 loopback exception: a plaintext `http://` provider on this machine is
+/// **not** refused for transport security. It still fails admission — nothing is
+/// listening on the discard port — but as `Unreachable`/`NonConformant`, which is
+/// the honest reason.
+///
+/// Without this the C7 check would be indistinguishable from "refuse all
+/// plaintext", which would break every local development provider.
+#[tokio::test]
+async fn a_plaintext_loopback_provider_is_not_refused_for_transport_security() {
+    let mut host = Host::new();
+    let mut configured = ContextProviderSettings::new();
+    configured.insert(
+        "local".to_string(),
+        ExternalContextProvider {
+            transport: ContextTransport::Http,
+            url: Some("http://127.0.0.1:9/query".to_string()),
+            enabled: true,
+            ..Default::default()
+        },
+    );
+    let admissions = register_external_providers(&mut host, &configured).await;
+    assert!(
+        !matches!(admissions[0], Admission::InsecureTransport { .. }),
+        "loopback plaintext is allowed by C7 — the bytes never leave the machine: {:?}",
+        admissions[0]
+    );
+    assert!(
+        !admissions[0].registered(),
+        "nothing is listening, so it still must not be admitted: {:?}",
+        admissions[0]
+    );
+}
+
+/// A URL the protocol's own parser rejects is configuration, not a security
+/// verdict: telling an operator to add TLS to a string that is not a URL points
+/// them at the wrong line. Previously this passed `target()` (which only checks
+/// non-emptiness) and failed later as `Unreachable`, which was equally
+/// misleading.
+#[tokio::test]
+async fn an_unparseable_url_is_a_config_refusal_not_a_security_one() {
+    let mut host = Host::new();
+    let mut configured = ContextProviderSettings::new();
+    configured.insert(
+        "garbled".to_string(),
+        ExternalContextProvider {
+            transport: ContextTransport::Http,
+            url: Some("not-a-url".to_string()),
+            enabled: true,
+            ..Default::default()
+        },
+    );
+    let admissions = register_external_providers(&mut host, &configured).await;
+    match &admissions[0] {
+        Admission::Misconfigured { id, reason } => {
+            assert_eq!(id, "garbled");
+            assert!(reason.contains("url"), "{reason}");
+        }
+        other => panic!("expected a config refusal, got {other:?}"),
+    }
+}
+
 /// A malformed entry is reported as configuration — naming the missing
 /// field — rather than surfacing later as a process that would not start.
 #[tokio::test]
@@ -887,6 +995,170 @@ fn pinned_protocol_version_is_the_expected_draft() {
         contextgraph_types::PROTOCOL_VERSION,
         "contextgraph/1.0-draft",
         "CGP protocol version changed — re-verify the conformance suite before bumping the pin"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Composition conformance
+//
+// The suite above certifies the two in-tree *providers*. This certifies the
+// *host* — specifically `recall_via_host`, which is Stella's own code and
+// therefore the part no upstream suite was ever going to cover.
+//
+// The distinction is the whole reason CGP's composition suite exists.
+// `Host::query_all` audits budget honesty **per provider**: it catches a
+// `token_cost` liar and a frame flooder, and then hands back a fan-out. Deciding
+// which of several honest providers' frames win one shared budget — and what is
+// owed to the ones that lose — is `recall_via_host`'s job, and a set of
+// individually conformant providers can still overflow in aggregate. Three
+// providers each returning one honest 400-token frame against a 1000-token query
+// are each within budget and jointly 200 over.
+//
+// Stella has been through this. The merge originally had no drop report at all
+// (#713): a frame the budget squeezed out simply vanished, and a required-item
+// precedence honored in the context plane's packer was silently undone here. The
+// checks below are exactly the properties that regression violated, so this is a
+// guard against a bug this codebase has actually shipped, not a hypothetical one.
+
+/// `recall_via_host` behind CGP's [`ComposingHost`] trait.
+///
+/// A fresh [`Host`] per call, because the suite reuses provider ids across checks
+/// and relies on the calls being independent. Everything else is a direct
+/// projection: Stella's `AttributedContextFrame` is already `(provider, frame)`,
+/// and its `HostDroppedFrame` is already a named, reported drop — the mapping is
+/// mechanical precisely because the merge was built to report rather than
+/// truncate.
+struct RecallViaHost;
+
+#[async_trait]
+impl ComposingHost for RecallViaHost {
+    async fn compose(
+        &self,
+        providers: Vec<Box<dyn ContextProvider>>,
+        query: &ContextQuery,
+    ) -> Composition {
+        let mut host = Host::new();
+        for provider in providers {
+            host.register(provider);
+        }
+        let recall = recall_via_host(&host, query).await;
+        Composition {
+            admitted: recall
+                .frames
+                .into_iter()
+                .map(|frame| (frame.provider, frame.frame))
+                .collect(),
+            dropped: recall
+                .dropped
+                .into_iter()
+                .map(|drop| ExcludedFrame {
+                    provider_id: drop.provider,
+                    frame_id: drop.id,
+                })
+                .collect(),
+        }
+    }
+}
+
+#[tokio::test]
+async fn recall_via_host_is_cgp_composition_conformant() {
+    let report = run_composition_conformance(&RecallViaHost, "stella: recall_via_host").await;
+    assert!(
+        report.passed(),
+        "recall_via_host must satisfy CGP's composition contract; failures: {}",
+        conformance_failures(&report)
+    );
+    // Named individually so a future check added upstream cannot be silently
+    // absent here: `passed()` is also true for a report with no checks in it.
+    for name in [
+        CCHECK_BUDGET_BOUND,
+        CCHECK_TOTAL_PARTITION,
+        CCHECK_QUARANTINE,
+        CCHECK_DETERMINISM,
+    ] {
+        assert_eq!(
+            check_status(&report, name),
+            CheckStatus::Pass,
+            "`{name}` must pass and must actually have run: {report:?}"
+        );
+    }
+    assert_eq!(report.checks.len(), 4, "every composition check ran");
+}
+
+/// The three observations CGP §14 defines for retrieval attribution (A2) are
+/// `selected`, `rendered`, and `cited`. Stella's ledger vocabulary
+/// (`stella_core::context_record::ContextUseKind`) is the *same* three, spelled
+/// the same way — which is not a coincidence and is worth protecting.
+///
+/// The two are not interchangeable, and the difference is the point:
+///
+/// - **Shape.** CGP puts all three on one record as independent booleans,
+///   deliberately, so that "rendered but never cited" — the host paid the tokens,
+///   the model read it, nothing came of it — is expressible. Stella emits one
+///   ledger row *per* observation. Both can express the same facts.
+/// - **Key.** CGP's `ContextUse.frame` is a `FrameId` — the `(provider id, frame
+///   id, content_digest)` triple — and A1 forbids minting a separate id for
+///   attribution. Stella's row is keyed by `context_record_id`, the identity of a
+///   record in its own memory substrate. These are different key spaces on
+///   purpose (ADR 0007: the record/lifecycle layer is host-owned), and A1 binds
+///   *frame* attribution, which Stella does not currently emit.
+///
+/// What this gate protects is the part that must not drift: the **vocabulary**.
+/// If CGP renames an observation or adds a fourth, Stella's ledger has to move
+/// with it, or the two layers will describe the same turn in two languages and
+/// nothing will notice. Asserted on the serialized strings, because those are
+/// what reach a database column and an event payload.
+///
+/// Frame-keyed attribution — an actual `AttributionReport` reconcilable against
+/// the usage report (A3) — is a separate piece of work and is deliberately not
+/// faked here. It needs `context_blocks` to carry the serving provider: the table
+/// has `content_digest` and `memory_id` but no provider column, so two thirds of
+/// a `FrameId` is recoverable from the extraction path and the third is not. That
+/// is a store migration, not a vocabulary alignment. Emitting a report now with
+/// `cited` structurally false would be the dead capability surface CGP's own
+/// ADR 0004 exists to prevent.
+#[test]
+fn the_ledger_names_the_same_three_attribution_observations_as_the_protocol() {
+    use stella_core::context_record::ContextUseKind;
+
+    // CGP's three observations, as their field names appear on the wire.
+    let protocol = ["selected", "rendered", "cited"];
+    let ledger: Vec<&str> = [
+        ContextUseKind::Selected,
+        ContextUseKind::Rendered,
+        ContextUseKind::Cited,
+    ]
+    .iter()
+    .map(|kind| kind.as_str())
+    .collect();
+
+    assert_eq!(
+        ledger, protocol,
+        "stella's context-use vocabulary must name CGP §14's observations identically"
+    );
+
+    // And the serde spelling must agree with `as_str`, so the database column and
+    // the Rust surface cannot drift from each other either.
+    for (kind, expected) in [
+        (ContextUseKind::Selected, "selected"),
+        (ContextUseKind::Rendered, "rendered"),
+        (ContextUseKind::Cited, "cited"),
+    ] {
+        assert_eq!(
+            serde_json::to_value(kind).expect("serializes"),
+            serde_json::Value::String(expected.to_string()),
+            "`{kind:?}` must serialize as `{expected}`"
+        );
+    }
+
+    // A fourth observation upstream is a real event, not a detail: it would mean
+    // there is something about a frame's fate the ledger cannot record. Pinning
+    // the count makes that arrive as a failing test rather than as a silent
+    // capability gap.
+    assert_eq!(
+        protocol.len(),
+        3,
+        "CGP §14 defines exactly three observations; a fourth needs a ledger kind"
     );
 }
 

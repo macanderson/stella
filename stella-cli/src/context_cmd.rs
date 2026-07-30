@@ -1,278 +1,262 @@
-//! `stella context` — the context-record command family.
+//! `stella context` — the review, publication, and explanation surface for
+//! context records.
 //!
-//! One verb today: `validate`, the on-demand truth-probe sweep. It re-runs each
-//! context record's **ungated** probe against the working tree and reports
-//! whether the claim still holds — the manual form of the staleness maintenance
-//! that keeps a once-true record from steering the agent wrong after the world
-//! moves (the `05` "Node 20 vs `.nvmrc` 22" case).
+//! `stella ingest` writes proposals to `.stella/proposals/*.toml`. Before this
+//! command existed, nothing consumed them: a proposal nobody can act on is a dead
+//! end, and the extraction work was invisible. This is the other half.
 //!
-//! ## Scope
+//! ```text
+//! stella context review              # what was proposed, and what the probe says
+//! stella context keep <id>           # publish it as a record the engine loads
+//! stella context edit <id>           # publish your wording instead
+//! stella context ignore <id>         # decline it, with a cooldown
+//! stella context list                # what currently steers this workspace
+//! stella context validate            # re-probe every claim, on demand
+//! stella context explain <handle>    # why did that rule apply?
+//! stella context propose <handle>    # turn a record into a reviewable change
+//! ```
 //!
-//! This is the buildable half of the maintenance sweep. The *scheduled* sweep
-//! and *automatic* demotion-from-selection wait on the record loader and
-//! renderer (a published record has to be selected before it can be un-selected);
-//! this command delivers the reusable check now. The retention decision
-//! (`refuted` + `on_expiry` → keep/warn/drop/block) lives in
-//! [`stella_core::ingest::retention_for`], so the future selection path and this
-//! command reach the same verdict.
+//! # Offline by construction
 //!
-//! ## Safety is inherited, not re-decided
+//! Every subcommand reads and writes local files only. No API key, no network —
+//! `review` shows what the ingest run already decided, `validate` re-runs
+//! declarative filesystem probes, and `keep` writes a TOML file and appends a line
+//! to a ledger. The local-first solo path is a requirement, not a convenience
+//! (`docs/context-pr.md` §18: no centralized service for the solo path).
 //!
-//! Only [`Record::honored_probe`] probes run — gated probes
-//! (`command_succeeds`/`http_ok`) are never honored on an imported/inferred
-//! record, so validating an ingested document can no more run a command or reach
-//! the network than ingesting it could.
+//! # Two proposal substrates, deliberately separate
+//!
+//! This reviews **file-based** proposals extracted from documents.
+//! `stella proposals` reviews **behavioral** proposals mined from what the agent
+//! did, out of `context.db`. They are not merged, and the reason is authority: an
+//! explicit instruction in a tracked file is eligible immediately, while a mined
+//! pattern must clear a distinct-task threshold first (§7). One review surface over
+//! both would apply one of those two gates to content it does not fit.
 
 use std::path::{Path, PathBuf};
 
 use clap::Subcommand;
 use colored::Colorize;
-use stella_core::ingest::{ContextFile, Record, Retention, Verdict, retention_for};
 
-use crate::ingest_cmd::probe;
+use stella_core::ingest::record::{ContextFile, Proposal};
 
-/// Subcommands under `stella context`.
-#[derive(Subcommand, Clone)]
+mod explain;
+mod propose;
+mod review;
+mod validate;
+
+/// `stella context <cmd>`.
+#[derive(Debug, Subcommand)]
 pub enum ContextCmd {
-    /// Re-run context records' truth probes against the tree and report which
-    /// claims have gone stale.
-    Validate {
-        /// TOML context-record files to validate. With none, scans
-        /// `.stella/proposals/` and `.stella/rules/`.
-        paths: Vec<PathBuf>,
-        /// Exit non-zero if any record is refuted — for use as a CI gate.
+    /// What `stella ingest` proposed, with the evidence and the probe verdict for
+    /// each claim. Nothing steers until you keep it.
+    Review {
+        /// Show dismissed proposals too — the compound claims and quarantined
+        /// executable content extraction refused.
         #[arg(long)]
-        strict: bool,
+        all: bool,
+    },
+
+    /// Publish a proposal as a record the engine loads. Writes
+    /// `.stella/rules/<lineage>.toml` (or `~/.stella/rules/` for a personal
+    /// record) and never overwrites an existing file.
+    Keep {
+        /// The proposal's candidate id, or a unique prefix of it.
+        candidate: String,
+        /// Also approve this record to block matching tool calls. Separate from
+        /// keeping on purpose: keeping a record and authorizing it to deny a tool
+        /// call are different grants (§11).
+        #[arg(long)]
+        enforce: bool,
+    },
+
+    /// Publish your wording instead of the extractor's. The claim keeps its
+    /// lineage and evidence; the statement becomes yours.
+    Edit {
+        /// The proposal's candidate id, or a unique prefix of it.
+        candidate: String,
+        /// The statement to publish.
+        #[arg(long)]
+        statement: String,
+        /// Also approve this record to block matching tool calls.
+        #[arg(long)]
+        enforce: bool,
+    },
+
+    /// Decline a proposal. Records negative evidence and a re-proposal cooldown,
+    /// so the next ingest of the same document does not ask again.
+    Ignore {
+        /// The proposal's candidate id, or a unique prefix of it.
+        candidate: String,
+        /// Why. A decline with no reason is evidence nobody can act on later.
+        #[arg(long)]
+        reason: Option<String>,
+        /// How long to decline for, as an ISO-8601 duration (default P90D).
+        #[arg(long)]
+        cooldown: Option<String>,
+    },
+
+    /// What currently steers this workspace: every loaded record, its handle, its
+    /// force, and whether it actually blocks anything.
+    List {
+        /// Emit JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Re-run every claim's truth probe now and report the result, plus every
+    /// validation finding and equal-precedence conflict. Exits non-zero when
+    /// something must not steer.
+    Validate {
+        /// Emit JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Why did that rule apply? Provenance, evidence, enforcement, and efficacy
+    /// for one record.
+    Explain {
+        /// The record's `^handle` (the caret is optional) or its lineage id.
+        rule: String,
+    },
+
+    /// Turn a record into a reviewable change: a branch, a single-concern diff,
+    /// and a PR body — or, in solo mode, the local commit that publishes it.
+    Propose {
+        /// The record's `^handle` or lineage id.
+        rule: String,
+        /// Create the branch and commit locally instead of only printing the plan.
+        #[arg(long)]
+        commit: bool,
     },
 }
 
-/// Run a `stella context` subcommand.
-pub fn run(cmd: &ContextCmd) -> Result<(), String> {
+/// Entry point for `stella context`.
+pub fn run_context(cmd: &ContextCmd) -> Result<(), String> {
+    let root = std::env::current_dir().map_err(|e| format!("cannot determine workspace: {e}"))?;
     match cmd {
-        ContextCmd::Validate { paths, strict } => validate(paths, *strict),
+        ContextCmd::Review { all } => review::run_review(&root, *all),
+        ContextCmd::Keep { candidate, enforce } => {
+            review::run_keep(&root, candidate, None, *enforce)
+        }
+        ContextCmd::Edit {
+            candidate,
+            statement,
+            enforce,
+        } => review::run_keep(&root, candidate, Some(statement), *enforce),
+        ContextCmd::Ignore {
+            candidate,
+            reason,
+            cooldown,
+        } => review::run_ignore(&root, candidate, reason.clone(), cooldown.as_deref()),
+        ContextCmd::List { json } => validate::run_list(&root, *json),
+        ContextCmd::Validate { json } => validate::run_validate(&root, *json),
+        ContextCmd::Explain { rule } => explain::run_explain(&root, rule),
+        ContextCmd::Propose { rule, commit } => propose::run_propose(&root, rule, *commit),
     }
 }
 
-/// The per-file, per-record tallies a validate run reports.
-#[derive(Default)]
-struct Tally {
-    supported: usize,
-    refuted: usize,
-    unchecked: usize,
+/// One proposal, with the file it came from — everything a review action needs.
+#[derive(Debug)]
+pub(crate) struct FoundProposal {
+    /// The proposal.
+    pub proposal: Proposal,
+    /// The file it was read from.
+    pub path: PathBuf,
+    /// The record-set slug from that file's header.
+    pub set_id: String,
+    /// The file's defaults, which the proposal's record inherits on publication.
+    pub defaults: stella_core::ingest::record::Defaults,
 }
 
-impl Tally {
-    fn total(&self) -> usize {
-        self.supported + self.refuted + self.unchecked
-    }
-}
-
-/// Longest slice of a statement shown per line.
-const MAX_STATEMENT: usize = 88;
-
-fn validate(paths: &[PathBuf], strict: bool) -> Result<(), String> {
-    let root = std::env::current_dir().map_err(|e| e.to_string())?;
-    let files = if paths.is_empty() {
-        default_targets(&root)
-    } else {
-        paths.to_vec()
+/// Every proposal in `.stella/proposals/*.toml`, file-name order.
+///
+/// A file that does not parse is reported to stderr and skipped: one malformed
+/// proposal file must not hide the readable ones, and staying silent about it would
+/// make a failed ingest look like an ingest that found nothing.
+pub(crate) fn read_proposals(root: &Path) -> Vec<FoundProposal> {
+    let dir = root.join(crate::context_records::PROPOSALS_DIR);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
     };
+    let mut paths: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|x| x.to_str()) == Some("toml"))
+        .collect();
+    paths.sort();
 
-    if files.is_empty() {
-        println!(
-            "  {} no context-record files found. Ingest some first: {}",
-            "·".dimmed(),
-            "stella ingest CLAUDE.md".dimmed()
-        );
-        return Ok(());
-    }
-
-    let checked_at = stella_context::format_rfc3339(crate::memory::unix_now_secs());
-    let mut tally = Tally::default();
-    println!();
-
-    for file in &files {
-        let rel = file
-            .strip_prefix(&root)
-            .unwrap_or(file)
-            .to_string_lossy()
-            .to_string();
-        match load_context_file(file) {
-            Ok(context) => {
-                println!("  {}", rel.bold());
-                for record in records_of(&context) {
-                    check_record(&root, record, &checked_at, &mut tally);
-                }
-            }
-            Err(err) => {
-                // A malformed file is reported and skipped, not fatal — one bad
-                // file must not hide the staleness of the others.
-                eprintln!("  {}  {}", rel.red(), err.dimmed());
-            }
-        }
-    }
-
-    summarize(&tally);
-    if strict && tally.refuted > 0 {
-        return Err(format!("{} record(s) refuted as stale", tally.refuted));
-    }
-    Ok(())
-}
-
-/// Re-run one record's honored probe and report the verdict.
-fn check_record(root: &Path, record: &Record, checked_at: &str, tally: &mut Tally) {
-    let statement = truncate(&record.statement);
-    let Some(probe) = record.honored_probe() else {
-        // No probe, or a gated one that is never honored here: unfalsifiable by
-        // absence. Visible, never counted as a failure.
-        tally.unchecked += 1;
-        println!(
-            "    {} {statement}  {}",
-            "·".dimmed(),
-            "unfalsifiable".dimmed()
-        );
-        return;
-    };
-    let refutation = probe::evaluate(root, probe, checked_at);
-    match refutation.verdict {
-        Verdict::Supported => {
-            tally.supported += 1;
-            println!("    {} {statement}", "✓".green());
-        }
-        Verdict::Unfalsifiable => {
-            tally.unchecked += 1;
-            println!(
-                "    {} {statement}  {}",
-                "·".dimmed(),
-                "unfalsifiable".dimmed()
-            );
-        }
-        Verdict::Refuted => {
-            tally.refuted += 1;
-            let retention = retention_for(Verdict::Refuted, record.on_expiry());
-            println!(
-                "    {} {statement}  {}",
-                "✗".red(),
-                format!("refuted → {}", retention_label(retention)).yellow()
-            );
-            println!("        {}", refutation.detail.dimmed());
-        }
-    }
-}
-
-/// The one-word consequence of a refuted claim, for the report.
-fn retention_label(retention: Retention) -> &'static str {
-    match retention {
-        Retention::Keep => "keep",
-        Retention::Warn => "review (still citing)",
-        Retention::Drop => "drop from selection",
-        Retention::Block => "block",
-    }
-}
-
-fn summarize(tally: &Tally) {
-    if tally.total() == 0 {
-        println!("  {} no records with claims to check.", "·".dimmed());
-        return;
-    }
-    let refuted = if tally.refuted > 0 {
-        format!(", {} refuted (stale)", tally.refuted)
-            .red()
-            .to_string()
-    } else {
-        String::new()
-    };
-    println!(
-        "\n  {} {} record(s): {} supported, {} unfalsifiable{}",
-        "✦".magenta(),
-        tally.total(),
-        tally.supported,
-        tally.unchecked,
-        refuted
-    );
-}
-
-/// Every checkable record in a file: published `[[record]]`s and the record each
-/// `[[proposal]]` would create.
-fn records_of(context: &ContextFile) -> Vec<&Record> {
-    context
-        .records
-        .iter()
-        .chain(context.proposals.iter().map(|p| &p.record))
-        .collect()
-}
-
-/// The default scan set: every `.toml` under `.stella/proposals/` and
-/// `.stella/rules/`.
-fn default_targets(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    for dir in [
-        root.join(".stella").join("proposals"),
-        root.join(".stella").join("rules"),
-    ] {
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let is_toml = path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .is_some_and(|e| e.eq_ignore_ascii_case("toml"));
-                if is_toml {
-                    out.push(path);
+    for path in paths {
+        let Ok(raw) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        match toml::from_str::<ContextFile>(&raw) {
+            Ok(file) => {
+                let defaults = file.defaults.clone().unwrap_or_default();
+                for proposal in file.proposals {
+                    out.push(FoundProposal {
+                        proposal,
+                        path: path.clone(),
+                        set_id: file.set_id.clone(),
+                        defaults: defaults.clone(),
+                    });
                 }
             }
+            Err(err) => eprintln!(
+                "  {}  {}",
+                path.display().to_string().red(),
+                err.to_string().dimmed()
+            ),
         }
     }
-    out.sort();
     out
 }
 
-/// Load a context-record file, tolerating bare TOML datetimes.
+/// Resolve a candidate id or unique prefix to exactly one proposal.
 ///
-/// The surface stores timestamps as strings ([`stella_core::ingest::record`]),
-/// but hand-authored files (and the `docs/context-record-examples`) use bare
-/// TOML datetime literals, which will not deserialize into a `String` field. So
-/// we parse to a [`toml::Value`], rewrite every datetime to its string form, and
-/// only then deserialize — this is the "the CLI normalizes bare TOML datetimes
-/// on the way in" contract the schema module documents.
-fn load_context_file(path: &Path) -> Result<ContextFile, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let mut value: toml::Value = toml::from_str(&text).map_err(|e| e.to_string())?;
-    normalize_datetimes(&mut value);
-    // Re-emit the normalized value (datetimes now strings) and parse it as the
-    // typed surface. Round-tripping through a string uses only `to_string` +
-    // `from_str`, both already exercised elsewhere in the ingest path.
-    let normalized = toml::to_string(&value).map_err(|e| e.to_string())?;
-    toml::from_str::<ContextFile>(&normalized).map_err(|e| e.to_string())
-}
-
-/// Recursively rewrite every TOML datetime to its RFC-3339 string form.
-fn normalize_datetimes(value: &mut toml::Value) {
-    match value {
-        toml::Value::Datetime(dt) => {
-            *value = toml::Value::String(dt.to_string());
-        }
-        toml::Value::Table(table) => {
-            for (_key, v) in table.iter_mut() {
-                normalize_datetimes(v);
-            }
-        }
-        toml::Value::Array(items) => {
-            for v in items.iter_mut() {
-                normalize_datetimes(v);
-            }
-        }
-        _ => {}
+/// An ambiguous prefix is an error naming every match rather than a guess: these
+/// commands publish policy, and publishing the wrong claim because two ids shared
+/// six characters is not a mistake a person would find quickly.
+pub(crate) fn resolve_candidate<'a>(
+    proposals: &'a [FoundProposal],
+    needle: &str,
+) -> Result<&'a FoundProposal, String> {
+    let exact: Vec<&FoundProposal> = proposals
+        .iter()
+        .filter(|found| found.proposal.candidate_id == needle)
+        .collect();
+    if let [found] = exact.as_slice() {
+        return Ok(found);
+    }
+    let matches: Vec<&FoundProposal> = proposals
+        .iter()
+        .filter(|found| found.proposal.candidate_id.starts_with(needle))
+        .collect();
+    match matches.as_slice() {
+        [found] => Ok(found),
+        [] => Err(format!(
+            "no proposal matches \"{needle}\" — run `stella context review` to see what is pending"
+        )),
+        many => Err(format!(
+            "\"{needle}\" matches {} proposals:\n{}",
+            many.len(),
+            many.iter()
+                .map(|found| format!("  {}", found.proposal.candidate_id))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )),
     }
 }
 
-/// Truncate a statement on a char boundary for the one-line report.
-fn truncate(statement: &str) -> String {
-    if statement.chars().count() <= MAX_STATEMENT {
-        return statement.to_string();
+/// The three-valued verdict, colored the way it reads: a refutation is the one a
+/// person must look at.
+pub(crate) fn verdict_label(verdict: &str) -> colored::ColoredString {
+    match verdict {
+        "supported" => "supported".green(),
+        "refuted" => "refuted".red(),
+        _ => "unfalsifiable".yellow(),
     }
-    let kept: String = statement.chars().take(MAX_STATEMENT - 1).collect();
-    format!("{kept}…")
 }
 
 #[cfg(test)]

@@ -306,3 +306,378 @@ async fn best_of_n_without_a_port_degrades_to_the_shared_tree_with_a_warning() {
         "shared-tree degradation must be loud"
     );
 }
+
+/// **Every candidate must see the steer.** A single `TurnSteering` tap is
+/// destructive by contract, so handing it to N candidate engines used to mean
+/// the first one to reach a step boundary consumed the user's words and the
+/// rest ran as if nothing had been typed — and since candidates run
+/// sequentially, that was always candidate 1. If the judge then picked another
+/// candidate, the steer was absent from the winning transcript entirely.
+///
+/// Counted via `Steered` events rather than the returned trajectory on purpose:
+/// `messages` only carries the WINNER's turn, so asserting there would pass
+/// even with the old racing behavior whenever candidate 1 happened to win.
+#[tokio::test]
+async fn a_mid_turn_steer_reaches_every_candidate_not_just_the_first() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("cand0 done"),
+        text_result("cand1 done"),
+        text_result("cand2 done"),
+    ]);
+    let resolver = OneProvider(&provider);
+    // Three candidates back-to-back in the shared tree: baseline+result each.
+    let runner = ScriptedRunner::new(
+        vec![false, false, false, true, false, false],
+        "@@ -1 +1 @@\n-a\n+b",
+    );
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let steering = SteeringOnce {
+        queued: std::sync::Mutex::new(vec!["also update the changelog".into()]),
+        drains: std::sync::atomic::AtomicU32::new(0),
+    };
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            diagnostics: &runner,
+            tests: &runner,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: Some(&steering),
+        },
+        tx,
+        isolated_config(3),
+    );
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    pipeline
+        .run("Fix the failing test", &mut messages, &mut budget)
+        .await
+        .expect("run succeeds");
+
+    let events = drain(&mut rx);
+    let steered = events
+        .iter()
+        .filter(
+            |e| matches!(e, AgentEvent::Steered { text } if text == "also update the changelog"),
+        )
+        .count();
+    assert_eq!(
+        steered, 3,
+        "all three candidates must observe the steer — one Steered event each; \
+         got {steered}: {events:?}"
+    );
+}
+
+/// A steer must be injected once per candidate, not once per step boundary.
+/// The fan-out replays from a per-candidate cursor, so a bug that forgot to
+/// advance it would re-inject the user's words on every step of every
+/// candidate — quietly multiplying the instruction.
+#[tokio::test]
+async fn the_steer_is_injected_once_per_candidate_not_once_per_step() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("cand0 done"),
+        text_result("cand1 done"),
+    ]);
+    let resolver = OneProvider(&provider);
+    let runner = ScriptedRunner::new(vec![false, false, false, true], "@@ -1 +1 @@\n-a\n+b");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let steering = SteeringOnce {
+        queued: std::sync::Mutex::new(vec!["keep it minimal".into()]),
+        drains: std::sync::atomic::AtomicU32::new(0),
+    };
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            diagnostics: &runner,
+            tests: &runner,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: Some(&steering),
+        },
+        tx,
+        isolated_config(2),
+    );
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    pipeline
+        .run("Fix the failing test", &mut messages, &mut budget)
+        .await
+        .expect("run succeeds");
+
+    let events = drain(&mut rx);
+    let steered = events
+        .iter()
+        .filter(|e| matches!(e, AgentEvent::Steered { text } if text == "keep it minimal"))
+        .count();
+    assert_eq!(
+        steered, 2,
+        "exactly one injection per candidate — never a re-injection per step: \
+         {events:?}"
+    );
+    // And the winner's own trajectory carries it exactly once.
+    let in_winner = messages
+        .iter()
+        .filter(|m| m.role == MessageRole::User && m.content == "keep it minimal")
+        .count();
+    assert_eq!(
+        in_winner, 1,
+        "the adopted trajectory must carry the steer once, not N times"
+    );
+}
+
+/// Best-of-N used to be invisible: the same `Execute` stage repeated N times
+/// with nothing naming the fan-out, the candidate, or the winner. The run must
+/// narrate itself so the TUI shows what the tool is doing while it does it.
+#[tokio::test]
+async fn a_fan_out_narrates_each_candidate_and_names_the_winner() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("cand0 done"),
+        text_result("cand1 done"),
+    ]);
+    let resolver = OneProvider(&provider);
+    let runner = ScriptedRunner::new(vec![false, false, false, true], "@@ -1 +1 @@\n-a\n+b");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            diagnostics: &runner,
+            tests: &runner,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        isolated_config(2),
+    );
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    pipeline
+        .run("Fix the failing test", &mut messages, &mut budget)
+        .await
+        .expect("run succeeds");
+
+    let events = drain(&mut rx);
+    let text: String = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::Text { delta } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        text.contains("candidate 1/2 starting"),
+        "each candidate must announce itself: {text:?}"
+    );
+    assert!(
+        text.contains("candidate 2/2 starting"),
+        "including the last one: {text:?}"
+    );
+    assert!(
+        text.contains("the shared working tree"),
+        "a shared-tree fan-out must say so — isolation changes what a loser \
+         leaves behind: {text:?}"
+    );
+    assert!(
+        text.contains("won"),
+        "the winner must be named, or a losing verdict looks like the run \
+         ignoring the user: {text:?}"
+    );
+}
+
+/// A single-candidate run must stay silent: `run_best_of_n` also serves `n == 1`
+/// when a witness is authored, and "candidate 1/1" there is noise, not signal.
+#[tokio::test]
+async fn a_single_candidate_run_emits_no_fan_out_narration() {
+    let provider = ScriptedProvider::new(vec![text_result("single"), text_result("only done")]);
+    let resolver = OneProvider(&provider);
+    let runner = ScriptedRunner::new(vec![false, true], "@@ -1 +1 @@\n-a\n+b");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            diagnostics: &runner,
+            tests: &runner,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        isolated_config(1),
+    );
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    pipeline
+        .run("Fix the failing test", &mut messages, &mut budget)
+        .await
+        .expect("run succeeds");
+
+    let events = drain(&mut rx);
+    let text: String = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::Text { delta } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !text.contains("best-of-"),
+        "a one-candidate run must not narrate a fan-out: {text:?}"
+    );
+}
+
+/// The same fan-out contract on the ISOLATED path. There are two candidate
+/// loops — shared-tree and per-workspace — and each attaches steering to its
+/// own engine, so fixing one and not the other would leave the real default
+/// (isolation is on wherever a git workspace exists) still racing.
+#[tokio::test]
+async fn every_isolated_candidate_also_sees_the_steer() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("cand0 done"),
+        text_result("cand1 done"),
+    ]);
+    let resolver = OneProvider(&provider);
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let port = FakeWorkspacePort::new(
+        vec![
+            // Candidate 0 stays red; candidate 1 flips and wins.
+            Ok(FakeWorkspace::new(
+                0,
+                vec![false, false],
+                Ok(vec![]),
+                log.clone(),
+            )),
+            Ok(FakeWorkspace::new(
+                1,
+                vec![false, true],
+                Ok(vec![]),
+                log.clone(),
+            )),
+        ],
+        log.clone(),
+    );
+    // Session ports must never be touched on the isolated path.
+    let diagnostics = NeverRunner;
+    let repo_status = NeverRepoStatus;
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let steering = SteeringOnce {
+        queued: std::sync::Mutex::new(vec!["prefer the smaller diff".into()]),
+        drains: std::sync::atomic::AtomicU32::new(0),
+    };
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            diagnostics: &diagnostics,
+            tests: &diagnostics,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: Some(&port),
+            mcp_prefetch: None,
+            steering: Some(&steering),
+        },
+        tx,
+        isolated_config(2),
+    );
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    pipeline
+        .run("Fix the failing test", &mut messages, &mut budget)
+        .await
+        .expect("run succeeds");
+
+    let events = drain(&mut rx);
+    let steered = events
+        .iter()
+        .filter(|e| matches!(e, AgentEvent::Steered { text } if text == "prefer the smaller diff"))
+        .count();
+    assert_eq!(
+        steered, 2,
+        "both isolated candidates must observe the steer: {events:?}"
+    );
+    let text: String = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::Text { delta } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        text.contains("its own isolated workspace"),
+        "an isolated fan-out must say the candidates are isolated: {text:?}"
+    );
+}
