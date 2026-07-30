@@ -492,28 +492,32 @@ pub(crate) fn render_scope_review(
                 .add_modifier(Modifier::ITALIC),
         ))
     } else {
+        // Every answer is typed and sent, so the legend reads as what to type
+        // rather than as keys that fire on their own — `[a]` looked like a
+        // one-press command, which is exactly the reading that made a note
+        // opening "also…" approve an eight-step plan. The bracket styling stays
+        // for scannability; the trailing "then ⏎" is the whole contract.
+        //
+        // The typed path is named here because it is now the only way to say
+        // "not like that — do this", and an affordance nobody is told about is
+        // one the next reviewer discovers by having their words routed
+        // somewhere they did not expect.
         Line::from(vec![
-            Span::styled(
-                "[a]",
-                Style::new().fg(theme::OK).add_modifier(Modifier::BOLD),
-            ),
+            Span::styled("type ", Style::new().fg(theme::TEXT_TERTIARY)),
+            Span::styled("a", Style::new().fg(theme::OK).add_modifier(Modifier::BOLD)),
             Span::styled("pprove  ", Style::new().fg(theme::INK)),
             Span::styled(
-                "[t]",
+                "t",
                 Style::new().fg(theme::WARN).add_modifier(Modifier::BOLD),
             ),
             Span::styled("rim  ", Style::new().fg(theme::INK)),
             Span::styled(
-                "[x]",
+                "x",
                 Style::new().fg(theme::DANGER).add_modifier(Modifier::BOLD),
             ),
             Span::styled("abort", Style::new().fg(theme::INK)),
-            // The typed path has to be on the card. It is now the only way to
-            // say "not like that — do this", and an affordance nobody is told
-            // about is one the next reviewer discovers by having their words
-            // routed somewhere they did not expect.
             Span::styled(
-                "  ·  or type what to change and ⏎ to re-plan",
+                "  ·  or what to change  —  then ⏎",
                 Style::new().fg(theme::TEXT_TERTIARY),
             ),
         ])

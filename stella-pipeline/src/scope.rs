@@ -113,7 +113,8 @@ pub fn apply_trim(plan: &[PlanStep], keep_steps: &[usize]) -> Vec<PlanStep> {
 /// different scope. Bounded because each revision is a fresh planner call: an
 /// unbounded loop would let a gate meant to *contain* spend become a way to
 /// spend without ever executing. Two is enough for "narrower" then "narrower
-/// still"; past that the card's approve/trim/abort keys are the honest answer.
+/// still"; past that, approving/trimming/aborting the plan on screen is the
+/// honest answer.
 pub const MAX_SCOPE_REVISIONS: usize = 2;
 
 /// What one pass of the scope gate settled on. Distinct from

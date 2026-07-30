@@ -265,17 +265,18 @@ pub fn handle_key(key: KeyEvent, model: &SessionModel, ui: &mut UiState) -> Shel
         return ShellAction::Handled;
     }
 
-    // A pending, unanswered scope card is modal-ish: a/t/x/Esc decide it — but
-    // only from an empty composer. The decision keys are ordinary prompt
-    // characters, so once the user starts typing a message (e.g. "add a table")
-    // the keys must build the prompt, not silently approve/trim/abort the gate.
-    // Mirrors the deck (`crate::deck_ui`) and the ask_user quick-pick's
-    // "only when nothing is typed" rule.
+    // A pending, unanswered scope card owns the user's submission: whatever is
+    // typed — `a`, `x`, `ok`, or a sentence asking for a different scope — is
+    // sent to the card by the submit chord, and only `Esc` acts without one.
+    // Mirrors the deck (`crate::deck_ui::gates`, where the rule is stated in
+    // full).
     //
-    // The submit chord then sends that typed message *to the card* — the other
-    // half of the same rule, and the half that was missing. Without it the keys
-    // build a prompt the gate never sees, which on the deck meant a sidecar
-    // sub-session ran with the reviewer's words while the review sat parked.
+    // Both halves of that rule were missing here in different ways. The decision
+    // keys are ordinary prompt characters, so a card that claimed them turned a
+    // message beginning "add a table" into a silent approve; and with no submit
+    // path, a reviewer who typed past that first letter had built a prompt the
+    // gate would never see — which on the deck meant a sidecar sub-session ran
+    // with the reviewer's words while the review sat parked.
     if model.pending_scope_review.is_some()
         && !ui.scope_answered
         && let Some(action) = handle_scope_key(key, ui)
@@ -348,16 +349,21 @@ fn handle_ask_user_key(
     }
 }
 
-/// The scope-card key bindings: `a`/`t`/`x`/`Esc` from an empty composer, or
-/// the submit chord over typed text (read by [`ScopeDecision::from_typed`]).
-/// Returns `None` to fall through to normal composer editing, so a note can be
-/// typed and can span lines.
+/// The scope-card key bindings. `Esc` from an empty composer aborts; every
+/// other answer — `a`, `t`, `x`, `ok`, or a sentence asking for a different
+/// scope — is typed and sent with the submit chord, read by
+/// [`ScopeDecision::from_typed`]. Returns `None` to fall through to normal
+/// composer editing, so a note can be typed and can span lines.
+///
+/// Only non-text keys act on their own: the composer is always live here, so a
+/// bare letter that committed the gate was competing with the text field for
+/// `a` — see the rule stated in full in [`crate::deck_ui::gates`].
 fn handle_scope_key(key: KeyEvent, ui: &mut UiState) -> Option<ShellAction> {
-    let empty = ui.composer.buffer().is_empty();
     let decision = match key.code {
-        KeyCode::Char('a') if empty => ScopeDecision::Approve,
-        KeyCode::Char('t') if empty => ScopeDecision::Trim,
-        KeyCode::Char('x') | KeyCode::Esc if empty => ScopeDecision::Abort,
+        // Claimed with a typed note too, unlike the letters: "type a note,
+        // change your mind, press Esc" must not fall past the card into the
+        // turn-stop chain. While a card is up, Esc means get out of the card.
+        KeyCode::Esc => ScopeDecision::Abort,
         KeyCode::Enter if classify_enter(&key) == EnterAction::Submit => {
             match ui.composer.take_submission() {
                 Some(submission) => ScopeDecision::from_typed(&submission.text),
@@ -725,60 +731,84 @@ mod tests {
     fn scope_card_keys_submit_a_decision_once() {
         let model = model_with_scope();
         let mut ui = UiState::default();
-        let action = handle_key(ch('a'), &model, &mut ui);
+        // `a` types, then the submit chord sends it — no bare letter commits.
+        assert_eq!(handle_key(ch('a'), &model, &mut ui), ShellAction::Handled);
         assert_eq!(
-            action,
+            handle_key(key(KeyCode::Enter), &model, &mut ui),
             ShellAction::Submit(UserInput::ScopeDecision(ScopeDecision::Approve))
         );
         assert!(ui.scope_answered);
-        // A second key no longer submits a decision — it types instead (the
-        // guard prevents a double-answer).
-        let action2 = handle_key(ch('a'), &model, &mut ui);
-        assert_eq!(action2, ShellAction::Handled);
-        assert_eq!(ui.composer.buffer(), "a");
+        // A second submit no longer answers the card — the guard prevents a
+        // double-answer, so it is an ordinary prompt again.
+        handle_key(ch('a'), &model, &mut ui);
+        assert_eq!(
+            handle_key(key(KeyCode::Enter), &model, &mut ui),
+            ShellAction::Submit(UserInput::Prompt {
+                text: "a".into(),
+                attachments: vec![]
+            })
+        );
     }
 
+    /// `Esc` is the one key that still acts alone: it cannot collide with prose,
+    /// and it stops work rather than starting it. `x` goes through ⏎ like every
+    /// other typed answer.
     #[test]
-    fn scope_card_esc_and_x_abort() {
-        for code in [KeyCode::Char('x'), KeyCode::Esc] {
-            let model = model_with_scope();
-            let mut ui = UiState::default();
-            assert_eq!(
-                handle_key(key(code), &model, &mut ui),
-                ShellAction::Submit(UserInput::ScopeDecision(ScopeDecision::Abort))
-            );
-        }
+    fn scope_card_esc_aborts_immediately_and_typed_x_aborts_on_submit() {
+        let model = model_with_scope();
+        let mut ui = UiState::default();
+        assert_eq!(
+            handle_key(key(KeyCode::Esc), &model, &mut ui),
+            ShellAction::Submit(UserInput::ScopeDecision(ScopeDecision::Abort))
+        );
+
+        let mut ui = UiState::default();
+        handle_key(ch('x'), &model, &mut ui);
+        assert_eq!(
+            handle_key(key(KeyCode::Enter), &model, &mut ui),
+            ShellAction::Submit(UserInput::ScopeDecision(ScopeDecision::Abort))
+        );
     }
 
+    /// No letter commits the gate, from any composer state. The decision keys
+    /// are ordinary prompt characters, and a card that stole them from a live
+    /// text field turned a note opening "also do X" into a silent approve of an
+    /// eight-step plan. Every answer is typed; ⏎ sends it.
     #[test]
-    fn scope_card_keys_yield_to_a_prompt_being_typed() {
-        // THE scope-key P1: the decision keys (a/t/x) are ordinary prompt
-        // letters and used to fire even mid-prompt, so typing a message like
-        // "add a table" while a scope card was up silently approved/aborted the
-        // gate. They must defer to a non-empty composer — same rule the deck and
-        // the ask_user quick-pick already use.
+    fn no_bare_letter_answers_the_scope_card() {
         let model = model_with_scope();
         let mut ui = UiState::default();
 
-        // A leading non-decision char types and makes the composer non-empty.
-        assert_eq!(handle_key(ch('f'), &model, &mut ui), ShellAction::Handled);
-        assert!(!ui.scope_answered, "typing must not answer the gate");
-
-        // Now a/t/x build the prompt instead of deciding.
+        // From an EMPTY composer — the case that used to commit on the first
+        // keystroke — a/t/x type like any other character.
         for c in "atx".chars() {
             assert_eq!(handle_key(ch(c), &model, &mut ui), ShellAction::Handled);
         }
-        assert!(
-            !ui.scope_answered,
-            "no decision submitted while a prompt is typed"
-        );
-        assert_eq!(ui.composer.buffer(), "fatx");
+        assert!(!ui.scope_answered, "typing must not answer the gate");
+        assert_eq!(ui.composer.buffer(), "atx");
 
-        // From an empty composer the gate still decides on a single key.
-        ui.composer.clear();
+        // And mid-prompt, unchanged.
+        for c in " also do the tests".chars() {
+            handle_key(ch(c), &model, &mut ui);
+        }
+        assert!(!ui.scope_answered);
+        assert_eq!(ui.composer.buffer(), "atx also do the tests");
+    }
+
+    /// The note that names the whole reason for the rule: "also do X" is a
+    /// revision, and it used to approve on its first letter.
+    #[test]
+    fn a_note_opening_with_a_decision_letter_is_a_revision_not_an_approval() {
+        let model = model_with_scope();
+        let mut ui = UiState::default();
+        for c in "also do the tests".chars() {
+            handle_key(ch(c), &model, &mut ui);
+        }
         assert_eq!(
-            handle_key(ch('a'), &model, &mut ui),
-            ShellAction::Submit(UserInput::ScopeDecision(ScopeDecision::Approve))
+            handle_key(key(KeyCode::Enter), &model, &mut ui),
+            ShellAction::Submit(UserInput::ScopeDecision(ScopeDecision::Revise {
+                note: "also do the tests".into()
+            }))
         );
     }
 
