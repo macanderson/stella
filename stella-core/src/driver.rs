@@ -56,9 +56,9 @@
 //!
 //! # Malformed-call repair
 //!
-//! Every existing adapter's stream aggregator falls back to
+//! Every adapter's stream aggregator in `stella-model` falls back to
 //! `serde_json::Value::Null` when a tool call's streamed argument JSON
-//! doesn't parse (`stella-model/src/{zai,anthropic}.rs`). `run_turn`
+//! doesn't parse. `run_turn`
 //! recognizes that sentinel structurally: rather than handing `Null` to a
 //! tool that expects an object, it short-circuits to a named
 //! `ToolOutput::Error` telling the model its own JSON was malformed, so the

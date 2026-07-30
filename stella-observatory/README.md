@@ -147,6 +147,33 @@ symlink *inside* the workspace pointing out of it is still followed — a narrow
 guarantee than the producer's canonicalising one, and the reason to keep the
 manifest a list of paths rather than anything more expressive.
 
+### The palette is a mirror, and one token in it is deliberately unused
+
+The `:root` block at the top of `index.html` is one of the four surfaces
+[`../docs/brand/BRAND.md`](../docs/brand/BRAND.md) requires to move together, so
+it carries the whole token set even where this page uses only part of it. Do not
+prune it to the tokens currently referenced.
+
+One token is applied nowhere on purpose. BRAND.md lists `#E3B341` as the first
+categorical data mark and separately forbids it from sharing a chart with the
+gold `#F5C145`, because the two are the same hue (42°) and measure 1.17:1
+against each other — nothing but size tells them apart. Gold is the identity and
+keeps the cursor block in the masthead wordmark, so `--c1` stands down: every
+chart on this page pairs `--c4` (hue 175) with `--c2` (hue 256), 81° apart at
+1.99:1, and both clear the brand blue. Two further collisions the pairing avoids,
+both measured on `--surface`: `--c3` against `--bad` is Δhue 18 at 1.30:1, so
+magenta never appears in the tool-error chart, and `--c2` against the neutral
+mark is Δhue 35 at 1.11:1, so violet never appears in the stacked runs chart.
+
+The same constraint caps the code graph at three crate colours plus a neutral
+tail. That is fewer than the eight it wants; the previous eight were invented
+rather than drawn from BRAND, and two of them were blues that read as "active"
+while `#008300` measured 2.4:1 on this surface. Widening the ramp needs new
+validated values in BRAND.md, not new hexes here.
+
+Gold carries no status anywhere. Status is `--ok` / `--warn` / `--bad`, always
+paired with a glyph (`✓`, `◌`, `✕`), so hue is never the only carrier.
+
 ## Gotchas
 
 - **The page is embedded at compile time.** Editing

@@ -34,6 +34,7 @@ mod command_deck;
 mod commands_cmd;
 mod config;
 mod connect_cmd;
+mod context_cmd;
 mod contextgraph;
 mod credential_handoff;
 mod credential_status;
@@ -131,47 +132,27 @@ pub(crate) fn note_json_summary_emitted() {
 /// The version of the `--output-format json|stream-json` summary envelope this
 /// build emits. Every summary object carries it — the pipeline summary, the raw
 /// step-loop summary, and the pre-flight error envelope — so a consumer can
-/// branch on the shape it was handed instead of sniffing for keys. A version
-/// stamped on only some summaries would be worse than none: a script could not
-/// rely on reading it.
+/// branch on the shape instead of sniffing for keys.
 ///
-/// All three envelopes are built from structs with the version declared first,
-/// so a derived `Serialize` puts it at the head of the object. That is a
-/// courtesy to whoever reads the output by eye, not a promise: key order stays
-/// outside the contract and consumers must read by key. Building any of them
-/// with `serde_json::json!` would quietly undo it — a `json!` object is a
-/// sorted map, which buries `schema_version` mid-envelope.
-///
-/// # Why version at all
-///
-/// The envelope's key set is a contract with every script that parses it, and
-/// the cost of adding the stamp rises with the number of consumers. Today it is
-/// additive and harmless; after the first external script pins the current
-/// shape, it is a compatibility negotiation (#644). This is the same reasoning
-/// that versioned the drain wire format ahead of its transport — see
-/// `DRAIN_SCHEMA_VERSION` in `stella-store`.
+/// All three envelopes are structs with the version declared first, so a derived
+/// `Serialize` heads the object — a courtesy, not a promise: key order stays
+/// outside the contract and consumers must read by key. Building any with
+/// `serde_json::json!` would undo that (a `json!` object is a sorted map that
+/// buries `schema_version` mid-envelope).
 ///
 /// # When to bump
 ///
-/// Increment when a consumer written against the previous version could break:
+/// Increment only when a consumer written against the previous version could
+/// break: a key removed or renamed, a value's type changed, or a key's *meaning*
+/// changed while its name and type stay the same. Do **not** bump for a purely
+/// additive key — consumers must ignore keys they do not recognize, so an
+/// addition cannot break a correct client and bumping would burn the signal
+/// (#644).
 ///
-/// - a key is removed or renamed,
-/// - a key's value type changes (`string` → `object`, scalar → array),
-/// - a key's *meaning* changes while its name and type stay the same.
-///
-/// Do **not** increment for purely additive change — a new key appended to the
-/// envelope. Consumers are required to ignore keys they do not recognize (the
-/// same discipline rule 1 of the event-stream contract imposes), so an addition
-/// cannot break a correct client, and bumping for one would burn the signal.
-///
-/// The `events` array is deliberately **out of scope**: the event vocabulary
-/// carries its own forward-compatibility contract
-/// (`website/content/docs/event-stream-compatibility.mdx`), and a new event type
-/// never bumps this number. Everything else the envelope owns — including the
-/// nested `verdict`, `reflection`, and `files_touched` payloads — is covered.
-///
-/// The consumer-facing statement of this rule lives in
-/// `website/content/docs/scripting.mdx`; keep the two in step.
+/// The `events` array is out of scope: the event vocabulary carries its own
+/// forward-compatibility contract and never bumps this number. The
+/// consumer-facing statement lives in `website/content/docs/scripting.mdx`; keep
+/// the two in step.
 pub(crate) const SUMMARY_SCHEMA_VERSION: u32 = 1;
 
 /// The stdout envelope for a failure under `--output-format json|stream-json`,
@@ -235,6 +216,7 @@ fn emit_error_summary(format: OutputFormat, msg: &str) {
 #[command(
     name = "stella",
     version = version_static(),
+    long_version = long_version_static(),
     about = "A fast, BYOK, model-agnostic terminal coding agent"
 )]
 struct Cli {
@@ -532,6 +514,13 @@ enum Command {
         cmd: proposals_cmd::ProposalsCmd,
     },
 
+    /// Work with context records — `stella context validate` re-runs each
+    /// record's truth probe and reports stale claims (#888). Offline.
+    Context {
+        #[command(subcommand)]
+        cmd: context_cmd::ContextCmd,
+    },
+
     /// Eval-driven self-tuning of stella's own policy (#831): A/B one knob
     /// (worker reasoning effort) over two loop-bench `--json` result files,
     /// auto-select the winner, and — with `--promote` — write it to settings
@@ -692,6 +681,23 @@ enum Command {
     Auth {
         #[command(subcommand)]
         cmd: AuthCmd,
+    },
+
+    /// Print a shell completion script for stella to stdout.
+    ///
+    /// Install it the way your shell expects, e.g.
+    ///
+    ///     bash: stella completions bash > /etc/bash_completion.d/stella
+    ///
+    ///     zsh:  stella completions zsh  > "${fpath[1]}/_stella"
+    ///
+    ///     fish: stella completions fish > ~/.config/fish/completions/stella.fish
+    ///
+    /// Offline, writes nothing, and needs no API key.
+    Completions {
+        /// bash | zsh | fish | powershell | elvish
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
     },
 
     /// Print the version and exit
@@ -868,6 +874,27 @@ fn version_static() -> &'static str {
     version_string()
 }
 
+/// What `--version` prints, as opposed to `-V`'s single line.
+///
+/// clap's convention, which `cargo`/`rustc` both follow: the short flag stays
+/// greppable and the long one answers the questions a bug report otherwise
+/// costs a round trip — which machine this binary was built for, and whether
+/// it is an optimized build. Composed with `concat!` so it is one `'static`
+/// literal with no allocation and no startup work.
+///
+/// Deliberately does NOT restate [`version_string`] through a second code
+/// path: it interpolates the same `STELLA_BUILD_VERSION` literal `build.rs`
+/// stamped, so the two surfaces cannot disagree about the version itself.
+fn long_version_static() -> &'static str {
+    concat!(
+        env!("STELLA_BUILD_VERSION"),
+        "\ntarget:  ",
+        env!("STELLA_BUILD_TARGET"),
+        "\nprofile: ",
+        env!("STELLA_BUILD_PROFILE"),
+    )
+}
+
 /// Honour `TERM=dumb` by switching ANSI output off process-wide.
 ///
 /// The `colored` crate already respects `NO_COLOR`, `CLICOLOR*`, and a
@@ -880,13 +907,40 @@ fn version_static() -> &'static str {
 /// override resolution keeps honouring it because this only sets the default
 /// when the user has not forced anything.
 fn apply_dumb_terminal_policy() {
-    let forced = std::env::var_os("CLICOLOR_FORCE").is_some_and(|v| !v.is_empty() && v != "0");
-    if forced {
-        return;
-    }
-    if std::env::var_os("TERM").is_some_and(|term| term == "dumb") {
+    if dumb_terminal(
+        std::env::var_os("TERM").as_deref(),
+        std::env::var_os("CLICOLOR_FORCE").as_deref(),
+    ) {
         colored::control::set_override(false);
     }
+}
+
+/// The decision behind [`apply_dumb_terminal_policy`], kept pure so it can be
+/// tested without reaching for `colored`'s process-global override (which
+/// every other test in this binary renders through).
+fn dumb_terminal(term: Option<&std::ffi::OsStr>, clicolor_force: Option<&std::ffi::OsStr>) -> bool {
+    let forced = clicolor_force.is_some_and(|v| !v.is_empty() && v != "0");
+    !forced && term.is_some_and(|term| term == "dumb")
+}
+
+/// Whether deck animation is off for this invocation: the `--no-anim` flag,
+/// or either environment signal its own help text promises.
+///
+/// The promise was only half kept. `init_fx::animation_enabled` folded
+/// `STELLA_NO_ANIM` and `NO_COLOR` in for the `stella init` cinematic, but the
+/// Command Deck — the surface with the shimmering progress bar and the
+/// blinking caret, and the one an asciinema recording or a CI log actually
+/// captures — was handed the bare flag. So `NO_COLOR=1 stella chat` kept
+/// animating, and the flag's documentation was simply wrong about it.
+///
+/// `NO_COLOR` follows its published rule (present and non-empty);
+/// `STELLA_NO_ANIM` follows this CLI's own house convention for boolean env
+/// vars (`--plain`'s `STELLA_PLAIN`, `env_files`' `STELLA_NO_ENV_FILE`), where
+/// an explicit `0` means off.
+fn animation_disabled(no_anim_flag: bool) -> bool {
+    let stella = std::env::var_os("STELLA_NO_ANIM").is_some_and(|v| !v.is_empty() && v != "0");
+    let no_color = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
+    no_anim_flag || stella || no_color
 }
 
 /// Whether `chat` should launch the Command Deck: an explicit `--plain` or
@@ -1110,6 +1164,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         Some(Command::Proposals { cmd }) => {
             return proposals_cmd::run_proposals(cmd);
         }
+        // Reads context-record TOML + the tree; no store, model, or API key.
+        Some(Command::Context { cmd }) => return context_cmd::run(cmd),
         // #831 first slice. Reads loop-bench result files + the local ledger;
         // writes settings only on `--promote`. No provider, no API key.
         Some(Command::Tune { cmd }) => {
@@ -1232,6 +1288,14 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // diagnosable without a working model configuration.
             return doctor::run_doctor(*repair);
         }
+        Some(Command::Completions { shell }) => {
+            // Generated from the live `Command` tree, so a new subcommand or
+            // flag is completable the day it lands — a hand-written script
+            // would be stale by the next release.
+            let mut command = <Cli as clap::CommandFactory>::command();
+            clap_complete::generate(*shell, &mut command, "stella", &mut std::io::stdout());
+            return Ok(());
+        }
         Some(Command::Version) => {
             println!("stella v{}", version_string());
             return Ok(());
@@ -1267,7 +1331,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 cli.globals.model.as_deref(),
                 cli.globals.api_key.as_deref(),
                 cli.globals.base_url.as_deref(),
-                cli.globals.no_anim,
+                animation_disabled(cli.globals.no_anim),
             ),
         );
     }
@@ -1393,7 +1457,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                     command_deck::run_deck_session(
                         &cfg,
                         cli.globals.budget,
-                        cli.globals.no_anim,
+                        animation_disabled(cli.globals.no_anim),
                         None,
                     ),
                 )?;
@@ -1426,7 +1490,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 command_deck::run_deck_session(
                     &cfg,
                     cli.globals.budget,
-                    cli.globals.no_anim,
+                    animation_disabled(cli.globals.no_anim),
                     Some(request),
                 ),
             )?;
@@ -1452,12 +1516,14 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         | Command::Memory { .. }
         | Command::Scoreboard
         | Command::Ingest(_)
+        | Command::Context { .. }
         | Command::Mcp { .. }
         | Command::Connect { .. }
         | Command::Auth { .. }
         | Command::Observe { .. }
         | Command::Models { .. }
         | Command::Doctor { .. }
+        | Command::Completions { .. }
         | Command::Version => {
             unreachable!("handled before provider resolution")
         }

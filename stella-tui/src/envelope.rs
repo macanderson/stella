@@ -270,8 +270,8 @@ pub enum Inbound {
     /// [`crate::deck_ui::ingest_inbound`]. Out-of-band view state, ignored by
     /// the model fold — like [`Inbound::GraphSnapshot`].
     ShowHelp,
-    /// A launch-cinematic cue (see [`SplashCue`]): the driver replays the
-    /// splash held open over a running init (session startup, `/init`) and
+    /// A launch-mark cue (see [`SplashCue`]): the driver holds the mark
+    /// open over a running init (session startup, `/init`) and
     /// releases it when init finishes. Out-of-band view state, applied
     /// straight to `DeckUi::splash` by [`crate::deck_ui::ingest_inbound`],
     /// ignored by the model fold — like [`Inbound::ShowHelp`].
@@ -556,15 +556,15 @@ pub struct NotificationInfo {
     pub session_id: Option<String>,
 }
 
-/// Driver → deck cues for the launch cinematic ([`crate::splash`]).
+/// Driver → deck cues for the launch mark ([`crate::splash`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SplashCue {
-    /// Restart the splash **held** open over a running init: the battle
-    /// scene loops until `Release`. Ignored on `--no-anim` sessions (a
-    /// static frame is their contract).
+    /// Show the mark **held** open over a running init: it stands until
+    /// `Release`. Ignored on `--no-anim` sessions (a static frame is their
+    /// contract).
     Replay,
-    /// Init finished — let the timeline advance to the wordmark reveal and
-    /// fade out. A no-op if no held splash is playing.
+    /// Init finished — hand the frame straight back to the deck. A no-op if
+    /// no held mark is showing.
     Release,
 }
 

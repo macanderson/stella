@@ -52,6 +52,11 @@ export default async function Page(props: {
 
   return (
     <DocsPage toc={page.data.toc} full={page.data.full}>
+      {/* The skip link's target (src/app/layout.tsx). Fumadocs wraps this in
+       * <article id="nd-page">, so the topmost node of the reading order is
+       * inside the article rather than being the article itself; `tabIndex`
+       * makes it a real focus destination rather than only a scroll anchor. */}
+      <span id="content" tabIndex={-1} />
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription>{page.data.description}</DocsDescription>
       <DocsBody>

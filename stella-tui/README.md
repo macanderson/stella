@@ -17,9 +17,8 @@ It also does not depend on `stella-graph`: the caller queries its own
 Depends on `stella-protocol` (the `AgentEvent` / `Attachment` types it folds)
 and `stella-tools` for exactly one thing — `subprocess_env::scrub_sensitive_env`
 when running a `!` command ([`src/deck_shell.rs:208`](src/deck_shell.rs)).
-Third-party: `ratatui` + `crossterm`, `tachyonfx` (motion), `tui-big-text`
-(the splash wordmark), `sysinfo` (CPU/MEM), `arboard` + `png` (clipboard
-images). `stella-cli` is the only workspace crate that depends on it — it owns
+Third-party: `ratatui` + `crossterm`, `sysinfo` (CPU/MEM), `arboard` + `png`
+(clipboard images). `stella-cli` is the only workspace crate that depends on it — it owns
 the driver side (`stella-cli/src/command_deck.rs`, `src/tui.rs`). This crate
 builds no binary; the runnable surface is `examples/deck_demo.rs`. The driver
 and the TUI communicate over two channels and never call each other directly.
@@ -43,7 +42,7 @@ and the TUI communicate over two channels and never call each other directly.
 | [`src/views/*.rs`](src/views) | One module per deck tab (session · agents · installed · traces · graph · files · skills · mcp · issues · settings), each exposing `render(model, ui, area, buf)`. `engine` is the exception: the config editor SETTINGS hosts, with its own `render_panel` and key handler. |
 | [`src/diff.rs`](src/diff.rs), [`src/syntax.rs`](src/syntax.rs), [`src/markdown.rs`](src/markdown.rs), [`src/textline.rs`](src/textline.rs) | Shared text presentation — one implementation each of "how a diff looks", source coloring, markdown, and the event→wording table (also consumed by `stella-cli`'s plain renderer). |
 | [`src/theme.rs`](src/theme.rs), [`src/palette.rs`](src/palette.rs) | Every color and glyph. `palette.rs` is **generated** from `docs/brand/tokens.json`; `theme.rs` is the only module allowed to reference it. |
-| [`src/progress.rs`](src/progress.rs), [`src/cache_panel.rs`](src/cache_panel.rs), [`src/splash.rs`](src/splash.rs), [`src/invaders.rs`](src/invaders.rs), [`src/fx.rs`](src/fx.rs) | Chrome widgets: the run progress bar, the statline's cache cells, the launch cinematic and its battle scene, and the shared `tachyonfx` constructors. |
+| [`src/progress.rs`](src/progress.rs), [`src/cache_panel.rs`](src/cache_panel.rs), [`src/splash.rs`](src/splash.rs) | Chrome widgets: the run progress bar, the statline's cache cells, and the launch mark held over session init. |
 | [`src/scroll.rs`](src/scroll.rs), [`src/input.rs`](src/input.rs), [`src/graph.rs`](src/graph.rs), [`src/resource.rs`](src/resource.rs), [`src/attach.rs`](src/attach.rs), [`src/clipboard.rs`](src/clipboard.rs) | Small leaf modules: line-exact viewport math, the outbound message enum, the graph snapshot types, CPU/MEM sampling, pasted-path detection, `⌃V` clipboard capture. |
 | [`src/fleet_dashboard.rs`](src/fleet_dashboard.rs) | A separate full-screen surface for `stella fleet` — its own fold (`FleetMsg`), its own `run`, monotonic `Instant` clocks only. |
 | [`src/scenario.rs`](src/scenario.rs) | A deterministic scripted multi-agent scenario, driving both `examples/deck_demo.rs` and the snapshot test. |
@@ -134,10 +133,14 @@ every panic on every thread, including panel panics the session survives.
 - `⌃G`, not `⌃I`, opens the INSPECT overlay: without the kitty keyboard
   protocol (pushed only best-effort) `⌃I` is byte-identical to Tab, which is
   bound to tab switching. The collision would be silent and terminal-dependent.
-- Animations are *scrubbed*, not stateful: `splash` / `fx` / `invaders` rebuild
-  a fresh seeded effect each frame and process it once with the total elapsed
-  time. That only stays deterministic because randomized effects pin their RNG
-  to `FX_SEED` — a new randomized effect that skips it breaks frame stability.
+- Prefer stillness. A terminal has no `prefers-reduced-motion`, so anything
+  that animates without carrying information is a bug: the launch cinematic,
+  the tab-switch sweep, the caret blink, and the pulsing STAGE dot were all
+  deleted for that reason. What motion remains (the progress shimmer, the
+  in-flight spinners) reports live work and is gated on `no_anim`.
+- What does animate must be *scrubbed*, not stateful: `splash` renders as a
+  pure function of elapsed time, so two frames at the same `t` are byte-identical
+  and a dropped frame lands where continuous playback would have.
 - Do not add a color literal to a view. `theme.rs` is the only module that may
   read `palette.rs`, and `palette.rs` is generated — edit `docs/brand/tokens.json`.
 - Anything you put on `WorkspaceModel` that is not folded from `Inbound` erodes

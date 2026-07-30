@@ -34,15 +34,34 @@ gone. No surface uses an orange, rust, or phosphor-green hue.
 | `ground` | `#080A0F` | App background |
 | `surface` | `#0B0F17` | Cards, panels |
 | `raised` | `#101623` | Popovers, selected rows |
-| `hairline` | `#182031` | Seam — decorative only, never the sole carrier of structure |
-| `hairline-strong` | `#232D42` | Seam where a boundary must actually read |
+| `hairline` | `#182031` | Seam — decorative only, 1.2:1, never the sole carrier of structure |
+| `hairline-strong` | `#232D42` | Heavier decorative seam — 1.4:1, still decorative |
+| `hairline-contrast` | `#525F80` | 3.0:1 on `surface` — the only seam that may carry structure alone |
+
+`hairline` and `hairline-strong` are both far below the 3:1 floor that WCAG
+1.4.11 sets for a graphical element, which is fine for what they are: they
+separate things that are *also* separated by spacing, weight, or a heading. The
+mistake is reaching for them when the border is the only thing saying "these two
+regions are different" — a card edge on a page of equal-weight cards, or the rule
+under a table header. That is what `hairline-contrast` is for.
+
+An interactive control's boundary is never decorative. Use `hairline-contrast`
+or a text tone; never `hairline`.
+
+The two structural seams are deliberately close in ratio — 3.0:1 on `surface`,
+3.2:1 on `paper` — because a 1px rule that clears the floor by a wide margin in
+one theme and sits on it in the other makes the same diagram read as two
+different weights. Before `paper-hairline-contrast` existed the light rule
+borrowed `ink-tertiary` at 4.7:1, and diagram strokes were visibly heavier on
+paper than on deep space.
 
 | Token | Value | Role |
 | --- | --- | --- |
 | `paper` | `#FFFFFF` | Light background |
 | `snow` | `#F5F7FA` | Light surface |
 | `paper-raised` | `#E7EBF2` | Light popovers, selected rows |
-| `paper-hairline` | `#D3DAE6` | Light seam |
+| `paper-hairline` | `#D3DAE6` | Light seam — decorative only, 1.4:1 |
+| `paper-hairline-contrast` | `#868FA2` | 3.2:1 on `paper` — the light structural seam |
 
 ### Brand — electric blue
 
@@ -50,11 +69,19 @@ The interactive signal: active/running state, focus, links, primary action.
 
 | Token | Value | Ground | Contrast |
 | --- | --- | --- | --- |
-| `brand` | `#2E7BFF` | dark | 5.1:1 on `ground` |
-| `brand-bright` | `#5AA0FF` | dark | 7.4:1 on `ground` — use for small text and thin strokes |
-| `brand-deep` | `#1550C8` | dark | pressed / gradient-deep stop |
+| `brand` | `#2E7BFF` | dark | 5.1:1 on `ground` — fills and large marks |
+| `brand-bright` | `#5AA0FF` | dark | 7.4:1 on `ground` — small text and thin strokes |
+| `brand-deep` | `#1A5FE0` | dark | 3.5:1 on `ground` — pressed state, gradient-deep stop |
 | `brand-ink` | `#1550C8` | light | 7.0:1 on `paper` |
-| `brand-ink-deep` | `#0F3A94` | light | pressed stop on paper |
+| `brand-ink-deep` | `#0F3A94` | light | 10.2:1 on `paper` — pressed stop |
+
+`brand-deep` was `#1550C8` in an earlier draft, carried over from the marketing
+site where it only ever backed a button fill. It measures 2.84:1 on `ground`,
+under the 3:1 floor for interactive and graphical elements — which matters
+because it is the leading stop of the determinate progress fill, so the leftmost
+cells of a running bar sat below the floor against the canvas. `#1A5FE0` clears
+it at 3.5:1. `#1550C8` survives unchanged as `brand-ink`, where it sits on paper
+at 7.0:1 and is entirely correct.
 
 ### Gold — the mark
 
@@ -70,7 +97,7 @@ and always glyph-paired; gold is identity and appears only on brand chrome.
 | `gold` | `#F5C145` | dark | 11.8:1 on `ground` |
 | `gold-bright` | `#FFD873` | dark | headline gradient stop |
 | `gold-deep` | `#C99420` | dark | trailing stop of the progress fill |
-| `gold-ink` | `#8A6118` | light | 5.6:1 on `paper` |
+| `gold-ink` | `#8A6118` | light | 5.5:1 on `paper` |
 
 ### Text
 
@@ -101,9 +128,30 @@ Always paired with a glyph. Hue alone never carries meaning.
 Categorical series in the Observatory are deliberately *not* the brand hue — a
 data mark must not read as "active".
 
-`#E3B341` · `#8F70E8` · `#E4408F` · `#2FD3C6`
+| Slot | Value | Hue | On `surface` |
+| --- | --- | --- | --- |
+| `data-1` | `#E3B341` | 42° | 10.2:1 |
+| `data-2` | `#8F70E8` | 256° | 5.2:1 |
+| `data-3` | `#E4408F` | 327° | 5.0:1 |
+| `data-4` | `#2FD3C6` | 175° | 10.3:1 |
 
-Gold and `#E3B341` must never appear in the same chart.
+**The ramp is four slots, and that is a constraint on the charts, not a
+placeholder.** Gold sits at hue 42° and `data-1` sits at hue 42°; measured
+against each other they are 1.17:1, so nothing but size tells them apart. Any
+view that shows the gold mark may not also use `data-1` — in practice that
+retires `data-1` from every chart on a page with brand chrome, leaving three.
+
+The temptation is to add a fifth and sixth value. Resist it: the usable hue
+circle is already crowded by `success` (142°), `warning` (48°), `danger` (349°),
+the brand blue (218°), and gold (42°), and every further slot has to clear all
+of them plus each other by ~40°. Colours added under that pressure end up
+distinguishable in a swatch and identical in an 8-pixel chart cell.
+
+**Beyond three categories, encode with something other than hue.** Order the
+series and label them directly; use shape or dash pattern for line series; or
+choose an encoding with fewer categories — "which crate" is a weak question
+compared with churn, symbol count, or last-touched-by-a-run, and those have
+natural rankings that a sequential ramp serves better than a categorical one.
 
 ## Logo
 

@@ -84,18 +84,7 @@ impl Tool for Glob {
         // this tool's advertised contract.
         let canon_root = root.canonicalize().ok();
 
-        // Try fd first — fast, respects .gitignore by default.
-        // `--glob` tells fd to interpret the pattern as a glob, not a regex,
-        // so `*.rs` matches the same way as `find -name "*.rs"`.
-        let mut fd = Command::new("fd");
-        fd.arg("--glob");
-        fd.arg("--type").arg("f");
-        fd.arg("--color").arg("never");
-        fd.arg("--max-results").arg(MAX_RESULTS.to_string());
-        fd.arg("--").arg(pattern).arg(&search_dir);
-        crate::subprocess_env::scrub_sensitive_env(&mut fd);
-        fd.stdout(std::process::Stdio::piped());
-        fd.stderr(std::process::Stdio::piped());
+        let fd = fd_command(&search_dir, pattern);
         // `run_captured` sets `kill_on_drop` (a cancelled turn must not leave a
         // full-tree walk burning IO) and bounds the wait.
         match crate::exec::run_captured(fd, crate::grep::SEARCH_TIMEOUT_SECS).await {
@@ -153,6 +142,37 @@ impl Tool for Glob {
     }
 }
 
+/// Build the `fd` fast path for `pattern` under `search_dir`.
+///
+/// `--glob` makes the pattern a glob rather than a regex, so `*.rs` matches
+/// the way `find -name "*.rs"` does.
+///
+/// `--hidden` is not optional politeness: `fd` skips dot-prefixed entries by
+/// default, so `.github/workflows/*.yml`, `.cargo/config.toml` and every
+/// dotfile in the tree came back as "(no files found)" — which an agent reads
+/// as proof the file does not exist and then recreates it. The `find`
+/// fallback never had that blind spot, so the two backends also disagreed
+/// depending on what happened to be installed. `--exclude .git` is the other
+/// half: once hidden entries are in scope, `.git`'s object store is thousands
+/// of files that are never what was asked for, and the same prune is applied
+/// to the `find` fallback ([`find_command`]) so both backends answer alike.
+/// `.gitignore` pruning stays on — that one is a feature, and it is the
+/// documented difference between the two backends.
+fn fd_command(search_dir: &std::path::Path, pattern: &str) -> Command {
+    let mut fd = Command::new("fd");
+    fd.arg("--glob");
+    fd.arg("--hidden");
+    fd.arg("--exclude").arg(".git");
+    fd.arg("--type").arg("f");
+    fd.arg("--color").arg("never");
+    fd.arg("--max-results").arg(MAX_RESULTS.to_string());
+    fd.arg("--").arg(pattern).arg(search_dir);
+    crate::subprocess_env::scrub_sensitive_env(&mut fd);
+    fd.stdout(std::process::Stdio::piped());
+    fd.stderr(std::process::Stdio::piped());
+    fd
+}
+
 /// Build the `find` fallback for `pattern` under `search_dir`.
 ///
 /// `-name` matches basenames only, so a slash-carrying glob — including the
@@ -164,9 +184,17 @@ impl Tool for Glob {
 /// `src/**/*.ts` → `<dir>/src/*.ts`. The same slash-crossing `*` makes a
 /// mid-pattern `a/**/b.rs` also match `a/xb.rs` — in a search tool a
 /// slightly wide match beats silently missing files.
+///
+/// `.git` is pruned to match [`fd_command`]'s `--exclude .git`: without it the
+/// fallback answered `**/*` with thousands of loose-object paths, and the two
+/// backends disagreed wildly depending on which was installed. The explicit
+/// `-print` is required once `-prune -o` is in the expression — `find`'s
+/// implicit print would otherwise apply to the whole expression and emit the
+/// pruned directory itself.
 fn find_command(search_dir: &std::path::Path, pattern: &str) -> Command {
     let mut find = Command::new("find");
     find.arg(search_dir);
+    find.arg("-name").arg(".git").arg("-prune").arg("-o");
     find.arg("-type").arg("f");
     if pattern.contains('/') {
         let mut translated = pattern.replace("**/", "*");
@@ -178,6 +206,7 @@ fn find_command(search_dir: &std::path::Path, pattern: &str) -> Command {
     } else {
         find.arg("-name").arg(pattern);
     }
+    find.arg("-print");
     crate::subprocess_env::scrub_sensitive_env(&mut find);
     find.stdout(std::process::Stdio::piped());
     find.stderr(std::process::Stdio::piped());
@@ -341,6 +370,53 @@ mod tests {
             args("src/**/*.ts")
                 .windows(2)
                 .any(|w| w == ["-path", "/ws/src/*.ts"])
+        );
+    }
+
+    /// `fd` skips dot-prefixed entries unless told otherwise, so
+    /// `.github/workflows/ci.yml` was invisible to `glob` on every machine
+    /// with `fd` installed — and visible on every machine without it.
+    #[test]
+    fn fd_sees_hidden_files_and_prunes_git_like_the_find_fallback() {
+        let args: Vec<String> = fd_command(std::path::Path::new("/ws"), "*.yml")
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(args.contains(&"--hidden".to_string()), "{args:?}");
+        assert!(
+            args.windows(2).any(|w| w == ["--exclude", ".git"]),
+            "{args:?}"
+        );
+        // The pattern still arrives after `--`, so a leading-dash glob is not
+        // parsed as an option.
+        assert!(args.windows(2).any(|w| w == ["--", "*.yml"]), "{args:?}");
+    }
+
+    /// Both backends must answer a dotted path the same way, and neither may
+    /// flood the result with `.git` internals.
+    #[tokio::test]
+    async fn the_find_fallback_finds_dotfiles_and_skips_the_git_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join(".github/workflows")).expect("mkdir");
+        std::fs::create_dir_all(dir.path().join(".git/objects")).expect("mkdir");
+        std::fs::write(dir.path().join(".github/workflows/ci.yml"), "").expect("write");
+        std::fs::write(dir.path().join(".git/objects/deadbeef.yml"), "").expect("write");
+
+        let cmd = find_command(dir.path(), "**/*.yml");
+        let out = match crate::exec::run_captured(cmd, crate::grep::FALLBACK_SEARCH_TIMEOUT_SECS)
+            .await
+        {
+            crate::exec::Captured::Done(out) => String::from_utf8_lossy(&out.stdout).into_owned(),
+            other => panic!(
+                "find must run: {}",
+                matches!(other, crate::exec::Captured::TimedOut)
+            ),
+        };
+        assert!(out.contains(".github/workflows/ci.yml"), "{out}");
+        assert!(
+            !out.contains(".git/objects"),
+            "`.git` must be pruned: {out}"
         );
     }
 

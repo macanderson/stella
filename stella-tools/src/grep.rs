@@ -219,6 +219,16 @@ impl Tool for Grep {
         rg.arg("--max-columns")
             .arg(MAX_COLUMNS.to_string())
             .arg("--max-columns-preview");
+        // `rg` skips dot-prefixed entries by default, so a search under
+        // `.github/`, `.cargo/` or any dotfile came back "(no matches)" —
+        // which an agent reads as "that code does not exist". The `grep`
+        // fallback never had that blind spot, so the two backends also
+        // disagreed depending on what was installed. `.git` is excluded
+        // explicitly (its object store is never the answer), matching the
+        // `--exclude-dir=.git` given to the fallback below. `.gitignore`
+        // pruning stays on: that difference between the backends is a
+        // feature, and it is what keeps `target/`/`node_modules` out.
+        rg.arg("--hidden").arg("--glob").arg("!.git/");
         if let Some(g) = glob_filter {
             rg.arg("--glob").arg(g);
         }
@@ -283,6 +293,8 @@ impl Tool for Grep {
                 // rg not installed — fall back to grep
                 let mut grep = Command::new("grep");
                 grep.arg("-rn").arg("--color=never");
+                // Parity with the rg arm's `--glob !.git/`.
+                grep.arg("--exclude-dir=.git");
                 if let Some(g) = glob_filter {
                     grep.arg("--include").arg(g);
                 }
@@ -442,6 +454,40 @@ mod tests {
             }
         }
         let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    /// A search under a dot-prefixed directory used to answer "(no matches)"
+    /// on every machine with `rg` installed, because `rg` skips hidden entries
+    /// by default — and to answer correctly on every machine without it. An
+    /// agent reads that silence as "the code isn't there".
+    #[tokio::test]
+    async fn a_dotted_directory_is_searched_and_git_internals_are_not() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join(".github/workflows")).expect("mkdir");
+        std::fs::create_dir_all(dir.path().join(".git")).expect("mkdir");
+        std::fs::write(
+            dir.path().join(".github/workflows/ci.yml"),
+            "run: cargo NEEDLE_TOKEN\n",
+        )
+        .expect("write");
+        std::fs::write(dir.path().join(".git/COMMIT_EDITMSG"), "NEEDLE_TOKEN\n").expect("write");
+
+        let result = Grep::default()
+            .execute(&serde_json::json!({"pattern": "NEEDLE_TOKEN"}), dir.path())
+            .await;
+        match result {
+            ToolOutput::Ok { content } => {
+                assert!(
+                    content.contains("ci.yml"),
+                    "a dotted directory must be searched: {content}"
+                );
+                assert!(
+                    !content.contains("COMMIT_EDITMSG"),
+                    "`.git` must stay out of the results: {content}"
+                );
+            }
+            ToolOutput::Error { message } => panic!("expected matches, got: {message}"),
+        }
     }
 
     /// Short lines must survive the column cap byte-for-byte — the caps are

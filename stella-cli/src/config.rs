@@ -759,8 +759,20 @@ impl Config {
                 None => {
                     // Just a model slug — find which provider has it:
                     // built-in defaults first, then config-defined ones.
-                    if let Some(provider) = PROVIDERS.iter().find(|p| p.default_model == model_spec)
-                    {
+                    //
+                    // Matched against the EFFECTIVE default as well as the
+                    // shipped one. A settings.json `providers.<id>.default_model`
+                    // is what auto-detection actually launches with, and
+                    // `stella models` prints it as that provider's default — but
+                    // this lookup only ever consulted the hard-coded row, so the
+                    // one slug the UI told you to use came back "model
+                    // `…` not recognized". Both spellings resolve now; the
+                    // shipped one keeps working so an override cannot retire a
+                    // name a user's muscle memory or script already has.
+                    if let Some(provider) = PROVIDERS.iter().find(|p| {
+                        p.default_model == model_spec
+                            || effective_builtin(p, settings).default_model == model_spec
+                    }) {
                         let provider = effective_builtin(provider, settings);
                         let settings_key = settings
                             .providers

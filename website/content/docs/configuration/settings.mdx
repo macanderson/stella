@@ -91,7 +91,7 @@ The `providers` map lets you override the built-in defaults for any provider —
 reaching for a provider-specific environment variable**. In **user scope**
 (`~/.stella/settings.json`) it is the recommended way to, for example, route a Z.ai
 coding-plan subscription through its dedicated endpoint — see the
-[coding-plan recipe](/docs/examples/zai-coding-plan).
+[coding-plan recipe](/docs/api-providers#zai).
 
 ## The `providers` map
 
@@ -295,7 +295,7 @@ is personal, so this belongs in **user scope** — project scope would silently 
 ```
 
 The full walkthrough — plan tiers, verification, and routing the whole pipeline at the
-subscription — is the [coding-plan recipe](/docs/examples/zai-coding-plan).
+subscription — is the [coding-plan recipe](/docs/api-providers#zai).
 
 Your `ZAI_API_KEY` env var (or a `settings.json` `api_key`) supplies the key; the base URL
 now comes from the file. Verify:
