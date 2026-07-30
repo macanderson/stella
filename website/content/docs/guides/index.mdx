@@ -1,0 +1,91 @@
+---
+title: Guides
+description: Task-shaped walkthroughs — fix a red CI run, land a change in a codebase you have never read, find out what a run cost, and hold a hard budget. Each one carried to a finished, verified result.
+---
+
+The rest of the documentation is organized around Stella's parts: a page per
+command, a page per subsystem. This section is organized around **your
+afternoon**. Each guide is one real task carried from the symptom to a verified
+result, in the order you would actually type the commands.
+
+Nothing here restates the reference. Every step links down into it, so you can
+stop and read the whole flag surface at the moment you need it and not before.
+
+## Start here
+
+<CardGrid size="md">
+  <SpecCard title="Fix a failing CI run" href="/docs/guides/fix-failing-ci">
+    The pipeline is red on a branch you own. `stella monitor` watches it, fixes root
+    causes, pushes, and re-checks — and stops only on a green run somebody else can
+    see. Includes what to do when the fix doesn't hold.
+  </SpecCard>
+  <SpecCard title="Change an unfamiliar codebase" href="/docs/guides/unfamiliar-codebase">
+    A repository you have never read, and a change that has to land in it. `stella
+    init` builds the code graph, `stella graph` answers the blast-radius question
+    before you commit to an approach, and the change ships verified.
+  </SpecCard>
+  <SpecCard title="Find out what a run cost" href="/docs/guides/what-a-run-cost">
+    A run cost more than you expected. Follow it from the dollar figure down to the
+    exact bytes of the model call that produced it — `stats`, `observe`, `inspect`.
+  </SpecCard>
+  <SpecCard title="Work within a budget" href="/docs/guides/budget">
+    A hard ceiling in dollars, and what Stella does as it approaches one: where the
+    abort lands, what compaction costs, and how to spend the money on the task
+    instead of on the transcript.
+  </SpecCard>
+  <SpecCard title="When something isn't working" href="/docs/guides/troubleshooting">
+    Config that isn't applying, a key that won't resolve, a hook that never fires, a
+    graph that answers about code you deleted. The four checks in the order that
+    finds it fastest.
+  </SpecCard>
+</CardGrid>
+
+## What these assume
+
+Every guide assumes you have [installed Stella](/docs/getting-started/installation)
+and that one provider key resolves — `stella config` prints a provider, a model,
+and a redacted key preview rather than an error. If that is not yet true,
+[Getting started](/docs/getting-started) is thirty seconds long and this section
+will still be here.
+
+Nothing else is assumed. Where a guide needs `gh`, a git remote, or an
+initialized code graph, it says so at the point of need and tells you what
+happens if you don't have it.
+
+## The idea the guides share
+
+Stella's distinguishing behavior is not any single command — it is that **work
+ends on evidence rather than on the worker's own claim**. A test that failed
+before the change and passes after it. A diff that exists. A CI run whose latest
+attempt is green. A judge from a different model family than the worker, reading
+the diff and not the narration.
+
+That is worth knowing before the first guide, because it explains a shape you
+will see in all of them: the fastest, cheapest path is usually the one that hands
+Stella something deterministic to check.
+
+```bash
+# The strongest flag on the CLI. It arms the fail→pass flip oracle, which
+# lets most runs finish on deterministic evidence and skip the judge entirely.
+stella run --test-command "cargo test -p api" "add cursor pagination to /orders"
+```
+
+The [inference pipeline](/docs/inference-pipeline) is the full account of how
+that works. You do not need it to follow any guide here.
+
+## Related reading
+
+<CardGrid size="sm">
+  <SpecCard title="Examples & recipes" href="/docs/examples">
+    The configuration half — complete `settings.json` files for a given set of keys
+    and a given budget. Answers *how do I set Stella up*, where the guides answer
+    *how do I get this done*.
+  </SpecCard>
+  <SpecCard title="Agent modes" href="/docs/agent-modes">
+    Deck, run, goal, monitor, fleet — which surface to reach for, and why.
+  </SpecCard>
+  <SpecCard title="Commands" href="/docs/commands">
+    The reference every guide links into: each subcommand's synopsis, flags, and
+    exit codes.
+  </SpecCard>
+</CardGrid>

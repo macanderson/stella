@@ -1,0 +1,208 @@
+---
+title: stella context
+description: Review, publish, and explain context records — the reviewable steering stella ingest extracts from documents you already wrote. Offline; local files only, no API key.
+---
+
+`stella ingest` writes proposals. `stella context` is what acts on them.
+
+Extraction turns markdown you already wrote into atomic, probed claims sitting in
+`.stella/proposals/*.toml`. Until you decide on one, it steers nothing. This
+command is the deciding surface: read what was proposed and what its truth probe
+found, publish the claims that are actually true, decline the ones that are not,
+and afterwards ask any live record why it applied.
+
+Every subcommand reads and writes **local files only** — no API key, no network.
+
+## Synopsis
+
+```bash
+stella context review [--all]
+stella context keep <candidate> [--enforce]
+stella context edit <candidate> --statement <text> [--enforce]
+stella context ignore <candidate> [--reason <why>] [--cooldown <ISO-8601>]
+stella context list [--json]
+stella context validate [--json]
+stella context explain <rule>
+stella context propose <rule> [--commit]
+```
+
+`<candidate>` is a proposal's candidate id, or any unique prefix of it.
+`<rule>` is a published record's `^handle` (the caret is optional) or its
+lineage id.
+
+## The usual pass
+
+```bash
+stella ingest AGENTS.md      # extract claims from a document you already wrote
+stella context review        # read them, with each claim's probe verdict
+stella context keep a1b2c3   # publish the ones that are true
+stella context list          # confirm what now steers this workspace
+```
+
+## Subcommands
+
+### `stella context review [--all]`
+
+What ingest proposed, with the evidence behind each claim and the verdict its
+truth probe returned. Nothing steers until you keep it, so this is a reading
+surface with no side effects.
+
+`--all` additionally shows the **dismissed** proposals — the compound claims
+extraction refused to split, and the executable content it quarantined. Those
+are worth a look when a document you expected to produce ten records produced
+six.
+
+### `stella context keep <candidate> [--enforce]`
+
+Publish a proposal as a record the engine loads. It writes
+`.stella/rules/<lineage>.toml` — or `~/.stella/rules/` for a personal record —
+and **never overwrites an existing file**.
+
+<Callout type="info">
+`--enforce` is a **separate grant on purpose**. Keeping a record means the engine
+loads it as steering. Authorizing it to *block a matching tool call* is a
+different decision with a different blast radius, so it is a different flag
+rather than a property of keeping.
+</Callout>
+
+### `stella context edit <candidate> --statement <text> [--enforce]`
+
+Publish your wording instead of the extractor's. The claim keeps its lineage and
+its evidence; only the statement becomes yours. Use it when the claim is right
+but the phrasing was inherited from prose that said it badly.
+
+### `stella context ignore <candidate> [--reason <why>] [--cooldown <ISO-8601>]`
+
+Decline a proposal. This records **negative evidence** and a re-proposal
+cooldown — default `P90D` — so the next ingest of the same document does not ask
+again.
+
+Supply `--reason`. A decline with no reason is evidence nobody can act on later,
+including you.
+
+### `stella context list [--json]`
+
+What currently steers this workspace: every loaded record, its handle, its
+force, and whether it actually blocks anything.
+
+**Force** selects the injection channel, which is also its cost:
+
+<CardGrid size="md">
+  <OptionCard name="must">
+    Binding. Always injected into the cached system prefix.
+  </OptionCard>
+  <OptionCard name="should">
+    Strong. Always injected into the cached system prefix.
+  </OptionCard>
+  <OptionCard name="may">
+    Relevant-when-selected. Rides the volatile block after the prefix.
+  </OptionCard>
+  <OptionCard name="info">
+    Informational. Rides the volatile block.
+  </OptionCard>
+</CardGrid>
+
+`must` and `should` are always present, which is what makes them binding — and
+also what makes them the ones to be sparing with. `may` and `info` are selected
+by relevance.
+
+**Enforcement** is orthogonal to force:
+
+<CardGrid size="sm">
+  <OptionCard name="hard">
+    Blocked at the tool boundary by a guard.
+  </OptionCard>
+  <OptionCard name="soft">
+    Warned, not blocked.
+  </OptionCard>
+  <OptionCard name="none">
+    Advisory only.
+  </OptionCard>
+</CardGrid>
+
+### `stella context validate [--json]`
+
+Re-run every claim's truth probe now and report the result, plus every
+validation finding and every equal-precedence conflict. It **exits non-zero when
+something must not steer**, which makes it usable as a gate:
+
+```bash
+stella context validate || echo "steering needs review before this merges"
+```
+
+This is the answer to the problem inherited documentation always has: a record
+extracted from a README that was true in 2024 is a confident, wrong instruction
+today. The probe is declarative and runs against the tree, so staleness is
+detected rather than assumed away.
+
+### `stella context explain <rule>`
+
+Why did that rule apply? Prints provenance, evidence, enforcement, and efficacy
+for one record.
+
+```bash
+stella context explain ^pnpm-only
+stella context explain ctx.acme.web.pkg-manager
+```
+
+Truth basis is part of that answer, and the four values are meaningfully
+different:
+
+<CardGrid size="sm">
+  <OptionCard name="decree">
+    True because an owner said so — unrefutable by construction.
+  </OptionCard>
+  <OptionCard name="measured">
+    True because the world was measured and agreed.
+  </OptionCard>
+  <OptionCard name="derived">
+    True because it follows from other records.
+  </OptionCard>
+  <OptionCard name="asserted">
+    Asserted without a machine-checkable basis.
+  </OptionCard>
+</CardGrid>
+
+### `stella context propose <rule> [--commit]`
+
+Turn a record into a reviewable change: a branch, a single-concern diff, and a
+PR body. Without `--commit` it prints the plan; with it, the branch and commit
+are created locally.
+
+This exists because steering that changes how an agent behaves for a whole team
+deserves the same review as code that does — and a single-concern diff is what
+makes that review possible.
+
+## Two proposal substrates, deliberately separate
+
+<Callout type="warn">
+`stella context` and [`stella proposals`](/docs/commands/proposals) review
+different things and do not share storage.
+
+- **`stella context`** reviews **file-based** proposals extracted from documents,
+  in `.stella/proposals/*.toml`.
+- **`stella proposals`** reviews **behavioral** proposals mined from what the
+  agent actually did, in `.stella/private/context.db`.
+
+The split is about **authority**, not plumbing. An explicit instruction in a
+tracked file is eligible immediately; a pattern mined from sessions must first
+clear a distinct-task threshold. One review surface over both would apply one of
+those two gates to content it does not fit.
+</Callout>
+
+## Related
+
+<CardGrid size="sm">
+  <SpecCard title="stella ingest" href="/docs/commands/ingest">
+    The extraction half — what produces the proposals this command reviews.
+  </SpecCard>
+  <SpecCard title="stella proposals" href="/docs/commands/proposals">
+    The adaptive-context ledger: behavioral proposals, a separate substrate.
+  </SpecCard>
+  <SpecCard title="Context engine" href="/docs/context-engine">
+    How records become recall, and the two injection channels force selects.
+  </SpecCard>
+  <SpecCard title="Unfamiliar codebase" href="/docs/guides/unfamiliar-codebase">
+    Where ingest and context fit when you inherit a repository.
+  </SpecCard>
+</CardGrid>

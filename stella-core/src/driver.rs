@@ -92,6 +92,15 @@ use crate::ports::ToolExecutor;
 use crate::receipts::ReceiptLedger;
 use crate::retry::{RetryOutcome, RetryPolicy, Sleeper, retry_with_backoff_observed};
 use crate::speculation::{SpeculationGate, SpeculationPool, SpeculativeResult};
+use crate::step::{
+    BorrowedTurn, CancelUsageGuard, CompactionPass, SpeculationDropGuard, StepOutcome,
+    SummarizerHealth, TurnState, bounded_generation,
+};
+// The latch count itself is only ever named by the test that pins it against
+// the number of failures the summarizer is actually allowed (`audit_fixes`);
+// the production path reads it through `SummarizerHealth::is_latched`.
+#[cfg(test)]
+use crate::step::SUMMARIZER_FAILURE_LATCH;
 use crate::{AccountedCall, AccountedCallError, run_accounted_call};
 use loop_evidence::{ResultIdentities, recent_call_records, snapshot_result_identities};
 use tokio::sync::mpsc::UnboundedSender;
@@ -243,6 +252,56 @@ pub enum TurnOutcome {
     Aborted { reason: String, cost_usd: f64 },
 }
 
+/// The per-turn memos a step mutates but a [`crate::step::Checkpoint`]
+/// deliberately does not carry.
+///
+/// All four exist to make repeated work cheap or repeated noise quiet within
+/// one turn: the receipt ledger remembers which blocks it already registered,
+/// the warning ledger claims the first observed-mode breach per axis, the
+/// result identities remember what a call really produced before compaction
+/// stubbed it (#554), and the summarizer latch stops a failing cheap model
+/// re-firing every step. They live in one struct, held by
+/// [`crate::step::TurnState`], because that is the whole set of per-turn state
+/// whose types are internal to this module — a resumed turn rebuilds them
+/// rather than deserializing four private caches out of a wire format.
+pub(crate) struct TurnMemos {
+    /// Block registry + residency for this turn's context receipts.
+    receipts: ReceiptLedger,
+    /// Observed-mode budget warnings already surfaced, per axis.
+    warnings: BudgetWarnings,
+    /// Pre-compaction tool-result identities ([`snapshot_result_identities`]).
+    identities: ResultIdentities,
+    /// Overflow-summarizer give-up latch.
+    health: SummarizerHealth,
+    /// Bumped by every pass that rewrites the transcript in place rather than
+    /// appending to it, which is what tells the two position-keyed memos above
+    /// — the result identities' positional half and the receipt ledger's block
+    /// digests — that their keys no longer name the bytes behind them. It
+    /// lives with the memos it invalidates, and is the reason a resumed turn
+    /// can start it back at zero: everything keyed by it was rebuilt too.
+    revision: TranscriptRevision,
+}
+
+impl TurnMemos {
+    /// Fresh memos for a turn keyed against `turn_instance`, with
+    /// `context.lifecycle.enabled` as configured.
+    pub(crate) fn new(turn_instance: u32, lifecycle_enabled: bool) -> Self {
+        Self {
+            receipts: ReceiptLedger::new(turn_instance).with_lifecycle(lifecycle_enabled),
+            warnings: BudgetWarnings::default(),
+            identities: ResultIdentities::default(),
+            health: SummarizerHealth::default(),
+            revision: TranscriptRevision::default(),
+        }
+    }
+
+    /// Record that the transcript was rewritten in place, invalidating both
+    /// position-keyed memos at their next sync.
+    pub(crate) fn mark_rewritten(&mut self) {
+        self.revision.rewritten();
+    }
+}
+
 /// The two references a turn needs to fire lifecycle hooks: the parsed
 /// workspace [`Hooks`] config and the [`HookRunner`] execution port that
 /// actually spawns the commands (the real process I/O `stella-core` never
@@ -299,7 +358,7 @@ const MAX_CONCURRENT_TOOL_CALLS: usize = 8;
 /// `SpeculationDiscarded.reason` — a speculative pool was dropped because
 /// its stream attempt failed (or the turn was cancelled) before its
 /// read-only work could be harvested.
-const SPECULATION_DISCARD_ATTEMPT_FAILED: &str = "attempt_failed";
+pub(crate) const SPECULATION_DISCARD_ATTEMPT_FAILED: &str = "attempt_failed";
 /// `SpeculationDiscarded.reason` — a speculative pool entry was rejected at
 /// dispatch because the committed call diverged from what was announced, or
 /// no committed call ever claimed it.
@@ -478,6 +537,10 @@ impl<'a> Engine<'a> {
     /// Existing callers use an ordinary Tokio sender; benchmark callers use
     /// this form so append+flush completes synchronously before a paid-call
     /// producer can advance to another request.
+    ///
+    /// The body is a loop over [`Self::run_step`] and nothing else — the step
+    /// is the only implementation of a step, so a host that drives steps
+    /// itself and a caller that drives whole turns cannot diverge (#971).
     pub async fn run_turn_with_sender(
         &self,
         messages: &mut Vec<CompletionMessage>,
@@ -487,161 +550,18 @@ impl<'a> Engine<'a> {
         let _ = events.send(AgentEvent::Stage {
             name: StageKind::Execute,
         });
-
-        let mut total_cost_usd = 0.0f64;
-        // Observed-mode budget warnings dedup per axis for this turn — a
-        // breach otherwise re-warns on every settled call after it.
-        let mut budget_warnings = BudgetWarnings::default();
-        // The model string of the last committed step, for reading the
-        // per-model drift correction. `None` until the first result lands —
-        // `CalibrationMap::factor` then falls back to the session's single
-        // seeded entry.
-        let mut calibration_model: Option<String> = None;
-        // Whether this turn already spent its one stuck-loop steering
-        // warning ([`Engine::check_loop_detection`]) — the next detection
-        // aborts instead of warning again.
-        let mut loop_steered = false;
-        // Per-turn context-receipt state: block registry + residency, carried
-        // by reference into each model call. Stack-local — the engine holds no
-        // receipt state of its own.
-        let lifecycle = self.config.lifecycle_enabled;
-        let mut receipts = ReceiptLedger::new(self.config.turn_instance).with_lifecycle(lifecycle);
-        // Per-turn overflow-summarizer latch: stops a persistently failing
-        // cheap summarizer re-firing every step for the rest of the turn.
-        let mut summarizer_health = SummarizerHealth::default();
-        // Per-turn pre-compaction tool-result identities
-        // ([`snapshot_result_identities`]). Stack-local like the two above —
-        // the engine holds no state of its own.
-        let mut result_identities = ResultIdentities::default();
-        // Bumped by every pass that rewrites the transcript in place rather than
-        // appending to it, which is what tells the two position-keyed memos —
-        // `result_identities`' positional half and the receipt ledger's block
-        // digests — that their keys no longer name the bytes behind them.
-        let mut revision = TranscriptRevision::default();
-
-        for step in 0..self.config.max_steps {
-            // Pause parks HERE — after the previous step fully settled and
-            // before any new model call, mirroring the budget-abort
-            // boundary. Resuming continues the very same turn.
-            if let Some(gate) = self.gate {
-                gate.wait_if_paused().await;
-            }
-            // Steering rides the same safe boundary as the pause gate:
-            // queued user messages land BEFORE compaction (so the pass sees
-            // them) and before the model call (so it answers them this
-            // step). Drain precedes the soft-stop check deliberately — a
-            // steer typed just before Esc is preserved in history for the
-            // next turn instead of evaporating with the per-turn tap.
-            if let Some(steering) = self.steering {
-                for text in steering.drain_steering() {
-                    let _ = events.send(AgentEvent::Steered { text: text.clone() });
-                    messages.push(CompletionMessage::user(text));
-                }
-                if steering.soft_stop_requested() {
-                    // A user choice, not a failure: no Error event, and the
-                    // caller keeps every completed step (unlike the hard
-                    // cancel, which drops the future and truncates).
-                    return TurnOutcome::Aborted {
-                        reason: SOFT_STOP_REASON.to_string(),
-                        cost_usd: total_cost_usd,
-                    };
-                }
-            }
-            if let Some(aborted) =
-                self.check_budget(budget, total_cost_usd, &mut budget_warnings, events)
-            {
-                return aborted;
-            }
-            // BEFORE compaction, never after: the pass rewrites tool results
-            // in place, and loop detection runs on the rewritten history in
-            // this very step (#554).
-            snapshot_result_identities(messages, &mut result_identities, revision);
-            let pass = self
-                .run_compaction_pass(
-                    messages,
-                    calibration_model.as_deref(),
-                    budget,
-                    &mut summarizer_health,
-                    step,
-                    events,
-                )
-                .await;
-            total_cost_usd += pass.cost_usd;
-            if pass.rewrote {
-                revision.rewritten();
-            }
-            // The manifest reports the budget compaction just compared against.
-            let (effective_budget, calibration_factor) =
-                self.effective_compaction_budget(calibration_model.as_deref());
-            receipts.set_effective_budget(effective_budget, calibration_factor);
-            // Set immediately after the pass that may have rewritten the
-            // transcript, so the ledger's digest memo cannot serve a stale block.
-            receipts.set_transcript_revision(revision);
-
-            if let Some(aborted) = self.check_loop_detection(
-                messages,
-                &result_identities,
-                &mut loop_steered,
-                total_cost_usd,
-                events,
-            ) {
-                return aborted;
-            }
-            if let Some(aborted) =
-                self.check_budget(budget, total_cost_usd, &mut budget_warnings, events)
-            {
-                return aborted;
-            }
-
-            let committed = match self
-                .run_model_call(
-                    step,
-                    messages,
-                    budget,
-                    &mut receipts,
-                    &mut budget_warnings,
-                    events,
-                )
+        // The turn's state is OWNED for the duration and written back to the
+        // caller's borrows when it drops — including on the hard-cancel path,
+        // where the future is dropped mid-step and there is no exit to copy
+        // back from (see `BorrowedTurn`).
+        let mut turn = BorrowedTurn::adopt(messages, budget, &self.config);
+        while turn.state.step < self.config.max_steps {
+            if let Some(outcome) = self
+                .run_step(&mut turn.state, events)
                 .await
+                .into_turn_outcome()
             {
-                Ok(committed) => committed,
-                Err(reason) => {
-                    return TurnOutcome::Aborted {
-                        reason,
-                        cost_usd: total_cost_usd,
-                    };
-                }
-            };
-            calibration_model = Some(committed.result.model.clone());
-            total_cost_usd += committed.result.cost_usd;
-
-            if let Some(aborted) = self.handle_committed_result(
-                &committed,
-                total_cost_usd,
-                messages,
-                &mut budget_warnings,
-                events,
-            ) {
-                // The budget-abort unwind never reaches `dispatch_completion`,
-                // which is where a committed step's speculation pool is
-                // otherwise harvested or discarded. Any read-only calls this
-                // step already speculated would drop silently here — account
-                // for them so #370's guarantee holds on the abort path too
-                // (#460). `handle_committed_result` only borrows `committed`,
-                // so the pool is still ours to move.
-                self.discard_speculation_pool(
-                    committed.speculation,
-                    SPECULATION_DISCARD_BUDGET_ABORT,
-                    events,
-                );
-                return aborted;
-            }
-
-            if let Some(completed) = self
-                .dispatch_completion(committed, total_cost_usd, messages, events)
-                .await
-            {
-                return completed;
+                return outcome;
             }
         }
 
@@ -656,8 +576,216 @@ impl<'a> Engine<'a> {
         });
         TurnOutcome::Aborted {
             reason,
-            cost_usd: total_cost_usd,
+            cost_usd: turn.state.total_cost_usd,
         }
+    }
+
+    /// Run exactly ONE committed step against `state`, the unit a durable host
+    /// checkpoints and cancels between (#971).
+    ///
+    /// The fixed phase sequence, in order: cancellation check → pause gate →
+    /// cancellation check → steering drain and soft stop → budget check →
+    /// result-identity snapshot → compaction pass → loop detection → budget
+    /// check → the model call (with retry+backoff) → committed-result
+    /// bookkeeping → dispatch. Every `AgentEvent` [`Self::run_turn`] emits is
+    /// emitted here, in the same order — `run_turn` IS this method in a loop,
+    /// so there is one code path and no second implementation to drift.
+    ///
+    /// `StepOutcome::Continue` means the step committed and `state.step` has
+    /// advanced; anything else ends the turn and leaves `state.step` naming
+    /// the step that ended it. A checkpoint is only guaranteed to hold a
+    /// well-paired transcript (every `tool_use` answered) after `Continue`.
+    ///
+    /// # Stopping: cancel, don't drop
+    ///
+    /// [`crate::step::CancelToken`] is checked at the top of the step and
+    /// again when the pause gate releases — the same safe boundary the budget
+    /// enforcer and the soft stop use, and never between announcing a tool
+    /// call and recording its result.
+    ///
+    /// Dropping the returned future stops the step too, but it is not a
+    /// boundary: it lands wherever the future was awaiting. A tool may be
+    /// half-way through mutating the workspace with its result never reaching
+    /// the transcript (leaving an unpaired `tool_use` the next provider call
+    /// rejects); an in-flight model call may already be billed, leaving only
+    /// the `UsageIncomplete { Cancelled }` envelope `CancelUsageGuard` emits;
+    /// speculative read-only work in flight is lost with one
+    /// `SpeculationDiscarded` each. Prefer the token, and expect to discard
+    /// the turn's history when you cannot.
+    ///
+    /// # This future is `!Send`
+    ///
+    /// The step borrows `&dyn Provider` / `&dyn ToolExecutor` and holds
+    /// non-`Send` futures across awaits, so it cannot be `tokio::spawn`ed onto
+    /// a multi-thread runtime. Drive it on a current-thread runtime — a host
+    /// serving many sessions gives each its own OS thread with its own
+    /// current-thread runtime and bridges with `Send` channels.
+    pub async fn run_step(&self, state: &mut TurnState, events: &EventSender) -> StepOutcome {
+        // Before the gate, not after: a turn that is both paused and cancelled
+        // must not park waiting for a resume that is never coming.
+        if let Some(cancelled) = state.cancel_outcome(events) {
+            return cancelled;
+        }
+        // Pause parks HERE — after the previous step fully settled and
+        // before any new model call, mirroring the budget-abort
+        // boundary. Resuming continues the very same turn.
+        if let Some(gate) = self.gate {
+            gate.wait_if_paused().await;
+        }
+        // A cancel that arrived while parked is answered on release rather
+        // than one whole step later.
+        if let Some(cancelled) = state.cancel_outcome(events) {
+            return cancelled;
+        }
+        // Steering rides the same safe boundary as the pause gate:
+        // queued user messages land BEFORE compaction (so the pass sees
+        // them) and before the model call (so it answers them this
+        // step). Drain precedes the soft-stop check deliberately — a
+        // steer typed just before Esc is preserved in history for the
+        // next turn instead of evaporating with the per-turn tap.
+        if let Some(steering) = self.steering {
+            for text in steering.drain_steering() {
+                let _ = events.send(AgentEvent::Steered { text: text.clone() });
+                state.messages.push(CompletionMessage::user(text));
+            }
+            if steering.soft_stop_requested() {
+                // A user choice, not a failure: no Error event, and the
+                // caller keeps every completed step (unlike the hard
+                // cancel, which drops the future and truncates).
+                return StepOutcome::Aborted {
+                    reason: SOFT_STOP_REASON.to_string(),
+                    cost_usd: state.total_cost_usd,
+                };
+            }
+        }
+        if let Some(aborted) = self.check_budget(
+            &mut state.budget,
+            state.total_cost_usd,
+            &mut state.memos.warnings,
+            events,
+        ) {
+            return aborted.into();
+        }
+        // BEFORE compaction, never after: the pass rewrites tool results
+        // in place, and loop detection runs on the rewritten history in
+        // this very step (#554).
+        let revision = state.memos.revision;
+        snapshot_result_identities(&state.messages, &mut state.memos.identities, revision);
+        let pass = self
+            .run_compaction_pass(
+                &mut state.messages,
+                state.calibration_model.as_deref(),
+                &mut state.budget,
+                &mut state.memos.health,
+                state.step,
+                events,
+            )
+            .await;
+        state.total_cost_usd += pass.cost_usd;
+        if pass.rewrote {
+            state.mark_transcript_rewritten();
+        }
+        // The manifest reports the budget compaction just compared against.
+        let (effective_budget, calibration_factor) =
+            self.effective_compaction_budget(state.calibration_model.as_deref());
+        state
+            .memos
+            .receipts
+            .set_effective_budget(effective_budget, calibration_factor);
+        // Set immediately after the pass that may have rewritten the
+        // transcript, so the ledger's digest memo cannot serve a stale block.
+        let revision = state.memos.revision;
+        state.memos.receipts.set_transcript_revision(revision);
+
+        if let Some(aborted) = self.check_loop_detection(
+            &mut state.messages,
+            &state.memos.identities,
+            &mut state.loop_steered,
+            state.total_cost_usd,
+            events,
+        ) {
+            return aborted.into();
+        }
+        if let Some(aborted) = self.check_budget(
+            &mut state.budget,
+            state.total_cost_usd,
+            &mut state.memos.warnings,
+            events,
+        ) {
+            return aborted.into();
+        }
+
+        let committed = match self
+            .run_model_call(
+                state.step,
+                &state.messages,
+                &mut state.budget,
+                &mut state.memos.receipts,
+                &mut state.memos.warnings,
+                events,
+            )
+            .await
+        {
+            Ok(committed) => committed,
+            Err(reason) => {
+                return StepOutcome::Aborted {
+                    reason,
+                    cost_usd: state.total_cost_usd,
+                };
+            }
+        };
+        state.calibration_model = Some(committed.result.model.clone());
+        state.total_cost_usd += committed.result.cost_usd;
+
+        if let Some(aborted) = self.handle_committed_result(
+            &committed,
+            state.total_cost_usd,
+            &mut state.messages,
+            &mut state.memos.warnings,
+            events,
+        ) {
+            // The budget-abort unwind never reaches `dispatch_completion`,
+            // which is where a committed step's speculation pool is
+            // otherwise harvested or discarded. Any read-only calls this
+            // step already speculated would drop silently here — account
+            // for them so #370's guarantee holds on the abort path too
+            // (#460). `handle_committed_result` only borrows `committed`,
+            // so the pool is still ours to move.
+            self.discard_speculation_pool(
+                committed.speculation,
+                SPECULATION_DISCARD_BUDGET_ABORT,
+                events,
+            );
+            return aborted.into();
+        }
+
+        if let Some(completed) = self
+            .dispatch_completion(committed, state.total_cost_usd, &mut state.messages, events)
+            .await
+        {
+            return completed.into();
+        }
+
+        // Advanced only by a step that committed and continued, so the index
+        // a checkpoint carries is always "the step that runs next".
+        state.step += 1;
+        StepOutcome::Continue
+    }
+
+    /// A fresh [`TurnState`] over `messages`, keyed to this engine's receipt
+    /// settings — the step-scoped counterpart of handing `run_turn` a history
+    /// and a meter.
+    #[must_use]
+    pub fn new_turn(&self, messages: Vec<CompletionMessage>, budget: BudgetGuard) -> TurnState {
+        TurnState::new(messages, budget, &self.config)
+    }
+
+    /// A [`TurnState`] resumed from a durable snapshot. See
+    /// [`TurnState::from_checkpoint`] for exactly what resuming rebuilds
+    /// rather than restores.
+    #[must_use]
+    pub fn resume_turn(&self, checkpoint: crate::step::Checkpoint) -> TurnState {
+        TurnState::from_checkpoint(checkpoint, &self.config)
     }
 
     /// The compaction budget this turn's next step will actually compare
@@ -1965,165 +2093,12 @@ type RetryAttemptFn<'a> = Box<
 type CompletionResultAlias = stella_protocol::CompletionResult;
 type SpeculationFuture<'a> = Pin<Box<dyn Future<Output = SpeculationPool> + 'a>>;
 
-/// Bound one provider dispatch by [`EngineConfig::model_timeout`].
-///
-/// The trip is [`ProviderError::Terminal`] on purpose. `Transport` is
-/// retryable, so classifying it that way would hand a provider that is simply
-/// not answering the same unbounded wait again once per attempt — multiplying
-/// the very window the deadline exists to close. `stella-serve`'s reverse-RPC
-/// deadline made the same call for the same reason.
-///
-/// Wrapping the dispatch rather than the whole retry future means the bound is
-/// per *generation*: backoff sleeps between attempts are not charged against
-/// it, and a slow-but-progressing provider is never cut off by time another
-/// attempt already spent.
-async fn bounded_generation<F>(
-    limit: Option<Duration>,
-    call: F,
-) -> Result<CompletionResultAlias, ProviderError>
-where
-    F: Future<Output = Result<CompletionResultAlias, ProviderError>>,
-{
-    let Some(limit) = limit else {
-        return call.await;
-    };
-    match tokio::time::timeout(limit, call).await {
-        Ok(result) => result,
-        Err(_) => Err(ProviderError::Terminal(format!(
-            "generation exceeded the {}s model deadline",
-            limit.as_secs()
-        ))),
-    }
-}
-
-/// Drop guard for the paid-call window ([`Engine::run_model_call`]): armed
-/// before the retried provider dispatch, disarmed on both normal exits. It
-/// fires only when the turn future is dropped mid-await — the caller-side
-/// hard cancel — leaving one content-free `Cancelled` usage envelope so a
-/// possibly-billed in-flight call never vanishes from the accounting
-/// stream. Content-free by construction, same privacy rule as every other
-/// `UsageIncomplete` envelope: no request or response body is representable.
-struct CancelUsageGuard {
-    events: EventSender,
-    role: stella_protocol::ModelCallRole,
-    provider: String,
-    started: std::time::Instant,
-    armed: bool,
-}
-
-impl CancelUsageGuard {
-    fn disarm(&mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for CancelUsageGuard {
-    fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-        let _ = self.events.send(AgentEvent::UsageIncomplete {
-            role: self.role,
-            provider: self.provider.clone(),
-            model: "unknown".into(),
-            reason: stella_protocol::UsageIncompleteReason::Cancelled,
-            duration_ms: self.started.elapsed().as_millis() as u64,
-            retries: None,
-        });
-    }
-}
-
-/// Accumulates one attempt's completed speculative executions
-/// (`crate::speculation`) and, if the pump future is dropped before its pool
-/// is harvested, emits one `SpeculationDiscarded` per entry. The drop path
-/// is a failed stream attempt (the retry builds a fresh pool) or a hard
-/// cancel mid-drain: read-only work that already ran real I/O but whose
-/// result never reaches the transcript. The committed path calls
-/// [`Self::harvest`] to disarm the guard and hand the pool to dispatch,
-/// where each entry is instead harvested or discarded per call (#370).
-struct SpeculationDropGuard {
-    events: EventSender,
-    pool: SpeculationPool,
-    armed: bool,
-}
-
-impl SpeculationDropGuard {
-    /// Disarm and hand the accumulated pool to the committed dispatch path.
-    fn harvest(&mut self) -> SpeculationPool {
-        self.armed = false;
-        std::mem::take(&mut self.pool)
-    }
-}
-
-impl Drop for SpeculationDropGuard {
-    fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-        for (call_id, result) in self.pool.drain() {
-            let _ = self.events.send(AgentEvent::SpeculationDiscarded {
-                call_id,
-                name: result.name,
-                reason: SPECULATION_DISCARD_ATTEMPT_FAILED.to_string(),
-            });
-        }
-    }
-}
-
 /// Prefix of the overflow summarizer's marker message
 /// ([`Engine::summarize_overflow_span`]). Shared with
 /// [`recent_call_records`]: the marker is User-role on the wire, but it is
 /// NOT a real user turn and must not act as a loop-detection window
 /// boundary.
 pub(crate) const SUMMARY_MARKER_PREFIX: &str = "[earlier history summarized";
-
-/// Consecutive overflow-summarizer failures this turn that trip the give-up
-/// latch ([`SummarizerHealth`]). Each failed attempt is a wasted completion
-/// and its latency; past this many in a row the pass stops re-firing and
-/// lets the next model call surface one clear overflow instead of N.
-const SUMMARIZER_FAILURE_LATCH: u32 = 2;
-
-/// Per-turn health of the overflow summarizer. A cheap summarizer model that
-/// keeps erroring, timing out, or returning nothing must not re-fire every
-/// remaining step of the turn: this latches after
-/// [`SUMMARIZER_FAILURE_LATCH`] consecutive non-progress results, and a
-/// successful splice clears it. Stack-local to [`Engine::run_turn`] — the
-/// engine holds no summarizer state of its own, so the latch is per-turn.
-#[derive(Default)]
-struct SummarizerHealth {
-    consecutive_failures: u32,
-}
-
-impl SummarizerHealth {
-    fn record_failure(&mut self) {
-        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
-    }
-
-    fn reset(&mut self) {
-        self.consecutive_failures = 0;
-    }
-
-    fn is_latched(&self) -> bool {
-        self.consecutive_failures >= SUMMARIZER_FAILURE_LATCH
-    }
-}
-
-/// What one compaction pass did: what it cost, and whether it rewrote the
-/// transcript in place.
-///
-/// `#[must_use]` is load-bearing. `rewrote` is the only signal that the two
-/// position-keyed memos — the loop detector's result identities and the receipt
-/// ledger's block digests — must drop their keys, and a caller that ignored it
-/// would leave both serving digests for bytes that no longer exist. Making the
-/// return value impossible to discard silently turns "remember to invalidate"
-/// from a convention into a compile error.
-#[must_use]
-struct CompactionPass {
-    /// The summarizer's spend, if the overflow fallback ran; zero otherwise.
-    cost_usd: f64,
-    /// True when a pass stubbed, aged, superseded or spliced anything.
-    rewrote: bool,
-}
 
 /// Prefix of the engine-injected stuck-loop steering message
 /// ([`Engine::check_loop_detection`]). User-role on the wire like every

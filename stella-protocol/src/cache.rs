@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 /// *established* a cache to hit (the diagnosis gates on that); the variants
 /// below are the three failure modes worth calling out, in the order the
 /// diagnosis discriminates them.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CacheCause {

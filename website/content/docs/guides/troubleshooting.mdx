@@ -1,0 +1,329 @@
+---
+title: When something isn't working
+description: Config that isn't applying, a key that won't resolve, hooks that never fire, a run that ends without doing anything — the checks in the order that finds it fastest.
+---
+
+Most Stella problems are one of a small number of things, and nearly all of them
+are answerable locally in a few seconds. This page is organized by **symptom**,
+and each section is ordered so the cheapest check that could explain it comes
+first.
+
+## The three commands that answer most of it
+
+```bash
+stella config     # what actually resolved: provider, model, key source, workspace
+stella models     # every provider, its key status, and which source supplied it
+stella doctor     # is the local state Stella owns sound?
+```
+
+Run these before forming a theory. `stella config` in particular resolves every
+source — flags, environment, all three `settings.json` scopes, `credentials.toml`
+— and prints the **effective** result, which is the single most common way a
+config mystery ends.
+
+## "My `settings.json` isn't applying"
+
+Four checks, in this order.
+
+### 1. Is Stella reading the file you are editing?
+
+There are three scopes, and they are merged rather than chosen:
+
+| Scope | Path | Preference |
+| --- | --- | --- |
+| project | `<workspace>/.stella/settings.json` | highest |
+| org-managed | `STELLA_MANAGED_SETTINGS`, else `/Library/Application Support/stella/settings.json` (macOS) or `/etc/stella/settings.json` | middle |
+| user | `~/.stella/settings.json` | lowest |
+
+A missing file at any scope is fine — it is skipped. A file that is **present but
+malformed** is reported as a named error rather than silently dropping your
+configuration, so if you are not seeing an error, the file parsed.
+
+### 2. Is a higher scope overriding it?
+
+Ordinary fields merge project over org-managed over user, and `stella config`
+shows the merged result. If your user-scope value is losing, something more
+specific set it too. On a machine with MDM you may have an org-managed file you
+did not know about — check the platform path above.
+
+### 3. Is the field one that merges the way you assumed?
+
+This is the check people skip, and the merge rules genuinely differ per field:
+
+<CardGrid size="md">
+  <OptionCard name="providers, agent_engine_config">
+    Merge **per field** — even `agents.<role>.params` composes per knob.
+  </OptionCard>
+  <OptionCard name="allowed_models">
+    **Replaces wholesale.** Whichever scope sets it owns the entire list. A project
+    file listing one model does not *add* to your user list; it replaces it.
+  </OptionCard>
+  <OptionCard name="hooks">
+    **Concatenate.** Org, repo, and personal hooks all fire, and no scope can remove
+    another's.
+  </OptionCard>
+  <OptionCard name="tools, mcp">
+    **Last scope wins per key** — and an org-managed `off` is a *ceiling* no lower
+    scope can grant back.
+  </OptionCard>
+</CardGrid>
+
+### 4. Is something outranking `settings.json` entirely?
+
+Command-line flags and some environment variables sit **above** settings:
+
+- **API key** — `--api-key` > provider env var > `settings.json` `api_key` >
+  `credentials.toml` > interactive prompt.
+- **Base URL** — `--base-url` > the `ZAI_GLM_CODING_PLAN=1` toggle (Z.ai only) >
+  `settings.json` `base_url` > the built-in default.
+
+An exported shell variable beats the file almost every time, which is the
+resolution to most "but I set it in settings.json" reports.
+
+<Callout type="info">
+Preview a change without starting a run — global flags first:
+
+```bash
+stella --model anthropic/claude-fable-5 config
+```
+</Callout>
+
+## "My API key isn't resolving"
+
+```bash
+stella models         # every provider, key status, and the source that supplied it
+stella auth list      # what credentials.toml holds, redacted, with resolution source
+```
+
+The chain is **first hit wins**, and nothing below the first hit is ever read:
+
+1. `--api-key` (requires an explicit `--model provider/…`)
+2. the provider's environment variable
+3. `settings.json` → `providers.<id>.api_key`
+4. `~/.stella/credentials.toml`
+5. an interactive prompt, on a TTY, when you named a provider
+
+Three specific traps:
+
+<CardGrid size="md">
+  <SpecCard title="The key is only in a .env file your shell never loads">
+    Project dotenv files are loaded into the environment before step 2, so a repo's
+    `.env.local` does reach Stella — but an **exported shell value always wins**, and a
+    dotenv loaded by an interactive-shell hook is not loaded for a non-interactive
+    invocation. `stella auth set <provider>` is the durable fix.
+  </SpecCard>
+  <SpecCard title="api_key_env renamed the variable">
+    A `providers.<id>.api_key_env` in settings **renames the primary variable** — the
+    named one is checked first, and the provider's original env var demotes to an
+    alias. If a teammate committed that, your usual variable is now the fallback.
+  </SpecCard>
+  <SpecCard title="An empty string is not unset">
+    `providers.<id>.api_key: ""` is treated as unset — but a value that is whitespace,
+    or a stale key, resolves and then fails at the provider. A 401 means the chain
+    worked and the key is wrong.
+  </SpecCard>
+</CardGrid>
+
+### A 401 that names the wrong provider
+
+If `settings.json` pins a `base_url` for one provider and you run without
+`--model`, auto-detection can pick a *different* provider whose key then gets
+sent to the pinned URL. The error names the key's provider while the request
+went somewhere else. Pin the model explicitly and the ambiguity disappears:
+
+```bash
+stella --model zai/glm-5.2 config
+```
+
+### Auto-detection picked a provider you did not expect
+
+With no `--model`, Stella takes the first provider with a resolvable credential,
+in this order:
+
+```text
+zai, anthropic, openai, xai, deepseek, gemini, openrouter, then vertex, and bedrock LAST
+```
+
+Vertex and Bedrock sit last so generic AWS or Google credentials present for
+other reasons never hijack selection. Any leftover key earlier in that list wins
+over the one you meant — `unset` it, or pin `--model`.
+
+## "Hooks, MCP servers, or custom tools never load"
+
+This is almost always the **project trust boundary**, working as designed.
+
+A fresh clone's `hooks`, `providers.*.base_url` / `api_key` / `api_key_env`,
+`mcp.registry_url`, `context_providers`, per-agent `prompt`s, and the whole of
+`.stella/mcp.toml` are held back until you opt in — otherwise any repository you
+cloned could run commands on your machine or route your keys through its server.
+
+A stderr notice names everything that was skipped. To grant it:
+
+```bash
+export STELLA_TRUST_PROJECT=1   # scope it per-repo with direnv or a shell guard
+```
+
+`STELLA_PROJECT_HOOKS=1` is the narrower legacy form — it trusts hooks, MCP, and
+context providers but leaves credential routing gated.
+
+<Callout type="warn">
+An **org-managed denial is a ceiling**: `tools: { "web": "off" }` or
+`authority.project_custom_tools: "off"` in the managed scope cannot be granted
+back by a project file, or by `STELLA_TRUST_PROJECT=1`. If a capability stays
+off after trusting the project, look at the managed file.
+</Callout>
+
+## "The model I configured isn't the one that ran"
+
+<CardGrid size="md">
+  <SpecCard title="Check allowed_models first">
+    It **replaces wholesale** across scopes. A model absent from the effective list is
+    not selectable, however it was configured.
+  </SpecCard>
+  <SpecCard title="A role fell back">
+    A configured role model whose provider has no credential **falls back to the
+    worker with a notice** rather than erroring. Configuration can never turn a
+    runnable pipeline into an error — so read the notice.
+  </SpecCard>
+  <SpecCard title="A circuit breaker opened">
+    Three consecutive transport failures open a provider's breaker; routing skips it
+    and reports the fallback visibly. After a cooldown, one trial call decides whether
+    it closes.
+  </SpecCard>
+  <SpecCard title="Cross-family judging moved the judge">
+    The judge prefers a healthy provider whose model *family* differs from the
+    worker's. With one family configured it degrades to the same family — with a
+    caveat, never an error.
+  </SpecCard>
+</CardGrid>
+
+## "`effort` or `reasoning` seems to be ignored"
+
+Two separate causes, and they are easy to confuse:
+
+1. **The provider drops it on the wire.** Z.ai, DeepSeek, and local endpoints do
+   not carry `effort` at all. The setting records intent and changes nothing.
+   Differentiate those roles with a strict `prompt` and `params.max_tokens`
+   instead.
+2. **An auto is overriding you.** `effort_auto` and `reasoning_auto` *override*
+   per-agent `effort` and `reasoning`. If you want per-agent values to apply,
+   the corresponding auto has to be `"off"`.
+
+That second one is why the [balanced profile](/docs/examples#balanced) carries no
+`agents` block at all and the [maximum-quality profile](/docs/examples#maximum-quality)
+turns both autos off.
+
+## "The agent answered about code that isn't there"
+
+The code graph re-indexes on every query, so a stale answer usually means the
+catch-up pass **failed** rather than that it was never run. That failure is
+non-fatal and reported rather than hidden:
+
+```text
+warning: the code graph index pass failed — answering from what the index already
+holds, which may be stale
+```
+
+If you see that, rebuild explicitly:
+
+```bash
+stella init
+stella graph definitions the_symbol_you_expected
+```
+
+A symbol that legitimately has two definitions is listed rather than silently
+resolved — that is not a bug, and it is usually the more interesting finding.
+
+## "A session won't open, or a command mentions `store.db`"
+
+```bash
+stella doctor            # read-only diagnosis, always safe
+stella doctor --repair   # quarantine a store SQLite judged corrupt
+```
+
+`--repair` **renames, never deletes** — the database and both sidecars move
+aside under one timestamp, whatever is still readable is copied to a separate
+salvaged database, and your next session starts fresh. Every quarantine is
+undoable with `mv`.
+
+`doctor` runs before configuration loads, on purpose: a workspace whose store is
+corrupt has to stay diagnosable without a working model config. One consequence
+is that `--output-format` does not apply to it.
+
+## "The run ended without doing anything"
+
+<CardGrid size="md">
+  <SpecCard title="The scope gate stopped it">
+    A plan over `max_steps` (5), `max_files` (8), or `max_cost_usd` (1.00) pauses for
+    review — and headless, without
+    `agent_engine_config.headless_scope_bypass: "on"`, it **ends the run** rather than
+    auto-approving. Deliberate: a gate that approves itself in CI is not a gate.
+  </SpecCard>
+  <SpecCard title="The budget tripped">
+    `--budget` aborts cleanly between steps. Exit code `1`; already-committed work
+    stays. Read `cost_usd` from `--output-format json` to confirm.
+  </SpecCard>
+  <SpecCard title="Verification found nothing to verify">
+    The zero-diff guard means a run that changed nothing can never claim success. If a
+    task was already done, that is the correct outcome.
+  </SpecCard>
+  <SpecCard title="It was interrupted">
+    Exit `130` is `SIGINT`, `143` is `SIGTERM` — distinguishable from a failure
+    exactly so a wrapping script can treat them differently.
+  </SpecCard>
+</CardGrid>
+
+## "Runs cost more than they should"
+
+Start with the cache columns — they explain most surprises:
+
+```bash
+stella stats --format json |
+  jq '.[] | select(.cache_hit_rate < 0.2) | {provider, model, cache_hit_rate, cache_expired_rewrites}'
+```
+
+Then find what changed between turns, which is the usual culprit behind a cold
+prefix:
+
+```bash
+stella inspect <EXEC> --step 0 --diff --only system
+```
+
+[Understand what a run cost](/docs/guides/what-a-run-cost) walks that whole chain.
+
+## Working entirely offline
+
+If you are diagnosing on a plane or inside an air gap, this much needs no
+network and no key: `stella config`, `stella doctor`, `stella models` (listing),
+`stella graph`, `stella scripts`, `stella storage`, `stella commands`,
+`stella stats`, `stella usage`, `stella inspect`, `stella context`,
+`stella proposals`, `stella memory`, and `stella observe`.
+
+The one remaining automatic outbound call is the model-catalog refresh, at most
+once per 24 hours:
+
+```bash
+export STELLA_CATALOG_AUTO_REFRESH=0
+```
+
+## Still stuck
+
+Collect the three outputs at the top of this page plus the failing command, and
+open an issue. `stella config` redacts the key to a preview, so its output is
+safe to paste; `stella inspect` output is **not** — it contains your prompts and
+source excerpts, and receipts never leave your machine unless you move them.
+
+<CardGrid size="sm">
+  <SpecCard title="Settings reference" href="/docs/configuration/settings">
+    Every field, the scope hierarchy, and the trust boundary in full.
+  </SpecCard>
+  <SpecCard title="Credentials" href="/docs/configuration/credentials">
+    The credential chain, `credentials.toml`, and cloud-provider extras.
+  </SpecCard>
+  <SpecCard title="stella doctor" href="/docs/commands/doctor">
+    What each verdict means, and exactly what `--repair` does to your disk.
+  </SpecCard>
+  <SpecCard title="API providers" href="/docs/api-providers">
+    Per-provider dialects, base URLs, and what each one drops on the wire.
+  </SpecCard>
+</CardGrid>

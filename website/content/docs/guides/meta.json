@@ -1,0 +1,11 @@
+{
+  "title": "Guides",
+  "pages": [
+    "index",
+    "fix-failing-ci",
+    "unfamiliar-codebase",
+    "what-a-run-cost",
+    "budget",
+    "troubleshooting"
+  ]
+}

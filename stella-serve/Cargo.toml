@@ -9,7 +9,22 @@ repository.workspace = true
 homepage.workspace = true
 publish.workspace = true
 
+[[bin]]
+name = "export-serve-schema"
+path = "src/bin/export_serve_schema.rs"
+# Only built when the wire contract is being regenerated, so a default build of
+# the workspace never compiles it or `schemars`.
+required-features = ["schema"]
+
+[features]
+# OFF by default, mirroring stella-protocol's own `schema` feature and for the
+# same reason: it adds the `schemars` derives that let `export-serve-schema`
+# emit docs/wire/serveframe.schema.json and its TypeScript twin, and a default
+# build of the shipping binary must never pay for describing the wire format.
+schema = ["dep:schemars", "stella-protocol/schema"]
+
 [dependencies]
+schemars = { workspace = true, optional = true }
 stella-protocol = { path = "../stella-protocol" }
 stella-core = { path = "../stella-core" }
 serde.workspace = true

@@ -1125,6 +1125,21 @@ fn render_composer_footer(
         Span::styled("⏎", key),
         Span::styled(" queue (never blocks)", dim),
     ];
+    // `>` steers the running turn — the highest-value affordance on this row,
+    // and until now advertised nowhere at all. Shown only while the focused
+    // agent is actually running, because that is the only time it does
+    // anything: a `>` typed at an idle agent is just the next prompt. It also
+    // takes priority over `!`/`/` in the width budget below, since it is the
+    // one thing a user watching a turn go the wrong way needs to know.
+    if model
+        .agents
+        .get(ui.focused)
+        .is_some_and(|a| a.status == crate::AgentStatus::Running)
+    {
+        left.push(Span::styled("  ·  ", sep));
+        left.push(Span::styled(">", key));
+        left.push(Span::styled(" steer this turn", dim));
+    }
     let extras = [("!", " shell"), ("/", " commands")];
     let left_budget = (area.width.saturating_sub(right_w + 1)) as usize;
     for (glyph, word) in extras {

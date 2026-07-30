@@ -95,6 +95,7 @@ pub use crate::receipt::{
 /// exists in this workspace — never duplicated per-crate (the TS-era
 /// `StageKind` duplication this structurally forbids, L-E1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum StageKind {
     /// Prompt classification and routing: how hard is this turn, and which
@@ -140,6 +141,7 @@ pub enum StageKind {
 /// `observed` (meter + warn), `enforced` (hard stop with a clean turn
 /// abort — never a mid-tool kill).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum BudgetMode {
     /// No metering at all — spend is neither tracked nor reported.
@@ -154,6 +156,7 @@ pub enum BudgetMode {
 /// `stella-core::budget::BudgetAxis` (kept separate so `stella-protocol`
 /// never depends on `stella-core`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum BudgetScope {
     /// The per-turn limit — reset at every `run_turn`.
@@ -165,6 +168,7 @@ pub enum BudgetScope {
 /// What kind of policy-plane decision a [`AgentEvent::PolicyDecision`]
 /// records (receipts spec §6.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum PolicyKind {
     /// A blocking policy chain evaluated a tool call or side effect.
@@ -190,6 +194,7 @@ pub enum PolicyKind {
 /// one-directional change in a way adding an [`AgentEvent`] variant no longer
 /// is.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ModelCallRole {
     /// Legacy events written before call-role attribution existed. The default
@@ -227,6 +232,7 @@ pub enum ModelCallRole {
 /// Content-free reason a provider attempt cannot contribute a truthful usage
 /// envelope. Error bodies and prompts are deliberately unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum UsageIncompleteReason {
     /// The provider returned a failure after dispatch, so the request was
@@ -253,6 +259,7 @@ pub enum UsageIncompleteReason {
 /// [`AgentEvent::Unknown`] around it. Without that indirection the forward-
 /// compat fallback would mean hand-writing a visitor for all 34 variants.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "snake_case", remote = "Self")]
 pub enum AgentEvent {
     /// The turn entered a new pipeline stage. Every stage boundary emits one,
@@ -1041,6 +1048,7 @@ impl<'de> Deserialize<'de> for AgentEvent {
 
 /// What happened to a file in a `FileChange` event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum FileChangeKind {
     /// Content was successfully read — no mutation, never a diff. Rides the
@@ -1069,6 +1077,7 @@ impl FileChangeKind {
 /// flip-oracle/tests ladder from a model judge's opinion — the two are
 /// never conflated (L-E11).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct JudgeEvidence {
     /// One line naming what was checked and what it showed.
     pub summary: String,
@@ -1089,6 +1098,7 @@ pub struct JudgeEvidence {
 /// `Baseline` and passing in `Candidate` is proof, while either result twice
 /// against one tree is a tree observed twice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ProofTree {
     /// The pre-execution tree — the code as it was before this turn touched it.
@@ -1104,6 +1114,7 @@ pub enum ProofTree {
 /// whole event as [`AgentEvent::Unknown`], and a reader that knows `Proof` but
 /// not a future step tags it `Unknown` at the step level rather than guessing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ProofStep {
     /// What assurance this turn is going to buy, stated by triage **before**
@@ -1171,6 +1182,7 @@ pub enum ProofStep {
 /// What a `ScopeReview` gate presents for approval before a large plan
 /// executes (L-E5).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ScopeProposal {
     /// One line describing the work, for the approval prompt's headline.
     pub summary: String,
@@ -1186,6 +1198,7 @@ pub struct ScopeProposal {
 
 /// Which kind of media artifact a job produces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum MediaKind {
     /// A raster image.
@@ -1200,6 +1213,7 @@ pub enum MediaKind {
 /// a failed job must never be distinguishable only by the absence of a
 /// success event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum MediaJobState {
     /// Accepted by the provider, not yet started.
@@ -1218,6 +1232,7 @@ pub enum MediaJobState {
 
 /// A completed media artifact: id + kind + where it landed on disk.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct MediaArtifactRef {
     /// The artifact id, matching the `artifact_id` its
     /// [`AgentEvent::MediaProgress`] events carried.
@@ -1235,6 +1250,7 @@ pub struct MediaArtifactRef {
 /// against the live source before rendering, never served from cache
 /// alone (L-V3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum PrStatus {
     /// Opened as a draft — not yet asking for review.
@@ -1251,6 +1267,7 @@ pub enum PrStatus {
 /// fleet monitor (`gh pr checks`). Reconciled against the live source
 /// before rendering, never served from cache alone (L-V3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum CiStatus {
     /// Checks exist but none have started reporting.
@@ -1267,6 +1284,7 @@ pub enum CiStatus {
 /// session-scoped working state — what the agent has planned, is doing,
 /// and has finished — mirrored to the store for cross-session findability.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct TaskItem {
     /// Stable per-session ordinal id ("1", "2", …) — what `task_complete`
     /// / `task_cancel` / `task_assign` reference.
@@ -1289,6 +1307,7 @@ pub struct TaskItem {
 /// `Cancelled`; a cancelled task keeps its row (the board is an audit
 /// surface, not just a scheduler).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
     /// Created and not yet started.

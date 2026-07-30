@@ -383,6 +383,29 @@ pub(crate) async fn write_sse_frame<W: AsyncWrite + Unpin>(
     Ok((b"data: ".len() + json.len() + 2) as u64)
 }
 
+/// Write one SSE event carrying its sequence number as the event `id`.
+///
+/// The `id:` line is not decoration. It is the half of the SSE specification
+/// that makes a stream resumable *without client code*: a browser `EventSource`
+/// records the last id it saw and, on an automatic reconnect, sends it back in
+/// the `Last-Event-ID` request header. Since the host this server exists for is
+/// a web app, emitting it turns reconnection into something the platform does
+/// rather than something every consumer has to re-implement. Non-browser
+/// clients, which control their own retry, use `?after=` instead — the same
+/// number by a different route.
+pub(crate) async fn write_sse_event<W: AsyncWrite + Unpin>(
+    stream: &mut W,
+    seq: u64,
+    json: &str,
+) -> std::io::Result<u64> {
+    let id = seq.to_string();
+    stream.write_all(b"id: ").await?;
+    stream.write_all(id.as_bytes()).await?;
+    stream.write_all(b"\n").await?;
+    let data = write_sse_frame(stream, json).await?;
+    Ok(data + (b"id: ".len() + id.len() + 1) as u64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

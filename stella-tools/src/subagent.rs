@@ -34,20 +34,34 @@
 //!
 //! # Spend
 //!
-//! The child's cost is pushed to a [`SubAgentSpendLedger`] the registry
-//! exposes through `ToolExecutor::drain_sub_agent_spend_usd`, which the
-//! engine folds into the parent's budget at the next step boundary. That
-//! ordering is what keeps `--budget` a hard ceiling: a tool cannot charge
-//! the guard directly, because the engine holds it mutably for the whole
-//! turn.
+//! The dispatcher pushes each child's cost to the
+//! [`SubAgentSpendLedger`](stella_core::subagent::SubAgentSpendLedger) the
+//! registry exposes through `ToolExecutor::drain_sub_agent_spend_usd`, which
+//! the engine folds into the parent's budget at the next step boundary. That
+//! ordering is what keeps `--budget` a hard ceiling: a tool cannot charge the
+//! guard directly, because the engine holds it mutably for the whole turn.
+//!
+//! This tool deliberately does **not** charge. It used to, on the line after
+//! `dispatch().await` — which never runs when the parent's turn is hard
+//! cancelled mid-call, leaving a child's real spend in no ledger at all.
+//! Settling belongs to whoever is still running when that happens, which is
+//! the child's own thread.
+//!
+//! # Interruption
+//!
+//! The dispatcher is session-scoped; the seams that pause and stop a turn
+//! are turn-scoped. [`TurnControlsSlot`] is the join: the driver publishes
+//! its gate and steering tap for the duration of the turn
+//! ([`crate::ToolRegistry::attach_turn_controls`]), and the dispatcher reads
+//! them when a `task` call arrives. Without it, Esc ended the parent while
+//! its children spent on.
 
 use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use stella_core::subagent::{
-    SubAgentDispatcher, SubAgentOutcome, SubAgentSpec, SubAgentSpendLedger, push_sub_agent_spend,
-};
+use stella_core::ports::TurnControls;
+use stella_core::subagent::{SubAgentDispatcher, SubAgentOutcome, SubAgentSpec};
 use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 use crate::registry::Tool;
@@ -56,6 +70,54 @@ use crate::registry::Tool;
 /// [`crate::ToolRegistry::attach_sub_agent_dispatcher`] runs — see the module
 /// docs on why this cannot be a constructor argument.
 pub type DispatcherSlot = Arc<RwLock<Option<Arc<dyn SubAgentDispatcher>>>>;
+
+/// Where the running turn publishes its pause gate and steering tap for the
+/// dispatcher to read. Empty between turns.
+pub type TurnControlsSlot = Arc<RwLock<TurnControls>>;
+
+/// Keeps a turn's [`TurnControls`] published for as long as it lives, and
+/// clears them on drop.
+///
+/// Returned by [`crate::ToolRegistry::attach_turn_controls`]; hold it for the
+/// turn and let it fall out of scope. Owning its slot handle rather than
+/// borrowing the registry means a driver can park it wherever the turn's
+/// scope actually is, including across an `await`.
+///
+/// A guard rather than a bare setter, and the asymmetry with
+/// [`crate::ToolRegistry::attach_events`] is deliberate: a stale event sender
+/// is inert (it writes to a channel nobody reads), but a stale
+/// [`stella_core::ports::TurnSteering`] is *armed*. `soft_stop_requested`
+/// latches by contract, so a tap left published past a stopped turn would
+/// stop every child of the next turn at its first boundary.
+///
+/// Clearing on drop — rather than on an explicit detach call — is the same
+/// argument as `stella_core::subagent::AgentAttribution`: the turn future can
+/// be dropped mid-flight by a hard cancel or a panic in a tool, and the
+/// controls must come down on those paths too.
+#[must_use = "the turn's controls detach the moment this guard is dropped"]
+pub struct TurnControlsGuard {
+    slot: TurnControlsSlot,
+}
+
+impl TurnControlsGuard {
+    /// Publish `controls` into `slot` until the guard drops.
+    ///
+    /// Replaces whatever was there rather than nesting. Turns do not overlap
+    /// on one registry — every driver that runs turns concurrently (deck
+    /// worker lanes, fleet workers, Best-of-N candidates) builds a registry
+    /// per lane — so a stack of guards would model a state that cannot
+    /// happen, at the cost of a leak whenever one was dropped out of order.
+    pub(crate) fn attach(slot: &TurnControlsSlot, controls: TurnControls) -> Self {
+        *slot.write().unwrap_or_else(|p| p.into_inner()) = controls;
+        Self { slot: slot.clone() }
+    }
+}
+
+impl Drop for TurnControlsGuard {
+    fn drop(&mut self) {
+        *self.slot.write().unwrap_or_else(|p| p.into_inner()) = TurnControls::none();
+    }
+}
 
 /// Ceiling on the characters a child may hand back.
 ///
@@ -83,13 +145,12 @@ const CHILD_SYSTEM_PROMPT: &str = "You are a research sub-agent. You have been g
 /// `task` — delegate a bounded research question to a read-only sub-agent.
 pub struct SpawnSubAgent {
     dispatcher: DispatcherSlot,
-    spend: SubAgentSpendLedger,
 }
 
 impl SpawnSubAgent {
     #[must_use]
-    pub fn new(dispatcher: DispatcherSlot, spend: SubAgentSpendLedger) -> Self {
-        Self { dispatcher, spend }
+    pub fn new(dispatcher: DispatcherSlot) -> Self {
+        Self { dispatcher }
     }
 }
 
@@ -179,11 +240,11 @@ impl Tool for SpawnSubAgent {
             ..SubAgentSpec::default()
         };
 
+        // Already settled by the time this resolves — the dispatcher charges
+        // the ledger from the child's own thread, which is the only place
+        // that still runs when a hard cancel means this `await` never
+        // resumes. Charging here too would double-bill.
         let outcome = dispatcher.dispatch(spec).await;
-        // Push before rendering: the money is owed whatever the outcome, and
-        // an early return that skipped this would silently drop it from the
-        // parent's budget.
-        push_sub_agent_spend(&self.spend, outcome.cost_usd());
         render(&outcome)
     }
 }

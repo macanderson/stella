@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 /// Schema for its input. Kept as `serde_json::Value` rather than a typed
 /// schema struct so any tool (built-in or MCP-supplied) can describe itself
 /// without a second schema language.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolSchema {
     /// The tool's identifier, as the model must spell it in a
@@ -30,6 +31,7 @@ pub struct ToolSchema {
 
 /// One tool invocation the model requested.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ToolCall {
     /// Stable id correlating this call to its eventual `ToolResult`.
     pub call_id: String,
@@ -44,6 +46,7 @@ pub struct ToolCall {
 /// The output of running a tool — success or a typed, named failure. Never a
 /// bare string: every tool result is inspectable without string-sniffing.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ToolOutput {
     /// The tool ran to completion.
@@ -69,6 +72,7 @@ impl ToolOutput {
 }
 
 /// A tool result reported back to the model, correlated to its call.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolResult {
     /// The [`ToolCall::call_id`] this answers.

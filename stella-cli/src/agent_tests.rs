@@ -2,6 +2,7 @@ use super::*;
 use crate::config::{ConfiguredProvider, PROVIDERS, ProviderConfig};
 use stella_model::credential::ApiKey;
 use stella_pipeline::CandidateWorkspacePort;
+use stella_protocol::event::BudgetMode; // no longer re-exported via `super::*` (#971)
 
 #[test]
 fn one_shot_reflection_defaults_on_for_every_output_format() {

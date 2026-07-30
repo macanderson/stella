@@ -567,6 +567,12 @@ pub struct DeckUi {
     pub issues: IssuesPanel,
     /// The one global composer — typing works from any tab.
     pub composer: Composer,
+    /// A mid-turn submission parked at the routing card, waiting for the user
+    /// to say whether it steers the running turn, continues the thread, or
+    /// forks a sidecar. See [`dispatch`].
+    pub pending_dispatch: Option<PendingDispatch>,
+    /// Whether that card is raised at all (default: yes).
+    pub ask_before_spawn: AskBeforeSpawn,
     pub splash: SplashState,
     /// Startup system notifications, shown as a transient dialog rather than
     /// as transcript rows (see [`crate::notice`]).
@@ -766,6 +772,8 @@ impl Default for DeckUi {
             skills: SkillsPanel::default(),
             issues: IssuesPanel::default(),
             composer: Composer::with_paste_threshold(crate::composer::DECK_PASTE_LINE_THRESHOLD),
+            pending_dispatch: None,
+            ask_before_spawn: AskBeforeSpawn::default(),
             splash: SplashState::new(),
             notice: NoticeState::new(),
             help_open: false,
@@ -1401,8 +1409,10 @@ fn push_single_line(buf: &mut String, text: &str) {
 /// pending ask-user gate never reaches them either — it folds the agent to
 /// [`AgentStatus::WaitingInput`], which fails rule 10's `Running` check.
 mod create;
+pub mod dispatch;
 mod gates;
 mod nav;
+pub use dispatch::{AskBeforeSpawn, DispatchRoute, PendingDispatch};
 pub use nav::TranscriptSearch;
 pub(crate) use nav::is_folded;
 use nav::{handle_search_key, reveal_current_match, seek_failure, toggle_fold};
@@ -1410,6 +1420,14 @@ use nav::{handle_search_key, reveal_current_match, seek_failure, toggle_fold};
 pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
     if key.kind == KeyEventKind::Release {
         return DeckAction::Ignored;
+    }
+
+    // The routing card owns every key while it is up — it is holding the
+    // user's words, and the only way out is to say where they go (or Esc,
+    // which hands them back to the composer). Checked before Ctrl-C so quit
+    // still wins, which the caller handles above this function.
+    if let Some(action) = dispatch::handle_key(key, ui) {
+        return action;
     }
 
     let is_ctrl_o =
@@ -1662,7 +1680,7 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
             }
             _ => {}
         }
-    } else if let Some(action) = handle_slash_key(key, &slash, ui) {
+    } else if let Some(action) = handle_slash_key(key, &slash, ui, model) {
         return action;
     }
 
@@ -1714,7 +1732,7 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
     // motion on the buffer internally).
     if !ui.composer.is_blank() {
         match classify_enter(&key) {
-            EnterAction::Submit => return dispatch_submission(ui),
+            EnterAction::Submit => return dispatch_submission(ui, model),
             EnterAction::Newline => {
                 ui.composer.insert_newline();
                 return DeckAction::Handled;
@@ -1774,7 +1792,7 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
         }
     }
 
-    handle_composer_key(key, ui)
+    handle_composer_key(key, ui, model)
 }
 
 /// The help-overlay key map. The overlay is modal: scrolling keys drive it,
@@ -1828,12 +1846,20 @@ fn handle_help_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
 /// reinterpretation of a plain Enqueue: the deck mirrors every queue edit
 /// locally at send time, and a message whose meaning depended on driver
 /// state the deck cannot see would let the two queue views drift.
-fn submit_prompt(ui: &mut DeckUi, text: String) -> DeckAction {
+///
+/// Everything else goes through [`dispatch::route`], which raises the routing
+/// card when the target agent is mid-turn and the text does not already say
+/// where it belongs. A held dispatch skips the card: the double-Esc already
+/// *was* the user saying "run mine next".
+fn submit_prompt(ui: &mut DeckUi, model: &WorkspaceModel, text: String) -> DeckAction {
     if ui.dispatch_held {
         ui.dispatch_held = false;
-        DeckAction::Send(WorkspaceInput::EnqueueFront { text })
-    } else {
-        DeckAction::Send(WorkspaceInput::Enqueue { text })
+        return DeckAction::Send(WorkspaceInput::EnqueueFront { text });
+    }
+    match dispatch::route(ui, model, text) {
+        Some(input) => DeckAction::Send(input),
+        // The card is up and now holds the text; the keystroke is spent.
+        None => DeckAction::Handled,
     }
 }
 
@@ -1852,7 +1878,12 @@ fn slash_matches(ui: &DeckUi) -> Vec<String> {
 /// Deck-local commands (tab switches, the help overlay) are intercepted here
 /// and act on the UI directly; everything else is enqueued for the driver,
 /// which owns the session-level vocabulary (`/clear`, `/models`, `/init`, …).
-fn handle_slash_key(key: KeyEvent, matches: &[String], ui: &mut DeckUi) -> Option<DeckAction> {
+fn handle_slash_key(
+    key: KeyEvent,
+    matches: &[String],
+    ui: &mut DeckUi,
+    model: &WorkspaceModel,
+) -> Option<DeckAction> {
     match handle_slash_popup_key(key, matches, &mut ui.composer, &mut ui.slash_selected)? {
         SlashPopupOutcome::Handled => Some(DeckAction::Handled),
         SlashPopupOutcome::Submit(text) => Some(match text.as_str() {
@@ -1916,7 +1947,7 @@ fn handle_slash_key(key: KeyEvent, matches: &[String], ui: &mut DeckUi) -> Optio
             // Everything else — including `/help` — is enqueued for the
             // driver, which owns the session vocabulary and answers into the
             // transcript (a transient overlay would leave no record).
-            _ => submit_prompt(ui, text),
+            _ => submit_prompt(ui, model, text),
         }),
     }
 }
@@ -3934,7 +3965,7 @@ fn handle_session_key(
 /// that executes IMMEDIATELY, bypassing the prompt queue and any busy agent
 /// entirely; any other prompt ALWAYS enqueues — never blocks on a busy agent,
 /// though a held dispatch (see [`submit_prompt`]) jumps it to the front.
-fn dispatch_submission(ui: &mut DeckUi) -> DeckAction {
+fn dispatch_submission(ui: &mut DeckUi, model: &WorkspaceModel) -> DeckAction {
     // The deck queue is text-shaped: attachments enter deck prompts as
     // pasted payload *paths* (extracted at dispatch by the driver), so the
     // submission's text is the whole content here.
@@ -3956,7 +3987,7 @@ fn dispatch_submission(ui: &mut DeckUi) -> DeckAction {
                 DeckAction::Shell(cmd)
             }
         }
-        Some(text) => submit_prompt(ui, text),
+        Some(text) => submit_prompt(ui, model, text),
         None => DeckAction::Ignored,
     }
 }
@@ -3965,9 +3996,9 @@ fn dispatch_submission(ui: &mut DeckUi) -> DeckAction {
 /// composer's Enter/motion keys were already handled by [`handle_deck_key`]'s
 /// textarea interception; this fallback covers typing plus the blank-composer
 /// Enter, which submits nothing and inserts nothing.)
-fn handle_composer_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
+fn handle_composer_key(key: KeyEvent, ui: &mut DeckUi, model: &WorkspaceModel) -> DeckAction {
     match classify_enter(&key) {
-        EnterAction::Submit => return dispatch_submission(ui),
+        EnterAction::Submit => return dispatch_submission(ui, model),
         // No line breaks into a fully blank composer — a stray leading
         // newline is never what an empty ⏎ meant.
         EnterAction::Newline => {

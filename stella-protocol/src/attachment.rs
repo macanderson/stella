@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 /// which provider wire shape (image block, document block, inline text, …)
 /// the model layer emits — and which kinds a given dialect must degrade to a
 /// descriptive text note instead.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AttachmentKind {
@@ -44,6 +45,7 @@ pub enum AttachmentKind {
 }
 
 /// Where an attachment's payload lives.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AttachmentSource {
@@ -63,6 +65,7 @@ pub enum AttachmentSource {
 }
 
 /// One multimodal input attached to a user message.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Attachment {
     /// Display name — the original filename, or a synthetic one for

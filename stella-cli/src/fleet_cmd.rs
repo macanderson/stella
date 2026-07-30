@@ -38,6 +38,7 @@
 use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use colored::Colorize;
@@ -650,12 +651,20 @@ async fn run_task(
     cfg.workspace_root = root.to_path_buf();
     let provider = agent::build_provider(&cfg)?;
     let registry_options = agent::registry_options(&cfg);
-    let registry = agent::new_tool_registry(root.to_path_buf(), registry_options.clone()).await;
+    // `Arc` because the worker's sub-agent dispatcher holds a `Weak` back to
+    // it (`crate::subagent`) — the registry is the child's tool set.
+    let registry =
+        Arc::new(agent::new_tool_registry(root.to_path_buf(), registry_options.clone()).await);
+    // As in a deck lane: without a dispatcher the `task` tool is advertised
+    // and always refuses, and the pause gate published below has nothing to
+    // reach. A worker's children inherit its headless posture through the
+    // registry they run against.
+    crate::subagent::install_for_session(&cfg, &registry)?;
     let active_rules = crate::rules::enforce_workspace_rules(&registry, root, &cfg.authority);
     // Claim-on-first-write (crate::claims): tool-level write claims + the
     // transient build lane, coordinated across every writer in the
     // workspace. Same holder as the fleet's declared claims — re-entrant.
-    let claims = crate::claims::ClaimTap::new(&registry, claims_store, claim_holder);
+    let claims = crate::claims::ClaimTap::new(&*registry, claims_store, claim_holder);
     // A fleet worker runs the operator's tool policy, same as every other
     // driver — an isolated worktree is not a different trust posture.
     let permitted = agent::PolicyToolSet::new(&claims, agent::session_tool_policy(&cfg));
@@ -848,8 +857,15 @@ async fn run_task(
         } else {
             // The pause line gates the raw step-loop at the engine's step
             // boundary (never mid-tool), and the stop line races the turn.
+            // `Arc` so the gate can be published to the registry as well as
+            // borrowed by the engine — a paused worker must not keep spending
+            // inside a sub-agent it dispatched, which this worker's dispatcher
+            // (installed above) makes reachable.
+            let gate: Arc<WatchGate> = Arc::new(WatchGate(pause));
+            let _controls = registry.attach_turn_controls(
+                stella_core::ports::TurnControls::none().with_gate(gate.clone()),
+            );
             let raced = {
-                let gate = WatchGate(pause);
                 let hook_runner = ShellHookRunner;
                 let mut engine = Engine::with_sleeper(
                     &*provider,
@@ -857,7 +873,7 @@ async fn run_task(
                     agent::engine_config_for(&cfg),
                     &TokioSleeper,
                 )
-                .with_gate(&gate);
+                .with_gate(gate.as_ref());
                 if let Some(hooks) = &cfg.hooks {
                     engine = engine.with_hooks(hooks, &hook_runner);
                 }

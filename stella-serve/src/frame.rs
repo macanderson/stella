@@ -29,6 +29,7 @@ use stella_protocol::{AgentEvent, CompletionRequest, CompletionResult, ProviderE
 /// is materialized with `CompletionRequestRef::into_owned`; a tool's `input`
 /// arrives as `&Value` and is cloned there) — which is what lets a frame cross
 /// from the session thread to the server runtime.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerFrame {
@@ -56,6 +57,7 @@ pub enum ServerFrame {
 /// Serializable projection of [`TurnOutcome`] for the wire. `TurnOutcome` lives
 /// in `stella-core` and is not itself `Serialize`, so the boundary owns the
 /// mapping.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum TurnOutcomeWire {
@@ -84,6 +86,7 @@ impl From<TurnOutcome> for TurnOutcomeWire {
 }
 
 /// Host → engine: the result of a [`ServerFrame::ToolRequest`].
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResultIn {
     pub request_id: String,
@@ -92,6 +95,7 @@ pub struct ToolResultIn {
 
 /// Host → engine: the result of a [`ServerFrame::ProviderRequest`] — either a
 /// completed model response or a classified provider error.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderResultIn {
     pub request_id: String,
@@ -100,6 +104,7 @@ pub struct ProviderResultIn {
 }
 
 /// The success-or-error half of a [`ProviderResultIn`].
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ProviderOutcomeIn {
@@ -111,6 +116,7 @@ pub enum ProviderOutcomeIn {
 /// failure at its adapter (never re-derived here) and sends the class; the
 /// engine reconstructs a real [`ProviderError`] so its retry logic behaves
 /// exactly as it would with a local provider.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ProviderErrorWire {

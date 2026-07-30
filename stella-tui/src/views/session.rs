@@ -334,14 +334,20 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     // does not reflow as the proof accumulates.
     let proof_h = crate::views::proof::band_height(&sm.proof);
 
+    // The routing card: raised when a prompt arrives mid-turn and the deck
+    // will not guess where it goes. Above the transcript with the other
+    // gates, because it is the same kind of thing — work parked on an answer.
+    let dispatch_h: u16 = if ui.pending_dispatch.is_some() { 7 } else { 0 };
+
     let bands = Layout::vertical([
-        Constraint::Length(1),       // identity header
-        Constraint::Length(3),       // HUD
-        Constraint::Length(scope_h), // pending scope review (0 = collapsed)
-        Constraint::Length(ask_h),   // pending ask-user (0 = collapsed)
-        Constraint::Length(tasks_h), // task-board checklist (0 = collapsed)
-        Constraint::Min(1),          // transcript
-        Constraint::Length(proof_h), // proof rail (0 = collapsed)
+        Constraint::Length(1),          // identity header
+        Constraint::Length(3),          // HUD
+        Constraint::Length(scope_h),    // pending scope review (0 = collapsed)
+        Constraint::Length(ask_h),      // pending ask-user (0 = collapsed)
+        Constraint::Length(dispatch_h), // mid-turn routing (0 = collapsed)
+        Constraint::Length(tasks_h),    // task-board checklist (0 = collapsed)
+        Constraint::Min(1),             // transcript
+        Constraint::Length(proof_h),    // proof rail (0 = collapsed)
     ])
     .split(area);
 
@@ -359,18 +365,21 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         let answered = ui.ask_answered.contains(&agent.meta.id);
         render_ask_user(prompt, answered, bands[3], buf);
     }
+    if let Some(pending) = &ui.pending_dispatch {
+        crate::views::dispatch_card::render(pending, bands[4], buf);
+    }
     if !task_rows.is_empty() {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(theme::muted())
             .title(" TASKS ");
-        Paragraph::new(task_rows).block(block).render(bands[4], buf);
+        Paragraph::new(task_rows).block(block).render(bands[5], buf);
     }
 
     // Transcript: fold through the incremental cache (settled entries fold
     // once; only the streaming tail re-folds per frame), then reuse the
     // line-exact scroll window over the cached rows.
-    let width = inner_width(bands[5]);
+    let width = inner_width(bands[6]);
     let empty = HashSet::new();
     let expanded_set = ui.expanded.get(&agent.meta.id).unwrap_or(&empty);
     // The plan is memoized on [`FoldPlanKey`] (taken out of `ui` so the
@@ -401,7 +410,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         &plan,
     );
     ui.session_plan = Some((plan_key, plan));
-    let height = inner_height(bands[5]);
+    let height = inner_height(bands[6]);
     let total = ui.session_fold.total();
 
     // A selection move from the key handler lands here, where visual-row
@@ -480,11 +489,11 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         total,
         ui.session_scroll.follow,
         Some(&hint),
-        bands[5],
+        bands[6],
         buf,
     );
     if proof_h > 0 {
-        crate::views::proof::render(&sm.proof, bands[6], buf);
+        crate::views::proof::render(&sm.proof, bands[7], buf);
     }
 }
 

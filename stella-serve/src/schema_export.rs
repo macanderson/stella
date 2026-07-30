@@ -1,0 +1,188 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
+//! A machine-checked description of the **serve transport** wire format.
+//!
+//! `stella-protocol`'s `schema_export` describes [`AgentEvent`] — the payload.
+//! This module describes the envelope around it: the [`ServerFrame`] union a
+//! host reads off the SSE stream, and the two result bodies it POSTs back.
+//! Together they are everything a client of `stella-serve` parses or produces.
+//!
+//! Split from the protocol's exporter rather than merged into it because the
+//! two contracts have different owners and different blast radii. `AgentEvent`
+//! is consumed by the TUI, `--output-format stream-json`, *and* this server; a
+//! `ServerFrame` exists only between this server and its host. Publishing them
+//! as one artifact would imply a coupling that is not there, and would make a
+//! transport change look like a change to the CLI's output format.
+//!
+//! The TypeScript printer is *not* duplicated: this calls
+//! [`stella_protocol::schema_export::typescript_declarations_with_header`], so
+//! there is one subset of JSON Schema to keep in step rather than two.
+//!
+//! # What the schema cannot say
+//!
+//! Two properties of the live stream are outside JSON Schema and are stated in
+//! the generated banner instead, because a client that misses them breaks:
+//!
+//! - **Every frame carries a `seq`** that is not on [`ServerFrame`] itself. It
+//!   is added by the transport at delivery time (`crate::history`), so the
+//!   object on the wire is the frame's own shape *plus* `seq`. The `.d.ts`
+//!   models that as an intersection, and `envelope_shape_is_frame_plus_seq` in
+//!   this crate's tests pins it against a really-serialized frame.
+//! - **`replay_truncated` is a transport frame, not an engine one.** It is
+//!   emitted when a resume point has aged out of the retained ring, and it
+//!   deliberately has no `seq`: it describes what the server can no longer
+//!   supply rather than something that happened in the turn.
+
+use serde_json::Value;
+use stella_protocol::schema_export::{UnsupportedSchema, typescript_declarations_with_header};
+
+use crate::frame::{ProviderResultIn, ServerFrame, ToolResultIn};
+
+/// The JSON Schema (2020-12) for one outbound frame.
+#[must_use]
+pub fn server_frame_schema() -> Value {
+    schemars::schema_for!(ServerFrame).to_value()
+}
+
+/// The JSON Schema for the tool-result body a host POSTs back.
+#[must_use]
+pub fn tool_result_schema() -> Value {
+    schemars::schema_for!(ToolResultIn).to_value()
+}
+
+/// The JSON Schema for the provider-result body a host POSTs back.
+#[must_use]
+pub fn provider_result_schema() -> Value {
+    schemars::schema_for!(ProviderResultIn).to_value()
+}
+
+/// Both inbound bodies in one document, as a `$defs` container.
+///
+/// A container rather than a `oneOf`: these are the bodies of **two different
+/// endpoints**, not two arms of one tagged union, and neither carries a
+/// discriminant. Publishing them as a union would tell a client it may send
+/// either shape to either route, which is false — and the shared TypeScript
+/// printer rejected exactly that framing when it was tried, because a `oneOf`
+/// with no `type` const is not something it can print an honest discriminated
+/// union from. The printer was right; the modeling was wrong.
+#[must_use]
+pub fn inbound_schema() -> Value {
+    serde_json::json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "StellaServeInbound",
+        "description":
+            "Bodies a host POSTs back to answer a reverse request. ToolResultIn \
+             answers POST /v1/turns/{id}/tool-result; ProviderResultIn answers \
+             POST /v1/turns/{id}/provider-result. Each is keyed by the \
+             request_id carried on the frame it answers. This document is a \
+             definitions container, not a union: the two are not \
+             interchangeable and carry no discriminant.",
+        "$defs": {
+            "ToolResultIn": tool_result_schema(),
+            "ProviderResultIn": provider_result_schema(),
+        },
+    })
+}
+
+/// Every committed artifact, as `(filename, contents)`.
+///
+/// # Errors
+///
+/// [`UnsupportedSchema`] when a generated schema uses a construct the shared
+/// TypeScript printer does not model. Loud rather than approximate: a `.d.ts`
+/// that lies is worse than no `.d.ts`.
+pub fn artifacts() -> Result<Vec<(&'static str, String)>, UnsupportedSchema> {
+    let outbound = server_frame_schema();
+
+    let mut ts = typescript_declarations_with_header(&outbound, OUTBOUND_HEADER)?;
+    ts.push_str(ENVELOPE_SUFFIX);
+    // Printed one root at a time, for the reason `inbound_schema` documents:
+    // they are two endpoint bodies, so each prints as its own interface rather
+    // than as an arm of a union nothing discriminates.
+    ts.push_str(&typescript_declarations_with_header(
+        &tool_result_schema(),
+        INBOUND_HEADER,
+    )?);
+    ts.push_str(&typescript_declarations_with_header(
+        &provider_result_schema(),
+        "",
+    )?);
+
+    let mut json =
+        serde_json::to_string_pretty(&outbound).expect("a JSON Schema is always serializable");
+    json.push('\n');
+    let mut inbound_json = serde_json::to_string_pretty(&inbound_schema())
+        .expect("a JSON Schema is always serializable");
+    inbound_json.push('\n');
+
+    Ok(vec![
+        ("serveframe.schema.json", json),
+        ("serveinbound.schema.json", inbound_json),
+        ("serveframe.d.ts", ts),
+    ])
+}
+
+const OUTBOUND_HEADER: &str = "\
+// GENERATED FILE — DO NOT EDIT.
+//
+// Regenerate with:  bash scripts/export-agentevent-schema.sh
+// Source of truth:  stella-serve/src/frame.rs
+// Guarded by:       scripts/check-wire-schema.sh (`make wire-schema`)
+//
+// The `stella-serve` transport contract: what a host reads off
+// `GET /v1/turns/{id}/events` and what it POSTs back.
+//
+// Frames arrive as SSE events. Each has an `id:` line carrying the frame's
+// `seq` and a `data:` line carrying the JSON below.
+";
+
+/// The one piece of the contract the schema cannot express, written once here
+/// rather than left for each consumer to rediscover.
+const ENVELOPE_SUFFIX: &str = "
+// ── the envelope ────────────────────────────────────────────────────────────
+//
+// `seq` is added by the transport at delivery time, not by the engine, so it
+// is not a field on any ServerFrame variant above. On the wire it sits
+// alongside them: `{\"seq\":12,\"type\":\"event\",\"event\":{…}}`.
+//
+// It is monotonic and gapless in DELIVERY order, starting at 1, and is also
+// emitted as the SSE `id:` line — which is what lets a browser EventSource
+// resume automatically via `Last-Event-ID`.
+
+/** One frame as it appears on the wire: the engine's frame, plus its seq. */
+export type StellaWireFrame = ServerFrame & { seq: number };
+
+/**
+ * Sent instead of a replay when the requested resume point has already been
+ * evicted from the server's retained ring.
+ *
+ * Deliberately has no `seq`: it describes what the transport can no longer
+ * supply, not something that happened in the turn. Receiving it means the
+ * frames between `requested_after` and `oldest_retained` are unrecoverable —
+ * reconnect with `?after=0` to replay what is still held, or abandon the turn.
+ */
+export interface ReplayTruncated {
+  type: \"replay_truncated\";
+  /** The seq the client asked to resume after. */
+  requested_after: number;
+  /** The oldest seq the server still holds. */
+  oldest_retained: number;
+}
+
+/** Anything a `data:` line can carry. */
+export type StellaSseFrame = StellaWireFrame | ReplayTruncated;
+";
+
+const INBOUND_HEADER: &str = "
+// ── inbound: answering a reverse request ────────────────────────────────────
+//
+// The engine never runs a model or a tool itself. When it needs one it emits a
+// `provider_request` / `tool_request` frame carrying a `request_id`, and parks
+// that step until the host POSTs the result back under the same id.
+//
+// An outstanding reverse request is NOT re-announced on resume: asking for
+// `?after=N` asserts you received everything through N, obligations included.
+// A client that persisted its seq but not its in-flight request ids must
+// resume from `?after=0` and replay to rediscover what it owes.
+";

@@ -31,17 +31,29 @@ pub struct ProviderConfig {
 }
 
 impl ProviderConfig {
-    /// Narrow this to the parts [`stella_model::factory::build_provider`] needs.
+    /// Narrow this to the parts [`stella_runtime::build_provider`] needs.
     ///
-    /// The factory deliberately does not take a whole `ProviderConfig`: env var
+    /// The runtime deliberately does not take a whole `ProviderConfig`: env var
     /// names, aliases, and the default model are credential-resolution and
-    /// config-UI concerns that belong up here, not in the model layer.
-    pub fn factory_spec(&self) -> stella_model::factory::ProviderSpec<'_> {
-        stella_model::factory::ProviderSpec {
-            id: self.id,
-            display_name: self.display_name,
+    /// config-UI concerns that belong up here, not below the CLI. Keeping the
+    /// narrowing on the config type means the field-by-field mapping exists
+    /// once, next to the fields it reads, rather than at each build site.
+    pub fn runtime_parts(
+        &self,
+        model_id: &str,
+        api_key: stella_model::ApiKey,
+        base_url: String,
+        base_url_override: Option<&str>,
+    ) -> stella_runtime::ProviderParts {
+        stella_runtime::ProviderParts {
+            id: self.id.to_string(),
+            display_name: self.display_name.to_string(),
             dialect: self.dialect,
             seeded: self.seeded,
+            model_id: model_id.to_string(),
+            api_key,
+            base_url,
+            base_url_override: base_url_override.map(str::to_string),
         }
     }
 }

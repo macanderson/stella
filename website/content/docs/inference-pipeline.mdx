@@ -130,17 +130,53 @@ testing — with the full [toolbelt](/docs/agent-tools) and its
 
 ### 6. Verify — the deterministic ladder
 
-Verification prefers evidence over opinion, in strict order:
+Verification prefers evidence over opinion. Three deterministic signals are
+gathered first:
 
 - **The flip oracle.** The test command (yours or the witness's) must **fail
   before** the change and **pass after** it. A suite that was already green
   proves nothing; the fail→pass flip is what proves the change did the work.
+  The oracle is a state machine keyed on a normalized command string: it locks
+  onto the first command it sees *fail*, and only a later *pass of that same
+  command* moves it to flipped — which structurally excludes the "it passed,
+  ship it" false positive.
 - **The zero-diff guard.** A run that changed nothing (including untracked
   files) can never claim success.
 - **The diff budget.** A small diff (≤ 400 changed lines by default) backed by
   deterministic evidence can submit without any model judge at all.
-- **Escalation to the judge** happens only when deterministic evidence is
-  unavailable or inconclusive.
+
+From those, the ladder picks one of **four** outcomes — before any model judge
+runs, and in this order:
+
+<CardGrid size="md">
+  <OptionCard name="1 · Revise">
+    Touched tests are **red**. That is already a deterministic failure, so the evidence
+    goes straight back into a revision turn. No judge call is spent confirming a
+    failure that is not in doubt.
+  </OptionCard>
+  <OptionCard name="2 · Unverifiable">
+    **Every** channel was blind — no flip, no test result, an unreadable working tree,
+    and no recorded file touch. The ladder **abstains**: no judge call, and the run is
+    scored as *unverified* rather than passed or failed.
+  </OptionCard>
+  <OptionCard name="3 · Submit fast">
+    Flip achieved, touched tests green, diff within budget. The full deterministic
+    pass — the model judge is **skipped** entirely.
+  </OptionCard>
+  <OptionCard name="4 · Model judge">
+    Genuinely inconclusive — no flip, or a diff over budget, or tests that could not
+    run — but at least one channel could still see something. Only here is a judge
+    asked.
+  </OptionCard>
+</CardGrid>
+
+<Callout type="info">
+The abstain rung is what keeps the ladder honest about its own reach. Before it
+existed, a turn nothing could observe fell through to the judge, which was handed
+an empty record and answered with a confident `FAIL` naming a file that existed.
+Buying a model call to guess from no evidence is worse than saying *I could not
+tell* — so now it says that.
+</Callout>
 
 The same discipline is available to the agent as a tool:
 **`verify_done`** replays a new test against the *previous* code in a shadow

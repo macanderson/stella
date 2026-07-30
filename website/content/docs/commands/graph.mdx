@@ -37,8 +37,16 @@ stella graph <op> <target>
 </CardGrid>
 
 <Callout type="info">
-Run [`stella init`](/docs/commands/init) first. The graph is only as current as the last `init` — if you have moved or renamed a lot of code since, re-run `init` to rebuild `.stella/private/codegraph.db`.
+You do not have to run [`stella init`](/docs/commands/init) first. `stella graph` **builds the index on first use** if it isn't there, and every query runs a catch-up pass over files that changed since the last one — so answers track your working tree without a manual re-index. Running `init` up front just means the first query doesn't pay for the full build, and it also produces the domain taxonomy, which querying alone does not.
 </Callout>
+
+If the catch-up pass fails, the query still answers — from whatever the index already held — and says so rather than hiding it:
+
+```text
+warning: the code graph index pass failed — answering from what the index already holds, which may be stale
+```
+
+That is the one case where a re-`init` is the fix.
 
 ## Examples
 

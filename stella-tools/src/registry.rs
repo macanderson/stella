@@ -117,6 +117,11 @@ pub struct ToolRegistry {
     /// guard directly (the engine holds it mutably), so this ledger is how
     /// `--budget` stays a hard ceiling once turns nest.
     sub_agent_spend: stella_core::subagent::SubAgentSpendLedger,
+    /// The pause gate and steering tap of the turn currently running, in the
+    /// owned form a session-scoped dispatcher can hold — published by the
+    /// driver alongside `events` below and read at dispatch time, so a child
+    /// pauses and stops with the turn that asked for it.
+    turn_controls: crate::subagent::TurnControlsSlot,
     storage_index: std::sync::Mutex<StorageIndex>,
     /// Which workspace paths are covered by a FRESH saved exploration map —
     /// the read-side analogue of `storage_index` (`docs/design/
@@ -334,7 +339,6 @@ impl ToolRegistry {
             // on why an unattached dispatcher is still the honest shape.
             Arc::new(crate::subagent::SpawnSubAgent::new(
                 sub_agent_dispatcher.clone(),
-                sub_agent_spend.clone(),
             )),
             // SVG generation is client-side (the model authors the SVG, the
             // pipeline validates/sanitizes) — no provider key needed, so
@@ -443,6 +447,7 @@ impl ToolRegistry {
             task_board,
             sub_agent_dispatcher,
             sub_agent_spend,
+            turn_controls: crate::subagent::TurnControlsSlot::default(),
             spawn_queue,
             storage_index: std::sync::Mutex::new(StorageIndex::default()),
             exploration_coverage,
@@ -549,6 +554,43 @@ impl ToolRegistry {
             .sub_agent_dispatcher
             .write()
             .unwrap_or_else(|p| p.into_inner()) = Some(dispatcher);
+    }
+
+    /// Publish this turn's pause gate and steering tap, until the returned
+    /// guard drops.
+    ///
+    /// The companion to [`Self::attach_events`], called from the same place
+    /// for the same reason: a sub-agent dispatcher is session-scoped, so
+    /// anything turn-shaped it needs has to be read from here at dispatch
+    /// time. Without this, a child dispatched by a tool call never sees the
+    /// pause or the soft stop that governs its parent. A guard rather than a
+    /// bare setter — see [`crate::subagent::TurnControlsGuard`].
+    pub fn attach_turn_controls(
+        &self,
+        controls: stella_core::ports::TurnControls,
+    ) -> crate::subagent::TurnControlsGuard {
+        crate::subagent::TurnControlsGuard::attach(&self.turn_controls, controls)
+    }
+
+    /// The ledger a dispatcher charges finished children to (cheap clone —
+    /// shared inner), drained by the engine at each step-boundary check.
+    ///
+    /// `pub` because settling is the *dispatcher's* job, per
+    /// [`stella_core::subagent::SubAgentDispatcher`]'s contract: it must
+    /// happen the moment a child stops, on the child's own thread, or a
+    /// parent cancelled mid-`task` leaves paid-for dollars in no ledger at
+    /// all.
+    pub fn sub_agent_spend_ledger(&self) -> stella_core::subagent::SubAgentSpendLedger {
+        self.sub_agent_spend.clone()
+    }
+
+    /// The current turn's boundary controls — empty between turns, and on a
+    /// driver that publishes none.
+    pub fn turn_controls(&self) -> stella_core::ports::TurnControls {
+        self.turn_controls
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     /// The attached turn event sender, if any (cheap clone — shared inner).

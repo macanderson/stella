@@ -10,7 +10,7 @@ fn to_zai_messages_maps_all_roles() {
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
     ];
-    let mapped = to_zai_messages(&messages);
+    let mapped = to_zai_messages(&messages, "glm-4.5v");
     assert_eq!(mapped.len(), 2);
     assert_eq!(mapped[0].role, "system");
     assert_eq!(mapped[1].role, "user");
@@ -44,7 +44,7 @@ fn to_zai_messages_frames_tool_results_with_call_ids() {
             attachments: Vec::new(),
         },
     ];
-    let mapped = to_zai_messages(&messages);
+    let mapped = to_zai_messages(&messages, "glm-4.5v");
     assert_eq!(mapped.len(), 2);
     assert_eq!(mapped[0].role, "assistant");
     assert_eq!(mapped[0].tool_calls.len(), 1);
@@ -72,7 +72,7 @@ fn user_attachments_widen_content_to_parts_with_data_uri_images() {
             ],
         ),
     ];
-    let mapped = to_zai_messages(&messages);
+    let mapped = to_zai_messages(&messages, "glm-4.5v");
     // A text-only user turn stays a plain string — byte-stable with the
     // pre-attachment wire format.
     let plain = serde_json::to_value(&mapped[0]).unwrap();
@@ -104,7 +104,7 @@ fn to_zai_messages_marks_error_results_loudly() {
         }],
         attachments: Vec::new(),
     }];
-    let mapped = to_zai_messages(&messages);
+    let mapped = to_zai_messages(&messages, "glm-4.5v");
     assert_eq!(mapped.len(), 1);
     assert!(mapped[0].content.as_text().starts_with("ERROR:"));
 }
@@ -1642,7 +1642,7 @@ async fn openrouter_resends_without_reasoning_when_the_endpoint_mandates_it() {
 }
 
 /// The pdf/audio/video arm of [`attachment_part`] is out of reach only
-/// because `ZAI_CAPS` switches those kinds off. Flipping one of those bools
+/// because [`caps_for`] switches those kinds off. Flipping one of those bools
 /// is a routine one-line edit, so the arm it lands in has to degrade like
 /// every other unsupported attachment instead of aborting the process
 /// mid-turn.

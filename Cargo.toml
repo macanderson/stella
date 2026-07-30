@@ -11,6 +11,8 @@ members = [
   "stella-pipeline",
   "stella-mcp",
   "stella-media",
+  "stella-engine",
+  "stella-runtime",
   "stella-fleet",
   "stella-observatory",
   "stella-serve",
@@ -21,7 +23,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.6.17"
+version = "0.6.18"
 edition = "2024"
 rust-version = "1.90"
 license = "AGPL-3.0-only"
@@ -107,6 +109,13 @@ tree-sitter-php = "0.24"
 # `system` keeps exactly the API in use.
 sysinfo = { version = "0.38.4", default-features = false, features = ["system"] }
 wiremock = "0.6"
+# Derive-driven JSON Schema emission for the `AgentEvent` wire contract, behind
+# stella-protocol's OPTIONAL `schema` feature so a default `cargo build` never
+# compiles it. Derived rather than hand-written on purpose: a hand-maintained
+# schema is exactly the drift class docs/design/serve-surface.md warns about,
+# and a derive cannot fall out of step with the type it is attached to.
+# MIT, and its proc-macro half is the same syn/quote already resident via serde.
+schemars = { version = "1", default-features = false, features = ["derive"] }
 
 # Config for 'dist'
 [workspace.metadata.dist]

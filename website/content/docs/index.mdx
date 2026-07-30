@@ -42,11 +42,41 @@ code-graph context engine. In [goal mode](/docs/agent-modes#outcome-driven-goal-
 second model judges the result from evidence, so the loop ends on a verified outcome
 rather than the worker's own say-so.
 
+## Start with the thing you came here to do
+
+Each of these is one real task carried to a finished, verified result. They link
+down into the reference rather than replacing it, so you can read a whole flag
+surface at the moment you need it and not before.
+
+<CardGrid size="md">
+  <SpecCard title="Fix a failing CI run" href="/docs/guides/fix-failing-ci">
+    Watch a red branch, fix root causes, push, re-check — and stop only on a green run
+    somebody else can see.
+  </SpecCard>
+  <SpecCard title="Change an unfamiliar codebase" href="/docs/guides/unfamiliar-codebase">
+    Find the blast radius with the code graph before committing to an approach, then
+    ship the change verified.
+  </SpecCard>
+  <SpecCard title="Find out what a run cost" href="/docs/guides/what-a-run-cost">
+    From the dollar figure down to the exact bytes one model call was sent — all of it
+    local.
+  </SpecCard>
+  <SpecCard title="Work within a budget" href="/docs/guides/budget">
+    A hard ceiling, where the abort lands, and what compaction does when the transcript
+    outgrows the window.
+  </SpecCard>
+</CardGrid>
+
+Never run it before? **[Get started](/docs/getting-started)** is thirty seconds —
+install, one key, `stella init`, first verified change. Something not working?
+**[Troubleshooting](/docs/guides/troubleshooting)** is organized by symptom.
+
 ## Where to go
 
 | Section | Read it for |
 | --- | --- |
 | **[Get started](/docs/getting-started)** | Install, configure a provider key, initialize a repo, make a first verified change. |
+| **[Guides](/docs/guides)** | Task-shaped walkthroughs: red CI, an unfamiliar repo, cost forensics, budgets, and troubleshooting. |
 | **Concepts** | How the [pipeline](/docs/inference-pipeline) proves work, how the [context engine](/docs/context-engine) makes recall cheap, and the [modes](/docs/agent-modes) and [fleets](/docs/agent-fleets) you drive it with. |
 | **Configure** | [`settings.json`](/docs/configuration), [providers](/docs/api-providers), [tools and permissions](/docs/agent-tools), [telemetry](/docs/telemetry), and ready-made [recipes](/docs/examples). |
 | **Reference** | Every [command and flag](/docs/commands), [headless scripting](/docs/scripting), the [event bus](/docs/extensions), and [release notes](/docs/release-notes). |
