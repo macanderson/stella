@@ -284,6 +284,38 @@ impl Settings {
         static ANNOUNCED: AtomicBool = AtomicBool::new(false);
         let announce = !ANNOUNCED.swap(true, Ordering::Relaxed);
 
+        // Keys nothing will ever read. The parse is deliberately tolerant of
+        // unknown fields (forward compatibility), which makes a typo and a
+        // future key look identical to serde — so the warning is the only
+        // thing standing between `"provider"` and a settings file that
+        // configures nothing at all. Advisory, never a gate, and latched with
+        // the notices above so the several loads one launch performs cannot
+        // turn one finding into four. The managed scope is deliberately
+        // excluded: it is administrator-owned, its reader is a hardened
+        // O_NOFOLLOW path, and an operator cannot act on a warning printed on
+        // somebody else's machine.
+        if announce {
+            for path in [Some(&project_path), user_settings_path().as_ref()]
+                .into_iter()
+                .flatten()
+            {
+                let unknown = super::unknown::unknown_keys_in(path);
+                if !unknown.is_empty() {
+                    eprintln!(
+                        "  ! {}: unrecognized key{} ignored ({}) — check the spelling; \
+                         stella reads none of them",
+                        path.display(),
+                        if unknown.len() == 1 { "" } else { "s" },
+                        unknown
+                            .iter()
+                            .map(|key| key.escape_debug().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    );
+                }
+            }
+        }
+
         if announce && !trust.hooks && project.hooks.is_some() {
             eprintln!(
                 "  ! project hooks in {} were NOT loaded — set STELLA_PROJECT_HOOKS=1 \

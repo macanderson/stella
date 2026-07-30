@@ -192,14 +192,12 @@ fn is_sensitive_key(key: &str) -> bool {
 pub fn redact_secrets(text: &str) -> Redaction {
     let bytes: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
-    let mut redacted = false;
     let mut i = 0usize;
 
     while i < bytes.len() {
         // 1. PEM blocks — everything between BEGIN and END, inclusive.
         if let Some(end) = pem_block_end(&bytes, i) {
             out.push_str(PLACEHOLDER);
-            redacted = true;
             i = end;
             continue;
         }
@@ -225,7 +223,6 @@ pub fn redact_secrets(text: &str) -> Redaction {
         {
             out.push_str(&token[..token.rfind("//").map_or(0, |p| p + 2)]);
             out.push_str(PLACEHOLDER);
-            redacted = true;
             i = after;
             continue;
         }
@@ -233,7 +230,6 @@ pub fn redact_secrets(text: &str) -> Redaction {
         // 2. The token speaks for itself.
         if is_secret_token(&token) {
             out.push_str(PLACEHOLDER);
-            redacted = true;
             continue;
         }
 
@@ -247,18 +243,15 @@ pub fn redact_secrets(text: &str) -> Redaction {
             out.push(bytes[separator]);
             out.extend(&bytes[separator + 1..value_start]);
             out.push_str(PLACEHOLDER);
-            redacted = true;
             i = value_end;
         }
     }
 
-    // `redacted` is what the pass *attempted*; the reported flag is what
-    // actually changed. They differ in exactly one case that matters: re-running
-    // over already-redacted text re-matches `KEY=[redacted]` on the key-name
-    // rule and rewrites the placeholder onto itself. Reporting that as a
-    // redaction would make the flag mean "a rule fired" rather than "content was
-    // removed", and every replay of an extraction would flip it back on.
-    let _ = redacted;
+    // The flag reports what actually CHANGED, not which rules fired. The two
+    // differ in exactly one case that matters: re-running over already-redacted
+    // text re-matches `KEY=[redacted]` on the key-name rule and rewrites the
+    // placeholder onto itself. Reporting that as a redaction would make the flag
+    // mean "a rule fired", and every replay of an extraction would flip it back on.
     let changed = out != text;
     Redaction {
         text: out,

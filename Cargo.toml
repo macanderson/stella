@@ -69,7 +69,14 @@ notify = "8"
 ratatui = "0.30"
 unicode-width = "0.2"
 roxmltree = "0.21"
-scraper = "0.27"
+# `default-features = false` drops scraper's `main` feature, which exists only
+# to build scraper's OWN command-line binary and drags `getopts` into the
+# workspace with it — an argument parser compiled into a coding agent that
+# already uses clap, reachable from nothing. `errors` is kept (it is
+# dependency-free and only enables richer parse diagnostics); the library API
+# stella-tools actually uses — `Html`, `Selector`, `ElementRef`, `Node` — lives
+# outside any feature gate.
+scraper = { version = "0.27", default-features = false, features = ["errors"] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 hmac = "0.13"
 sha2 = "0.11"
@@ -86,7 +93,14 @@ tree-sitter-c = "0.24"
 tree-sitter-php = "0.24"
 
 tachyonfx = "0.25.1"
-sysinfo = "0.38.4"
+# stella-tui reads process stats and nothing else (`Pid`, `ProcessRefreshKind`,
+# `ProcessesToUpdate`, `System` — see stella-tui/src/resource.rs). sysinfo's
+# default set additionally compiles `component`, `disk`, `network` and `user`,
+# each of which drags in platform bindings this workspace never calls:
+# objc2-io-kit and a pile of objc2-core-foundation submodules on macOS, and the
+# WMI/COM/OLE/RPC/Variant surface of the `windows` crate elsewhere. Scoping to
+# `system` keeps exactly the API in use.
+sysinfo = { version = "0.38.4", default-features = false, features = ["system"] }
 tui-big-text = "0.8.8"
 wiremock = "0.6"
 

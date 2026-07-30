@@ -1,59 +1,70 @@
 /**
- * Raw palette values, imported by global.css. Nothing here is mode-aware:
- * global.css maps these onto the light/dark semantic layer, the same way
- * stella-tui's theme.rs maps palette.rs.
+ * Stella's raw palette. Imported by global.css; nothing here is mode-aware.
+ * global.css is the semantic layer that decides which of these is foreground in
+ * which mode — the same split as stella-tui's palette.rs / theme.rs.
  *
- * The identity is terminal green on black: a signal light in the dark. The
- * light theme (`stella-light` in the app) is ember on paper.
+ * The identity is ELECTRIC BLUE AND GOLD ON DEEP SPACE. Blue is the interactive
+ * signal — links, focus, active/running, primary action. Gold is the mark: the
+ * logo's cursor block and brand chrome, and nothing else. Gold never carries
+ * status, because it sits too close to `warning` in hue to be told apart in the
+ * same row; status is amber and always glyph-paired.
  *
- * This file mirrors stella-tui/src/palette.rs, which is the normative source;
- * the two must be edited together. (The header used to claim generation from
- * docs/brand/tokens.json by docs/brand/build.py — neither exists.)
+ * The normative source is docs/brand/BRAND.md. Every value below is copied from
+ * its tables verbatim — do not tune a hex here, change BRAND.md and mirror it.
+ * The surfaces that must move together are listed in BRAND.md's first table
+ * (terminal palette, brand tokens, this file, the observatory).
  *
- * Note: the Rust palette renamed the brand tokens `SKY`→`BRAND` (hue-neutral,
- * to survive recolours). The CSS var names here keep `--stella-sky*` because
- * global.css and components reference them widely; only the *values* changed
- * (blue → terminal green). `--stella-brand*` are added as forward aliases.
+ * Retired and gone: the vermilion "ember" (#FF3D1F), the terminal-green dark
+ * theme, and the `--stella-sky*` names those shipped under. No surface uses an
+ * orange, rust, or phosphor-green hue; nothing aliases the old names.
  */
 
 :root {
-  /* Ground (dark) — True black, so the accent keeps its contrast. */
-  --stella-night: #000000;
-  --stella-ground: #000000;
-  --stella-surface: #0a0e14;
-  --stella-raised: #141c26;
-  --stella-hairline: #24313f;
+  /* ── Ground — deep space ──────────────────────────────────────────────── */
+  --stella-void: #05070c; /* full-bleed backdrops, splash, OG art */
+  --stella-ground: #080a0f; /* app background */
+  --stella-surface: #0b0f17; /* cards, panels */
+  --stella-raised: #101623; /* popovers, selected rows */
+  --stella-hairline: #182031; /* seam — decorative only */
+  --stella-hairline-strong: #232d42; /* seam where a boundary must read */
 
-  /* Brand — Terminal green (default dark theme). */
-  --stella-sky: #00e676;
-  --stella-sky-deep: #00b25a;
-  --stella-sky-ink: #0b4a6f;
-  /* Forward-compat hue-neutral aliases (match palette.rs BRAND / BRAND_DEEP). */
-  --stella-brand: #00e676;
-  --stella-brand-deep: #00b25a;
+  /* ── Ground — paper ───────────────────────────────────────────────────── */
+  --stella-paper: #ffffff;
+  --stella-snow: #f5f7fa;
+  --stella-paper-raised: #e7ebf2;
+  --stella-paper-hairline: #d3dae6;
 
-  /* Brand (light) — Ember, sampled from the logo square (#ff3d1f). */
-  --stella-ember: #ff3d1f;
-  --stella-ember-deep: #d62e0e;
+  /* ── Brand — electric blue. The interactive signal. ───────────────────── */
+  --stella-brand: #2e7bff; /* 5.1:1 on ground — fills, large marks */
+  --stella-brand-bright: #5aa0ff; /* 7.4:1 on ground — small text, thin strokes */
+  --stella-brand-deep: #1550c8; /* pressed / deep stop */
+  --stella-brand-ink: #1550c8; /* 7.0:1 on paper — the light-mode brand text */
+  --stella-brand-ink-deep: #0f3a94; /* pressed stop on paper */
 
-  /* Text (dark ground) — Cool neutrals for the dark canvas. */
-  --stella-text-primary: #f3f6fa;
-  --stella-text-secondary: #98a6ba;
-  --stella-text-tertiary: #6c7b90;
+  /* ── Gold — the mark. Identity only; never status. ────────────────────── */
+  --stella-gold: #f5c145; /* 11.8:1 on ground */
+  --stella-gold-bright: #ffd873;
+  --stella-gold-deep: #c99420;
+  --stella-gold-ink: #8a6118; /* 5.6:1 on paper */
 
-  /* Status — Always paired with a glyph. Warning is amber-yellow (no longer orange). */
+  /* ── Text on deep space ───────────────────────────────────────────────── */
+  --stella-text-primary: #f2f5fa; /* 18.1:1 on ground */
+  --stella-text-secondary: #8e97a8; /* 6.7:1 */
+  --stella-text-tertiary: #737d92; /* 4.8:1 */
+
+  /* ── Text on paper.
+   * All three tiers clear AA for body text on `paper`. `ink-tertiary` clears it
+   * by 0.19 — on `snow` it measures 4.37:1, so a tertiary string set on the
+   * light surface tone rather than on paper must step up to `ink-secondary`. */
+  --stella-ink-primary: #0a0f1a; /* 19.2:1 on paper */
+  --stella-ink-secondary: #525c6e; /* 6.7:1 on paper */
+  --stella-ink-tertiary: #6b7488; /* 4.7:1 on paper */
+
+  /* ── Status. Always paired with a glyph; hue alone never carries meaning. */
   --stella-success: #4ade80;
   --stella-warning: #eab308;
   --stella-danger: #ff5c7a;
-
-  /* Status (light ground) — The same three meanings, darkened along their own hue until they clear AA on paper. */
   --stella-success-ink: #16744f;
   --stella-warning-ink: #a16207;
-  --stella-danger-ink: #c8102e;
-
-  /* Ground (light) — The paper mode. */
-  --stella-paper: #ffffff;
-  --stella-snow: #f4f4f5;
-  --stella-ink: #0a0a0a;
-  --stella-muted: #5b6270;
+  --stella-danger-ink: #c81e3e;
 }

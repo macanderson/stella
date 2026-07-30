@@ -76,11 +76,23 @@ fn open_in_browser(url: &str) {
     let _ = command.spawn();
 }
 
-/// Masked secret prompt on a real TTY; refuses to run piped (a pasted secret
-/// in a script belongs in the environment instead).
+/// Masked secret prompt.
+///
+/// On a real TTY `rpassword` disables echo; when stdin is a pipe it reads the
+/// line plainly, which is what makes `printf '%s' "$TOKEN" | stella connect
+/// github --token` work in a script. (This comment used to claim the function
+/// "refuses to run piped". It never did, and the piped path is load-bearing —
+/// the claim only misled anyone reasoning about where the secret can land.)
+///
+/// The raw buffer is [`Zeroizing`]: it is a second copy of the secret that no
+/// caller ever sees — only the trimmed `String` below escapes — so without it
+/// the untrimmed original is dropped intact into freed heap. Same treatment
+/// `stella_model::credential::prompt_for_key` gives its own prompt buffer.
 fn prompt_secret(prompt: &str) -> Result<String, String> {
-    let value = rpassword::prompt_password(prompt)
-        .map_err(|e| format!("cannot read secret from terminal: {e}"))?;
+    let value = Zeroizing::new(
+        rpassword::prompt_password(prompt)
+            .map_err(|e| format!("cannot read secret from terminal: {e}"))?,
+    );
     let value = value.trim().to_string();
     if value.is_empty() {
         return Err("empty secret — aborted".to_string());

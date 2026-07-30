@@ -132,17 +132,42 @@ That push starts the `Release` workflow, which:
   version + per-target SHA-256 sums) and commits it to the Homebrew tap
   (skipped if `HOMEBREW_TAP_TOKEN` is not configured).
 
-## Cut a release locally (no CI)
+## Cut a release locally (no CI) — the degraded path
 
-When GitHub Actions is unavailable (e.g. an org billing hold) or you just want
-full local control, [`scripts/release.sh`](scripts/release.sh) does the entire
+> **This path ships unattested artifacts. Prefer the tag-driven CI release
+> above whenever Actions can run at all.**
+>
+> `release.yml` attests every tarball *and* the `SHA256SUMS` file with
+> `actions/attest-build-provenance` — a Sigstore bundle bound to that workflow
+> at that commit, which nobody holding the release can reissue. A local release
+> cannot produce one: attestation needs the OIDC token only a GitHub Actions
+> job can mint.
+>
+> The downgrade is invisible to users. `install.sh` deliberately separates "no
+> verifier available" from "verifier said no", and an unattested release lands
+> in the first bucket — `gh attestation verify` reports *no attestation*, the
+> installer logs one info line and installs anyway. Anyone running
+> `STELLA_REQUIRE_PROVENANCE=1` will instead be refused outright.
+>
+> The bytes differ too: the Linux tarballs here are `cargo-zigbuild` cross
+> compiles against glibc 2.17, where `release.yml` builds them natively. Same
+> tag, different artifacts, depending on who cut it.
+>
+> So the script refuses by default and requires the decision to be explicit.
+
+When GitHub Actions is unavailable (e.g. an org billing hold) and a release
+still has to ship, [`scripts/release.sh`](scripts/release.sh) does the entire
 pipeline from your Mac — build all four targets, publish the GitHub Release, and
 push the Homebrew formula — with the version auto-incremented:
 
 ```bash
 git checkout main && git pull        # release exactly what's on origin/main
-scripts/release.sh patch             # 0.1.15 -> 0.1.16  (also: minor, major)
+ALLOW_UNATTESTED=1 scripts/release.sh patch   # 0.1.15 -> 0.1.16 (also: minor, major)
 ```
+
+Without `ALLOW_UNATTESTED=1` the script stops before touching anything. When you
+do use it, say so in the release notes, so users understand why
+`STELLA_REQUIRE_PROVENANCE=1` rejects that version.
 
 It refuses to run unless your checkout is clean and matches `origin/main`, and
 it never leaves your tree modified. macOS targets build natively; the Linux

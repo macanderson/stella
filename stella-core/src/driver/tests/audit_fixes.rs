@@ -1055,3 +1055,267 @@ fn a_provider_recycling_call_ids_per_response_still_gets_loop_detection() {
         other => panic!("a recycled call_id must not hide a repeat streak: {other:?}"),
     }
 }
+
+/// A provider that announces `announce` (several tool calls, streamed before
+/// the response resolves), waits until every announced read has actually
+/// executed, then commits `commit`. Step 2 finishes the turn with plain text.
+struct MultiAnnounceProvider {
+    announce: Vec<ToolCall>,
+    commit: Vec<ToolCall>,
+    executions: Arc<AtomicU32>,
+    step: AtomicU32,
+}
+
+#[async_trait]
+impl Provider for MultiAnnounceProvider {
+    fn id(&self) -> &str {
+        "multi-announce"
+    }
+    async fn complete(
+        &self,
+        _req: CompletionRequest,
+    ) -> Result<CompletionResultAlias, ProviderError> {
+        unreachable!("the engine must drive complete_observed, never bare complete")
+    }
+    async fn complete_observed(
+        &self,
+        _req: CompletionRequest,
+        observer: &dyn stella_protocol::ToolCallObserver,
+    ) -> Result<CompletionResultAlias, ProviderError> {
+        if self.step.fetch_add(1, Ordering::SeqCst) > 0 {
+            return Ok(text_result("done"));
+        }
+        for call in &self.announce {
+            observer.tool_call_streamed(call);
+        }
+        // "Keep streaming" until every announced read has run, so the pool is
+        // fully populated before the response commits. The pump shares this
+        // task through `tokio::select!`, so yielding is what lets it advance.
+        let want = self.announce.len() as u32;
+        while self.executions.load(Ordering::SeqCst) < want {
+            tokio::task::yield_now().await;
+        }
+        Ok(CompletionResultAlias {
+            text: String::new(),
+            tool_calls: self.commit.clone(),
+            usage: CompletionUsage::reported_zero(),
+            model: "multi-announce".into(),
+            cost_usd: 0.0001,
+            finish_reason: None,
+        })
+    }
+}
+
+/// A read-only executor that just counts executions.
+struct CountingReadTools {
+    executions: Arc<AtomicU32>,
+}
+
+#[async_trait]
+impl ToolExecutor for CountingReadTools {
+    fn schemas(&self) -> Vec<ToolSchema> {
+        vec![ToolSchema {
+            name: "read_file".into(),
+            description: "read a file".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+            read_only: true,
+        }]
+    }
+    async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+        self.executions.fetch_add(1, Ordering::SeqCst);
+        ToolOutput::Ok {
+            content: "contents".into(),
+        }
+    }
+}
+
+/// #370's accounting guarantee is that every speculative execution which never
+/// reaches the transcript is reported as `SpeculationDiscarded`. The pool is a
+/// `HashMap` keyed by `call_id`, and a `call_id` is only unique within ONE
+/// response (`loop_evidence::CallIdentityKey` names the adapters that recycle
+/// them). A second announcement under the same id therefore EVICTS the first
+/// pool entry — whose tool had already run real I/O — and before the fix that
+/// eviction was silent: the execution happened and nothing on the wire said so.
+#[tokio::test]
+async fn a_recycled_speculation_call_id_reports_the_execution_it_displaces() {
+    let read = |path: &str| ToolCall {
+        call_id: "call_0".into(),
+        name: "read_file".into(),
+        input: serde_json::json!({ "path": path }),
+    };
+    let executions = Arc::new(AtomicU32::new(0));
+    let provider = MultiAnnounceProvider {
+        // Same recycled id, two genuinely different reads.
+        announce: vec![read("a.rs"), read("b.rs")],
+        // The committed call matches NEITHER, so whichever pool entry survived
+        // the collision is also rejected at harvest — making the expected event
+        // count independent of which of the two concurrent reads finished last.
+        commit: vec![read("c.rs")],
+        executions: executions.clone(),
+        step: AtomicU32::new(0),
+    };
+    let tools = CountingReadTools {
+        executions: executions.clone(),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut messages = vec![CompletionMessage::user("read some files")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        engine.run_turn(&mut messages, &mut budget, &tx),
+    )
+    .await
+    .expect("a hung turn means speculation deadlocked the provider/pump join");
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }), "{outcome:?}");
+
+    let events = drain_events(&mut rx);
+    let discards: Vec<&AgentEvent> = events
+        .iter()
+        .filter(|e| matches!(e, AgentEvent::SpeculationDiscarded { .. }))
+        .collect();
+    assert_eq!(
+        executions.load(Ordering::SeqCst),
+        3,
+        "two speculated reads plus the divergent committed one actually ran"
+    );
+    assert_eq!(
+        discards.len(),
+        2,
+        "both unreachable speculative executions must be accounted for — the one \
+         evicted from the pool by the recycled id, and the one rejected at harvest: {events:?}"
+    );
+    assert!(
+        discards.iter().all(|e| matches!(
+            e,
+            AgentEvent::SpeculationDiscarded { call_id, name, reason }
+                if call_id == "call_0" && name == "read_file" && reason == "harvest_mismatch"
+        )),
+        "every discard must name the call it lost: {discards:?}"
+    );
+}
+
+/// A provider that records the system prefix of every request it is handed.
+struct PrefixRecordingProvider {
+    prefixes: std::sync::Mutex<Vec<String>>,
+    step: AtomicU32,
+}
+
+#[async_trait]
+impl Provider for PrefixRecordingProvider {
+    fn id(&self) -> &str {
+        "prefix-recording"
+    }
+    async fn complete(
+        &self,
+        req: CompletionRequest,
+    ) -> Result<CompletionResultAlias, ProviderError> {
+        // The summarizer's own request has its own (different) system prompt and
+        // is not part of the worker prefix under test; it carries no tools.
+        if req.tools.is_empty() {
+            return Ok(text_result("compacted summary of earlier work"));
+        }
+        let prefix = req
+            .messages
+            .first()
+            .filter(|m| m.role == MessageRole::System)
+            .map(|m| m.content.clone())
+            .unwrap_or_else(|| "<no system message>".to_string());
+        self.prefixes
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(prefix);
+        if self.step.fetch_add(1, Ordering::SeqCst) < 4 {
+            Ok(tool_call_result("c1", "bash"))
+        } else {
+            Ok(text_result("done"))
+        }
+    }
+}
+
+/// A tool whose output is large enough to drive the transcript past the
+/// compaction budget within a couple of steps.
+struct BulkyTools;
+
+#[async_trait]
+impl ToolExecutor for BulkyTools {
+    fn schemas(&self) -> Vec<ToolSchema> {
+        vec![ToolSchema {
+            name: "bash".into(),
+            description: "run a command".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+            read_only: false,
+        }]
+    }
+    async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+        ToolOutput::Ok {
+            content: "output line\n".repeat(400),
+        }
+    }
+}
+
+/// Prompt-cache stability (L-E8 / #372): the system prefix a provider caches is
+/// index 0 of the request, and every mechanism that rewrites the transcript
+/// mid-turn must leave it byte-identical. Compaction's pure passes only touch
+/// `Tool`-role results, dedup keeps the EARLIEST copy so the prefix never moves,
+/// and the overflow summarizer's span opens *after* the first user message. This
+/// pins all three at the driver level: several steps of real compaction and a
+/// summarization pass, and the bytes at index 0 never change.
+#[tokio::test]
+async fn the_system_prefix_stays_byte_stable_across_a_compacting_turn() {
+    const SYSTEM: &str = "You are Stella. Follow the workspace rules. Prefer small diffs.";
+    let provider = PrefixRecordingProvider {
+        prefixes: std::sync::Mutex::new(Vec::new()),
+        step: AtomicU32::new(0),
+    };
+    let sleeper = NoopSleeper;
+    let config = EngineConfig {
+        // Small enough that every step after the first compacts, and small
+        // enough that the pure passes cannot get under it alone — so the
+        // overflow summarizer fires too.
+        compaction_budget_tokens: 300,
+        summarize_keep_recent: 2,
+        max_steps: 8,
+        ..EngineConfig::default()
+    };
+    let engine = Engine::with_sleeper(&provider, &BulkyTools, config, &sleeper);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut messages = vec![
+        CompletionMessage::system(SYSTEM),
+        CompletionMessage::user("do the work"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }), "{outcome:?}");
+
+    let events = drain_events(&mut rx);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::Compaction { .. })),
+        "fixture sanity: the turn must actually compact, or this proves nothing"
+    );
+
+    let prefixes = provider
+        .prefixes
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    assert!(
+        prefixes.len() >= 3,
+        "fixture sanity: need several steps to observe drift, got {}",
+        prefixes.len()
+    );
+    for (step, prefix) in prefixes.iter().enumerate() {
+        assert_eq!(
+            prefix, SYSTEM,
+            "step {step} sent a different system prefix — the provider prompt cache \
+             built over it is invalidated on every step"
+        );
+    }
+    // And the live history still carries it, so the NEXT turn starts on the
+    // same cached prefix.
+    assert_eq!(messages[0].role, MessageRole::System);
+    assert_eq!(messages[0].content, SYSTEM);
+}
