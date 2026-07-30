@@ -26,8 +26,7 @@ fn a_text_only_glm_degrades_an_image_instead_of_killing_the_turn() {
         },
     };
     for model in ["glm-5.2", "glm-4.6", "glm-5", "zai/glm-5.2", "GLM-5.2"] {
-        let message =
-            CompletionMessage::user_with_attachments("what is this", vec![shot.clone()]);
+        let message = CompletionMessage::user_with_attachments("what is this", vec![shot.clone()]);
         let ZaiContent::Parts(parts) = user_content(&message, model) else {
             panic!("{model}: attachments always produce a parts array");
         };

@@ -512,7 +512,11 @@ fn caps_for(model: &str) -> crate::attachment::DialectCaps {
 /// The prefix match is on the *last* path segment so gateway-qualified slugs
 /// (`zai/glm-5.2`, `openrouter/z-ai/glm-4.5v`) classify the same as bare ones.
 fn model_ingests_images(model: &str) -> bool {
-    let slug = model.rsplit('/').next().unwrap_or(model).to_ascii_lowercase();
+    let slug = model
+        .rsplit('/')
+        .next()
+        .unwrap_or(model)
+        .to_ascii_lowercase();
     let Some(version) = slug.strip_prefix("glm-") else {
         // Not a GLM model — some other provider behind an OpenAI-compatible
         // gateway. Unknown, so permitted (see the asymmetry above).
