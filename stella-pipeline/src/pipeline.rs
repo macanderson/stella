@@ -124,6 +124,23 @@ fn verification_honest_diff(diff_text: String, file_changes: u32) -> String {
     }
 }
 
+/// What [`Pipeline::gather_diff`] reports when the diff probe *failed* rather
+/// than found nothing.
+///
+/// `verification_honest_diff` resolves the same ambiguity from `file_changes`,
+/// but that signal is structurally unavailable to an isolated candidate: the
+/// engine emits no `FileChange` events (the deck's `FileChangeTap` synthesizes
+/// them, and it wraps only the SESSION tool stack), so inside a best-of-N or
+/// witness candidate the count is always zero. A candidate whose probe went
+/// blind therefore handed an empty string to [`crate::witness::warrant`], which
+/// read it as [`crate::NoWitnessReason::NothingChanged`] and completed the run
+/// with a PASSING verdict stating no behavior had changed — the exact
+/// verification lie the honest-diff guard exists to prevent, reached with no
+/// witness stage and no warning. Non-empty text keeps the warrant fail-closed
+/// on the one path its own guard could not see.
+const DIFF_PROBE_FAILED: &str = "[the diff probe failed; the working tree could not be read. This \
+     is NOT evidence that nothing changed — verify the result on its own merits.]";
+
 /// How many `git diff --no-index --numstat` probes [`Pipeline::gather_diff`]
 /// keeps in flight at once. High enough that the usual handful of new files
 /// costs roughly one round-trip instead of N, low enough that a turn which
@@ -2355,6 +2372,21 @@ impl<'a> Pipeline<'a> {
             return (0, String::new());
         };
         let out = surface.diagnostics.run_diagnostic(diagnostic).await;
+        // `git diff` exits 0 on a clean tree, so a non-zero exit with nothing on
+        // stdout is the machinery failing to READ the tree, never a report that
+        // the tree is unchanged. Observed in the wild as a candidate shadow
+        // whose worktree registration was gone by the time it was probed
+        // (`git add -A` → "fatal: not a git repository"). See
+        // [`DIFF_PROBE_FAILED`] for why the empty string could not be left to
+        // `verification_honest_diff` to catch. Scoped to `GitDiff` because
+        // `--no-index --numstat` exits 1 whenever the files differ, which is
+        // that probe's ordinary success.
+        if matches!(diagnostic, DiagnosticInvocation::GitDiff)
+            && !out.passed()
+            && out.stdout_tail.trim().is_empty()
+        {
+            return (0, DIFF_PROBE_FAILED.to_string());
+        }
         let mut lines = count_diff_lines(&out.stdout_tail);
         let mut text = out.stdout_tail;
         if matches!(diagnostic, DiagnosticInvocation::GitDiff) {
