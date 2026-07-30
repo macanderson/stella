@@ -24,6 +24,7 @@ use stella_protocol::{
 
 use std::collections::VecDeque;
 
+mod error_rows;
 pub mod file_state;
 #[cfg(test)]
 pub use file_state::DIFF_HISTORY;
@@ -682,10 +683,14 @@ impl SessionModel {
                 // An aborted model call never commits its text — without
                 // this the un-committed preview would linger indefinitely.
                 self.streaming_text.clear();
-                self.transcript.push(TranscriptEntry::Error {
-                    message: message.clone(),
-                    retryable: *retryable,
-                });
+                // One failure, one row — see `error_rows` for why the same
+                // error can arrive twice.
+                if !error_rows::repeats_the_last_row(&self.transcript, message, *retryable) {
+                    self.transcript.push(TranscriptEntry::Error {
+                        message: message.clone(),
+                        retryable: *retryable,
+                    });
+                }
             }
             AgentEvent::Complete { model, cost_usd } => {
                 self.hud.stage = Some(StageKind::Complete);
@@ -998,6 +1003,29 @@ fn format_tool_input(name: &str, input: &serde_json::Value) -> String {
             .map(|s| s.to_string())
     };
 
+    // apply_edits carries its paths in a batch; surface them instead of the
+    // raw-JSON fallback so the transcript row reads like other file tools.
+    if name == "apply_edits"
+        && let Some(edits) = input.get("edits").and_then(|v| v.as_array())
+    {
+        let mut paths: Vec<&str> = Vec::new();
+        for edit in edits {
+            if let Some(p) = edit.get("path").and_then(|v| v.as_str())
+                && !paths.contains(&p)
+            {
+                paths.push(p);
+            }
+        }
+        if !paths.is_empty() {
+            let labels: Vec<String> = paths.iter().map(|p| truncate_field(p, 48)).collect();
+            return if paths.len() == 1 {
+                labels.into_iter().next().unwrap()
+            } else {
+                format!("{}  ({} files)", labels.join(", "), paths.len())
+            };
+        }
+    }
+
     // Primary field per tool — the one the user cares about at a glance.
     if let Some(p) = str_field("path").or_else(|| str_field("file_path")) {
         return match name {
@@ -1055,8 +1083,21 @@ fn truncate_field(s: &str, max: usize) -> String {
 /// the `path` key, and the engine emits `FileChange` for that same path — so
 /// this is the join key between a tool result and its diff.
 fn tool_input_path(input: &serde_json::Value) -> Option<String> {
-    input
+    if let Some(path) = input
         .get("path")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+    {
+        return Some(path);
+    }
+    // apply_edits carries its paths in a batch, not at the top level; the
+    // first edit's path stands in so a single-file batch still renders an
+    // inline diff under its result row.
+    input
+        .get("edits")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|edits| edits.first())
+        .and_then(|e| e.get("path"))
         .and_then(serde_json::Value::as_str)
         .map(str::to_string)
 }
@@ -1066,7 +1107,10 @@ fn tool_input_path(input: &serde_json::Value) -> Option<String> {
 /// stay in lockstep with `file_change_of` in stella-cli's `command_deck.rs`,
 /// the `FileChange` emitter that owns this list.
 fn is_file_mutation(name: &str) -> bool {
-    matches!(name, "write_file" | "edit_file" | "delete_file")
+    matches!(
+        name,
+        "write_file" | "edit_file" | "apply_edits" | "delete_file"
+    )
 }
 
 /// Truncate a summary to [`SUMMARY_BUDGET`] chars with a middle-out elision —
@@ -1387,6 +1431,29 @@ mod tests {
         }
     }
 
+    /// One abort, one row. The pipeline emits `Error` for an abort it decided
+    /// and also returns `Aborted`, which the host re-emits — the reported
+    /// screenshot showed "aborted at scope review" twice and it read as two
+    /// failed attempts.
+    #[test]
+    fn an_identical_error_repeated_immediately_is_reported_once() {
+        let mut model = SessionModel::new();
+        let err = AgentEvent::Error {
+            message: "aborted at scope review".into(),
+            retryable: false,
+        };
+        model.apply(&err);
+        model.apply(&err);
+        assert_eq!(
+            model
+                .transcript
+                .iter()
+                .filter(|e| matches!(e, TranscriptEntry::Error { .. }))
+                .count(),
+            1
+        );
+    }
+
     #[test]
     fn complete_populates_hud() {
         let mut model = SessionModel::new();
@@ -1422,6 +1489,8 @@ mod tests {
             }],
             tokens: 100,
             usage: None,
+            latency_ms: 0,
+            used_ann_index: None,
         });
         match model.transcript.last() {
             Some(TranscriptEntry::ContextRecall { labels, .. }) => {

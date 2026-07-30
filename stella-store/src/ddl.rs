@@ -54,6 +54,14 @@ pub(crate) const TABLES: [&str; 19] = [
 /// by-session index is that reader's access path (filter on session_id,
 /// scan in id order). `IF NOT EXISTS` on both so the batch also tolerates a
 /// partial file that already grew them.
+///
+/// `executions_unfinished` is **partial** (`WHERE finished_at IS NULL`), and
+/// that is the whole point: the crash-recovery sweep at
+/// [`Store::open`](crate::Store::open) asks "is anything unclosed?" on every
+/// single open, and the honest answer is almost always no. A partial index
+/// holds only the open rows — usually zero, at most a handful — so the
+/// question costs an empty index probe instead of a scan over every
+/// execution the workspace has ever run.
 pub(crate) const EXECUTIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS executions (
        id INTEGER PRIMARY KEY AUTOINCREMENT,
        kind TEXT NOT NULL,
@@ -70,7 +78,9 @@ pub(crate) const EXECUTIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS executions (
          CHECK(usage_status IN ('pending', 'complete', 'incomplete'))
      );
      CREATE INDEX IF NOT EXISTS executions_by_session
-       ON executions(session_id, id);";
+       ON executions(session_id, id);
+     CREATE INDEX IF NOT EXISTS executions_unfinished
+       ON executions(id) WHERE finished_at IS NULL;";
 
 /// Tables whose shape has not changed since v0. `IF NOT EXISTS` keeps one
 /// batch usable both for fresh files and for filling gaps in partial legacy
@@ -315,6 +325,40 @@ pub(crate) const MCP_USAGE_DDL: &str = "CREATE TABLE IF NOT EXISTS mcp_usage (
 /// (execution_id, seq) is the house double-write guard. The by-name index is
 /// the access path for usage histograms (e.g. "grep called N times,
 /// graph_query zero").
+///
+/// **This projection is written LIVE** (v18), inside the same transaction as
+/// the `tool_start`/`tool_result` event that produces it
+/// ([`Store::record_event`](crate::Store::record_event)). Before v18 it was
+/// materialized once, at turn end, from the whole event stream — which meant
+/// an in-flight turn reported zero tool calls no matter how many it had made,
+/// and a turn that never reached its end (SIGKILL, panic, power loss) left
+/// its calls in `events` with no row here forever. The end-of-turn fold
+/// ([`Store::materialize_tool_calls`](crate::Store::materialize_tool_calls))
+/// survives as the idempotent *repair* path, not as the only writer.
+///
+/// `state` is the lifecycle the live write needs and the end-of-turn fold
+/// could not express: `'running'` (announced, no result yet), `'ok'`, or
+/// `'error'`. It is strictly richer than `ok`, which is kept in lockstep
+/// (`ok = 1` iff `state = 'ok'`) so every pre-v18 reader keeps working.
+/// Without it an in-flight call is indistinguishable from a failed one with
+/// an empty error message, and a dashboard cannot honestly draw either.
+///
+/// `ts` is now the moment the call was **announced** rather than the moment
+/// the turn ended, so per-day rollups bucket a call on the day it ran.
+///
+/// The by-state index is the access path for the live views — "what is
+/// running right now" and the interrupted-call sweep — both of which filter
+/// on `state` before anything else.
+///
+/// `tool_calls_by_call_id` is the live writer's own access path: a
+/// `tool_result` finds the row its `tool_start` opened by `call_id`, which is
+/// the only identity the two events share. It is UNIQUE because one `call_id`
+/// is one call — the invariant that stops a re-announced start from minting a
+/// second row and double-counting the call — but **partial**, excluding
+/// `call_id = ''`. Legacy rows predating the column carry the empty default,
+/// and a total unique index would fail to build on any file holding two of
+/// them, which fails the migration and takes the workspace's whole store with
+/// it. The invariant is only meaningful for real ids anyway.
 pub(crate) const TOOL_CALLS_DDL: &str = "CREATE TABLE IF NOT EXISTS tool_calls (
        execution_id INTEGER NOT NULL,
        seq INTEGER NOT NULL,
@@ -325,6 +369,8 @@ pub(crate) const TOOL_CALLS_DDL: &str = "CREATE TABLE IF NOT EXISTS tool_calls (
        args_digest TEXT NOT NULL DEFAULT '',
        reason TEXT NOT NULL DEFAULT '',
        ok INTEGER NOT NULL DEFAULT 1,
+       state TEXT NOT NULL DEFAULT 'ok'
+         CHECK(state IN ('running', 'ok', 'error')),
        error TEXT NOT NULL DEFAULT '',
        bytes_out INTEGER NOT NULL DEFAULT 0,
        duration_ms INTEGER NOT NULL DEFAULT 0,
@@ -332,7 +378,11 @@ pub(crate) const TOOL_CALLS_DDL: &str = "CREATE TABLE IF NOT EXISTS tool_calls (
        UNIQUE (execution_id, seq)
      );
      CREATE INDEX IF NOT EXISTS tool_calls_by_name
-       ON tool_calls(name, execution_id);";
+       ON tool_calls(name, execution_id);
+     CREATE INDEX IF NOT EXISTS tool_calls_by_state
+       ON tool_calls(state, execution_id, seq);
+     CREATE UNIQUE INDEX IF NOT EXISTS tool_calls_by_call_id
+       ON tool_calls(execution_id, call_id) WHERE call_id != '';";
 
 /// `execution_reflection` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — the agent's own
 /// assessment of ONE turn, tied 1:1 to its execution (and thus to

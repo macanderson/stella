@@ -54,8 +54,8 @@ use stella_core::retry::{RetryPolicy, Sleeper};
 use stella_core::router::FallbackInfo;
 use stella_core::{BudgetGuard, Engine, EngineConfig, EventSender, Router, TurnOutcome};
 use stella_protocol::{
-    AgentEvent, CompletionMessage, ContextUsage, JudgeEvidence, MessageRole, ModelCallRole,
-    ModelRef, ProofStep, ProofTree, Provider, Role, StageKind,
+    AgentEvent, CompletionMessage, JudgeEvidence, MessageRole, ModelCallRole, ModelRef, Provider,
+    Role, StageKind,
 };
 
 use crate::candidate::{
@@ -68,7 +68,10 @@ use crate::ports::{
     Recall, RecalledFrame, RepoStatusPort, RepoStructurePort, ScopeDecision, TestInvocation,
     TestRunner, WorkspaceError,
 };
-use crate::scope::{ScopeEstimate, apply_trim, build_proposal, needs_scope_review};
+use crate::scope::{
+    MAX_SCOPE_REVISIONS, PlannedScope, ScopeEstimate, ScopeVerdict, apply_trim, build_proposal,
+    needs_scope_review,
+};
 use crate::triage::{
     TaskAssessment, TaskClass, parse_triage_response, resolve_conversational, resolve_task_class,
     resolve_witness, triage_prompt,
@@ -90,6 +93,7 @@ use crate::witness::{
 mod disclosure;
 mod raw_usage;
 mod run_error;
+mod scope_stage;
 mod stage_budget;
 mod witness_stage;
 use raw_usage::{RawCall, RawCallError};
@@ -640,15 +644,15 @@ impl<'a> Pipeline<'a> {
                 .await
                 .unwrap_or_default()
         };
-        let (assessment, recalled) =
+        let (assessment, mut recalled) =
             tokio::join!(self.triage(goal, budget, &mut total_cost), recall_future);
         // Bounded at the source (#616), so every consumer — the user message,
         // the planner prompt, the witness prompt — inherits one budget, and
         // the ContextRecall event reports the frames the turn actually pays
         // for. A mis-tuned recall port must not silently inflate every
         // subsequent turn (N candidates × every revision) past the window.
-        let frames = bound_recalled_frames(recalled.frames);
-        self.emit_context_recall(&frames, recalled.usage.clone());
+        let frames = bound_recalled_frames(std::mem::take(&mut recalled.frames));
+        self.emit_context_recall(&frames, &recalled);
         let assessment = match assessment {
             Ok(assessment) => assessment,
             Err(abort) => {
@@ -679,36 +683,21 @@ impl<'a> Pipeline<'a> {
                 .await;
         }
 
-        // --- 3. Plan (skipped for simple/single-task). ---------------------
+        // --- 3+4. Plan, then scope review — one phase, because a reviewer who
+        // asks for a different scope sends us back to the planner. -----------
         let plan: Option<Vec<PlanStep>> = if task_class.plans() {
-            let repo_structure = self.repo.structure_summary().await;
             match self
-                .plan_stage(goal, &frames, &repo_structure, budget, &mut total_cost)
+                .plan_with_review(goal, &frames, budget, &mut total_cost)
                 .await
             {
-                Ok(plan) => Some(plan),
-                Err(abort) => {
-                    return Ok(self.aborted_before_execute(task_class, total_cost, &abort.reason));
+                Ok(PlannedScope::Steps(steps)) => Some(steps),
+                Ok(PlannedScope::Ended { reason }) => {
+                    return Ok(self.aborted_before_execute(task_class, total_cost, &reason));
                 }
+                Err(cause) => return Err(PipelineRunError::new(cause, total_cost)),
             }
         } else {
             None
-        };
-        // --- 4. Scope review (only for planned work above thresholds). -----
-        let plan = match plan {
-            Some(steps) => match self.scope_review(goal, steps).await {
-                Ok(Some(steps)) => Some(steps),
-                Ok(None) => {
-                    // User aborted (or trimmed to nothing) at the gate.
-                    return Ok(self.aborted_before_execute(
-                        task_class,
-                        total_cost,
-                        "aborted at scope review",
-                    ));
-                }
-                Err(cause) => return Err(PipelineRunError::new(cause, total_cost)),
-            },
-            None => None,
         };
 
         // --- 5. Witness + execute + verify (single-shot or best-of-N). ------
@@ -1108,11 +1097,14 @@ impl<'a> Pipeline<'a> {
 
     // Stage: plan
 
+    /// `revision` is the reviewer's note from a rejected scope card, or `None`
+    /// for a turn's first plan.
     async fn plan_stage(
         &self,
         goal: &str,
         recall: &[RecalledFrame],
         repo_structure: &str,
+        revision: Option<&str>,
         budget: &mut BudgetGuard,
         total: &mut f64,
     ) -> Result<Vec<PlanStep>, PipelineBudgetAbort> {
@@ -1129,7 +1121,7 @@ impl<'a> Pipeline<'a> {
             self.emit_fallback(fb);
         }
 
-        let prompt = build_planner_prompt(goal, recall, repo_structure);
+        let prompt = build_planner_prompt(goal, recall, repo_structure, revision);
         // Plan rides the worker's settings (same router tier, same tuning).
         let worker_overrides = RoleCallOverrides::default();
         let result = match self
@@ -1184,74 +1176,6 @@ impl<'a> Pipeline<'a> {
         // Degrade to a single-step plan rather than failing — a planner that
         // won't produce a parseable plan must still let the work proceed.
         Ok(fallback_plan())
-    }
-
-    // Stage: scope review
-
-    /// Returns `Ok(Some(plan))` to proceed (possibly trimmed), `Ok(None)` if
-    /// the user aborted/emptied the plan, or `Err` if headless without bypass.
-    async fn scope_review(
-        &self,
-        goal: &str,
-        plan: Vec<PlanStep>,
-    ) -> Result<Option<Vec<PlanStep>>, PipelineError> {
-        // Coarse blast-radius estimate: one file per step is a deliberately
-        // rough proxy until the planner emits per-step file hints (a
-        // documented follow-up). Cost estimate is left to the caller/planner.
-        let estimate = ScopeEstimate {
-            estimated_files: plan.len() as u32,
-            estimated_cost_usd: None,
-        };
-        if !needs_scope_review(&plan, &estimate, &self.config.scope_thresholds) {
-            return Ok(Some(plan));
-        }
-
-        if self.config.headless && self.config.headless_bypass_scope_review {
-            // Bypass means proceed, not "ask a gate that always says no".
-            // The headless approval port is `AlwaysAbortGate`, so running the
-            // review anyway would empty the plan and end the turn having done
-            // nothing — the same zero-work outcome as the error below, just
-            // spelled differently.
-            return Ok(Some(plan));
-        }
-        if self.config.headless {
-            // Say why the run is ending. This error leaves through the
-            // `Result`, not the event stream, so without this the stream just
-            // stops mid-plan: a consumer reading only events sees a run that
-            // vanished with no terminal event and no explanation.
-            self.emit(AgentEvent::Error {
-                message: format!(
-                    "this plan needs scope review ({} steps, ~{} files) and a headless \
-                     run has nobody to ask; set `headless_scope_bypass: on` where the \
-                     working tree is disposable, or raise the scope thresholds",
-                    plan.len(),
-                    estimate.estimated_files
-                ),
-                retryable: false,
-            });
-            return Err(PipelineError::ScopeReviewRequiredHeadless);
-        }
-
-        self.emit(AgentEvent::Stage {
-            name: StageKind::ScopeReview,
-        });
-        let proposal = build_proposal(goal, &plan, &estimate);
-        self.emit(AgentEvent::ScopeReview {
-            proposal: proposal.clone(),
-        });
-
-        match self.approvals.review(&proposal).await {
-            ScopeDecision::Approve => Ok(Some(plan)),
-            ScopeDecision::Trim { keep_steps } => {
-                let trimmed = apply_trim(&plan, &keep_steps);
-                if trimmed.is_empty() {
-                    Ok(None)
-                } else {
-                    Ok(Some(trimmed))
-                }
-            }
-            ScopeDecision::Abort => Ok(None),
-        }
     }
 
     // Stage: execute + verify — candidate generation and selection
@@ -2453,12 +2377,18 @@ impl<'a> Pipeline<'a> {
     /// [`Recall::telemetry_event`] — Phase 2 (#713) moved it there because the
     /// pipeline was the only surface that emitted it, and four other recall
     /// paths now need the same event built the same way.
-    fn emit_context_recall(&self, frames: &[RecalledFrame], usage: Option<ContextUsage>) {
-        let recall = Recall {
+    ///
+    /// `frames` is separate because the caller bounds them first (#616) and
+    /// the event must report what the turn actually pays for. Everything else
+    /// rides off the original rather than being rebuilt from parts:
+    /// reconstructing a `Recall` field by field here is exactly how
+    /// `latency_ms` (#875) would have been dropped the moment it was added.
+    fn emit_context_recall(&self, frames: &[RecalledFrame], recall: &Recall) {
+        let bounded = Recall {
             frames: frames.to_vec(),
-            usage,
+            ..recall.clone()
         };
-        if let Some(event) = recall.telemetry_event() {
+        if let Some(event) = bounded.telemetry_event() {
             self.emit(event);
         }
     }

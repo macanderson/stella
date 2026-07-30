@@ -54,6 +54,18 @@ impl WitnessToolExecutor {
         let Some(content) = input.get("content").and_then(serde_json::Value::as_str) else {
             return Self::denied("create_witness_test", "string `content` is required");
         };
+        // The assertion-density screen (#863). This runs BEFORE the one-create
+        // claim is taken, so a refusal leaves the author's single write still
+        // available: the named reason arrives as a tool error and it revises
+        // in-turn, rather than the run discovering after a baseline test run
+        // and a repair turn that the artifact could never have witnessed
+        // anything. This boundary is the only path witness bytes take to disk,
+        // which is what makes a check here complete rather than advisory.
+        if let Err(vacuous) =
+            stella_pipeline::witness::density::screen_witness_source(&path, content)
+        {
+            return Self::denied("create_witness_test", vacuous);
+        }
 
         let mut claimed = self
             .created_path
@@ -327,6 +339,19 @@ mod tests {
         WitnessToolExecutor::new(root.to_path_buf(), registry)
     }
 
+    /// A witness body that would really witness something, tagged so the tests
+    /// below can still tell two attempts apart.
+    ///
+    /// The tests that use this are about file *mechanics* — exclusive creation,
+    /// symlink refusal, the one-create claim under a race — and they used to
+    /// pass placeholder text like `"new"`. The density screen (#863) refuses
+    /// that before any of those mechanics run, which silently turned the
+    /// symlink test green for the wrong reason. Real bytes keep each test
+    /// testing what it names.
+    fn witness_body(tag: u32) -> String {
+        format!("#[test]\nfn witness() {{\n    assert_eq!(stella::compute(), {tag});\n}}\n")
+    }
+
     #[tokio::test]
     async fn has_no_general_or_external_capabilities() {
         let root = tempfile::tempdir().unwrap();
@@ -393,7 +418,7 @@ mod tests {
         let output = tools
             .execute(
                 "create_witness_test",
-                &serde_json::json!({"path": "tests/existing.rs", "content": "owned"}),
+                &serde_json::json!({"path": "tests/existing.rs", "content": witness_body(1)}),
             )
             .await;
         assert!(output.is_error());
@@ -402,24 +427,89 @@ mod tests {
         let output = tools
             .execute(
                 "create_witness_test",
-                &serde_json::json!({"path": "tests/new_witness.rs", "content": "new"}),
+                &serde_json::json!({"path": "tests/new_witness.rs", "content": witness_body(2)}),
             )
             .await;
         assert!(matches!(output, ToolOutput::Ok { .. }));
         assert_eq!(
             std::fs::read_to_string(root.path().join("tests/new_witness.rs")).unwrap(),
-            "new"
+            witness_body(2)
         );
         assert!(
             tools
                 .execute(
                     "create_witness_test",
-                    &serde_json::json!({"path": "tests/second.rs", "content": "second"}),
+                    &serde_json::json!({"path": "tests/second.rs", "content": witness_body(3)}),
                 )
                 .await
                 .is_error()
         );
         assert!(!root.path().join("tests/second.rs").exists());
+    }
+
+    /// #863 at the boundary that owns it: a vacuous witness never reaches
+    /// disk, the reason is named, and the author's one create is still
+    /// available — a refusal that consumed the write would turn a revisable
+    /// mistake into a lost witness.
+    #[tokio::test]
+    async fn a_vacuous_witness_is_refused_and_the_author_may_still_revise() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("tests")).unwrap();
+        let tools = witness_executor(root.path()).await;
+
+        for (name, content, expected) in [
+            (
+                "tests/no_assertions.rs",
+                "#[test]\nfn witness() {\n    let _ = stella::retry();\n}\n",
+                "asserts nothing",
+            ),
+            (
+                "tests/tautology.rs",
+                "#[test]\nfn witness() {\n    assert_eq!(2, 2);\n}\n",
+                "tautology over constants",
+            ),
+            (
+                "tests/catch_all.rs",
+                "#[test]\n#[should_panic]\nfn witness() {\n    stella::retry();\n}\n",
+                "catch-all panic check",
+            ),
+        ] {
+            let output = tools
+                .execute(
+                    "create_witness_test",
+                    &serde_json::json!({"path": name, "content": content}),
+                )
+                .await;
+            match &output {
+                ToolOutput::Error { message } => assert!(
+                    message.contains(expected),
+                    "{name} must name its vacuous shape, got: {message}"
+                ),
+                ToolOutput::Ok { .. } => panic!("{name} is vacuous and must be refused"),
+            }
+            assert!(
+                !root.path().join(name).exists(),
+                "{name} must never reach disk"
+            );
+        }
+
+        // The refusals did not consume the one-create budget: a real witness
+        // still lands on the very next attempt, in the same turn.
+        let output = tools
+            .execute(
+                "create_witness_test",
+                &serde_json::json!({
+                    "path": "tests/real_witness.rs",
+                    "content": "#[test]\nfn witness() {\n    \
+                                assert_eq!(stella::retry_delays(3), vec![1, 2, 4]);\n}\n",
+                }),
+            )
+            .await;
+        assert!(
+            matches!(output, ToolOutput::Ok { .. }),
+            "a substantive witness must be accepted after the refusals: {output:?}"
+        );
+        assert!(root.path().join("tests/real_witness.rs").exists());
     }
 
     #[cfg(unix)]
@@ -436,7 +526,7 @@ mod tests {
         let output = tools
             .execute(
                 "create_witness_test",
-                &serde_json::json!({"path": "tests/witness.rs", "content": "owned"}),
+                &serde_json::json!({"path": "tests/witness.rs", "content": witness_body(1)}),
             )
             .await;
         assert!(output.is_error());
@@ -453,7 +543,7 @@ mod tests {
             left_tools
                 .execute(
                     "create_witness_test",
-                    &serde_json::json!({"path": "tests/raced.rs", "content": "left"}),
+                    &serde_json::json!({"path": "tests/raced.rs", "content": witness_body(1)}),
                 )
                 .await
         });
@@ -461,7 +551,7 @@ mod tests {
             right_tools
                 .execute(
                     "create_witness_test",
-                    &serde_json::json!({"path": "tests/raced.rs", "content": "right"}),
+                    &serde_json::json!({"path": "tests/raced.rs", "content": witness_body(2)}),
                 )
                 .await
         });
@@ -472,7 +562,10 @@ mod tests {
             1
         );
         let content = std::fs::read_to_string(root.path().join("tests/raced.rs")).unwrap();
-        assert!(matches!(content.as_str(), "left" | "right"));
+        assert!(
+            content == witness_body(1) || content == witness_body(2),
+            "{content}"
+        );
     }
 
     #[tokio::test]
@@ -485,7 +578,7 @@ mod tests {
             left_tools
                 .execute(
                     "create_witness_test",
-                    &serde_json::json!({"path": "tests/left.rs", "content": "left"}),
+                    &serde_json::json!({"path": "tests/left.rs", "content": witness_body(1)}),
                 )
                 .await
         });
@@ -493,7 +586,7 @@ mod tests {
             tools
                 .execute(
                     "create_witness_test",
-                    &serde_json::json!({"path": "tests/right.rs", "content": "right"}),
+                    &serde_json::json!({"path": "tests/right.rs", "content": witness_body(2)}),
                 )
                 .await
         });

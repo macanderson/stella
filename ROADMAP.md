@@ -37,11 +37,15 @@ the test *constrains* the change well.
   `DeterministicPass` toward the judge path — the witness is likely
   tautological. Bounded cost: one extra test run per mutant, only on the
   winning candidate.
-- **Assertion-density heuristic on authored witnesses.** Reject or revise
-  authored witness tests that contain no assertions, assert only on constants,
-  or `#[should_panic]`/catch-all patterns — before spending the execute turn.
-  This extends the existing "test must fail first" check in `witness.rs` with
-  a static "test must be able to fail *meaningfully*" check.
+- **Assertion-density heuristic on authored witnesses.** *Done (#863).*
+  `witness::density::screen_witness_source` is the static "test must be able
+  to fail *meaningfully*" check beside "test must fail first": it refuses a
+  witness with no assertions, one asserting only over constants, one
+  comparing a value to itself, and a bare `#[should_panic]` /
+  `raises(Exception)`. Enforced at `create_witness_test` — the only path
+  witness bytes take to disk — so the refusal lands *inside the author's own
+  turn* and costs no extra model invocation, rather than after a baseline run
+  and a repair turn as sketched here.
 - **Diff-coverage overlap.** Where coverage tooling is available (e.g.
   `cargo llvm-cov`), check that the witness actually executes some of the
   changed lines. A flip whose test never touches the diff is a coincidence,
@@ -77,11 +81,16 @@ Lint/typecheck are rightly excluded from the flip oracle. But they can still
   candidate: new errors (or new warnings, configurable) block fast-submit
   even when the flip holds. A flipped witness plus a fresh type error in an
   untested module is exactly the inconclusive case the judge exists for.
-- **Impacted-test scope for Rust.** `run_tests scope=impacted` currently
-  falls back loudly to the full suite for Rust (#335). Graph-driven impacted
-  selection via the code-graph importer edges would let the ladder's
-  "touched tests green" input cover *affected* tests cheaply instead of
-  choosing between one witness command and a full workspace run.
+- **Impacted-test scope for Rust.** *Done at the tool level (#443, #862).*
+  `run_tests scope=impacted` resolves Rust `use`/`mod` edges through the
+  workspace module tree — including cross-crate paths — and narrows to the
+  owning cargo packages; an unrelated crate is left out, and a missing or
+  stale index still stands down loudly. What remains is **using** it as
+  ladder evidence: `observe_touched_tests` runs exactly one typed invocation
+  (the configured `--test-command`, else the witness command), so the ladder
+  still chooses between one witness command and a full workspace run. Feeding
+  it the impacted selection means composing a *typed* `cargo test -p …`
+  invocation for the ladder, not shelling the tool.
 - **Touched-tests set widening.** After revise turns, re-derive the
   touched-tests set from the *final* diff, not the first one — revisions can
   touch files whose tests were never consulted.
@@ -133,9 +142,9 @@ several verified candidates the *best-verified* one, not merely the smallest.
 | Phase | Items | Rationale |
 |-------|-------|-----------|
 | 1 | §2 confirmation run, §2 typed infra outcomes, §3 regression veto | Small, pure-logic changes in `verify.rs`/ports; directly reduce false `DeterministicPass` |
-| 2 | §1 assertion-density check, §4 structured judge evidence, §6 verdict provenance | Improves authored-witness quality and judge inputs with no new tooling deps |
+| 2 | ~~§1 assertion-density check~~ (done, #863), §4 structured judge evidence, §6 verdict provenance | Improves authored-witness quality and judge inputs with no new tooling deps |
 | 3 | §2 failure fingerprints, §4 early distress guidance, §5 score refinement | Builds on the fingerprint machinery from phase 1–2 |
-| 4 | §1 mutation check, §1 diff-coverage, §3 Rust impacted selection (#335), §4 calibration telemetry | Larger investments; each degrades gracefully when unavailable |
+| 4 | §1 mutation check, §1 diff-coverage, ~~§3 Rust impacted selection~~ (done at the tool level, #443/#862 — the ladder wiring remains), §4 calibration telemetry | Larger investments; each degrades gracefully when unavailable |
 
 Each phase preserves the two core invariants: `Flipped` is reachable only
 through `Failing` of the same normalized command, and the judge never

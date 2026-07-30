@@ -92,12 +92,17 @@ impl Tool for RunTests {
                     "scope": {
                         "type": "string",
                         "enum": ["impacted"],
-                        "description": "impacted: diff the working tree and run only the test \
-                                        files that transitively import a changed file \
-                                        (graph-driven; TS/JS/Python today). Falls back LOUDLY \
-                                        to the full suite when selection is unavailable (e.g. \
-                                        Rust until #335) — never silently under-tests. Not \
-                                        combinable with filter."
+                        "description": "impacted: diff the working tree and run only the tests \
+                                        that transitively import a changed file, through the \
+                                        code graph's resolved import edges — relative TS/JS, \
+                                        Python, and Rust `use`/`mod` paths. Rust narrows to the \
+                                        owning cargo packages (`-p`), because its unit tests \
+                                        live inside the sources rather than in named test \
+                                        files. Falls back LOUDLY to the full suite when \
+                                        selection is unavailable — a language whose imports the \
+                                        graph cannot resolve (e.g. Go), or a missing/stale \
+                                        index — never silently under-tests. Not combinable \
+                                        with filter."
                     },
                     "command": { "type": "string", "description": "Override the detected test command" },
                     "timeout_secs": { "type": "integer" }

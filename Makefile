@@ -152,10 +152,6 @@ dev-env-test: ## Test the dev-env scripts (hermetic; not part of `gate`)
 docs: ## Build rustdoc for the workspace (skip dep docs)
 	cargo doc --workspace --no-deps
 
-.PHONY: llms-txt
-llms-txt: ## Regenerate docs/llms.txt from the documentation site content
-	node website/scripts/build-llms-txt.mjs
-
 .PHONY: deny
 deny: ## cargo deny: advisories, dependency bans, source provenance, licenses
 	cargo deny check advisories bans sources licenses

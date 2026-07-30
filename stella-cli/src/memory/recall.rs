@@ -215,7 +215,15 @@ impl SessionMemory {
         // filter later drops every frame: a provider still spent the tokens,
         // and a cost that vanishes because the host discarded the frames is
         // exactly the unmeterable cost #452 exists to surface.
+        // #875: recall is on the first-token path of every turn, so the one
+        // number that says whether context retrieval is why a turn felt slow
+        // is measured here — around the host fan-out itself, which is the
+        // work. Everything before this point is query construction and
+        // suppression-set reads; everything after is projection. Timing the
+        // whole function would blame recall for both.
+        let started = std::time::Instant::now();
         let recalled = crate::contextgraph::recall_via_host(&self.host, &query).await;
+        let latency_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
         // Phase 2 (#713): the host's cross-provider merge is a second budget
         // pass and reported nothing at all, so anything it cut vanished
         // without a trace — a silent truncation `L-C5` bans. A required item
@@ -239,6 +247,11 @@ impl SessionMemory {
                 .filter(|frame| !is_suppressed_local_frame(frame, &quarantined))
                 .collect(),
             usage: Some(recalled.usage),
+            latency_ms,
+            // The host fan-out does not carry the accelerator flag across the
+            // provider-result boundary, and reporting `false` would read as
+            // "the index never fires" rather than "nobody said".
+            used_ann_index: None,
         }
     }
 }
