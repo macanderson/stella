@@ -34,6 +34,7 @@ mod command_deck;
 mod commands_cmd;
 mod config;
 mod connect_cmd;
+mod context_cmd;
 mod contextgraph;
 mod credential_handoff;
 mod credential_status;
@@ -131,47 +132,27 @@ pub(crate) fn note_json_summary_emitted() {
 /// The version of the `--output-format json|stream-json` summary envelope this
 /// build emits. Every summary object carries it — the pipeline summary, the raw
 /// step-loop summary, and the pre-flight error envelope — so a consumer can
-/// branch on the shape it was handed instead of sniffing for keys. A version
-/// stamped on only some summaries would be worse than none: a script could not
-/// rely on reading it.
+/// branch on the shape instead of sniffing for keys.
 ///
-/// All three envelopes are built from structs with the version declared first,
-/// so a derived `Serialize` puts it at the head of the object. That is a
-/// courtesy to whoever reads the output by eye, not a promise: key order stays
-/// outside the contract and consumers must read by key. Building any of them
-/// with `serde_json::json!` would quietly undo it — a `json!` object is a
-/// sorted map, which buries `schema_version` mid-envelope.
-///
-/// # Why version at all
-///
-/// The envelope's key set is a contract with every script that parses it, and
-/// the cost of adding the stamp rises with the number of consumers. Today it is
-/// additive and harmless; after the first external script pins the current
-/// shape, it is a compatibility negotiation (#644). This is the same reasoning
-/// that versioned the drain wire format ahead of its transport — see
-/// `DRAIN_SCHEMA_VERSION` in `stella-store`.
+/// All three envelopes are structs with the version declared first, so a derived
+/// `Serialize` heads the object — a courtesy, not a promise: key order stays
+/// outside the contract and consumers must read by key. Building any with
+/// `serde_json::json!` would undo that (a `json!` object is a sorted map that
+/// buries `schema_version` mid-envelope).
 ///
 /// # When to bump
 ///
-/// Increment when a consumer written against the previous version could break:
+/// Increment only when a consumer written against the previous version could
+/// break: a key removed or renamed, a value's type changed, or a key's *meaning*
+/// changed while its name and type stay the same. Do **not** bump for a purely
+/// additive key — consumers must ignore keys they do not recognize, so an
+/// addition cannot break a correct client and bumping would burn the signal
+/// (#644).
 ///
-/// - a key is removed or renamed,
-/// - a key's value type changes (`string` → `object`, scalar → array),
-/// - a key's *meaning* changes while its name and type stay the same.
-///
-/// Do **not** increment for purely additive change — a new key appended to the
-/// envelope. Consumers are required to ignore keys they do not recognize (the
-/// same discipline rule 1 of the event-stream contract imposes), so an addition
-/// cannot break a correct client, and bumping for one would burn the signal.
-///
-/// The `events` array is deliberately **out of scope**: the event vocabulary
-/// carries its own forward-compatibility contract
-/// (`website/content/docs/event-stream-compatibility.mdx`), and a new event type
-/// never bumps this number. Everything else the envelope owns — including the
-/// nested `verdict`, `reflection`, and `files_touched` payloads — is covered.
-///
-/// The consumer-facing statement of this rule lives in
-/// `website/content/docs/scripting.mdx`; keep the two in step.
+/// The `events` array is out of scope: the event vocabulary carries its own
+/// forward-compatibility contract and never bumps this number. The
+/// consumer-facing statement lives in `website/content/docs/scripting.mdx`; keep
+/// the two in step.
 pub(crate) const SUMMARY_SCHEMA_VERSION: u32 = 1;
 
 /// The stdout envelope for a failure under `--output-format json|stream-json`,
@@ -531,6 +512,13 @@ enum Command {
     Proposals {
         #[command(subcommand)]
         cmd: proposals_cmd::ProposalsCmd,
+    },
+
+    /// Work with context records — `stella context validate` re-runs each
+    /// record's truth probe and reports stale claims (#888). Offline.
+    Context {
+        #[command(subcommand)]
+        cmd: context_cmd::ContextCmd,
     },
 
     /// Eval-driven self-tuning of stella's own policy (#831): A/B one knob
@@ -1176,6 +1164,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         Some(Command::Proposals { cmd }) => {
             return proposals_cmd::run_proposals(cmd);
         }
+        // Reads context-record TOML + the tree; no store, model, or API key.
+        Some(Command::Context { cmd }) => return context_cmd::run(cmd),
         // #831 first slice. Reads loop-bench result files + the local ledger;
         // writes settings only on `--promote`. No provider, no API key.
         Some(Command::Tune { cmd }) => {
@@ -1526,6 +1516,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         | Command::Memory { .. }
         | Command::Scoreboard
         | Command::Ingest(_)
+        | Command::Context { .. }
         | Command::Mcp { .. }
         | Command::Connect { .. }
         | Command::Auth { .. }

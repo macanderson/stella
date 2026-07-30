@@ -26,7 +26,7 @@ use colored::Colorize;
 use stella_core::ingest::{self, Candidate, Plan, Tier};
 
 mod extract;
-mod probe;
+pub(crate) mod probe;
 
 /// Largest slice of any one file read for classification.
 ///
