@@ -67,9 +67,8 @@ use crate::plan::{PlanStep, build_planner_prompt, parse_plan, plan_repair_prompt
 use crate::ports::{
     ApprovalGate, CandidateWorkspace, CandidateWorkspacePort, ContextRecallPort,
     DiagnosticInvocation, DiagnosticRunner, FileTouchPort, McpPrefetchPort, PipelinePorts,
-    ProviderResolver,
-    Recall, RecalledFrame, RepoStatusPort, RepoStructurePort, ScopeDecision, TestInvocation,
-    TestRunner, WorkspaceError,
+    ProviderResolver, Recall, RecalledFrame, RepoStatusPort, RepoStructurePort, ScopeDecision,
+    TestInvocation, TestRunner, WorkspaceError,
 };
 use crate::scope::{
     MAX_SCOPE_REVISIONS, PlannedScope, ScopeEstimate, ScopeVerdict, apply_trim, build_proposal,
@@ -156,8 +155,7 @@ const DIFF_PROBE_FAILED: &str = "[the diff probe failed; the working tree could 
 /// as a transient fault a reader might expect to clear on a retry; this one
 /// says the probe is structurally inapplicable to this workspace, which is the
 /// difference between "try again" and "use another channel" (#973).
-const DIFF_PROBE_NOT_A_REPO: &str =
-    "[the working tree is not a git repository, so the diff probe cannot read it at all. This is \
+const DIFF_PROBE_NOT_A_REPO: &str = "[the working tree is not a git repository, so the diff probe cannot read it at all. This is \
      a permanent property of this workspace, NOT evidence that nothing changed — verify the \
      result on its own merits.]";
 

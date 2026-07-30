@@ -661,7 +661,11 @@ mod tests {
     /// tree" as "the file does not exist".
     #[test]
     fn the_judge_prompt_forbids_reading_a_blind_probe_as_an_absence() {
-        let p = judge_prompt("fix the bug", DIFF_PROBE_BLIND_SAMPLE, "file_change_events=6");
+        let p = judge_prompt(
+            "fix the bug",
+            DIFF_PROBE_BLIND_SAMPLE,
+            "file_change_events=6",
+        );
         assert!(
             p.contains("could not read the working tree"),
             "the prompt must name the failure mode it is guarding against"

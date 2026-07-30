@@ -114,9 +114,8 @@ pub use ports::{
     CandidateWorkspace, CandidateWorkspacePort, CmdOutcome, ContextRecallPort,
     DiagnosticInvocation, DiagnosticRunner, FileTouchPort, McpPrefetchPort, NoContextRecall,
     NoFileTouches, NoRepoStatus, NoRepoStructure, PipelinePorts, ProviderResolver, Recall,
-    RecalledFrame, RepoStatusPort,
-    RepoStructurePort, ScopeDecision, StdioApprovalGate, TestInvocation, TestRunner,
-    WorkspaceError,
+    RecalledFrame, RepoStatusPort, RepoStructurePort, ScopeDecision, StdioApprovalGate,
+    TestInvocation, TestRunner, WorkspaceError,
 };
 pub use triage::TaskClass;
 pub use verify::{FlipOracle, FlipState, LadderDecision, LadderInputs};

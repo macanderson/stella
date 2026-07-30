@@ -93,8 +93,7 @@ impl crate::ports::FileTouchPort for SeqTouches {
     fn mutations_recorded(&self) -> u64 {
         match self.readings.lock().unwrap().pop_front() {
             Some(next) => {
-                self.last
-                    .store(next, std::sync::atomic::Ordering::Relaxed);
+                self.last.store(next, std::sync::atomic::Ordering::Relaxed);
                 next
             }
             None => self.last.load(std::sync::atomic::Ordering::Relaxed),
