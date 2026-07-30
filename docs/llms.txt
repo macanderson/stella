@@ -5801,7 +5801,7 @@ These 46 tools register in every session — no configuration, no prerequisites.
 
     Prove a change is done: the test command must pass on the new code and fail on `git HEAD`. Runs in a shadow worktree and never edits your working tree.
     Build the workspace with its own toolchain (cargo/npm/go/make), or a custom command.
-    Run the project's tests with its own runner — `kind` picks unit/e2e/all, `filter` is runner-native, and `scope: "impacted"` runs only the tests reaching the working-tree change through the code graph's importer edges (TS/JS/Python today; falls back loudly to the full suite when selection is unavailable).
+    Run the project's tests with its own runner — `kind` picks unit/e2e/all, `filter` is runner-native, and `scope: "impacted"` runs only the tests reaching the working-tree change through the code graph's importer edges (relative TS/JS, Python, and Rust `use`/`mod` paths; Rust narrows to the owning cargo packages, since its unit tests live inside the sources). Falls back loudly to the full suite when selection is unavailable — an unresolvable language, or a missing/stale index — never silently under-testing.
     Fast typecheck: run the toolchain's native machine-readable check (`cargo check` / `tsc` / `eslint` / `ruff`) and return structured file:line:col diagnostics with severity and rule code, grouped by file.
     Run the project's own linter (cargo clippy, or the `lint` script); `fix` applies automatic fixes.
     Run the project's own formatter (cargo fmt, or the `format` script); `check` verifies without rewriting.
