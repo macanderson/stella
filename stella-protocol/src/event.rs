@@ -596,6 +596,30 @@ pub enum AgentEvent {
         /// no CGP host behind it has none to report.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         usage: Option<ContextUsage>,
+        /// Wall-clock milliseconds the recall itself took (#875).
+        ///
+        /// Recall sits on the **first-token path of every turn**, so a slow
+        /// one delays everything after it — and until this existed, a cold
+        /// store, a large corpus or a wedged embedding call was
+        /// indistinguishable from a fast recall right up until it became a
+        /// timeout. Defaulted, so older streams still deserialize; `0` there
+        /// means "not measured", not "instant".
+        #[serde(default)]
+        latency_ms: u32,
+        /// Whether the IVF approximate-nearest-neighbour accelerator fired,
+        /// or `None` when the recall path did not report it. Latency alone
+        /// cannot be acted on: a slow recall with a cold index is a different
+        /// problem, with a different fix, from one that used the index and
+        /// was still slow.
+        ///
+        /// Tri-state on purpose. `stella-context` knows the answer, but the
+        /// CGP host fan-out production recall goes through does not carry it
+        /// across the provider-result boundary — closing that is a change to
+        /// the provider contract, not to this event. A plain `bool` would
+        /// report `false` on every real turn, which reads as "the index never
+        /// fires" rather than "nobody said". `None` says what is true.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        used_ann_index: Option<bool>,
     },
     /// Context write-back completed: episode summaries, fact upserts,
     /// supersession (bi-temporal, close-not-delete per L-C3).
@@ -1581,6 +1605,8 @@ mod tests {
             }],
             tokens: 120,
             usage: None,
+            latency_ms: 0,
+            used_ann_index: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("citation_label"), "{json}");
@@ -1640,6 +1666,8 @@ mod tests {
             provider_mix: vec![],
             tokens: 210,
             usage: Some(usage.clone()),
+            latency_ms: 0,
+            used_ann_index: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         let back: AgentEvent = serde_json::from_str(&json).unwrap();

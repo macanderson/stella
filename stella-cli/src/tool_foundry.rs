@@ -93,7 +93,7 @@ fn invocation_from_row(row: ToolCallRow) -> Option<ShellInvocation> {
     }
     Some(ShellInvocation {
         command,
-        succeeded: row.ok,
+        succeeded: row.ok(),
     })
 }
 
@@ -151,6 +151,7 @@ fn proposal_body(p: &ProposedTool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use stella_store::ToolCallState;
 
     fn bash_row(call_id: &str, command: &str, ok: bool) -> ToolCallRow {
         ToolCallRow {
@@ -160,7 +161,11 @@ mod tests {
             args_json: serde_json::json!({ "command": command }).to_string(),
             args_digest: call_id.into(),
             reason: String::new(),
-            ok,
+            state: if ok {
+                ToolCallState::Ok
+            } else {
+                ToolCallState::Error
+            },
             error: String::new(),
             bytes_out: 0,
             duration_ms: 1,
@@ -247,7 +252,7 @@ mod tests {
                         args_json: "not json".into(),
                         args_digest: "c1".into(),
                         reason: String::new(),
-                        ok: true,
+                        state: ToolCallState::Ok,
                         error: String::new(),
                         bytes_out: 0,
                         duration_ms: 1,

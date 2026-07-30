@@ -32,6 +32,7 @@ use crate::composer::{
     handle_slash_popup_key, slash_popup_matches,
 };
 use crate::deck::{DeckTab, WorkspaceModel};
+use crate::deck_ui::gates::handle_focused_gates;
 use crate::envelope::{
     AgentControl, AgentId, AgentScope, AgentStatus, EntityField, EntityHit, Inbound,
     InstalledAgentEntry, IssueAction, IssueRow, Secret, SkillOp, SkillScope, SkillSearchHit,
@@ -1388,6 +1389,7 @@ fn push_single_line(buf: &mut String, text: &str) {
 /// pending ask-user gate never reaches them either — it folds the agent to
 /// [`AgentStatus::WaitingInput`], which fails rule 10's `Running` check.
 mod create;
+mod gates;
 mod nav;
 pub use nav::TranscriptSearch;
 pub(crate) use nav::is_folded;
@@ -3226,88 +3228,6 @@ fn handle_skills_prompt_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
 /// The id of the focused agent, if any — also the lane a `!` command borrows.
 pub(crate) fn focused_id(model: &WorkspaceModel, ui: &DeckUi) -> Option<AgentId> {
     model.agents.get(ui.focused).map(|a| a.meta.id.clone())
-}
-
-/// Scope-review / ask-user gates for the focused agent. Returns `Some` to
-/// short-circuit; `None` to fall through to normal editing.
-fn handle_focused_gates(
-    key: KeyEvent,
-    model: &WorkspaceModel,
-    ui: &mut DeckUi,
-    agent: &AgentId,
-) -> Option<DeckAction> {
-    let entry = model.agents.get(ui.focused)?;
-    let composer_empty = ui.composer.buffer().is_empty();
-
-    // Scope review: a/t/x/Esc decide it (only when nothing is typed, and only
-    // while UNANSWERED — the pending gate clears on the engine's follow-on
-    // event, so the latch is what stops a second press re-sending the
-    // decision during that round-trip; the card reads "decision sent" until
-    // then and the keys type into the composer as usual).
-    if entry.model.pending_scope_review.is_some()
-        && !ui.scope_answered.contains(agent)
-        && composer_empty
-    {
-        let decision = match key.code {
-            KeyCode::Char('a') => Some(ScopeDecision::Approve),
-            KeyCode::Char('t') => Some(ScopeDecision::Trim),
-            KeyCode::Char('x') | KeyCode::Esc => Some(ScopeDecision::Abort),
-            _ => None,
-        };
-        if let Some(decision) = decision {
-            ui.scope_answered.insert(agent.clone());
-            return Some(DeckAction::Send(WorkspaceInput::ToAgent {
-                agent: agent.clone(),
-                input: UserInput::ScopeDecision(decision),
-            }));
-        }
-    }
-
-    // Ask-user: digit quick-pick when nothing typed; Enter submits free text.
-    // Same latch: the answer returns as the tool's own ToolResult, and until
-    // it lands a second digit/Enter must not re-answer the question.
-    if let Some(prompt) = &entry.model.pending_ask_user
-        && !ui.ask_answered.contains(agent)
-    {
-        match key.code {
-            KeyCode::Char(d @ '1'..='9') if composer_empty => {
-                let idx = (d as usize) - ('1' as usize);
-                if let Some(option) = prompt.options.get(idx) {
-                    let answer = option.clone();
-                    let id = prompt.id.clone();
-                    ui.ask_answered.insert(agent.clone());
-                    return Some(DeckAction::Send(WorkspaceInput::ToAgent {
-                        agent: agent.clone(),
-                        input: UserInput::AskUserAnswer { id, answer },
-                    }));
-                }
-            }
-            // The submit chord dispatches the typed free text as the answer.
-            // A plain `⏎` is NOT claimed — it falls through to composer
-            // editing, so the answer can span lines. A `!` line is a shell
-            // command even while a question is pending — it must run
-            // immediately, not be swallowed as the answer.
-            KeyCode::Enter
-                if classify_enter(&key) == EnterAction::Submit
-                    && !ui.composer.buffer().trim_start().starts_with('!') =>
-            {
-                if let Some(submission) = ui.composer.take_submission() {
-                    let id = prompt.id.clone();
-                    ui.ask_answered.insert(agent.clone());
-                    return Some(DeckAction::Send(WorkspaceInput::ToAgent {
-                        agent: agent.clone(),
-                        input: UserInput::AskUserAnswer {
-                            id,
-                            answer: submission.text,
-                        },
-                    }));
-                }
-                return Some(DeckAction::Ignored); // force an explicit answer
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 /// MCP tab keys. Three sub-modes: Browse (navigate the configured servers and

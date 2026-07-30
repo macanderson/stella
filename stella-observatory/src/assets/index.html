@@ -2147,27 +2147,136 @@ async function refresh() {
   }
 }
 
-/* Polling is stopped outright while the tab is hidden rather than ticking and
-   returning early, so a backgrounded dashboard costs nothing. */
-let poll = 0;
-function startPolling() {
-  if (poll) return;
-  poll = setInterval(refresh, 5000);
+/* ── the live plane ──────────────────────────────────────────────────────
+   The dashboard used to re-run twelve full-history aggregates every five
+   seconds no matter what — expensive when busy, pure waste when idle, and
+   still up to five seconds behind. It now subscribes to /api/v1/live, which
+   pushes a frame only when the workspace's cursor actually moves.
+
+   Two things arrive on every frame. `live` is the in-flight slice — running
+   executions and the tool calls outstanding under them — small enough to
+   ride inline, so it paints with no follow-up request. `changed` says
+   whether anything moved; only then are the heavy payloads re-fetched.
+
+   Polling survives as the fallback, not the default: SSE can be refused
+   (the server caps concurrent streams) or unavailable, and a dashboard that
+   goes blank because a stream would not open is worse than a slow one. */
+const POLL_MS = 2000;
+let poller = null;
+let lastCursor = "";
+
+/* The fallback poll, which is deliberately not the old one. It asks the two
+   cheap questions first — /api/v1/cursor (a handful of index probes) and
+   /api/v1/snapshot (the in-flight slice) — and only re-runs the twelve
+   full-history aggregates when the cursor has actually moved. An idle
+   workspace therefore costs almost nothing even without a stream, which is
+   what lets this poll twice as often as the old one did while doing less
+   work. The in-flight panel repaints every tick regardless, so elapsed
+   times keep counting. */
+async function pollOnce() {
+  try {
+    const [cursor, snapshot] = await Promise.all(
+      ["/api/v1/cursor", "/api/v1/snapshot"].map(api));
+    renderInflight(snapshot);
+    const stamp = JSON.stringify(cursor);
+    if (stamp !== lastCursor) { lastCursor = stamp; await refresh(); }
+    $("live").classList.remove("paused");
+  } catch {
+    $("live").classList.add("paused");
+  }
 }
-function stopPolling() { clearInterval(poll); poll = 0; }
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden) { stopPolling(); return; }
-  startPolling(); refresh();
-});
-addEventListener("pagehide", stopPolling);
+
+function startPolling() {
+  if (poller) return;
+  pollOnce();
+  poller = setInterval(() => { if (!document.hidden) pollOnce(); }, POLL_MS);
+}
+function stopPolling() {
+  if (poller) { clearInterval(poller); poller = null; }
+}
+
+function renderInflight(live) {
+  const execs = live?.executions ?? [];
+  const calls = live?.running_calls ?? [];
+  const host = $("inflight");
+  if (!host) return;
+  if (!execs.length) {
+    host.innerHTML = "";
+    host.style.display = "none";
+    return;
+  }
+  host.style.display = "";
+  const secs = (ms) => (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + "s";
+  const byExec = {};
+  for (const c of calls) (byExec[c.execution_id] ??= []).push(c);
+  host.innerHTML = `<div class="card"><div class="k">IN FLIGHT · ${execs.length}</div>
+    ${execs.map(e => {
+      const running = (byExec[e.id] ?? [])
+        .map(c => `<span class="chip run">${esc(c.name)} · ${secs(c.elapsed_ms)}</span>`)
+        .join("");
+      return `<div class="inflight-row">
+        <div class="inflight-head">
+          <b>#${e.id}</b> <span class="dim">${esc(e.kind)}</span>
+          <span class="dim">${esc(e.model)}</span>
+          <span class="grow"></span>
+          <span>${secs(e.elapsed_ms)}</span>
+        </div>
+        <div class="dim ellipsis">${esc(e.prompt)}</div>
+        <div class="inflight-stats">
+          <span><b>${e.tool_calls}</b> tool calls</span>
+          <span><b>${e.steps}</b> steps</span>
+          <span><b>${(e.input_tokens + e.output_tokens).toLocaleString()}</b> tokens</span>
+          <span>$${e.cost_usd.toFixed(4)}</span>
+          ${e.tool_errors ? `<span class="bad"><b>${e.tool_errors}</b> tool errors</span>` : ""}
+        </div>
+        ${running ? `<div class="inflight-calls">${running}</div>` : ""}
+      </div>`;
+    }).join("")}</div>`;
+}
+
+function connectLive() {
+  let source;
+  try {
+    source = new EventSource("/api/v1/live");
+  } catch {
+    startPolling();
+    return;
+  }
+  source.addEventListener("tick", (msg) => {
+    let payload;
+    try { payload = JSON.parse(msg.data); } catch { return; }
+    // The stream is healthy, so the fallback poller is redundant. Stopping
+    // it here rather than on `open` means it only stands down once a frame
+    // has actually arrived — a socket that connects and then says nothing
+    // must not silence the fallback.
+    stopPolling();
+    $("live").classList.remove("paused");
+    renderInflight(payload.live);
+    // Keep the poller's cursor current while the stream drives, so a later
+    // fallback does not re-fetch everything just because it never saw the
+    // frames that already updated the page.
+    lastCursor = JSON.stringify(payload.cursor);
+    if (payload.changed) refresh();
+  });
+  source.onerror = () => {
+    // EventSource reconnects on its own, but a refused stream (the server's
+    // concurrency cap) errors every time. Polling covers both cases; the
+    // reconnect, if it succeeds, stops the poller again on its first frame.
+    $("live").classList.add("paused");
+    startPolling();
+  };
+}
 
 /* Boot. The graph bindings touch canvas and ResizeObserver, so they are the
    most environment-dependent thing on the page; a throw there must not take
-   the data refresh with it, which is what a bare sequence of calls did. */
+   the data plane with it, which is what a bare sequence of calls did. */
 try { bindGraphEvents(); } catch (e) { fail("The code graph could not be initialised.", e); }
 switchTab(isTab(location.hash.slice(1)) ? location.hash.slice(1) : "overview");
-refresh();
-startPolling();
+refresh().then(connectLive);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+/* A hidden tab already skips its tick; pagehide is the one exit that never
+   comes back, so the timer is released outright rather than left armed. */
+addEventListener("pagehide", stopPolling);
 </script>
 </body>
 </html>

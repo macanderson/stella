@@ -10,6 +10,7 @@ use super::*;
 use crate::envelope::AgentMeta;
 use stella_protocol::AgentEvent;
 
+mod gates;
 mod graph;
 mod help;
 mod issues;

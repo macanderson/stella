@@ -203,6 +203,8 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 provider_mix: vec![share("code-graph", 1), share("memory", 1)],
                 tokens: 210,
                 usage: None,
+                latency_ms: 34,
+                used_ann_index: Some(true),
             },
         ),
         ev(

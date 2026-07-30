@@ -35,15 +35,25 @@ fn host_header_gates_dns_rebinding() {
 /// Build a workspace with a seeded `.stella/private/store.db` shaped like the
 /// real schema (the subset the observatory reads).
 ///
-/// A hand-written *subset*, not a copy, and already a divergent one:
+/// A hand-written *subset*, not a copy, and deliberately a divergent one:
 /// `stella-store`'s shipped DDL also carries `executions.session_id`,
 /// `usage_complete` and `usage_status`, and `telemetry.call_role` and
-/// `usage_complete` — columns no query in this crate selects. Nothing
-/// checks the two schemas against each other, so a column this crate *does*
-/// read, renamed in `stella-store`, keeps this suite green and 500s the
-/// dashboard at runtime. Every INSERT below therefore names its columns:
-/// the fixture must survive the store growing another one, not silently
-/// depend on the column order of the day.
+/// `usage_complete` — columns no query in this crate selects. The point of
+/// the subset is speed and focus: these are routing and rendering tests, and
+/// they should not pay for a migration run to assert that a query string
+/// parses.
+///
+/// What used to be wrong with that is now covered elsewhere. Nothing checked
+/// the two schemas against each other, so a column this crate *does* read,
+/// renamed in `stella-store`, kept this suite green and 500'd the dashboard
+/// at runtime (#827). `tests/schema_conformance.rs` closes that: it builds a
+/// database through the real `Store::open` migration path and drives every
+/// route against it, so drift fails there. This fixture is free to stay a
+/// subset precisely because that gate exists.
+///
+/// Every INSERT below still names its columns: the fixture must survive the
+/// store growing another one, not silently depend on the column order of the
+/// day.
 fn seeded_workspace() -> TempDir {
     let dir = TempDir::new().unwrap();
     let dot = dir.path().join(".stella");

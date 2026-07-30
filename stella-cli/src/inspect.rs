@@ -28,7 +28,7 @@
 //! flattening them into one word.
 
 use serde::Serialize;
-use stella_protocol::{CompletionMessage, MessageRole};
+use stella_protocol::{CompletionMessage, MessageRole, ToolOutput};
 use stella_store::{Reconstruction, RecordedCall, Store};
 
 /// How much of a message body the text format prints before eliding. The whole
@@ -262,11 +262,17 @@ pub(crate) fn message_body(message: &CompletionMessage) -> String {
         if !out.is_empty() {
             out.push('\n');
         }
-        out.push_str(&format!(
-            "← tool_result {} {}",
-            result.call_id,
-            serde_json::to_string(&result.output).unwrap_or_default()
-        ));
+        // Render the payload directly rather than serializing the whole
+        // `ToolOutput` enum. Serialization escapes every newline and quote
+        // inside a result body (file contents, command stdout), turning a
+        // readable transcript into one long line of `\n` and `\"`.
+        out.push_str("← tool_result ");
+        out.push_str(&result.call_id);
+        out.push('\n');
+        match &result.output {
+            ToolOutput::Ok { content } => out.push_str(content),
+            ToolOutput::Error { message } => out.push_str(&format!("error: {message}")),
+        }
     }
     out
 }
@@ -439,5 +445,49 @@ mod tests {
             attachments: vec![],
         };
         assert!(message_body(&tool).contains("← tool_result c1"));
+    }
+
+    #[test]
+    fn message_body_keeps_newlines_and_quotes_unescaped() {
+        // Tool results routinely carry file contents and command stdout with
+        // embedded newlines and quotes. The old renderer serialized the whole
+        // `ToolOutput` enum, which escaped every `\n` and `"` into one long
+        // unreadable line. The body must print the raw payload instead.
+        use stella_protocol::ToolResult;
+        let tool = CompletionMessage {
+            role: MessageRole::Tool,
+            content: String::new(),
+            tool_calls: vec![],
+            tool_results: vec![ToolResult {
+                call_id: "c1".into(),
+                output: ToolOutput::Ok {
+                    content: "fn main() {\n    println!(\"hi\");\n}".into(),
+                },
+            }],
+            attachments: vec![],
+        };
+        let body = message_body(&tool);
+        assert!(body.contains("fn main() {\n    println!(\"hi\");\n}"));
+        assert!(!body.contains("\\n"));
+        assert!(!body.contains("\\\""));
+    }
+
+    #[test]
+    fn message_body_labels_error_results() {
+        use stella_protocol::ToolResult;
+        let tool = CompletionMessage {
+            role: MessageRole::Tool,
+            content: String::new(),
+            tool_calls: vec![],
+            tool_results: vec![ToolResult {
+                call_id: "e1".into(),
+                output: ToolOutput::Error {
+                    message: "file not found".into(),
+                },
+            }],
+            attachments: vec![],
+        };
+        let body = message_body(&tool);
+        assert!(body.contains("← tool_result e1\nerror: file not found"));
     }
 }
