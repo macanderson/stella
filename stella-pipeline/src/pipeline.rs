@@ -55,7 +55,7 @@ use stella_core::router::FallbackInfo;
 use stella_core::{BudgetGuard, Engine, EngineConfig, EventSender, Router, TurnOutcome};
 use stella_protocol::{
     AgentEvent, CompletionMessage, ContextUsage, JudgeEvidence, MessageRole, ModelCallRole,
-    ModelRef, Provider, Role, StageKind,
+    ModelRef, ProofStep, ProofTree, Provider, Role, StageKind,
 };
 
 use crate::candidate::{
@@ -1621,6 +1621,11 @@ impl<'a> Pipeline<'a> {
         {
             let pre = surface.tests.run_test(cmd.invocation).await;
             oracle.observe(cmd.command, pre.passed());
+            self.emit_proof(ProofStep::Oracle {
+                command: cmd.command.to_string(),
+                passed: pre.passed(),
+                tree: ProofTree::Baseline,
+            });
         }
 
         // Snapshot untracked files (with content fingerprints) BEFORE
@@ -1665,6 +1670,21 @@ impl<'a> Pipeline<'a> {
             // A clean lookup: nothing to verify.
             return state.into_unverified();
         }
+
+        // The warrant's answer, published from the one place that always runs
+        // for a verifying candidate. `witness_on_demand` and
+        // `warranted_completion` each re-ask it (the call is pure and cheap),
+        // but neither is reached on every path — authoring is skipped whenever
+        // there is no independent author, and the completion shortcut returns
+        // early when a test IS required. Emitting from either would make the
+        // rail's first row appear only on some runs, which is the failure this
+        // whole surface exists to end.
+        let warrant = warrant(&state.diff_text, state.file_changes);
+        self.emit_proof(ProofStep::Warrant {
+            required: warrant.is_required(),
+            reason: warrant.reason().map(|r| r.sentence().to_string()),
+            diff_lines: state.diff_lines,
+        });
 
         // Buy the witness now, or not at all. Everything above this line has
         // already happened, so the diff is evidence rather than a prediction —
@@ -2037,6 +2057,11 @@ impl<'a> Pipeline<'a> {
                 let post = surface.tests.run_test(cmd.invocation).await;
                 let passed = post.passed();
                 oracle.observe(cmd.command, passed);
+                self.emit_proof(ProofStep::Oracle {
+                    command: cmd.command.to_string(),
+                    passed,
+                    tree: ProofTree::Candidate,
+                });
                 (Some(passed), post.stderr_tail)
             }
             None => (None, String::new()),
@@ -2478,6 +2503,14 @@ impl<'a> Pipeline<'a> {
 
     fn emit(&self, event: AgentEvent) {
         let _ = self.events.send(event);
+    }
+
+    /// Publish one step of the proof this turn is building for itself. Pure
+    /// observability — nothing downstream reads these back, and dropping them
+    /// changes no decision — but a run that proves its work used to be
+    /// indistinguishable on the stream from one that did not.
+    fn emit_proof(&self, step: ProofStep) {
+        self.emit(AgentEvent::Proof { step });
     }
 }
 

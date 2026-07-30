@@ -232,6 +232,23 @@ pub fn event_signature(event: &AgentEvent) -> String {
         // so, like `TextDelta`, [`structural_diff`] excludes it before
         // comparing; the signature exists only to keep this function total.
         AgentEvent::SpeculationDiscarded { .. } => "speculation_discarded".to_string(),
+        // Structural to the last field that carries a decision: whether a test
+        // was warranted, whether one was produced, and which way the oracle
+        // went on which tree. Paths, reasons and fingerprints are dropped —
+        // they name the artifact, not the shape of the proof. Two runs that
+        // prove the same work the same way agree here even when the author
+        // picked a different filename.
+        AgentEvent::Proof { step } => {
+            use stella_protocol::ProofStep;
+            match step {
+                ProofStep::Warrant { required, .. } => format!("proof:warrant:{required}"),
+                ProofStep::WitnessAuthored { .. } => "proof:witness_authored".to_string(),
+                ProofStep::WitnessUnavailable { .. } => "proof:witness_unavailable".to_string(),
+                ProofStep::Oracle { passed, tree, .. } => {
+                    format!("proof:oracle:{tree:?}:{passed}")
+                }
+            }
+        }
         AgentEvent::ToolStart { call } => format!("tool_start:{}", call.name),
         // A tool_result's structural identity is that it answered a call and
         // whether it errored — not its duration or output body.

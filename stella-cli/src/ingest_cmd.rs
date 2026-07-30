@@ -25,6 +25,9 @@ use colored::Colorize;
 
 use stella_core::ingest::{self, Candidate, Plan, Tier};
 
+mod extract;
+mod probe;
+
 /// Largest slice of any one file read for classification.
 ///
 /// Classification looks at the head and the bullet structure; a document that
@@ -224,8 +227,20 @@ fn print_held_back(found: &[Found]) {
 }
 
 /// `stella ingest <paths>` — the user named files, so tiering does not apply.
-fn run_named(root: &Path, paths: &[PathBuf]) -> Result<(), String> {
-    let mut failed = false;
+///
+/// Reads and displays each named file, then hands the readable ones to
+/// [`extract::extract_all`], which makes the model call and writes the proposals.
+/// An unreadable file is reported and skipped; only a run with nothing readable
+/// at all is an error.
+fn run_named(
+    root: &Path,
+    paths: &[PathBuf],
+    model: Option<&str>,
+    api_key: Option<&str>,
+    base_url: Option<&str>,
+) -> Result<(), String> {
+    let mut unreadable = false;
+    let mut docs = Vec::new();
     println!();
     for path in paths {
         let rel = relative(root, path).unwrap_or_else(|| path.to_string_lossy().to_string());
@@ -246,31 +261,43 @@ fn run_named(root: &Path, paths: &[PathBuf]) -> Result<(), String> {
                     format!("{} lines", content.lines().count()).dimmed(),
                     note
                 );
+                docs.push(extract::NamedDoc {
+                    rel,
+                    content,
+                    tier: candidate.tier,
+                });
             }
             Err(err) => {
-                failed = true;
+                unreadable = true;
                 eprintln!("  {}  {}", rel.red(), err.to_string().dimmed());
             }
         }
     }
-    if failed {
-        return Err("one or more files could not be read".to_string());
+    if docs.is_empty() {
+        return Err("no readable files to ingest".to_string());
     }
-    println!(
-        "\n{}",
-        "Extraction into context records is not wired yet — this reports what would be read."
-            .dimmed()
-    );
-    Ok(())
+    let result = extract::extract_all(root, &docs, model, api_key, base_url);
+    if unreadable && result.is_ok() {
+        eprintln!(
+            "{}",
+            "  (some named files could not be read — see above)".dimmed()
+        );
+    }
+    result
 }
 
 /// Entry point for `stella ingest`.
-pub fn run(args: &IngestArgs) -> Result<(), String> {
+pub fn run(
+    args: &IngestArgs,
+    model: Option<&str>,
+    api_key: Option<&str>,
+    base_url: Option<&str>,
+) -> Result<(), String> {
     let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     if args.paths.is_empty() {
         run_scan(&root, args.all);
         Ok(())
     } else {
-        run_named(&root, &args.paths)
+        run_named(&root, &args.paths, model, api_key, base_url)
     }
 }
