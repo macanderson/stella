@@ -23,6 +23,15 @@
 //!
 //! `stella-serve healthcheck` probes `/healthz` on the bind port and exits 0/1,
 //! so a container HEALTHCHECK needs no extra tooling in the runtime image.
+//!
+//! `--version` and `--help` exist for host integrations rather than for people.
+//! A host that embeds this server (Oxagen — see `docs/design/serve-surface.md`)
+//! records which release it has verified its wire contract against, and pinning
+//! is only possible if the binary will state its own version. Without it the
+//! only way to identify a build was the filename, which is not a fact about the
+//! program. `--help` is the same argument one level down: the entire
+//! configuration surface is environment variables, so a binary that answered
+//! "unknown argument" to `--help` left an operator with nowhere to look.
 
 use std::process::ExitCode;
 use std::time::Duration;
@@ -31,6 +40,46 @@ use stella_serve::{ServeConfig, serve};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const DEFAULT_BIND: &str = "127.0.0.1:8080";
+
+/// The configuration surface, printed by `--help`.
+///
+/// Deliberately not a clap definition: there are no flags to parse — every knob
+/// is an environment variable — so adding a parser would buy nothing but a
+/// dependency and a second place for the documented defaults to drift from
+/// [`DEFAULT_BIND`].
+const USAGE: &str = "\
+stella-serve — headless Stella engine server
+
+USAGE:
+    stella-serve                run the server (configured by environment)
+    stella-serve healthcheck    probe /healthz on the bind port; exit 0 if 200
+    stella-serve --version      print the version and exit
+    stella-serve --help         print this help and exit
+
+ENVIRONMENT:
+    STELLA_SERVE_BIND        address to bind (default 127.0.0.1:8080;
+                             containerized deployments bind 0.0.0.0:8080)
+    STELLA_SERVE_TOKEN_FILE  path to a file holding the bearer token; wins over
+                             STELLA_SERVE_TOKEN when both are set
+    STELLA_SERVE_TOKEN       bearer token every request must present
+    STELLA_SERVE_TOOLS       must be `remote` (the default) — every tool and
+                             model call is remoted to the host
+
+One of STELLA_SERVE_TOKEN_FILE / STELLA_SERVE_TOKEN is required.
+
+The server exposes GET /healthz unauthenticated, and POST /v1/turns,
+GET /v1/turns/{id}/events, POST /v1/turns/{id}/{provider-result,tool-result,cancel}
+behind the bearer token. See docs/design/serve-surface.md.
+";
+
+/// `stella-serve <version>` — the line `--version` prints.
+///
+/// Split out so the format is asserted by a test rather than by eyeballing
+/// stdout: a host parses this string to record which release it verified its
+/// wire contract against, so the shape is a contract, not cosmetics.
+fn version_line() -> String {
+    format!("stella-serve {}", env!("CARGO_PKG_VERSION"))
+}
 
 /// Deadline covering the healthcheck's whole connect + write + read. Kept
 /// strictly under the container `HEALTHCHECK --timeout=5s`
@@ -60,8 +109,19 @@ async fn main() -> ExitCode {
     match std::env::args().nth(1).as_deref() {
         None => run().await,
         Some("healthcheck") => healthcheck().await,
+        Some("--version" | "-V") => {
+            println!("{}", version_line());
+            ExitCode::SUCCESS
+        }
+        Some("--help" | "-h") => {
+            print!("{USAGE}");
+            ExitCode::SUCCESS
+        }
         Some(other) => {
-            eprintln!("stella-serve: unknown argument `{other}` (expected none, or `healthcheck`)");
+            eprintln!(
+                "stella-serve: unknown argument `{other}` (expected none, or one of \
+                 `healthcheck`, `--version`, `--help`)"
+            );
             ExitCode::FAILURE
         }
     }
@@ -258,6 +318,50 @@ mod tests {
             std::env::temp_dir().join(format!("stella-serve-token-{name}-{}", std::process::id()));
         std::fs::write(&path, contents).unwrap();
         path
+    }
+
+    /// A host pins the wire contract to a release by parsing this line, so its
+    /// shape is part of the integration surface: `stella-serve <semver>`, one
+    /// space, nothing else. A bare version (no program name) or an added `v`
+    /// prefix would silently break that parse.
+    #[test]
+    fn the_version_line_is_the_program_name_then_a_bare_semver() {
+        let line = version_line();
+        let rest = line
+            .strip_prefix("stella-serve ")
+            .expect("the line must be `stella-serve <version>`");
+        assert!(
+            !rest.starts_with('v'),
+            "the version must be bare semver, not v-prefixed: {rest}"
+        );
+        assert_eq!(
+            rest.split('.').count(),
+            3,
+            "expected three dot-separated semver components: {rest}"
+        );
+        assert!(
+            rest.split('.').all(|part| !part.is_empty()),
+            "no semver component may be empty: {rest}"
+        );
+    }
+
+    /// `--help` is the only place the environment surface is described to an
+    /// operator, so every variable the program actually reads must appear in it.
+    /// Adding a knob without documenting it is the failure this pins.
+    #[test]
+    fn help_documents_every_environment_variable_the_program_reads() {
+        for var in [
+            "STELLA_SERVE_BIND",
+            "STELLA_SERVE_TOKEN_FILE",
+            "STELLA_SERVE_TOKEN",
+            "STELLA_SERVE_TOOLS",
+        ] {
+            assert!(USAGE.contains(var), "`--help` omits {var}");
+        }
+        assert!(
+            USAGE.contains(DEFAULT_BIND),
+            "`--help` must state the real default bind, not a stale copy"
+        );
     }
 
     #[test]
