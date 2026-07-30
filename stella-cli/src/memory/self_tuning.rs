@@ -30,8 +30,8 @@ use stella_core::self_tuning::{
 use stella_protocol::completion::ReasoningEffort;
 
 use crate::settings::{
-    AgentEngineAgent, AgentEngineConfig, EngineAgentKind, Toggle, project_settings_path,
-    user_settings_path,
+    AgentEngineAgent, AgentEngineConfig, EngineAgentKind, Toggle, project_config_path,
+    user_config_path,
 };
 
 /// The settings path the effort knob lives at — the `knob` field of every
@@ -55,8 +55,8 @@ pub(crate) enum SettingsScope {
 impl SettingsScope {
     fn path(self, workspace_root: &Path) -> Result<PathBuf, String> {
         match self {
-            SettingsScope::Project => Ok(project_settings_path(workspace_root)),
-            SettingsScope::User => user_settings_path()
+            SettingsScope::Project => Ok(project_config_path(workspace_root)),
+            SettingsScope::User => user_config_path()
                 .ok_or_else(|| "HOME is not set; cannot resolve user settings".to_string()),
         }
     }
@@ -393,6 +393,10 @@ pub(crate) fn rollback(workspace_root: &Path) -> Result<RollbackOutcome, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+    // These fixtures write JSON directly, so they name the JSON path rather
+    // than going through `project_config_path` (which prefers a stella.toml
+    // when one exists).
+    use crate::settings::project_settings_path;
 
     fn trial(reward: Option<f64>) -> BenchTrial {
         BenchTrial {

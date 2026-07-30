@@ -143,6 +143,16 @@ pub(crate) struct GlobalArgs {
 }
 
 #[derive(Subcommand)]
+pub(crate) enum MigrateCmd {
+    /// Rewrite settings.json as stella.toml
+    Config {
+        /// Render and report without writing anything
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Subcommand)]
 pub(crate) enum Command {
     /// Send a one-shot prompt (non-interactive)
     Run {
@@ -571,6 +581,22 @@ pub(crate) enum Command {
 
     /// Show current configuration
     Config,
+
+    /// Move settings.json to stella.toml
+    ///
+    /// Writes `<repo>/stella.toml` for the project scope and
+    /// `~/.stella/stella.toml` for the user scope, with every value serialized
+    /// from what stella actually read rather than transcribed. The JSON is
+    /// KEPT, never deleted — review the TOML, then remove it yourself; until
+    /// you do, stella reads the TOML and says the JSON is shadowed.
+    ///
+    /// Runs before provider resolution, so a config too broken to start with
+    /// is still migratable. The org-managed scope is not migrated: an
+    /// administrator deploys that file directly.
+    Migrate {
+        #[command(subcommand)]
+        cmd: MigrateCmd,
+    },
 
     /// Check the local state stella owns, and report each verdict
     ///
