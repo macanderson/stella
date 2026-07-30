@@ -26,10 +26,13 @@ Ship deterministically verified code fully autonomously with Stella, a self-impr
 next generation coding agent. Stella is an open-source, bring-your-own-key (BYOK)
 coding agent that runs in your terminal. It supports nine hosted model
 providers plus any local OpenAI-compatible server, keeps canonical telemetry
-in a local SQLite database, and enforces a hard per-run budget. Community/default
-installs have zero telemetry egress. An explicitly enrolled Oxagen Enterprise
-managed install may export only a minimal operational rollup under the governed boundary described
-below. It is built in Rust as a workspace of focused crates.
+in a local SQLite database, and enforces a hard per-run budget. Telemetry leaves
+your machine only if you configure it to, by one of exactly two explicit paths:
+an enrolled Oxagen Enterprise managed install, which may export only a minimal
+operational rollup under the governed boundary described below; or a `drain`
+block in `~/.stella/cloud.json`, which `stella cloud sync` uses to POST staged
+rows to an org intake you name. Neither exists in a default install. It is built
+in Rust as a workspace of focused crates.
 
 ## Features
 
@@ -549,8 +552,14 @@ stream, per-model-call telemetry (tokens, cache hits, cost), and the
 Files-Touched ledger. The store is never a dependency of a turn — a session
 runs even if the file can't be opened. Query it with any SQLite client.
 
-Community/default mode constructs no enterprise spool or HTTP client and has
-zero telemetry egress. A seat becomes enrolled only through a valid signed
+A default install constructs no telemetry spool and no telemetry HTTP client, so
+nothing is sent anywhere. Two explicit configurations, and only these two, change
+that: Enterprise enrollment (below) and the `cloud.json` drain
+([`stella cloud sync`](https://stella.oxagen.sh/docs/commands/cloud), a separate
+pipe with its own wire contract
+and endpoint, inert unless the file carries both an `org_id` and a `drain` block).
+
+A seat becomes enrolled only through a valid signed
 `enterprise_telemetry` document in the org-managed settings scope. That
 document binds issuer, audience, organization/workspace, expiry, the single
 `execution_rollup` event class, a managed model catalog, `process_free`

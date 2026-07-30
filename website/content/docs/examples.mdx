@@ -376,8 +376,12 @@ stella doctor    # checks the local session store's integrity; reads local state
 Community/default telemetry stays in `.stella/private/store.db`, the
 [Observatory](/docs/telemetry/dashboard) binds `127.0.0.1`, memories and the code graph
 are files in your workspace, and `stella init` works offline with a heuristic fallback.
-Leave [Oxagen Enterprise telemetry](/docs/telemetry#oxagen-enterprise-managed-export)
-unenrolled and configure only loopback model endpoints.
+To keep it that way, leave both telemetry-egress paths unconfigured — Stella has
+[exactly two](/docs/telemetry): leave
+[Oxagen Enterprise telemetry](/docs/telemetry#oxagen-enterprise-managed-export)
+unenrolled, and write no `drain` block into `~/.stella/cloud.json` (without one,
+`stella cloud sync` performs no network I/O). Then configure only loopback model
+endpoints.
 
 <Callout type="info">
   Local models have no catalog prices, so `stella stats` dollar columns read zero and

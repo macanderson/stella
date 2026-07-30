@@ -318,6 +318,8 @@ pub async fn run_deck_session(
         agent::new_tool_registry(cfg.workspace_root.clone(), registry_options.clone()).await,
     );
     agent::populate_schema_index(&registry, &cfg.workspace_root)?;
+
+    crate::subagent::install_for_session(cfg, &registry)?;
     let active_rules =
         crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority);
     let custom_tools = agent::discover_custom_tools(cfg, true).await;
@@ -4405,6 +4407,7 @@ async fn run_lead_pipeline_turn(
             recall,
             repo: &ws_ports.repo_structure,
             repo_status: &ws_ports.repo_status,
+            touches: &crate::agent::RegistryTouches(registry),
             diagnostics: &ws_ports.diagnostic_runner,
             tests: &ws_ports.test_runner,
             approvals: scope_gate,
@@ -4589,6 +4592,13 @@ impl ToolExecutor for TaskTap<'_> {
             }
         }
         output
+    }
+
+    /// Forwarded: this is a decorator, and a decorator that let the default
+    /// `0.0` stand would silently drop sub-agent spend out of the parent's
+    /// budget (see the port's contract).
+    fn drain_sub_agent_spend_usd(&self) -> f64 {
+        self.inner.drain_sub_agent_spend_usd()
     }
 }
 

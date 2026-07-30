@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use stella_protocol::{
-    BudgetMode, CompletionRequest, CompletionResult, CompletionUsage, ProviderError, ToolCall,
+    BudgetMode, CompletionRequestRef, CompletionResult, CompletionUsage, ProviderError, ToolCall,
     ToolOutput, ToolSchema,
 };
 use tokio::sync::mpsc;
@@ -53,9 +53,12 @@ impl Provider for ScriptedProvider {
         "scripted"
     }
 
-    async fn complete(
+    // `complete_ref` is the trait's required method; `complete` is a default
+    // that delegates to it. Overriding the default left this double missing the
+    // real one, so the crate's tests stopped compiling.
+    async fn complete_ref(
         &self,
-        _request: CompletionRequest,
+        _request: CompletionRequestRef<'_>,
     ) -> Result<CompletionResult, ProviderError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         let mut script = self.script.lock().unwrap();
@@ -917,4 +920,159 @@ async fn the_child_claims_its_own_receipt_turn_slot() {
         !slots.is_empty() && slots.iter().all(|slot| *slot == 5),
         "the child's manifests must land in ITS slot, got {slots:?}"
     );
+}
+
+// ---- the out-of-band spend fold (tool-dispatched children) ------------
+
+/// An executor whose tools "spawn" sub-agents: it reports a fixed spend per
+/// `execute`, exactly as a real `task` tool would after its child settled.
+struct SpendingTools {
+    ledger: SubAgentSpendLedger,
+    per_call_usd: f64,
+    drains: AtomicUsize,
+}
+
+#[async_trait]
+impl ToolExecutor for SpendingTools {
+    fn schemas(&self) -> Vec<ToolSchema> {
+        vec![ToolSchema {
+            name: "task".into(),
+            description: "spawn a sub-agent".into(),
+            input_schema: json!({"type": "object"}),
+            // Mutating on purpose: a read-only schema would let the engine
+            // execute it speculatively, and this test is about the ordinary
+            // dispatch path.
+            read_only: false,
+        }]
+    }
+
+    async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+        push_sub_agent_spend(&self.ledger, self.per_call_usd);
+        ToolOutput::Ok {
+            content: "child says: it is in retry.rs".into(),
+        }
+    }
+
+    fn drain_sub_agent_spend_usd(&self) -> f64 {
+        self.drains.fetch_add(1, Ordering::SeqCst);
+        drain_sub_agent_spend(&self.ledger)
+    }
+}
+
+/// A child dispatched from *inside* a tool call spends money the engine's
+/// guard cannot see — the engine holds it mutably for the whole turn. Folding
+/// that spend in at the next step boundary is what keeps `--budget` a hard
+/// ceiling once turns nest; deferring to end-of-turn would let the parent and
+/// its children each run to the cap independently.
+#[tokio::test]
+async fn tool_dispatched_child_spend_aborts_the_parent_at_the_next_step_boundary() {
+    let provider = ScriptedProvider::new(vec![
+        // The parent's own calls are free; every dollar here is the child's.
+        Ok(tool_call_result("task", "c1", 0.0)),
+        Ok(tool_call_result("task", "c2", 0.0)),
+        Ok(text_result("should never be reached", 0.0)),
+    ]);
+    let tools = SpendingTools {
+        ledger: SubAgentSpendLedger::default(),
+        per_call_usd: 0.60,
+        drains: AtomicUsize::new(0),
+    };
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &NoSleep);
+    let mut messages = vec![CompletionMessage::user("go")];
+    let mut budget = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.0));
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    match outcome {
+        TurnOutcome::Aborted { reason, .. } => assert!(
+            reason.contains("budget exceeded"),
+            "the parent must abort on the CHILDREN's spend, got: {reason}"
+        ),
+        other => panic!("expected a budget abort, got {other:?}"),
+    }
+    assert!(
+        (budget.session_spent_usd() - 1.20).abs() < 1e-9,
+        "both children's spend is charged to the parent, got {}",
+        budget.session_spent_usd()
+    );
+    assert_eq!(
+        provider.calls.load(Ordering::SeqCst),
+        2,
+        "the third model call must never be dispatched — that is the ceiling \
+         holding at a step boundary"
+    );
+    // The fold rides `record_settled_cost`, so the child's money moves the
+    // HUD like every other dollar rather than appearing only in a total.
+    let ticked: Vec<f64> = drain(&mut rx)
+        .into_iter()
+        .filter_map(|event| match event {
+            AgentEvent::BudgetTick {
+                session_spent_usd, ..
+            } => session_spent_usd,
+            _ => None,
+        })
+        .collect();
+    assert!(
+        ticked.iter().any(|spent| (*spent - 0.60).abs() < 1e-9),
+        "a tick must report the first child's spend as it lands, got {ticked:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_drain_is_destructive_so_child_spend_is_never_charged_twice() {
+    let provider = ScriptedProvider::new(vec![
+        Ok(tool_call_result("task", "c1", 0.0)),
+        Ok(text_result("done", 0.0)),
+    ]);
+    let tools = SpendingTools {
+        ledger: SubAgentSpendLedger::default(),
+        per_call_usd: 0.25,
+        drains: AtomicUsize::new(0),
+    };
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &NoSleep);
+    let mut messages = vec![CompletionMessage::user("go")];
+    let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    assert!(
+        tools.drains.load(Ordering::SeqCst) >= 2,
+        "the engine drains at every step boundary, not once per turn"
+    );
+    assert!(
+        (budget.session_spent_usd() - 0.25).abs() < 1e-9,
+        "0.25 spent once, charged once — got {}",
+        budget.session_spent_usd()
+    );
+}
+
+#[test]
+fn a_read_only_view_forwards_the_drain_instead_of_zeroing_it() {
+    // A grandchild's spend arrives through the child's `ReadOnlyTools` view.
+    // Zeroing here would hide it from the carve meant to bound it.
+    let ledger = SubAgentSpendLedger::default();
+    push_sub_agent_spend(&ledger, 0.75);
+    let inner = SpendingTools {
+        ledger: ledger.clone(),
+        per_call_usd: 0.0,
+        drains: AtomicUsize::new(0),
+    };
+    let view = ReadOnlyTools::new(&inner);
+    assert!((view.drain_sub_agent_spend_usd() - 0.75).abs() < 1e-9);
+    assert_eq!(
+        drain_sub_agent_spend(&ledger),
+        0.0,
+        "and it really took it — a peek would double-charge"
+    );
+}
+
+#[test]
+fn the_ledger_accumulates_and_drains_to_zero() {
+    let ledger = SubAgentSpendLedger::default();
+    push_sub_agent_spend(&ledger, 0.01);
+    push_sub_agent_spend(&ledger, 0.02);
+    assert!((drain_sub_agent_spend(&ledger) - 0.03).abs() < 1e-9);
+    assert_eq!(drain_sub_agent_spend(&ledger), 0.0);
 }

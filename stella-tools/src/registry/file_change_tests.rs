@@ -288,3 +288,120 @@ fn detaching_an_unattached_event_stream_is_a_no_op() {
     reg.detach_event_stream();
     reg.detach_event_stream();
 }
+
+/// The drift guard for #973: `mutations_recorded` and the mutating
+/// `FileChange`s on the stream are two views of one event, and must never
+/// disagree.
+///
+/// They travel different wires. The event goes to whatever channel a host
+/// attached; the count sits on the recorder. That gap is the bug — a verifier
+/// wrapping the *engine's* sender saw none of the six changes a real run made
+/// and told its judge `file_change_events=0`, which the judge read as "the file
+/// likely does not exist" while the file sat on disk. Reading the count instead
+/// only helps if the two provably agree, so: run a mixed batch of creates,
+/// edits, deletes and reads, and assert the delta equals the stream's mutating
+/// tally exactly.
+#[tokio::test]
+async fn the_mutation_count_equals_the_mutating_events_on_the_stream() {
+    let (dir, reg, mut rx) = announcing_fixture();
+    let before = reg.mutations_recorded();
+
+    std::fs::write(dir.path().join("edit_me.rs"), "one\ntwo\n").unwrap();
+    std::fs::write(dir.path().join("delete_me.rs"), "gone\n").unwrap();
+
+    // Create, read (NOT a mutation), edit, bulk-edit the same file again,
+    // delete — the shapes a real turn mixes.
+    exec_ok(
+        &reg,
+        "write_file",
+        serde_json::json!({ "path": "fresh.rs", "content": "a\nb\nc\n" }),
+    )
+    .await;
+    exec_ok(&reg, "read_file", serde_json::json!({ "path": "fresh.rs" })).await;
+    exec_ok(
+        &reg,
+        "edit_file",
+        serde_json::json!({ "path": "edit_me.rs", "old_string": "two", "new_string": "TWO" }),
+    )
+    .await;
+    exec_ok(
+        &reg,
+        "apply_edits",
+        serde_json::json!({
+            "edits": [{ "path": "edit_me.rs", "old_string": "one", "new_string": "ONE" }]
+        }),
+    )
+    .await;
+    exec_ok(
+        &reg,
+        "delete_file",
+        serde_json::json!({ "path": "delete_me.rs" }),
+    )
+    .await;
+
+    let streamed = drain_changes(&mut rx);
+    let mutating = streamed.iter().filter(|c| c.1.is_mutation()).count() as u64;
+    assert!(
+        mutating > 0,
+        "the fixture must actually mutate something: {streamed:?}"
+    );
+    assert!(
+        streamed.len() as u64 > mutating,
+        "and must include a read, so the count is proven to exclude them: {streamed:?}"
+    );
+    assert_eq!(
+        reg.mutations_recorded() - before,
+        mutating,
+        "the recorder's count must equal the stream's mutating events: {streamed:?}"
+    );
+}
+
+/// The count is a count of *touches*, not of files: re-editing one file twice
+/// is two changes. `files_touched` deduplicates by path and would report one —
+/// which is why the verification ladder cannot use its length as a change
+/// count.
+#[tokio::test]
+async fn re_touching_one_file_counts_twice() {
+    let (dir, reg) = telemetry_fixture();
+    std::fs::write(dir.path().join("f.rs"), "one\ntwo\n").unwrap();
+    let before = reg.mutations_recorded();
+
+    exec_ok(
+        &reg,
+        "edit_file",
+        serde_json::json!({ "path": "f.rs", "old_string": "one", "new_string": "ONE" }),
+    )
+    .await;
+    exec_ok(
+        &reg,
+        "edit_file",
+        serde_json::json!({ "path": "f.rs", "old_string": "two", "new_string": "TWO" }),
+    )
+    .await;
+
+    assert_eq!(reg.mutations_recorded() - before, 2);
+    assert_eq!(reg.files_touched().len(), 1, "one file, two changes");
+}
+
+/// The count must not depend on a channel being attached. A best-of-N or
+/// witness candidate runs against a registry left deliberately unattached (its
+/// edits must not be announced as the user's) — and that is exactly the surface
+/// the issue found structurally blind, so the count has to survive there.
+#[tokio::test]
+async fn an_unattached_registry_still_counts_its_mutations() {
+    let (_dir, reg) = telemetry_fixture();
+    let before = reg.mutations_recorded();
+
+    exec_ok(
+        &reg,
+        "write_file",
+        serde_json::json!({ "path": "quiet.rs", "content": "x\n" }),
+    )
+    .await;
+
+    assert_eq!(
+        reg.mutations_recorded() - before,
+        1,
+        "an unannounced change is still a change"
+    );
+}

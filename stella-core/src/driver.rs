@@ -97,7 +97,7 @@ use loop_evidence::{ResultIdentities, recent_call_records, snapshot_result_ident
 use tokio::sync::mpsc::UnboundedSender;
 
 mod settlement;
-use settlement::{BudgetWarnings, check_budget, emit_budget_warning, record_settled_cost};
+use settlement::{BudgetWarnings, emit_budget_warning, record_settled_cost};
 
 /// Everything about a turn's execution that isn't the provider/tools
 /// themselves: prompt shape, retry/compaction/loop tuning, and hard
@@ -548,7 +548,7 @@ impl<'a> Engine<'a> {
                 }
             }
             if let Some(aborted) =
-                check_budget(budget, total_cost_usd, &mut budget_warnings, events)
+                self.check_budget(budget, total_cost_usd, &mut budget_warnings, events)
             {
                 return aborted;
             }
@@ -588,7 +588,7 @@ impl<'a> Engine<'a> {
                 return aborted;
             }
             if let Some(aborted) =
-                check_budget(budget, total_cost_usd, &mut budget_warnings, events)
+                self.check_budget(budget, total_cost_usd, &mut budget_warnings, events)
             {
                 return aborted;
             }

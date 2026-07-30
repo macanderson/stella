@@ -66,9 +66,9 @@ use crate::candidate_steering::SteeringFanOut;
 use crate::plan::{PlanStep, build_planner_prompt, parse_plan, plan_repair_prompt};
 use crate::ports::{
     ApprovalGate, CandidateWorkspace, CandidateWorkspacePort, ContextRecallPort,
-    DiagnosticInvocation, DiagnosticRunner, McpPrefetchPort, PipelinePorts, ProviderResolver,
-    Recall, RecalledFrame, RepoStatusPort, RepoStructurePort, ScopeDecision, TestInvocation,
-    TestRunner, WorkspaceError,
+    DiagnosticInvocation, DiagnosticRunner, FileTouchPort, McpPrefetchPort, PipelinePorts,
+    ProviderResolver, Recall, RecalledFrame, RepoStatusPort, RepoStructurePort, ScopeDecision,
+    TestInvocation, TestRunner, WorkspaceError,
 };
 use crate::scope::{
     MAX_SCOPE_REVISIONS, PlannedScope, ScopeEstimate, ScopeVerdict, apply_trim, build_proposal,
@@ -82,6 +82,7 @@ use crate::verify::{
     FlipOracle, JudgeVerdict as ModelJudgeVerdict, LadderDecision, LadderInputs,
     deterministic_fail_evidence, deterministic_pass_evidence, guidance_prompt, heuristic_fallback,
     judge_prompt, ladder_decision, model_verdict_evidence, parse_judge_response,
+    unverifiable_evidence,
 };
 use crate::witness::airlock::{
     DisclosureGrain, FailureFingerprint, SealedFailure, grain_for_repeats, redact, scrub,
@@ -146,6 +147,33 @@ fn verification_honest_diff(diff_text: String, file_changes: u32) -> String {
 /// on the one path its own guard could not see.
 const DIFF_PROBE_FAILED: &str = "[the diff probe failed; the working tree could not be read. This \
      is NOT evidence that nothing changed — verify the result on its own merits.]";
+
+/// The same report, for the one cause worth naming separately: there is no git
+/// repository here, so `git diff` can never answer.
+///
+/// Terminal-Bench task images are plain directories. `DIFF_PROBE_FAILED` reads
+/// as a transient fault a reader might expect to clear on a retry; this one
+/// says the probe is structurally inapplicable to this workspace, which is the
+/// difference between "try again" and "use another channel" (#973).
+const DIFF_PROBE_NOT_A_REPO: &str = "[the working tree is not a git repository, so the diff probe cannot read it at all. This is \
+     a permanent property of this workspace, NOT evidence that nothing changed — verify the \
+     result on its own merits.]";
+
+/// One observation of the working tree by [`Pipeline::gather_diff`].
+///
+/// `available` is the field that did not exist and had to: without it, "the
+/// probe read the tree and it was unchanged" and "the probe could not read the
+/// tree" both arrived as `(0, ...)`, and every consumer downstream was free to
+/// read the second as the first. The text has said the right thing for a while;
+/// nothing could act on it, because prose is not a signal a ladder can branch
+/// on.
+struct DiffProbe {
+    lines: u32,
+    text: String,
+    /// Whether the probe could read the working tree AT ALL. Never `false`
+    /// merely because the diff came back empty.
+    available: bool,
+}
 
 /// How many `git diff --no-index --numstat` probes [`Pipeline::gather_diff`]
 /// keeps in flight at once. High enough that the usual handful of new files
@@ -474,6 +502,15 @@ struct CandidateState {
     untracked_before: HashMap<String, String>,
     diff_lines: u32,
     diff_text: String,
+    /// Whether the diff probe could READ the working tree this round. `false`
+    /// is "I could not look" — never "I looked and it was empty". A
+    /// Terminal-Bench task directory is not a git repository, so `git diff`
+    /// there is permanently `false` (#973).
+    diff_available: bool,
+    /// The recorder's mutation tally as it stood before this candidate's first
+    /// turn. Every later reading is a delta from here, which is what makes a
+    /// monotonic session-wide counter usable per candidate.
+    touch_baseline: u64,
     revisions: u32,
     /// Paths of the witness artifact grafted into this candidate, if the
     /// warrant bought one after execution. Empty until then, and empty forever
@@ -548,6 +585,9 @@ pub struct Pipeline<'a> {
     recall: &'a dyn ContextRecallPort,
     repo: &'a dyn RepoStructurePort,
     repo_status: &'a dyn RepoStatusPort,
+    /// The file recorder's mutation tally — the evidence channel that answers
+    /// "did this turn touch anything" when the diff probe cannot.
+    touches: &'a dyn FileTouchPort,
     diagnostics: &'a dyn DiagnosticRunner,
     tests: &'a dyn TestRunner,
     approvals: &'a dyn ApprovalGate,
@@ -587,6 +627,7 @@ impl<'a> Pipeline<'a> {
             recall: ports.recall,
             repo: ports.repo,
             repo_status: ports.repo_status,
+            touches: ports.touches,
             diagnostics: ports.diagnostics,
             tests: ports.tests,
             approvals: ports.approvals,
@@ -1604,6 +1645,8 @@ impl<'a> Pipeline<'a> {
             untracked_before,
             diff_lines: 0,
             diff_text: String::new(),
+            diff_available: true,
+            touch_baseline: self.touches.mutations_recorded(),
             revisions: 0,
             witness_paths: Vec::new(),
             failures: Vec::new(),
@@ -1620,10 +1663,8 @@ impl<'a> Pipeline<'a> {
         // simple lookup, only if the turn unexpectedly touched files (the
         // zero-diff guard, L-E2). "Touched files" = FileChange events observed
         // OR a non-empty diff.
-        let (gathered_lines, gathered_diff) =
-            self.gather_diff(surface, &state.untracked_before).await;
-        state.diff_lines = gathered_lines;
-        state.diff_text = verification_honest_diff(gathered_diff, state.file_changes);
+        let probe = self.gather_diff(surface, &state.untracked_before).await;
+        self.absorb_probe(&mut state, probe);
         let files_touched = state.file_changes > 0 || !state.diff_text.trim().is_empty();
         let should_verify = assessment.class.verifies_unconditionally()
             || (assessment.class == TaskClass::SimpleLookup && files_touched);
@@ -1808,6 +1849,8 @@ impl<'a> Pipeline<'a> {
                 touched_tests_passed,
                 diff_lines: state.diff_lines,
                 diff_budget: self.config.diff_budget_lines,
+                diff_available: state.diff_available,
+                file_change_events: state.file_changes,
             };
 
             // Everything the verification side knows about this round's
@@ -1836,6 +1879,32 @@ impl<'a> Pipeline<'a> {
                         true,
                         &evidence,
                         score_from_verification(true, None),
+                    );
+                }
+                LadderDecision::Unverifiable => {
+                    // Every channel was blind. The judge is not asked, because
+                    // the only thing it could do is guess from an empty record
+                    // — which in the wild it did, returning `FAIL … the file
+                    // likely does not exist` about a file that was in the
+                    // container (#973).
+                    //
+                    // `passed: true` because a run is not failed by the absence
+                    // of a way to check it, and this shape already exists for
+                    // the review-waived path. What keeps it from reading as a
+                    // pass is the pair beside it: the summary says UNVERIFIABLE
+                    // in its first word, and the score is `Unverified`, so this
+                    // candidate can never tie a genuinely verified sibling in
+                    // best-of-N and then win the smaller-diff tiebreak.
+                    let evidence = unverifiable_evidence(&inputs);
+                    self.unverifiable(&evidence.summary);
+                    self.emit(AgentEvent::JudgeVerdict {
+                        passed: true,
+                        evidence: evidence.clone(),
+                    });
+                    return state.into_verified(
+                        true,
+                        &evidence,
+                        score_from_verification(false, None),
                     );
                 }
                 LadderDecision::Revise => {
@@ -2061,7 +2130,7 @@ impl<'a> Pipeline<'a> {
         total: &mut f64,
         state: &mut CandidateState,
     ) -> Result<(), String> {
-        let (diff_lines, diff_text) = self
+        let probe = self
             .revise_turn(
                 engine,
                 surface,
@@ -2074,8 +2143,7 @@ impl<'a> Pipeline<'a> {
                 &state.untracked_before,
             )
             .await?;
-        state.diff_lines = diff_lines;
-        state.diff_text = verification_honest_diff(diff_text, state.file_changes);
+        self.absorb_probe(state, probe);
         state.revisions += 1;
         Ok(())
     }
@@ -2096,7 +2164,7 @@ impl<'a> Pipeline<'a> {
         final_text: &mut String,
         total: &mut f64,
         untracked_before: &HashMap<String, String>,
-    ) -> Result<(u32, String), String> {
+    ) -> Result<DiffProbe, String> {
         messages.push(CompletionMessage::user(revision_prompt(reason)));
         self.emit(AgentEvent::Stage {
             name: StageKind::Execute,
@@ -2114,11 +2182,11 @@ impl<'a> Pipeline<'a> {
                 return Err(reason);
             }
         }
-        let (dl, dt) = self.gather_diff(surface, untracked_before).await;
+        let probe = self.gather_diff(surface, untracked_before).await;
         self.emit(AgentEvent::Stage {
             name: StageKind::Verify,
         });
-        Ok((dl, dt))
+        Ok(probe)
     }
 
     // Stage: judge
@@ -2328,9 +2396,15 @@ impl<'a> Pipeline<'a> {
         &self,
         surface: CandidateSurface<'_>,
         untracked_before: &HashMap<String, String>,
-    ) -> (u32, String) {
+    ) -> DiffProbe {
         let Some(diagnostic) = &self.config.diff_diagnostic else {
-            return (0, String::new());
+            // No probe configured is not "nothing changed" either: this host
+            // simply has no diff channel, so it reports one fewer way to see.
+            return DiffProbe {
+                lines: 0,
+                text: String::new(),
+                available: false,
+            };
         };
         let out = surface.diagnostics.run_diagnostic(diagnostic).await;
         // `git diff` exits 0 on a clean tree, so a non-zero exit with nothing on
@@ -2346,7 +2420,21 @@ impl<'a> Pipeline<'a> {
             && !out.passed()
             && out.stdout_tail.trim().is_empty()
         {
-            return (0, DIFF_PROBE_FAILED.to_string());
+            // git's own words, matched case-insensitively because the phrasing
+            // is stable across versions but its capitalization is not.
+            let not_a_repo = out
+                .stderr_tail
+                .to_ascii_lowercase()
+                .contains("not a git repository");
+            return DiffProbe {
+                lines: 0,
+                text: if not_a_repo {
+                    DIFF_PROBE_NOT_A_REPO.to_string()
+                } else {
+                    DIFF_PROBE_FAILED.to_string()
+                },
+                available: false,
+            };
         }
         let mut lines = count_diff_lines(&out.stdout_tail);
         let mut text = out.stdout_tail;
@@ -2383,7 +2471,50 @@ impl<'a> Pipeline<'a> {
                 text.push_str(&format!("\n+ untracked change: {path} (+{added} lines)"));
             }
         }
-        (lines, text)
+        DiffProbe {
+            lines,
+            text,
+            available: true,
+        }
+    }
+
+    /// Mutating file touches this candidate has made, read from the recorder
+    /// that emitted the `FileChange` events rather than from a wrapper around
+    /// the engine's sender.
+    ///
+    /// This is the fix for the counter that read `0` while six `file_change`
+    /// events sat in the very stream the judge's run produced (#973). The two
+    /// numbers came from different wires: `ToolRegistry::record_touch` sends to
+    /// the channel the *host* attached, and the tally lived on a sender the
+    /// pipeline handed the *engine*, which no file tool ever uses.
+    ///
+    /// `max` of the two, because they are independent lower bounds rather than
+    /// a sum: the recorder's delta is authoritative wherever a `FileTouchPort`
+    /// is wired, and the event tally is the only signal for a host with no
+    /// recorder at all. Neither can double-count the other — the sender the
+    /// tally wraps is built per-turn inside this pipeline and never handed out.
+    fn observed_mutations(&self, state: &CandidateState) -> u32 {
+        let delta = self
+            .touches
+            .mutations_recorded()
+            .saturating_sub(state.touch_baseline);
+        u32::try_from(delta)
+            .unwrap_or(u32::MAX)
+            .max(state.file_changes)
+    }
+
+    /// Fold one working-tree observation into `state`, refreshing every
+    /// evidence channel from its own source at the same instant.
+    ///
+    /// One function, so the channels cannot be updated apart and disagree about
+    /// which round they describe — the honest-diff text in particular is built
+    /// from the touch count, and reading a stale one is how a real change gets
+    /// rendered as an empty diff.
+    fn absorb_probe(&self, state: &mut CandidateState, probe: DiffProbe) {
+        state.file_changes = self.observed_mutations(state);
+        state.diff_lines = probe.lines;
+        state.diff_available = probe.available;
+        state.diff_text = verification_honest_diff(probe.text, state.file_changes);
     }
 
     /// Emit this recall's telemetry. The projection itself lives on

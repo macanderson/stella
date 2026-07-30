@@ -311,6 +311,29 @@ pub(crate) struct WorkspacePorts {
     pub(crate) mcp_prefetch: Option<crate::candidate_ws::McpPrefetchAdapter>,
 }
 
+/// The verification ladder's view of the session file recorder's own mutation
+/// tally ([`stella_tools::ToolRegistry::mutations_recorded`]).
+///
+/// Deliberately points at the **same** `ToolRegistry` the driver calls
+/// `attach_events` on, and is constructed beside that call for exactly that
+/// reason. The bug this closes was two numbers describing one event from two
+/// wires: `record_touch` announced six changes down the session channel while
+/// the pipeline, counting on a sender it had handed the *engine*, told its
+/// judge `file_change_events=0` — and the judge reported the file as probably
+/// absent while it sat in the container (#973).
+///
+/// Not part of [`WorkspacePorts`]: that bundle is rooted at a path, and this is
+/// bound to a live registry instance. Folding it in would invite a future
+/// caller to build the bundle from one registry and run the turn on another,
+/// which is the very confusion being removed.
+pub(crate) struct RegistryTouches<'a>(pub(crate) &'a stella_tools::ToolRegistry);
+
+impl stella_pipeline::FileTouchPort for RegistryTouches<'_> {
+    fn mutations_recorded(&self) -> u64 {
+        self.0.mutations_recorded()
+    }
+}
+
 /// Build the [`WorkspacePorts`] bundle rooted at `root` (the session
 /// workspace, or a fleet worker's own worktree). `mcp`, when the caller has
 /// one connected, is shared into both the candidate tool surface
