@@ -317,23 +317,37 @@ pub(crate) async fn handle_events(
     .await;
     res.add_bytes(bytes_out);
     record.set_turn(id);
-    state.observer().emit(&ServeEvent::StreamEnded {
-        turn,
-        frames_sent,
-        reason,
-    });
 
     // A peer that vanished may be back: park the session so a reconnect can
     // resume from its retained tail, and let the grace window — not this
     // connection — decide when the turn is definitively abandoned. Every other
     // ending is final, so the session drops here and `Drop for Session`
     // cancels the turn, releasing its thread now rather than at end of scope.
-    if reason == StreamEndReason::PeerDisconnected {
+    //
+    // Asked of the reason rather than compared against one variant: a hang-up
+    // surfaces as an EOF *or* as the failed write that follows it, whichever
+    // the `select!` in `stream_frames` happens to see first, and both have to
+    // land here. See `StreamEndReason::leaves_the_turn_resumable`.
+    if reason.leaves_the_turn_resumable() {
         state.park_for_resume(id, &entry, session, generation);
     } else {
         drop(session);
         state.turns().remove(id);
     }
+
+    // Announced *after* the turn has been disposed of, not before. The event is
+    // the only signal an observer gets that a subscriber went away, and the
+    // obvious thing to do with it is reconnect — so emitting it first published
+    // a moment in which the turn was neither streamed nor yet parked, and a
+    // reconnect arriving inside that window took the `replay_only` path: it got
+    // the retained tail and an immediately-closed stream, with no live source
+    // behind it. Ordering the emit last makes the event describe a state the
+    // server is already in, which is what makes acting on it deterministic.
+    state.observer().emit(&ServeEvent::StreamEnded {
+        turn,
+        frames_sent,
+        reason,
+    });
     res.stream_mut().shutdown().await
 }
 
