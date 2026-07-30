@@ -325,7 +325,10 @@ fn the_footer_advertises_the_steer_marker_while_a_turn_runs() {
     let mut buf = Buffer::empty(area);
     render_composer_footer(&model, &ui, &layout, area, &mut buf);
     let text = buffer_text(&buf);
-    assert!(text.contains("steer this turn"), "steer affordance:\n{text}");
+    assert!(
+        text.contains("steer this turn"),
+        "steer affordance:\n{text}"
+    );
 }
 
 /// …and only then. At an idle agent a leading `>` is not a steer marker, it
@@ -345,7 +348,10 @@ fn the_footer_hides_the_steer_marker_when_nothing_is_running() {
     let mut buf = Buffer::empty(area);
     render_composer_footer(&model, &ui, &layout, area, &mut buf);
     let text = buffer_text(&buf);
-    assert!(!text.contains("steer"), "no steer affordance at rest:\n{text}");
+    assert!(
+        !text.contains("steer"),
+        "no steer affordance at rest:\n{text}"
+    );
 }
 
 #[test]
