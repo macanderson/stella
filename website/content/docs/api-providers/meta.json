@@ -1,4 +1,4 @@
 {
   "title": "API Providers",
-  "pages": ["index", "models", "anthropic", "openai", "gemini", "vertex", "bedrock", "xai", "deepseek", "zai", "openrouter", "local"]
+  "pages": ["index", "models"]
 }

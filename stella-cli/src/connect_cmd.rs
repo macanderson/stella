@@ -9,6 +9,8 @@
 //! next session once a connection exists.
 
 use colored::Colorize as _;
+use zeroize::Zeroizing;
+
 use stella_tools::tracker_auth::{
     ConnectEvent, ConnectionKind, GitHubDeviceConfig, LinearOAuthConfig, TrackerConnection,
     TrackerProvider, TrackerStore, fetch_account_label, github_device_login, linear_oauth_login,

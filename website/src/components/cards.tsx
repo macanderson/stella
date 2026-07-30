@@ -11,17 +11,21 @@ import type { ReactNode } from "react";
  * they reach the cell that mattered. A card carries its own labels, so it reads
  * the same at 380px and 1400px — and it stacks instead of scrolling sideways.
  *
+ * What a card is NOT: a panel. There is no fill, no radius, no shadow, and no
+ * border box — a card is a rule and a heading, and the grid is a list with
+ * seams. Grouping is carried by the markup (`<dl>`/`<dt>`/`<dd>`, one title per
+ * card), so the seam is decoration and never the only cue.
+ *
  * Three shapes, all built on the same `sc-grid`:
- * - `ProviderCard` — logo lockup + the facts you need to start (env var,
- *   default model, wire dialect).
- * - `ToolCard`     — tool name in mono, a read-only/mutating badge, one line
- *   of prose.
- * - `SpecCard`     — the generic escape hatch: a title, optional badge, prose,
- *   and an arbitrary label/value list.
+ * - `SpecCard`   — a title, optional badge, prose, and a label/value list.
+ * - `ToolCard`   — tool name in mono, a read-only/mutating badge, one line of
+ *   prose, and a left rule that repeats the badge as shape.
+ * - `OptionCard` — one CLI flag or settings key, with its default in its own
+ *   slot.
  *
  * Styles live in `src/app/global.css` under the `sc-` (stella card) prefix
  * rather than in a `<style>` tag here, so a page rendering forty cards emits
- * one stylesheet instead of forty. Every color is a Fumadocs or brand token —
+ * one stylesheet instead of forty. Every colour is a Fumadocs or brand token —
  * no hex literals — so all three invert with the theme.
  */
 
@@ -52,9 +56,9 @@ export function CardGrid({
  * ─────────────────────────────────────────────────────────────────────────── */
 
 /**
- * A label/value row inside a card. `mono` is the default because these values
- * are overwhelmingly identifiers you will type or paste — env vars, model ids,
- * file paths — and a proportional face makes `l`/`1` and `O`/`0` ambiguous in
+ * A label/value row inside a card. Mono is the default because these values are
+ * overwhelmingly identifiers you will type or paste — env vars, model ids, file
+ * paths — and a proportional face makes `l`/`1` and `O`/`0` ambiguous in
  * exactly the strings where that costs you a failed command.
  */
 export interface CardMeta {
@@ -71,7 +75,7 @@ function MetaList({ items }: { items: CardMeta[] }) {
       {items.map((item) => (
         <div className="sc-meta-row" key={item.label}>
           <dt className="sc-meta-label">{item.label}</dt>
-          <dd className={item.mono === false ? "sc-meta-value" : "sc-meta-value sc-mono"}>
+          <dd className="sc-meta-value" data-prose={item.mono === false}>
             {item.value}
           </dd>
         </div>
@@ -81,10 +85,11 @@ function MetaList({ items }: { items: CardMeta[] }) {
 }
 
 /**
- * Status badge. `tone` is semantic, not decorative: `mutating` and `caution`
- * borrow the same functional amber the callouts use, because "this tool can
- * change your files" is a warning, not a label. Everything else stays neutral
- * so the amber keeps meaning something.
+ * Status badge — uppercase micro-type, no pill and no fill. `tone` is semantic,
+ * not decorative: `mutating` and `caution` borrow the functional amber the
+ * callouts use, because "this tool can change your files" is a warning, not a
+ * label. The word always spells it out, so hue is never the sole cue, and
+ * everything else stays neutral so the amber keeps meaning something.
  */
 export function Badge({
   children,
@@ -179,7 +184,7 @@ export function OptionCard({
   children: ReactNode;
 }) {
   return (
-    <div className="sc-card sc-option">
+    <div className="sc-card">
       <div className="sc-card-head">
         <code className="sc-tool-name">{name}</code>
         {required ? <Badge tone="caution">Required</Badge> : null}

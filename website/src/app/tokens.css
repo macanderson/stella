@@ -17,6 +17,12 @@
  * Retired and gone: the vermilion "ember" (#FF3D1F), the terminal-green dark
  * theme, and the `--stella-sky*` names those shipped under. No surface uses an
  * orange, rust, or phosphor-green hue; nothing aliases the old names.
+ *
+ * Some tokens below currently have no consumer in global.css — `gold-bright`,
+ * `gold-deep`, `paper-raised`, `danger`, `hairline`. That is intended: this is
+ * the palette, not a usage list. A value that BRAND.md defines belongs here
+ * whether or not the docs site happens to spend it, so that the next surface
+ * to need one finds it rather than inventing a near-miss. Do not prune them.
  */
 
 :root {
@@ -32,7 +38,8 @@
   --stella-paper: #ffffff;
   --stella-snow: #f5f7fa;
   --stella-paper-raised: #e7ebf2;
-  --stella-paper-hairline: #d3dae6;
+  --stella-paper-hairline: #d3dae6; /* decorative only — 1.4:1 */
+  --stella-paper-hairline-contrast: #868fa2; /* 3.2:1 on paper — structural */
 
   /* ── Brand — electric blue. The interactive signal. ───────────────────── */
   --stella-brand: #2e7bff; /* 5.1:1 on ground — fills, large marks */

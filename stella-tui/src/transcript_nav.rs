@@ -73,46 +73,73 @@ pub fn seek_failure(
         .find(|&i| is_failure(&transcript[i]))
 }
 
-/// The text a search matches against for one entry.
+/// The text fields a search matches against for one entry, **borrowed**.
 ///
 /// Matching is over *content*, not over the rendered row: a reader searching
 /// `auth.rs` means the path, not the pixels, and rendering can elide, wrap, or
 /// truncate the very substring being looked for. This is also why the full
 /// tool output is searched while only a preview line is drawn — the answer to
 /// "did it ever mention a deadlock" lives in the ninety collapsed lines.
+///
+/// Field-wise rather than one joined string, because a joined string is a copy:
+/// a tool result retains up to `OUTPUT_BUDGET` (16 KiB) of output, the search
+/// bar re-runs on every keystroke, and the transcript holds up to
+/// `MAX_TRANSCRIPT_ENTRIES` of them. Concatenating to scan meant a keystroke
+/// could copy tens of megabytes it then threw away.
 #[must_use]
-pub fn entry_text(entry: &TranscriptEntry) -> String {
+pub fn entry_fields(entry: &TranscriptEntry) -> Vec<&str> {
     use TranscriptEntry as E;
     match entry {
-        E::User(t) | E::Text(t) | E::Reasoning(t) => t.clone(),
+        E::User(t) | E::Text(t) | E::Reasoning(t) => vec![t],
         E::ToolStart {
             name, input, raw, ..
-        } => format!("{name} {input} {raw}"),
+        } => vec![name, input, raw],
         E::ToolResult {
             name,
             summary,
             full,
             ..
-        } => format!("{name} {summary} {full}"),
-        E::Retry { reason, .. } => reason.clone(),
-        E::ProviderFallback { from, to, reason } => format!("{from} {to} {reason}"),
-        E::ContextRecall { labels, .. } => labels.join(" "),
-        E::ContextWrite { provider, .. } => provider.clone(),
-        E::MediaComplete { label, path, .. } => format!("{label} {path}"),
-        E::JudgeVerdict { summary, .. } | E::ScopeReview { summary, .. } => summary.clone(),
-        E::GoalVerdict { reasoning, .. } => reasoning.clone(),
-        E::AskUser { question, .. } => question.clone(),
-        E::Commit { sha, message } => format!("{sha} {message}"),
-        E::Pr { url, .. } => url.clone(),
-        E::TaskUpdate { active, .. } => active.clone().unwrap_or_default(),
-        E::Error { message, .. } => message.clone(),
-        E::Complete { model, .. } => model.clone(),
+        } => vec![name, summary, full],
+        E::Retry { reason, .. } => vec![reason],
+        E::ProviderFallback { from, to, reason } => vec![from, to, reason],
+        E::ContextRecall { labels, .. } => labels.iter().map(String::as_str).collect(),
+        E::ContextWrite { provider, .. } => vec![provider],
+        E::MediaComplete { label, path, .. } => vec![label, path],
+        E::JudgeVerdict { summary, .. } | E::ScopeReview { summary, .. } => vec![summary],
+        E::GoalVerdict { reasoning, .. } => vec![reasoning],
+        E::AskUser { question, .. } => vec![question],
+        E::Commit { sha, message } => vec![sha, message],
+        E::Pr { url, .. } => vec![url],
+        E::TaskUpdate { active, .. } => active.as_deref().into_iter().collect(),
+        E::Error { message, .. } => vec![message],
+        E::Complete { model, .. } => vec![model],
         E::Evicted { .. }
         | E::Stage(_)
         | E::Compaction { .. }
         | E::BudgetTick { .. }
-        | E::MediaProgress { .. } => String::new(),
+        | E::MediaProgress { .. } => Vec::new(),
     }
+}
+
+/// Case-insensitive substring test that allocates nothing when both sides are
+/// ASCII — which every realistic search query and almost every tool payload is.
+/// `needle` must already be lowercased.
+///
+/// The fallback still lowercases the haystack, because ASCII case folding is
+/// wrong for anything else; it just no longer runs on every entry of every
+/// transcript on every keystroke.
+fn contains_ci(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if !haystack.is_ascii() || !needle.is_ascii() {
+        return haystack.to_lowercase().contains(needle);
+    }
+    let (hay, ndl) = (haystack.as_bytes(), needle.as_bytes());
+    hay.len() >= ndl.len()
+        && hay
+            .windows(ndl.len())
+            .any(|w| w.iter().zip(ndl).all(|(a, b)| a.to_ascii_lowercase() == *b))
 }
 
 /// Entry indices whose text contains `query`, case-insensitively.
@@ -131,7 +158,7 @@ pub fn search_hits(transcript: &[TranscriptEntry], query: &str) -> Vec<usize> {
     transcript
         .iter()
         .enumerate()
-        .filter(|(_, e)| entry_text(e).to_lowercase().contains(&needle))
+        .filter(|(_, e)| entry_fields(e).iter().any(|f| contains_ci(f, &needle)))
         .map(|(i, _)| i)
         .collect()
 }
@@ -394,6 +421,45 @@ mod tests {
         assert!(
             search_hits(&t, "").is_empty(),
             "an empty query claims nothing"
+        );
+    }
+
+    /// The ASCII fast path must agree with the unicode fallback in every
+    /// direction — it is the one that runs on essentially every keystroke, so
+    /// a divergence would be a silently wrong search, not a slow one.
+    #[test]
+    fn case_insensitive_matching_agrees_across_the_ascii_and_unicode_paths() {
+        assert!(contains_ci("Compiling stella-tui", "stella"));
+        assert!(contains_ci("PANIC at src/x.rs", "panic at"));
+        assert!(!contains_ci("nothing here", "panic"));
+        assert!(!contains_ci("ab", "abc"), "needle longer than haystack");
+        // Non-ASCII on either side falls back to full lowercasing.
+        assert!(contains_ci("ÉCHEC du build", "échec"));
+        assert!(contains_ci("straße", "stra"));
+        assert!(!contains_ci("ÉCHEC", "echec"));
+    }
+
+    /// Searching reaches every field of an entry without ever concatenating
+    /// them — a tool result's 16 KiB body must not be copied to be scanned.
+    #[test]
+    fn every_searchable_field_of_an_entry_is_reachable() {
+        let start = TranscriptEntry::ToolStart {
+            call_id: "c".into(),
+            name: "edit_file".into(),
+            input: "src/auth.rs".into(),
+            raw: r#"{"path":"src/auth.rs"}"#.into(),
+            path: Some("src/auth.rs".into()),
+        };
+        assert_eq!(
+            entry_fields(&start),
+            vec!["edit_file", "src/auth.rs", r#"{"path":"src/auth.rs"}"#]
+        );
+        let t = vec![start];
+        for query in ["edit_file", "AUTH.rs", r#""path""#] {
+            assert_eq!(search_hits(&t, query), vec![0], "no hit for {query:?}");
+        }
+        assert!(
+            entry_fields(&TranscriptEntry::Stage(stella_protocol::StageKind::Verify)).is_empty()
         );
     }
 

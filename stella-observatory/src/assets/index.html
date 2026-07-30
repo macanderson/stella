@@ -13,10 +13,13 @@
    page is served as one self-contained document — see the
    `dashboard_html_has_no_external_references` test in ../../lib_tests.rs.       */
 :root{
-  /* BEGIN brand palette — electric blue + gold on deep space */
+  /* BEGIN brand palette — electric blue + gold on deep space.
+     This block is one of the four mirrors BRAND.md requires to move together,
+     so it carries the full token set even where this page uses only part of
+     it. Do not prune it to the tokens currently referenced. */
   --void:#05070C; --ground:#080A0F; --surface:#0B0F17; --raised:#101623;
   --hairline:#182031; --hairline-strong:#232D42;
-  --brand:#2E7BFF; --brand-bright:#5AA0FF; --brand-deep:#1550C8;
+  --brand:#2E7BFF; --brand-bright:#5AA0FF; --brand-deep:#1A5FE0;
   --gold:#F5C145; --gold-bright:#FFD873; --gold-deep:#C99420;
   --text:#F2F5FA; --text-2:#8E97A8; --text-3:#737D92;
   --ok:#4ADE80; --warn:#EAB308; --bad:#FF5C7A;
@@ -42,12 +45,17 @@
   --brand-wash:rgba(46,123,255,.10);   /* --brand @10% — hover / selected fill */
   --brand-edge:rgba(46,123,255,.40);   /* --brand @40% — chip + badge edges    */
   --sunken:rgba(5,7,12,.55);           /* --void @55% — inset wells            */
+  /* Control outlines. WCAG 1.4.11 wants 3:1 for the boundary that identifies
+     an interactive component; no token in the ground ramp reaches it —
+     --hairline-strong measures 1.39:1 on --surface. --text-3 does (4.64:1),
+     so every control that is operable takes it, while purely decorative
+     grouping seams (card edges, table rules) keep the hairlines. */
+  --control-edge:var(--text-3);
 
   /* Type. Two families, six sizes, three weights. Nothing else. */
   --mono:"SFMono-Regular",Menlo,Consolas,"Liberation Mono",monospace;
   --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Arial,sans-serif;
-  --fs-micro:11px; --fs-sm:12px; --fs-base:13px;
-  --fs-md:15px;    --fs-lg:18px; --fs-xl:28px;
+  --fs-micro:11px; --fs-sm:12px; --fs-base:13px; --fs-md:15px; --fs-xl:28px;
 
   /* Rhythm. One 8px unit; every gutter, gap and pad is a multiple. */
   --sp1:8px; --sp2:16px; --sp3:24px; --sp4:32px;
@@ -105,7 +113,7 @@ header .bword{height:20px;width:auto;display:block;align-self:center}
 .live[data-state="offline"]{color:var(--bad)}
 .live[data-state="offline"] i{background:var(--bad);animation:none}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-select{background:var(--raised);color:var(--text);border:1px solid var(--hairline-strong);
+select{background:var(--raised);color:var(--text);border:1px solid var(--control-edge);
        border-radius:var(--radius-sm);font:var(--fs-micro)/1.4 var(--mono);
        padding:6px 10px;max-width:280px}
 
@@ -118,16 +126,16 @@ nav.bar{position:sticky;top:0;z-index:20;display:flex;align-items:center;
   color:var(--text-2);cursor:pointer;font:var(--fs-sm)/1 var(--sans);
   letter-spacing:.005em;padding:11px 13px;margin-bottom:-1px}
 .tabs button:hover{color:var(--text);background:var(--brand-wash)}
-.tabs button[aria-selected="true"]{color:var(--text);border-bottom-color:var(--brand)}
+.tabs button[aria-selected="true"]{color:var(--text);border-bottom-color:var(--accent)}
 .tf-wrap{margin-left:auto;display:flex;align-items:center;gap:var(--sp1);padding:6px 0}
 .tf-label{font:var(--fs-micro)/1 var(--mono);color:var(--text-3)}
-.tf{display:flex;align-items:stretch;border:1px solid var(--hairline-strong);
+.tf{display:flex;align-items:stretch;border:1px solid var(--control-edge);
     border-radius:var(--radius-sm);overflow:hidden}
 .tf button{background:none;border:0;border-left:1px solid var(--hairline-strong);
   color:var(--text-2);cursor:pointer;font:var(--fs-micro)/1 var(--mono);padding:6px 11px}
 .tf button:first-child{border-left:0}
 .tf button:hover{color:var(--text);background:var(--brand-wash)}
-.tf button[aria-checked="true"]{color:var(--ground);background:var(--brand);font-weight:600}
+.tf button[aria-checked="true"]{color:var(--ground);background:var(--accent);font-weight:600}
 .tf button:focus-visible{outline-offset:-2px}
 section[data-tab]{display:none}
 section[data-tab].on{display:block}
@@ -194,13 +202,17 @@ tr.click:hover td,tr.drill:hover td,tr.click:focus-visible td,tr.drill:focus-vis
 .badge.warn{color:var(--warn);border-color:rgba(234,179,8,.42)}
 .badge.dim{color:var(--text-3);border-color:var(--hairline-strong)}
 .badge.accent{color:var(--brand-bright);border-color:var(--brand-edge)}
+.rowbtn{background:none;border:0;padding:0;font:inherit;color:var(--brand-bright);
+        cursor:pointer;text-align:left;font-variant-numeric:tabular-nums}
+.rowbtn:hover{text-decoration:underline}
 .chip{display:inline-block;font:var(--fs-micro)/1.7 var(--mono);color:var(--text-3);
       border:1px solid var(--hairline-strong);border-radius:var(--radius-sm);
       padding:0 7px;margin:2px 3px 2px 0}
 
 /* ── Charts ───────────────────────────────────────────────────────────── */
+/* 10 is viewBox units, not CSS px: charts scale with their card, so this is
+   the only size on the page that is deliberately outside the type scale. */
 svg text{font:10px var(--mono);fill:var(--text-3)}
-svg text.axis{fill:var(--text-3)}
 .legend{display:flex;gap:var(--sp2);font:var(--fs-micro)/1.4 var(--mono);color:var(--text-2);
         margin:0 0 var(--sp1);flex-wrap:wrap}
 .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:-1px}
@@ -230,11 +242,11 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
 #gcanvas{width:100%;height:100%;display:block;cursor:grab}
 #gcanvas.dragging{cursor:grabbing}
 .gctl{display:flex;gap:var(--sp1);align-items:center;margin-bottom:var(--sp1);flex-wrap:wrap}
-.gctl input{background:var(--raised);border:1px solid var(--hairline-strong);color:var(--text);
+.gctl input{background:var(--raised);border:1px solid var(--control-edge);color:var(--text);
             border-radius:var(--radius-sm);font:var(--fs-sm)/1.4 var(--mono);padding:6px 10px;width:230px}
-.gctl button{background:none;border:1px solid var(--hairline-strong);color:var(--text-2);
+.gctl button{background:none;border:1px solid var(--control-edge);color:var(--text-2);
              cursor:pointer;font:var(--fs-micro)/1.4 var(--mono);padding:6px 12px;border-radius:var(--radius-sm)}
-.gctl button:hover{color:var(--text);border-color:var(--brand)}
+.gctl button:hover{color:var(--text);border-color:var(--accent)}
 .gstats{font:var(--fs-micro)/1.4 var(--mono);color:var(--text-3);margin-left:auto}
 .gside .row{display:flex;justify-content:space-between;gap:var(--sp2);
             font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);padding:3px 0}
@@ -263,9 +275,9 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
        transition:opacity .24s;z-index:30}
 #scrim.open{opacity:1;pointer-events:auto}
 #drawer .close{position:absolute;top:18px;right:18px;background:none;
-               border:1px solid var(--hairline-strong);border-radius:var(--radius-sm);
+               border:1px solid var(--control-edge);border-radius:var(--radius-sm);
                color:var(--text-2);font:var(--fs-micro)/1.4 var(--mono);padding:5px 10px;cursor:pointer}
-#drawer .close:hover{color:var(--text);border-color:var(--brand)}
+#drawer .close:hover{color:var(--text);border-color:var(--accent)}
 #drawer h2{font:600 var(--fs-md)/1.4 var(--sans);margin:6px 0 2px;max-width:85%}
 #drawer .sect{margin-top:var(--sp3)}
 .step-row{display:grid;grid-template-columns:34px minmax(0,1fr) 160px;gap:var(--sp2);
@@ -281,9 +293,9 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
 .empty code,.err code{color:var(--text);background:var(--raised);border:1px solid var(--hairline-strong);
              padding:1px 6px;border-radius:var(--radius-sm);white-space:nowrap}
 .crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:2px;margin-top:var(--sp1)}
-.crumbs .crumb{background:var(--raised);border:1px solid var(--hairline-strong);color:var(--text-2);
+.crumbs .crumb{background:var(--raised);border:1px solid var(--control-edge);color:var(--text-2);
   border-radius:var(--radius-sm);padding:3px 10px;cursor:pointer;font:var(--fs-sm)/1.5 var(--mono)}
-.crumbs .crumb:hover{color:var(--text);border-color:var(--brand)}
+.crumbs .crumb:hover{color:var(--text);border-color:var(--accent)}
 .crumbs .sep{color:var(--text-3);margin:0 4px}
 .section-gap{margin-bottom:var(--sp2)}
 .loop-strip{display:flex;gap:6px;align-items:center;flex-wrap:wrap;
@@ -300,7 +312,7 @@ footer b{color:var(--text-2);font-weight:600}
 <a class="skip" href="#main">Skip to dashboard</a>
 <div class="wrap">
   <header>
-    <img class="bword" src="/assets/wordmark.svg" alt="Stella" width="95" height="28">
+    <img class="bword" src="/assets/wordmark.svg" alt="Stella" width="99" height="20">
     <div class="title">
       <h1>Observatory</h1>
       <p>Local telemetry. Reads .stella only. Nothing leaves this machine.</p>
@@ -671,7 +683,10 @@ const lazyCache = {};    // per-tab payloads keyed `${tab}:${project}`
 const api = (u) => {
   const sep = u.includes("?") ? "&" : "?";
   return fetch(state.project ? u + sep + "project=" + encodeURIComponent(state.project) : u)
-    .then(r => r.json());
+    .then(r => {
+      if (!r.ok) throw new Error(`${u} → HTTP ${r.status}`);
+      return r.json();
+    });
 };
 const inTf = (startedAt) => {
   if (state.tf === "all") return true;
@@ -688,74 +703,110 @@ const inTfDay = (day) => {
   const d = new Date(day + "T00:00:00Z");
   return d && (Date.now() - d.getTime()) <= (TF_MS[state.tf] + 864e5);
 };
+/* Names the active window in prose, so an empty state can say what is missing
+   and over what span rather than just "nothing here". */
+const TF_LABEL = {
+  "24h": "in the last 24 hours", "7d": "in the last 7 days",
+  "30d": "in the last 30 days", all: "in this workspace",
+};
+const window_ = () => pick(TF_LABEL, state.tf, "in this window");
+
+/* Re-render gate. The poll runs every 5s but the payload usually has not
+   moved; rebuilding ten sections of DOM (and re-binding their listeners) on
+   an unchanged dataset was the page's main cost and the reason a hovered row
+   or a mid-drag selection could be yanked out from under the pointer. */
+const _sig = Object.create(null);
+function changed(key, ...values) {
+  const s = JSON.stringify(values);
+  if (_sig[key] === s) return false;
+  _sig[key] = s;
+  return true;
+}
+function invalidate() { for (const k of Object.keys(_sig)) delete _sig[k]; }
 
 /* ── stat tiles ──────────────────────────────────────────────────────── */
+/* `k`, `v` and `sub` are page-authored labels and formatted numbers only —
+   no API string reaches this without esc() at the call site. */
 function tile(k, v, sub, accent) {
   return `<div class="card tile"><div class="k">${k}</div>
     <div class="v${accent ? " accent" : ""}">${v}</div>
-    ${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
+    <div class="sub">${sub || "&nbsp;"}</div></div>`;
 }
 function renderKpis() {
   const o = D.overview ?? {};
   const all = state.tf === "all";
   const rows = (D.executions ?? []).filter(r => inTf(r.started_at));
-  const sum = (k) => rows.reduce((a, r) => a + (r[k] ?? 0), 0);
-  const runs = all ? (o.runs ?? 0) : rows.length;
-  const resolved = all ? (o.resolved ?? 0)
+  if (!changed("kpis", o, rows, state.tf)) return;
+  const sum = (k) => rows.reduce((a, r) => a + num(r[k]), 0);
+  const runs = all ? num(o.runs) : rows.length;
+  const resolved = all ? num(o.resolved)
     : rows.filter(r => r.outcome === "completed").length;
-  const cost = all ? (o.cost_usd ?? 0) : sum("cost_usd");
-  const tin = all ? (o.input_tokens ?? 0) : sum("input_tokens");
-  const tout = all ? (o.output_tokens ?? 0) : sum("output_tokens");
-  const modelMs = all ? (o.model_ms ?? 0) : sum("model_ms");
-  const steps = all ? (o.steps ?? 0) : sum("steps");
-  const cacheDen = (o.cache_read_tokens ?? 0) + (o.cache_miss_tokens ?? 0);
-  const cacheHit = cacheDen ? (o.cache_read_tokens / cacheDen) : null;
+  const cost = all ? num(o.cost_usd) : sum("cost_usd");
+  const tin = all ? num(o.input_tokens) : sum("input_tokens");
+  const tout = all ? num(o.output_tokens) : sum("output_tokens");
+  const modelMs = all ? num(o.model_ms) : sum("model_ms");
+  const steps = all ? num(o.steps) : sum("steps");
+  const cacheDen = num(o.cache_read_tokens) + num(o.cache_miss_tokens);
+  const cacheHit = cacheDen ? (num(o.cache_read_tokens) / cacheDen) : null;
   $("kpis").innerHTML =
-    tile("runs", String(runs), resolved + " resolved") +
-    tile("resolve rate", runs ? pct(resolved / runs) : "—", "outcome = completed") +
-    tile("total spend", fmtUsd(cost),
-         resolved ? fmtUsd(cost / resolved) + " / resolved" : "&nbsp;", true) +
-    tile("tokens in", fmtTok(tin), fmtTok(tout) + " out") +
-    tile("cache hits", cacheHit === null ? "—" : pct(cacheHit),
-         fmtTok(o.cache_read_tokens ?? 0) + " read · all-time") +
-    tile("model time", fmtMs(modelMs), steps ? fmtMs(modelMs / steps) + " avg / step" : "&nbsp;");
+    tile("Runs", fmtInt(runs), fmtInt(resolved) + " resolved") +
+    tile("Resolve rate", runs ? pct(resolved / runs) : "—", "outcome = completed") +
+    tile("Total spend", fmtUsd(cost),
+         resolved ? fmtUsd(cost / resolved) + " per resolved" : "no resolved runs yet", true) +
+    tile("Tokens in", fmtTok(tin), fmtTok(tout) + " out") +
+    tile("Cache hits", cacheHit === null ? "—" : pct(cacheHit),
+         cacheDen ? fmtTok(o.cache_read_tokens) + " read · all-time" : "no cache traffic yet") +
+    tile("Model time", fmtMs(modelMs), steps ? fmtMs(modelMs / steps) + " avg per step" : "no steps yet");
 }
+
+/* ── chart furniture ─────────────────────────────────────────────────── */
+/* Shared y-axis: three gridlines, a labelled unit, and a baseline rule that
+   is heavier than the gridlines so the zero line reads as the zero line. */
+function yAxis(padL, padT, innerH, right, max, fmt, unit) {
+  const rows = [0, .5, 1].map(f => {
+    const y = padT + innerH * (1 - f);
+    return `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${right}" y2="${y.toFixed(1)}"
+        stroke="${f === 0 ? "var(--hairline-strong)" : "var(--hairline)"}"/>
+      <text x="${padL - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end">${fmt(max * f)}</text>`;
+  }).join("");
+  return rows + `<text x="0" y="${(padT - 2).toFixed(1)}" text-anchor="start">${unit}</text>`;
+}
+const xAxis = (W, H, label) =>
+  `<text x="${W}" y="${H - 1}" text-anchor="end">${label}</text>`;
 
 /* ── timeline chart (grouped thin bars, input+output per run) ─────────── */
 function renderTimeline() {
   const t = (D.overview?.timeline ?? []).filter(r => inTf(r.started_at));
+  if (!changed("timeline", t, state.tf)) return;
   if (!t.length) {
-    $("timeline").innerHTML =
-      `<div class="empty">no runs in this window — try <code>stella run "fix the failing test"</code></div>`;
+    $("timeline").innerHTML = `<div class="empty">No runs ${window_()} to plot.<br>
+      Tokens per run appear once stella records one — try
+      <code>stella run "fix the failing test"</code>.</div>`;
     return;
   }
-  const W = 640, H = 190, padL = 44, padB = 26, padT = 12;
+  const W = 640, H = 198, padL = 46, padB = 32, padT = 16;
   const n = t.length;
   const innerW = W - padL - 8, innerH = H - padT - padB;
-  const max = Math.max(...t.map(r => Math.max(r.input_tokens, r.output_tokens)), 1);
+  const max = Math.max(...t.map(r => Math.max(num(r.input_tokens), num(r.output_tokens))), 1);
   const group = innerW / n;
   const bw = Math.min(16, Math.max(3, group / 2.6));
   let bars = "", labels = "";
   t.forEach((r, i) => {
     const x0 = padL + i * group + group / 2;
-    const hIn = innerH * r.input_tokens / max, hOut = innerH * r.output_tokens / max;
+    const hIn = innerH * num(r.input_tokens) / max, hOut = innerH * num(r.output_tokens) / max;
     const yIn = padT + innerH - hIn, yOut = padT + innerH - hOut;
     bars += `<g class="bar" data-i="${i}">
-      <rect x="${(x0 - bw - 1).toFixed(1)}" y="${yIn.toFixed(1)}" width="${bw}" height="${Math.max(hIn, 1).toFixed(1)}" rx="2" fill="var(--c1)"/>
-      <rect x="${(x0 + 1).toFixed(1)}" y="${yOut.toFixed(1)}" width="${bw}" height="${Math.max(hOut, 1).toFixed(1)}" rx="2" fill="var(--c2)"/>
-      <rect x="${(x0 - group / 2).toFixed(1)}" y="0" width="${group.toFixed(1)}" height="${H}" fill="transparent"/>
+      <rect x="${(x0 - bw - 1).toFixed(1)}" y="${yIn.toFixed(1)}" width="${bw}" height="${Math.max(hIn, 1).toFixed(1)}" rx="1" fill="var(--c4)"/>
+      <rect x="${(x0 + 1).toFixed(1)}" y="${yOut.toFixed(1)}" width="${bw}" height="${Math.max(hOut, 1).toFixed(1)}" rx="1" fill="var(--c2)"/>
+      <rect x="${(x0 - group / 2).toFixed(1)}" y="0" width="${group.toFixed(1)}" height="${H - padB + 8}" fill="transparent"/>
     </g>`;
     if (n <= 14 || i % Math.ceil(n / 14) === 0)
-      labels += `<text x="${x0.toFixed(1)}" y="${H - 8}" text-anchor="middle">#${r.id}</text>`;
+      labels += `<text x="${x0.toFixed(1)}" y="${H - 14}" text-anchor="middle">${num(r.id)}</text>`;
   });
-  const grid = [0, .5, 1].map(f => {
-    const y = padT + innerH * (1 - f);
-    return `<line x1="${padL}" y1="${y}" x2="${W - 8}" y2="${y}" stroke="var(--hairline-dim)"/>
-      <text x="${padL - 6}" y="${y + 3}" text-anchor="end">${fmtTok(max * f)}</text>`;
-  }).join("");
   $("timeline").innerHTML =
     `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img"
-       aria-label="input and output tokens per execution">${grid}${bars}${labels}</svg>`;
+       aria-label="Input and output tokens for each of ${n} executions. Peak ${fmtTok(max)} tokens."
+       >${yAxis(padL, padT, innerH, W - 8, max, fmtTok, "tokens")}${bars}${labels}${xAxis(W, H, "execution #")}</svg>`;
   $("timeline").querySelectorAll("g.bar").forEach(g => {
     const r = t[+g.dataset.i];
     g.addEventListener("mousemove", ev => showTip(ev,
@@ -769,17 +820,24 @@ function renderTimeline() {
 }
 
 /* ── daily bar charts (activity tab) ─────────────────────────────────── */
-function renderDaily(elId, days, series, fmt, stacked) {
+/* `opts`: { unit, noun, stacked }. `unit` labels the y-axis, `noun` names what
+   is missing when the window is empty — an empty box that says "nothing" tells
+   the reader less than one that says which series has no data and where it
+   would come from. `series[].color` is a page-authored CSS token, never data. */
+function renderDaily(elId, days, series, fmt, opts) {
   const el = $(elId);
+  const { unit, noun, stacked = false } = opts;
+  if (!changed(elId, days, state.tf)) return;
   if (!days.length) {
-    el.innerHTML = `<div class="empty">nothing recorded in this window</div>`;
+    el.innerHTML = `<div class="empty">No ${noun} recorded ${window_()}.<br>
+      One bar per day appears here once <code>.stella</code> has a dated run in range.</div>`;
     return;
   }
-  const W = 620, H = 180, padL = 46, padB = 24, padT = 10;
+  const W = 620, H = 192, padL = 48, padB = 30, padT = 16;
   const innerW = W - padL - 8, innerH = H - padT - padB;
   const total = (d) => stacked
-    ? series.reduce((a, s) => a + (d[s.key] ?? 0), 0)
-    : Math.max(...series.map(s => d[s.key] ?? 0));
+    ? series.reduce((a, s) => a + num(d[s.key]), 0)
+    : Math.max(...series.map(s => num(d[s.key])));
   const max = Math.max(...days.map(total), 1e-9);
   const group = innerW / days.length;
   const bw = stacked
@@ -791,36 +849,35 @@ function renderDaily(elId, days, series, fmt, stacked) {
     if (stacked) {
       let yCursor = padT + innerH;
       series.forEach(s => {
-        const h = innerH * (d[s.key] ?? 0) / max;
+        const h = innerH * num(d[s.key]) / max;
         yCursor -= h;
         if (h > 0.2) bars += `<rect x="${(x0 - bw / 2).toFixed(1)}" y="${(yCursor + 1).toFixed(1)}"
-          width="${bw}" height="${Math.max(h - 2, 1).toFixed(1)}" rx="2" fill="${s.color}"/>`;
+          width="${bw}" height="${Math.max(h - 2, 1).toFixed(1)}" rx="1" fill="${s.color}"/>`;
       });
     } else {
       const span = series.length * (bw + 2);
       series.forEach((s, si) => {
-        const h = innerH * (d[s.key] ?? 0) / max;
+        const h = innerH * num(d[s.key]) / max;
         const x = x0 - span / 2 + si * (bw + 2);
         bars += `<rect x="${x.toFixed(1)}" y="${(padT + innerH - h).toFixed(1)}"
-          width="${bw}" height="${Math.max(h, d[s.key] ? 1 : 0).toFixed(1)}" rx="2" fill="${s.color}"/>`;
+          width="${bw}" height="${Math.max(h, num(d[s.key]) ? 1 : 0).toFixed(1)}" rx="1" fill="${s.color}"/>`;
       });
     }
     bars += `<rect class="hit" data-i="${i}" x="${(x0 - group / 2).toFixed(1)}" y="0"
-      width="${group.toFixed(1)}" height="${H}" fill="transparent"/>`;
+      width="${group.toFixed(1)}" height="${H - padB + 8}" fill="transparent"/>`;
     if (days.length <= 12 || i % Math.ceil(days.length / 12) === 0)
-      labels += `<text x="${x0.toFixed(1)}" y="${H - 6}" text-anchor="middle">${d.day.slice(5)}</text>`;
+      labels += `<text x="${x0.toFixed(1)}" y="${H - 13}" text-anchor="middle">${esc(String(d.day).slice(5))}</text>`;
   });
-  const grid = [0, .5, 1].map(f => {
-    const y = padT + innerH * (1 - f);
-    return `<line x1="${padL}" y1="${y}" x2="${W - 8}" y2="${y}" stroke="var(--hairline-dim)"/>
-      <text x="${padL - 6}" y="${y + 3}" text-anchor="end">${fmt(max * f)}</text>`;
-  }).join("");
-  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img">${grid}${bars}${labels}</svg>`;
+  const label = `${series.map(s => s.label).join(" and ")} per day over ` +
+    `${days.length} day${days.length === 1 ? "" : "s"}, peak ${fmt(max)} ${unit}.`;
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img"
+    aria-label="${esc(label)}">${yAxis(padL, padT, innerH, W - 8, max, fmt, unit)}` +
+    `${bars}${labels}${xAxis(W, H, "day (UTC)")}</svg>`;
   el.querySelectorAll("rect.hit").forEach(r => {
     const d = days[+r.dataset.i];
     r.addEventListener("mousemove", ev => showTip(ev,
       `<b>${esc(d.day)}</b>` +
-      series.map(s => `${esc(s.label)}: ${fmt(d[s.key] ?? 0)}`).join("<br>")));
+      series.map(s => `${esc(s.label)}: ${fmt(d[s.key])}`).join("<br>")));
     r.addEventListener("mouseleave", hideTip);
   });
 }
@@ -828,51 +885,62 @@ function renderDaily(elId, days, series, fmt, stacked) {
    day to sit on, so it is named rather than hidden or faked onto the axis. */
 function renderUndated(d) {
   const el = $("act-undated");
-  if (!d || !((d.runs ?? 0) || (d.tool_calls ?? 0))) {
-    el.innerHTML = "";
-    return;
-  }
-  const runs = d.runs ?? 0;
-  el.innerHTML = `<div class="card" style="margin-bottom:14px">
+  if (!changed("undated", d ?? null)) return;
+  if (!d || !(num(d.runs) || num(d.tool_calls))) { el.innerHTML = ""; return; }
+  const runs = num(d.runs);
+  el.innerHTML = `<div class="card section-gap">
     <div class="kick">Off the day axis</div>
-    <h2>${runs} undated ${runs === 1 ? "run" : "runs"}
-      <span class="badge warn">unparseable timestamp</span></h2>
-    <div style="color:var(--text-2)">${fmtUsd(d.cost_usd ?? 0)} ·
-      ${fmtTok(d.input_tokens ?? 0)} in · ${fmtTok(d.output_tokens ?? 0)} out ·
-      ${d.tool_calls ?? 0} tool calls (${d.tool_errors ?? 0} failed) — left out of the
-      charts below because <code>started_at</code> didn't parse as a date.</div></div>`;
+    <h2>${fmtInt(runs)} undated ${runs === 1 ? "run" : "runs"}
+      <span class="badge warn">◌ unparseable timestamp</span></h2>
+    <p style="color:var(--text-2);font:var(--fs-sm)/1.6 var(--mono)">${fmtUsd(d.cost_usd)} ·
+      ${fmtTok(d.input_tokens)} in · ${fmtTok(d.output_tokens)} out ·
+      ${fmtInt(d.tool_calls)} tool calls (${fmtInt(d.tool_errors)} failed) — left out of the
+      charts below because <code>started_at</code> didn't parse as a date.</p></div>`;
 }
 function renderActivity() {
   const rows = D.activity ?? [];
   renderUndated(rows.find(d => !ISO_DAY.test(d.day)));
   const days = rows.filter(d => inTfDay(d.day));
-  const withOther = days.map(d => ({ ...d, other: (d.runs ?? 0) - (d.resolved ?? 0) }));
+  const withOther = days.map(d => ({ ...d, other: Math.max(0, num(d.runs) - num(d.resolved)) }));
+  const int = (v) => fmtInt(Math.round(num(v)));
   renderDaily("ch-cost", days,
-    [{ key: "cost_usd", label: "spend", color: "var(--c1)" }], fmtUsd, false);
+    [{ key: "cost_usd", label: "spend", color: "var(--c4)" }],
+    fmtUsd, { unit: "USD", noun: "spend" });
   renderDaily("ch-tokens", days,
-    [{ key: "input_tokens", label: "input", color: "var(--c1)" },
-     { key: "output_tokens", label: "output", color: "var(--c2)" }], fmtTok, false);
+    [{ key: "input_tokens", label: "input", color: "var(--c4)" },
+     { key: "output_tokens", label: "output", color: "var(--c2)" }],
+    fmtTok, { unit: "tokens", noun: "token traffic" });
   renderDaily("ch-runs", withOther,
-    [{ key: "resolved", label: "resolved", color: "var(--c1)" },
-     { key: "other", label: "other outcomes", color: "#6B7C99" }], v => String(Math.round(v)), true);
+    [{ key: "resolved", label: "resolved", color: "var(--c4)" },
+     { key: "other", label: "other outcomes", color: "var(--neutral-mark)" }],
+    int, { unit: "runs", noun: "runs", stacked: true });
   renderDaily("ch-toolcalls", days,
     [{ key: "tool_calls", label: "calls", color: "var(--c2)" },
-     { key: "tool_errors", label: "errors", color: "var(--bad)" }], v => String(Math.round(v)), false);
+     { key: "tool_errors", label: "errors", color: "var(--bad)" }],
+    int, { unit: "calls", noun: "tool calls" });
 }
+
+/* Clip to n characters without assuming the field is a string: several of
+   these arrive from JSON that a bad row can leave null. */
+const clip = (s, n) => { const v = String(s ?? ""); return v.length > n ? v.slice(0, n) + "…" : v; };
 
 /* ── models table ────────────────────────────────────────────────────── */
 function renderModels(rows) {
+  if (!changed("models", rows)) return;
   if (!rows.length) {
-    $("models").innerHTML = `<div class="empty">no model traffic yet</div>`; return;
+    $("models").innerHTML = `<div class="empty">No model traffic recorded.<br>
+      Cost per resolved task appears here after the first billed turn.</div>`;
+    return;
   }
   $("models").innerHTML = `<table><thead><tr>
-    <th>model</th><th class="num">runs</th><th class="num">rate</th>
-    <th class="num">cost</th><th class="num">$/resolved</th>
-    <th class="num">in</th><th class="num">out</th></tr></thead><tbody>` +
+    <th scope="col">model</th><th scope="col" class="num">runs</th>
+    <th scope="col" class="num">resolve&nbsp;%</th><th scope="col" class="num">cost&nbsp;USD</th>
+    <th scope="col" class="num">USD/resolved</th>
+    <th scope="col" class="num">tok&nbsp;in</th><th scope="col" class="num">tok&nbsp;out</th></tr></thead><tbody>` +
     rows.map(r => `<tr>
       <td class="main" title="${esc(r.provider)}/${esc(r.model)}${r.division !== "-" ? " · " + esc(r.division) : ""}">
         ${esc(r.provider)}/${esc(r.model)}${r.division !== "-" ? ` <span class="badge dim">${esc(r.division)}</span>` : ""}</td>
-      <td class="num">${r.runs}</td><td class="num">${pct(r.resolve_rate)}</td>
+      <td class="num">${fmtInt(r.runs)}</td><td class="num">${pct(r.resolve_rate)}</td>
       <td class="num">${fmtUsd(r.total_cost_usd)}</td>
       <td class="num">${r.cost_per_resolved_usd == null ? "—" : fmtUsd(r.cost_per_resolved_usd)}</td>
       <td class="num">${fmtTok(r.input_tokens)}</td>
@@ -881,184 +949,254 @@ function renderModels(rows) {
 }
 
 /* ── horizontal bars (tools / files) ─────────────────────────────────── */
+/* `valueLabel` returns a page-built fragment; every API string inside it must
+   already be esc()'d by the caller. `name` is escaped here. */
 function hbars(rows, name, value, valueLabel) {
-  const max = Math.max(...rows.map(value), 1);
+  const max = Math.max(...rows.map(r => num(value(r))), 1);
   return rows.map((r, i) => `<div class="hbar" data-i="${i}">
       <span class="name" title="${esc(name(r))}">${esc(name(r))}</span>
-      <span><span class="track" style="width:${(100 * value(r) / max).toFixed(1)}%"></span></span>
+      <span><span class="track" style="width:${(100 * num(value(r)) / max).toFixed(1)}%"></span></span>
       <span class="val">${valueLabel(r)}</span>
     </div>`).join("");
 }
 function renderTools(rows) {
-  if (!rows.length) { $("tools").innerHTML = `<div class="empty">no tool calls yet</div>`; return; }
-  $("tools").innerHTML = hbars(rows.slice(0, 12),
+  if (!changed("tools", rows)) return;
+  if (!rows.length) {
+    $("tools").innerHTML = `<div class="empty">No tool calls recorded.<br>
+      Every native and MCP call stella makes is counted here.</div>`;
+    return;
+  }
+  const top = rows.slice(0, 12);
+  $("tools").innerHTML = hbars(top,
     r => r.name, r => r.calls,
-    r => `${r.calls}× · ${fmtMs(r.p50_ms)}` +
-         (r.errors ? ` · <span style="color:var(--bad)">${r.errors} err</span>` : ""));
+    r => `${fmtInt(r.calls)}× · p50 ${fmtMs(r.p50_ms)}` +
+         (num(r.errors) ? ` · <span style="color:var(--bad)">✕ ${fmtInt(r.errors)}</span>` : ""));
   $("tools").querySelectorAll(".hbar").forEach((el, i) => {
-    const r = rows[i];
+    const r = top[i];
     el.addEventListener("mousemove", ev => showTip(ev,
-      `<b>${esc(r.name)}</b>${r.calls} calls · ${r.errors} errors<br>` +
+      `<b>${esc(r.name)}</b>${fmtInt(r.calls)} calls · ${fmtInt(r.errors)} errors<br>` +
       `p50 ${fmtMs(r.p50_ms)} · max ${fmtMs(r.max_ms)} · ${fmtTok(r.bytes_out)}B returned`));
     el.addEventListener("mouseleave", hideTip);
   });
 }
 function renderFiles(rows) {
-  if (!rows.length) { $("files").innerHTML = `<div class="empty">no files touched yet</div>`; return; }
-  $("files").innerHTML = hbars(rows.slice(0, 12),
-    r => r.path.split("/").pop(), r => r.executions,
-    r => `${r.executions}× · <span style="color:var(--ok)">+${r.lines_added}</span>` +
-         `/<span style="color:var(--bad)">−${r.lines_removed}</span>`);
+  if (!changed("files", rows)) return;
+  if (!rows.length) {
+    $("files").innerHTML = `<div class="empty">No files touched.<br>
+      Reads and writes are attributed to a run as soon as one edits the tree.</div>`;
+    return;
+  }
+  const top = rows.slice(0, 12);
+  $("files").innerHTML = hbars(top,
+    r => String(r.path ?? "").split("/").pop() || "—", r => r.executions,
+    r => `${fmtInt(r.executions)}× · <span style="color:var(--ok)">+${fmtInt(r.lines_added)}</span>` +
+         ` <span style="color:var(--bad)">−${fmtInt(r.lines_removed)}</span>`);
   $("files").querySelectorAll(".hbar").forEach((el, i) => {
-    const r = rows[i];
+    const r = top[i];
     el.addEventListener("mousemove", ev => showTip(ev,
-      `<b>${esc(r.path)}</b>touched in ${r.executions} runs · +${r.lines_added} −${r.lines_removed}`));
+      `<b>${esc(r.path)}</b>touched in ${fmtInt(r.executions)} runs · ` +
+      `+${fmtInt(r.lines_added)} −${fmtInt(r.lines_removed)} lines`));
     el.addEventListener("mouseleave", hideTip);
   });
 }
 
 /* ── memory / self-improvement (overview card) ───────────────────────── */
 function renderMemory(m) {
+  if (!changed("memory", m)) return;
   const cites = m.citations ?? [], refl = m.reflections ?? [];
   const rules = m.rules ?? [], skills = m.skills ?? [];
   if (!cites.length && !refl.length && !rules.length && !skills.length) {
     $("memory").innerHTML =
-      `<div class="empty">the self-improvement loop hasn't recorded anything here yet —<br>
-       memories, citations, reflections and promoted rules will appear as stella works</div>`;
+      `<div class="empty">The self-improvement loop has recorded nothing here yet.<br>
+       Memories, citations, reflections and promoted rules appear as stella works.</div>`;
     return;
   }
   let html = "";
   if (cites.length) {
-    html += `<table><thead><tr><th>memory</th><th class="num">cites</th>
-      <th class="num">useful</th><th class="num">truthful</th></tr></thead><tbody>` +
+    html += `<table><thead><tr><th scope="col">memory</th><th scope="col" class="num">cites</th>
+      <th scope="col" class="num">useful&nbsp;/10</th><th scope="col" class="num">truthful&nbsp;%</th></tr></thead><tbody>` +
       cites.slice(0, 6).map(c => `<tr>
         <td class="main" title="${esc(c.memory_id)}">${esc(c.memory_id)}</td>
-        <td class="num">${c.citations}</td>
-        <td class="num">${(c.avg_useful ?? 0).toFixed(1)}</td>
+        <td class="num">${fmtInt(c.citations)}</td>
+        <td class="num">${num(c.avg_useful).toFixed(1)}</td>
         <td class="num">${pct(c.truthful_rate)}</td></tr>`).join("") + `</tbody></table>`;
   }
   if (skills.length) {
-    html += `<div class="kick" style="margin-top:14px">skills exercised</div>` +
+    html += `<div class="subhead">Skills exercised</div>` +
       skills.slice(0, 5).map(s =>
         `<div class="hbar"><span class="name">${esc(s.skill)}</span>
-         <span></span><span class="val">${s.uses}× · v${s.version}</span></div>`).join("");
+         <span></span><span class="val">${fmtInt(s.uses)}× · v${esc(s.version)}</span></div>`).join("");
   }
   if (refl.length) {
-    html += `<div class="kick" style="margin-top:14px">latest reflections</div>` +
+    html += `<div class="subhead">Latest reflections</div>` +
       refl.slice(0, 3).map(r =>
         `<div class="feed-item"><span class="badge dim">${esc(r.kind)}</span>
-         ${esc(r.content.slice(0, 130))}${r.content.length > 130 ? "…" : ""}</div>`).join("");
+         ${esc(clip(r.content, 130))}</div>`).join("");
   }
   if (rules.length) {
-    html += `<div class="kick" style="margin-top:14px">promoted rules</div>` +
+    html += `<div class="subhead">Promoted rules</div>` +
       rules.slice(0, 3).map(r =>
-        `<div style="font:11px var(--mono);color:var(--text-2);padding:3px 0">
-         <span style="color:var(--accent)">§</span> ${esc(r.rule_id)}</div>`).join("");
+        `<div class="feed-item">§ ${esc(r.rule_id)}</div>`).join("");
   }
   $("memory").innerHTML = html;
 }
 
 /* ── fleet + mcp (overview card) ─────────────────────────────────────── */
 function renderFleetMcp(fleet, mcp) {
+  if (!changed("fleetmcp", fleet, mcp)) return;
   let html = "";
   if (fleet.length) {
-    html += `<table><thead><tr><th>fleet run</th><th class="num">tasks</th>
-      <th class="num">attempts</th><th class="num">ok</th><th class="num">commits</th></tr></thead><tbody>` +
+    html += `<table><thead><tr><th scope="col">fleet run</th><th scope="col" class="num">tasks</th>
+      <th scope="col" class="num">attempts</th><th scope="col" class="num">ok</th>
+      <th scope="col" class="num">commits</th></tr></thead><tbody>` +
       fleet.slice(0, 5).map(f => `<tr>
-        <td class="main" title="${esc(f.run_id)}">${esc(f.run_id.slice(0, 22))}…</td>
-        <td class="num">${f.tasks}</td><td class="num">${f.attempts}</td>
-        <td class="num">${f.succeeded}</td><td class="num">${f.commits}</td></tr>`).join("") +
+        <td class="main" title="${esc(f.run_id)}">${esc(clip(f.run_id, 22))}</td>
+        <td class="num">${fmtInt(f.tasks)}</td><td class="num">${fmtInt(f.attempts)}</td>
+        <td class="num">${fmtInt(f.succeeded)}</td><td class="num">${fmtInt(f.commits)}</td></tr>`).join("") +
       `</tbody></table>`;
   }
   if (mcp.length) {
-    html += `<div class="kick" style="margin-top:${fleet.length ? 14 : 0}px">mcp calls</div>` +
+    html += `<div class="subhead">MCP calls</div>` +
       mcp.slice(0, 6).map(r =>
         `<div class="hbar"><span class="name" title="${esc(r.server)}/${esc(r.tool)}">${esc(r.server)}/${esc(r.tool)}</span>
-         <span></span><span class="val">${r.calls}×</span></div>`).join("");
+         <span></span><span class="val">${fmtInt(r.calls)}×</span></div>`).join("");
   }
   $("fleetmcp").innerHTML = html ||
-    `<div class="empty">no fleet fan-outs or MCP traffic yet —<br>
-     <code>stella fleet "task a" "task b"</code> records its ledger here</div>`;
+    `<div class="empty">No fleet fan-outs and no MCP traffic.<br>
+     <code>stella fleet "task a" "task b"</code> records its ledger here.</div>`;
 }
 
 /* ── executions table ────────────────────────────────────────────────── */
+/* The `#` cell is a real button so the drawer is reachable by keyboard; the
+   row click is a mouse convenience on top of it, delegated once at startup
+   rather than re-bound per row on every 5s poll. */
 function renderExecutions() {
   const rows = (D.executions ?? []).filter(r => inTf(r.started_at));
+  if (!changed("executions", rows, state.tf)) return;
   if (!rows.length) {
-    $("executions").innerHTML = `<div class="empty">nothing in this window — every
-      <code>stella run</code>, <code>goal</code>, chat turn and pipeline lands here</div>`;
+    $("executions").innerHTML = `<div class="empty">No executions ${window_()}.<br>
+      Every <code>stella run</code>, <code>goal</code>, chat turn and pipeline lands here.</div>`;
     return;
   }
   $("executions").innerHTML = `<table><thead><tr>
-    <th>#</th><th>kind</th><th>prompt</th><th>model</th><th>outcome</th>
-    <th class="num">steps</th><th class="num">tools</th><th class="num">files</th>
-    <th class="num">in</th><th class="num">out</th><th class="num">cost</th><th class="num">when</th>
+    <th scope="col">#</th><th scope="col">kind</th><th scope="col">prompt</th>
+    <th scope="col">model</th><th scope="col">outcome</th>
+    <th scope="col" class="num">steps</th><th scope="col" class="num">tools</th>
+    <th scope="col" class="num">files</th>
+    <th scope="col" class="num">tok&nbsp;in</th><th scope="col" class="num">tok&nbsp;out</th>
+    <th scope="col" class="num">cost&nbsp;USD</th><th scope="col" class="num">started</th>
     </tr></thead><tbody>` +
-    rows.map(r => `<tr class="click" data-id="${r.id}">
-      <td>${r.id}</td><td>${esc(r.kind)}</td>
+    rows.map(r => `<tr class="click" data-id="${num(r.id)}">
+      <td><button type="button" class="rowbtn" data-id="${num(r.id)}"
+          aria-label="Open execution ${num(r.id)}">${num(r.id)}</button></td>
+      <td>${esc(r.kind)}</td>
       <td class="main" style="max-width:340px;overflow:hidden;text-overflow:ellipsis"
           title="${esc(r.prompt)}">${esc(r.prompt)}</td>
       <td title="${esc(r.provider)}/${esc(r.model)}">${esc(r.model)}</td>
       <td>${badge(r.outcome)}</td>
-      <td class="num">${r.steps}</td><td class="num">${r.tool_calls}</td>
-      <td class="num">${r.files_touched}</td>
+      <td class="num">${fmtInt(r.steps)}</td><td class="num">${fmtInt(r.tool_calls)}</td>
+      <td class="num">${fmtInt(r.files_touched)}</td>
       <td class="num">${fmtTok(r.input_tokens)}</td><td class="num">${fmtTok(r.output_tokens)}</td>
       <td class="num">${fmtUsd(r.cost_usd)}</td>
       <td class="num" title="${esc(r.started_at)} UTC">${ago(r.started_at)}</td></tr>`).join("") +
     `</tbody></table>`;
-  $("executions").querySelectorAll("tr.click").forEach(tr =>
-    tr.addEventListener("click", () => openDrawer(+tr.dataset.id)));
 }
+$("executions").addEventListener("click", (ev) => {
+  const tr = ev.target.closest("tr[data-id]");
+  if (tr) openDrawer(+tr.dataset.id);
+});
 
 /* ── drawer ──────────────────────────────────────────────────────────── */
+let drawerReturn = null;          // element focus came from, restored on close
+function showDrawer(html) {
+  const el = $("drawer");
+  el.innerHTML = `<button type="button" class="close" aria-label="Close detail">esc</button>` + html;
+  el.querySelector(".close").addEventListener("click", closeDrawer);
+  el.classList.add("open");
+  el.removeAttribute("aria-hidden");
+  $("scrim").classList.add("open");
+  el.focus();
+}
 async function openDrawer(id) {
-  const d = await api(`/api/execution?id=${id}`).catch(() => null);
-  if (!d) return;
-  const maxTok = Math.max(...(d.steps ?? []).map(s => s.input_tokens + s.output_tokens), 1);
+  if (!Number.isFinite(id)) return;
+  drawerReturn = document.activeElement;
+  let d = null;
+  try { d = await api(`/api/execution?id=${encodeURIComponent(id)}`); } catch { d = null; }
+  if (!d || d.id == null) {
+    showDrawer(`<h2 id="drawerTitle">Execution ${esc(String(id))} could not be loaded</h2>
+      <p class="kick" style="margin-top:8px">The dashboard reached
+      <code>/api/execution</code> but got no usable row back. The run may have been
+      pruned from <code>.stella</code>, or the server may have stopped. The Live
+      indicator in the masthead reports the connection.</p>`);
+    return;
+  }
+  const tok = (s) => num(s.input_tokens) + num(s.output_tokens);
+  const maxTok = Math.max(...(d.steps ?? []).map(tok), 1);
   const steps = (d.steps ?? []).map(s => {
-    const w = 100 * (s.input_tokens + s.output_tokens) / maxTok;
-    const inW = s.input_tokens + s.output_tokens
-      ? 100 * s.input_tokens / (s.input_tokens + s.output_tokens) : 0;
-    return `<div class="step-row"><span>${s.step}</span>
+    const t = tok(s);
+    const w = 100 * t / maxTok;
+    const inW = t ? 100 * num(s.input_tokens) / t : 0;
+    return `<div class="step-row"><span>${fmtInt(s.step)}</span>
       <span class="tokbar" style="width:${w.toFixed(1)}%">
-        <i style="background:var(--c1);width:${inW.toFixed(1)}%"></i>
+        <i style="background:var(--c4);width:${inW.toFixed(1)}%"></i>
         <i style="background:var(--c2);flex:1"></i></span>
-      <span>${fmtTok(s.input_tokens)}·${fmtTok(s.output_tokens)} · ${fmtMs(s.duration_ms)}${s.retries ? ` · <span style="color:var(--warn)">${s.retries}r</span>` : ""}</span>
+      <span>${fmtTok(s.input_tokens)} in · ${fmtTok(s.output_tokens)} out · ${fmtMs(s.duration_ms)}${
+        num(s.retries) ? ` · <span style="color:var(--warn)">◌ ${fmtInt(s.retries)} retries</span>` : ""}</span>
     </div>`;
   }).join("");
   const tools = (d.tools ?? []).map(t => `<div class="step-row">
-      <span>${t.seq}</span>
+      <span>${fmtInt(t.seq)}</span>
       <span class="name" style="color:${t.ok ? "var(--text)" : "var(--bad)"}">
         ${esc(t.name)}${t.surface !== "native" ? ` <span class="badge dim">${esc(t.surface)}</span>` : ""}
-        ${t.ok ? "" : " ✕ " + esc(t.error.slice(0, 60))}</span>
+        ${t.ok ? "" : " ✕ " + esc(clip(t.error, 60))}</span>
       <span>${fmtMs(t.duration_ms)} · ${fmtTok(t.bytes_out)}B</span></div>`).join("");
   const files = (d.files ?? []).map(f => `<div class="step-row">
-      <span>${esc(f.ops)}</span><span class="name">${esc(f.path)}</span>
-      <span><span style="color:var(--ok)">+${f.lines_added}</span> <span style="color:var(--bad)">−${f.lines_removed}</span></span>
+      <span>${esc(f.ops)}</span><span class="name" title="${esc(f.path)}">${esc(f.path)}</span>
+      <span><span style="color:var(--ok)">+${fmtInt(f.lines_added)}</span>
+        <span style="color:var(--bad)">−${fmtInt(f.lines_removed)}</span></span>
     </div>`).join("");
-  const refl = d.reflection ? `<div class="sect"><div class="kick">self-reflection</div>
-      <div style="font:12px var(--mono);color:var(--text-2)">
-        ${d.reflection.self_rating != null ? `rated ${d.reflection.self_rating}/10 · ` : ""}
-        ${d.reflection.delivered != null ? (d.reflection.delivered ? "delivered" : "not delivered") : ""}
-        ${d.reflection.what_to_improve ? `<br>improve: ${esc(d.reflection.what_to_improve)}` : ""}
-      </div></div>` : "";
-  $("drawer").innerHTML = `
-    <button class="close" aria-label="close">esc</button>
-    <div class="kick">execution #${d.id} · ${esc(d.kind)} · ${esc(d.provider)}/${esc(d.model)}</div>
-    <h3>${esc(d.prompt)}</h3>
-    <div style="margin:8px 0 0">${badge(d.outcome)}
-      <span style="font:11px var(--mono);color:var(--text-3)"> · ${fmtUsd(d.cost_usd)} · ${esc(d.started_at)} UTC</span></div>
-    ${steps ? `<div class="sect"><div class="kick">per-step tokens (in·out) &amp; latency</div>${steps}</div>` : ""}
-    ${tools ? `<div class="sect"><div class="kick">tool calls</div>${tools}</div>` : ""}
-    ${files ? `<div class="sect"><div class="kick">files touched</div>${files}</div>` : ""}
-    ${refl}`;
-  $("drawer").querySelector(".close").addEventListener("click", closeDrawer);
-  $("drawer").classList.add("open"); $("scrim").classList.add("open");
+  const rf = d.reflection;
+  const refl = rf ? `<div class="sect"><div class="kick">Self-reflection</div>
+      <p style="font:var(--fs-sm)/1.6 var(--mono);color:var(--text-2);margin-top:6px">
+        ${rf.self_rating != null ? `rated ${esc(String(rf.self_rating))}/10 · ` : ""}
+        ${rf.delivered != null ? (rf.delivered ? "delivered" : "not delivered") : ""}
+        ${rf.what_to_improve ? `<br>improve: ${esc(rf.what_to_improve)}` : ""}
+      </p></div>` : "";
+  showDrawer(`
+    <div class="kick">Execution ${fmtInt(d.id)} · ${esc(d.kind)} · ${esc(d.provider)}/${esc(d.model)}</div>
+    <h2 id="drawerTitle">${esc(d.prompt)}</h2>
+    <p style="margin:8px 0 0">${badge(d.outcome)}
+      <span class="kick"> · ${fmtUsd(d.cost_usd)} · ${esc(d.started_at)} UTC</span></p>
+    ${steps ? `<div class="sect"><div class="kick">Per-step tokens and latency</div>${steps}</div>`
+            : `<div class="sect"><div class="kick">Per-step tokens and latency</div>
+               <div class="empty">No steps recorded for this run.</div></div>`}
+    ${tools ? `<div class="sect"><div class="kick">Tool calls</div>${tools}</div>` : ""}
+    ${files ? `<div class="sect"><div class="kick">Files touched</div>${files}</div>` : ""}
+    ${refl}`);
 }
 function closeDrawer() {
-  $("drawer").classList.remove("open"); $("scrim").classList.remove("open");
+  const el = $("drawer");
+  if (!el.classList.contains("open")) return;
+  el.classList.remove("open");
+  el.setAttribute("aria-hidden", "true");
+  $("scrim").classList.remove("open");
+  if (drawerReturn && document.contains(drawerReturn)) drawerReturn.focus();
+  drawerReturn = null;
 }
 $("scrim").addEventListener("click", closeDrawer);
+/* Keep Tab inside the open drawer: it is aria-modal, so focus escaping it
+   would leave a screen reader reading a page it says is not there. */
+$("drawer").addEventListener("keydown", (e) => {
+  if (e.key !== "Tab") return;
+  const f = $("drawer").querySelectorAll('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])');
+  if (!f.length) return;
+  const first = f[0], last = f[f.length - 1];
+  if (e.shiftKey && (document.activeElement === first || document.activeElement === $("drawer"))) {
+    last.focus(); e.preventDefault();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    first.focus(); e.preventDefault();
+  }
+});
 addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
 
 /* ── projects switcher ───────────────────────────────────────────────── */
@@ -1069,7 +1207,7 @@ function renderProjects(p) {
   opts.push(`<option value="">${esc(current ? current.name : "this workspace")} · current</option>`);
   (p.projects ?? []).filter(x => !x.is_current && x.has_store).forEach(x => {
     opts.push(`<option value="${esc(x.project_id)}"${x.project_id === state.project ? " selected" : ""}>
-      ${esc(x.name)} · ${x.runs} runs</option>`);
+      ${esc(x.name)} · ${fmtInt(x.runs)} runs</option>`);
   });
   if (sel.dataset.sig !== opts.join()) {   // avoid resetting an open dropdown
     sel.dataset.sig = opts.join();
@@ -1080,35 +1218,37 @@ function renderProjects(p) {
 $("proj").addEventListener("change", () => {
   state.project = $("proj").value;
   Object.keys(lazyCache).forEach(k => delete lazyCache[k]);
+  invalidate();                      // every gated section belongs to the old project
   refresh().then(() => loadTab(state.tab, true));
 });
 
 /* ── skills tab ──────────────────────────────────────────────────────── */
 function renderSkills(rows) {
-  const uses = {};
-  (D.memory?.skills ?? []).forEach(s => { uses[s.skill] = s; });
+  if (!changed("skills", rows, D.memory?.skills ?? [])) return;
+  const uses = new Map((D.memory?.skills ?? []).map(s => [s.skill, s]));
   const learned = rows.filter(r => r.learned);
   $("skill-kpis").innerHTML =
-    tile("skills", String(rows.length), "visible to this workspace") +
-    tile("project scope", String(rows.filter(r => r.scope === "project").length), ".stella/skills") +
-    tile("user scope", String(rows.filter(r => r.scope === "user").length), "~/.stella/skills") +
-    tile("learned", String(learned.length), "auto-extracted by stella", true);
+    tile("Skills", fmtInt(rows.length), "visible to this workspace") +
+    tile("Project scope", fmtInt(rows.filter(r => r.scope === "project").length), ".stella/skills") +
+    tile("User scope", fmtInt(rows.filter(r => r.scope === "user").length), "~/.stella/skills") +
+    tile("Learned", fmtInt(learned.length), "auto-extracted by stella", true);
   if (!rows.length) {
     $("skills-table").innerHTML =
-      `<div class="empty">no skills installed — <code>stella skills find</code> searches the registry,
-       and stella promotes its own lessons into <code>skills/learned/</code></div>`;
+      `<div class="empty">No skills visible to this workspace.<br>
+       <code>stella skills find</code> searches the registry, and stella promotes its own
+       lessons into <code>skills/learned/</code>.</div>`;
     return;
   }
   $("skills-table").innerHTML = `<table><thead><tr>
-    <th>skill</th><th>scope</th><th>description</th>
-    <th class="num">uses</th><th class="num">updated</th></tr></thead><tbody>` +
+    <th scope="col">skill</th><th scope="col">scope</th><th scope="col">description</th>
+    <th scope="col" class="num">uses</th><th scope="col" class="num">updated</th></tr></thead><tbody>` +
     rows.map(r => {
-      const u = uses[r.name];
+      const u = uses.get(r.name);
       return `<tr>
       <td class="main">${r.learned ? `<span class="badge accent" title="auto-extracted from stella's own reflections">◆ learned</span> ` : ""}${esc(r.name)}</td>
       <td><span class="badge dim">${esc(r.scope)}</span></td>
       <td class="wrap-txt" style="max-width:520px;color:var(--text-2)">${esc(r.description || "—")}</td>
-      <td class="num">${u ? u.uses + "×" : "—"}</td>
+      <td class="num">${u ? fmtInt(u.uses) + "×" : "—"}</td>
       <td class="num">${agoUnix(r.modified_unix)}</td></tr>`;
     }).join("") + `</tbody></table>`;
 }
@@ -1116,22 +1256,26 @@ function renderSkills(rows) {
 /* ── mcp tab ─────────────────────────────────────────────────────────── */
 function renderMcpTab(cfg) {
   const servers = cfg?.servers ?? [];
+  if (!changed("mcptab", servers, D.mcp ?? [])) return;
   $("mcp-servers").innerHTML = servers.length
-    ? `<table><thead><tr><th>server</th><th>transport</th><th>target</th><th>env</th></tr></thead><tbody>` +
+    ? `<table><thead><tr><th scope="col">server</th><th scope="col">transport</th>
+        <th scope="col">target</th><th scope="col">env &amp; header keys</th></tr></thead><tbody>` +
       servers.map(s => `<tr>
         <td class="main">${esc(s.name)}</td>
         <td><span class="badge dim">${esc(s.transport)}</span></td>
         <td class="wrap-txt" style="max-width:340px">${esc(s.target || "—")}</td>
         <td>${(s.env_keys ?? []).concat(s.header_keys ?? []).map(k => `<span class="chip">${esc(k)}</span>`).join("") || "—"}</td>
       </tr>`).join("") + `</tbody></table>`
-    : `<div class="empty">no MCP servers configured in this workspace —<br>
-       <code>stella mcp install &lt;name&gt;</code> installs one from the registry</div>`;
+    : `<div class="empty">No MCP servers configured in this workspace.<br>
+       <code>stella mcp install &lt;name&gt;</code> installs one from the registry,
+       and it is listed here from <code>.stella/mcp.toml</code>.</div>`;
   const traffic = D.mcp ?? [];
   $("mcp-traffic").innerHTML = traffic.length
     ? hbars(traffic.slice(0, 14),
         r => `${r.server}/${r.tool}`, r => r.calls,
-        r => `${r.calls}× · ${r.last_called_ms ? agoMs(r.last_called_ms) : "—"}`)
-    : `<div class="empty">no MCP calls recorded yet — traffic appears once an agent uses a connected server</div>`;
+        r => `${fmtInt(r.calls)}× · ${r.last_called_ms ? agoMs(r.last_called_ms) : "never"}`)
+    : `<div class="empty">No MCP calls recorded.<br>
+       Traffic appears here the first time an agent uses a connected server.</div>`;
 }
 
 /* ── memory & rules tab ──────────────────────────────────────────────── */
@@ -1145,75 +1289,81 @@ const FRESHNESS = {
 function renderExplorations(rows) {
   rows = rows ?? [];
   if (!rows.length) {
-    $("mem-explorations").innerHTML = `<div class="empty">no exploration maps yet —
-      stella writes one to <code>.stella/explorations/</code> when a session maps a slice
-      of this codebase, and every other session reads it instead of re-reading the tree</div>`;
+    $("mem-explorations").innerHTML = `<div class="empty">No exploration maps recorded.<br>
+      stella writes one to <code>.stella/explorations/</code> when a session maps a slice of
+      this codebase; every other session reads it instead of re-reading the tree.</div>`;
     return;
   }
   $("mem-explorations").innerHTML = `<table><thead><tr>
-    <th>map</th><th>freshness</th><th class="num">files</th>
-    <th>drift</th><th class="num">recorded</th></tr></thead><tbody>` +
+    <th scope="col">map</th><th scope="col">freshness</th><th scope="col" class="num">files</th>
+    <th scope="col">drift</th><th scope="col" class="num">recorded</th></tr></thead><tbody>` +
     rows.map(r => {
-      const [cls, label] = FRESHNESS[r.freshness] ?? ["dim", r.freshness];
-      const changed = r.changed ?? [], missing = r.missing ?? [];
+      const [cls, label] = pick(FRESHNESS, r.freshness, ["dim", String(r.freshness ?? "unknown")]);
+      const drifted = r.changed ?? [], missing = r.missing ?? [];
       const drift = [
-        changed.length ? `${changed.length} changed` : "",
+        drifted.length ? `${drifted.length} changed` : "",
         missing.length ? `${missing.length} missing` : "",
-      ].filter(Boolean).join(" · ") || "—";
+      ].filter(Boolean).join(" · ") || "none";
       return `<tr>
         <td class="main" title="${esc(r.slice ?? "")}">${esc(r.title || r.slice || "—")}
           ${r.status === "draft"
             ? `<span class="badge dim" title="a session is exploring this slice right now">◐ in flight · pid ${esc(r.pid)}</span>`
             : ""}</td>
         <td><span class="badge ${cls}">${esc(label)}</span></td>
-        <td class="num">${r.manifest_files ?? 0}</td>
+        <td class="num">${fmtInt(r.manifest_files)}</td>
         <td class="wrap-txt" style="max-width:420px;color:var(--text-2)"
-            title="${esc(changed.concat(missing).join("\n"))}">${esc(drift)}</td>
+            title="${esc(drifted.concat(missing).join("\n"))}">${esc(drift)}</td>
         <td class="num">${r.created_at_ms ? agoMs(r.created_at_ms) : "—"}</td></tr>`;
     }).join("") + `</tbody></table>`;
 }
 function renderMemoryTab(files, rules, explorations) {
   renderExplorations(explorations);
+  if (!changed("memtab", files ?? [], rules ?? null, D.memory?.citations ?? [])) return;
   $("mem-files").innerHTML = (files ?? []).length
     ? files.map(f => `<div class="mem-card">
         <span class="name">${esc(f.name)}</span>
-        <span class="when" style="font:10px var(--mono);color:var(--text-3)"> · ${agoUnix(f.modified_unix)} · ${fmtTok(f.bytes)}B</span>
+        <span class="when"> · ${agoUnix(f.modified_unix)} · ${fmtTok(f.bytes)}B</span>
         <div class="snip">${esc(f.snippet)}</div></div>`).join("")
-    : `<div class="empty">no memories yet — stella writes durable, citable memories to
-       <code>.stella/memories/</code> as it learns this codebase</div>`;
+    : `<div class="empty">No memories written yet.<br>
+       stella writes durable, citable memories to <code>.stella/memories/</code>
+       as it learns this codebase.</div>`;
   const cites = D.memory?.citations ?? [];
   $("mem-citations").innerHTML = cites.length
-    ? `<table><thead><tr><th>memory</th><th class="num">cites</th>
-        <th class="num">useful</th><th class="num">truthful</th><th class="num">last cited</th></tr></thead><tbody>` +
+    ? `<table><thead><tr><th scope="col">memory</th><th scope="col" class="num">cites</th>
+        <th scope="col" class="num">useful&nbsp;/10</th><th scope="col" class="num">truthful&nbsp;%</th>
+        <th scope="col" class="num">last cited</th></tr></thead><tbody>` +
       cites.slice(0, 12).map(c => `<tr>
         <td class="main" title="${esc(c.memory_id)}">${esc(c.memory_id)}</td>
-        <td class="num">${c.citations}</td>
-        <td class="num">${(c.avg_useful ?? 0).toFixed(1)}</td>
+        <td class="num">${fmtInt(c.citations)}</td>
+        <td class="num">${num(c.avg_useful).toFixed(1)}</td>
         <td class="num">${pct(c.truthful_rate)}</td>
         <td class="num">${ago(c.last_cited)}</td></tr>`).join("") + `</tbody></table>`
-    : `<div class="empty">no citations yet — every time a recalled memory is used,
-       stella records whether it was useful and truthful</div>`;
+    : `<div class="empty">No citations recorded.<br>
+       Every time a recalled memory is used, stella records whether it was
+       useful and truthful — those receipts land here.</div>`;
   const db = rules?.db ?? [], fileRules = rules?.files ?? [];
   let html = "";
   if (db.length) {
     html += db.map(r => `<div class="feed-item">
-      <b><span style="color:var(--accent)">§</span> ${esc(r.rule_id)}</b>
+      <b>§ ${esc(r.rule_id)}</b>
       <span class="badge dim">${esc(r.source)}</span><span class="when">${ago(r.created_at)}</span>
       <div>${esc(r.contents)}</div></div>`).join("");
   }
   if (fileRules.length) {
     html += fileRules.map(f => `<div class="feed-item">
-      <b><span style="color:var(--accent)">§</span> ${esc(f.name)}</b>
+      <b>§ ${esc(f.name)}</b>
       <span class="when">${agoUnix(f.modified_unix)}</span>
       <div>${esc(f.snippet)}</div></div>`).join("");
   }
   $("rules-list").innerHTML = html ||
-    `<div class="empty">no promoted rules yet — lessons that keep proving true get promoted here</div>`;
+    `<div class="empty">No promoted rules.<br>
+     Lessons that keep proving true across runs get promoted here.</div>`;
 }
 
 /* ── self-improve tab ────────────────────────────────────────────────── */
 function renderImprove(skills) {
   const refl = D.reflections ?? {};
+  if (!changed("improve", refl, skills ?? [])) return;
   const lessons = refl.lessons ?? [];
   const ratings = (refl.ratings ?? []).filter(r => r.self_rating != null || r.delivered != null);
   const rated = ratings.filter(r => r.self_rating != null);
@@ -1222,13 +1372,13 @@ function renderImprove(skills) {
   const avg = rated.length
     ? (rated.reduce((a, r) => a + r.self_rating, 0) / rated.length) : null;
   $("imp-kpis").innerHTML =
-    tile("avg self-rating", avg == null ? "—" : avg.toFixed(1) + "<small>/10</small>",
-      rated.length + " rated reflections") +
-    tile("delivered", delivered.length
+    tile("Avg self-rating", avg == null ? "—" : avg.toFixed(1) + "<small>/10</small>",
+      rated.length ? fmtInt(rated.length) + " rated reflections" : "nothing rated yet") +
+    tile("Delivered", delivered.length
         ? pct(delivered.filter(r => r.delivered).length / delivered.length) : "—",
       "by stella's own account") +
-    tile("lessons", String(lessons.length), "distilled into reflections.jsonl") +
-    tile("learned skills", String(learned.length), "promoted from lessons", true);
+    tile("Lessons", fmtInt(lessons.length), "distilled into reflections.jsonl") +
+    tile("Learned skills", fmtInt(learned.length), "promoted from lessons", true);
 
   renderRatingsChart(ratings);
 
@@ -1236,57 +1386,65 @@ function renderImprove(skills) {
     .slice(-14).reverse();
   $("imp-improve").innerHTML = improves.length
     ? improves.map(r => `<div class="feed-item">
-        <b>#${r.execution_id}</b> ${badge(r.outcome)}
+        <b>#${fmtInt(r.execution_id)}</b> ${badge(r.outcome)}
         <span class="when">${ago(r.recorded_at)}</span>
         <div>${esc(r.what_to_improve)}</div></div>`).join("")
-    : `<div class="empty">nothing owned yet — after every turn stella critiques its own work here</div>`;
+    : `<div class="empty">Nothing owned yet.<br>
+       After every turn stella critiques its own work, and the critiques land here.</div>`;
 
   $("imp-lessons").innerHTML = lessons.length
     ? lessons.map(l => `<div class="feed-item">
         ${esc(l.lesson)}
-        <div style="margin-top:3px">${(Array.isArray(l.domains) ? l.domains : [])
+        <div style="margin-top:4px">${(Array.isArray(l.domains) ? l.domains : [])
           .map(d => `<span class="chip">${esc(d)}</span>`).join("")}
-          <span class="when">${l.occurred_at ? agoMs(l.occurred_at * 1000) : ""}</span></div>
+          <span class="when">${agoUnix(l.occurred_at)}</span></div>
       </div>`).join("")
-    : `<div class="empty">no distilled lessons yet — failed and hard-won turns are mined
-       into <code>.stella/private/reflections.jsonl</code></div>`;
+    : `<div class="empty">No distilled lessons.<br>
+       Failed and hard-won turns are mined into
+       <code>.stella/private/reflections.jsonl</code>.</div>`;
 
   $("imp-learned").innerHTML = learned.length
     ? learned.map(s => `<div class="mem-card">
         <span class="badge accent">◆ learned</span> <span class="name">${esc(s.name)}</span>
-        <span class="when" style="font:10px var(--mono);color:var(--text-3)"> · ${agoUnix(s.modified_unix)}</span>
+        <span class="when"> · ${agoUnix(s.modified_unix)}</span>
         <div class="snip">${esc(s.description || "")}</div></div>`).join("")
-    : `<div class="empty">none yet — when a lesson generalizes, stella writes it into
-       <code>skills/learned/</code> and starts using it in future runs</div>`;
+    : `<div class="empty">No learned skills yet.<br>
+       When a lesson generalizes, stella writes it into <code>skills/learned/</code>
+       and starts using it in later runs.</div>`;
 }
 function renderRatingsChart(ratings) {
   const el = $("ch-ratings");
   const pts = ratings.filter(r => r.self_rating != null);
   if (!pts.length) {
-    el.innerHTML = `<div class="empty">no self-ratings yet — stella scores each turn 0–10 after finishing</div>`;
+    el.innerHTML = `<div class="empty">No self-ratings recorded.<br>
+      stella scores each finished turn 0–10; the trend appears once two turns are scored.</div>`;
     return;
   }
-  const W = 620, H = 170, padL = 34, padB = 22, padT = 10, padR = 10;
+  const W = 620, H = 184, padL = 36, padB = 30, padT = 16, padR = 10;
   const innerW = W - padL - padR, innerH = H - padT - padB;
   const x = (i) => padL + (pts.length === 1 ? innerW / 2 : innerW * i / (pts.length - 1));
-  const y = (v) => padT + innerH * (1 - v / 10);
+  const y = (v) => padT + innerH * (1 - Math.min(10, Math.max(0, num(v))) / 10);
   const grid = [0, 5, 10].map(v =>
-    `<line x1="${padL}" y1="${y(v)}" x2="${W - padR}" y2="${y(v)}" stroke="var(--hairline-dim)"/>
-     <text x="${padL - 6}" y="${y(v) + 3}" text-anchor="end">${v}</text>`).join("");
+    `<line x1="${padL}" y1="${y(v).toFixed(1)}" x2="${W - padR}" y2="${y(v).toFixed(1)}"
+       stroke="${v === 0 ? "var(--hairline-strong)" : "var(--hairline)"}"/>
+     <text x="${padL - 6}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end">${v}</text>`).join("") +
+    `<text x="0" y="${padT - 2}" text-anchor="start">rating</text>`;
   const line = pts.length > 1
-    ? `<polyline fill="none" stroke="var(--c2)" stroke-width="2"
+    ? `<polyline fill="none" stroke="var(--c2)" stroke-width="1.75" stroke-linejoin="round"
         points="${pts.map((r, i) => `${x(i).toFixed(1)},${y(r.self_rating).toFixed(1)}`).join(" ")}"/>`
     : "";
   const dots = pts.map((r, i) =>
     `<circle class="dot" data-i="${i}" cx="${x(i).toFixed(1)}" cy="${y(r.self_rating).toFixed(1)}"
-      r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>`).join("");
+      r="3.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>`).join("");
+  const avg = pts.reduce((a, r) => a + num(r.self_rating), 0) / pts.length;
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img"
-    aria-label="self-rating out of ten per reflection">${grid}${line}${dots}</svg>`;
+    aria-label="${esc(`Self-rating out of ten across ${pts.length} reflections, mean ${avg.toFixed(1)}.`)}"
+    >${grid}${line}${dots}${xAxis(W, H, "reflection, oldest first")}</svg>`;
   el.querySelectorAll("circle.dot").forEach(c => {
     const r = pts[+c.dataset.i];
     c.addEventListener("mousemove", ev => showTip(ev,
-      `<b>#${r.execution_id} · rated ${r.self_rating}/10</b>` +
-      `${esc((r.prompt || "").slice(0, 120))}<br>` +
+      `<b>#${fmtInt(r.execution_id)} · rated ${esc(String(r.self_rating))}/10</b>` +
+      `${esc(clip(r.prompt, 120))}<br>` +
       `${r.delivered != null ? (r.delivered ? "delivered" : "not delivered") + " · " : ""}${ago(r.recorded_at)}`));
     c.addEventListener("mouseleave", hideTip);
   });
@@ -1302,17 +1460,20 @@ function deepMerge(a, b) {
 }
 function renderConfig(cfg) {
   const scopes = cfg?.scopes ?? [];
+  if (!changed("config", cfg ?? null)) return;
   $("cfg-scopes").innerHTML = scopes.map(s => `
     <div class="card">
       <div class="kick">${esc(s.scope)} scope</div>
-      <div style="font:11px var(--mono);color:var(--text-3);margin-bottom:8px;word-break:break-all">
+      <p class="kick" style="margin-bottom:var(--sp1);word-break:break-all">
         ${esc(s.path)} ·
-        ${s.exists ? `<span class="badge ok">present</span>` : `<span class="badge dim">absent</span>`}
-        ${s.parse_error ? `<span class="badge bad">parse error</span>` : ""}
-      </div>
+        ${s.exists ? `<span class="badge ok">✓ present</span>` : `<span class="badge dim">· absent</span>`}
+        ${s.parse_error ? `<span class="badge bad">✕ parse error</span>` : ""}
+      </p>
       ${s.exists && !s.parse_error && s.settings != null
         ? `<pre class="cfg">${esc(JSON.stringify(s.settings, null, 2))}</pre>`
-        : `<div class="empty" style="padding:16px">${s.exists ? "unreadable" : "not configured"}</div>`}
+        : `<div class="empty" style="padding:var(--sp2)">${s.exists
+             ? "This file exists but could not be parsed as settings."
+             : "No settings file at this scope."}</div>`}
     </div>`).join("");
   const engine = scopes.reduce((acc, s) =>
     s.settings && s.settings.agent_engine_config
@@ -1320,9 +1481,11 @@ function renderConfig(cfg) {
   const agents = engine.agents ?? {};
   const names = ["default", "worker", "judge", "triage"].filter(n => agents[n]);
   $("cfg-engine").innerHTML = names.length
-    ? `<table><thead><tr><th>agent</th><th>model</th><th>effort</th><th>reasoning</th><th>params</th></tr></thead><tbody>` +
+    ? `<table><thead><tr><th scope="col">agent</th><th scope="col">model</th>
+        <th scope="col">effort</th><th scope="col">reasoning</th>
+        <th scope="col">params</th></tr></thead><tbody>` +
       names.map(n => {
-        const a = agents[n] ?? {};
+        const a = pick(agents, n, {}) ?? {};
         const params = Object.keys(a.params ?? {});
         return `<tr><td class="main">${esc(n)}</td>
           <td>${esc(a.model ?? "auto")}</td>
@@ -1330,39 +1493,52 @@ function renderConfig(cfg) {
           <td>${esc(String(a.reasoning ?? "—"))}</td>
           <td>${params.length ? params.map(p => `<span class="chip">${esc(p)}</span>`).join("") : "—"}</td></tr>`;
       }).join("") + `</tbody></table>` +
-      (engine.allowed_models
-        ? `<div class="kick" style="margin-top:12px">allowed models</div>
+      (Array.isArray(engine.allowed_models)
+        ? `<div class="subhead">Allowed models</div>
            ${engine.allowed_models.map(m => `<span class="chip">${esc(m)}</span>`).join("")}` : "")
-    : `<div class="empty">no agent_engine_config in any scope —
-       the <code>/engine</code> command in stella's deck edits it interactively</div>`;
+    : `<div class="empty">No <code>agent_engine_config</code> in any scope.<br>
+       The <code>/engine</code> command in stella's deck edits it interactively.</div>`;
   const stores = cfg?.stores ?? {};
-  $("cfg-stores").innerHTML = Object.entries(stores).map(([k, v]) => `
-    <div class="hbar" style="grid-template-columns:110px 1fr 80px">
+  const rows = Object.entries(stores);
+  $("cfg-stores").innerHTML = rows.length ? rows.map(([k, v]) => `
+    <div class="hbar" style="grid-template-columns:minmax(0,110px) minmax(0,1fr) 88px">
       <span class="name">${esc(k.replace("_", "."))}</span>
-      <span style="font:11px var(--mono);color:var(--text-3);overflow:hidden;text-overflow:ellipsis" title="${esc(v.path)}">${esc(v.path)}</span>
-      <span class="val">${v.exists ? `<span class="badge ok">live</span>` : `<span class="badge dim">absent</span>`}</span>
-    </div>`).join("");
+      <span class="kick" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+            title="${esc(v.path)}">${esc(v.path)}</span>
+      <span class="val">${v.exists ? `<span class="badge ok">✓ live</span>`
+                                   : `<span class="badge dim">· absent</span>`}</span>
+    </div>`).join("")
+    : `<div class="empty">The server reported no store paths.</div>`;
 }
 
 /* ── code graph ──────────────────────────────────────────────────────── */
-/* Validated 8-slot categorical palette (dataviz six checks, dark surface).
+/* Crate colours come from BRAND.md's categorical set, minus --c1: gold lives
+   in the masthead of this same page and #E3B341 is the same hue at 1.17:1.
+   The previous eight slots were invented — two of them were blues that read
+   as "active", and #008300 measured 2.4:1 on this surface. Three legible
+   marks plus a neutral tail is a smaller ramp but an honest one; extending
+   BRAND to eight validated slots is filed as a ticket.
    Assigned to crates in fixed file-count order; the long tail is neutral. */
-const GP = ["#3987e5", "#008300", "#2FD3C6", "#4D9FFF",
-            "#199e70", "#E4408F", "#8F70E8", "#e66767"];
-const G_OTHER = "#6B7C99";
+/* Canvas needs concrete colours, so the tokens are resolved once from the
+   stylesheet rather than restated as hexes that could drift out of sync. */
+const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const GP = [cssVar("--c4"), cssVar("--c2"), cssVar("--c3")];
+const G_OTHER = cssVar("--neutral-mark");
+const G_EDGE = cssVar("--neutral-mark"), G_EDGE_LIT = cssVar("--brand-bright");
+const G_LABEL = cssVar("--text"), G_LABEL_DIM = cssVar("--text-2"), G_HALO = cssVar("--ground");
 const graph = {
-  nodes: [], edges: [], groupColor: {}, adj: [],
+  nodes: [], edges: [], groupColor: Object.create(null), adj: [],
   t: { x: 0, y: 0, k: 1 }, alpha: 0, selected: -1, hover: -1,
-  matched: null, raf: 0, ready: false,
+  matched: null, raf: 0, ready: false, w: 0, h: 0,
 };
-function groupColorFor(g) { return graph.groupColor[g] ?? G_OTHER; }
+function groupColorFor(g) { return pick(graph.groupColor, g, G_OTHER); }
 function nodeRadius(n) {
   return Math.min(4 + (n.in + n.out) * 0.7 + Math.sqrt(n.symbols || 0) * 0.25, 18);
 }
 function initGraph(data) {
   const nodes = (data.nodes ?? []).map((n, i) => ({ ...n, i, x: 0, y: 0, vx: 0, vy: 0 }));
   const edges = (data.edges ?? []).map(([a, b, w]) => ({ a, b, w }));
-  graph.groupColor = {};
+  graph.groupColor = Object.create(null);
   (data.groups ?? []).slice(0, GP.length).forEach((g, i) => {
     graph.groupColor[g.name] = GP[i];
   });
@@ -1387,10 +1563,11 @@ function initGraph(data) {
   graph.selected = -1; graph.hover = -1; graph.matched = null;
   graph.alpha = 1; graph.ready = true;
   $("gstats").textContent =
-    `${data.total_files} files · ${edges.length} import edges · ${fmtTok(data.total_symbols)} symbols` +
-    (data.truncated ? ` · ${data.truncated} low-degree files folded` : "");
+    `${fmtInt(data.total_files)} files · ${fmtInt(edges.length)} import edges · ` +
+    `${fmtTok(data.total_symbols)} symbols` +
+    (num(data.truncated) ? ` · ${fmtInt(data.truncated)} low-degree files folded` : "");
   $("glegend").innerHTML = (data.groups ?? []).slice(0, GP.length).map(g =>
-    `<span><i style="background:${groupColorFor(g.name)}"></i>${esc(g.name)} (${g.files})</span>`).join("") +
+    `<span><i style="background:${groupColorFor(g.name)}"></i>${esc(g.name)} (${fmtInt(g.files)})</span>`).join("") +
     ((data.groups ?? []).length > GP.length ? `<span><i style="background:${G_OTHER}"></i>other</span>` : "");
   renderGraphSide();
   fitGraph();
@@ -1444,14 +1621,24 @@ function tickGraph() {
   }
   graph.alpha *= 0.985;
 }
-function graphCanvas() {
+/* Canvas size is read from layout only when the ResizeObserver says it moved.
+   Reading clientWidth/clientHeight inside drawGraph forced a synchronous
+   layout on every animation frame of the force simulation. */
+function measureCanvas() {
   const c = $("gcanvas");
   const dpr = devicePixelRatio || 1;
   const w = c.clientWidth, h = c.clientHeight;
-  if (c.width !== w * dpr || c.height !== h * dpr) { c.width = w * dpr; c.height = h * dpr; }
+  if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
+    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+  }
+  graph.w = w; graph.h = h; graph.dpr = dpr;
+}
+function graphCanvas() {
+  const c = $("gcanvas");
+  if (!graph.w || !graph.h) measureCanvas();
   const ctx = c.getContext("2d");
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  return { c, ctx, w, h };
+  ctx.setTransform(graph.dpr || 1, 0, 0, graph.dpr || 1, 0, 0);
+  return { c, ctx, w: graph.w, h: graph.h };
 }
 function focusSet() {
   if (graph.selected < 0) return null;
@@ -1479,7 +1666,7 @@ function drawGraph() {
     else if (q) { ctx.globalAlpha = 0.06; }
     else { ctx.globalAlpha = lit ? 0.75 : 0.16; }
     if (lit) ctx.globalAlpha = 0.75;
-    ctx.strokeStyle = lit ? "#7DD3FC" : "#98A6BA";
+    ctx.strokeStyle = lit ? G_EDGE_LIT : G_EDGE;
     ctx.lineWidth = (lit ? 1.6 : 0.7) / k;
     ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
   }
@@ -1492,7 +1679,7 @@ function drawGraph() {
     ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 2 * Math.PI); ctx.fill();
     if (n.i === graph.selected || n.i === graph.hover) {
       ctx.globalAlpha = 1;
-      ctx.strokeStyle = "#7DD3FC"; ctx.lineWidth = 2 / k;
+      ctx.strokeStyle = G_EDGE_LIT; ctx.lineWidth = 2 / k;
       ctx.beginPath(); ctx.arc(n.x, n.y, r + 2 / k, 0, 2 * Math.PI); ctx.stroke();
     }
   }
@@ -1508,9 +1695,9 @@ function drawGraph() {
     ctx.globalAlpha = 1;
     const label = n.path.split("/").pop();
     const ly = n.y - nodeRadius(n) - 5 / k;
-    ctx.lineWidth = 3 / k; ctx.strokeStyle = "rgba(8,13,26,.85)";
+    ctx.lineWidth = 3 / k; ctx.strokeStyle = G_HALO;
     ctx.strokeText(label, n.x, ly);
-    ctx.fillStyle = inFocus || hit || n.i === graph.hover ? "#EDF1F8" : "#98A6BA";
+    ctx.fillStyle = inFocus || hit || n.i === graph.hover ? G_LABEL : G_LABEL_DIM;
     ctx.fillText(label, n.x, ly);
   }
   ctx.restore();
@@ -1556,42 +1743,43 @@ function selectNode(i, center) {
   }
   drawGraph();
 }
+$("gside").addEventListener("click", (ev) => {
+  const b = ev.target.closest(".gfile");
+  if (b) selectNode(+b.dataset.i, true);
+});
 function renderGraphSide() {
   const el = $("gside");
   if (!graph.ready || !graph.nodes.length) {
-    $("gside-kick").textContent = "selection";
-    el.innerHTML = `<div class="empty">no code graph yet —<br>stella indexes this workspace
-      with tree-sitter as it works; run <code>stella</code> here first</div>`;
+    $("gside-kick").textContent = "Selection";
+    el.innerHTML = `<div class="empty">No code graph for this workspace.<br>
+      stella indexes the tree with tree-sitter as it works — run <code>stella</code>
+      here once and the import graph appears.</div>`;
     return;
   }
   if (graph.selected < 0) {
-    $("gside-kick").textContent = "busiest files · click to focus";
+    $("gside-kick").textContent = "Busiest files · select to focus";
     const top = [...graph.nodes].sort((a, b) => (b.in + b.out) - (a.in + a.out)).slice(0, 14);
     el.innerHTML = top.map(n =>
-      `<div class="gfile" data-i="${n.i}" title="${esc(n.path)}">
+      `<button type="button" class="gfile" data-i="${num(n.i)}" title="${esc(n.path)}">
         <i style="background:${groupColorFor(n.group)}"></i>${esc(n.path)}
-        <span style="color:var(--text-3)"> · ${n.in + n.out}</span></div>`).join("");
-    el.querySelectorAll(".gfile").forEach(f =>
-      f.addEventListener("click", () => selectNode(+f.dataset.i, true)));
+        <span style="color:var(--text-3)"> · ${fmtInt(num(n.in) + num(n.out))}</span></button>`).join("");
     return;
   }
   const n = graph.nodes[graph.selected];
-  $("gside-kick").textContent = "selected file";
+  $("gside-kick").textContent = "Selected file";
   const outs = graph.edges.filter(e => e.a === n.i).map(e => graph.nodes[e.b]);
   const ins = graph.edges.filter(e => e.b === n.i).map(e => graph.nodes[e.a]);
   const fileRow = (m) =>
-    `<div class="gfile" data-i="${m.i}" title="${esc(m.path)}">
-      <i style="background:${groupColorFor(m.group)}"></i>${esc(m.path)}</div>`;
+    `<button type="button" class="gfile" data-i="${num(m.i)}" title="${esc(m.path)}">
+      <i style="background:${groupColorFor(m.group)}"></i>${esc(m.path)}</button>`;
   el.innerHTML = `
-    <div style="font:600 12px var(--mono);color:var(--accent);word-break:break-all">${esc(n.path)}</div>
+    <div class="gpath">${esc(n.path)}</div>
     <div class="row"><span class="k">crate / group</span><span>${esc(n.group)}</span></div>
     <div class="row"><span class="k">language</span><span>${esc(n.lang)}</span></div>
-    <div class="row"><span class="k">symbols</span><span>${n.symbols}</span></div>
-    <div class="row"><span class="k">imports / imported by</span><span>${n.out} / ${n.in}</span></div>
-    ${outs.length ? `<div class="kick" style="margin-top:12px">imports</div>` + outs.slice(0, 12).map(fileRow).join("") : ""}
-    ${ins.length ? `<div class="kick" style="margin-top:12px">imported by</div>` + ins.slice(0, 12).map(fileRow).join("") : ""}`;
-  el.querySelectorAll(".gfile").forEach(f =>
-    f.addEventListener("click", () => selectNode(+f.dataset.i, true)));
+    <div class="row"><span class="k">symbols</span><span>${fmtInt(n.symbols)}</span></div>
+    <div class="row"><span class="k">imports / imported by</span><span>${fmtInt(n.out)} / ${fmtInt(n.in)}</span></div>
+    ${outs.length ? `<div class="subhead">Imports</div>` + outs.slice(0, 12).map(fileRow).join("") : ""}
+    ${ins.length ? `<div class="subhead">Imported by</div>` + ins.slice(0, 12).map(fileRow).join("") : ""}`;
 }
 function bindGraphEvents() {
   const c = $("gcanvas");
@@ -1664,7 +1852,7 @@ function bindGraphEvents() {
     const hit = graph.nodes.find(n => n.path.toLowerCase().includes(v));
     if (hit) selectNode(hit.i, true);
   });
-  new ResizeObserver(() => { if (graph.ready) drawGraph(); }).observe(c);
+  new ResizeObserver(() => { measureCanvas(); if (graph.ready) drawGraph(); }).observe(c);
 }
 
 /* ── org / hub telemetry ─────────────────────────────────────────────── */
@@ -1684,10 +1872,10 @@ function renderHub(d) {
   const scoped = hub.org != null || hub.workspace != null || hub.repo != null;
 
   // Breadcrumb: all › org › workspace › repo, each popping to its own level.
-  const crumbs = [`<button class="crumb" data-pop="all">all orgs</button>`];
-  if (hub.org != null) crumbs.push(`<button class="crumb" data-pop="org">${esc(scopeLabel(hub.org))}</button>`);
-  if (hub.workspace != null) crumbs.push(`<button class="crumb" data-pop="workspace">ws ${esc(scopeLabel(hub.workspace))}</button>`);
-  if (hub.repo != null) crumbs.push(`<button class="crumb" data-pop="repo">repo ${esc(scopeLabel(hub.repo))}</button>`);
+  const crumbs = [`<button type="button" class="crumb" data-pop="all">all orgs</button>`];
+  if (hub.org != null) crumbs.push(`<button type="button" class="crumb" data-pop="org">${esc(scopeLabel(hub.org))}</button>`);
+  if (hub.workspace != null) crumbs.push(`<button type="button" class="crumb" data-pop="workspace">ws ${esc(scopeLabel(hub.workspace))}</button>`);
+  if (hub.repo != null) crumbs.push(`<button type="button" class="crumb" data-pop="repo">repo ${esc(scopeLabel(hub.repo))}</button>`);
   $("hubScope").innerHTML = crumbs.join(`<span class="sep">›</span>`);
   $("hubScope").querySelectorAll(".crumb").forEach(b => b.addEventListener("click", () => {
     const to = b.dataset.pop;
@@ -1698,74 +1886,103 @@ function renderHub(d) {
   }));
 
   if (!d.available && (totals.calls ?? 0) === 0 && !scoped) {
-    $("hubKpis").innerHTML = `<div class="card"><div class="empty">no hub telemetry yet — finished turns replicate into ~/.stella/usage.db (or run <code>stella usage sync --all</code>)</div></div>`;
+    $("hubKpis").innerHTML = `<div class="card" style="grid-column:1/-1"><div class="empty">
+      No hub telemetry recorded.<br>Finished turns replicate into
+      <code>~/.stella/usage.db</code>, or run <code>stella usage sync --all</code>
+      to backfill from every workspace on this machine.</div></div>`;
   } else {
     $("hubKpis").innerHTML =
-      tile("calls", (totals.calls ?? 0).toLocaleString()) +
-      tile("cost", fmtUsd(totals.cost_usd ?? 0), null, true) +
-      tile("input", fmtTok(totals.input_tokens ?? 0)) +
-      tile("output", fmtTok(totals.output_tokens ?? 0)) +
-      tile("cache read", pct(totals.cache_read_rate ?? 0)) +
-      tile("projects", totals.projects ?? 0) +
-      tile("orgs", totals.orgs ?? 0);
+      tile("Calls", fmtInt(totals.calls), "model calls in scope") +
+      tile("Cost", fmtUsd(totals.cost_usd), "USD, all providers", true) +
+      tile("Tokens in", fmtTok(totals.input_tokens), fmtTok(totals.output_tokens) + " out") +
+      tile("Cache read", pct(totals.cache_read_rate), "of input tokens") +
+      tile("Projects", fmtInt(totals.projects), "with recorded traffic") +
+      tile("Orgs", fmtInt(totals.orgs), "registered in the hub");
   }
 
   // Drill table — one level in from the current scope.
   const level = d.drill?.level ?? "org";
   const titles = { org: "By org", workspace: "By workspace", repo: "By repo", project: "By project" };
-  $("hubDrillTitle").textContent = titles[level] ?? "Breakdown";
-  $("hubDrillKick").textContent = level === "project" ? "click a project to open its dashboard" : "click a row to drill in";
+  $("hubDrillTitle").textContent = pick(titles, level, "Breakdown");
+  $("hubDrillKick").textContent = level === "project"
+    ? "Select a project to open its dashboard" : "Select a row to drill in";
   const rows = d.drill?.rows ?? [];
+  hubDrillRows = rows; hubDrillLevel = level;
   if (!rows.length) {
-    $("hubDrill").innerHTML = `<div class="empty">nothing in scope</div>`;
+    $("hubDrill").innerHTML = `<div class="empty">Nothing recorded in this scope.<br>
+      Use the breadcrumb above to widen it.</div>`;
   } else {
-    $("hubDrill").innerHTML = `<table><thead><tr><th>${level}</th><th class="num">calls</th>
-      <th class="num">cost</th><th class="num">cache</th><th class="num">in</th>
-      <th class="num">out</th><th class="num">${level === "project" ? "ws" : "proj"}</th></tr></thead><tbody>` +
+    $("hubDrill").innerHTML = `<table><thead><tr><th scope="col">${esc(level)}</th>
+      <th scope="col" class="num">calls</th><th scope="col" class="num">cost&nbsp;USD</th>
+      <th scope="col" class="num">cache&nbsp;%</th><th scope="col" class="num">tok&nbsp;in</th>
+      <th scope="col" class="num">tok&nbsp;out</th>
+      <th scope="col" class="num">${level === "project" ? "ws" : "proj"}</th></tr></thead><tbody>` +
       rows.map((r, i) => {
         const label = level === "project" ? (r.name || r.key) : scopeLabel(r.key);
-        const tail = level === "project" ? (r.workspaces ?? 0) : (r.projects ?? 0);
-        return `<tr class="drill" data-i="${i}"><td class="main">${esc(String(label))}</td>
-          <td class="num">${r.calls}</td><td class="num">${fmtUsd(r.cost_usd)}</td>
-          <td class="num">${pct(r.cache_read_rate ?? 0)}</td>
+        const tail = level === "project" ? r.workspaces : r.projects;
+        return `<tr class="drill" data-i="${i}">
+          <td class="main"><button type="button" class="rowbtn">${esc(String(label))}</button></td>
+          <td class="num">${fmtInt(r.calls)}</td><td class="num">${fmtUsd(r.cost_usd)}</td>
+          <td class="num">${pct(r.cache_read_rate)}</td>
           <td class="num">${fmtTok(r.input_tokens)}</td><td class="num">${fmtTok(r.output_tokens)}</td>
-          <td class="num">${tail}</td></tr>`;
+          <td class="num">${fmtInt(tail)}</td></tr>`;
       }).join("") + `</tbody></table>`;
-    $("hubDrill").querySelectorAll("tr.drill").forEach(el => el.addEventListener("click", () => {
-      const r = rows[+el.dataset.i];
-      if (level === "org") { hub.org = r.key == null ? "(local)" : r.key; hubReload(); }
-      else if (level === "workspace") { hub.workspace = r.key == null ? "(local)" : r.key; hubReload(); }
-      else if (level === "repo") { hub.repo = r.key === "" ? "(local)" : r.key; hubReload(); }
-      else if (level === "project") { state.project = r.key; renderProjects(D.projects); switchTab("overview"); }
-    }));
   }
 
   // Provider / model — mirrors `stella usage report`, plus a cache-read rate.
   const pm = d.by_provider_model ?? [];
-  $("hubModels").innerHTML = !pm.length ? `<div class="empty">no model traffic in scope</div>`
-    : `<table><thead><tr><th>model</th><th class="num">calls</th><th class="num">cost</th>
-        <th class="num">cache</th><th class="num">in</th><th class="num">out</th></tr></thead><tbody>` +
+  $("hubModels").innerHTML = !pm.length
+    ? `<div class="empty">No model traffic in this scope.</div>`
+    : `<table><thead><tr><th scope="col">model</th><th scope="col" class="num">calls</th>
+        <th scope="col" class="num">cost&nbsp;USD</th><th scope="col" class="num">cache&nbsp;%</th>
+        <th scope="col" class="num">tok&nbsp;in</th><th scope="col" class="num">tok&nbsp;out</th></tr></thead><tbody>` +
       pm.map(r => `<tr><td class="main" title="${esc(r.provider)}/${esc(r.model)}">${esc(r.provider)}/${esc(r.model)}</td>
-        <td class="num">${r.calls}</td><td class="num">${fmtUsd(r.cost_usd)}</td>
-        <td class="num">${pct(r.cache_read_rate ?? 0)}</td>
+        <td class="num">${fmtInt(r.calls)}</td><td class="num">${fmtUsd(r.cost_usd)}</td>
+        <td class="num">${pct(r.cache_read_rate)}</td>
         <td class="num">${fmtTok(r.input_tokens)}</td><td class="num">${fmtTok(r.output_tokens)}</td></tr>`).join("") +
       `</tbody></table>`;
 
   // Daily spend.
   const days = d.by_day ?? [];
-  $("hubDays").innerHTML = !days.length ? `<div class="empty">no dated activity in scope</div>`
-    : hbars(days, r => r.day, r => r.cost_usd, r => `${fmtUsd(r.cost_usd)} · ${r.calls}×`);
+  $("hubDays").innerHTML = !days.length
+    ? `<div class="empty">No dated activity in this scope.</div>`
+    : hbars(days, r => r.day, r => r.cost_usd, r => `${fmtUsd(r.cost_usd)} · ${fmtInt(r.calls)}×`);
 
   // Repos.
   const repos = d.by_repo ?? [];
-  $("hubRepos").innerHTML = !repos.length ? `<div class="empty">no repo activity in scope</div>`
-    : `<table><thead><tr><th>repo</th><th class="num">calls</th><th class="num">cost</th>
-        <th class="num">in</th><th class="num">out</th><th class="num">proj</th></tr></thead><tbody>` +
+  $("hubRepos").innerHTML = !repos.length
+    ? `<div class="empty">No repo activity in this scope.</div>`
+    : `<table><thead><tr><th scope="col">repo</th><th scope="col" class="num">calls</th>
+        <th scope="col" class="num">cost&nbsp;USD</th><th scope="col" class="num">tok&nbsp;in</th>
+        <th scope="col" class="num">tok&nbsp;out</th><th scope="col" class="num">proj</th></tr></thead><tbody>` +
       repos.map(r => `<tr><td class="main">${esc(r.repo_id || "(none)")}</td>
-        <td class="num">${r.calls}</td><td class="num">${fmtUsd(r.cost_usd)}</td>
+        <td class="num">${fmtInt(r.calls)}</td><td class="num">${fmtUsd(r.cost_usd)}</td>
         <td class="num">${fmtTok(r.input_tokens)}</td><td class="num">${fmtTok(r.output_tokens)}</td>
-        <td class="num">${r.projects}</td></tr>`).join("") + `</tbody></table>`;
+        <td class="num">${fmtInt(r.projects)}</td></tr>`).join("") + `</tbody></table>`;
 }
+/* Breadcrumb and drill listeners are bound once; the tables under them are
+   replaced on every drill, so per-row binding leaked a listener per redraw. */
+let hubDrillRows = [], hubDrillLevel = "org";
+$("hubScope").addEventListener("click", (ev) => {
+  const b = ev.target.closest(".crumb");
+  if (!b) return;
+  const to = b.dataset.pop;
+  if (to === "all") hub.org = hub.workspace = hub.repo = null;
+  else if (to === "org") hub.workspace = hub.repo = null;
+  else if (to === "workspace") hub.repo = null;
+  hubReload();
+});
+$("hubDrill").addEventListener("click", (ev) => {
+  const el = ev.target.closest("tr.drill");
+  if (!el) return;
+  const r = hubDrillRows[+el.dataset.i];
+  if (!r) return;
+  const level = hubDrillLevel;
+  if (level === "org") { hub.org = r.key == null ? "(local)" : r.key; hubReload(); }
+  else if (level === "workspace") { hub.workspace = r.key == null ? "(local)" : r.key; hubReload(); }
+  else if (level === "repo") { hub.repo = r.key === "" ? "(local)" : r.key; hubReload(); }
+  else if (level === "project") { state.project = r.key; renderProjects(D.projects); switchTab("overview"); }
+});
 
 /* ── tabs, lazy loads, refresh loop ──────────────────────────────────── */
 async function loadTab(tab, force) {
@@ -1805,19 +2022,44 @@ async function loadTab(tab, force) {
       // the project. Cheap hub-only query, so re-fetch each entry/drill.
       renderHub(await api("/api/hub-telemetry" + hubQuery()) ?? {});
     }
-  } catch { /* section keeps its previous contents; the LIVE dot reports */ }
+  } catch (e) {
+    /* The section keeps its previous contents rather than blanking; the Live
+       indicator and the alert banner both report the broken connection. */
+    fail(`Could not load the ${tab} tab.`, e);
+  }
 }
+
+/* ── tab bar: roving tabindex, arrow keys, aria-selected ──────────────── */
+const TABS = [...document.querySelectorAll('#tabs button[role="tab"]')];
 function switchTab(tab) {
   state.tab = tab;
-  document.querySelectorAll("nav.bar button.tab").forEach(b =>
-    b.classList.toggle("on", b.dataset.tab === tab));
+  TABS.forEach(b => {
+    const on = b.dataset.tab === tab;
+    b.setAttribute("aria-selected", on ? "true" : "false");
+    b.tabIndex = on ? 0 : -1;
+  });
   document.querySelectorAll("section[data-tab]").forEach(s =>
     s.classList.toggle("on", s.dataset.tab === tab));
   if (location.hash !== "#" + tab) history.replaceState(null, "", "#" + tab);
   loadTab(tab, false);
 }
-document.querySelectorAll("nav.bar button.tab").forEach(b =>
-  b.addEventListener("click", () => switchTab(b.dataset.tab)));
+$("tabs").addEventListener("click", (ev) => {
+  const b = ev.target.closest('button[role="tab"]');
+  if (b) switchTab(b.dataset.tab);
+});
+$("tabs").addEventListener("keydown", (ev) => {
+  const i = TABS.indexOf(document.activeElement);
+  if (i < 0) return;
+  const step = { ArrowRight: 1, ArrowLeft: -1 };
+  let next = -1;
+  if (ev.key in step) next = (i + step[ev.key] + TABS.length) % TABS.length;
+  else if (ev.key === "Home") next = 0;
+  else if (ev.key === "End") next = TABS.length - 1;
+  if (next < 0) return;
+  ev.preventDefault();
+  TABS[next].focus();
+  switchTab(TABS[next].dataset.tab);
+});
 // Matched against the sections rather than interpolated into a selector: a
 // crafted `#a"]` would make querySelector throw, and the throw at load time
 // (below) would take the whole dashboard down with it.
@@ -1827,13 +2069,58 @@ addEventListener("hashchange", () => {
   const tab = location.hash.slice(1);
   if (isTab(tab)) switchTab(tab);
 });
-$("tf").querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
-  state.tf = b.dataset.tf;
-  $("tf").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
-  renderKpis(); renderTimeline(); renderExecutions(); renderActivity();
-}));
 
+/* ── time window: a real radiogroup, arrow-key operable ──────────────── */
+const TFS = [...$("tf").querySelectorAll('button[role="radio"]')];
+function setTf(b) {
+  state.tf = b.dataset.tf;
+  TFS.forEach(x => {
+    const on = x === b;
+    x.setAttribute("aria-checked", on ? "true" : "false");
+    x.tabIndex = on ? 0 : -1;
+  });
+  renderKpis(); renderTimeline(); renderExecutions(); renderActivity();
+}
+TFS.forEach(b => { b.tabIndex = b.getAttribute("aria-checked") === "true" ? 0 : -1; });
+$("tf").addEventListener("click", (ev) => {
+  const b = ev.target.closest('button[role="radio"]');
+  if (b) setTf(b);
+});
+$("tf").addEventListener("keydown", (ev) => {
+  const i = TFS.indexOf(document.activeElement);
+  if (i < 0) return;
+  const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+  if (!(ev.key in step)) return;
+  ev.preventDefault();
+  const b = TFS[(i + step[ev.key] + TFS.length) % TFS.length];
+  b.focus(); setTf(b);
+});
+
+/* ── connection state ────────────────────────────────────────────────── */
+let failures = 0;
+function fail(what, err) {
+  failures++;
+  $("live").dataset.state = "offline";
+  $("liveText").textContent = "Offline";
+  const detail = err && err.message ? ` (${err.message})` : "";
+  $("err").innerHTML = `<b>✕ Offline</b><span>${esc(what)} The dashboard reads
+    <code>.stella</code> through the local server; it has failed
+    ${fmtInt(failures)} time${failures === 1 ? "" : "s"} in a row${esc(detail)}.
+    Figures below are the last good read. Retrying every 5s.</span>`;
+  $("err").hidden = false;
+}
+function ok() {
+  if (failures === 0 && $("err").hidden) return;
+  failures = 0;
+  $("live").dataset.state = "live";
+  $("liveText").textContent = "Live";
+  $("err").hidden = true;
+}
+
+let refreshing = false;
 async function refresh() {
+  if (refreshing) return;          // a slow poll must not stack on the next tick
+  refreshing = true;
   try {
     const [meta, o, ex, models, tools, files, memory, mcp, fleet, activity, reflections, projects]
       = await Promise.all([
@@ -1843,23 +2130,23 @@ async function refresh() {
       ].map(api));
     Object.assign(D, { meta, overview: o, executions: ex, models, tools, files,
       memory, mcp, fleet, activity, reflections, projects });
-    $("ws").textContent = meta.workspace.split("/").slice(-2).join("/");
-    $("ws").title = meta.workspace;
+    const wsPath = String(meta?.workspace ?? "");
+    $("ws").textContent = wsPath ? wsPath.split("/").slice(-2).join("/") : "unknown workspace";
+    $("ws").title = wsPath || "the server reported no workspace path";
     renderProjects(projects);
-    renderKpis(); renderTimeline(); renderModels(models); renderTools(tools);
-    renderFiles(files); renderMemory(memory); renderFleetMcp(fleet, mcp);
+    renderKpis(); renderTimeline(); renderModels(models ?? []); renderTools(tools ?? []);
+    renderFiles(files ?? []); renderMemory(memory ?? {}); renderFleetMcp(fleet ?? [], mcp ?? []);
     renderExecutions(); renderActivity();
     if (state.tab === "improve") renderImprove(lazyCache[`skills:${state.project}`] ?? []);
     if (state.tab === "mcp") loadTab("mcp", false);
-    $("live").classList.remove("paused");
-  } catch {
-    $("live").classList.add("paused");
+    ok();
+  } catch (e) {
+    fail("The last poll did not complete.", e);
+  } finally {
+    refreshing = false;
   }
 }
-bindGraphEvents();
-if (isTab(location.hash.slice(1))) {
-  switchTab(location.hash.slice(1));
-}
+
 /* ── the live plane ──────────────────────────────────────────────────────
    The dashboard used to re-run twelve full-history aggregates every five
    seconds no matter what — expensive when busy, pure waste when idle, and
@@ -1980,8 +2267,16 @@ function connectLive() {
   };
 }
 
+/* Boot. The graph bindings touch canvas and ResizeObserver, so they are the
+   most environment-dependent thing on the page; a throw there must not take
+   the data plane with it, which is what a bare sequence of calls did. */
+try { bindGraphEvents(); } catch (e) { fail("The code graph could not be initialised.", e); }
+switchTab(isTab(location.hash.slice(1)) ? location.hash.slice(1) : "overview");
 refresh().then(connectLive);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+/* A hidden tab already skips its tick; pagehide is the one exit that never
+   comes back, so the timer is released outright rather than left armed. */
+addEventListener("pagehide", stopPolling);
 </script>
 </body>
 </html>

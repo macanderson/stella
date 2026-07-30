@@ -179,14 +179,23 @@ enum Ink {
 
 impl Ink {
     /// The truecolor RGB this ink renders as, or `None` for dim/plain.
+    ///
+    /// Read out of [`stella_tui::theme`], never written here. The literals
+    /// this replaced were two recolours stale — the pale "sky" pair
+    /// (`#38BDF8`/`#7DD3FC`), a retired `text-tertiary` (`#6C7B90`), and a
+    /// retired violet (`#A78BFA`) — and the test below "guarding" them
+    /// asserted the very same literals, so the copy was only ever checking
+    /// itself. The cinematic writes raw truecolor and cannot render ratatui
+    /// cells, but it can read the tokens, which is what makes this a
+    /// reference instead of a duplicate.
     fn rgb(self) -> Option<(u8, u8, u8)> {
+        use stella_tui::theme;
         match self {
-            // sky-deep, text-tertiary, sky, and the deck's categorical
-            // violet — see stella-tui/src/palette.rs.
-            Ink::Flame => Some((0x38, 0xBD, 0xF8)),
-            Ink::Star => Some((0x6C, 0x7B, 0x90)),
-            Ink::StarBright => Some((0x7D, 0xD3, 0xFC)),
-            Ink::Shell => Some((0xA7, 0x8B, 0xFA)),
+            Ink::Flame => Some(crate::tui::token_rgb(theme::ACCENT_DEEP)),
+            Ink::Star => Some(crate::tui::token_rgb(theme::TEXT_TERTIARY)),
+            Ink::StarBright => Some(crate::tui::token_rgb(theme::ACCENT)),
+            // Categorical, not brand — the deck's data-mark violet.
+            Ink::Shell => Some(crate::tui::token_rgb(theme::VIOLET)),
             Ink::Dim | Ink::Plain => None,
         }
     }
@@ -445,12 +454,23 @@ mod tests {
                 }
             }
         }
-        // The cinematic's two brand inks are the brand tokens themselves, not
-        // a look-alike blue that drifted. These are `SKY` and `SKY_DEEP` from
-        // stella-tui/src/palette.rs; if that file changes, this fails and points
-        // at the copy that needs regenerating.
-        assert_eq!(Ink::StarBright.rgb(), Some((0x7D, 0xD3, 0xFC)), "sky");
-        assert_eq!(Ink::Flame.rgb(), Some((0x38, 0xBD, 0xF8)), "sky-deep");
+        // The cinematic's inks must BE the live theme tokens, not a copy of
+        // their values. Asserting literals on both sides is what let this
+        // drift through two recolours undetected.
+        use stella_tui::theme;
+        assert_eq!(
+            Ink::StarBright.rgb(),
+            Some(crate::tui::token_rgb(theme::ACCENT))
+        );
+        assert_eq!(
+            Ink::Flame.rgb(),
+            Some(crate::tui::token_rgb(theme::ACCENT_DEEP))
+        );
+        assert_eq!(
+            Ink::Star.rgb(),
+            Some(crate::tui::token_rgb(theme::TEXT_TERTIARY))
+        );
+        assert_eq!(Ink::Shell.rgb(), Some(crate::tui::token_rgb(theme::VIOLET)));
         // And the star/flame pair stays cool — blue-dominant — so the cinematic
         // can never drift back to the retired warm accent while still passing.
         for ink in [Ink::Flame, Ink::StarBright] {

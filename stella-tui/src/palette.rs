@@ -62,7 +62,7 @@ pub const BRAND: Color = Color::Rgb(0x2E, 0x7B, 0xFF);
 pub const BRAND_BRIGHT: Color = Color::Rgb(0x5A, 0xA0, 0xFF);
 
 /// Pressed / gradient-deep stop, and the leading stop of the progress fill.
-pub const BRAND_DEEP: Color = Color::Rgb(0x15, 0x50, 0xC8);
+pub const BRAND_DEEP: Color = Color::Rgb(0x1A, 0x5F, 0xE0);
 
 // ── Brand (light: blue on paper) ────────────────────────────────
 //
@@ -70,9 +70,14 @@ pub const BRAND_DEEP: Color = Color::Rgb(0x15, 0x50, 0xC8);
 // white (7.0:1). Applied by the per-frame theme remap in [`crate::theme`],
 // truecolor only.
 
-/// The light-theme brand hue -- 7.0:1 on [`PAPER`]. Shares its value with
-/// [`BRAND_DEEP`]: the dark theme's pressed stop is the light theme's resting
-/// tone, which is the same relationship the two golds have.
+/// The light-theme brand hue -- 7.0:1 on [`PAPER`].
+///
+/// This *was* [`BRAND_DEEP`]'s value too, on the theory that the dark theme's
+/// pressed stop is the light theme's resting tone. It isn't: the same colour
+/// that reads at 7.0:1 on paper measures 2.84:1 on ground, under the 3:1 floor
+/// for a graphical element -- and `BRAND_DEEP` leads the progress fill, so the
+/// left end of a running bar sat below the floor. The two are separate values
+/// now; only the golds still hold that relationship.
 pub const BRAND_INK: Color = Color::Rgb(0x15, 0x50, 0xC8);
 
 /// Pressed stop / leading progress stop on paper.

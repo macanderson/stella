@@ -1,235 +1,184 @@
 import Link from "next/link";
-import {
-  ArrowRight,
-  Boxes,
-  GitBranch,
-  KeyRound,
-  Layers,
-  ListChecks,
-  ShieldCheck,
-  Terminal,
-  Wrench,
-  Gauge,
-} from "lucide-react";
-import { CommandDeck, HeroTerminal } from "@/components/command-deck";
+import { HeroTerminal } from "@/components/command-deck";
 import { Mark } from "@/components/brand";
+import { PROVIDER_CATALOG } from "@/components/provider-cards";
 
-const FEATURES = [
-  {
-    icon: KeyRound,
-    title: "Bring your own key",
-    body: "No account, no sign-up. Stella auto-detects the provider from whichever API keys you already have and runs on your credentials — nothing is proxied through a hosted service.",
-  },
-  {
-    icon: Boxes,
-    title: "Model-agnostic",
-    body: "Anthropic, OpenAI, Gemini, Vertex, Bedrock, xAI, DeepSeek, Z.ai, OpenRouter, and any OpenAI-compatible local server — one CLI, no rewrites when you switch.",
-  },
-  {
-    icon: ListChecks,
-    title: "Proves its work",
-    body: "Goal mode doesn't stop on a hunch. A separate judge model verifies the definition of done from evidence before the loop ends — outcomes, not vibes.",
-  },
-  {
-    icon: Wrench,
-    title: "Real tools, gated",
-    body: "Read, edit, grep, shell, web, CI, screenshots, issues, and your own script tools — each behind a per-tool permission model, with the shell off by default.",
-  },
-  {
-    icon: Layers,
-    title: "Durable sessions & fleets",
-    body: "Pause, resume, and survive anything. Run one agent, or a fleet of workers over a shared task board with per-task worktree isolation and live PR/CI status.",
-  },
-  {
-    icon: Gauge,
-    title: "Local-first telemetry",
-    body: "Token usage, cost, and per-step metering land in a local SQLite store on your disk. Community/default use sends nothing anywhere — inspect every run, share none of it.",
-  },
-];
+/**
+ * The landing page.
+ *
+ * It used to carry six feature cards, three "split" cards, a provider pill
+ * cloud, a looping animated fleet demo, and two hero background layers — five
+ * sections that between them made the same claim ("it is fast, it is BYOK, it
+ * proves its work") three times over. Repeating a claim does not make it more
+ * believable; it makes the page longer.
+ *
+ * What is left is what a reader who has never heard of Stella actually needs:
+ * one sentence saying what it is, the command that installs it, a transcript of
+ * a real run, the list of providers it speaks to, and the four doors into the
+ * docs. Everything else is one click away and better written there.
+ */
 
-const PROVIDERS = [
-  "Anthropic",
-  "OpenAI",
-  "Google Gemini",
-  "Vertex AI",
-  "Amazon Bedrock",
-  "xAI",
-  "DeepSeek",
-  "Z.ai",
-  "OpenRouter",
-  "Local / OpenAI-compatible",
+/**
+ * Copied from content/docs/getting-started/installation.mdx. If that page's
+ * command changes, this one has to change with it — a landing page that
+ * installs a different thing than the docs say is worse than no landing page.
+ */
+const INSTALL =
+  "curl -fsSL https://raw.githubusercontent.com/macanderson/stella/main/install.sh | sh";
+
+/** The four entry points, in the order a new reader needs them. */
+const DOORS = [
+  {
+    href: "/docs/getting-started/installation",
+    title: "Install and authenticate",
+    body: "One binary, one API key you already have. No account, no sign-up.",
+  },
+  {
+    href: "/docs/agent-modes",
+    title: "Pick a mode",
+    body: "chat, run, goal, monitor, or fleet — and which of them fits the task in front of you.",
+  },
+  {
+    href: "/docs/agent-tools/permissions",
+    title: "Decide what it may touch",
+    body: "Every tool sits behind a per-tool permission model, with the shell off by default.",
+  },
+  {
+    href: "/docs/inference-pipeline",
+    title: "Read the pipeline",
+    body: "triage, plan, witness, execute, verify, judge — and where a run can stop.",
+  },
 ];
 
 export default function HomePage() {
   return (
-    <main className="flex flex-1 flex-col">
-      {/* Hero */}
-      <section className="relative overflow-hidden border-b border-fd-border">
-        <div className="lp-hero-grid pointer-events-none absolute inset-0" aria-hidden />
-        <div className="lp-hero-glow pointer-events-none absolute inset-0" aria-hidden />
-        <div className="relative mx-auto flex max-w-5xl flex-col items-center px-4 py-20 text-center sm:py-32">
-          <Mark className="lp-mark mb-8 h-12 w-auto sm:h-14" />
-          <span className="mb-6 inline-flex items-center gap-2 rounded-full border border-fd-border bg-fd-card px-3 py-1 text-xs font-medium text-fd-muted-foreground">
-            <Terminal className="size-3.5" aria-hidden />
-            A terminal coding agent that proves its work
-          </span>
-          <h1 className="max-w-3xl text-balance text-3xl font-semibold tracking-tight sm:text-6xl">
-            Ship code from your terminal with{" "}
-            <span className="lp-brand-text">stella</span>
-          </h1>
-          <p className="mt-6 max-w-2xl text-balance text-base text-fd-muted-foreground sm:text-lg">
-            A fast, bring-your-own-key, model-agnostic coding agent. Point it at any
-            provider, give it a goal, and let a verifier decide when the work is
-            actually done.
-          </p>
+    <div id="content" tabIndex={-1} className="flex flex-1 flex-col">
+      {/* ── What it is ─────────────────────────────────────────────────── */}
+      <section className="mx-auto w-full max-w-3xl px-4 py-20 sm:py-28">
+        <Mark className="lp-mark mb-10 h-10 w-auto" cursor label="Stella" />
+        <h1 className="lp-h1">
+          <span className="lp-brand-face">stella</span> is a terminal coding
+          agent that proves its work finished.
+        </h1>
+        <p className="lp-lead mt-6">
+          It runs on the API keys you already have, speaks ten providers&apos; own
+          protocols, and ends a run only when a second model has confirmed the goal
+          from evidence. Nothing is proxied through a hosted service, and telemetry
+          never leaves your disk.
+        </p>
 
-          <div className="mt-9 w-full max-w-xl">
-            <HeroTerminal />
+        <div className="mt-10">
+          <p className="mb-2 text-sm text-fd-muted-foreground">Install it:</p>
+          <div className="term">
+            <pre className="term-body">
+              <span className="term-prompt">$ </span>
+              {INSTALL}
+            </pre>
           </div>
+        </div>
 
-          <div className="mt-8 flex w-full max-w-xs flex-col items-stretch gap-3 sm:max-w-none sm:flex-row sm:items-center sm:justify-center">
-            <Link
-              href="/docs"
-              className="lp-cta inline-flex items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-colors"
-            >
-              Read the docs
-              <ArrowRight className="size-4" aria-hidden />
-            </Link>
-            <Link
-              href="/docs/getting-started/installation"
-              className="inline-flex items-center justify-center gap-2 rounded-lg border border-fd-border bg-fd-card px-5 py-2.5 text-sm font-semibold text-fd-foreground transition-colors hover:bg-fd-accent"
-            >
-              Install Stella
-            </Link>
-          </div>
+        <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
+          <Link
+            href="/docs"
+            className="lp-cta inline-flex items-center rounded-md px-4 py-2 text-sm font-medium transition-colors"
+          >
+            Read the docs
+          </Link>
+          <a
+            href="https://github.com/macanderson/stella"
+            className="text-sm text-fd-muted-foreground underline underline-offset-4 hover:text-fd-foreground"
+          >
+            Source on GitHub
+          </a>
         </div>
       </section>
 
-      {/* Features */}
-      <section className="mx-auto w-full max-w-6xl px-4 py-16 sm:py-20">
-        <div className="grid gap-px overflow-hidden rounded-xl border border-fd-border bg-fd-border sm:grid-cols-2 lg:grid-cols-3">
-          {FEATURES.map(({ icon: Icon, title, body }) => (
-            <div key={title} className="bg-fd-background p-6">
-              <div className="mb-4 inline-flex size-10 items-center justify-center rounded-lg border border-fd-border bg-fd-card">
-                <Icon className="size-5 text-fd-foreground" aria-hidden />
-              </div>
-              <h3 className="text-base font-semibold">{title}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-fd-muted-foreground">
-                {body}
-              </p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Command Deck — the signature: watch a run actually happen */}
-      <section className="border-t border-fd-border bg-fd-muted/40">
-        <div className="mx-auto w-full max-w-5xl px-4 py-16 sm:py-20">
-          <div className="mb-8 flex flex-col items-start gap-3 sm:mb-10">
-            <span className="inline-flex items-center gap-2 rounded-full border border-fd-border bg-fd-background px-3 py-1 text-xs font-medium text-fd-muted-foreground">
-              <Gauge className="size-3.5" aria-hidden />
-              The command deck, live
-            </span>
-            <h2 className="max-w-2xl text-balance text-2xl font-semibold tracking-tight sm:text-3xl">
-              Don&apos;t take our word for it. Watch the work.
-            </h2>
-            <p className="max-w-2xl text-sm leading-relaxed text-fd-muted-foreground sm:text-base">
-              This is Stella&apos;s real supervisor: a roster of agents moving through the
-              staged pipeline, every dollar metered against a budget, every result
-              proven before it counts as done. Switch between a{" "}
-              <span className="font-medium text-fd-foreground">fleet</span> fanning tasks
-              out in parallel and a single{" "}
-              <span className="font-medium text-fd-foreground">goal</span> run driving to
-              green.
-            </p>
-          </div>
-          <CommandDeck />
-          <p className="mt-4 text-center text-xs text-fd-muted-foreground">
-            An illustrative run — the states, stages, and budget accounting are Stella&apos;s
-            own.
+      {/* ── Proof ──────────────────────────────────────────────────────── */}
+      <section className="lp-section">
+        <div className="mx-auto w-full max-w-3xl px-4 py-16">
+          <h2 className="lp-eyebrow mb-5">One run, start to finish</h2>
+          <HeroTerminal />
+          <p className="mt-4 max-w-prose text-sm text-fd-muted-foreground">
+            The stages, the metering, and the verification step are Stella&apos;s
+            own; the figures illustrate a run rather than a benchmark.{" "}
+            <Link
+              href="/docs/agent-modes#outcome-driven-goal-mode"
+              className="underline underline-offset-4 hover:text-fd-foreground"
+            >
+              How goal mode decides it is done
+            </Link>
+            .
           </p>
         </div>
       </section>
 
-      {/* Providers */}
-      <section className="border-y border-fd-border bg-fd-muted/40">
-        <div className="mx-auto w-full max-w-6xl px-4 py-16">
-          <div className="flex flex-col items-center text-center">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-fd-muted-foreground">
-              Works with your provider
-            </h2>
-            <div className="mt-6 flex flex-wrap justify-center gap-2">
-              {PROVIDERS.map((p) => (
-                <span
-                  key={p}
-                  className="rounded-full border border-fd-border bg-fd-background px-3.5 py-1.5 text-sm text-fd-foreground"
+      {/* ── Providers ──────────────────────────────────────────────────── */}
+      <section className="lp-section">
+        <div className="mx-auto w-full max-w-3xl px-4 py-16">
+          <h2 className="lp-eyebrow mb-5">Providers</h2>
+          <p className="max-w-prose text-base">
+            {PROVIDER_CATALOG.map((p, i) => (
+              <span key={p.id}>
+                {i > 0 ? <span className="text-fd-muted-foreground"> · </span> : null}
+                <Link href={p.href} className="underline underline-offset-4">
+                  {p.name}
+                </Link>
+              </span>
+            ))}
+          </p>
+          <p className="mt-4 max-w-prose text-sm text-fd-muted-foreground">
+            Stella speaks each vendor&apos;s own wire protocol rather than
+            normalising everything through one OpenAI-shaped adapter, so thinking
+            blocks, cache control, and tool-call shapes are native rather than
+            emulated. Override any base URL, key, or model in{" "}
+            <Link
+              href="/docs/configuration/settings"
+              className="font-mono text-[0.9em] underline underline-offset-4"
+            >
+              settings.json
+            </Link>
+            .
+          </p>
+        </div>
+      </section>
+
+      {/* ── Doors into the docs ────────────────────────────────────────── */}
+      <section className="lp-section">
+        <div className="mx-auto w-full max-w-3xl px-4 py-16">
+          <h2 className="lp-eyebrow mb-5">Start here</h2>
+          <ul className="border-t border-fd-border">
+            {DOORS.map((d) => (
+              <li key={d.href} className="border-b border-fd-border">
+                <Link
+                  href={d.href}
+                  className="-mx-3 block px-3 py-4 transition-colors hover:bg-fd-accent"
                 >
-                  {p}
-                </span>
-              ))}
-            </div>
-            <p className="mt-6 max-w-2xl text-sm text-fd-muted-foreground">
-              Override any provider&apos;s base URL, key, or model in{" "}
-              <Link
-                href="/docs/configuration/settings"
-                className="rounded bg-fd-muted px-1.5 py-0.5 font-mono text-xs text-fd-foreground underline-offset-2 hover:underline"
-              >
-                settings.json
-              </Link>{" "}
-              — no provider-specific environment variables required.
-            </p>
-          </div>
+                  <span className="text-base font-medium">{d.title}</span>
+                  <span className="mt-1 block max-w-prose text-sm text-fd-muted-foreground">
+                    {d.body}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
         </div>
       </section>
 
-      {/* Closing split */}
-      <section className="mx-auto w-full max-w-6xl px-4 py-16 sm:py-20">
-        <div className="mb-8 max-w-2xl">
-          <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-            Built to be believed
-          </h2>
-          <p className="mt-3 text-sm leading-relaxed text-fd-muted-foreground sm:text-base">
-            Stella runs a real pipeline — triage, recall, plan, execute, verify, judge —
-            so a run ends on proof, not the worker&apos;s own say-so. Scale it from one
-            session to a fleet, and extend it to fit your workflow.
-          </p>
-        </div>
-        <div className="grid gap-6 md:grid-cols-3">
-          <SplitCard
-            icon={ListChecks}
-            title="Goal mode"
-            body="Give Stella an objective and it drives to green — editing, running, and re-checking until an independent judge confirms the goal from evidence."
-            href="/docs/agent-modes#outcome-driven-goal-mode"
-            cta="How goal mode works"
-          />
-          <SplitCard
-            icon={GitBranch}
-            title="Multi-agent fleets"
-            body="Point many workers at one task board. Cooperative claims on a shared tree or per-task worktree isolation, with pause/resume and live PR & CI status."
-            href="/docs/agent-fleets"
-            cta="Run a fleet"
-          />
-          <SplitCard
-            icon={Wrench}
-            title="Extend it"
-            body="Add MCP servers, custom script tools, skills, and lifecycle hooks. Stella meets your workflow instead of replacing it."
-            href="/docs/agent-tools/custom-tools"
-            cta="Add your own tools"
-          />
-        </div>
-      </section>
-
-      <footer className="border-t border-fd-border">
-        <div className="mx-auto flex w-full max-w-6xl flex-col items-center justify-between gap-4 px-4 py-8 text-sm text-fd-muted-foreground sm:flex-row">
+      <footer className="lp-section">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-10 text-sm text-fd-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           <span className="inline-flex items-center gap-2">
-            <Mark className="h-4 w-auto text-fd-muted-foreground" />
-            <span className="lp-brand-face">stella</span>
+            <Mark className="lp-mark h-4 w-auto" cursor />
+            <span className="lp-brand-face text-fd-foreground">stella</span>
+            <span>— AGPL 3.0</span>
           </span>
-          <div className="flex items-center gap-5">
+          <nav aria-label="Footer" className="flex items-center gap-5">
             <Link href="/docs" className="hover:text-fd-foreground">
               Docs
             </Link>
-            <Link href="/docs/getting-started/installation" className="hover:text-fd-foreground">
+            <Link
+              href="/docs/getting-started/installation"
+              className="hover:text-fd-foreground"
+            >
               Install
             </Link>
             <a
@@ -238,42 +187,9 @@ export default function HomePage() {
             >
               GitHub
             </a>
-          </div>
+          </nav>
         </div>
       </footer>
-    </main>
-  );
-}
-
-function SplitCard({
-  icon: Icon,
-  title,
-  body,
-  href,
-  cta,
-}: {
-  icon: typeof GitBranch;
-  title: string;
-  body: string;
-  href: string;
-  cta: string;
-}) {
-  return (
-    <div className="flex flex-col rounded-xl border border-fd-border bg-fd-card p-6">
-      <div className="mb-4 inline-flex size-10 items-center justify-center rounded-lg border border-fd-border bg-fd-background">
-        <Icon className="size-5 text-fd-foreground" aria-hidden />
-      </div>
-      <h3 className="text-lg font-semibold">{title}</h3>
-      <p className="mt-2 flex-1 text-sm leading-relaxed text-fd-muted-foreground">
-        {body}
-      </p>
-      <Link
-        href={href}
-        className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-fd-primary hover:underline"
-      >
-        {cta}
-        <ArrowRight className="size-4" aria-hidden />
-      </Link>
     </div>
   );
 }

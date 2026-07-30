@@ -436,10 +436,6 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
             }
         }
     }
-    // Contextual help, keyed to the transcript's interaction state: every
-    // mode advertises its own way out (ctrl+o/Esc collapse the expand-all
-    // overlay, Esc clears a highlight) and the resting state teaches the
-    // scroll verbs (↑ scrolls; ⌘/⌃ ] and ⌘/⌃ [ jump to the ends).
     // Every occurrence of a live query is lit inside the rows on screen.
     // Done here on the materialized window rather than inside the fold cache
     // so the query never becomes a cache-key term — typing must not rebuild
@@ -473,7 +469,10 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     } else if ui.session_selected.is_some() {
         "⌃O expand · ⌃Z fold turn · ⌃N next failure · Esc clears".to_string()
     } else {
-        "↑ scroll · ⌃F find · ⌃N failure · ⌃Z fold turns · ⌃O expand all".to_string()
+        // `↑` selects the newest message, it does not scroll — the scroll
+        // verbs are the page keys (see `handle_session_key`, which claims
+        // ↑/↓ for the highlight whenever the transcript has any entries).
+        "↑ select · ⇞⇟ scroll · ⌃F find · ⌃N failure · ⌃Z fold · ⌃O expand".to_string()
     };
     render_transcript_window(
         visible,

@@ -516,7 +516,16 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
     }
 
     let timeout = Duration::from_millis(tool.timeout_ms);
-    let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
+    // Capped capture, like every other spawn path: a manifest tool is
+    // repository-authored, so its output volume is not Stella's to trust —
+    // `wait_with_output` would hold all of it before the truncation below
+    // ever ran. See `crate::exec::MAX_CAPTURE_BYTES`.
+    let output = match tokio::time::timeout(
+        timeout,
+        crate::exec::wait_with_capped_output(child, crate::exec::MAX_CAPTURE_BYTES),
+    )
+    .await
+    {
         Ok(Ok(output)) => {
             #[cfg(unix)]
             guard.disarm();

@@ -692,6 +692,92 @@ fn a_bare_slug_matches_a_custom_providers_default_model() {
     assert_eq!(cfg.model_id, "totally-custom-slug");
 }
 
+/// A settings.json override of a BUILT-IN provider's `default_model` is what
+/// auto-detection launches with and what `stella models` prints as that
+/// provider's default — but the bare-slug lookup only ever consulted the
+/// hard-coded row, so the one slug the UI told you to use came back
+/// "model `…` not recognized". Both spellings must resolve.
+#[test]
+fn a_bare_slug_matches_a_builtin_providers_overridden_default_model() {
+    let _env = crate::test_env::lock();
+    let settings = settings_from(
+        r#"{"providers": {"anthropic": {
+            "api_key": "sk-overridden",
+            "default_model": "claude-house-blend"
+        }}}"#,
+    );
+    let cfg = Config::load_with_settings(
+        Some("claude-house-blend"),
+        None,
+        None,
+        &settings,
+        std::path::PathBuf::from("/tmp/ws"),
+    )
+    .expect("the configured default model must be selectable by its bare slug");
+    assert_eq!(cfg.provider.id, "anthropic");
+    assert_eq!(cfg.model_id, "claude-house-blend");
+
+    // And the shipped default keeps working: an override must not retire a
+    // name a script or muscle memory already has.
+    let cfg = Config::load_with_settings(
+        Some("claude-fable-5"),
+        None,
+        None,
+        &settings,
+        std::path::PathBuf::from("/tmp/ws"),
+    )
+    .expect("the shipped default must keep resolving after an override");
+    assert_eq!(cfg.provider.id, "anthropic");
+    assert_eq!(cfg.model_id, "claude-fable-5");
+}
+
+/// `ApiKey::resolve`'s documented contract: a headless caller must get a clean
+/// `NotFound` rather than block on a masked prompt. Nothing honoured it — the
+/// `--model provider/slug` path passed `interactive: true` unconditionally, so
+/// a `--output-format json` run from an attached terminal with no key stopped
+/// dead on a password prompt while its caller waited on stdout for an object
+/// that could never arrive.
+///
+/// The prompt itself cannot be exercised here (it needs a tty), so this pins
+/// the policy latch that gates it: once `main` forbids interactive
+/// credentials, `resolve` must not be able to reach the prompt step whatever
+/// the call site asked for.
+#[test]
+fn forbidding_interactive_credentials_is_process_wide_and_survives_an_interactive_call_site() {
+    let _env = crate::test_env::lock();
+    assert!(
+        interactive_allowed(),
+        "the default posture is interactive — a human at a terminal is the common case"
+    );
+    forbid_interactive_credentials();
+    assert!(!interactive_allowed());
+
+    // The `--model provider/slug` path (the one that asks for `interactive:
+    // true`) with no credential anywhere still returns a named error rather
+    // than reaching the prompt.
+    let settings = settings_from(
+        r#"{"providers": {"headlessprobe": {
+            "base_url": "https://headlessprobe.example/v1",
+            "api_key_env": "STELLA_TEST_HEADLESS_PROBE_KEY"
+        }}}"#,
+    );
+    unsafe {
+        std::env::remove_var("STELLA_TEST_HEADLESS_PROBE_KEY");
+    }
+    let err = Config::load_with_settings(
+        Some("headlessprobe/m"),
+        None,
+        None,
+        &settings,
+        std::path::PathBuf::from("/tmp/ws"),
+    )
+    .unwrap_err();
+    assert!(err.contains("could not resolve a credential"), "{err}");
+
+    // Restore the default for every other test in this binary.
+    INTERACTIVE_CREDENTIALS.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
 #[test]
 fn discovery_style_resolution_accepts_the_settings_literal_key() {
     let _env = crate::test_env::lock();
@@ -933,15 +1019,49 @@ fn provider_cards_match_the_registry() {
             provider.id, provider.env_var_aliases
         );
 
-        assert_eq!(
-            card.href,
-            format!("/docs/api-providers/{}", provider.id),
-            "the docs card for `{}` links to `{}`, which is not that \
-             provider's page",
+        // The link must reach that provider's documentation. Deliberately NOT
+        // pinned to one URL shape: the docs moved from ten per-provider pages
+        // (`/docs/api-providers/zai`) to one consolidated page with anchors
+        // (`/docs/api-providers#zai`), and re-encoding the site's heading slugs
+        // here would make every editorial retitle a failing test in the binary
+        // — asserting on the website's structure rather than on the fact this
+        // file is the authority for. What still cannot drift is what actually
+        // breaks a reader: a card pointing outside the API-providers docs, or
+        // at the bare index with no anchor to land on.
+        assert!(
+            card.href.starts_with("/docs/api-providers"),
+            "the docs card for `{}` links to `{}`, which is not in the \
+             API-providers docs",
             provider.id,
             card.href
         );
+        let lands_somewhere = card.href.len() > "/docs/api-providers".len()
+            && !card.href.ends_with('#')
+            && !card.href.ends_with('/');
+        assert!(
+            lands_somewhere,
+            "the docs card for `{}` links to `{}` — the bare index, with \
+             nothing identifying this provider",
+            provider.id, card.href
+        );
     }
+
+    // …and two providers must never share a destination, which is how a
+    // copy-pasted card silently sends readers to the wrong provider's setup.
+    let mut hrefs: Vec<&str> = PROVIDERS
+        .iter()
+        .filter_map(|p| cards.iter().find(|c| c.id == p.id))
+        .map(|c| c.href.as_str())
+        .collect();
+    let total = hrefs.len();
+    hrefs.sort_unstable();
+    hrefs.dedup();
+    assert_eq!(
+        hrefs.len(),
+        total,
+        "two provider cards link to the same page — one of them sends readers \
+         to another provider's setup instructions"
+    );
 
     // The reverse direction: a card for a provider that no longer exists sends
     // readers to a page for something they cannot select. `local` is the one
