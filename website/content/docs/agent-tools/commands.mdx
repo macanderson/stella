@@ -1,6 +1,6 @@
 ---
 title: Custom Commands
-description: Extend the slash menu with your own COMMAND.md prompt templates — $ARGUMENTS expansion, project and user scopes, and adoption from .claude/ and .agents/.
+description: Extend the slash menu with your own prompt templates in markdown or TOML — $ARGUMENTS expansion, namespaces, a restricted toolbelt, project and user scopes, and adoption from .claude/ and .agents/.
 ---
 
 The Command Deck's slash menu is extensible: alongside the built-ins
@@ -32,6 +32,88 @@ stem (or the directory name in the nested layout), and `description:` falls
 back to the body's first non-empty line. Only the body is required — a
 command with an empty body is skipped with a diagnostic, never a fatal
 error.
+
+### Every field
+
+<CardGrid size="md">
+  <OptionCard name="name" defaultValue="the filename stem">
+    The bare command name, without the leading slash and without any namespace.
+  </OptionCard>
+  <OptionCard name="description" defaultValue="the body's first line">
+    Menu description, shown in the slash menu.
+  </OptionCard>
+  <OptionCard name="argument-hint">
+    What the argument slot expects (`<pr-number>`), shown next to the name.
+    **Documentation only** — nothing validates against it, because a command that
+    refuses to run on a shape its author did not anticipate is worse than one that
+    passes the text through.
+  </OptionCard>
+  <OptionCard name="allowed-tools" defaultValue="no restriction">
+    Tools this command's turn may use. Omitted, the command runs with the session's
+    full toolbelt.
+  </OptionCard>
+  <OptionCard name="model" defaultValue="the session's model">
+    A model pin for this command's turn, as `provider/model_id`.
+  </OptionCard>
+  <OptionCard name="disable-model-invocation" defaultValue="false">
+    Set `true` so only *you* can invoke it, never the model — for commands that should
+    always be deliberate.
+  </OptionCard>
+</CardGrid>
+
+Every field is accepted in both kebab-case and snake_case (`argument-hint` or
+`argument_hint`), matching the spellings contributors already know from the
+wider ecosystem.
+
+<Callout type="info">
+`disable-model-invocation` exists to *remove* a capability, so an unparseable value
+is never read as the removal — a typo leaves the command invocable rather than
+silently disabling it.
+</Callout>
+
+## Markdown or TOML — the same command
+
+A definition can be authored as markdown-with-frontmatter (`<slug>.md`) **or** as
+TOML (`<slug>.toml`). The two formats carry exactly the same fields and produce the
+same command: TOML is a spelling, not a feature tier, so nothing is gained or lost by
+converting, and a workspace can hold both.
+
+```toml title=".stella/commands/review.toml"
+name = "review"
+description = "Review the working diff like our team does."
+argument-hint = "<focus-areas>"
+allowed-tools = ["read_file", "grep", "repo_diff"]
+disable-model-invocation = true
+prompt = """
+Review the current diff for correctness first, style second.
+Focus areas: $ARGUMENTS
+
+- Flag any change without a matching test.
+- Check error paths before happy paths.
+"""
+```
+
+The body lives under `prompt` rather than being the file's tail. That is the one
+practical reason to prefer TOML: a `prompt` string needs no frontmatter fence, so a
+template that itself contains markdown (or a `---` rule) has nothing to escape. The
+other is a typed `allowed-tools` array instead of a delimited string.
+
+[`stella commands convert`](/docs/commands/commands) converts markdown definitions to
+TOML, and [`stella commands list`](/docs/commands/commands) shows what a workspace
+actually offers.
+
+## Namespaces
+
+A definition one level down is namespaced by its directory, and typed with a colon:
+
+```text
+.stella/commands/deploy.toml          →  /deploy
+.stella/commands/vercel/deploy.toml   →  /vercel:deploy
+```
+
+Namespacing is **commands only** — skills and agents have no namespace syntax and keep
+a stricter one-file rule. A namespace directory containing no loadable definition is
+reported with a diagnostic rather than skipped silently.
 
 ## Argument expansion
 
@@ -71,6 +153,18 @@ Definitions load user-global first, then workspace — **workspace wins** on
 a name collision. In the slash menu, built-ins can never be shadowed, and
 when a custom name collides across kinds, commands shadow skills shadow
 agents.
+
+### Project-scope commands need a trusted repo
+
+A cloned repository's commands are **withheld** until you declare the repo
+trusted with `STELLA_TRUST_PROJECT=1`. Your own user-scope commands in
+`~/.stella/commands/` are always available; it is the project scope that is
+gated, because a prompt template that ships in a repo is content you did not
+write.
+
+If a command you added to `.stella/commands/` does not appear in the slash menu
+or in [`stella commands list`](/docs/commands/commands), check the repo's trust
+before you check the file — the loader is telling you what will actually run.
 
 ## Adopted from tools you already use
 
