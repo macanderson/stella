@@ -361,6 +361,12 @@ fn entry_body(
                 human_duration(*duration_ms)
             };
             let inline = diff.as_ref().and_then(|d| resolve_inline_diff(d, files));
+            // The delta the emitter measured for this very mutation, carried
+            // alongside its diff — not a recount of the rendered hunk, which is
+            // a bounded view of the changed region and reports a smaller number.
+            let inline_delta = diff
+                .as_ref()
+                .and_then(|d| super::resolve_inline_delta(d, files));
 
             // The right-hand metric column. A diff states its own size in
             // added/removed lines, which is the honest unit for an edit —
@@ -368,8 +374,8 @@ fn entry_body(
             // change. Everything else reports output size, and only when
             // there is more than the one line already shown.
             let mut metric: Vec<Span<'static>> = Vec::new();
-            if let Some(d) = inline {
-                let (added, removed) = diff::count_diff_lines(d);
+            if inline.is_some() {
+                let (added, removed) = inline_delta.unwrap_or((0, 0));
                 metric.push(Span::styled(
                     format!("+{added}"),
                     Style::new().fg(theme::OK),

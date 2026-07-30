@@ -109,6 +109,38 @@ pub fn apply_trim(plan: &[PlanStep], keep_steps: &[usize]) -> Vec<PlanStep> {
         .collect()
 }
 
+/// How many times one turn will re-plan for a reviewer who keeps asking for a
+/// different scope. Bounded because each revision is a fresh planner call: an
+/// unbounded loop would let a gate meant to *contain* spend become a way to
+/// spend without ever executing. Two is enough for "narrower" then "narrower
+/// still"; past that the card's approve/trim/abort keys are the honest answer.
+pub const MAX_SCOPE_REVISIONS: usize = 2;
+
+/// What one pass of the scope gate settled on. Distinct from
+/// [`crate::ScopeDecision`], which is what the *human* chose: `Trim` has
+/// already been applied here, and both "abort" and "trimmed to nothing"
+/// collapse into [`ScopeVerdict::Stop`] because the pipeline does the same
+/// thing for each.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScopeVerdict {
+    /// Execute these steps.
+    Run(Vec<PlanStep>),
+    /// Plan again with the reviewer's note.
+    Revise { note: String },
+    /// End the turn before execute, having done nothing.
+    Stop,
+}
+
+/// The result of the whole plan-then-review phase, after any re-plans.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlannedScope {
+    /// Execute these steps.
+    Steps(Vec<PlanStep>),
+    /// Nothing will execute. `reason` is already user-facing — it becomes the
+    /// aborted outcome's reason verbatim.
+    Ended { reason: String },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

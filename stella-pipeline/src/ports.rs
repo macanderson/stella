@@ -328,14 +328,25 @@ pub trait TestRunner: Send + Sync {
 }
 
 /// One file the winning best-of-N candidate changed, as applied to the real
-/// tree by [`CandidateWorkspace::adopt`]. Paths are repo-relative; the kind
-/// feeds the `FileChange` events the pipeline emits for adopted work (the
-/// session's own file tracking never saw the winner's edits — they happened
-/// inside the snapshot).
+/// tree by [`CandidateWorkspace::adopt`]. Paths are repo-relative.
+///
+/// This is the whole `FileChange` the pipeline emits for adopted work, because
+/// the session's own recorder never saw the winner's edits — they happened
+/// inside a shadow worktree, against a registry deliberately left unattached
+/// (a losing candidate's edits must never be announced as the user's). So the
+/// delta has to come from the adoption itself: `git`'s own `--numstat` for the
+/// counts, and its patch text, sliced per file, for `diff`.
+///
+/// `added`/`removed` default to `0` and `diff` to `None` only for an
+/// implementation that cannot measure them — which reads in the Files tab as
+/// "changed, extent unknown", not as "nothing changed".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdoptedChange {
     pub path: String,
     pub kind: FileChangeKind,
+    pub added: u32,
+    pub removed: u32,
+    pub diff: Option<String>,
 }
 
 /// A typed candidate-isolation failure.
@@ -490,6 +501,17 @@ pub enum ScopeDecision {
     /// Execute only the steps at these indices (into the proposed step list),
     /// in the given order. Out-of-range indices are ignored by the pipeline.
     Trim { keep_steps: Vec<usize> },
+    /// Re-plan: the reviewer rejected *this* scope and said what they want
+    /// instead. `note` is their own words, folded into the planner's next
+    /// prompt; the fresh plan is gated again (bounded — see
+    /// `MAX_SCOPE_REVISIONS` in `crate::pipeline`).
+    ///
+    /// Approve/Trim/Abort are the three answers a *yes-or-no* gate can take,
+    /// and a review is not a yes-or-no question: the common human reply to a
+    /// plan is neither "run it" nor "run less of it" but "not like that — do
+    /// this". Without this variant every such reply has to be spelled as an
+    /// abort, which throws away both the turn and the reviewer's reasoning.
+    Revise { note: String },
     /// Abandon the turn cleanly — no execution happens.
     Abort,
 }
@@ -561,14 +583,19 @@ impl ApprovalGate for AlwaysAbortGate {
     }
 }
 
-/// An [`ApprovalGate`] that prints the proposal to stdout and reads a y/n
-/// answer from stdin: `y`/`yes` approves, **everything else — including EOF,
-/// a read error, and the empty line — aborts**. Deliberately fail-closed, and
-/// deliberately without a [`ScopeDecision::Trim`] path: per-step selection
+/// An [`ApprovalGate`] that prints the proposal to stdout and reads an answer
+/// from stdin: `y`/`yes` approves, a bare `n`/`no`/empty line aborts, **EOF and
+/// read errors abort** (fail-closed), and any other typed line is the
+/// reviewer's revision note ([`ScopeDecision::Revise`]) — the same reading the
+/// TUI's card gives typed text, so the two interactive surfaces answer the gate
+/// the same way.
+///
+/// Deliberately without a [`ScopeDecision::Trim`] path: per-step selection
 /// needs a real prompt, and half-implementing it here would let a typo drop
-/// steps silently. For interactive text mode only — headless runs use
-/// [`AlwaysAbortGate`] (with the config bypass skipping the gate outright),
-/// and the TUI supplies its own gate.
+/// steps silently. (A note asking for fewer steps reaches the same place by
+/// re-planning, without inventing an index syntax over a `read_line`.) For
+/// interactive text mode only — headless runs use [`AlwaysAbortGate`] (with the
+/// config bypass skipping the gate outright), and the TUI supplies its own gate.
 ///
 /// Note that [`ApprovalGate::review`] is `async` while this reads stdin with
 /// blocking I/O, so it parks the calling runtime thread until the user
@@ -590,9 +617,12 @@ impl ApprovalGate for StdioApprovalGate {
             println!("  │ est. cost: ${cost:.4}");
         }
         println!("  └──────────────────────────────────────────────");
-        // `[y/N]`, not `[y/N/a=bort]`: there is no third branch below, so
-        // offering one told the user about a choice that does not exist.
-        print!("  Approve? [y/N]: ");
+        // Every branch offered below exists: `y` approves, a bare no/empty
+        // aborts, and anything else is read as a note (which is why the
+        // prompt has to say so — a reviewer who types a sentence at a
+        // `[y/N]` prompt would otherwise expect it to be ignored, not to
+        // become the instruction the next plan is built from).
+        print!("  Approve? [y/N, or type what to change]: ");
         let _ = io::stdout().flush();
 
         let stdin = io::stdin();
@@ -600,9 +630,13 @@ impl ApprovalGate for StdioApprovalGate {
         if stdin.lock().read_line(&mut line).is_err() {
             return ScopeDecision::Abort;
         }
-        match line.trim().to_ascii_lowercase().as_str() {
+        let answer = line.trim();
+        match answer.to_ascii_lowercase().as_str() {
             "y" | "yes" => ScopeDecision::Approve,
-            _ => ScopeDecision::Abort,
+            "" | "n" | "no" => ScopeDecision::Abort,
+            _ => ScopeDecision::Revise {
+                note: answer.to_string(),
+            },
         }
     }
 }

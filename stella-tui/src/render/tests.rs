@@ -357,6 +357,8 @@ fn files_panel_lists_touched_files_by_label() {
     model.apply(&AgentEvent::FileChange {
         path: "src/driver.rs".into(),
         kind: FileChangeKind::Modified,
+        added: 1,
+        removed: 1,
         diff: Some("@@\n-old\n+new".into()),
     });
     let mut ui = UiState::default();
@@ -371,6 +373,8 @@ fn diff_viewer_shows_the_selected_files_diff() {
     model.apply(&AgentEvent::FileChange {
         path: "a.rs".into(),
         kind: FileChangeKind::Modified,
+        added: 1,
+        removed: 1,
         diff: Some("@@ -1 +1 @@\n-removed\n+added".into()),
     });
     let mut ui = UiState::default();
@@ -402,6 +406,13 @@ fn scope_card_renders_the_decision_legend_when_unanswered() {
     let text = draw(&model, &mut ui, 100, 30);
     assert!(text.contains("refactor auth"), "card summary:\n{text}");
     assert!(text.contains("pprove"), "shows approve legend:\n{text}");
+    // The typed path is now the only way to ask for a *different* scope, so the
+    // card has to name it. An affordance nobody is told about is one the next
+    // reviewer discovers by having their words routed somewhere unexpected.
+    assert!(
+        text.contains("re-plan"),
+        "offers the typed revision path:\n{text}"
+    );
     // Once answered, the legend flips to the awaiting message.
     ui.scope_answered = true;
     let text2 = draw(&model, &mut ui, 100, 30);
@@ -628,6 +639,8 @@ fn ui_transcript_cache_follows_file_mutations_and_keeps_each_results_own_diff() 
     model.apply(&AgentEvent::FileChange {
         path: "src/x.rs".into(),
         kind: FK::Modified,
+        added: 1,
+        removed: 0,
         diff: Some("@@ -1,1 +1,1 @@\n+first_diff_line".into()),
     });
     model.apply(&AgentEvent::ToolResult {
@@ -655,6 +668,8 @@ fn ui_transcript_cache_follows_file_mutations_and_keeps_each_results_own_diff() 
     model.apply(&AgentEvent::FileChange {
         path: "src/x.rs".into(),
         kind: FK::Modified,
+        added: 1,
+        removed: 0,
         diff: Some("@@ -1,1 +1,1 @@\n+second_diff_line".into()),
     });
     assert_eq!(model.transcript.len(), len_before, "no transcript append");
@@ -676,6 +691,8 @@ fn ui_transcript_cache_follows_file_mutations_and_keeps_each_results_own_diff() 
         model.apply(&AgentEvent::FileChange {
             path: "src/x.rs".into(),
             kind: FK::Modified,
+            added: 0,
+            removed: 0,
             diff: Some(format!("@@ -1,1 +1,1 @@\n+evicting_edit_{i}")),
         });
     }
@@ -993,11 +1010,21 @@ fn mutation_entry_and_files() -> (TranscriptEntry, Vec<FileState>) {
             seq: 1,
         }),
     };
+    let (added, removed) = crate::diff::count_diff_lines(&diff_text);
     let files = vec![FileState {
         path: "src/x.rs".into(),
         kind: FileChangeKind::Modified,
         latest_diff: Some(diff_text.clone()),
-        recent_diffs: [(1, diff_text)].into_iter().collect(),
+        added,
+        removed,
+        recent_diffs: [crate::model::RememberedDiff {
+            seq: 1,
+            text: diff_text,
+            added,
+            removed,
+        }]
+        .into_iter()
+        .collect(),
         changes: 1,
         reads: 0,
         touched_seq: 1,
@@ -1111,7 +1138,12 @@ fn a_stale_or_unresolvable_diff_ref_renders_no_inline_diff() {
     // never made, so the row degrades to naming its result.
     files[0].changes = crate::model::DIFF_HISTORY as u32 + 1;
     files[0].recent_diffs = (2..=files[0].changes)
-        .map(|seq| (seq, format!("@@ -0,0 +1,1 @@\n+later_edit_{seq}\n")))
+        .map(|seq| crate::model::RememberedDiff {
+            seq,
+            text: format!("@@ -0,0 +1,1 @@\n+later_edit_{seq}\n"),
+            added: 1,
+            removed: 0,
+        })
         .collect();
     let mut out = Vec::new();
     entry_lines(&entry, &files, false, false, false, 120, &mut out);
@@ -1354,6 +1386,8 @@ fn any_event() -> impl Strategy<Value = AgentEvent> {
             } else {
                 FileChangeKind::Modified
             },
+            added: 1,
+            removed: 1,
             diff: Some("@@\n-a\n+b".into()),
         }),
         (any::<f64>(), any::<f64>()).prop_map(|(a, b)| AgentEvent::BudgetTick {

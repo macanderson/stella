@@ -552,6 +552,130 @@ mod tests {
         assert!(!shell_safe("a$(x).test.ts"), "substitution");
     }
 
+    /// Fixture plumbing for the tests that need a real git tree and a real
+    /// code-graph index rather than a mocked importer oracle.
+    async fn git_available() -> bool {
+        tokio::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .await
+            .map(|out| out.status.success())
+            .unwrap_or(false)
+    }
+
+    async fn sh_git(dir: &Path, args: &[&str]) {
+        let out = tokio::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    async fn commit_fixture(dir: &Path) {
+        sh_git(dir, &["init", "--quiet"]).await;
+        for (key, value) in [
+            ("user.email", "test@example.com"),
+            ("user.name", "Test"),
+            ("commit.gpgsign", "false"),
+        ] {
+            sh_git(dir, &["config", key, value]).await;
+        }
+        sh_git(dir, &["add", "-A"]).await;
+        sh_git(dir, &["commit", "-q", "-m", "seed"]).await;
+    }
+
+    fn write(root: &Path, rel: &str, content: &str) {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+
+    /// #862's exit criterion, and the one the single-crate test could not
+    /// state: a change inside one workspace crate selects that crate AND the
+    /// crates that transitively reach it through the graph's Rust importer
+    /// edges, while an unrelated crate is left out.
+    ///
+    /// This is the whole difference between narrowing and the loud full-suite
+    /// stand-down: `beta` must be selected because it `use`s the changed
+    /// module cross-crate (an edge that only exists because `rust_resolve`
+    /// walks the workspace layout), and `gamma` must NOT be, because nothing
+    /// connects it. A selector that returned all three would be "correct" in
+    /// the never-under-test sense while buying no narrowing at all.
+    #[tokio::test]
+    async fn a_cross_crate_change_selects_downstream_crates_and_not_unrelated_ones() {
+        if !git_available().await {
+            eprintln!("skipping cross-crate impact test: `git` not available");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        write(
+            ws,
+            "Cargo.toml",
+            "[workspace]\nresolver = \"2\"\nmembers = [\"alpha\", \"beta\", \"gamma\"]\n",
+        );
+        write(
+            ws,
+            "alpha/Cargo.toml",
+            "[package]\nname = \"alpha\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+        );
+        write(ws, "alpha/src/lib.rs", "pub mod util;\n");
+        write(ws, "alpha/src/util.rs", "pub fn helper() -> u32 { 1 }\n");
+        write(
+            ws,
+            "beta/Cargo.toml",
+            "[package]\nname = \"beta\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n\
+             [dependencies]\nalpha = { path = \"../alpha\" }\n",
+        );
+        write(
+            ws,
+            "beta/src/lib.rs",
+            "use alpha::util::helper;\npub fn twice() -> u32 { helper() * 2 }\n",
+        );
+        write(
+            ws,
+            "gamma/Cargo.toml",
+            "[package]\nname = \"gamma\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+        );
+        write(ws, "gamma/src/lib.rs", "pub fn alone() -> u32 { 9 }\n");
+        commit_fixture(ws).await;
+
+        // Change the leaf module inside `alpha`.
+        write(ws, "alpha/src/util.rs", "pub fn helper() -> u32 { 2 }\n");
+
+        match select_impacted(ws).await {
+            ImpactSelection::Selected { tests, changed } => {
+                assert_eq!(changed, 1, "one changed file");
+                assert_eq!(
+                    tests,
+                    vec![
+                        "alpha/src/lib.rs".to_string(),
+                        "alpha/src/util.rs".to_string(),
+                        "beta/src/lib.rs".to_string(),
+                    ],
+                    "the change, its declaring module, and the cross-crate importer"
+                );
+                assert!(
+                    !tests.iter().any(|t| t.starts_with("gamma/")),
+                    "gamma reaches nothing that changed: {tests:?}"
+                );
+                assert_eq!(
+                    cargo_packages(ws, &tests),
+                    Some(vec!["alpha".to_string(), "beta".to_string()]),
+                    "the `-p` selection is the two crates that can see the change"
+                );
+            }
+            other => panic!("a Rust change must narrow, not stand down: {other:?}"),
+        }
+    }
+
     #[test]
     fn porcelain_parse_handles_renames_and_short_lines() {
         let out = " M src/x.ts\n?? new.test.ts\nR  old.ts -> moved.ts\n\nX\n";

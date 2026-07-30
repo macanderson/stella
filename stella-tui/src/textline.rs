@@ -905,6 +905,8 @@ mod tests {
             AgentEvent::FileChange {
                 path: "a.rs".into(),
                 kind: FileChangeKind::Created,
+                added: 0,
+                removed: 0,
                 diff: None,
             },
             AgentEvent::ContextRecall {
