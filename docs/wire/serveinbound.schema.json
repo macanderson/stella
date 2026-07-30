@@ -1,0 +1,384 @@
+{
+  "$defs": {
+    "ProviderResultIn": {
+      "$defs": {
+        "CompletionResult": {
+          "description": "The result of a completion.",
+          "properties": {
+            "cost_usd": {
+              "description": "Estimated provider cost in USD (0 for on-device/local).",
+              "format": "double",
+              "type": "number"
+            },
+            "finish_reason": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/FinishReason"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Why generation stopped, when the adapter can determine it. `None` when\nthe provider doesn't report it. `serde(default)` so envelopes\nserialized before this field existed still parse."
+            },
+            "model": {
+              "description": "Concrete model id/slug that produced the result, resolved from the\ncatalog — never a literal at the call site.",
+              "type": "string"
+            },
+            "text": {
+              "default": "",
+              "description": "The answer text, assembled from the stream. Empty when the model\nonly made tool calls.",
+              "type": "string"
+            },
+            "tool_calls": {
+              "description": "Tool calls the model requested, in the order it made them.",
+              "items": {
+                "$ref": "#/$defs/ToolCall"
+              },
+              "type": "array"
+            },
+            "usage": {
+              "$ref": "#/$defs/CompletionUsage",
+              "description": "Token accounting for this call ([`CompletionUsage`])."
+            }
+          },
+          "required": [
+            "usage",
+            "model",
+            "cost_usd"
+          ],
+          "type": "object"
+        },
+        "CompletionUsage": {
+          "description": "Token accounting for a single completion, normalized across providers\ninto one envelope: normalization lives in the adapter, not the caller.",
+          "properties": {
+            "cache_write_tokens": {
+              "default": 0,
+              "description": "Tokens WRITTEN to the provider's prompt cache by this call\n(Anthropic `cache_creation_input_tokens`, Bedrock\n`cacheWriteInputTokens`). Unlike `cached_input_tokens` this is NOT a\nsubset of `input_tokens` — providers report writes separately, and\nfolding them into `input_tokens` would change cost accounting\n(`Pricing::cost_usd` carries no cache-write rate). 0 for providers\nthat never report cache writes (the OpenAI-compatible dialects).\n`serde(default)` so envelopes serialized before this field existed\nstill parse.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "cached_input_tokens": {
+              "default": 0,
+              "description": "The subset of `input_tokens` served from the provider's prompt cache\n— billed at the cache-read rate, not the input rate. 0 for providers\nthat never report a cache hit.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "input_tokens": {
+              "description": "Tokens the prompt cost, cache hits included.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "output_tokens": {
+              "description": "Tokens the model generated.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "reported": {
+              "default": false,
+              "description": "The adapter observed the provider's authoritative usage-bearing\nterminal response. This is explicit because a legitimate call can\nreport all zero counters, while a missing usage frame can accompany\nnon-empty streamed text. Legacy envelopes fail closed.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "input_tokens",
+            "output_tokens"
+          ],
+          "type": "object"
+        },
+        "FinishReason": {
+          "description": "Why the model stopped generating, normalized across providers. Lets the\nengine tell a natural stop from a truncation (`Length`) so an empty or\ncut-off turn is surfaced to the user instead of being recorded as a clean\ncompletion (the \"turn ends with no feedback\" defect).",
+          "oneOf": [
+            {
+              "const": "stop",
+              "description": "Natural end of the response.",
+              "type": "string"
+            },
+            {
+              "const": "length",
+              "description": "Output was cut off at the token limit (OpenAI-compatible `length`).",
+              "type": "string"
+            },
+            {
+              "const": "tool_calls",
+              "description": "The model stopped in order to make tool calls.",
+              "type": "string"
+            },
+            {
+              "const": "content_filter",
+              "description": "A provider content filter halted generation.",
+              "type": "string"
+            }
+          ]
+        },
+        "ProviderErrorWire": {
+          "description": "Serializable mirror of [`ProviderError`]'s taxonomy. The host classifies the\nfailure at its adapter (never re-derived here) and sends the class; the\nengine reconstructs a real [`ProviderError`] so its retry logic behaves\nexactly as it would with a local provider.",
+          "oneOf": [
+            {
+              "properties": {
+                "kind": {
+                  "const": "transport",
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "message"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "rate_limited",
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "retry_after_ms": {
+                  "default": null,
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "message"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "auth",
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "message"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "unknown_model",
+                  "type": "string"
+                },
+                "slug": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "slug"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "malformed",
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "message"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "cancelled",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "terminal",
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "message"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "ToolCall": {
+          "description": "One tool invocation the model requested.",
+          "properties": {
+            "call_id": {
+              "description": "Stable id correlating this call to its eventual `ToolResult`.",
+              "type": "string"
+            },
+            "input": {
+              "description": "The arguments, as the model produced them. Runtime data: validate\nagainst [`ToolSchema::input_schema`] rather than trusting the shape."
+            },
+            "name": {
+              "description": "Which tool to run — matches the [`ToolSchema::name`] it was chosen\nfrom.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "call_id",
+            "name",
+            "input"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Host → engine: the result of a [`ServerFrame::ProviderRequest`] — either a\ncompleted model response or a classified provider error.",
+      "oneOf": [
+        {
+          "properties": {
+            "result": {
+              "$ref": "#/$defs/CompletionResult"
+            },
+            "status": {
+              "const": "ok",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error": {
+              "$ref": "#/$defs/ProviderErrorWire"
+            },
+            "status": {
+              "const": "error",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "error"
+          ],
+          "type": "object"
+        }
+      ],
+      "properties": {
+        "request_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id"
+      ],
+      "title": "ProviderResultIn",
+      "type": "object"
+    },
+    "ToolResultIn": {
+      "$defs": {
+        "ToolOutput": {
+          "description": "The output of running a tool — success or a typed, named failure. Never a\nbare string: every tool result is inspectable without string-sniffing.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "The tool ran to completion.",
+              "properties": {
+                "ok": {
+                  "properties": {
+                    "content": {
+                      "description": "What the tool produced, as the model will read it.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "content"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "ok"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "The tool failed.",
+              "properties": {
+                "error": {
+                  "properties": {
+                    "message": {
+                      "description": "Why it failed, phrased so the model can act on it — the model\nsees this text and retries against it.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Host → engine: the result of a [`ServerFrame::ToolRequest`].",
+      "properties": {
+        "output": {
+          "$ref": "#/$defs/ToolOutput"
+        },
+        "request_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "output"
+      ],
+      "title": "ToolResultIn",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Bodies a host POSTs back to answer a reverse request. ToolResultIn answers POST /v1/turns/{id}/tool-result; ProviderResultIn answers POST /v1/turns/{id}/provider-result. Each is keyed by the request_id carried on the frame it answers. This document is a definitions container, not a union: the two are not interchangeable and carry no discriminant.",
+  "title": "StellaServeInbound"
+}

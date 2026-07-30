@@ -47,13 +47,20 @@ trap 'rm -rf "$tmp"' EXIT
 # shown on failure — a green gate should say one line.
 if ! build_log="$(cargo run --quiet -p stella-protocol --features schema \
   --bin export-wire-schema -- "$tmp" 2>&1)"; then
-  echo "check-wire-schema: FAIL — the exporter did not run." >&2
+  echo "check-wire-schema: FAIL — the AgentEvent exporter did not run." >&2
+  printf '%s\n' "$build_log" >&2
+  exit 1
+fi
+if ! build_log="$(cargo run --quiet -p stella-serve --features schema \
+  --bin export-serve-schema -- "$tmp" 2>&1)"; then
+  echo "check-wire-schema: FAIL — the serve-frame exporter did not run." >&2
   printf '%s\n' "$build_log" >&2
   exit 1
 fi
 
 status=0
-for artifact in agentevent.schema.json agentevent.d.ts; do
+for artifact in agentevent.schema.json agentevent.d.ts \
+                serveframe.schema.json serveinbound.schema.json serveframe.d.ts; do
   if [ ! -f "$committed/$artifact" ]; then
     echo "check-wire-schema: FAIL — $committed/$artifact is missing." >&2
     status=1

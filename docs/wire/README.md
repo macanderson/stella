@@ -1,4 +1,4 @@
-# The `AgentEvent` wire contract
+# The wire contract
 
 Generated files. Do not edit them by hand.
 
@@ -6,10 +6,32 @@ Generated files. Do not edit them by hand.
 | --- | --- |
 | `agentevent.schema.json` | JSON Schema 2020-12 for `AgentEvent` and its whole payload graph |
 | `agentevent.d.ts` | The same contract as TypeScript declarations |
+| `serveframe.schema.json` | JSON Schema for `ServerFrame`, the `stella-serve` transport envelope |
+| `serveinbound.schema.json` | The two bodies a host POSTs back to answer a reverse request |
+| `serveframe.d.ts` | Both of the above as TypeScript, plus the `seq` envelope |
 
-Both are derived from `stella-protocol/src/event.rs` and committed, so a change
-to the wire format lands as a reviewable diff instead of as something a
-consumer discovers.
+All are derived from the Rust types and committed, so a change to the wire
+format lands as a reviewable diff instead of as something a consumer discovers.
+
+**Two contracts, deliberately separate.** `AgentEvent` is the *payload*, and it
+has three consumers at once — the TUI, `--output-format stream-json`, and the
+server. `ServerFrame` is the *envelope*, and exists only between `stella-serve`
+and its host. Publishing them as one artifact would imply a coupling that is
+not there and make a transport change read as a change to the CLI's output
+format. They share one TypeScript printer
+(`stella_protocol::schema_export`), so there is one subset of JSON Schema to
+keep in step rather than two.
+
+## The one hand-written line, and why it is safe
+
+`seq` is added by the transport at delivery time, not by the engine, so no
+derive on `ServerFrame` describes it — which makes
+`StellaWireFrame = ServerFrame & { seq: number }` the single hand-written type
+in these artifacts. It is pinned by `envelope_pin` in
+`stella-serve/src/history.rs`, which serializes a real frame through the real
+encoder and asserts the wire object is exactly the frame's own keys plus
+`seq`. If that ever stops being true, the test fails rather than the artifact
+quietly lying.
 
 ## 1. Why this directory exists
 

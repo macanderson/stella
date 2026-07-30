@@ -412,3 +412,89 @@ mod tests {
         assert_eq!(history.lock().last_seq, 100);
     }
 }
+
+#[cfg(test)]
+mod envelope_pin {
+    //! The one line of `docs/wire/serveframe.d.ts` that is hand-written.
+    //!
+    //! Everything else in that artifact is printed from the types, so it cannot
+    //! drift. `StellaWireFrame = ServerFrame & { seq: number }` cannot be:
+    //! `seq` is added by the transport at delivery time, so no derive on
+    //! `ServerFrame` describes it. These tests are what stop that one line from
+    //! becoming the drift the whole exercise exists to prevent.
+
+    use super::*;
+    use crate::frame::TurnOutcomeWire;
+
+    fn keys(json: &str) -> Vec<String> {
+        let value: serde_json::Value = serde_json::from_str(json).expect("valid JSON on the wire");
+        let mut keys: Vec<String> = value
+            .as_object()
+            .expect("a frame is a JSON object")
+            .keys()
+            .cloned()
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    /// The wire object is exactly the frame's own keys plus `seq` — no
+    /// envelope, no nesting. A client typed as `ServerFrame & { seq: number }`
+    /// is therefore describing what actually arrives.
+    #[test]
+    fn envelope_shape_is_frame_plus_seq() {
+        let frame = ServerFrame::TurnComplete {
+            outcome: TurnOutcomeWire::Completed {
+                text: "done".to_string(),
+                cost_usd: 0.5,
+            },
+        };
+        let bare = serde_json::to_string(&frame).expect("frames serialize");
+        let bare_keys = keys(&bare);
+
+        let (json, unencodable) = encode_seq_frame(
+            42,
+            ServerFrame::TurnComplete {
+                outcome: TurnOutcomeWire::Completed {
+                    text: "done".to_string(),
+                    cost_usd: 0.5,
+                },
+            },
+        );
+        assert!(unencodable.is_none());
+        let mut expected = bare_keys.clone();
+        expected.push("seq".to_string());
+        expected.sort();
+        assert_eq!(
+            keys(&json),
+            expected,
+            "the wire frame must be the frame's own keys plus `seq`, or the \
+             hand-written `StellaWireFrame` intersection in \
+             docs/wire/serveframe.d.ts is wrong: {json}"
+        );
+
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["seq"], 42);
+        assert_eq!(
+            value["type"], "turn_complete",
+            "`seq` must not displace the discriminant a client switches on"
+        );
+    }
+
+    /// `seq` is a number in JSON, not a string — `Last-Event-ID` arrives as
+    /// text and a client that round-trips it must parse, so the two spellings
+    /// have to be pinned apart.
+    #[test]
+    fn seq_is_a_json_number() {
+        let (json, _) = encode_seq_frame(
+            7,
+            ServerFrame::Event {
+                event: stella_protocol::AgentEvent::TextDelta {
+                    text: "hi".to_string(),
+                },
+            },
+        );
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(value["seq"].is_u64(), "seq must be a number: {json}");
+    }
+}

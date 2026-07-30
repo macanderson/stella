@@ -1,0 +1,2964 @@
+{
+  "$defs": {
+    "AgentEvent": {
+      "description": "One event in the turn's stream. Every stage boundary emits an event;\nnothing user-visible is derived from internal state that isn't also in\nthis stream.\n\n`remote = \"Self\"` keeps the derived codec as a pair of *inherent*\nassociated functions instead of the trait impls, so the hand-written\n[`Serialize`]/[`Deserialize`] impls below can delegate to it after routing\n[`AgentEvent::Unknown`] around it. Without that indirection the forward-\ncompat fallback would mean hand-writing a visitor for all 34 variants.",
+      "oneOf": [
+        {
+          "description": "The turn entered a new pipeline stage. Every stage boundary emits one,\nin the order the pipeline walks them.",
+          "properties": {
+            "name": {
+              "$ref": "#/$defs/StageKind"
+            },
+            "type": {
+              "const": "stage",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "name"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The step's answer text, in full — the authoritative, durable record.\nThe field name `delta` is wire-frozen legacy and does NOT mean a\nfragment: the live fragments are [`AgentEvent::TextDelta`], which the\njournal deliberately drops. Consumers must REPLACE any accumulated\npreview with this value, never append it to one.",
+          "properties": {
+            "delta": {
+              "type": "string"
+            },
+            "type": {
+              "const": "text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "delta"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "One in-order fragment of the answer text, emitted live while the\nmodel call streams. Strictly a best-effort preview: the step's\nfollowing `Text` event carries the full text and is authoritative —\nconsumers must REPLACE any accumulated deltas with it, never merge\n(a retried model call re-streams its deltas from the start, so the\naccumulation can be garbled; there is no reset marker). Additive to\nthe stream-json wire contract: consumers must tolerate `text_delta`\nlines appearing between events, and persistence layers may drop them\n(the `Text` event is the durable record).",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "const": "text_delta",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "One in-order fragment of the model's thinking/extended-reasoning\nstream, for the providers that expose it. Unlike [`AgentEvent::Text`]\nthis really is a fragment — consumers accumulate, and the journal\ncoalesces a consecutive run into one record.",
+          "properties": {
+            "delta": {
+              "type": "string"
+            },
+            "type": {
+              "const": "reasoning",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "delta"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The model requested a tool call and the engine is about to run it. The\nmatching [`AgentEvent::ToolResult`] correlates by `call.call_id`.",
+          "properties": {
+            "call": {
+              "$ref": "#/$defs/ToolCall"
+            },
+            "type": {
+              "const": "tool_start",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "call"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A tool call finished, successfully or not — `output` is the typed\n[`ToolOutput`], never a bare string, so a failure is inspectable\nwithout sniffing prose. Correlates to its [`AgentEvent::ToolStart`] by\n`call_id`.",
+          "properties": {
+            "call_id": {
+              "type": "string"
+            },
+            "duration_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "output": {
+              "$ref": "#/$defs/ToolOutput"
+            },
+            "speculated": {
+              "default": false,
+              "description": "True when this result was produced by speculative execution: the\ncall was read-only and began executing while the model was still\nstreaming the rest of its response, so `duration_ms` (the real\nexecution time) overlapped the model call instead of following\nit. `serde(default)` so streams recorded before this field parse.",
+              "type": "boolean"
+            },
+            "type": {
+              "const": "tool_result",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "call_id",
+            "output",
+            "duration_ms"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A speculatively-executed read-only call (`stella-core::speculation`)\nwhose result never reached the transcript: its stream attempt failed\nand the pool was dropped, or the committed call diverged from what\nwas announced so the pooled result was rejected at harvest. The\ntool's real I/O still ran — this is the event-log's record of that\nwork, so call counts reconcile with what actually executed rather\nthan silently diverging. `reason` is a short stable token\n(`\"attempt_failed\"`, `\"harvest_mismatch\"`). Additive to the wire\ncontract: consumers recorded before speculation existed never see it.",
+          "properties": {
+            "call_id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "type": {
+              "const": "speculation_discarded",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "call_id",
+            "name",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A model call is being retried with backoff. Flushed only for steps\nthat COMMIT — a step that exhausts its retries reports the whole\ndoomed sequence through [`AgentEvent::RetriesExhausted`] instead.",
+          "properties": {
+            "attempt": {
+              "description": "1-indexed ordinal of the attempt that FAILED and triggered this\nretry — the initial call is attempt 1 (mirrors\n`stella-core::retry::RetryAttempt::attempt`).",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "type": {
+              "const": "retry",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "attempt",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A user message queued mid-turn was injected at a step boundary\n(`stella-core` steering) — the transcript's record that the model\nwas steered, and when.",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "const": "steered",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Loop detection fired (receipts spec §6.3, #364 gap 3): the typed\ntwin of the prose steer/abort, so receipts can parse the decision\ninstead of string-matching an `Error` prefix. Emitted on BOTH\noutcomes — the first detection steers (`aborted: false`) and a\ndetection that persists past the warning aborts (`aborted: true`).\nAdditive to the wire contract: older consumers never see it.",
+          "properties": {
+            "aborted": {
+              "description": "`false`: first detection, the turn was steered and continues.\n`true`: detection persisted after the warning, the turn aborted.",
+              "type": "boolean"
+            },
+            "evidence": {
+              "description": "The human-readable evidence — same text the paired\n`Steered`/`Error` carries.",
+              "type": "string"
+            },
+            "kind": {
+              "description": "`\"exact_repeat\"` | `\"short_cycle\"` — mirrors\n`stella-core::loop_detect::LoopVerdict` (kept as a string here so\n`stella-protocol` never depends on `stella-core`).",
+              "type": "string"
+            },
+            "pattern": {
+              "description": "Tool names of the repeated signature, in cycle order (one entry\nfor an exact repeat).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "repeats": {
+              "description": "Consecutive identical calls (exact repeat) or full cycles (short\ncycle) observed.",
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "turn_instance": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "loop_detected",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "turn_instance",
+            "kind",
+            "pattern",
+            "repeats",
+            "evidence",
+            "aborted"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "An enforced budget stopped the turn (receipts spec §6.3, #364 gap\n3): the typed twin of the prose \"budget exceeded\" `Error`. Only ever\nemitted in `BudgetMode::Enforced` — observed mode warns without\ndenying.",
+          "properties": {
+            "limit_usd": {
+              "format": "double",
+              "type": "number"
+            },
+            "mode": {
+              "$ref": "#/$defs/BudgetMode"
+            },
+            "scope": {
+              "$ref": "#/$defs/BudgetScope",
+              "description": "Which limit tripped."
+            },
+            "spent_usd": {
+              "format": "double",
+              "type": "number"
+            },
+            "type": {
+              "const": "budget_denied",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "scope",
+            "spent_usd",
+            "limit_usd",
+            "mode"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A model call failed terminally after exhausting its retries\n(receipts spec §6.3, #364 gap 3). The per-attempt reasons were\npreviously lost on the failure path — `Retry` events only flush for\nsteps that COMMIT — so this is the durable record of the doomed\nattempts. Emitted just before the paired `Error`.",
+          "properties": {
+            "attempts": {
+              "description": "Total dispatched attempts that failed (the initial call plus\nevery retry). Equals `reasons.len()`.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "reasons": {
+              "description": "Per-attempt failure reasons, oldest first.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "turn_instance": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "retries_exhausted",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "turn_instance",
+            "attempts",
+            "reasons"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "One decision from the extension/policy audit plane bridged into the\nevent stream (receipts spec §6.4, #364 gap 6). The `HookBus` audit\nevents (`policy.evaluated`/`policy.blocked`, `approval.requested`,\n`secret.detected`) were process-ephemeral — hosts map them onto this\nvariant so the journal carries the policy plane too. Content-free by\ndesign: `subject` names the tool/capability/path, NEVER a secret\nvalue or file contents.",
+          "properties": {
+            "kind": {
+              "$ref": "#/$defs/PolicyKind"
+            },
+            "outcome": {
+              "description": "Short outcome token — e.g. `\"allow\"`, `\"deny\"`, `\"modify\"`, a\ndetector's kind list — never content.",
+              "type": "string"
+            },
+            "subject": {
+              "description": "The tool name, capability, or workspace-relative path the\ndecision was about.",
+              "type": "string"
+            },
+            "type": {
+              "const": "policy_decision",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "kind",
+            "subject",
+            "outcome"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A compaction pass ran (`stella-core::compaction`). Fields mirror\n`CompactionReport` — kept as a flat struct here (not a re-exported\ntype) so `stella-protocol` never depends on `stella-core` (dependency\ndirection: core depends on protocol, never the reverse).",
+          "properties": {
+            "after_tokens": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "aged": {
+              "default": 0,
+              "description": "Large old outputs middle-out truncated instead of dropped whole.",
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "aged_blocks": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "before_tokens": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "calibration_factor": {
+              "default": 0.0,
+              "description": "The per-model calibration factor the pass divided by. `serde(default)`\nmakes this `0.0` on a pre-receipt journal, which is a sentinel, NOT a\nfactor: recovering the raw budget as `effective * factor` yields 0 and\ndividing by it yields infinity. A consumer must read `0.0` as \"this\njournal predates calibration\" and skip the derivation, exactly as it\nreads `effective_budget_tokens == 0`. (The identity factor is `1.0`;\nthe default cannot be changed to it without rewriting how every\nalready-written journal decodes.)",
+              "format": "double",
+              "type": "number"
+            },
+            "deduped": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "deduped_blocks": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "effective_budget_tokens": {
+              "default": 0,
+              "description": "The budget this pass actually compared against — the raw compaction\nbudget divided by the model's calibration factor — and that factor.\nThe event's `before/after_tokens` are raw estimates; these are the\nnumbers the eviction loop's stopping condition used, so the receipt\nlines up with the decision (#364 item 1). `0` on pre-receipt journals.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "evicted": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "evicted_blocks": {
+              "description": "The `block_id`s each pass stubbed (spec §6.2) — identities, not just\ncounts, so the receipt records *which* blocks left context and a\nlater pass can prove a block was evicted before it was ever cited or\nreferenced (the wasted-carry signal). For the pure passes each vec's\nlength equals its count field (`summarized_blocks` is the documented\nexception). `serde(default)` — absent on pre-identity journals.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "summarized": {
+              "default": 0,
+              "description": "Messages replaced by a model-written history summary — the\noverflow fallback when eviction alone cannot reach budget.",
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "summarized_blocks": {
+              "description": "The `block_id`s of the tool-result blocks folded into an\noverflow-summary splice (spec §6.2). Unlike the pure passes — which\nstub tool-result blocks one-for-one, so their vec length equals the\ncount — the summary replaces a whole message span whose `summarized`\ncount also covers user/assistant text carrying no block identity;\nthis vector is the identity-bearing (tool-result) subset that left\ncontext, so `summarized_blocks.len()` may be less than `summarized`.\n`serde(default)` — absent on pre-identity journals.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "superseded": {
+              "default": 0,
+              "description": "Older results of a repeated identical call, stubbed as stale.\n`serde(default)` so journals written before these fields parse.",
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "superseded_blocks": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "compaction",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "before_tokens",
+            "after_tokens",
+            "evicted",
+            "deduped"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Emitted after every provider/media call that spends money. The TUI HUD\nrenders spend live from this stream; nothing user-visible about spend\nis derived from state that isn't also in this event.",
+          "properties": {
+            "limit_usd": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "mode": {
+              "$ref": "#/$defs/BudgetMode"
+            },
+            "session_limit_usd": {
+              "default": null,
+              "description": "The configured per-session limit, when one is set. `None` mirrors\n`session_spent_usd`.",
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "session_spent_usd": {
+              "default": null,
+              "description": "Session-scoped spend at this tick — `spent_usd`/`limit_usd` are\nturn-scoped, so a HUD cannot otherwise reconstruct session state\n(or see a session-axis breach) from this stream. `None` when the\nemitter does not track a session axis, and on events serialized\nbefore these fields existed (hence `serde(default)`, so older\nstreams still parse).",
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "spent_usd": {
+              "format": "double",
+              "type": "number"
+            },
+            "type": {
+              "const": "budget_tick",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "spent_usd",
+            "mode"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "One committed model call — the metering record. Emitted exactly once\nper step that lands, carrying the normalized usage envelope plus\neverything a metering/billing pipeline needs to price and audit the\ncall; aggregate a turn by summing its `StepUsage` events.",
+          "properties": {
+            "cache_write_tokens": {
+              "default": 0,
+              "description": "Tokens written to the provider's prompt cache by this call\n(`CompletionUsage::cache_write_tokens`). Reported separately from\n`input_tokens`, never a subset of it. `0` when the provider does\nnot report cache writes (the OpenAI-compatible dialects) — hence\n`serde(default)`, so streams serialized before this field existed\nstill parse.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "cached_input_tokens": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "complete": {
+              "default": false,
+              "description": "Whether the provider supplied a truthful usage envelope. Missing\nlegacy values fail closed to `false`.",
+              "type": "boolean"
+            },
+            "cost_usd": {
+              "format": "double",
+              "type": "number"
+            },
+            "duration_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "estimated_input_tokens": {
+              "default": 0,
+              "description": "The engine's RAW (uncalibrated) pre-call estimate of the input it\nsent — paired with `input_tokens` this is one drift sample, the\nfeedback that calibrates future estimates per model\n(`stella-core::estimator::Calibration`). Raw by contract:\nconsumers rebuild the correction from these pairs, and a\ncorrected estimate here would compound the correction on every\nround trip. `0` means no estimate was taken (pre-drift emitters —\nhence `serde(default)`, so old streams still parse).",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "input_tokens": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "model": {
+              "type": "string"
+            },
+            "output_text": {
+              "description": "Authoritative model output for calls that do not emit a separate\n[`AgentEvent::Text`] (pipeline management and compaction calls).\nExecute calls leave this `None`, avoiding duplicate transcript\ntext while keeping older event consumers compatible.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "output_tokens": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "provider": {
+              "default": "",
+              "description": "Provider which actually served this call, never the session's\nconfigured default. Empty only on legacy events.",
+              "type": "string"
+            },
+            "retries": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "role": {
+              "$ref": "#/$defs/ModelCallRole",
+              "default": "unknown",
+              "description": "Exact call purpose. Missing legacy values deserialize as\n[`ModelCallRole::Unknown`]."
+            },
+            "step": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tool_calls": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "step_usage",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "step",
+            "model",
+            "input_tokens",
+            "output_tokens",
+            "cached_input_tokens",
+            "cost_usd",
+            "duration_ms",
+            "retries",
+            "tool_calls"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A provider call failed or timed out after dispatch, so local accounting\ncannot prove that no billable work occurred. Content-free by design.",
+          "properties": {
+            "duration_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "model": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/UsageIncompleteReason"
+            },
+            "retries": {
+              "description": "Number of retries completed before the failure, when known.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "role": {
+              "$ref": "#/$defs/ModelCallRole"
+            },
+            "type": {
+              "const": "usage_incomplete",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "role",
+            "provider",
+            "model",
+            "reason",
+            "duration_ms"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A judge model's assessment of a goal-driven loop after one working\nround. `met == true` ends the loop; `met == false` feeds `reasoning`\nback to the worker as course-correction. `cost_usd` is the judge\ncall's own spend.",
+          "properties": {
+            "cost_usd": {
+              "format": "double",
+              "type": "number"
+            },
+            "met": {
+              "type": "boolean"
+            },
+            "reasoning": {
+              "type": "string"
+            },
+            "round": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "goal_verdict",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "round",
+            "met",
+            "reasoning",
+            "cost_usd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A provider's circuit breaker opened and the router fell back to the\nnext configured provider of the same role's tier. Never silent\n(L-M7) — no mid-turn family switch happens without this event.",
+          "properties": {
+            "from": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            },
+            "type": {
+              "const": "provider_fallback",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "from",
+            "to",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A file was read/created/modified/deleted by the agent, carrying both\nthe authoritative line delta and a diff for display.\n\nThe single emission point is `ToolRegistry::record_touch` — the same\nplace that writes the session's file-touch ledger and its telemetry\npayload — so the TUI, the audit log and the exported JSON can no longer\ndisagree about what a turn changed. (This doc once claimed one emission\npoint \"by construction\" while the deck in fact synthesized its own\nevents from tool inputs, in a wrapper that knew only four tool names and\nsat on one of three tool stacks. Files edited in bulk, or by a worker\nlane, were reported as `+0 -0`.)\n\n`added`/`removed` are the counts the recorder derived from the real pre-\nand post-images (`file_touch::line_diff`). Consumers **must** use them\nrather than counting `+`/`-` lines in `diff`: the diff is a bounded,\ndeliberately coarse rendering of the changed region, and re-deriving\nfrom it is what made the two disagree. Reads carry `0/0` and no diff;\nconsumers that only care about mutations filter on `kind`.",
+          "properties": {
+            "added": {
+              "default": 0,
+              "description": "`serde(default)` so journals written before the counts existed\nparse — those replay as `0/0`, which is what they recorded.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "diff": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "$ref": "#/$defs/FileChangeKind"
+            },
+            "path": {
+              "type": "string"
+            },
+            "removed": {
+              "default": 0,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "file_change",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "path",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Context recall completed: which frames reached the prompt, from which\nproviders, at what token cost. Every frame carries a human\n`citation_label`, never a raw id (L-C4).",
+          "properties": {
+            "frames": {
+              "items": {
+                "$ref": "#/$defs/ContextFrameRef"
+              },
+              "type": "array"
+            },
+            "latency_ms": {
+              "default": 0,
+              "description": "Wall-clock milliseconds the recall itself took (#875).\n\nRecall sits on the **first-token path of every turn**, so a slow\none delays everything after it — and until this existed, a cold\nstore, a large corpus or a wedged embedding call was\nindistinguishable from a fast recall right up until it became a\ntimeout. Defaulted, so older streams still deserialize; `0` there\nmeans \"not measured\", not \"instant\".",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "provider_mix": {
+              "items": {
+                "$ref": "#/$defs/ProviderShare"
+              },
+              "type": "array"
+            },
+            "tokens": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "context_recall",
+              "type": "string"
+            },
+            "usage": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ContextUsage"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The CGP usage report for this recall (`docs/context-reuse.md` §2):\nper-provider frame counts and token costs against the requested\nbudget, so context cost is meterable rather than merely visible.\nOptional and defaulted — streams recorded before the report existed\nstill deserialize (the additive contract), and a recall path with\nno CGP host behind it has none to report."
+            },
+            "used_ann_index": {
+              "description": "Whether the IVF approximate-nearest-neighbour accelerator fired,\nor `None` when the recall path did not report it. Latency alone\ncannot be acted on: a slow recall with a cold index is a different\nproblem, with a different fix, from one that used the index and\nwas still slow.\n\nTri-state on purpose. `stella-context` knows the answer, but the\nCGP host fan-out production recall goes through does not carry it\nacross the provider-result boundary — closing that is a change to\nthe provider contract, not to this event. A plain `bool` would\nreport `false` on every real turn, which reads as \"the index never\nfires\" rather than \"nobody said\". `None` says what is true.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "frames",
+            "provider_mix",
+            "tokens"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Context write-back completed: episode summaries, fact upserts,\nsupersession (bi-temporal, close-not-delete per L-C3).",
+          "properties": {
+            "provider": {
+              "type": "string"
+            },
+            "superseded": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "context_write",
+              "type": "string"
+            },
+            "upserts": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "type",
+            "provider",
+            "upserts",
+            "superseded"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A context block first became eligible to enter the prompt (spec §4).\nThe birth record that makes the per-step manifest an index over the fold.\n\nDigest, not bytes, for the kinds the journal already carries whole\n(`ToolResult`, `ToolCall`/`ToolStart`, assistant `Text`): those preimages\nare resolved from the originating event at reconstruction time, never\nre-stored. For the two kinds the fold does NOT carry — the system prefix\nand the assembled user/recall message — `content` carries the bytes so\nthe step is reconstructable (spec §5.3). \"Content-free\" is therefore a\nclaim about two specific things and no others: the *export* projection,\nwhich strips `content`, and the *wire shape of journal-resolvable\nkinds*, which never carry bytes at all. It is **not** a claim about this\nevent stream, which gap-kind blocks do put prompt bytes on: everything\nemitted here also reaches `--output-format stream-json` on stdout and\nany durable stream file configured behind it. Treat a raw event stream\nas carrying prompt content and redirect it accordingly. Additive:\nconsumers recorded before receipts existed simply never see this event.",
+          "properties": {
+            "block_id": {
+              "description": "`blk_<24 hex of sha256(kind \\0 content)>`. Byte-identical blocks\nshare an id, so dedup/supersession become identities not counts.",
+              "type": "string"
+            },
+            "citation_label": {
+              "description": "Human label for recall frames / memory nodes, when the block has one.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "content": {
+              "description": "The preimage for gap kinds the journal cannot resolve (the system\nprefix, the assembled user/recall message). `None` for\njournal-resolvable kinds (tool I/O, assistant text) — those never\ncarry bytes here. Redacted by the content-free export projection,\nbut present on the live event stream, so it reaches stream-json\nstdout: this is the one field on `AgentEvent` that can carry raw\nprompt text, and the only thing keeping it off a remote sink is\nwhere the operator points the stream.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "content_digest": {
+              "description": "`\"sha256:<full hex>\"` — verifies the preimage on reconstruction.",
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/$defs/BlockKind"
+            },
+            "origin": {
+              "$ref": "#/$defs/BlockOrigin"
+            },
+            "token_cost": {
+              "description": "Estimated tokens at birth (the engine's estimator).",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "block_registered",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "block_id",
+            "kind",
+            "origin",
+            "token_cost",
+            "content_digest"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The ordered receipt of exactly what the model saw on one step (spec §5):\nthe block sequence sent, in wire order, plus the budget the compaction\npass actually compared against this step. Emitted immediately before the\nstep's model call commits. Content-free (block ids + small ints); the\npreimages are resolved from the fold at inspection time. This is the\nrecord that makes any past step reconstructable and auditable.",
+          "properties": {
+            "blocks": {
+              "description": "Blocks in wire order; index 0 is the system prefix.",
+              "items": {
+                "$ref": "#/$defs/ManifestEntry"
+              },
+              "type": "array"
+            },
+            "calibration_factor": {
+              "description": "The per-model calibration factor applied to the raw budget.",
+              "format": "double",
+              "type": "number"
+            },
+            "call_seq": {
+              "default": 0,
+              "description": "Disambiguates the several model calls that can share one\n`(turn_instance, step)`. The engine's own worker call is always 0;\nauxiliary calls that ride the same step — the overflow summarizer,\nand the pipeline's triage/judge/plan/guidance roles — take 1, 2, …\nfrom a per-execution counter. Without it a summarizer receipt and\nthe worker receipt it precedes collide on the primary key and the\nauxiliary one is silently replaced. `serde(default)` so manifests\npersisted before this field existed still decode (as the worker 0).",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "compiled_frame": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CompiledContextFrameBuilt"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "This manifest's identity as a **compiled context frame** — ADR 0006\nas amended: the compiled frame is this manifest extended, not a\nparallel aggregate, so its id and hash are fields here rather than a\nsecond record of the same call.\n\n`Some` only when `context.lifecycle.enabled` is on; `None`\notherwise and on every manifest recorded before the frame existed.\nThe hash covers what entered the prompt and deliberately excludes\nthe accounting around it — `provider`, `model`, `call_seq`, the two\nbudget numbers, and each entry's `resident_since_step` — so two runs\nof identical work agree even when served by different models. See\n`stella_core::receipts::compiled_frame` for the exact preimage."
+            },
+            "effective_budget_tokens": {
+              "description": "The budget the compaction pass actually compared against THIS step —\nthe raw budget divided by the model's calibration factor. Evented so\nthe receipt's numbers line up with the decision that was made (the\n`Compaction` event's raw before/after do not, on their own — #364).",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "estimated_input_tokens": {
+              "description": "Sum of block token costs, pre-call (the engine's raw estimate).",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "model": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "role": {
+              "$ref": "#/$defs/ModelCallRole"
+            },
+            "step": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "turn_instance": {
+              "description": "Monotonic per session — groups the steps of one `run_turn`.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "step_manifest",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "turn_instance",
+            "step",
+            "role",
+            "provider",
+            "model",
+            "blocks",
+            "effective_budget_tokens",
+            "calibration_factor",
+            "estimated_input_tokens"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "One observable step of the proof this turn is building for itself.\n\nThe pipeline already decided all of this — it read the diff, bought or\ndeclined a witness, watched a command fail and then pass — and until\nnow kept every step to itself. A run that proves its work looked\nidentical to one that did not, because the only proof artifact on the\nstream was the verdict at the end. These are the intermediate\nobservations, emitted as they are made, so a renderer can show the\nproof accumulating **beside** the work instead of announcing it after.\n\nStrictly observability: no consumer decides anything from these, and\nthe verdict remains the authority on whether the work is verified.",
+          "properties": {
+            "step": {
+              "$ref": "#/$defs/ProofStep"
+            },
+            "type": {
+              "const": "proof",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "step"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A verification verdict — from the deterministic ladder (flip oracle,\ntouched-tests-green) or the model judge (L-E11: deterministic-first;\nmodel judges handle only inconclusive evidence).",
+          "properties": {
+            "evidence": {
+              "$ref": "#/$defs/JudgeEvidence"
+            },
+            "passed": {
+              "type": "boolean"
+            },
+            "type": {
+              "const": "judge_verdict",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "passed",
+            "evidence"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Interactive gate before large plans execute (L-E5): the pipeline\npauses on this event and waits for approval above configured\nthresholds; headless requires a flag to bypass.",
+          "properties": {
+            "proposal": {
+              "$ref": "#/$defs/ScopeProposal"
+            },
+            "type": {
+              "const": "scope_review",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "proposal"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The agent asked the user a multiple-choice question (the `ask_user`\ntool). BINDING renderer contract: present the structured `options`\nAND always exactly one additional free-text option — the user can\nalways answer in their own words, on every question, without the\nmodel having to list that affordance itself. The answer returns as\nthe tool call's ordinary `ToolResult`; there is no separate answer\nevent. Headless runs fail this tool with a named error instead of\nhanging on input that will never arrive.",
+          "properties": {
+            "id": {
+              "description": "Correlates the eventual answer (the ToolResult's `call_id`)\nback to this question.",
+              "type": "string"
+            },
+            "options": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "question": {
+              "type": "string"
+            },
+            "type": {
+              "const": "ask_user",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "question",
+            "options"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A media generation job changed state. Video jobs are async and\nlong-lived; this event is how the TUI shows progress without polling\nshared state (L-T1).",
+          "properties": {
+            "artifact_id": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/$defs/MediaKind"
+            },
+            "state": {
+              "$ref": "#/$defs/MediaJobState"
+            },
+            "type": {
+              "const": "media_progress",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "artifact_id",
+            "kind",
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A media artifact landed under `.stella/artifacts/` with a manifest\nrow.",
+          "properties": {
+            "artifact": {
+              "$ref": "#/$defs/MediaArtifactRef"
+            },
+            "type": {
+              "const": "media_complete",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "artifact"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A commit landed (fleet ledger / pipeline execute stage).",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "sha": {
+              "type": "string"
+            },
+            "type": {
+              "const": "commit",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "sha",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A pull request was opened or changed status (fleet PR/CI monitor).\n`number` and `ci` ride `serde(default)` so streams recorded before\nthey existed still parse (additive-only wire contract).",
+          "properties": {
+            "ci": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CiStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The head commit's aggregate CI verdict, when observed. Absent\nmeans \"not polled yet\", never \"passing\"."
+            },
+            "number": {
+              "description": "The PR number (e.g. 183 for `…/pull/183`). `None` on streams\nrecorded before the field existed or when the monitor could not\nparse one from the URL.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "status": {
+              "$ref": "#/$defs/PrStatus"
+            },
+            "type": {
+              "const": "pr",
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "url",
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The turn's task board changed (an agent called one of the `task_*`\ntools). Carries the FULL board snapshot, not a delta — the render\nfold stays pure and any single event reconstructs the checklist,\nwhich is what makes dead-session replay show the board as it was.",
+          "properties": {
+            "tasks": {
+              "items": {
+                "$ref": "#/$defs/TaskItem"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "task_update",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "tasks"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A bounded child turn started or finished — the `Started`/`Finished`\nbracket IS the attribution for every event emitted between them.\nSee [`crate::subagent_event`] for what the child forwards and what it\ndeliberately drops at that boundary.",
+          "properties": {
+            "phase": {
+              "$ref": "#/$defs/SubAgentPhase"
+            },
+            "type": {
+              "const": "sub_agent",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "phase"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The turn failed. `retryable` is the source's own classification (see\n[`crate::error::ProviderError::is_retryable`]), never re-derived from\n`message` by a consumer.",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "type": {
+              "const": "error",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "message",
+            "retryable"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The turn finished — the stream's terminator, and the only event a\nconsumer may treat as \"nothing more is coming\". `cost_usd` is the\nturn's total spend and `model` the model that served its last committed\ncall; both are summaries of the `StepUsage` events that preceded it, not\na separate source of truth. A turn that fails ends on\n[`AgentEvent::Error`] instead, never on both.",
+          "properties": {
+            "cost_usd": {
+              "format": "double",
+              "type": "number"
+            },
+            "model": {
+              "type": "string"
+            },
+            "type": {
+              "const": "complete",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "model",
+            "cost_usd"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Attachment": {
+      "description": "One multimodal input attached to a user message.",
+      "properties": {
+        "byte_len": {
+          "description": "Payload size in bytes (pre-base64), for display and telemetry.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "media_type": {
+          "description": "MIME type (`image/png`, `application/pdf`, `video/mp4`, …).",
+          "type": "string"
+        },
+        "name": {
+          "description": "Display name — the original filename, or a synthetic one for\nclipboard pastes (`pasted-image.png`).",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/AttachmentSource",
+          "description": "Where the payload actually lives — a path at rest, inline base64 only\nafter the model layer hydrates it for one request."
+        }
+      },
+      "required": [
+        "name",
+        "media_type",
+        "byte_len",
+        "source"
+      ],
+      "type": "object"
+    },
+    "AttachmentSource": {
+      "description": "Where an attachment's payload lives.",
+      "oneOf": [
+        {
+          "description": "The payload is a file on disk, hydrated to bytes only when a provider\nrequest is built. The canonical form for anything persisted.",
+          "properties": {
+            "path": {
+              "description": "Where the payload lives. Resolved by the model layer at hydration\ntime, so a moved or deleted file fails then, not at attach time.",
+              "type": "string"
+            },
+            "type": {
+              "const": "path",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The payload is inline base64 — the post-hydration form the provider\nadapters consume. Never the at-rest form for anything large.",
+          "properties": {
+            "base64": {
+              "description": "The payload, base64-encoded (no data-URI prefix).",
+              "type": "string"
+            },
+            "type": {
+              "const": "data",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "base64"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "BlockKind": {
+      "description": "The semantic kind of one context block — one durable, individually\nattributable unit that can enter the model's prompt. Finer-grained than a\n`CompletionMessage`: a tool message holding several results decomposes into\none `ToolResult` block per `call_id`. See the session-telemetry-receipts\nspec (`docs/design/session-telemetry-receipts-spec.md`, §4). Forward-compat:\nan unknown kind read from a newer emitter deserializes to [`BlockKind::Other`]\nrather than failing the whole event.",
+      "oneOf": [
+        {
+          "const": "system_prefix",
+          "description": "Message index 0 — the stable system prefix, never compacted.",
+          "type": "string"
+        },
+        {
+          "const": "user_goal",
+          "description": "The user's task text.",
+          "type": "string"
+        },
+        {
+          "const": "recalled_frame",
+          "description": "A context frame injected by recall (memory/graph/file).",
+          "type": "string"
+        },
+        {
+          "const": "assistant_text",
+          "description": "Model prose.",
+          "type": "string"
+        },
+        {
+          "const": "tool_call",
+          "description": "An assistant tool-call request.",
+          "type": "string"
+        },
+        {
+          "const": "tool_result",
+          "description": "A tool output (Ok or Error).",
+          "type": "string"
+        },
+        {
+          "const": "steered",
+          "description": "A mid-turn injected user (steering) message.",
+          "type": "string"
+        },
+        {
+          "const": "summary",
+          "description": "An overflow-summarizer replacement span.",
+          "type": "string"
+        },
+        {
+          "const": "attachment",
+          "description": "A multimodal attachment (image/doc/audio/video).",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "A kind this reader does not recognize (written by a newer emitter).\n\nTolerant on the way in, **lossy on the way out**: the original token is\nnot preserved, so re-serializing an event that arrived with a future\nkind writes `\"other\"`. Unlike [`crate::event::AgentEvent::Unknown`], which keeps the\nwhole original object, a proxy or `replay::to_jsonl` that round-trips a\nnewer emitter's `block_registered` rewrites the kind. Widen this enum\nbefore relaying a stream whose kinds matter downstream.",
+          "type": "string"
+        }
+      ]
+    },
+    "BlockOrigin": {
+      "description": "Where a context block came from — the provenance stamped once at a block's\nbirth (spec §4). The join hub: a `RecalledFrame` carries the `memory_id` it\nwas recalled from; a `ToolResult`/`ToolCall` carries its `call_id`.",
+      "properties": {
+        "call_id": {
+          "description": "Tool-call correlation id, for `ToolCall`/`ToolResult` blocks — the\ncall that *first* minted this block. Block ids are content-addressed,\nso two distinct calls with byte-identical output share one id and only\nthe first is registered: this is birth provenance, **not** the complete\nset of calls that carried the block. For \"which calls did this block\nserve at step N\", read [`ManifestEntry::call_id`], which is recorded\nper occurrence.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "memory_id": {
+          "description": "The `nod_…` memory node id, for a `RecalledFrame` that is a memory.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "step": {
+          "description": "The step within that turn.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "turn_instance": {
+          "description": "Monotonic per session — the `run_turn` that produced the block.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "turn_instance",
+        "step"
+      ],
+      "type": "object"
+    },
+    "BudgetMode": {
+      "description": "Budget enforcement mode: `off` (no metering),\n`observed` (meter + warn), `enforced` (hard stop with a clean turn\nabort — never a mid-tool kill).",
+      "oneOf": [
+        {
+          "const": "off",
+          "description": "No metering at all — spend is neither tracked nor reported.",
+          "type": "string"
+        },
+        {
+          "const": "observed",
+          "description": "Spend is metered and a breach warns, but nothing is ever denied.",
+          "type": "string"
+        },
+        {
+          "const": "enforced",
+          "description": "A breach aborts the turn at the next clean boundary.",
+          "type": "string"
+        }
+      ]
+    },
+    "BudgetScope": {
+      "description": "Which budget limit a [`AgentEvent::BudgetDenied`] tripped — mirrors\n`stella-core::budget::BudgetAxis` (kept separate so `stella-protocol`\nnever depends on `stella-core`).",
+      "oneOf": [
+        {
+          "const": "turn",
+          "description": "The per-turn limit — reset at every `run_turn`.",
+          "type": "string"
+        },
+        {
+          "const": "session",
+          "description": "The per-session limit — accumulated across every turn of the session.",
+          "type": "string"
+        }
+      ]
+    },
+    "CacheZone": {
+      "description": "A block's cache position relative to the provider's prompt-cache\nbreakpoints. Stella keeps the system prefix byte-stable and places volatile\nrecall after it (L-E8), so a block's zone is computable from its position at\nmanifest time. A structural hint at emission; reconciled against reported\nusage by cache attribution (spec §7). Forward-compat via [`CacheZone::Other`].",
+      "oneOf": [
+        {
+          "const": "stable_prefix",
+          "description": "At/before the system-block breakpoint — should cache-hit every step.",
+          "type": "string"
+        },
+        {
+          "const": "cacheable",
+          "description": "Before the conversation-tail breakpoint — cacheable across steps.",
+          "type": "string"
+        },
+        {
+          "const": "volatile",
+          "description": "After the last breakpoint — recomputed every step by construction.",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "A zone this reader does not recognize (written by a newer emitter).\nLossy on re-serialization for the same reason [`BlockKind::Other`] is:\nthe original token is not kept, so a relayed manifest entry comes back\nout as `\"other\"`.",
+          "type": "string"
+        }
+      ]
+    },
+    "CiStatus": {
+      "description": "Aggregate CI verdict for a PR's head commit, as observed by the\nfleet monitor (`gh pr checks`). Reconciled against the live source\nbefore rendering, never served from cache alone (L-V3).",
+      "oneOf": [
+        {
+          "const": "pending",
+          "description": "Checks exist but none have started reporting.",
+          "type": "string"
+        },
+        {
+          "const": "running",
+          "description": "At least one check is still running and none have failed.",
+          "type": "string"
+        },
+        {
+          "const": "passing",
+          "description": "Every check reported and all of them succeeded.",
+          "type": "string"
+        },
+        {
+          "const": "failing",
+          "description": "At least one check failed — terminal for this head commit.",
+          "type": "string"
+        }
+      ]
+    },
+    "CompiledContextFrameBuilt": {
+      "description": "Stable-ID payload of `compiled_context_frame_built`.",
+      "properties": {
+        "compiled_frame_id": {
+          "description": "The compiled frame id.",
+          "type": "string"
+        },
+        "frame_hash": {
+          "description": "Its byte-stable frame hash (`sha256:<hex>`).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "compiled_frame_id",
+        "frame_hash"
+      ],
+      "type": "object"
+    },
+    "CompletionMessage": {
+      "description": "One chat message handed to a provider, including any tool calls the\nassistant made or tool results being reported back.",
+      "properties": {
+        "attachments": {
+          "description": "Multimodal inputs (images, documents, audio, video) accompanying a\nuser message. `serde(default)` + skip-when-empty so envelopes\nserialized before this field existed still parse and text-only\nmessages serialize byte-for-byte as they always have (the prompt-cache\nstability contract).",
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
+        "content": {
+          "description": "The message text. Empty on an assistant message that only made tool\ncalls, and on a `Tool` message whose payload rides `tool_results`.",
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/$defs/MessageRole",
+          "description": "Who authored this message."
+        },
+        "tool_calls": {
+          "description": "Tool calls the assistant made in this message.",
+          "items": {
+            "$ref": "#/$defs/ToolCall"
+          },
+          "type": "array"
+        },
+        "tool_results": {
+          "description": "Tool results being reported back, each naming the call it answers.",
+          "items": {
+            "$ref": "#/$defs/ToolResult"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "role"
+      ],
+      "type": "object"
+    },
+    "CompletionRequest": {
+      "description": "A completion request — the same shape regardless of which provider\nadapter ultimately serves it.",
+      "properties": {
+        "effort": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Reasoning effort for models that support a thinking mode."
+        },
+        "max_output_tokens": {
+          "description": "Upper bound on generated tokens. `None` uses the provider default.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "messages": {
+          "description": "The conversation so far, in order, starting with the system message.",
+          "items": {
+            "$ref": "#/$defs/CompletionMessage"
+          },
+          "type": "array"
+        },
+        "params": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GenerationParams"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional sampling/routing overrides ([`GenerationParams`]) — each\nadapter forwards the subset its dialect supports."
+        },
+        "reasoning": {
+          "description": "Whether the model's thinking/extended-reasoning mode is enabled at\nall. `Some(true)` asks the adapter to turn thinking on (at\n`effort`'s level, or the adapter's default level when `effort` is\n`None`); `Some(false)` asks it to suppress thinking; `None` keeps\nthe provider's default behavior (exactly the pre-field wire shape).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "temperature": {
+          "description": "Sampling temperature. `None` uses the provider default.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "tools": {
+          "description": "Tool schemas the model may call, in the engine's one internal shape\n([`ToolSchema`]); each adapter translates to its own dialect.",
+          "items": {
+            "$ref": "#/$defs/ToolSchema"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "messages"
+      ],
+      "type": "object"
+    },
+    "ContextFrameRef": {
+      "description": "A context frame as cited in a `ContextRecall` event. `citation_label`\nis mandatory and human-readable; the raw `id` (when the frame is\nmaterialized at all) belongs only in inspectable detail views, never as\nthe primary identifier (L-C4).",
+      "properties": {
+        "block_id": {
+          "description": "The registry id (`blk_…`) of this frame as a context block, when\nreceipts are enabled. Joins the frame to its manifest membership and,\nfor memory frames, to the write→citation loop (spec §5.3, §9). Absent on\nstreams recorded before receipts existed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "citation_label": {
+          "description": "The human-readable citation every surface renders, e.g.\n`engine step-driver (driver.rs)`. Mandatory by design (L-C4).",
+          "type": "string"
+        },
+        "content_digest": {
+          "description": "`\"sha256:<hex>\"` of the exact injected text. The digest rides the wire;\nthe content itself is journaled only locally (never exported), closing\nthe recall-content gap G1 without widening the content-free export.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "The provider's own frame id, when the frame was materialized at all.\nA detail-view identifier only — never the primary one a surface shows.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "The protocol frame kind (`symbol`, `memory`, `graph`, ...).",
+          "type": "string"
+        },
+        "method": {
+          "description": "The most-derived provenance method, when declared.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "description": "The CGP provider leg that returned the frame. Empty only when reading\na stream recorded before provider provenance was added.",
+          "type": "string"
+        },
+        "source": {
+          "description": "The original source named by the frame's provenance chain. This is\ndeliberately distinct from [`Self::provider`]: a host adapter may be\n`workspace-memory` while the record source remains `stella-context`.",
+          "type": "string"
+        },
+        "token_cost": {
+          "description": "The engine's estimate of what injecting this frame cost the prompt.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "uri": {
+          "description": "Canonical source URI when the frame supplied one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "citation_label",
+        "source",
+        "token_cost"
+      ],
+      "type": "object"
+    },
+    "ContextProviderUsage": {
+      "description": "One provider's contribution to a recall's cost, as the CGP usage report\ndefines it (`docs/context-reuse.md` §2 `ProviderUsage`).\n\nDistinct from [`ProviderShare`], which counts only the frames that *won*\nfusion and reached the prompt. This counts what the provider **served to\nthe host** and what the host **rejected** (a budget lie, a consent gate, a\nfailed leg), with the token cost behind each — the difference between \"what\ndid the model see?\" and \"what did this turn cost, and who drove it?\".\n\nContent-free by construction: a provider id, three numbers. No frame\ntitles, bodies, URIs, or query text ever enter this type.",
+      "properties": {
+        "frames_rejected": {
+          "description": "Frames the host dropped whole, e.g. a provider that misdeclared cost.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "frames_served": {
+          "description": "Frames accepted — they passed consent, the timeout, and the\nbudget-honesty audit.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "provider_id": {
+          "description": "The host's routing/consent key for the serving provider.",
+          "type": "string"
+        },
+        "token_cost": {
+          "description": "This provider's contribution to `budget_consumed`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "provider_id",
+        "frames_served",
+        "frames_rejected",
+        "token_cost"
+      ],
+      "type": "object"
+    },
+    "ContextUsage": {
+      "description": "The per-request roll-up of what one context recall cost\n(`docs/context-reuse.md` §2 `UsageReport`) — the envelope a metering\npipeline bills from, and the answer to \"what did this turn's context cost,\nand which sources drove it?\".\n\nDeliberately **content-free**: budget scalars, an accounting timestamp, and\nper-provider counts and costs. The spec's `served_frames` drill-down is\n*not* duplicated here — the sibling `frames: Vec<ContextFrameRef>` on the\nsame [`crate::event::AgentEvent::ContextRecall`] already records the frame-granular\nidentities locally, so an auditor still walks from a total to its frames\nwithout this type ever carrying one.",
+      "properties": {
+        "as_of": {
+          "description": "The report's accounting snapshot (RFC 3339), stamped by the host. This\nis the *accounting event* time, never the query's bi-temporal `as_of`\nretrieval pin — two different clocks.",
+          "type": "string"
+        },
+        "budget_consumed": {
+          "description": "The summed `token_cost` of every served frame.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "budget_requested": {
+          "description": "The query's `max_tokens` — the budget this recall was allowed.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "providers": {
+          "description": "One entry per provider the query reached.",
+          "items": {
+            "$ref": "#/$defs/ContextProviderUsage"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "budget_requested",
+        "budget_consumed",
+        "as_of",
+        "providers"
+      ],
+      "type": "object"
+    },
+    "FileChangeKind": {
+      "description": "What happened to a file in a `FileChange` event.",
+      "oneOf": [
+        {
+          "const": "read",
+          "description": "Content was successfully read — no mutation, never a diff. Rides the\nsame event so the files-touched panel sees reads without a second\ndata path.",
+          "type": "string"
+        },
+        {
+          "const": "created",
+          "description": "The file did not exist before this change.",
+          "type": "string"
+        },
+        {
+          "const": "modified",
+          "description": "An existing file's contents changed.",
+          "type": "string"
+        },
+        {
+          "const": "deleted",
+          "description": "The file was removed.",
+          "type": "string"
+        }
+      ]
+    },
+    "GenerationParams": {
+      "description": "Optional sampling/routing parameter overrides riding a\n[`CompletionRequest`]. Every field is independently optional —\n\"include\" semantics: `None` leaves the provider's own default in place,\n`Some` puts the value on the wire. Each adapter forwards the subset its\ndialect supports and silently drops the rest (a param the provider\ncan't express must never fail the request).",
+      "properties": {
+        "frequency_penalty": {
+          "description": "Penalize tokens by their frequency in the text so far.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "presence_penalty": {
+          "description": "Penalize tokens that have appeared at all in the text so far.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "repetition_penalty": {
+          "description": "Multiplicative repetition penalty (>1 discourages, <1 encourages).",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "seed": {
+          "description": "Random seed for deterministic outputs, where supported.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "service_tier": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ServiceTier"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Which capacity tier to route to ([`ServiceTier`])."
+        },
+        "top_k": {
+          "description": "Limit sampling to the k highest-probability tokens.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "top_p": {
+          "description": "Nucleus sampling: cumulative-probability cutoff.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "verbosity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Verbosity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How much detail to ask for ([`Verbosity`])."
+        }
+      },
+      "type": "object"
+    },
+    "JudgeEvidence": {
+      "description": "Evidence backing a `JudgeVerdict`. `deterministic` distinguishes the\nflip-oracle/tests ladder from a model judge's opinion — the two are\nnever conflated (L-E11).",
+      "properties": {
+        "deterministic": {
+          "description": "`true` when the verdict came from the deterministic ladder (a\nfail→pass flip of the same normalized test command, touched-tests\ngreen, diff budget) rather than a model judge.",
+          "type": "boolean"
+        },
+        "evidence_refs": {
+          "description": "Pointers to the underlying artifacts (`trace:t1#verify`, a test\ncommand, a diff), so a reader can go check the summary rather than\ntake it on faith.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "summary": {
+          "description": "One line naming what was checked and what it showed.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "deterministic"
+      ],
+      "type": "object"
+    },
+    "ManifestEntry": {
+      "description": "One block's membership in a step's manifest (spec §5): its id, its cache\nzone at that step, its estimated token cost, and how long it has been\nresident. Residency × cost is what makes cost-of-carry a real number.",
+      "properties": {
+        "block_id": {
+          "type": "string"
+        },
+        "cache_zone": {
+          "$ref": "#/$defs/CacheZone",
+          "default": "cacheable",
+          "description": "Cache position class relative to the last stable breakpoint. Defaults to\n[`CacheZone::Cacheable`] on a manifest recorded before the field existed\n— an assumption, not an observation, so a cache-attribution pass over\npre-field manifests is reading the default rather than a measured zone."
+        },
+        "call_id": {
+          "description": "The tool call this *occurrence* belongs to, for `ToolCall`/`ToolResult`\nblocks. Content-addressing collapses byte-identical blocks onto one\n`block_id`, so [`BlockOrigin::call_id`] only ever names the first call\nto mint it — two `git status` runs with identical output register once.\nRecording the id per manifest entry keeps the attribution complete:\njoining a compaction event's evicted/deduped/aged `block_id`s against\nthe manifests that carried them answers \"which *calls* left context\"\nwithout under-reporting the duplicates. `None` for non-tool blocks, and\non manifests recorded before this field existed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message_index": {
+          "default": 0,
+          "description": "Which `CompletionMessage` this block belonged to, by position in the\nsent sequence. Event-granular blocks (a tool message's several results,\nan assistant message's text + calls) share one `message_index`, so\nreconstruction regroups them back into the exact message boundaries\nrather than inferring them from kinds (spec §5.1). `0` on manifests\nrecorded before reconstruction existed.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "resident_since_step": {
+          "description": "The step this block first entered a manifest — drives cost-of-carry.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "token_cost": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "block_id",
+        "token_cost",
+        "resident_since_step"
+      ],
+      "type": "object"
+    },
+    "MediaArtifactRef": {
+      "description": "A completed media artifact: id + kind + where it landed on disk.",
+      "properties": {
+        "id": {
+          "description": "The artifact id, matching the `artifact_id` its\n[`AgentEvent::MediaProgress`] events carried.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/MediaKind",
+          "description": "What was produced."
+        },
+        "label": {
+          "description": "Human label for citation/display.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Path under `.stella/artifacts/` (the generation tools may never\nwrite outside it).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "path",
+        "label"
+      ],
+      "type": "object"
+    },
+    "MediaJobState": {
+      "description": "Lifecycle of an async media job. `Failed` carries the reason inline —\na failed job must never be distinguishable only by the absence of a\nsuccess event.",
+      "oneOf": [
+        {
+          "description": "Accepted by the provider, not yet started.",
+          "properties": {
+            "state": {
+              "const": "queued",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Generation is under way.",
+          "properties": {
+            "state": {
+              "const": "running",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The artifact landed; a [`AgentEvent::MediaComplete`] follows.",
+          "properties": {
+            "state": {
+              "const": "succeeded",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Generation failed terminally.",
+          "properties": {
+            "reason": {
+              "description": "Why it failed, inline — a failed job is never signalled only by\nthe absence of a success event.",
+              "type": "string"
+            },
+            "state": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "MediaKind": {
+      "description": "Which kind of media artifact a job produces.",
+      "oneOf": [
+        {
+          "const": "image",
+          "description": "A raster image.",
+          "type": "string"
+        },
+        {
+          "const": "svg",
+          "description": "Vector artwork emitted as SVG source.",
+          "type": "string"
+        },
+        {
+          "const": "video",
+          "description": "A video clip — the only kind whose job is asynchronous and long-lived.",
+          "type": "string"
+        }
+      ]
+    },
+    "MessageRole": {
+      "description": "Who authored one message in the conversation. Tool results are\nrepresented as a `Tool` message carrying the `tool_call_id` they answer,\nso every dialect adapter has one place to translate role framing.",
+      "oneOf": [
+        {
+          "const": "system",
+          "description": "The byte-stable prompt prefix at message index 0.",
+          "type": "string"
+        },
+        {
+          "const": "user",
+          "description": "Input from the human operator.",
+          "type": "string"
+        },
+        {
+          "const": "assistant",
+          "description": "Output from the model, including any tool calls it made.",
+          "type": "string"
+        },
+        {
+          "const": "tool",
+          "description": "A tool result reported back, carrying the `tool_call_id` it answers.",
+          "type": "string"
+        }
+      ]
+    },
+    "ModelCallRole": {
+      "description": "Concrete purpose of one provider call. This is more precise than the\nrouter's tier role: repair and guidance calls must remain distinguishable\nin the paid-call ledger even when they share a provider/model.\n\nThis vocabulary grows, and it is **not** forward-tolerant: [`Self::Unknown`]\nis the `serde(default)` for an *absent* `role`, not a `serde(other)`\ncatch-all for an unrecognized one. A role token this build has never seen\nfails its whole event — `step_usage`, `step_manifest`, `usage_incomplete` —\nbecause a known `\"type\"` with a body that does not fit stays a hard error by\ndesign (see the module docs). Adding a variant here is therefore a\none-directional change in a way adding an [`AgentEvent`] variant no longer\nis.",
+      "oneOf": [
+        {
+          "const": "unknown",
+          "description": "Legacy events written before call-role attribution existed. The default\nfor an absent `role` field only — an unrecognized one is an error.",
+          "type": "string"
+        },
+        {
+          "const": "triage",
+          "description": "Prompt classification and tier routing.",
+          "type": "string"
+        },
+        {
+          "const": "plan",
+          "description": "Authoring the ordered plan.",
+          "type": "string"
+        },
+        {
+          "const": "plan_repair",
+          "description": "Re-authoring a plan the parser or the scope gate rejected.",
+          "type": "string"
+        },
+        {
+          "const": "witness_author",
+          "description": "Writing the witness test that arms the flip oracle.",
+          "type": "string"
+        },
+        {
+          "const": "witness_repair",
+          "description": "Fixing a witness that did not fail on the current code.",
+          "type": "string"
+        },
+        {
+          "const": "worker",
+          "description": "The tool-calling loop that actually changes the workspace.",
+          "type": "string"
+        },
+        {
+          "const": "distress_guidance",
+          "description": "Course-correction handed to a worker that is looping or stuck.",
+          "type": "string"
+        },
+        {
+          "const": "judge",
+          "description": "The model judge, reached only on inconclusive deterministic evidence.",
+          "type": "string"
+        },
+        {
+          "const": "agent_author",
+          "description": "Generating an agent definition.",
+          "type": "string"
+        },
+        {
+          "const": "skill_author",
+          "description": "Generating a skill definition.",
+          "type": "string"
+        },
+        {
+          "const": "domain_inference",
+          "description": "Inferring the workspace's domains, for memory tagging and recall.",
+          "type": "string"
+        },
+        {
+          "const": "reflection",
+          "description": "Post-turn self-reflection writing improvement memories.",
+          "type": "string"
+        },
+        {
+          "const": "summarization",
+          "description": "The overflow summarizer that replaces a history span with a summary.",
+          "type": "string"
+        }
+      ]
+    },
+    "PolicyKind": {
+      "description": "What kind of policy-plane decision a [`AgentEvent::PolicyDecision`]\nrecords (receipts spec §6.4).",
+      "oneOf": [
+        {
+          "const": "evaluated",
+          "description": "A blocking policy chain evaluated a tool call or side effect.",
+          "type": "string"
+        },
+        {
+          "const": "blocked",
+          "description": "A policy denied the call/side effect.",
+          "type": "string"
+        },
+        {
+          "const": "approval_requested",
+          "description": "A policy deferred the call to human approval.",
+          "type": "string"
+        },
+        {
+          "const": "secret_detected",
+          "description": "A payload-hygiene detector flagged secret-shaped content.",
+          "type": "string"
+        }
+      ]
+    },
+    "PrStatus": {
+      "description": "A pull request's status as observed by the fleet monitor. Reconciled\nagainst the live source before rendering, never served from cache\nalone (L-V3).",
+      "oneOf": [
+        {
+          "const": "draft",
+          "description": "Opened as a draft — not yet asking for review.",
+          "type": "string"
+        },
+        {
+          "const": "open",
+          "description": "Open and reviewable.",
+          "type": "string"
+        },
+        {
+          "const": "merged",
+          "description": "Merged into its base branch.",
+          "type": "string"
+        },
+        {
+          "const": "closed",
+          "description": "Closed without merging.",
+          "type": "string"
+        }
+      ]
+    },
+    "ProofStep": {
+      "description": "One step of the proof a turn builds for its own work, in the order the\npipeline makes the observation. Carried by [`AgentEvent::Proof`].\n\nAdditive to the wire contract in both directions: an older reader sees the\nwhole event as [`AgentEvent::Unknown`], and a reader that knows `Proof` but\nnot a future step tags it `Unknown` at the step level rather than guessing.",
+      "oneOf": [
+        {
+          "description": "What assurance this turn is going to buy, stated by triage **before**\nany of it happens.\n\nEmitted first, and the reason the rail can be honest at all. Every\nother step reports something that *did* happen, so a turn where the\nanswer is \"we decided not to\" produced no steps and left the surface\nwith nothing to say — which is exactly the case that dominates in\npractice. A declared plan turns that silence into a statement: the\nwitness row reads \"waived by triage\" from the first second of the\nturn instead of implying a test is still coming.",
+          "properties": {
+            "judge": {
+              "description": "Whether a model judge was called for on inconclusive evidence.",
+              "type": "boolean"
+            },
+            "kind": {
+              "const": "assurance",
+              "type": "string"
+            },
+            "witness": {
+              "description": "Whether an independently authored witness test was called for.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "witness",
+            "judge"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The warrant read the diff and answered \"does this change need a test\".\nEmitted once per candidate, before any witness is bought — a change\nwith nothing to prove is a *stated* outcome here, never silence.",
+          "properties": {
+            "diff_lines": {
+              "description": "Size of the change the answer was read from.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "warrant",
+              "type": "string"
+            },
+            "reason": {
+              "description": "The stated reason when no test is warranted; `None` when one is.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "required",
+            "diff_lines"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "An independent model authored the failing witness, and its bytes are\npinned: any later change to `path` fails the candidate closed.",
+          "properties": {
+            "command": {
+              "description": "The command that arms the flip oracle.",
+              "type": "string"
+            },
+            "fingerprint": {
+              "description": "The accepted artifact's fingerprint — what tamper exclusion compares\nagainst for the rest of the run.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "witness_authored",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "path",
+            "command",
+            "fingerprint"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A warranted witness could not be *produced* (no independent author, an\nauthor that got stuck, a failed graft). The work stands; it is simply\nunproven, and saying so is the point.",
+          "properties": {
+            "kind": {
+              "const": "witness_unavailable",
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "**Every** evidence channel was blind, so the ladder abstained rather\nthan judging: no flip oracle, no test result, a working tree the diff\nprobe could not read, and no recorded file change.\n\nDistinct from a failing verdict, and the distinction is the point. The\nturn this exists for ended with a judge asserting a file \"likely does\nnot exist\" while the file sat in the container — a claim about the\n*instruments* delivered as a claim about the *work* (#973). Without a\nstep of its own, an abstention reaches the rail as `✓ passed · model\njudge`, which is the same silent outcome in the other direction.",
+          "properties": {
+            "kind": {
+              "const": "verification_unavailable",
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The flip oracle observed one run of the tracked command against one\ntree. A fail in `Baseline` followed by a pass in `Candidate` is the\nflip; anything else is not.",
+          "properties": {
+            "command": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "oracle",
+              "type": "string"
+            },
+            "passed": {
+              "type": "boolean"
+            },
+            "tree": {
+              "$ref": "#/$defs/ProofTree"
+            }
+          },
+          "required": [
+            "kind",
+            "command",
+            "passed",
+            "tree"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ProofTree": {
+      "description": "Which code state a [`ProofStep::Oracle`] observation was made against.\n\nThe distinction is the whole content of a flip: the same command failing in\n`Baseline` and passing in `Candidate` is proof, while either result twice\nagainst one tree is a tree observed twice.",
+      "oneOf": [
+        {
+          "const": "baseline",
+          "description": "The pre-execution tree — the code as it was before this turn touched it.",
+          "type": "string"
+        },
+        {
+          "const": "candidate",
+          "description": "The executed tree — the code as this turn left it.",
+          "type": "string"
+        }
+      ]
+    },
+    "ProviderShare": {
+      "description": "One provider's share of a recall's frame mix.",
+      "properties": {
+        "frames": {
+          "description": "How many of the recall's frames this provider contributed — the ones\nthat won fusion and reached the prompt, not the ones it served.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "provider": {
+          "description": "The CGP provider leg the frames came from.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "frames"
+      ],
+      "type": "object"
+    },
+    "ReasoningEffort": {
+      "description": "Reasoning effort forwarded to models with a thinking/extended-reasoning\nmode. One enum, mapped per-adapter to the provider's own parameter name\n(\"reasoning_param\").",
+      "oneOf": [
+        {
+          "const": "low",
+          "description": "Least thinking — cheapest and fastest.",
+          "type": "string"
+        },
+        {
+          "const": "medium",
+          "description": "The middle setting most adapters treat as their default.",
+          "type": "string"
+        },
+        {
+          "const": "high",
+          "description": "More thinking, for harder steps.",
+          "type": "string"
+        },
+        {
+          "const": "xhigh",
+          "description": "Above `High`, where the provider exposes a fourth level.",
+          "type": "string"
+        },
+        {
+          "const": "max",
+          "description": "The provider's ceiling.",
+          "type": "string"
+        }
+      ]
+    },
+    "ScopeProposal": {
+      "description": "What a `ScopeReview` gate presents for approval before a large plan\nexecutes (L-E5).",
+      "properties": {
+        "estimated_cost_usd": {
+          "description": "Projected spend, when the planner could estimate one.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "estimated_files": {
+          "description": "How many files the plan expects to touch — the magnitude the gate's\nthresholds are compared against.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "steps": {
+          "description": "The plan's steps, in the order the worker will attempt them.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "summary": {
+          "description": "One line describing the work, for the approval prompt's headline.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "steps",
+        "estimated_files"
+      ],
+      "type": "object"
+    },
+    "ServiceTier": {
+      "description": "Provider service tier: `Priority` routes to faster paid-tier capacity,\n`Flex` to cheaper capacity with slower response times. Only applied by\nproviders that support tiered service; others use their default tier.",
+      "oneOf": [
+        {
+          "const": "auto",
+          "description": "Let the provider pick the tier.",
+          "type": "string"
+        },
+        {
+          "const": "default",
+          "description": "The account's standard tier.",
+          "type": "string"
+        },
+        {
+          "const": "flex",
+          "description": "Cheaper capacity, slower responses.",
+          "type": "string"
+        },
+        {
+          "const": "priority",
+          "description": "Faster paid-tier capacity.",
+          "type": "string"
+        }
+      ]
+    },
+    "StageKind": {
+      "description": "A named point in the turn's data flow. Exactly one stage vocabulary\nexists in this workspace — never duplicated per-crate (the TS-era\n`StageKind` duplication this structurally forbids, L-E1).",
+      "oneOf": [
+        {
+          "const": "triage",
+          "description": "Prompt classification and routing: how hard is this turn, and which\ntier should serve it.",
+          "type": "string"
+        },
+        {
+          "const": "context_recall",
+          "description": "Context recall: the frames the context plane put in front of the model\nbefore it planned anything.",
+          "type": "string"
+        },
+        {
+          "const": "plan",
+          "description": "Planning: the ordered steps the worker is about to attempt.",
+          "type": "string"
+        },
+        {
+          "const": "scope_review",
+          "description": "The interactive approval gate a large plan passes through (L-E5).",
+          "type": "string"
+        },
+        {
+          "const": "witness",
+          "description": "Witness authoring: before the worker executes, an independent model\n(the judge's resolution, never the worker's transcript) writes the\nwitness test — a test that FAILS on the current code and will pass\nonce the goal is met — arming the deterministic flip oracle (L-E11).\nThe witness is visible to the worker (iterating against a failing\ntest is where convergence comes from); integrity comes from tamper\nexclusion at verify time, not from hiding the test.",
+          "type": "string"
+        },
+        {
+          "const": "execute",
+          "description": "The worker's own tool-calling loop — the steps that actually change\nthe workspace.",
+          "type": "string"
+        },
+        {
+          "const": "verify",
+          "description": "The deterministic verification ladder: the flip oracle, the touched\ntests, the diff budget.",
+          "type": "string"
+        },
+        {
+          "const": "judge",
+          "description": "The model judge, reached only when the deterministic ladder came back\ninconclusive (L-E11).",
+          "type": "string"
+        },
+        {
+          "const": "reflect",
+          "description": "Post-turn self-reflection: the agent reviews its own performance on\nthe completed turn and records improvement memories into the context\nplane, tagged with the workspace's inferred domains, for recall on\nfuture relevant turns.",
+          "type": "string"
+        },
+        {
+          "const": "context_write",
+          "description": "Context write-back: episode summaries and fact upserts landing in the\ncontext plane (close-not-delete, L-C3).",
+          "type": "string"
+        },
+        {
+          "const": "complete",
+          "description": "The turn is done. The last stage boundary a turn emits.",
+          "type": "string"
+        }
+      ]
+    },
+    "SubAgentPhase": {
+      "description": "One point in a sub-agent's lifecycle. Exactly one `Started` and exactly\none `Finished` are emitted per spawn, in that order, even when the child\nis refused before its first model call (a refusal still brackets, so a\nconsumer folding these never sees an unclosed child).",
+      "oneOf": [
+        {
+          "description": "A child turn is about to start. Every event between this and the\nmatching `Finished` with the same `agent_id` belongs to the child,\nnot the parent — this bracket IS the attribution mechanism, which is\nwhy no per-event agent field was added to the other 35 variants.",
+          "properties": {
+            "agent_id": {
+              "description": "Stable id for this child, unique within the parent turn.",
+              "type": "string"
+            },
+            "budget_usd": {
+              "description": "The USD ceiling actually carved for this child, after clamping\nthe request against the parent's remaining headroom. `None` when\nno axis anywhere bounds it.",
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "depth": {
+              "description": "Nesting depth: `1` for a child of the top-level turn.",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "instruction_preview": {
+              "description": "The child's task, truncated for display. Never the full prompt —\nthe prompt can be large and the event stream is journaled.",
+              "type": "string"
+            },
+            "phase": {
+              "const": "started",
+              "type": "string"
+            },
+            "write_access": {
+              "description": "Whether the child may mutate the workspace. `false` (the\ndefault) means it ran behind a read-only view of the parent's\ntools and could not have changed anything.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "phase",
+            "agent_id",
+            "instruction_preview",
+            "write_access",
+            "depth"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The child turn ended. Emitted on every path, including a refusal.",
+          "properties": {
+            "absorbed_messages": {
+              "description": "How many messages the child's private transcript grew to — the\ncontext the parent did NOT have to carry. This is the primitive's\nwhole value proposition, reported rather than asserted.",
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "agent_id": {
+              "description": "Matches the `Started` this closes.",
+              "type": "string"
+            },
+            "cost_usd": {
+              "description": "The child's total spend, already settled into the parent's guard\nby the time this is emitted.",
+              "format": "double",
+              "type": "number"
+            },
+            "phase": {
+              "const": "finished",
+              "type": "string"
+            },
+            "reason": {
+              "description": "Present only when `status` is not `Completed`: why it ended.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "$ref": "#/$defs/SubAgentStatus"
+            },
+            "steps": {
+              "description": "Model calls the child made.",
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "summary": {
+              "description": "The report handed back to the parent — the ONLY thing that may\nenter the parent's transcript, and already clamped to the spec's\ncharacter cap.",
+              "type": "string"
+            },
+            "truncated": {
+              "description": "Whether the report was cut to fit that cap. Never silent: a\nconsumer can tell an exhaustive answer from a clipped one.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "phase",
+            "agent_id",
+            "status",
+            "summary",
+            "truncated",
+            "cost_usd",
+            "steps",
+            "absorbed_messages"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SubAgentStatus": {
+      "description": "How a sub-agent's turn ended. The parent reasons about this as data — a\nfailed child is never an error that kills the parent turn.",
+      "oneOf": [
+        {
+          "const": "completed",
+          "description": "The child produced a final answer with no further tool calls.",
+          "type": "string"
+        },
+        {
+          "const": "incomplete",
+          "description": "The child's turn aborted cleanly at a step boundary — its carved\nbudget, its step cap, loop detection, or exhausted retries. Any text\nit had already produced is salvaged into the report rather than\ndiscarded, so paid work is never thrown away.",
+          "type": "string"
+        },
+        {
+          "const": "refused",
+          "description": "The child never ran: refused before its first model call (no budget\nheadroom left in the parent's carve, or the nesting-depth cap). Cost\nis always exactly zero.",
+          "type": "string"
+        }
+      ]
+    },
+    "TaskItem": {
+      "description": "One entry on the turn's task board (the `task_*` tools). The board is\nsession-scoped working state — what the agent has planned, is doing,\nand has finished — mirrored to the store for cross-session findability.",
+      "properties": {
+        "description": {
+          "description": "What needs to be done, if the creator elaborated beyond the subject.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Stable per-session ordinal id (\"1\", \"2\", …) — what `task_complete`\n/ `task_cancel` / `task_assign` reference.",
+          "type": "string"
+        },
+        "owner": {
+          "description": "Which agent lane owns the task: `None` until claimed, `Some(\"lead\")`\nfor the lead, or the sub-agent lane id once `task_assign` spawned a\ndedicated worker for it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/TaskStatus",
+          "description": "Where the task is in its lifecycle ([`TaskStatus`])."
+        },
+        "subject": {
+          "description": "Imperative title (\"Fix the auth redirect loop\").",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "subject",
+        "status"
+      ],
+      "type": "object"
+    },
+    "TaskStatus": {
+      "description": "Lifecycle of a `TaskItem`. Terminal states are `Completed` and\n`Cancelled`; a cancelled task keeps its row (the board is an audit\nsurface, not just a scheduler).",
+      "oneOf": [
+        {
+          "const": "pending",
+          "description": "Created and not yet started.",
+          "type": "string"
+        },
+        {
+          "const": "in_progress",
+          "description": "Claimed by a lane and being worked.",
+          "type": "string"
+        },
+        {
+          "const": "completed",
+          "description": "Finished successfully. Terminal.",
+          "type": "string"
+        },
+        {
+          "const": "cancelled",
+          "description": "Abandoned. Terminal, and the row is kept — the board is an audit\nsurface, not just a scheduler.",
+          "type": "string"
+        }
+      ]
+    },
+    "ToolCall": {
+      "description": "One tool invocation the model requested.",
+      "properties": {
+        "call_id": {
+          "description": "Stable id correlating this call to its eventual `ToolResult`.",
+          "type": "string"
+        },
+        "input": {
+          "description": "The arguments, as the model produced them. Runtime data: validate\nagainst [`ToolSchema::input_schema`] rather than trusting the shape."
+        },
+        "name": {
+          "description": "Which tool to run — matches the [`ToolSchema::name`] it was chosen\nfrom.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "call_id",
+        "name",
+        "input"
+      ],
+      "type": "object"
+    },
+    "ToolOutput": {
+      "description": "The output of running a tool — success or a typed, named failure. Never a\nbare string: every tool result is inspectable without string-sniffing.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "The tool ran to completion.",
+          "properties": {
+            "ok": {
+              "properties": {
+                "content": {
+                  "description": "What the tool produced, as the model will read it.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "content"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "ok"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The tool failed.",
+          "properties": {
+            "error": {
+              "properties": {
+                "message": {
+                  "description": "Why it failed, phrased so the model can act on it — the model\nsees this text and retries against it.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "message"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "error"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ToolResult": {
+      "description": "A tool result reported back to the model, correlated to its call.",
+      "properties": {
+        "call_id": {
+          "description": "The [`ToolCall::call_id`] this answers.",
+          "type": "string"
+        },
+        "output": {
+          "$ref": "#/$defs/ToolOutput",
+          "description": "What running the call produced — success or a named failure."
+        }
+      },
+      "required": [
+        "call_id",
+        "output"
+      ],
+      "type": "object"
+    },
+    "ToolSchema": {
+      "description": "A tool schema advertised to the model: name, description, and a JSON\nSchema for its input. Kept as `serde_json::Value` rather than a typed\nschema struct so any tool (built-in or MCP-supplied) can describe itself\nwithout a second schema language.",
+      "properties": {
+        "description": {
+          "description": "What the tool does, written for the model rather than for a human\nreader — this text is the whole basis on which it decides to call.",
+          "type": "string"
+        },
+        "input_schema": {
+          "description": "JSON Schema for the object the model must send as\n[`ToolCall::input`]."
+        },
+        "name": {
+          "description": "The tool's identifier, as the model must spell it in a\n[`ToolCall::name`]. Unique within one registry.",
+          "type": "string"
+        },
+        "read_only": {
+          "default": false,
+          "description": "True when the tool cannot mutate any state (filesystem, processes,\nenvironment) — the engine may run consecutive read-only calls from\none step concurrently. Defaults to false so unknown/external tools\nare treated as mutating, the safe direction.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "input_schema"
+      ],
+      "type": "object"
+    },
+    "TurnOutcomeWire": {
+      "description": "Serializable projection of [`TurnOutcome`] for the wire. `TurnOutcome` lives\nin `stella-core` and is not itself `Serialize`, so the boundary owns the\nmapping.",
+      "oneOf": [
+        {
+          "properties": {
+            "cost_usd": {
+              "format": "double",
+              "type": "number"
+            },
+            "status": {
+              "const": "completed",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "text",
+            "cost_usd"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cost_usd": {
+              "default": 0.0,
+              "format": "double",
+              "type": "number"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "status": {
+              "const": "aborted",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "UsageIncompleteReason": {
+      "description": "Content-free reason a provider attempt cannot contribute a truthful usage\nenvelope. Error bodies and prompts are deliberately unrepresentable.",
+      "oneOf": [
+        {
+          "const": "provider_error",
+          "description": "The provider returned a failure after dispatch, so the request was\nreceived and may have been billed even though no usage frame arrived.",
+          "type": "string"
+        },
+        {
+          "const": "timeout",
+          "description": "The client-side deadline elapsed with the call still in flight. The\nserver may have completed the work regardless.",
+          "type": "string"
+        },
+        {
+          "const": "cancelled",
+          "description": "The caller dropped the turn (hard cancel) while a paid provider\nattempt was still in flight — the call may have real server-side\ncost whose usage is unknowable. Emitted by the engine's drop guard,\nwhich is armed only for exactly that window (a call that settles\nnormally reports through its ordinary `StepUsage` envelope instead).",
+          "type": "string"
+        }
+      ]
+    },
+    "Verbosity": {
+      "description": "Response-detail level for providers with a verbosity parameter (OpenAI's\n`text.verbosity`). Adapters whose wire has no equivalent ignore it — the\nsame never-fail contract as [`ReasoningEffort`].",
+      "oneOf": [
+        {
+          "const": "low",
+          "description": "Terse answers.",
+          "type": "string"
+        },
+        {
+          "const": "medium",
+          "description": "The provider's usual level of detail.",
+          "type": "string"
+        },
+        {
+          "const": "high",
+          "description": "Expansive answers.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One frame emitted by the engine toward the host over the outbound stream.\n\nNot `Clone`: every frame is produced once and moved onto the channel, so no\nconsumer ever needs a second copy. The variants own their payloads outright\nrather than borrowing — the port adapters in `remote.rs` pay whatever copy\nthat costs once, at construction (a completion request arrives borrowed and\nis materialized with `CompletionRequestRef::into_owned`; a tool's `input`\narrives as `&Value` and is cloned there) — which is what lets a frame cross\nfrom the session thread to the server runtime.",
+  "oneOf": [
+    {
+      "description": "A normal agent event — stream it to the UI. Never requires a response.",
+      "properties": {
+        "event": {
+          "$ref": "#/$defs/AgentEvent"
+        },
+        "type": {
+          "const": "event",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "event"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "The engine needs the host to run a tool call and POST the result back\n([`ToolResultIn`]) keyed by `request_id`. The engine step that raised\nit is parked until then.",
+      "properties": {
+        "input": true,
+        "name": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_request",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "request_id",
+        "name",
+        "input"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "The engine needs the host to run a model completion and POST the result\nback ([`ProviderResultIn`]) keyed by `request_id`. The host owns the\nmodel call (metering, gateway, BYOK); the engine only orchestrates.",
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/CompletionRequest"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "provider_request",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "request_id",
+        "request"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "Terminal frame: the turn ended. No further frames follow for this turn.",
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/TurnOutcomeWire"
+        },
+        "type": {
+          "const": "turn_complete",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "outcome"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "ServerFrame"
+}

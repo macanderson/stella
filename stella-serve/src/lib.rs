@@ -61,6 +61,8 @@ pub mod observe;
 mod pending;
 mod remote;
 mod routes;
+#[cfg(feature = "schema")]
+pub mod schema_export;
 mod server;
 mod session;
 

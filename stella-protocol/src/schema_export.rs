@@ -128,12 +128,31 @@ const HEADER: &str = "\
 /// [`UnsupportedSchema`] when the schema uses a construct outside the subset
 /// `schemars` emits for these types.
 pub fn typescript_declarations(schema: &Value) -> Result<String, UnsupportedSchema> {
+    typescript_declarations_with_header(schema, HEADER)
+}
+
+/// [`typescript_declarations`] under a caller-supplied banner.
+///
+/// The printer is generic over the schema but the banner is not: it names the
+/// regeneration command and the source of truth, and those differ per artifact.
+/// `stella-serve` prints its own frame types through this same function rather
+/// than growing a second printer, because two printers is two subsets of JSON
+/// Schema to keep in step and the whole point of this module is not having two
+/// of something.
+///
+/// # Errors
+///
+/// [`UnsupportedSchema`], as [`typescript_declarations`].
+pub fn typescript_declarations_with_header(
+    schema: &Value,
+    header: &str,
+) -> Result<String, UnsupportedSchema> {
     let root = schema.as_object().ok_or_else(|| UnsupportedSchema {
         path: "#".to_string(),
         detail: "root schema is not an object".to_string(),
     })?;
 
-    let mut out = String::from(HEADER);
+    let mut out = String::from(header);
 
     let title = root
         .get("title")
@@ -167,35 +186,62 @@ pub fn typescript_declarations(schema: &Value) -> Result<String, UnsupportedSche
         }
     }
 
-    // Then the root union.
+    // Then the root itself. Two shapes reach here, and only one of them has a
+    // tag vocabulary:
+    //
+    //   - a tagged enum (`AgentEvent`, `ServerFrame`) — a `oneOf` of variants
+    //     each pinning a `"type"` const, which prints as a discriminated union;
+    //   - a plain struct (`ToolResultIn`, `ProviderResultIn`) — one object,
+    //     which prints as an interface exactly as a `$defs` entry would.
+    //
+    // The second was added when `stella-serve` needed to print its two inbound
+    // request bodies. They are the bodies of two *different* endpoints and
+    // carry no discriminant, so wrapping them in a union to satisfy a
+    // union-only printer would have published a false claim — that a client
+    // may send either shape to either route. Teaching the printer the shape
+    // that actually exists is the honest fix, and the reason it refuses rather
+    // than guesses is that it caught this.
     out.push('\n');
     push_doc(&mut out, schema, "");
-    let ty = type_expr_ignoring(root, &["$defs", "$schema", "title"], "#", 0)?;
-    let _ = writeln!(out, "export type {title} = {ty};");
+    let root_object = root
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|t| t == "object")
+        && root.contains_key("properties");
+    if root_object {
+        let body = object_body(root, "#", 1)?;
+        let _ = writeln!(out, "export interface {title} {{\n{body}}}");
+    } else {
+        let ty = type_expr_ignoring(root, &["$defs", "$schema", "title"], "#", 0)?;
+        let _ = writeln!(out, "export type {title} = {ty};");
+    }
 
     // Finally the tag vocabulary as a standalone union — the one thing a
     // consumer needs that the discriminated union above does not hand them
     // directly: the set of `"type"` values this build knows, so an
     // unrecognized one routes to forward-compat handling instead of an error
-    // branch.
+    // branch. Meaningless for an object root, which has no tags, so it is
+    // emitted only for the union shape.
     //
     // A *type*, not a `const`: this is a `.d.ts`, and an initializer in an
     // ambient context is both a TypeScript error and a claim that some JS
     // module exports the array at runtime. Nothing does.
-    let tags = tag_literals(root)?;
-    out.push('\n');
-    out.push_str(
-        "/**\n * Every `\"type\"` tag this build emits. A value outside this union is an\n \
-         * event from a newer stella — keep it, do not fail on it.\n */\n",
-    );
-    let _ = writeln!(
-        out,
-        "export type KnownTypeTag =\n{};",
-        tags.iter()
-            .map(|t| format!("  | {}", json_literal(&Value::String(t.clone()))))
-            .collect::<Vec<_>>()
-            .join("\n")
-    );
+    if !root_object {
+        let tags = tag_literals(root)?;
+        out.push('\n');
+        out.push_str(
+            "/**\n * Every `\"type\"` tag this build emits. A value outside this union is an\n \
+             * event from a newer stella — keep it, do not fail on it.\n */\n",
+        );
+        let _ = writeln!(
+            out,
+            "export type KnownTypeTag =\n{};",
+            tags.iter()
+                .map(|t| format!("  | {}", json_literal(&Value::String(t.clone()))))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
 
     Ok(out)
 }

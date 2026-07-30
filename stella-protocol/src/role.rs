@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 /// A functional role a model call fills. Never a model name.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
@@ -35,6 +36,7 @@ pub enum Role {
 /// (an explicit pin from a flag, config, or slash command) or `None` (auto:
 /// the router resolves by task class + scenario defaults). There is
 /// deliberately no "auto" variant here — see module docs.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelRef {
     /// The provider's stable id, matching [`crate::provider::Provider::id`] —

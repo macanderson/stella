@@ -10,6 +10,7 @@ use crate::tool::{ToolCall, ToolResult, ToolSchema};
 /// Who authored one message in the conversation. Tool results are
 /// represented as a `Tool` message carrying the `tool_call_id` they answer,
 /// so every dialect adapter has one place to translate role framing.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageRole {
@@ -26,6 +27,7 @@ pub enum MessageRole {
 /// Reasoning effort forwarded to models with a thinking/extended-reasoning
 /// mode. One enum, mapped per-adapter to the provider's own parameter name
 /// ("reasoning_param").
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasoningEffort {
@@ -44,6 +46,7 @@ pub enum ReasoningEffort {
 /// Response-detail level for providers with a verbosity parameter (OpenAI's
 /// `text.verbosity`). Adapters whose wire has no equivalent ignore it — the
 /// same never-fail contract as [`ReasoningEffort`].
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Verbosity {
@@ -58,6 +61,7 @@ pub enum Verbosity {
 /// Provider service tier: `Priority` routes to faster paid-tier capacity,
 /// `Flex` to cheaper capacity with slower response times. Only applied by
 /// providers that support tiered service; others use their default tier.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ServiceTier {
@@ -77,6 +81,7 @@ pub enum ServiceTier {
 /// `Some` puts the value on the wire. Each adapter forwards the subset its
 /// dialect supports and silently drops the rest (a param the provider
 /// can't express must never fail the request).
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct GenerationParams {
     /// Nucleus sampling: cumulative-probability cutoff.
@@ -107,6 +112,7 @@ pub struct GenerationParams {
 
 /// One chat message handed to a provider, including any tool calls the
 /// assistant made or tool results being reported back.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CompletionMessage {
     /// Who authored this message.
@@ -182,6 +188,7 @@ impl CompletionMessage {
 
 /// A completion request — the same shape regardless of which provider
 /// adapter ultimately serves it.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletionRequest {
     /// The conversation so far, in order, starting with the system message.
@@ -329,6 +336,7 @@ impl CompletionRequestRef<'_> {
 
 /// Token accounting for a single completion, normalized across providers
 /// into one envelope: normalization lives in the adapter, not the caller.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct CompletionUsage {
     /// The adapter observed the provider's authoritative usage-bearing
@@ -381,6 +389,7 @@ impl CompletionUsage {
 /// engine tell a natural stop from a truncation (`Length`) so an empty or
 /// cut-off turn is surfaced to the user instead of being recorded as a clean
 /// completion (the "turn ends with no feedback" defect).
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FinishReason {
@@ -395,6 +404,7 @@ pub enum FinishReason {
 }
 
 /// The result of a completion.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletionResult {
     /// The answer text, assembled from the stream. Empty when the model

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 /// Schema for its input. Kept as `serde_json::Value` rather than a typed
 /// schema struct so any tool (built-in or MCP-supplied) can describe itself
 /// without a second schema language.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolSchema {
     /// The tool's identifier, as the model must spell it in a
@@ -71,6 +72,7 @@ impl ToolOutput {
 }
 
 /// A tool result reported back to the model, correlated to its call.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolResult {
     /// The [`ToolCall::call_id`] this answers.

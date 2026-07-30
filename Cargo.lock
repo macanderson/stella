@@ -3306,6 +3306,7 @@ dependencies = [
  "async-trait",
  "proptest",
  "rand 0.10.2",
+ "schemars",
  "serde",
  "serde_json",
  "stella-core",
