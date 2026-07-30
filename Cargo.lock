@@ -3160,6 +3160,7 @@ dependencies = [
  "stella-protocol",
  "thiserror 2.0.19",
  "tokio",
+ "toml",
 ]
 
 [[package]]
