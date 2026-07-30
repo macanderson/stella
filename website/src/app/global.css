@@ -72,12 +72,10 @@
    * — where the border IS the only thing saying two regions differ, and WCAG
    * 1.4.11's 3:1 floor applies.
    *
-   * BRAND.md defines `hairline-contrast` (3.0:1 on surface) for the dark side
-   * and has no paper counterpart: every light seam it lists tops out at 1.4:1
-   * on white. Until it grows one, the light structural rule borrows
-   * `ink-tertiary` at 4.7:1 — over the floor rather than on it, so a 1px
-   * diagram stroke reads heavier on paper than it does on deep space. */
-  --stella-rule: var(--stella-ink-tertiary); /* 4.7:1 — structural */
+   * BRAND.md defines a structural seam per theme, kept deliberately close in
+   * ratio — 3.0:1 on surface, 3.2:1 on paper — so one 1px rule does not read
+   * as two different weights depending on the theme. */
+  --stella-rule: var(--stella-paper-hairline-contrast); /* 3.2:1 — structural */
   /* The third text tier: for a label whose value beside it is the thing being
    * read. 4.7:1 on paper — AA, with nothing to spare, so it is never used on
    * `snow` (4.4:1 there). */

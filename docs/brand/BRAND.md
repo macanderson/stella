@@ -48,12 +48,20 @@ under a table header. That is what `hairline-contrast` is for.
 An interactive control's boundary is never decorative. Use `hairline-contrast`
 or a text tone; never `hairline`.
 
+The two structural seams are deliberately close in ratio — 3.0:1 on `surface`,
+3.2:1 on `paper` — because a 1px rule that clears the floor by a wide margin in
+one theme and sits on it in the other makes the same diagram read as two
+different weights. Before `paper-hairline-contrast` existed the light rule
+borrowed `ink-tertiary` at 4.7:1, and diagram strokes were visibly heavier on
+paper than on deep space.
+
 | Token | Value | Role |
 | --- | --- | --- |
 | `paper` | `#FFFFFF` | Light background |
 | `snow` | `#F5F7FA` | Light surface |
 | `paper-raised` | `#E7EBF2` | Light popovers, selected rows |
-| `paper-hairline` | `#D3DAE6` | Light seam |
+| `paper-hairline` | `#D3DAE6` | Light seam — decorative only, 1.4:1 |
+| `paper-hairline-contrast` | `#868FA2` | 3.2:1 on `paper` — the light structural seam |
 
 ### Brand — electric blue
 

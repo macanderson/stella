@@ -45,18 +45,24 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
 /// Selectable accent palette — `/color` switches the session's accent so
 /// multiple terminal windows running stella are visually distinct at a
 /// glance (see [`set_accent`], and [`rename_tab`] for the `/rename` sibling).
-// Sky first: it is the brand, and so the default. The rest are
-// personalisation only — `/color` exists so several terminal windows running
-// stella can be told apart at a glance, which needs hues that are *distinct*
-// rather than on-brand. `colored`'s named ANSI colors are the portable
-// stand-ins: sky≈bright-cyan, cyan≈bright-cyan, azure≈bright-blue,
-// violet≈bright-magenta, magenta≈magenta, mint≈green. `sky` and `cyan` land on
-// the same ANSI code — the brand hue is a light blue and the named set holds no
-// nearer distinct entry — so they are two names for one appearance here; only
-// `sky` is the brand, and `cyan` is kept so an existing `/color cyan` still
-// resolves.
+// The brand entry is first, and so the default. The rest are personalisation
+// only — `/color` exists so several terminal windows running stella can be told
+// apart at a glance, which needs hues that are *distinct* rather than on-brand.
+// `colored`'s named ANSI colors are the portable stand-ins, and the nearest one
+// to the brand's electric blue (`theme::ACCENT`, `#5AA0FF`) is bright-blue.
+//
+// It used to be bright-CYAN, from back when the identity was the pale "sky"
+// blue: the default accent stayed a cyan through two recolours while every
+// other surface moved to electric blue. The slug is deliberately NOT renamed —
+// `sky` is a name a user types at `/color`, not a brand token, and retiring it
+// would break muscle memory and any saved habit for no benefit. What was wrong
+// was the hue behind it, and that is what changed.
+//
+// `sky` and `azure` therefore land on the same ANSI code, exactly as `sky` and
+// `cyan` used to: the named set holds no second distinct blue. Both are kept so
+// an existing `/color azure` still resolves.
 const PALETTE: [(&str, Color); 6] = [
-    ("sky", Color::BrightCyan),
+    ("sky", Color::BrightBlue),
     ("cyan", Color::BrightCyan),
     ("azure", Color::BrightBlue),
     ("violet", Color::BrightMagenta),
@@ -653,6 +659,13 @@ mod tests {
         assert_eq!(ACCENT.load(Ordering::Relaxed) % PALETTE.len(), 0);
         assert!(set_accent("sky"));
         assert_eq!(PALETTE[ACCENT.load(Ordering::Relaxed)].0, "sky");
+        // …and it must be the BRAND hue, not merely first in the list. The
+        // default sat on bright-cyan through two recolours because nothing
+        // asserted which colour the default slug actually resolves to — only
+        // that it was called `sky`. Bright-blue is the nearest named ANSI
+        // stand-in for `theme::ACCENT` (`#5AA0FF`).
+        assert_eq!(PALETTE[0].1, Color::BrightBlue);
+        assert_eq!(accent(), Color::BrightBlue);
     }
 
     #[test]

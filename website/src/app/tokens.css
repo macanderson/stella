@@ -38,7 +38,8 @@
   --stella-paper: #ffffff;
   --stella-snow: #f5f7fa;
   --stella-paper-raised: #e7ebf2;
-  --stella-paper-hairline: #d3dae6;
+  --stella-paper-hairline: #d3dae6; /* decorative only — 1.4:1 */
+  --stella-paper-hairline-contrast: #868fa2; /* 3.2:1 on paper — structural */
 
   /* ── Brand — electric blue. The interactive signal. ───────────────────── */
   --stella-brand: #2e7bff; /* 5.1:1 on ground — fills, large marks */
