@@ -87,8 +87,9 @@ pub use skills::{
     mine_skill_candidates, render_skills_section, select_skills,
 };
 pub use subagent::{
-    AgentAttribution, ChildSteering, MAX_SUB_AGENT_DEPTH, SubAgentHost, SubAgentOutcome,
-    SubAgentReport, SubAgentSpec, forwards_to_parent,
+    AgentAttribution, ChildSteering, MAX_SUB_AGENT_DEPTH, SubAgentDispatcher, SubAgentHost,
+    SubAgentOutcome, SubAgentReport, SubAgentSpec, SubAgentSpendLedger, drain_sub_agent_spend,
+    forwards_to_parent, push_sub_agent_spend,
 };
 pub use tasks::{SpawnRequest, TaskBoard, TaskBoardError};
 pub use tool_foundry::{

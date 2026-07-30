@@ -17,6 +17,38 @@ pub trait ToolExecutor: Send + Sync {
     /// never an Err — tool failures are model-visible data, not engine
     /// failures.
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput;
+
+    /// USD spent by sub-agents this executor dispatched since the last call,
+    /// **taken** (not peeked) — the engine folds it into the turn's
+    /// [`crate::BudgetGuard`] at the next step-boundary budget check.
+    ///
+    /// # Why the executor and not the engine
+    ///
+    /// A `task`-style tool spawns a child turn *from inside*
+    /// `ToolExecutor::execute`, while the engine holds the budget guard
+    /// mutably for the whole turn — so the tool structurally cannot charge
+    /// the parent as it goes. This is the same "written by one object,
+    /// drained by another" seam [`crate::mcp_usage`] uses, and the executor
+    /// that dispatched the child is exactly the thing that knows what it
+    /// cost. Draining at the *step boundary* (rather than after the turn) is
+    /// what keeps `--budget` a hard ceiling once turns nest: the parent's
+    /// `evaluate()` always sees child spend to date.
+    ///
+    /// # Decorators MUST forward this
+    ///
+    /// The default returns `0.0`, which reads as "this executor never
+    /// dispatches sub-agents" — correct for a leaf, and **wrong for a
+    /// wrapper**. A decorator that forgets to forward silently drops real
+    /// money out of the accounting, and no compiler will say so. Every
+    /// wrapper in this workspace forwards; the shipped composition is pinned
+    /// end-to-end by `stella-cli`'s `the_production_tool_stack_forwards_sub_agent_spend`,
+    /// which asserts through the real stack rather than a hypothetical one.
+    ///
+    /// Destructive by contract: two drains of the same spend would charge it
+    /// twice, so an implementation must reset its ledger here.
+    fn drain_sub_agent_spend_usd(&self) -> f64 {
+        0.0
+    }
 }
 
 /// A read-only view over another executor: advertises only the schemas
@@ -73,6 +105,16 @@ impl ToolExecutor for ReadOnlyTools<'_> {
             };
         }
         self.inner.execute(name, input).await
+    }
+
+    /// Forwarded, not zeroed. A sub-agent runs behind this view, so a
+    /// *grandchild* it dispatched settles here first — into the child's own
+    /// carve — and only then into the parent as part of the child's total.
+    /// Each level charges once, which is what nesting means; zeroing here
+    /// would make a grandchild's spend invisible to the carve that is
+    /// supposed to bound it.
+    fn drain_sub_agent_spend_usd(&self) -> f64 {
+        self.inner.drain_sub_agent_spend_usd()
     }
 }
 

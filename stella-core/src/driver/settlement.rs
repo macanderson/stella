@@ -86,8 +86,43 @@ pub(super) fn record_settled_cost(
     outcome
 }
 
-/// The between-steps budget check (never mid-tool — see module docs).
-pub(super) fn check_budget(
+impl super::Engine<'_> {
+    /// The between-steps budget check (never mid-tool — see module docs),
+    /// preceded by folding in any spend sub-agents incurred since the last
+    /// boundary.
+    ///
+    /// The fold has to happen *here*, not after the turn: a `task`-style tool
+    /// spawns a child from inside `ToolExecutor::execute`, where the engine
+    /// already holds `budget` mutably, so the child's cost arrives
+    /// out-of-band through [`crate::ports::ToolExecutor::drain_sub_agent_spend_usd`].
+    /// Charging it at the next boundary is what keeps a configured `--budget`
+    /// a hard ceiling once turns nest — `evaluate()` below is then reading a
+    /// guard that already knows what the children spent. Deferring to
+    /// end-of-turn instead would let a parent and its children each run to
+    /// the cap independently.
+    ///
+    /// Routed through [`record_settled_cost`] rather than a bare
+    /// `record_spend` so child spend moves the HUD and trips observed-mode
+    /// warnings exactly like the engine's own calls — money that only
+    /// appeared in the total would be money no one saw arrive.
+    pub(super) fn check_budget(
+        &self,
+        budget: &mut BudgetGuard,
+        total_cost_usd: f64,
+        warnings: &mut BudgetWarnings,
+        events: &EventSender,
+    ) -> Option<TurnOutcome> {
+        let child_spend = self.tools.drain_sub_agent_spend_usd();
+        if child_spend > 0.0 {
+            record_settled_cost(budget, child_spend, warnings, events);
+        }
+        check_budget(budget, total_cost_usd, warnings, events)
+    }
+}
+
+/// The evaluation half, split from the drain above so the pure decision
+/// (guard state → abort or not) stays testable without an executor.
+fn check_budget(
     budget: &BudgetGuard,
     total_cost_usd: f64,
     warnings: &mut BudgetWarnings,

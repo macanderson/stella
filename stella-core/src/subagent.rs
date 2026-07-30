@@ -93,9 +93,10 @@
 //! cap enforces, and `depth` rides the `Started` event so a violation is
 //! visible in any journal.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
+use async_trait::async_trait;
 use stella_protocol::{
     AgentEvent, CompletionMessage, MessageRole, ModelCallRole, Provider, SubAgentPhase,
     SubAgentStatus,
@@ -114,6 +115,57 @@ use crate::ports::{ReadOnlyTools, ToolExecutor, TurnSteering};
 /// real shape. Beyond that the context saving is swamped by the per-child
 /// prompt overhead, and the failure modes stop being debuggable.
 pub const MAX_SUB_AGENT_DEPTH: u8 = 2;
+
+/// Runs a sub-agent on behalf of a *tool*, which cannot build an [`Engine`]
+/// of its own.
+///
+/// [`Engine::run_sub_agent`] needs a provider, a sleeper, a tool set and a
+/// budget — all of which the engine holds by short-lived reference during the
+/// turn a tool executes inside. This port is the inversion: the host (which
+/// owns all four for real) implements it, a tool holds one behind an `Arc`,
+/// and the two never have to name each other's lifetimes.
+///
+/// # Budget
+///
+/// An implementation carves the child from a **pool** it owns, not from the
+/// caller's guard — the engine has that borrowed mutably for the whole turn.
+/// The spend it charges must land in a [`SubAgentSpendLedger`] the executor
+/// drains via [`ToolExecutor::drain_sub_agent_spend_usd`], which is what
+/// folds it back into the parent at the next step boundary.
+///
+/// # Failure
+///
+/// Returns [`SubAgentOutcome`], never an error: a dispatcher that cannot run
+/// anything at all (its host is gone, no provider is configured) reports
+/// [`SubAgentOutcome::Refused`] so the model gets a tool result it can reason
+/// about rather than the turn dying under it.
+#[async_trait]
+pub trait SubAgentDispatcher: Send + Sync {
+    async fn dispatch(&self, spec: SubAgentSpec) -> SubAgentOutcome;
+}
+
+/// Sub-agent spend awaiting fold-in to a parent budget, in USD.
+///
+/// Written by whatever dispatches children, drained once per step-boundary
+/// budget check through [`ToolExecutor::drain_sub_agent_spend_usd`]. Mirrors
+/// [`crate::mcp_usage::McpUsageLedger`]'s shape and its drain-once discipline
+/// for the same reason: charging the same dollars twice is worse than
+/// charging them late.
+pub type SubAgentSpendLedger = Arc<Mutex<f64>>;
+
+/// Add a finished child's spend to the ledger, tolerating a poisoned lock —
+/// accounting must never take down a tool call. (It may, however, arrive
+/// late; that is what the drain-at-step-boundary contract is for.)
+pub fn push_sub_agent_spend(ledger: &SubAgentSpendLedger, cost_usd: f64) {
+    let mut total = ledger.lock().unwrap_or_else(|p| p.into_inner());
+    *total += cost_usd;
+}
+
+/// Take everything recorded so far, leaving the ledger at zero.
+pub fn drain_sub_agent_spend(ledger: &SubAgentSpendLedger) -> f64 {
+    let mut total = ledger.lock().unwrap_or_else(|p| p.into_inner());
+    std::mem::replace(&mut *total, 0.0)
+}
 
 /// What a parent asks a child to do, and the bounds it must respect.
 ///

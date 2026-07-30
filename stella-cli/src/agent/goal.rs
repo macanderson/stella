@@ -24,6 +24,8 @@ pub(crate) async fn run_raw_one_shot(
         new_tool_registry(cfg.workspace_root.clone(), registry_options.clone()).await,
     );
     populate_schema_index(&registry, &cfg.workspace_root)?;
+
+    crate::subagent::install_for_session(cfg, &registry)?;
     let active_rules =
         crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority);
     // Auto-build + live-refresh the code graph in the background so a
@@ -217,6 +219,8 @@ pub async fn run_goal_cmd(
         new_tool_registry(cfg.workspace_root.clone(), registry_options.clone()).await,
     );
     populate_schema_index(&registry, &cfg.workspace_root)?;
+
+    crate::subagent::install_for_session(cfg, &registry)?;
     let active_rules =
         crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority);
     // Auto-build + live-refresh the code-graph index in the background so

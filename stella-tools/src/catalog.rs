@@ -169,6 +169,10 @@ catalog! {
     "task_complete"       => (false, Always, "task"),
     "task_cancel"         => (false, Always, "task"),
     "task_assign"         => (false, Always, "task"),
+    // Sub-agent delegation (#922). NOT read_only — it spends money, and that
+    // flag is also what caps nesting: children run behind `ReadOnlyTools`, so
+    // a read-only `task` would let them spawn children of their own.
+    "task"                => (false, Always, "task"),
     // The shell. No prerequisite — it is on unless `"tools": {"bash": "off"}`
     // says otherwise, exactly like every other row in this block.
     "bash"                => (false, Always, "bash"),
