@@ -1631,11 +1631,10 @@ fn tab_shortcuts(tab: DeckTab) -> &'static [(&'static str, &'static str)] {
         DeckTab::Agents => &[
             ("← →", "switch panes — executions / installed"),
             ("↑ ↓", "select an agent"),
-            ("s", "stop the selected running agent"),
-            ("⏎", "edit the selected installed agent"),
-            ("v", "show the selected agent's versions"),
+            ("⏎", "open the selected agent's session"),
+            ("s / p / r", "stop · pause · restart the selected agent"),
+            ("⏎", "installed pane: edit · v versions · r reload"),
             ("n", "new agent — drafted by the LLM"),
-            ("r", "reload installed agents"),
         ],
         DeckTab::Traces => &[
             ("↑ ↓ ⇞ ⇟", "scroll the event log"),
@@ -1699,7 +1698,7 @@ const GLOBAL_SHORTCUTS: &[(&str, &str)] = &[
     // `composer::classify_enter`): a bare ⏎ dispatches, a *modified* ⏎ breaks
     // the line. The composer footer advertises the same pair — these rows must
     // not drift from it.
-    ("⏎", "queue the prompt — never blocks a running turn"),
+    ("⏎", "queue the prompt — mid-turn it runs as its own agent"),
     ("⌘⏎ / ⌃⏎ / ⌥⏎", "insert a line break in the prompt"),
     ("!cmd", "run a shell command NOW (skips the queue)"),
     ("/", "slash commands — ↑↓ pick · tab completes · ⏎ runs"),
