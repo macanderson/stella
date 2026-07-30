@@ -297,6 +297,79 @@ pub fn model_supports_reasoning(provider: &str, model: &str) -> Option<bool> {
         .and_then(|entry| entry.supports_reasoning)
 }
 
+// Provider default posture
+
+/// The OpenRouter default posture, as the settings object a user would have
+/// had to write by hand to get it.
+///
+/// One key reaches every vendor, so the interesting choice on OpenRouter is
+/// not "which model" but "which model per ROLE" — and the roles want
+/// genuinely different things. The driver wants a long-context agentic model
+/// thinking hard; the judge wants a different vendor's strongest reasoner, so
+/// its verdict is not the worker grading its own homework (see
+/// [`spec_family`], which exists precisely to keep those apart); triage wants
+/// something fast and cheap that runs on every turn.
+///
+/// Hence Kimi K3 driving at `xhigh` with thinking on, Opus 5 judging, GLM 5.2
+/// triaging. All three are OpenRouter slugs on the one key, so this costs the
+/// instance no extra configuration — which is the point of it being a default
+/// rather than documentation telling people to write it out.
+///
+/// Being a baseline is what keeps this honest: it composes UNDER the settings
+/// scope chain via [`AgentEngineConfig::layered_over`], so any of it that a
+/// user has an opinion about is theirs, field by field.
+pub fn provider_engine_baseline(provider_id: &str) -> Option<AgentEngineConfig> {
+    if provider_id != "openrouter" {
+        return None;
+    }
+    let routed = |slug: &str| {
+        Some(AgentEngineAgent {
+            provider: Some("openrouter".to_string()),
+            model: Some(slug.to_string()),
+            ..AgentEngineAgent::default()
+        })
+    };
+    Some(AgentEngineConfig {
+        agents: Some(AgentEngineAgents {
+            // No `model` here on purpose: the default agent's model is
+            // already answered by the provider row's `default_model`, and
+            // pinning it a second time would outrank an explicit `--model`.
+            // This sets only the posture that row cannot carry.
+            default: Some(AgentEngineAgent {
+                effort: Some(ReasoningEffort::Xhigh),
+                reasoning: Some(Toggle::On),
+                ..AgentEngineAgent::default()
+            }),
+            // Unset: the worker rides the default agent's model, and saying
+            // so twice is how the two drift apart.
+            worker: None,
+            judge: routed("anthropic/claude-opus-5"),
+            triage: routed("z-ai/glm-5.2"),
+        }),
+        ..AgentEngineConfig::default()
+    })
+}
+
+/// The engine settings a session actually runs on: the user's merged
+/// `agent_engine_config` layered over whatever posture the resolved provider
+/// brings ([`provider_engine_baseline`]).
+///
+/// Keyed on the provider that resolution actually PICKED, not on which
+/// credentials happen to exist. An instance with an OpenRouter key that was
+/// nonetheless pointed at `--model anthropic/…` is an Anthropic session, and
+/// quietly routing its judge through a different gateway — and a different
+/// bill — would be the config surprising its user.
+pub fn engine_with_provider_baseline(
+    provider_id: &str,
+    configured: &Option<AgentEngineConfig>,
+) -> Option<AgentEngineConfig> {
+    match (provider_engine_baseline(provider_id), configured) {
+        (Some(baseline), Some(user)) => Some(user.layered_over(&baseline)),
+        (Some(baseline), None) => Some(baseline),
+        (None, configured) => configured.clone(),
+    }
+}
+
 /// The effort levels that DO something for a model served by `provider_id`.
 /// Two constraints intersect here:
 /// - the model: a catalog-confirmed non-reasoning model has no levels at
@@ -321,6 +394,14 @@ pub fn effort_levels(
     }
     if provider_id == "zai" {
         return &[];
+    }
+    // OpenRouter is OpenAI-compatible on the wire but NOT in this vocabulary:
+    // its `reasoning.effort` accepts the full ladder and normalizes each tier
+    // onto the routed model, so offering `xhigh`/`max` here promises a
+    // distinction the request can genuinely express (see
+    // `zai::map_openrouter_effort`).
+    if provider_id == "openrouter" {
+        return &["low", "medium", "high", "xhigh", "max"];
     }
     match dialect {
         Dialect::Anthropic | Dialect::Bedrock => &["low", "medium", "high", "xhigh", "max"],
