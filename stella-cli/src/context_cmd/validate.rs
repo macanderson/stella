@@ -34,7 +34,7 @@ use crate::context_records::{
 
 /// `stella context list`.
 pub fn run_list(root: &Path, json: bool) -> Result<(), String> {
-    let registry = crate::context_records::load_registry(root, true);
+    let registry = crate::context_records::load_registry(root);
     if json {
         let rows: Vec<RecordRow> = registry.entries.iter().map(RecordRow::from_entry).collect();
         println!(
@@ -87,7 +87,7 @@ pub fn run_list(root: &Path, json: bool) -> Result<(), String> {
 
 /// `stella context validate`.
 pub fn run_validate(root: &Path, json: bool) -> Result<(), String> {
-    let files = rule_files(root, true);
+    let files = rule_files(root, true, true);
     let now = now_rfc3339();
     let cache = probe_everything(root, &files, &now);
     let registry = registry_with_cache(root, &files, &cache, &now);

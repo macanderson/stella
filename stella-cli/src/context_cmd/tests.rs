@@ -263,7 +263,7 @@ fn keeping_a_proposal_publishes_a_record_the_engine_loads_and_cites() {
         .join("ctx.acme.web.pkg-manager.toml");
     assert!(published.exists(), "keep writes a Git-tracked record file");
 
-    let registry = load_registry(root.path(), false);
+    let registry = load_registry(root.path());
     let entry = registry.by_handle("pkg-manager").expect("the record loads");
     assert_eq!(
         entry.record.record.statement,
@@ -286,7 +286,7 @@ fn keeping_a_proposal_publishes_a_record_the_engine_loads_and_cites() {
 fn a_published_records_hash_verifies_on_load() {
     let root = workspace();
     review::run_keep(root.path(), "pkg-manager", None, false).expect("keep succeeds");
-    let registry = load_registry(root.path(), false);
+    let registry = load_registry(root.path());
     let entry = registry.by_handle("pkg-manager").unwrap();
     assert!(
         !entry
@@ -323,7 +323,7 @@ fn edit_publishes_the_reviewers_wording_under_the_same_lineage() {
     )
     .expect("edit succeeds");
 
-    let registry = load_registry(root.path(), false);
+    let registry = load_registry(root.path());
     let entry = registry.by_handle("pkg-manager").expect("loads");
     assert_eq!(
         entry.record.record.statement,
@@ -369,7 +369,7 @@ fn keeping_a_refuted_claim_still_leaves_it_out_of_the_prompt() {
     // A reviewer can keep it — the record is a claim somebody stands behind — but the
     // truth sweep is what decides whether it steers, and `.nvmrc` says 22.
     review::run_keep(root.path(), "node-version", None, false).expect("keep succeeds");
-    let registry = load_registry(root.path(), false);
+    let registry = load_registry(root.path());
     let entry = registry.by_handle("node-version").expect("it loads");
     assert!(
         !entry.disposition.is_selected(),
@@ -383,6 +383,110 @@ fn keeping_a_refuted_claim_still_leaves_it_out_of_the_prompt() {
             .contains("Node 20"),
         "it must not be taught to the agent on every turn"
     );
+}
+
+/// The epic's own acceptance criterion: a revert removes the rule from all
+/// subsequent selection (§17).
+///
+/// Worth pinning even though it looks like it needs no code: the whole design rests
+/// on Git being the authority and the loader deriving from it, so "reverting the
+/// publishing commit un-publishes the record" must be true *by construction* rather
+/// than by a cleanup path somebody could forget to call. If a cache or a database
+/// row ever outlived the file, this is the test that would notice.
+#[test]
+fn reverting_the_publication_removes_the_record_from_selection() {
+    let root = workspace();
+    review::run_keep(root.path(), "pkg-manager", None, false).expect("keep succeeds");
+    let published = root
+        .path()
+        .join(RULES_DIR)
+        .join("ctx.acme.web.pkg-manager.toml");
+    assert!(
+        load_registry(root.path())
+            .by_handle("pkg-manager")
+            .is_some()
+    );
+
+    // What `git revert` of the publishing commit does to the tree.
+    std::fs::remove_file(&published).unwrap();
+
+    let registry = load_registry(root.path());
+    assert!(
+        registry.by_handle("pkg-manager").is_none(),
+        "the record must leave selection with the file"
+    );
+    assert!(
+        registry.render(Channel::Cached, None).text.is_empty(),
+        "and must not linger in the prompt from a cache"
+    );
+    // The decision log deliberately still remembers the keep — history is not
+    // rewritten by a revert; the record simply stops being loaded.
+    assert!(
+        !read_decisions(root.path()).is_empty(),
+        "a revert un-publishes; it does not erase that the decision was made"
+    );
+}
+
+/// The solo path end to end, in a real repository: `--commit` makes the branch and
+/// the ordinary local commit §5.1 describes ("add rule to this repository", not
+/// "open a pull request").
+#[test]
+fn propose_commit_makes_a_branch_and_a_local_commit() {
+    let root = workspace();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    git(&["init", "-q"]);
+    git(&["config", "user.email", "t@t.t"]);
+    git(&["config", "user.name", "t"]);
+    git(&["remote", "add", "origin", "git@github.com:acme/web.git"]);
+    std::fs::write(
+        root.path().join("README.md"),
+        "base
+",
+    )
+    .unwrap();
+    git(&["add", "README.md"]);
+    git(&["commit", "-q", "-m", "base"]);
+
+    review::run_keep(root.path(), "pkg-manager", None, false).expect("keep succeeds");
+    propose::run_propose(root.path(), "pkg-manager", true).expect("propose --commit succeeds");
+
+    assert_eq!(
+        git(&["rev-parse", "--abbrev-ref", "HEAD"]),
+        "stella/context/pkg-manager",
+        "the branch is named after the handle, so it reads as what it changes"
+    );
+    let message = git(&["log", "-1", "--pretty=%B"]);
+    assert!(
+        message.starts_with("context: this repository uses pnpm"),
+        "{message}"
+    );
+    assert!(
+        message.contains("## Proposed steering") && message.contains("## Expected runtime effect"),
+        "the §8.2 body travels with the commit: {message}"
+    );
+    let changed = git(&["show", "--name-only", "--pretty=format:", "HEAD"]);
+    assert_eq!(
+        changed.lines().filter(|l| !l.trim().is_empty()).count(),
+        1,
+        "the diff touches exactly one rule file (§17): {changed}"
+    );
+
+    // A second run must not clobber the branch it already made.
+    let err = propose::run_propose(root.path(), "pkg-manager", true).unwrap_err();
+    assert!(err.contains("already exists"), "{err}");
 }
 
 // #892 — explain

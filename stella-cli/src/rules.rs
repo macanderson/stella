@@ -209,8 +209,7 @@ pub(crate) fn load_workspace_rules(
         user_rules_dir,
         authority.project_prompts_allowed,
     );
-    let records =
-        crate::context_records::load_registry(workspace_root, authority.project_prompts_allowed);
+    let records = crate::context_records::load_session_registry(workspace_root, authority);
     ResolvedRules {
         rules: boundary_rules(markdown, &records).into(),
         records: Arc::new(records),

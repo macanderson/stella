@@ -44,7 +44,7 @@ use stella_core::records::{Entry, Registry, Severity};
 
 /// `stella context propose <rule>`.
 pub fn run_propose(root: &Path, needle: &str, commit: bool) -> Result<(), String> {
-    let registry = crate::context_records::load_registry(root, true);
+    let registry = crate::context_records::load_registry(root);
     let entry = registry
         .by_handle(needle)
         .or_else(|| {

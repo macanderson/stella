@@ -100,7 +100,7 @@ fn a_never_checked_record_is_probed_and_its_verdict_cached() {
     std::fs::write(root.path().join(".nvmrc"), "22\n").unwrap();
     write_published_record(root.path(), "ctx.acme.web.node-version", "20");
 
-    let registry = load_registry(root.path(), false);
+    let registry = load_registry(root.path());
     let entry = registry.by_handle("node-version").expect("record loaded");
     assert!(
         !entry.disposition.is_selected(),
@@ -127,7 +127,7 @@ fn a_supported_record_reaches_the_prompt_with_its_handle() {
     std::fs::write(root.path().join(".nvmrc"), "20\n").unwrap();
     write_published_record(root.path(), "ctx.acme.web.node-version", "20");
 
-    let registry = load_registry(root.path(), false);
+    let registry = load_registry(root.path());
     let cached = registry.render(Channel::Cached, None);
     assert_eq!(cached.rendered, vec!["node-version"]);
     assert!(cached.text.contains("^node-version"), "{}", cached.text);
@@ -145,7 +145,7 @@ fn a_cached_verdict_inside_the_cadence_is_reused_rather_than_re_probed() {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join(".nvmrc"), "20\n").unwrap();
     write_published_record(root.path(), "ctx.acme.web.node-version", "20");
-    load_registry(root.path(), false);
+    load_registry(root.path());
     let first = SweepCache::read(root.path());
     let first_checked = first.checked["ctx.acme.web.node-version"]
         .checked_at
@@ -155,7 +155,7 @@ fn a_cached_verdict_inside_the_cadence_is_reused_rather_than_re_probed() {
     // P30D cadence the sweep must NOT re-run — that is what keeps a filesystem scan
     // out of every session start.
     std::fs::write(root.path().join(".nvmrc"), "22\n").unwrap();
-    let registry = load_registry(root.path(), false);
+    let registry = load_registry(root.path());
     let second = SweepCache::read(root.path());
     assert_eq!(
         second.checked["ctx.acme.web.node-version"].verdict, "supported",
@@ -176,10 +176,10 @@ fn probe_everything_ignores_the_cadence_and_does_not_move_the_scheduled_clock() 
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join(".nvmrc"), "20\n").unwrap();
     write_published_record(root.path(), "ctx.acme.web.node-version", "20");
-    load_registry(root.path(), false);
+    load_registry(root.path());
 
     std::fs::write(root.path().join(".nvmrc"), "22\n").unwrap();
-    let files = rule_files(root.path(), false);
+    let files = rule_files(root.path(), false, true);
     let fresh = probe_everything(root.path(), &files, "2026-07-20T00:00:00Z");
     assert_eq!(
         fresh.checked["ctx.acme.web.node-version"].verdict, "refuted",
@@ -195,7 +195,7 @@ fn probe_everything_ignores_the_cadence_and_does_not_move_the_scheduled_clock() 
 #[test]
 fn a_workspace_with_no_records_loads_and_writes_nothing() {
     let root = tempfile::tempdir().unwrap();
-    let registry = load_registry(root.path(), false);
+    let registry = load_registry(root.path());
     assert!(registry.entries.is_empty());
     assert!(
         !root.path().join(SWEEP_CACHE).exists(),
@@ -298,7 +298,7 @@ guard_deny_command = "git push --force*"
     )
     .unwrap();
 
-    let registry = load_registry(root.path(), false);
+    let registry = load_registry(root.path());
     let entry = registry.by_handle("no-force-push").expect("loaded");
     assert!(
         entry.is_enforced(),
@@ -338,7 +338,7 @@ guard_deny_command = "git push --force*"
 "#,
     )
     .unwrap();
-    let registry = load_registry(root.path(), false);
+    let registry = load_registry(root.path());
     let entry = registry.by_handle("no-force-push").expect("loaded");
     assert!(
         !entry.is_enforced(),
@@ -357,7 +357,7 @@ fn a_proposal_file_contributes_no_published_records() {
         ".nvmrc",
     );
     // Proposals live outside the rule directories, so nothing about them can steer.
-    assert!(load_registry(root.path(), false).entries.is_empty());
+    assert!(load_registry(root.path()).entries.is_empty());
 }
 
 #[test]

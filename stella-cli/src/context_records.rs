@@ -153,7 +153,19 @@ pub(crate) fn append_decision(root: &Path, event: &DecisionEvent) -> Result<(), 
 }
 
 /// The rule files this workspace's directories contain, in precedence order.
-pub(crate) fn rule_files(root: &Path, include_user: bool) -> Vec<RuleFile> {
+///
+/// **Two independent trust axes, and collapsing them is a security bug.**
+/// `include_user` controls whether `~/.stella/rules/` is read; `include_project`
+/// controls whether the *repository's* `.claude/rules/` and `.stella/rules/` are.
+/// An untrusted checkout must contribute nothing to the privileged system prompt
+/// (`AuthorityPolicy::project_prompts_allowed`), while the user's own rules are
+/// trusted by definition — they are the user's.
+///
+/// [`rule_search_dirs`] returns all three in precedence order and
+/// [`RuleSource`] reads every directory it is handed, so the filtering has to
+/// happen here, on the slice. Passing one flag for both axes reads plausibly and
+/// silently loads an untrusted repository's rules into the prompt.
+pub(crate) fn rule_files(root: &Path, include_user: bool, include_project: bool) -> Vec<RuleFile> {
     let user_rules_dir = if include_user {
         crate::settings::user_home_dir()
             .map(|home| home.join(".stella").join("rules").display().to_string())
@@ -165,7 +177,39 @@ pub(crate) fn rule_files(root: &Path, include_user: bool) -> Vec<RuleFile> {
         cwd: root.display().to_string(),
         user_rules_dir,
     });
-    crate::rules::FsRuleSource.read_rule_files(&dirs)
+    // `rule_search_dirs` puts the user directory first, then the two project ones.
+    let visible = if include_project {
+        dirs.as_slice()
+    } else {
+        dirs.get(..1).unwrap_or(&dirs)
+    };
+    crate::rules::FsRuleSource.read_rule_files(visible)
+}
+
+/// The registry a **session** loads: the authority policy decides whether an
+/// untrusted checkout's records may steer.
+///
+/// Named separately from [`load_registry`] rather than taking a bool, because the
+/// bool version of this distinction is what let an untrusted project record reach
+/// the privileged system prompt — `load_registry(root, flag)` reads plausibly with
+/// either value, and the compiler has nothing to say about which one is right.
+pub(crate) fn load_session_registry(
+    root: &Path,
+    authority: &crate::settings::AuthorityPolicy,
+) -> Registry {
+    load_registry_with(root, authority.project_prompts_allowed)
+}
+
+/// The registry a **CLI command** loads: everything on disk.
+///
+/// `stella context list`/`validate`/`explain` answer "what is in this workspace",
+/// which is a question about the filesystem rather than about what this session is
+/// permitted to be steered by — the same distinction
+/// [`crate::rules::load_workspace_rules_unfiltered`] draws for the miner. Trust
+/// governs whether a record steers the model; it has nothing to say about whether a
+/// file exists.
+pub(crate) fn load_registry(root: &Path) -> Registry {
+    load_registry_with(root, true)
 }
 
 /// Load this workspace's record registry, running any probe that is due.
@@ -175,8 +219,8 @@ pub(crate) fn rule_files(root: &Path, include_user: bool) -> Vec<RuleFile> {
 /// making the pure loader call back into a probe runner would put I/O behind
 /// `stella-core`'s only I/O-free boundary, and parsing a handful of small TOML
 /// files twice costs less than the seam it would cost to avoid.
-pub(crate) fn load_registry(root: &Path, include_user: bool) -> Registry {
-    let files = rule_files(root, include_user);
+fn load_registry_with(root: &Path, include_project: bool) -> Registry {
+    let files = rule_files(root, true, include_project);
     let now = now_rfc3339();
     let mut cache = SweepCache::read(root);
     let ran = run_due_probes(root, &files, &mut cache, &now);

@@ -40,7 +40,7 @@ use stella_core::records::{Disposition, Entry, Registry};
 
 /// `stella context explain <rule>`.
 pub fn run_explain(root: &Path, needle: &str) -> Result<(), String> {
-    let registry = crate::context_records::load_registry(root, true);
+    let registry = crate::context_records::load_registry(root);
     let entry = find(&registry, needle).ok_or_else(|| not_found(&registry, needle))?;
     let record = &entry.record.record;
 
