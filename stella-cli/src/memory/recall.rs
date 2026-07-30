@@ -38,6 +38,14 @@ impl RecalledBlock {
 }
 
 impl SessionMemory {
+    /// Hand this session the volatile record channel resolved at assembly.
+    ///
+    /// Called once, from the session driver that already has the rule registry, so
+    /// recall never re-walks the rule directories or re-runs the truth sweep.
+    pub(crate) fn set_record_channel(&mut self, block: String) {
+        self.record_channel = (!block.trim().is_empty()).then_some(block);
+    }
+
     /// Build the volatile recalled-context block for a prompt: relevant
     /// memories (similarity + domain overlap + recency via the context
     /// store) and relevant skills (lexical + domain selection). `None` when
@@ -104,6 +112,13 @@ impl SessionMemory {
         if let Some(section) = stella_tools::exploration::render_draft_claims(&self.workspace_root)
         {
             sections.push(section);
+        }
+
+        // The volatile context-record channel (epic #897). Same channel as the
+        // memories above and for the same reason: a fact about a staging URL costs
+        // tokens on every turn and is worth them on almost none.
+        if let Some(section) = self.record_channel.as_deref().filter(|s| !s.is_empty()) {
+            sections.push(section.trim_start().to_string());
         }
 
         RecalledBlock {

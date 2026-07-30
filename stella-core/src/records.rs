@@ -151,11 +151,6 @@ pub enum RecordFinding {
     /// The record asked to block at the tool boundary and was refused. See
     /// [`BlockingRefusal`] for which precondition failed.
     BlockingRefused(BlockingRefusal),
-    /// The record's truth probe now says the claim does not hold.
-    Refuted {
-        /// The probe's explanation.
-        detail: String,
-    },
     /// The record overlaps another at equal precedence with different
     /// enforcement, and nothing here resolves it (§12: never silently resolved).
     Conflict {
@@ -176,9 +171,7 @@ impl RecordFinding {
             | Self::BlockingRefused(_)
             | Self::Conflict { .. }
             | Self::HashMismatch { .. } => Severity::Warning,
-            Self::GuardLint(_) | Self::ForbiddenData { .. } | Self::Refuted { .. } => {
-                Severity::Blocking
-            }
+            Self::GuardLint(_) | Self::ForbiddenData { .. } => Severity::Blocking,
         }
     }
 }
@@ -212,7 +205,6 @@ impl std::fmt::Display for RecordFinding {
                 kind.as_str()
             ),
             Self::BlockingRefused(refusal) => write!(f, "{refusal}"),
-            Self::Refuted { detail } => write!(f, "the claim no longer holds: {detail}"),
             Self::Conflict { with, detail } => write!(
                 f,
                 "conflicts with ^{with} at equal precedence: {detail} \

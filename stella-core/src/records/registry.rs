@@ -209,7 +209,7 @@ pub fn load(files: &[RuleFile], facts: &Facts<'_>) -> Registry {
     // Pass 3: sweep and arm.
     let mut entries: Vec<Entry> = Vec::new();
     for (record, markdown) in records.into_iter().zip(markdown) {
-        let disposition = super::disposition(&SweepInput {
+        let mut disposition = super::disposition(&SweepInput {
             record: &record.record,
             verdict: facts.verdicts.get(&record.record.lineage_id).copied(),
             last_checked: facts
@@ -218,6 +218,15 @@ pub fn load(files: &[RuleFile], facts: &Facts<'_>) -> Registry {
                 .map(String::as_str),
             now: facts.now,
         });
+        // A blocking finding — a leaked credential, a guard that cannot fire, a
+        // retracted status — means this record must not steer. That is expressed as
+        // a disposition rather than by dropping the record, because the two are not
+        // the same thing: a dropped record is invisible to `stella context validate`
+        // and `explain`, which is precisely where somebody needs to be told that the
+        // policy they committed is inert. It stays visible; it stops steering.
+        if let Some(reason) = blocking_reason(&record) {
+            disposition = Disposition::Block { reason };
+        }
         let guard = resolve_guard(
             &record,
             markdown.as_ref(),
@@ -233,9 +242,6 @@ pub fn load(files: &[RuleFile], facts: &Facts<'_>) -> Registry {
         });
     }
 
-    // A record with a blocking finding must not steer. It leaves the registry here
-    // rather than being filtered at each use site, so no caller can forget.
-    entries.retain(|entry| entry.record.is_selectable());
     let rules = entries.iter().map(projected_rule).collect();
 
     Registry {
@@ -267,6 +273,31 @@ fn merge_by_lineage(
         .collect()
 }
 
+/// Why this record must not steer, when something says it must not.
+///
+/// A retracted or archived record is not a defect — somebody retired it, and revert
+/// relies on that taking effect — so it reads as an ordinary status rather than a
+/// finding to fix.
+fn blocking_reason(record: &LoadedRecord) -> Option<String> {
+    if !matches!(record.record.status, None | Some(RecordStatus::Active)) {
+        return Some(format!(
+            "its status is {}",
+            record
+                .record
+                .status
+                .map(|status| status.as_str())
+                .unwrap_or("unset")
+        ));
+    }
+    let blockers: Vec<String> = record
+        .findings
+        .iter()
+        .filter(|finding| finding.severity() == super::Severity::Blocking)
+        .map(ToString::to_string)
+        .collect();
+    (!blockers.is_empty()).then(|| blockers.join("; "))
+}
+
 /// The blocking decision for one record.
 fn resolve_guard(
     record: &LoadedRecord,
@@ -279,6 +310,13 @@ fn resolve_guard(
         // Grandfathered: a shipped markdown guard keeps working exactly as it did.
         return GuardDecision {
             guard: rule.guard.clone(),
+            refusal: None,
+        };
+    }
+    if blocking_reason(record).is_some() {
+        // A record that must not steer must certainly not deny a tool call.
+        return GuardDecision {
+            guard: None,
             refusal: None,
         };
     }
