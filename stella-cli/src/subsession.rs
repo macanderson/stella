@@ -504,8 +504,19 @@ async fn run_worker(
         Ok(p) => p,
         Err(e) => return (None, 0.0, WorkerEnd::Failed(e)),
     };
-    let registry = agent::new_tool_registry(cfg.workspace_root.clone(), registry_options).await;
+    // `Arc` because the lane's sub-agent dispatcher holds a `Weak` back to it
+    // (`crate::subagent`) — the registry is the child's tool set, so an owning
+    // handle either way would leak both.
+    let registry =
+        Arc::new(agent::new_tool_registry(cfg.workspace_root.clone(), registry_options).await);
     if let Err(error) = agent::populate_schema_index(&registry, &cfg.workspace_root) {
+        return (None, 0.0, WorkerEnd::Failed(error));
+    }
+    // A worker lane delegates research like any other turn. Without this the
+    // `task` tool is still advertised (the registry registers it
+    // unconditionally) and answers "sub-agents are unavailable" every time —
+    // and the lane's pause gate, published below, would have nothing to reach.
+    if let Err(error) = crate::subagent::install_for_session(cfg, &registry) {
         return (None, 0.0, WorkerEnd::Failed(error));
     }
     let active_rules =
@@ -549,7 +560,7 @@ async fn run_worker(
     // store's lock table — no coordinator, sub-millisecond acquire, rivals
     // named in the refusal (crate::claims).
     let claims = crate::claims::ClaimTap::new(
-        &registry,
+        &*registry,
         execution.as_ref().map(|(store, _)| store.clone()),
         format!("{session_id}/{}", spec.lane),
     );
@@ -564,10 +575,9 @@ async fn run_worker(
     // ledger described a session in which the delegated work never happened.
     registry.attach_events(stella_core::EventSender::new(tx.clone()));
     // `Arc` so the same gate can be published for the turn as well as
-    // borrowed by it: a worker parked at Pause must not keep spending inside
-    // a sub-agent it dispatched (`crate::subagent`). A worker lane installs no
-    // dispatcher today, so nothing reads this yet — it is published anyway
-    // because the gap reopens silently the day one is installed.
+    // borrowed by it: a lane parked at Pause must not keep spending inside a
+    // sub-agent it dispatched, and this lane has a dispatcher (installed
+    // above) for that to reach.
     let gate: Arc<WatchGate> = Arc::new(WatchGate(pause_rx));
     let _controls = registry
         .attach_turn_controls(stella_core::ports::TurnControls::none().with_gate(gate.clone()));
