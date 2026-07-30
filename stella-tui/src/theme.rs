@@ -582,7 +582,7 @@ const FALLBACKS: &[(Color, u8, u8)] = &[
 /// (already-indexed, named, `Reset`, or an interpolated gradient cell) passes
 /// through unchanged in the two indexed modes — this only ever narrows the
 /// palette tokens, never anything else. That pass-through is a known gap for
-/// interpolated cells (the `crate::fx` sweeps, `brand_gradient`): on a 256- or
+/// interpolated cells (animated sweeps, `brand_gradient`): on a 256- or
 /// 16-color terminal they still emit 24-bit SGR. Surfaces that care collapse
 /// to a solid named token themselves when [`ColorMode::is_truecolor`] is false
 /// (see `crate::progress`).

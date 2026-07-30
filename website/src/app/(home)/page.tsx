@@ -46,7 +46,7 @@ const DOORS = [
 
 export default function HomePage() {
   return (
-    <main id="content" className="flex flex-1 flex-col">
+    <div id="content" tabIndex={-1} className="flex flex-1 flex-col">
       {/* ── What it is ─────────────────────────────────────────────────── */}
       <section className="mx-auto w-full max-w-3xl px-4 py-20 sm:py-28">
         <Mark className="lp-mark mb-10 h-10 w-auto" cursor label="Stella" />
@@ -184,6 +184,6 @@ export default function HomePage() {
           </nav>
         </div>
       </footer>
-    </main>
+    </div>
   );
 }

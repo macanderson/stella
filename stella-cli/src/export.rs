@@ -71,8 +71,17 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
     let html = render_dashboard(&usage_stats, &dumps, &watermark);
 
     // Assemble the ZIP.
+    //
+    // Owner-only, directory and archive both. #817 masks *credentials* from
+    // the dumps, but what remains is still the whole session: every prompt,
+    // every tool argument, every touched file's content. That was landing at
+    // the process umask (0644 on a stock system) inside the project tree, so on
+    // a shared machine or a multi-user build box any other account could read
+    // the complete transcript. The rest of the tree treats data of this
+    // sensitivity as `.stella/private/`; the export is no less sensitive for
+    // being a file the user later chooses to share deliberately.
     let exports_dir = workspace_root.join(".stella").join("exports");
-    std::fs::create_dir_all(&exports_dir).map_err(|e| format!("create exports dir: {e}"))?;
+    create_private_dir(&exports_dir)?;
     let zip_path = exports_dir.join(format!("session-{folder}.zip"));
 
     let mut zip = ZipWriter::new();
@@ -101,9 +110,38 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
     )?;
 
     let bytes = zip.finish()?;
-    std::fs::write(&zip_path, &bytes).map_err(|e| format!("write archive: {e}"))?;
+    stella_store::durable::write_atomic(
+        &zip_path,
+        &bytes,
+        stella_store::durable::MODE_PRIVATE,
+    )
+    .map_err(|e| format!("write archive: {e}"))?;
 
     Ok(zip_path)
+}
+
+/// Create `dir` (and parents) owner-only. An existing directory is tightened
+/// too: an archive written 0600 into a 0755 directory is still listed by
+/// everyone, and a directory created by an older build is exactly the case
+/// that needs fixing.
+fn create_private_dir(dir: &Path) -> Result<(), String> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder
+        .create(dir)
+        .map_err(|e| format!("create exports dir: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("restrict exports dir: {e}"))?;
+    }
+    Ok(())
 }
 
 /// Redact credentials from one table's JSON dump (#817). Parses the array and
@@ -1104,6 +1142,66 @@ mod tests {
             "model name appears in the data"
         );
         assert!(content.contains("manifest"), "manifest is present");
+    }
+
+    /// #817 masks credentials from the dump, but what remains is the whole
+    /// session — every prompt, tool argument, and touched file's content. It
+    /// was written at the process umask (0644 on a stock system) inside the
+    /// project tree, so on a shared machine any other account could read the
+    /// complete transcript just by looking. Archive and directory are both
+    /// owner-only now; the directory matters as much as the file, because an
+    /// archive nobody can open is still an archive everybody can list.
+    #[cfg(unix)]
+    #[test]
+    fn the_export_archive_and_its_directory_are_owner_only() {
+        use stella_store::TelemetryRow;
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        {
+            let store = Store::open(tmp.path()).unwrap();
+            store
+                .record_telemetry(
+                    1,
+                    &TelemetryRow {
+                        step: 0,
+                        call_role: "worker".into(),
+                        provider: "anthropic".into(),
+                        model: "claude-test".into(),
+                        input_tokens: 10,
+                        estimated_input_tokens: 10,
+                        output_tokens: 2,
+                        cache_read_tokens: 0,
+                        cache_miss_tokens: 0,
+                        cache_write_tokens: 0,
+                        cost_usd: 0.001,
+                        duration_ms: 5,
+                        retries: 0,
+                        tool_calls: 0,
+                        usage_complete: true,
+                    },
+                )
+                .unwrap();
+        }
+
+        // A pre-existing world-readable exports dir (an older build's) must be
+        // tightened, not accepted.
+        let exports = tmp.path().join(".stella/exports");
+        std::fs::create_dir_all(&exports).unwrap();
+        std::fs::set_permissions(&exports, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let zip_path = export_session(tmp.path()).unwrap();
+
+        assert_eq!(
+            std::fs::metadata(&zip_path).unwrap().permissions().mode() & 0o777,
+            0o600,
+            "the session archive must not be readable by other accounts"
+        );
+        assert_eq!(
+            std::fs::metadata(&exports).unwrap().permissions().mode() & 0o777,
+            0o700,
+            "the exports directory must not be listable by other accounts"
+        );
     }
 
     #[test]

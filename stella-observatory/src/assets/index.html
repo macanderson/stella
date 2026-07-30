@@ -45,6 +45,12 @@
   --brand-wash:rgba(46,123,255,.10);   /* --brand @10% — hover / selected fill */
   --brand-edge:rgba(46,123,255,.40);   /* --brand @40% — chip + badge edges    */
   --sunken:rgba(5,7,12,.55);           /* --void @55% — inset wells            */
+  /* Control outlines. WCAG 1.4.11 wants 3:1 for the boundary that identifies
+     an interactive component; no token in the ground ramp reaches it —
+     --hairline-strong measures 1.39:1 on --surface. --text-3 does (4.64:1),
+     so every control that is operable takes it, while purely decorative
+     grouping seams (card edges, table rules) keep the hairlines. */
+  --control-edge:var(--text-3);
 
   /* Type. Two families, six sizes, three weights. Nothing else. */
   --mono:"SFMono-Regular",Menlo,Consolas,"Liberation Mono",monospace;
@@ -107,7 +113,7 @@ header .bword{height:20px;width:auto;display:block;align-self:center}
 .live[data-state="offline"]{color:var(--bad)}
 .live[data-state="offline"] i{background:var(--bad);animation:none}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-select{background:var(--raised);color:var(--text);border:1px solid var(--hairline-strong);
+select{background:var(--raised);color:var(--text);border:1px solid var(--control-edge);
        border-radius:var(--radius-sm);font:var(--fs-micro)/1.4 var(--mono);
        padding:6px 10px;max-width:280px}
 
@@ -123,7 +129,7 @@ nav.bar{position:sticky;top:0;z-index:20;display:flex;align-items:center;
 .tabs button[aria-selected="true"]{color:var(--text);border-bottom-color:var(--accent)}
 .tf-wrap{margin-left:auto;display:flex;align-items:center;gap:var(--sp1);padding:6px 0}
 .tf-label{font:var(--fs-micro)/1 var(--mono);color:var(--text-3)}
-.tf{display:flex;align-items:stretch;border:1px solid var(--hairline-strong);
+.tf{display:flex;align-items:stretch;border:1px solid var(--control-edge);
     border-radius:var(--radius-sm);overflow:hidden}
 .tf button{background:none;border:0;border-left:1px solid var(--hairline-strong);
   color:var(--text-2);cursor:pointer;font:var(--fs-micro)/1 var(--mono);padding:6px 11px}
@@ -235,9 +241,9 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
 #gcanvas{width:100%;height:100%;display:block;cursor:grab}
 #gcanvas.dragging{cursor:grabbing}
 .gctl{display:flex;gap:var(--sp1);align-items:center;margin-bottom:var(--sp1);flex-wrap:wrap}
-.gctl input{background:var(--raised);border:1px solid var(--hairline-strong);color:var(--text);
+.gctl input{background:var(--raised);border:1px solid var(--control-edge);color:var(--text);
             border-radius:var(--radius-sm);font:var(--fs-sm)/1.4 var(--mono);padding:6px 10px;width:230px}
-.gctl button{background:none;border:1px solid var(--hairline-strong);color:var(--text-2);
+.gctl button{background:none;border:1px solid var(--control-edge);color:var(--text-2);
              cursor:pointer;font:var(--fs-micro)/1.4 var(--mono);padding:6px 12px;border-radius:var(--radius-sm)}
 .gctl button:hover{color:var(--text);border-color:var(--accent)}
 .gstats{font:var(--fs-micro)/1.4 var(--mono);color:var(--text-3);margin-left:auto}
@@ -268,7 +274,7 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
        transition:opacity .24s;z-index:30}
 #scrim.open{opacity:1;pointer-events:auto}
 #drawer .close{position:absolute;top:18px;right:18px;background:none;
-               border:1px solid var(--hairline-strong);border-radius:var(--radius-sm);
+               border:1px solid var(--control-edge);border-radius:var(--radius-sm);
                color:var(--text-2);font:var(--fs-micro)/1.4 var(--mono);padding:5px 10px;cursor:pointer}
 #drawer .close:hover{color:var(--text);border-color:var(--accent)}
 #drawer h2{font:600 var(--fs-md)/1.4 var(--sans);margin:6px 0 2px;max-width:85%}
@@ -286,7 +292,7 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
 .empty code,.err code{color:var(--text);background:var(--raised);border:1px solid var(--hairline-strong);
              padding:1px 6px;border-radius:var(--radius-sm);white-space:nowrap}
 .crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:2px;margin-top:var(--sp1)}
-.crumbs .crumb{background:var(--raised);border:1px solid var(--hairline-strong);color:var(--text-2);
+.crumbs .crumb{background:var(--raised);border:1px solid var(--control-edge);color:var(--text-2);
   border-radius:var(--radius-sm);padding:3px 10px;cursor:pointer;font:var(--fs-sm)/1.5 var(--mono)}
 .crumbs .crumb:hover{color:var(--text);border-color:var(--accent)}
 .crumbs .sep{color:var(--text-3);margin:0 4px}
@@ -2154,7 +2160,10 @@ document.addEventListener("visibilitychange", () => {
 });
 addEventListener("pagehide", stopPolling);
 
-bindGraphEvents();
+/* Boot. The graph bindings touch canvas and ResizeObserver, so they are the
+   most environment-dependent thing on the page; a throw there must not take
+   the data refresh with it, which is what a bare sequence of calls did. */
+try { bindGraphEvents(); } catch (e) { fail("The code graph could not be initialised.", e); }
 switchTab(isTab(location.hash.slice(1)) ? location.hash.slice(1) : "overview");
 refresh();
 startPolling();

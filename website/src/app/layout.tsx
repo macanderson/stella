@@ -72,6 +72,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       className={`${sans.variable} ${mono.variable}`}
     >
       <body className="flex min-h-screen flex-col">
+        {/* First focusable node in the document, ahead of the Fumadocs header
+         * and (on /docs) a ~90-link sidebar. Both route groups expose a
+         * `#content` target at the top of their reading order. */}
+        <a className="skip-link" href="#content">
+          Skip to content
+        </a>
         <RootProvider>{children}</RootProvider>
       </body>
     </html>
