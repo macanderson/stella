@@ -1071,8 +1071,10 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // Reads (and, for convert, writes) definition files only.
             return commands_cmd::run_commands(cmd);
         }
-        // Phase 3 (#714). Reads and appends to the local lifecycle ledger
-        // only — no provider, no API key.
+        // Reads context-record TOML and the tree, and appends to the local
+        // lifecycle ledger on the review actions (Phase 3, #714). `propose
+        // --commit` writes a local branch and commit. No store, model, or
+        // API key on any path.
         Some(Command::Context { cmd }) => {
             return context_cmd::run_context(cmd);
         }

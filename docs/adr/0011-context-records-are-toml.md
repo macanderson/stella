@@ -1,9 +1,11 @@
 # ADR 0011: Context Records Are TOML (supersedes the surface decision in 0008)
 
-- Status: **Proposed** — needs repository-owner ratification. Supersedes ADR
-  0008's *surface* decision only; 0008's thesis is preserved unchanged.
-- Date: 2026-07-28
-- Deciders: (pending)
+- Status: **Accepted** — ratified by repository owner 2026-07-30 (was: Proposed).
+  Supersedes ADR 0008's *surface* decision only; 0008's thesis is preserved
+  unchanged. Ratified together with [ADR 0012](0012-context-record-field-schema.md),
+  as the closing section of this ADR requires.
+- Date: 2026-07-28 (ratified 2026-07-30)
+- Deciders: repository owner (ratified 2026-07-30)
 
 ## Context
 

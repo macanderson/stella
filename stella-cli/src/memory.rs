@@ -236,6 +236,16 @@ pub struct SessionMemory {
     /// this is off the learning loop runs exactly the lexical path that ships
     /// today and writes nothing to the lifecycle ledger.
     lifecycle_enabled: bool,
+    /// The `executions` row this session's next reflection belongs to, set by
+    /// the turn that opened it.
+    ///
+    /// The post-turn self-review is stored 1:1 with an execution, so without
+    /// this the loop has nothing to key the write on — which is why
+    /// `execution_reflection.self_rating` was NULL on every row ever written,
+    /// and the Observatory's self-improve panels had no data to show. `None`
+    /// degrades exactly as before: lessons still mine, the self-review is
+    /// dropped rather than written against a guessed row.
+    execution_id: Option<i64>,
     /// The volatile context-record channel — `may`/`info` records and anything the
     /// truth sweep demoted (epic #897).
     ///
