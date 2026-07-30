@@ -24,6 +24,15 @@
 //! headers (discarded beyond the path), `Connection: close`, explicit
 //! `Content-Length`.
 //!
+//! One route breaks that shape on purpose. `/api/v1/live` is a Server-Sent
+//! Events subscription — `keep-alive`, no `Content-Length`, open for as long
+//! as the tab is — because the alternative was a page that re-ran twelve
+//! full-history aggregates every five seconds and was still five seconds
+//! behind. Catching a degrading agent is the job; five seconds is the wrong
+//! order of magnitude for it. Being the only long-lived response here has
+//! consequences for the read timeout and the connection semaphore that are
+//! documented on each, and the transport itself lives in the `live` module.
+//!
 //! Every `/api/*` route accepts `?project=<id>`: the id is resolved against
 //! the cross-project rollup's `projects` table (the `global` module) and, when
 //! known, that project's workspace root replaces the serving root for the request —
@@ -35,6 +44,7 @@ mod codegraph;
 mod db;
 mod fsview;
 mod global;
+mod live;
 
 use accept::{AcceptAction, AcceptBackoff};
 use std::net::SocketAddr;
@@ -58,17 +68,31 @@ const WORDMARK_SVG: &str = include_str!("assets/wordmark.svg");
 ///
 /// Without it, a connection that opens and then says nothing occupies a task
 /// forever. Ten seconds is generous for a request head from a browser on
-/// loopback, and the dashboard has no long-lived response for this to endanger
-/// — every route answers once and closes.
+/// loopback.
+///
+/// It covers **reading the head only**, never the response. That distinction
+/// used to be invisible — every route answered once and closed, so wrapping
+/// the whole exchange was equivalent — and became load-bearing the moment
+/// `/api/v1/live` existed: a ten-second cap on a healthy SSE stream would
+/// sever it on a timer. The hazard this guards against (a peer that connects
+/// and says nothing) ends when the head arrives, so that is where the timeout
+/// ends too.
 const READ_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Connections served at once.
+/// **One-shot** connections served at once.
 ///
-/// A semaphore is safe here in a way it is not in `stella-serve`: nothing the
-/// observatory serves is a long-lived stream, so a permit is held for one
-/// request rather than for a whole turn, and bounding connections cannot
+/// A semaphore is safe here in a way it is not in `stella-serve` because
+/// every request it bounds answers once and closes: a permit is held for one
+/// request rather than for a whole turn, so bounding connections cannot
 /// deadlock a protocol against itself. 64 is far past what one dashboard page
 /// opens while keeping the blocking-pool fan-out bounded.
+///
+/// That reasoning is exactly why the live SSE stream is **not** counted here.
+/// An SSE connection is held open for as long as a tab is, so a handful of
+/// them on this semaphore would hold permits indefinitely and starve every
+/// one-shot route behind them — the page would hang while its own stream was
+/// perfectly healthy. Streams carry their own separate, smaller budget in
+/// the `live` module. Do not merge the two.
 const MAX_LIVE_CONNECTIONS: usize = 64;
 
 /// Sent on every response, making the dashboard's zero-external-reference
@@ -128,8 +152,23 @@ impl Response {
     }
 }
 
+/// The live SSE subscription. Handled before the one-shot router because it
+/// is the one route that does not answer once and close — see the `live`
+/// module for why it also needs its own connection budget.
+const LIVE_ROUTE: &str = "/api/v1/live";
+
+/// The path with any query string removed.
+fn route_of(path: &str) -> &str {
+    path.split_once('?').map_or(path, |(route, _)| route)
+}
+
 /// Route a request path to a response. Pure function of (workspace, path) —
 /// the unit tests drive this directly, no sockets involved.
+///
+/// Every route here answers exactly once. The live SSE subscription
+/// (`/api/v1/live`) is deliberately absent: it is a stream, it is dispatched
+/// before this function is reached, and giving it a `Response` here would
+/// mean buffering an endless one.
 #[must_use]
 pub fn respond(workspace_root: &Path, path: &str) -> Response {
     let (route, query) = match path.split_once('?') {
@@ -168,6 +207,14 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
             };
         }
         "/api/meta" => Ok(obs.meta()),
+        // The live plane's two one-shot faces. `/api/v1/cursor` is the
+        // change fingerprint and `/api/v1/snapshot` the in-flight slice —
+        // the same data [`LIVE_ROUTE`] pushes, reachable by plain GET. They
+        // exist so the dashboard degrades to polling when SSE is refused or
+        // unavailable, and so anything scripting against this (a CI monitor,
+        // a status bar) can ask without holding a socket open.
+        "/api/v1/cursor" => obs.cursor(),
+        "/api/v1/snapshot" => obs.live(),
         "/api/overview" => obs.overview(),
         "/api/executions" => obs.executions(),
         "/api/execution" => match query_param(query, "id").and_then(|v| v.parse::<i64>().ok()) {
@@ -382,17 +429,31 @@ fn host_is_local(head: &str) -> bool {
 
 /// Read one request head, answer it, close. GET only, 8 KiB head cap,
 /// [`READ_TIMEOUT`] to deliver it.
-async fn handle(stream: TcpStream, workspace_root: &Path) -> std::io::Result<()> {
-    match tokio::time::timeout(READ_TIMEOUT, handle_inner(stream, workspace_root)).await {
-        Ok(result) => result,
+///
+/// The timeout covers **reading the head only**, never the response. It used
+/// to wrap the whole exchange, which was harmless while every route answered
+/// once and closed — and became a bug the moment `/api/v1/live` existed,
+/// because a ten-second cap on a healthy stream would sever it on a timer.
+/// What the timeout is actually for is a peer that opens a socket and says
+/// nothing; that hazard ends when the head arrives.
+async fn handle(mut stream: TcpStream, workspace_root: &Path) -> std::io::Result<()> {
+    let head = match tokio::time::timeout(READ_TIMEOUT, read_head(&mut stream)).await {
+        Ok(result) => result?,
         // The peer never finished its head. Dropping the connection is the whole
         // remedy: there is nobody to tell, because a client that cannot send a
         // request head in ten seconds is not waiting for a status code.
-        Err(_elapsed) => Ok(()),
-    }
+        Err(_elapsed) => return Ok(()),
+    };
+    respond_to_head(stream, workspace_root, head).await
 }
 
-async fn handle_inner(mut stream: TcpStream, workspace_root: &Path) -> std::io::Result<()> {
+/// One request head, and whether its terminator arrived inside the cap.
+struct RequestHead {
+    text: String,
+    complete: bool,
+}
+
+async fn read_head(stream: &mut TcpStream) -> std::io::Result<RequestHead> {
     let mut buf = vec![0_u8; 8192];
     let mut read = 0;
     let mut head_complete = false;
@@ -415,12 +476,38 @@ async fn handle_inner(mut stream: TcpStream, workspace_root: &Path) -> std::io::
             break;
         }
     }
-    let head = String::from_utf8_lossy(&buf[..read]);
+    Ok(RequestHead {
+        text: String::from_utf8_lossy(&buf[..read]).into_owned(),
+        complete: head_complete,
+    })
+}
+
+/// Route one already-read head and write its answer.
+async fn respond_to_head(
+    mut stream: TcpStream,
+    workspace_root: &Path,
+    head: RequestHead,
+) -> std::io::Result<()> {
+    let RequestHead {
+        text: head,
+        complete: head_complete,
+    } = head;
     let mut parts = head.split_whitespace();
     let (method, path) = match (parts.next(), parts.next()) {
         (Some(m), Some(p)) => (m, p),
         _ => return Ok(()),
     };
+    // The live stream is the one route that does not answer once and close,
+    // so it is dispatched before the one-shot response is built. It is gated
+    // by the same two checks as everything else first — a truncated head or a
+    // rebound Host must not buy a long-lived subscription to the workspace's
+    // telemetry any more than it buys a single read of it.
+    if head_complete && host_is_local(&head) && method == "GET" && route_of(path) == LIVE_ROUTE {
+        let root = query_param(path.split_once('?').map(|(_, query)| query), "project")
+            .and_then(|id| global::resolve_project_root(&id))
+            .unwrap_or_else(|| workspace_root.to_path_buf());
+        return live::serve_stream(stream, Arc::new(Observatory::new(&root)), CSP).await;
+    }
     let response = if !head_complete {
         // A head with no terminator inside the cap is refused *before* routing.
         // Otherwise it is a hole straight through the rebinding gate below: pad

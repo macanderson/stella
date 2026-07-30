@@ -51,6 +51,8 @@ use stella_store::{
 /// 500s is a failure regardless of what it returns.
 const ROUTES: &[(&str, Option<&str>)] = &[
     ("/api/meta", None),
+    ("/api/v1/cursor", Some("/events")),
+    ("/api/v1/snapshot", Some("/executions/0/id")),
     ("/api/overview", Some("/runs")),
     ("/api/executions", Some("/0/id")),
     ("/api/execution?id=1", Some("/steps/0/step")),

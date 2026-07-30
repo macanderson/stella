@@ -21,6 +21,7 @@ toml.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+tokio = { workspace = true, features = ["net", "rt-multi-thread"] }
 # The schema-drift gate (#827) only. This crate must NOT link stella-store in
 # production: `Store::open` runs migrations, migrations are writes, and an
 # observer must never mutate what it observes — which is exactly why the SQL
