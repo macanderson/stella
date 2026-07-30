@@ -1,7 +1,8 @@
 /**
  * Stella CLI docs — styles.
  *
- * Brand system: "bright sky on black — a signal light in the dark." This site
+ * Brand system: electric blue and gold on deep space (docs/brand/BRAND.md is
+ * the normative source). This site
  * used to be deliberately hueless ("paper & ink, no accent colour"), which was
  * the right call while the repo carried three rival palettes and a neutral site
  * refused to arbitrate. That is settled now: there is one normative palette,
@@ -12,13 +13,13 @@
  * file is the *semantic* layer: it decides which token is foreground in which
  * mode, exactly as stella-tui's theme.rs sits over its generated palette.rs.
  *
- * The sky accent is asymmetric between the modes, and that is deliberate
- * rather than an oversight. It is 1.67:1 on white — well under what body text
- * needs — so on the light ground it is never text: it appears only as a FILL
- * under an ink label (11.87:1), and light-mode accent text is ink. On the black
- * ground it is 12.60:1 and carries brand, active/running, and progress.
- * `--stella-sky-ink` (9.45:1 on paper) is the only brand *text* tone light mode
- * may use.
+ * The brand accent is asymmetric between the modes, and that is deliberate
+ * rather than an oversight. Electric blue on white is far under what body text
+ * needs, so on the light ground it is never text: it appears only as a FILL
+ * under an ink label, and light-mode accent text is ink. On the dark ground
+ * `brand-bright` is 7.4:1 and carries brand, active/running, and progress.
+ * `--stella-brand-ink` (7.0:1 on paper) is the only brand *text* tone light
+ * mode may use.
  *
  * The accent is also reserved: brand, active, progress. Not a general-purpose
  * highlight — if everything is blue, nothing is.
@@ -45,12 +46,12 @@
 :root {
   /* Mode-aware "accent" that COMPONENTS reference (icons, diagram strokes,
    * prompt, brand headline word, marks). RULE 1: on paper this is ink, never
-   * the accent — sky is 1.67:1 on white. The `.dark` block lifts it to the
-   * brand sky, where it is 12.60:1. One token flips every mark with the
-   * theme. */
-  --stella-accent: var(--stella-ink);
-  --stella-accent-fill: var(--stella-ink); /* solid fill (CTA) — inverted label */
-  --stella-accent-muted: var(--stella-muted); /* quieter mark tone, 6.13:1 */
+   * the accent — electric blue does not clear AA as text on white. The `.dark`
+   * block lifts it to `brand-bright`, where it is 7.4:1. One token flips every
+   * mark with the theme. */
+  --stella-accent: var(--stella-ink-primary);
+  --stella-accent-fill: var(--stella-ink-primary); /* solid fill (CTA) — inverted label */
+  --stella-accent-muted: var(--stella-ink-secondary); /* quieter mark tone, 6.7:1 */
 
   /* Legacy alias. Only --stella-azure is still consumed (diagrams.tsx); it is
    * repointed at the mode-aware accent so diagrams keep inverting with the
@@ -61,44 +62,45 @@
   --stella-azure: var(--stella-accent);
 
   /* CTA (inverted primary) surfaces — an ink button on paper. */
-  --stella-cta-bg: var(--stella-ink);
+  --stella-cta-bg: var(--stella-ink-primary);
   --stella-cta-fg: var(--stella-paper);
   --stella-cta-bg-hover: #383838;
 
-  /* Light mode — paper ground, ink type. Accent text is ink; the sky accent
+  /* Light mode — paper ground, ink type. Accent text is ink; the brand accent
    * appears here only as a fill with an ink label on it. */
   --color-fd-background: var(--stella-paper);
-  --color-fd-foreground: var(--stella-ink);
+  --color-fd-foreground: var(--stella-ink-primary);
   --color-fd-muted: #fafafa;
-  --color-fd-muted-foreground: var(--stella-muted); /* 6.13:1 on paper */
+  --color-fd-muted-foreground: var(--stella-ink-secondary); /* 6.7:1 on paper */
   --color-fd-card: var(--stella-paper);
-  --color-fd-card-foreground: var(--stella-ink);
+  --color-fd-card-foreground: var(--stella-ink-primary);
   --color-fd-popover: var(--stella-paper);
-  --color-fd-popover-foreground: var(--stella-ink);
+  --color-fd-popover-foreground: var(--stella-ink-primary);
   --color-fd-border: #eaeaea; /* neutral hairline */
   --color-fd-accent: var(--stella-snow); /* hover/selected surface */
-  --color-fd-accent-foreground: var(--stella-ink);
-  --color-fd-primary: var(--stella-ink); /* links/active = ink, 19.80:1 on paper */
+  --color-fd-accent-foreground: var(--stella-ink-primary);
+  --color-fd-primary: var(--stella-ink-primary); /* links/active = ink, 19.2:1 on paper */
   --color-fd-primary-foreground: var(--stella-paper); /* text on an ink fill */
   --color-fd-secondary: var(--stella-snow);
-  --color-fd-secondary-foreground: var(--stella-ink);
-  --color-fd-ring: var(--stella-ink); /* focus ring — 19.80:1 on paper */
+  --color-fd-secondary-foreground: var(--stella-ink-primary);
+  --color-fd-ring: var(--stella-ink-primary); /* focus ring — 19.2:1 on paper */
 }
 
 .dark {
-  /* Dark mode — true black ground, bright sky accent. This is where the brand
-   * hue lives: sky is 12.60:1 on the ground and carries brand, active, and
-   * progress. Links stay text-primary (19.40:1) rather than sky, because a page
-   * of sky links would make the accent a general-purpose highlight. */
-  --stella-accent: var(--stella-sky);
-  --stella-accent-fill: var(--stella-sky);
+  /* Dark mode — deep-space ground, electric-blue accent. This is where the
+   * brand hue lives: `brand-bright` is 7.4:1 on the ground and carries brand,
+   * active, and progress. Links stay text-primary (18.1:1) rather than brand,
+   * because a page of blue links would make the accent a general-purpose
+   * highlight. */
+  --stella-accent: var(--stella-brand-bright);
+  --stella-accent-fill: var(--stella-brand-bright);
   --stella-accent-muted: var(--stella-text-secondary); /* 8.50:1 on ground */
 
   /* The CTA is the one place the accent fills on the dark side too — an ink
-   * label on a sky fill reads 11.87:1 in both modes. */
-  --stella-cta-bg: var(--stella-sky);
-  --stella-cta-fg: var(--stella-ink);
-  --stella-cta-bg-hover: var(--stella-sky-deep);
+   * label on a brand fill, so the button reads the same way in both modes. */
+  --stella-cta-bg: var(--stella-brand-bright);
+  --stella-cta-fg: var(--stella-ink-primary);
+  --stella-cta-bg-hover: var(--stella-brand-deep);
 
   --color-fd-background: var(--stella-ground);
   --color-fd-foreground: var(--stella-text-primary);
@@ -115,7 +117,7 @@
   --color-fd-primary-foreground: var(--stella-ground); /* text on a light fill */
   --color-fd-secondary: var(--stella-raised);
   --color-fd-secondary-foreground: var(--stella-text-primary);
-  --color-fd-ring: var(--stella-sky); /* focus ring — sky, 12.60:1 */
+  --color-fd-ring: var(--stella-brand-bright); /* focus ring — brand-bright, 7.4:1 on ground */
 }
 
 /* ───────────────────────────────────────────────────────────────────────────
@@ -433,9 +435,10 @@
   }
 }
 
-/* The mark carries the brand hue (rule 4): sky on the black ground, ink on
- * paper. It rides --stella-accent rather than the foreground so it inverts with
- * the theme — sky is 1.67:1 on white and can never be the light-mode mark. */
+/* The mark carries the brand hue (rule 4): electric blue on the deep-space
+ * ground, ink on paper. It rides --stella-accent rather than the foreground so
+ * it inverts with the theme — the blue does not clear AA on white and can never
+ * be the light-mode mark. */
 .lp-mark {
   color: var(--stella-accent);
 }
@@ -460,7 +463,7 @@
   --deck-warn: var(--stella-warning-ink); /* needs input — 5.49:1 on paper */
   --deck-bad: var(--stella-danger-ink); /* failed — 5.88:1 on paper */
   --deck-run: var(--stella-accent); /* running — ink on paper; RULE 1 */
-  --deck-queued: var(--stella-muted); /* queued — 6.13:1 on paper */
+  --deck-queued: var(--stella-ink-secondary); /* queued — 6.7:1 on paper */
 }
 
 .dark {
