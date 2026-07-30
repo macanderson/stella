@@ -94,7 +94,7 @@ use std::sync::Mutex;
 use base64::Engine as _;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::Serialize;
-use stella_protocol::{AgentEvent, TaskItem, TaskStatus, ToolOutput};
+use stella_protocol::{AgentEvent, TaskItem, TaskStatus};
 
 // Module map — this file holds the row types, the `Store` handle and its
 // query surface, and the tests; everything else is split by concern:
@@ -141,6 +141,7 @@ mod reconstruct;
 mod telemetry;
 #[cfg(test)]
 mod tests;
+mod tool_calls;
 #[cfg(test)]
 mod usage_completeness_tests;
 
@@ -207,6 +208,7 @@ pub use receipts::{
 pub use reconstruct::Reconstruction;
 pub use sessions::{SessionRecord, SessionRegistry, SessionStatus};
 pub use telemetry::{SourceTelemetryRow, TelemetryRow};
+pub use tool_calls::{ToolCallRow, ToolCallState};
 
 /// FNV-1a/64 hex — a stable, dependency-free digest for prompt hashes and
 /// tool-arg fingerprints (loop detection, not security). Also the
@@ -415,30 +417,6 @@ pub struct SkillUsageRow {
     pub skill: String,
     pub version: u32,
     pub reason: String,
-}
-
-/// One normalized tool-call row for the `tool_calls` log — a queryable
-/// per-call record materialized from the `events` stream. Stores shape,
-/// timing, and success (never the full output — `bytes_out` is its size).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolCallRow {
-    pub call_id: String,
-    pub name: String,
-    /// `"native"` | `"mcp"` — the only surfaces the one producer
-    /// ([`Store::materialize_tool_calls`]) derives (from the `mcp__` name
-    /// prefix). Skill and agent invocations are logged in their own tables
-    /// (`skill_usage`, `agent_uses`), not as surfaces here.
-    pub surface: String,
-    pub args_json: String,
-    pub args_digest: String,
-    /// Free-text "why" for the call. Currently always empty — the event
-    /// stream the producer normalizes from carries no reason, so the column
-    /// waits for a producer that captures one.
-    pub reason: String,
-    pub ok: bool,
-    pub error: String,
-    pub bytes_out: i64,
-    pub duration_ms: i64,
 }
 
 /// The agent's self-review of one turn, tied 1:1 to its execution (and thus to
@@ -811,7 +789,20 @@ impl Store {
         Ok(())
     }
 
-    /// Append one uniquely sequenced event to the execution stream.
+    /// Append one uniquely sequenced event to the execution stream, folding
+    /// it into the `tool_calls` projection in the same transaction.
+    ///
+    /// The two writes are atomic **on purpose**. `events` is the source of
+    /// truth and `tool_calls` is derived from it, so any window where one has
+    /// landed and the other has not is a window where the dashboard's counts
+    /// disagree with the log they claim to summarize. Committing them
+    /// together removes the window entirely: there is no interleaving, no
+    /// crash point, and no ordering of these two statements that leaves a
+    /// `tool_start` in the log without its row.
+    ///
+    /// Before v18 the projection was instead built once, at turn end, which
+    /// meant a live turn reported zero tool calls and an interrupted one
+    /// reported zero forever. See [`crate::tool_calls`] for the full account.
     pub fn record_event(&self, execution_id: i64, seq: u64, event: &AgentEvent) -> Result<()> {
         let seq = sqlite_i64("event sequence", seq)?;
         let payload = serde_json::to_string(event).map_err(|e| StoreError(e.to_string()))?;
@@ -831,10 +822,14 @@ impl Store {
         let event_type = serde_json::from_str::<EventTag>(&payload)
             .map(|tag| tag.ty)
             .unwrap_or_else(|_| "unknown".into());
-        self.lock().execute(
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        tx.execute(
             "INSERT INTO events (execution_id, seq, event_type, payload) VALUES (?, ?, ?, ?)",
             params![execution_id, seq, event_type, payload],
         )?;
+        tool_calls::project_event(&tx, execution_id, event)?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -1123,39 +1118,6 @@ impl Store {
         Ok(fold_mcp_usage_stats(&calls))
     }
 
-    /// Record the normalized per-call `tool_calls` log for an execution
-    /// (materialized from the `events` stream). `seq` is the call's index in
-    /// the drained batch; UNIQUE (execution_id, seq) guards double-writes.
-    /// One transaction — see [`Self::record_files_touched`].
-    pub fn record_tool_calls(&self, execution_id: i64, calls: &[ToolCallRow]) -> Result<()> {
-        let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        for (seq, row) in calls.iter().enumerate() {
-            tx.execute(
-                "INSERT OR REPLACE INTO tool_calls \
-                 (execution_id, seq, call_id, name, surface, args_json, args_digest, \
-                  reason, ok, error, bytes_out, duration_ms) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                params![
-                    execution_id,
-                    seq as i64,
-                    row.call_id,
-                    row.name,
-                    row.surface,
-                    row.args_json,
-                    row.args_digest,
-                    row.reason,
-                    row.ok as i64,
-                    row.error,
-                    row.bytes_out,
-                    row.duration_ms,
-                ],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
-    }
-
     /// Record (or replace) the agent's self-review for one turn, 1:1 with its
     /// execution.
     pub fn record_execution_reflection(
@@ -1193,150 +1155,6 @@ impl Store {
             params![r.execution_id, r.kind, r.content, r.domains, r.occurred_at],
         )?;
         Ok(conn.last_insert_rowid())
-    }
-
-    /// Materialize the normalized `tool_calls` log for an execution from its
-    /// already-persisted `events` stream (`tool_start` + `tool_result`). Rows
-    /// are emitted in call order; a `tool_start` with no matching result (turn
-    /// cut off mid-tool) is recorded as an incomplete, failed call so the count
-    /// stays honest. A re-emitted `tool_start` for an already-seen call_id
-    /// folds into that call's one row (first announcement keeps the position,
-    /// the last one's payload wins — the same newest-record keep-rule the
-    /// v0 → v1 dedup applies), because one call_id is one call no matter how
-    /// many times the stream announced it. Idempotent (INSERT OR REPLACE on
-    /// seq). Returns the count.
-    pub fn materialize_tool_calls(&self, execution_id: i64) -> Result<usize> {
-        let payloads: Vec<String> = {
-            let conn = self.lock();
-            let mut stmt = conn.prepare(
-                "SELECT payload FROM events \
-                 WHERE execution_id = ?1 AND event_type IN ('tool_start', 'tool_result') \
-                 ORDER BY seq ASC",
-            )?;
-            let rows = stmt.query_map(params![execution_id], |row| row.get::<_, String>(0))?;
-            let mut out = Vec::new();
-            for r in rows {
-                out.push(r?);
-            }
-            out
-        };
-
-        use std::collections::HashMap;
-        let mut order: Vec<String> = Vec::new();
-        // call_id -> (name, surface, args_json)
-        let mut starts: HashMap<String, (String, String, String)> = HashMap::new();
-        // call_id -> (ok, error, bytes_out, duration_ms)
-        let mut results: HashMap<String, (bool, String, i64, i64)> = HashMap::new();
-
-        for payload in &payloads {
-            let Ok(ev) = serde_json::from_str::<AgentEvent>(payload) else {
-                continue;
-            };
-            match ev {
-                AgentEvent::ToolStart { call } => {
-                    let args_json =
-                        serde_json::to_string(&call.input).unwrap_or_else(|_| "{}".into());
-                    let surface = if call.name.starts_with("mcp__") {
-                        "mcp"
-                    } else {
-                        "native"
-                    };
-                    // One position per call_id: pushing every announcement
-                    // would mint a second row (and double the call count)
-                    // for a re-emitted start, and its result — keyed by
-                    // call_id alone — would attach to both.
-                    if !starts.contains_key(&call.call_id) {
-                        order.push(call.call_id.clone());
-                    }
-                    starts.insert(call.call_id, (call.name, surface.into(), args_json));
-                }
-                AgentEvent::ToolResult {
-                    call_id,
-                    output,
-                    duration_ms,
-                    ..
-                } => {
-                    let (ok, error, bytes) = match output {
-                        ToolOutput::Ok { content } => (true, String::new(), content.len() as i64),
-                        ToolOutput::Error { message } => {
-                            let len = message.len() as i64;
-                            (false, message, len)
-                        }
-                    };
-                    results.insert(call_id, (ok, error, bytes, duration_ms as i64));
-                }
-                _ => {}
-            }
-        }
-
-        let mut rows: Vec<ToolCallRow> = Vec::with_capacity(order.len());
-        for call_id in &order {
-            let Some((name, surface, args_json)) = starts.get(call_id) else {
-                continue;
-            };
-            let digest = fnv_hex(args_json);
-            let (ok, error, bytes_out, duration_ms) = match results.get(call_id) {
-                Some((ok, error, bytes, dur)) => (*ok, error.clone(), *bytes, *dur),
-                None => (
-                    false,
-                    "no result (turn ended before the tool returned)".to_string(),
-                    0,
-                    0,
-                ),
-            };
-            rows.push(ToolCallRow {
-                call_id: call_id.clone(),
-                name: name.clone(),
-                surface: surface.clone(),
-                args_json: args_json.clone(),
-                args_digest: digest,
-                reason: String::new(),
-                ok,
-                error,
-                bytes_out,
-                duration_ms,
-            });
-        }
-        let n = rows.len();
-        self.record_tool_calls(execution_id, &rows)?;
-        Ok(n)
-    }
-
-    /// The most recent `tool_calls` rows for one tool, newest first, capped at
-    /// `limit`. Reads through the `tool_calls_by_name` index. The Tool Foundry
-    /// gap detector consumes this for `name = "bash"` to mine repeated command
-    /// shapes (`stella_core::detect_tool_gaps`); it is a general reader, not
-    /// bash-specific. `limit == 0` returns an empty vec.
-    pub fn recent_tool_calls(&self, name: &str, limit: usize) -> Result<Vec<ToolCallRow>> {
-        if limit == 0 {
-            return Ok(Vec::new());
-        }
-        let conn = self.lock();
-        let mut stmt = conn.prepare(
-            "SELECT call_id, name, surface, args_json, args_digest, reason, \
-                    ok, error, bytes_out, duration_ms \
-             FROM tool_calls WHERE name = ?1 \
-             ORDER BY execution_id DESC, seq DESC LIMIT ?2",
-        )?;
-        let rows = stmt.query_map(params![name, limit as i64], |r| {
-            Ok(ToolCallRow {
-                call_id: r.get(0)?,
-                name: r.get(1)?,
-                surface: r.get(2)?,
-                args_json: r.get(3)?,
-                args_digest: r.get(4)?,
-                reason: r.get(5)?,
-                ok: r.get::<_, i64>(6)? != 0,
-                error: r.get(7)?,
-                bytes_out: r.get(8)?,
-                duration_ms: r.get(9)?,
-            })
-        })?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
     }
 
     /// Derive and record the objective half of this turn's

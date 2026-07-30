@@ -322,6 +322,7 @@ fn data_plane_tables_roundtrip_and_tool_histogram() {
                     args_digest: "d1".into(),
                     reason: "find foo".into(),
                     ok: true,
+                    state: ToolCallState::Ok,
                     error: String::new(),
                     bytes_out: 120,
                     duration_ms: 14,
@@ -334,6 +335,7 @@ fn data_plane_tables_roundtrip_and_tool_histogram() {
                     args_digest: "d2".into(),
                     reason: String::new(),
                     ok: true,
+                    state: ToolCallState::Ok,
                     error: String::new(),
                     bytes_out: 0,
                     duration_ms: 9,
@@ -346,6 +348,7 @@ fn data_plane_tables_roundtrip_and_tool_histogram() {
                     args_digest: "d3".into(),
                     reason: String::new(),
                     ok: false,
+                    state: ToolCallState::Error,
                     error: "nope".into(),
                     bytes_out: 0,
                     duration_ms: 3,
@@ -1092,8 +1095,12 @@ fn skill_usage_records_per_execution_version_rows() {
     // compiled frame's identity to the receipt header — two nullable columns,
     // not a table, because the frame IS the manifest (ADR 0006 as amended).
     // v17 drops the never-wired graph_nodes/graph_edges seam and the
-    // query-less agent_uses_by_agent/reflections_by_kind indexes.
-    assert_eq!(SCHEMA_VERSION, 17);
+    // query-less agent_uses_by_agent/reflections_by_kind indexes. v18 turns
+    // `tool_calls` into a LIVE projection — a `state` column ('running' |
+    // 'ok' | 'error') plus the two indexes the live writer reads through, so
+    // an in-flight turn's calls are visible while it runs and a crashed one's
+    // are recoverable from the log.
+    assert_eq!(SCHEMA_VERSION, 18);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")
@@ -2213,6 +2220,11 @@ fn bash_row(call_id: &str, command: &str, ok: bool) -> ToolCallRow {
         args_digest: call_id.into(),
         reason: String::new(),
         ok,
+        state: if ok {
+            ToolCallState::Ok
+        } else {
+            ToolCallState::Error
+        },
         error: String::new(),
         bytes_out: 0,
         duration_ms: 1,
@@ -2236,6 +2248,7 @@ fn recent_tool_calls_filters_by_name_and_returns_newest_first() {
                     args_digest: "c2".into(),
                     reason: String::new(),
                     ok: true,
+                    state: ToolCallState::Ok,
                     error: String::new(),
                     bytes_out: 0,
                     duration_ms: 1,
