@@ -269,6 +269,56 @@ impl Store {
         Ok(rows)
     }
 
+    /// The prompt exactly as it was submitted, before the context engine
+    /// mutated it into a message array — the one artifact of a turn the user
+    /// authored themselves.
+    ///
+    /// This is the baseline `stella inspect --diff` uses for a role's *first*
+    /// call, which by definition has no predecessor to compare against. Diffing
+    /// the assembled context against these bytes is the only way to see what
+    /// Stella added on top of what was typed, which is otherwise invisible:
+    /// the reconstruction shows the sum, never the delta.
+    ///
+    /// `None` when the execution id does not exist. Reads the same column the
+    /// index preview does, but keyed rather than limit-bounded, so it still
+    /// answers for an execution too old to appear in
+    /// [`Store::inspectable_executions`].
+    pub fn execution_prompt(&self, execution_id: i64) -> Result<Option<String>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare("SELECT prompt FROM executions WHERE id = ?1")?;
+        let mut rows = stmt.query_map(params![execution_id], |r| r.get::<_, String>(0))?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Every execution of the same chat session as `execution_id`, oldest
+    /// first — the *turns* of one conversation.
+    ///
+    /// A turn is an execution, not a `turn_instance`: each prompt a user
+    /// submits at the deck opens a new execution row, and `turn_instance`
+    /// counts sub-turns *inside* one of those (goal rounds, subagents) and is
+    /// zero for almost every real call. So the comparison a person means by
+    /// "the previous turn" is a comparison across executions, which is also the
+    /// only boundary where a system prompt can legitimately drift — inside one
+    /// execution it is byte-stable by design, for cache reasons.
+    ///
+    /// Empty when the execution has no `session_id` (a one-shot `stella run`,
+    /// or a row predating session tracking); callers should treat that as "this
+    /// execution is its own session" rather than as an error.
+    pub fn session_executions(&self, execution_id: i64) -> Result<Vec<i64>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id FROM executions
+             WHERE session_id IS NOT NULL
+               AND session_id = (SELECT session_id FROM executions WHERE id = ?1)
+             ORDER BY id ASC",
+        )?;
+        let rows = stmt.query_map(params![execution_id], |r| r.get::<_, i64>(0))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// Executions with at least one recorded receipt, most recent first.
     pub fn inspectable_executions(&self, limit: u32) -> Result<Vec<InspectableExecution>> {
         let conn = self.lock();
@@ -372,6 +422,45 @@ mod tests {
             citation_label: None,
             content: None,
         }
+    }
+
+    #[test]
+    fn the_submitted_prompt_is_readable_for_any_execution_by_id() {
+        // `inspect --diff` needs the pre-mutation prompt for the execution it
+        // was asked about, which the limit-bounded index cannot promise to
+        // contain. Absent ids answer None rather than erroring: "no such
+        // execution" is a fact, not a failure.
+        let store = Store::in_memory().unwrap();
+        let id = store
+            .begin_execution("run", "do issue 859", "anthropic", "opus")
+            .unwrap();
+        assert_eq!(
+            store.execution_prompt(id).unwrap().as_deref(),
+            Some("do issue 859")
+        );
+        assert_eq!(store.execution_prompt(id + 999).unwrap(), None);
+    }
+
+    #[test]
+    fn a_sessions_turns_come_back_oldest_first_and_never_mix_conversations() {
+        let store = Store::in_memory().unwrap();
+        let a1 = store.begin_execution("chat", "one", "z", "m").unwrap();
+        let other = store
+            .begin_execution("chat", "elsewhere", "z", "m")
+            .unwrap();
+        let a2 = store.begin_execution("chat", "two", "z", "m").unwrap();
+        store.set_execution_session(a1, "ses-a").unwrap();
+        store.set_execution_session(a2, "ses-a").unwrap();
+        store.set_execution_session(other, "ses-b").unwrap();
+
+        assert_eq!(store.session_executions(a2).unwrap(), vec![a1, a2]);
+        assert_eq!(store.session_executions(other).unwrap(), vec![other]);
+
+        // A session-less execution (a one-shot `stella run`) yields nothing
+        // rather than sweeping up every other session-less row — callers read
+        // the empty vec as "this execution is its own session".
+        let loner = store.begin_execution("run", "solo", "z", "m").unwrap();
+        assert!(store.session_executions(loner).unwrap().is_empty());
     }
 
     #[test]

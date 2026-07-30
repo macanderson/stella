@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use stella_protocol::{
-    BudgetMode, CompletionRequest, CompletionResult, CompletionUsage, ProviderError, ToolCall,
+    BudgetMode, CompletionRequestRef, CompletionResult, CompletionUsage, ProviderError, ToolCall,
     ToolOutput, ToolSchema,
 };
 use tokio::sync::mpsc;
@@ -53,9 +53,12 @@ impl Provider for ScriptedProvider {
         "scripted"
     }
 
-    async fn complete(
+    // `complete_ref` is the trait's required method; `complete` is a default
+    // that delegates to it. Overriding the default left this double missing the
+    // real one, so the crate's tests stopped compiling.
+    async fn complete_ref(
         &self,
-        _request: CompletionRequest,
+        _request: CompletionRequestRef<'_>,
     ) -> Result<CompletionResult, ProviderError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         let mut script = self.script.lock().unwrap();

@@ -568,6 +568,25 @@ enum Command {
         /// Print message bodies in full instead of eliding long ones
         #[arg(long)]
         full: bool,
+
+        /// Show a unified diff of what changed instead of the whole context.
+        /// Bare `--diff` compares against whatever ran immediately before in
+        /// the same role — the previous step, or the previous turn when this
+        /// is a turn's first call. The session's very first call has no
+        /// predecessor, so it is compared against the prompt as the user
+        /// submitted it: the mutation no other view shows
+        #[arg(long, value_enum, num_args = 0..=1, default_missing_value = "prev")]
+        diff: Option<inspect::DiffBase>,
+
+        /// Unchanged lines to print around each change in a `--diff`
+        #[arg(long, default_value_t = 3)]
+        context: usize,
+
+        /// Restrict `--diff` to one message role — `system` is the usual
+        /// reason to reach for this, since every step appends tool traffic
+        /// that would otherwise bury the prompt's own delta
+        #[arg(long, value_enum, default_value = "all")]
+        only: inspect::RoleFilter,
     },
 
     /// Summarize cost, tokens, and resolve rate per provider/model from
@@ -1093,9 +1112,22 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             call_seq,
             format,
             full,
+            diff,
+            context,
+            only,
         }) => {
             // Reads the local receipt tables only — no provider, no API key.
-            return inspect::run_inspect(*execution_id, *turn, *step, *call_seq, *format, *full);
+            return inspect::run_inspect(&inspect::InspectArgs {
+                execution_id: *execution_id,
+                turn: *turn,
+                step: *step,
+                call_seq: *call_seq,
+                format: *format,
+                full: *full,
+                diff: *diff,
+                context: *context,
+                only: *only,
+            });
         }
         Some(Command::Stats {
             format,
