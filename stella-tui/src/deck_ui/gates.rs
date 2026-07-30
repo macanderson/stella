@@ -22,35 +22,42 @@ pub(super) fn handle_focused_gates(
     let composer_empty = ui.composer.buffer().is_empty();
 
     // Scope review, while UNANSWERED — the pending gate clears on the engine's
-    // follow-on event, so the latch is what stops a second press re-sending the
+    // follow-on event, so the latch is what stops a second submit re-sending the
     // decision during that round-trip; the card reads "decision sent" until
-    // then and the keys type into the composer as usual.
+    // then and keys type into the composer as usual.
     //
-    // Two ways in, exactly like `ask_user` below: a/t/x/Esc from an empty
-    // composer, or the submit chord over typed text. The typed path is what
-    // makes the card answerable at all once the user has started writing — the
-    // decision keys are ordinary prompt characters, so they cannot claim a
-    // non-empty composer, and without a submit path the reviewer's line fell
-    // through to the driver, which reads a mid-turn prompt as a *new request*
-    // and spawns a sidecar sub-session for it. The gate stayed parked, the
-    // words went to a stranger agent, and the only key that still reached the
-    // card was Esc — which aborts. That is the whole bug: a review nobody could
-    // answer by typing, whose recovery gesture killed the turn.
+    // **Only non-text keys act on their own.** `Esc` aborts immediately; every
+    // other answer — `a`, `t`, `x`, `ok`, or a sentence describing a different
+    // scope — is typed into the composer and sent with the submit chord, read by
+    // [`ScopeDecision::from_typed`].
     //
-    // Known sharp edge, unchanged by this fix and deliberately not widened
-    // here: the single-key decisions claim the *first* keystroke into an empty
-    // composer, so a note that opens with a/t/x sends that decision instead of
-    // starting a note ("also do X" approves). It is survivable mostly by
-    // accident — the words most likely to open such a note are "approve",
-    // "abort" and "trim", which map to the same decision the key sent — but a
-    // note beginning "add…" or "also…" is a silent approve. Fixing it means
-    // deciding whether the card's advertised keys should require ⏎, which is a
-    // change to how every reviewer approves, not a bug fix.
+    // A single unmodified letter used to commit from an empty composer, and that
+    // is wrong for *this* surface. A single-key commit is fine where the prompt
+    // is modal (git's `y/n`, a permission dialog) because nothing else wants the
+    // letter. Here the composer is an unconditional band, always live, and
+    // typing a note is now the advertised way to ask for a different scope — so
+    // the card was competing with the text field for `a`, and losing either way:
+    // a note opening "also do X" silently approved an eight-step plan, while a
+    // reviewer who typed past that first letter had no way to send what they
+    // wrote (it fell through to the driver, which reads a mid-turn prompt as a
+    // *new request* and spawns a sidecar sub-session for it — the gate stayed
+    // parked, the words went to a stranger agent, and the only key still
+    // reaching the card was Esc, which aborts).
+    //
+    // `Esc` keeps acting immediately because it cannot collide with prose, and
+    // because it is the direction that *stops* work rather than starting it.
+    // The one keystroke this costs buys deliberate consent at the one gate whose
+    // whole purpose is deliberate consent.
+    //
+    // Esc is claimed with a *non-empty* composer too, which the letter keys
+    // never are. Otherwise "type a note, change your mind, press Esc" fell past
+    // the gate into the turn-stop chain — and for a pipeline turn that is a hard
+    // cancel, so the same gesture ended the turn cleanly or violently depending
+    // on whether the user had started typing. While a card is up, Esc means one
+    // thing: get out of this card.
     if entry.model.pending_scope_review.is_some() && !ui.scope_answered.contains(agent) {
         let decision = match key.code {
-            KeyCode::Char('a') if composer_empty => Some(ScopeDecision::Approve),
-            KeyCode::Char('t') if composer_empty => Some(ScopeDecision::Trim),
-            KeyCode::Char('x') | KeyCode::Esc if composer_empty => Some(ScopeDecision::Abort),
+            KeyCode::Esc => Some(ScopeDecision::Abort),
             // A `!` line is a shell command even while a gate is pending — it
             // must run immediately, not be read as the decision (same carve-out
             // as `ask_user`).

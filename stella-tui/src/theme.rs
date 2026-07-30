@@ -10,13 +10,20 @@ use crate::deck::TraceKind;
 use crate::envelope::AgentStatus;
 use crate::palette;
 
-// ── Stella palette — "terminal green on black" ──────────────────────────────
+// ── Stella palette — "electric blue and gold on deep space" ─────────────────
 //
-// A signal light in the dark. The ground is true black; the terminal green is
-// the light — reserved for brand, active/running, and progress, and for
-// nothing else. If everything is green, nothing is: a general-purpose highlight
-// is exactly what this hue must not become. (Green is the *default* accent;
-// `stella-light` swaps it for the logo's ember on paper — see [`apply_theme`].)
+// A star chart, not a product launch. The ground is a blue-cast near-black;
+// the electric blue is the interactive signal — reserved for brand,
+// active/running, and focus, and for nothing else. If everything is blue,
+// nothing is: a general-purpose highlight is exactly what this hue must not
+// become. (Blue is the *default* accent; `stella-light` swaps it for the same
+// hue darkened onto paper — see [`apply_theme`].)
+//
+// Gold is the second half of the identity: the logo's block cursor, splash
+// rules, section markers. **Gold never carries status.** It is the same brass
+// as [`WARNING`] at a glance, so the two may never share a row — status is
+// amber and always glyph-paired, gold is chrome. Enforced by
+// `gold_is_never_a_status_colour`.
 //
 // The corollary the transcript actually depends on: **prose is white.** The
 // accent buys attention, so it may only be spent where attention is owed — on
@@ -24,14 +31,12 @@ use crate::palette;
 // fill. Everything else is [`INK`] (white) or [`MUTED`], and a row that wants
 // to be scannable does it with a glyph and a column, not with a hue.
 //
-// Warning is amber and success is green; the brand green and the success green
-// are the one permitted collision (both mean "good"), and status always pairs
-// colour with a glyph (see [`status_glyph`]) so hue never carries meaning alone
-// — active ▶ vs done ✓ — which is also what keeps the deck readable under
-// `NO_COLOR` and for red/green colour blindness.
+// Status always pairs colour with a glyph (see [`status_glyph`]) so hue never
+// carries meaning alone — active ▶ vs done ✓ — which is also what keeps the
+// deck readable under `NO_COLOR` and for red/green colour blindness.
 //
-// Every value below comes from [`crate::palette`] — the same source the docs
-// site's tokens.css is cut from. This module is the *semantic* layer over it:
+// Every value below comes from [`crate::palette`] — the same source the brand
+// kit's tokens are cut from. This module is the *semantic* layer over it:
 // call sites reference roles (accent, ink, rule, ok) rather than hues, so a
 // recolour is a palette edit rather than a hunt through the crate. Add a
 // colour here only as a role; add a *value* in `palette`.
@@ -41,16 +46,21 @@ use crate::palette;
 // truecolor. A theme switch is a second per-frame pass ([`apply_theme`]).
 
 // Grounds (dark → light lift).
-/// App background — true black. Applied as a real frame fill by `render_deck`,
-/// not just assumed from the terminal.
+/// Deepest ground — full-bleed backdrops and the splash.
+pub const VOID: Color = palette::VOID;
+/// App background — deep space, a near-black with a blue cast. Applied as a
+/// real frame fill by `render_deck`, not just assumed from the terminal.
 pub const GROUND: Color = palette::GROUND;
 /// Card / panel surface.
 pub const SURFACE: Color = palette::SURFACE;
 /// Raised panel (one step above surface).
 pub const RAISED: Color = palette::RAISED;
 /// Hairline border / rule — a cool slate seam. Deliberately below 3.0
-/// contrast: it may never be the only thing conveying structure.
+/// contrast (1.2:1): it may never be the only thing conveying structure.
 pub const HAIRLINE: Color = palette::HAIRLINE;
+/// The louder seam, for a boundary that must actually read (1.4:1). Still
+/// decoration — a stronger rule, not a substitute for a glyph or a gap.
+pub const HAIRLINE_STRONG: Color = palette::HAIRLINE_STRONG;
 
 // Text tiers (primary → dim) — cool, blue-leaning neutrals.
 /// Primary text.
@@ -71,7 +81,8 @@ pub const TEXT_DIM: Color = palette::TEXT_TERTIARY;
 pub const SUCCESS: Color = palette::SUCCESS;
 /// Success (bright — text / completed fills).
 pub const SUCCESS_BRIGHT: Color = palette::SUCCESS;
-/// Warning (base). Amber-yellow — distinct from both the brand green and danger.
+/// Warning (base). Amber-yellow — distinct from both the brand blue and danger.
+/// Never on the same surface as [`GOLD`], which is the same brass at a glance.
 pub const WARNING: Color = palette::WARNING;
 /// Warning (bright — text).
 pub const WARNING_BRIGHT: Color = palette::WARNING;
@@ -82,40 +93,68 @@ pub const DANGER_BRIGHT: Color = palette::DANGER;
 
 // ── Categorical hues (deliberately NOT brand) ───────────────────────────────
 //
-// A few surfaces need more mutually-distinguishable colours than a four-hue
+// A few surfaces need more mutually-distinguishable colours than a two-hue
 // brand palette provides: syntax tokens, graph node kinds, and one colour per
 // concurrent agent. Making those the brand hue would violate the reservation
-// above, so they are a categorical set — the same role the observatory's `--c1..--c4`
-// data-mark palette plays. They carry no brand meaning and must never be used
-// for brand, status, or "active".
+// above, so they are a categorical set — the *same four values* the
+// observatory paints its data marks with, so a series in a chart and a chip in
+// the deck agree. They carry no brand meaning and must never be used for
+// brand, status, or "active".
 
 /// Violet — process/structural events (links, diff hunk headers, graph
 /// relations, trace stages, the user's own prompt). Categorical, not the brand
-/// accent.
-pub const VIOLET: Color = Color::Rgb(0xA7, 0x8B, 0xFA);
+/// accent. `data-2`.
+pub const VIOLET: Color = palette::DATA_2;
 /// Amber — the second categorical hue: syntax keywords, file/module graph
-/// nodes. A warm gold, well clear of the green accent; a categorical set is
-/// only useful to the extent its members cannot be mistaken for one another or
-/// for the accent. (Distinct from the amber-yellow [`WARNING`] status, which
-/// lives in a different context — a syntax token is never a caution.)
-pub const AMBER: Color = Color::Rgb(0xE3, 0xB3, 0x41);
+/// nodes. `data-1`. A categorical set is only useful to the extent its members
+/// cannot be mistaken for one another or for the accent. (Distinct from the
+/// amber-yellow [`WARNING`] status, which lives in a different context — a
+/// syntax token is never a caution. It is *not* distinct from [`GOLD`], which
+/// is why gold stays on chrome and never enters a chart or a chip row.)
+pub const AMBER: Color = palette::DATA_1;
 /// Teal — the third categorical hue: media traces and one slot of the
-/// per-agent palette. Blue-green, so it reads apart from both the brand green
-/// and the success green. It replaces a glacier blue (`AGENT_ICE`) and then a
-/// lilac, each of which drifted within confusable range of the accent.
-pub const TEAL: Color = Color::Rgb(0x2D, 0xD4, 0xBF);
+/// per-agent palette. `data-4`. Blue-green, so it reads apart from both the
+/// brand blue and the success green. It replaces a glacier blue (`AGENT_ICE`)
+/// and then a lilac, each of which drifted within confusable range of the
+/// accent.
+pub const TEAL: Color = palette::DATA_4;
+/// Magenta — the fourth categorical hue. `data-3`. Held for series four and
+/// for surfaces that need a fourth chip; deliberately far from [`DANGER`]'s
+/// red-pink in context because it never appears without a neutral label.
+pub const MAGENTA: Color = palette::DATA_3;
 
 // ── Role aliases (what the rest of the crate references) ─────────────────────
 // Role names remap onto the palette so call sites read as intent (accent,
 // ink, rule) rather than as a hue that a future recolor would falsify.
 
-/// Stella brand accent — terminal green (ember on `stella-light`). Brand,
-/// active/running, and progress only. In the transcript, the tool name and
-/// nothing else. The active theme's actual hue is applied per-frame by
+/// Stella brand accent — electric blue, in the tone that is safe on text and
+/// on a one-cell rule (`brand-bright`, 7.4:1 on [`GROUND`]). Brand,
+/// active/running, focus, and progress only. In the transcript, the tool name
+/// and nothing else. The active theme's actual hue is applied per-frame by
 /// [`apply_theme`]; this is the canonical dark value every call site renders.
-pub const ACCENT: Color = palette::BRAND;
+///
+/// This is deliberately the *bright* brand tone, not `palette::BRAND`: almost
+/// every call site in the crate paints a glyph or a border with it, and plain
+/// `brand` only reaches 5.1:1 on ground (4.9:1 on [`SURFACE`]). Reach for
+/// [`ACCENT_FILL`] when the colour covers an area rather than a stroke.
+pub const ACCENT: Color = palette::BRAND_BRIGHT;
+/// The brand hue for *fills* — a block, a bar body, a selected-row wash. Large
+/// area, so 5.1:1 on ground is enough and the deeper, more saturated blue reads
+/// better than the bright one at size. Never use it for text or a 1-cell rule.
+pub const ACCENT_FILL: Color = palette::BRAND;
 /// A deeper accent (gradient / pressed).
 pub const ACCENT_DEEP: Color = palette::BRAND_DEEP;
+
+/// The identity gold — the logo's block cursor, splash rules, section markers,
+/// and brand chrome generally. **Never a status**: it is the same brass as
+/// [`WARN`] at a glance, and `gold_is_never_a_status_colour` proves no status
+/// mapping can return it.
+pub const GOLD: Color = palette::GOLD;
+/// The bright stop of the gold sweep (headlines, the splash rule's leading
+/// edge).
+pub const GOLD_BRIGHT: Color = palette::GOLD_BRIGHT;
+/// The trailing stop of the gold sweep.
+pub const GOLD_DEEP: Color = palette::GOLD_DEEP;
 /// Near-white primary text.
 pub const INK: Color = TEXT_PRIMARY;
 /// Dimmed secondary text.
@@ -144,8 +183,8 @@ pub const HELD: Color = VIOLET;
 // ── Runtime theme (the `/theme` switch) ──────────────────────────────────────
 //
 // Colours above are compile-time constants: the canonical **dark** palette
-// (terminal green on black), which is what every view renders and what ships
-// as the default. A theme switch is applied *after* the widgets draw, as a
+// (electric blue and gold on deep space), which is what every view renders and
+// what ships as the default. A theme switch is applied *after* the widgets draw, as a
 // per-frame value→value remap over the finished buffer ([`apply_theme`]) —
 // the exact mechanism [`degrade_buffer`] already uses for colour-depth. That
 // keeps ~700 `theme::TOKEN` call sites untouched: a theme is a substitution
@@ -155,15 +194,16 @@ pub const HELD: Color = VIOLET;
 // whose interpolated cells are never equal to a token; so its source
 // ([`brand_gradient`] via [`primary_stops`]) is theme-aware directly.
 
-/// The shipped themes. `stella-dark` (terminal green on black) is the default;
-/// `stella-light` (ember on paper) is its complement. The names match the
-/// `/theme` argument and the `ui.theme` settings value verbatim.
+/// The shipped themes. `stella-dark` (electric blue on deep space) is the
+/// default; `stella-light` (the same blue darkened onto paper) is its
+/// complement. The names match the `/theme` argument and the `ui.theme`
+/// settings value verbatim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ThemeName {
-    /// Terminal green on true black. Default.
+    /// Electric blue and gold on deep space. Default.
     #[default]
     StellaDark,
-    /// Ember (logo red-orange) on paper white.
+    /// The same blue and gold darkened onto paper white.
     StellaLight,
 }
 
@@ -219,17 +259,43 @@ pub fn set_active_theme(theme: ThemeName) {
     ACTIVE_THEME.store(v, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// The active theme's brand gradient stops, deep → bright: green on
-/// `stella-dark`, ember on `stella-light`. Feeds [`brand_gradient`] so the
-/// progress fill and wordmark sweep recolour with the theme.
+/// The active theme's brand gradient stops, deep → bright: `brand-deep` →
+/// `brand-bright` on `stella-dark`, `brand-ink-deep` → `brand-ink` on
+/// `stella-light`. Feeds [`brand_gradient`] so the progress fill and wordmark
+/// sweep recolour with the theme.
+///
+/// The bright end is [`ACCENT`] (`brand-bright`), not `palette::BRAND`, so that
+/// the truecolor gradient lands on the same value a degraded terminal falls
+/// back to — `crate::progress` paints a solid [`ACCENT`] when
+/// [`ColorMode::is_truecolor`] is false, and a fill whose colour jumped between
+/// depths would be a downgrade-path bug.
 pub fn primary_stops() -> [Color; 2] {
     match active_theme() {
-        ThemeName::StellaDark => [palette::BRAND_DEEP, palette::BRAND],
-        ThemeName::StellaLight => [palette::EMBER_DEEP, palette::EMBER],
+        ThemeName::StellaDark => [palette::BRAND_DEEP, palette::BRAND_BRIGHT],
+        ThemeName::StellaLight => [palette::BRAND_INK_DEEP, palette::BRAND_INK],
     }
 }
 
-/// The active theme's bright primary (green / ember). Same value the flat
+/// The active theme's gold gradient stops, deep → bright. Gold is identity
+/// chrome: the splash rule, section markers, the wordmark's cursor block. It is
+/// never a status and never a data mark, so nothing that resolves a *meaning*
+/// may call this.
+pub fn gold_stops() -> [Color; 2] {
+    match active_theme() {
+        ThemeName::StellaDark => [palette::GOLD_DEEP, palette::GOLD_BRIGHT],
+        // One gold on paper: `gold-ink` is the only value in the family that
+        // holds an edge against white, so the light sweep is flat by design.
+        ThemeName::StellaLight => [palette::GOLD_INK, palette::GOLD_INK],
+    }
+}
+
+/// The gold gradient sampled at `t ∈ [0, 1]` — the counterpart of
+/// [`brand_gradient`] for identity chrome.
+pub fn gold_gradient(t: f64) -> Color {
+    gradient_at(&gold_stops(), t)
+}
+
+/// The active theme's bright primary. Same value the flat
 /// [`ACCENT`] remaps to, but resolved eagerly — use this only where a colour is
 /// *interpolated* (lightened, swept), since [`apply_theme`]'s value remap can't
 /// reach an interpolated cell. Flat fills should keep using [`ACCENT`].
@@ -285,11 +351,12 @@ pub const SYNTAX_NUMBER: Color = VIOLET;
 pub const SYNTAX_COMMENT: Color = Color::Rgb(118, 124, 134);
 
 /// Inline code spans and fenced-code plain runs (`crate::markdown`). A calm
-/// sage green — in the brand family so code reads as *technical*, but far
-/// enough from the neon [`ACCENT`] that it never reads as *active*. This
-/// replaces the warning-orange the transcript used to paint every `identifier`
-/// with: code is not a warning, and an alarm hue on every backticked word was
-/// the single loudest thing on the deck.
+/// sage green — quiet enough that a backticked word reads as *technical*
+/// rather than as emphasis, and 72° of hue away from [`ACCENT`] so it never
+/// reads as *active*. This replaces the warning-orange the transcript used to
+/// paint every `identifier` with: code is not a warning, and an alarm hue on
+/// every backticked word was the single loudest thing on the deck. Not a brand
+/// value — it is TUI-only and has no entry in `palette`.
 pub const CODE: Color = Color::Rgb(0x6F, 0xBF, 0x92);
 
 // ── Brand gradient (the wordmark sweep and the progress-bar fill) ───────────
@@ -298,13 +365,18 @@ pub const CODE: Color = Color::Rgb(0x6F, 0xBF, 0x92);
 // earlier generation ran two separate gradients — one for brand chrome and a
 // second for the progress bar — which is precisely the split this palette
 // collapses. Progress *is* activity, activity is the brand hue, so one
-// gradient serves both. The stops track the ACTIVE theme (green on dark, ember
-// on light) via [`primary_stops`]: the progress fill interpolates non-token
-// cells the per-frame [`apply_theme`] remap can't see, so its source has to be
-// theme-aware directly.
+// gradient serves both. The stops track the ACTIVE theme (blue on deep space,
+// the same blue darkened on paper) via [`primary_stops`]: the progress fill
+// interpolates non-token cells the per-frame [`apply_theme`] remap can't see,
+// so its source has to be theme-aware directly.
+//
+// Gold has its own two-stop sweep ([`gold_stops`] / [`gold_gradient`]) for
+// identity chrome — the splash rule and section markers. It is a separate
+// gradient precisely because it must never end up somewhere a status could,
+// and because the progress bar's degraded fallback is a solid [`ACCENT`].
 
 /// The brand gradient's stops for the *default* (dark) theme, deep → bright.
-/// [`primary_stops`] returns these for `stella-dark` and the ember pair for
+/// [`primary_stops`] returns these for `stella-dark` and the paper pair for
 /// `stella-light`; prefer that accessor. The determinate progress fill
 /// interpolates across the active stops per cell (truecolor only; lesser
 /// terminals collapse to a solid [`ACCENT`] fill).
@@ -462,24 +534,38 @@ pub fn detect_color_mode() -> ColorMode {
 /// green/red cube entries for the same reason. Truecolor terminals never see
 /// either column.
 const FALLBACKS: &[(Color, u8, u8)] = &[
-    (GROUND, 16, 0),
-    (SURFACE, 232, 0),
+    (VOID, 232, 0),
+    (GROUND, 232, 0),
+    (SURFACE, 233, 0),
     (RAISED, 234, 8),
-    (HAIRLINE, 236, 8),
+    (HAIRLINE, 235, 8),
+    (HAIRLINE_STRONG, 236, 8),
     (TEXT_PRIMARY, 255, 15),
-    (TEXT_SECONDARY, 109, 7),
-    (TEXT_TERTIARY, 66, 8),
-    // Accent and deep accent take *different* 256 indices (42/35) and different
-    // ANSI-16 indices (bright green / green) so the progress fill keeps a
-    // readable head-to-tail ramp even where the gradient collapses.
-    (ACCENT, 42, 10),
-    (ACCENT_DEEP, 35, 2),
+    (TEXT_SECONDARY, 103, 7),
+    (TEXT_TERTIARY, 244, 8),
+    // Accent, fill and deep accent take *different* 256 indices (75/33/26) and
+    // the deep one drops to plain blue at 16 colours, so the progress fill
+    // keeps a readable head-to-tail ramp even where the gradient collapses.
+    (ACCENT, 75, 12),
+    (ACCENT_FILL, 33, 12),
+    (ACCENT_DEEP, 26, 4),
+    // Gold stays on the *bright yellow* side at both depths. The nearest cube
+    // entry to `gold` by RGB distance is 215 (255,175,95) — an orange — and an
+    // orange is the one thing this identity may not render, so 221/222 (the
+    // next-nearest, 1.15× the distance) are used instead. At 16 colours the
+    // whole family takes bright yellow so it never collapses onto `warning`'s
+    // plain yellow: gold is chrome, warning is a status, and the two may not
+    // become the same cell.
+    (GOLD, 221, 11),
+    (GOLD_BRIGHT, 222, 11),
+    (GOLD_DEEP, 136, 11),
     (SUCCESS, 78, 10),
     (WARNING, 178, 3),
     (DANGER, 204, 9),
-    (VIOLET, 141, 13),
+    (VIOLET, 98, 13),
     (AMBER, 179, 3),
-    (TEAL, 43, 2),
+    (TEAL, 44, 6),
+    (MAGENTA, 168, 5),
     (CODE, 72, 2),
     (DIFF_ADD_BG, 22, 2),
     (DIFF_DEL_BG, 52, 1),
@@ -496,7 +582,7 @@ const FALLBACKS: &[(Color, u8, u8)] = &[
 /// (already-indexed, named, `Reset`, or an interpolated gradient cell) passes
 /// through unchanged in the two indexed modes — this only ever narrows the
 /// palette tokens, never anything else. That pass-through is a known gap for
-/// interpolated cells (the `crate::fx` sweeps, `brand_gradient`): on a 256- or
+/// interpolated cells (animated sweeps, `brand_gradient`): on a 256- or
 /// 16-color terminal they still emit 24-bit SGR. Surfaces that care collapse
 /// to a solid named token themselves when [`ColorMode::is_truecolor`] is false
 /// (see `crate::progress`).
@@ -551,18 +637,31 @@ pub fn degrade_buffer(buf: &mut ratatui::buffer::Buffer, mode: ColorMode) {
 
 /// `stella-light`: every canonical (dark) token value → its paper counterpart.
 const LIGHT_REMAP: &[(Color, Color)] = &[
-    // Grounds → paper (NIGHT and GROUND are both black; one entry covers both).
+    // Grounds → paper. VOID and GROUND are distinct values now (they were both
+    // true black under the retired identity), so each needs its own entry.
+    (VOID, palette::PAPER),
     (GROUND, palette::PAPER),
     (SURFACE, palette::SNOW),
-    (RAISED, palette::PAPER_RAISED),     // also SELECT_BG
-    (HAIRLINE, palette::PAPER_HAIRLINE), // also RULE
+    (RAISED, palette::PAPER_RAISED),            // also SELECT_BG
+    (HAIRLINE, palette::PAPER_HAIRLINE),        // also RULE
+    (HAIRLINE_STRONG, palette::PAPER_HAIRLINE), // one paper seam serves both
     // Text → ink (INK==TEXT_PRIMARY, MUTED==TEXT_SECONDARY, DIM==TERTIARY).
     (TEXT_PRIMARY, palette::INK),
     (TEXT_SECONDARY, palette::MUTED),
     (TEXT_TERTIARY, palette::INK_DIM),
-    // Brand → ember (ACCENT==BRAND, ACCENT_DEEP==BRAND_DEEP).
-    (ACCENT, palette::EMBER),
-    (ACCENT_DEEP, palette::EMBER_DEEP),
+    // Brand → the paper blue. ACCENT is `brand-bright`, ACCENT_FILL is `brand`;
+    // both land on `brand-ink`, which is the tone that clears AA on white.
+    // ACCENT_DEEP shares its value with `brand-ink`, so its entry has to sit
+    // *after* the two above and map on to `brand-ink-deep` — first match wins
+    // per cell, and these are distinct keys, so ordering is documentation
+    // rather than load-bearing.
+    (ACCENT, palette::BRAND_INK),
+    (ACCENT_FILL, palette::BRAND_INK),
+    (ACCENT_DEEP, palette::BRAND_INK_DEEP),
+    // Gold → the one gold that holds an edge on white.
+    (GOLD, palette::GOLD_INK),
+    (GOLD_BRIGHT, palette::GOLD_INK),
+    (GOLD_DEEP, palette::GOLD_INK),
     // Status → ink variants (OK/BRIGHT share the base value).
     (SUCCESS, palette::SUCCESS_INK),
     (WARNING, palette::WARNING_INK),
@@ -574,6 +673,7 @@ const LIGHT_REMAP: &[(Color, Color)] = &[
     (VIOLET, Color::Rgb(0x6D, 0x28, 0xD9)),
     (AMBER, Color::Rgb(0x92, 0x40, 0x0E)),
     (TEAL, Color::Rgb(0x0D, 0x94, 0x88)),
+    (MAGENTA, Color::Rgb(0xA6, 0x18, 0x5C)),
     // Syntax bodies.
     (SYNTAX_STRING, Color::Rgb(0x15, 0x80, 0x3D)),
     (SYNTAX_COMMENT, Color::Rgb(0x6B, 0x72, 0x80)),
@@ -815,21 +915,28 @@ mod tests {
     /// aliases (`INK`, `OK`, `DANGER`, …) share a value with a palette token, so
     /// they are intentionally not re-listed.
     const ALL_RGB_TOKENS: &[Color] = &[
+        VOID,
         GROUND,
         SURFACE,
         RAISED,
         HAIRLINE,
+        HAIRLINE_STRONG,
         TEXT_PRIMARY,
         TEXT_SECONDARY,
         TEXT_TERTIARY,
         ACCENT,
+        ACCENT_FILL,
         ACCENT_DEEP,
+        GOLD,
+        GOLD_BRIGHT,
+        GOLD_DEEP,
         SUCCESS,
         WARNING,
         DANGER,
         VIOLET,
         AMBER,
         TEAL,
+        MAGENTA,
         CODE,
         DIFF_ADD_BG,
         DIFF_DEL_BG,
@@ -839,6 +946,59 @@ mod tests {
         SYNTAX_STRING,
         SYNTAX_COMMENT,
     ];
+
+    /// Palette values that only ever reach a cell through [`apply_theme`]'s
+    /// paper remap. They are never rendered on the canonical dark canvas, and
+    /// `stella-light` is truecolor-only, so they intentionally have no
+    /// [`FALLBACKS`] entry.
+    const LIGHT_ONLY_PALETTE_TOKENS: &[&str] = &[
+        "brand-ink",
+        "brand-ink-deep",
+        "gold-ink",
+        "success-ink",
+        "warning-ink",
+        "danger-ink",
+        "paper",
+        "snow",
+        "paper-raised",
+        "paper-hairline",
+        "ink",
+        "muted",
+        "ink-dim",
+    ];
+
+    /// `palette::ALL` is the brand kit's token list in Rust form; this is the
+    /// check that makes keeping it complete worth anything. Every dark-side
+    /// palette value must be renderable on a 256- and a 16-colour terminal, so
+    /// every one of them needs a [`FALLBACKS`] entry — adding a token to
+    /// `palette` without wiring its degradation fails here rather than in a
+    /// user's `xterm`.
+    #[test]
+    fn every_dark_palette_value_has_a_fallback() {
+        for (name, color) in palette::ALL {
+            if LIGHT_ONLY_PALETTE_TOKENS.contains(&name) {
+                continue;
+            }
+            assert!(
+                FALLBACKS.iter().any(|(rgb, ..)| *rgb == color),
+                "palette token `{name}` ({color:?}) has no FALLBACKS entry"
+            );
+        }
+        // The skip list may not name a token that no longer exists.
+        for name in LIGHT_ONLY_PALETTE_TOKENS {
+            assert!(
+                palette::ALL.iter().any(|(n, _)| n == name),
+                "LIGHT_ONLY_PALETTE_TOKENS names `{name}`, which is not in palette::ALL"
+            );
+        }
+        // Token names are unique, so `ALL` can be read as a map.
+        for (i, (name, _)) in palette::ALL.iter().enumerate() {
+            assert!(
+                !palette::ALL[..i].iter().any(|(other, _)| other == name),
+                "duplicate palette token name `{name}`"
+            );
+        }
+    }
 
     #[test]
     fn every_named_token_has_a_fallback() {
@@ -865,8 +1025,16 @@ mod tests {
     #[test]
     fn role_aliases_track_their_palette_token() {
         // Brand roles resolve to the generated palette, not to a local literal.
-        assert_eq!(ACCENT, palette::BRAND);
+        // ACCENT is the *bright* brand tone: it is what paints text and rules,
+        // and plain `brand` does not clear AA body on surface/raised.
+        assert_eq!(ACCENT, palette::BRAND_BRIGHT);
+        assert_eq!(ACCENT_FILL, palette::BRAND);
         assert_eq!(ACCENT_DEEP, palette::BRAND_DEEP);
+        assert_eq!(GOLD, palette::GOLD);
+        assert_eq!(GOLD_BRIGHT, palette::GOLD_BRIGHT);
+        assert_eq!(GOLD_DEEP, palette::GOLD_DEEP);
+        assert_eq!(VOID, palette::VOID);
+        assert_eq!(HAIRLINE_STRONG, palette::HAIRLINE_STRONG);
         assert_eq!(GROUND, palette::GROUND);
         assert_eq!(INK, TEXT_PRIMARY);
         assert_eq!(MUTED, TEXT_SECONDARY);
@@ -879,35 +1047,151 @@ mod tests {
         // Syntax and process hues are categorical -- never the brand accent.
         assert_eq!(SYNTAX_NUMBER, VIOLET);
         assert_eq!(SYNTAX_KEYWORD, AMBER);
+        // The categorical set is the observatory's data-mark palette verbatim,
+        // so a series in a chart and a chip in the deck are the same colour.
+        assert_eq!(AMBER, palette::DATA_1);
+        assert_eq!(VIOLET, palette::DATA_2);
+        assert_eq!(MAGENTA, palette::DATA_3);
+        assert_eq!(TEAL, palette::DATA_4);
+    }
+
+    /// BRAND.md's one hard prohibition: **gold never carries status.** Gold and
+    /// [`WARNING`] are the same brass at a glance (42.3° vs 45.4° hue), so a
+    /// reader must never be asked to tell them apart — gold is identity chrome
+    /// and status is glyph-paired amber. This is the test that would fail if
+    /// someone reached for the prettier colour in a status mapping.
+    #[test]
+    fn gold_is_never_a_status_colour() {
+        for gold in [GOLD, GOLD_BRIGHT, GOLD_DEEP] {
+            for (status, name) in [
+                (OK, "OK"),
+                (WARN, "WARN"),
+                (BAD, "BAD"),
+                (HELD, "HELD"),
+                (RUN, "RUN"),
+            ] {
+                assert_ne!(gold, status, "{name} must not be a gold");
+            }
+            for status in [
+                AgentStatus::Queued,
+                AgentStatus::Running,
+                AgentStatus::Paused,
+                AgentStatus::WaitingInput,
+                AgentStatus::Done,
+                AgentStatus::Failed,
+                AgentStatus::Killed,
+            ] {
+                assert_ne!(
+                    status_color(status),
+                    gold,
+                    "status_color({status:?}) returned a gold"
+                );
+            }
+            for kind in [
+                TraceKind::Stage,
+                TraceKind::Text,
+                TraceKind::Reasoning,
+                TraceKind::Tool,
+                TraceKind::File,
+                TraceKind::Budget,
+                TraceKind::Context,
+                TraceKind::Verdict,
+                TraceKind::Media,
+                TraceKind::Vcs,
+                TraceKind::Error,
+                TraceKind::Complete,
+                TraceKind::Other,
+            ] {
+                assert_ne!(
+                    trace_kind_color(kind),
+                    gold,
+                    "trace_kind_color({kind:?}) returned a gold"
+                );
+            }
+            for i in 0..=20 {
+                assert_ne!(gauge_color(f64::from(i) / 20.0), gold);
+            }
+            for id in ["lead", "sub:auth", "", "agent-42"] {
+                assert_ne!(agent_color(id), gold, "agent_color({id:?}) returned a gold");
+            }
+            // And it is not a graph node kind either — a node is a category.
+            for kind in [
+                "function", "method", "struct", "enum", "trait", "file", "module", "?",
+            ] {
+                assert_ne!(graph_kind_color(kind), gold);
+            }
+        }
+    }
+
+    /// Hue angle in degrees `[0, 360)`, for the separation law below.
+    ///
+    /// The reservation used to be measured as squared euclidean RGB distance,
+    /// which worked while the brand was green and every categorical hue was far
+    /// from it in all three channels. With a blue brand it stops working: a
+    /// violet and a blue can be 40° apart — plainly different colours in a
+    /// terminal cell — and still sit within 0x30 per channel, because blue is
+    /// pinned at 0xFF in both. Hue separation measures the thing a reader
+    /// actually uses, so the law is stated in the units it is really about.
+    fn hue_deg(color: Color) -> f64 {
+        let Color::Rgb(r, g, b) = color else {
+            panic!("{color:?} must be a truecolor token");
+        };
+        let (r, g, b) = (
+            f64::from(r) / 255.0,
+            f64::from(g) / 255.0,
+            f64::from(b) / 255.0,
+        );
+        let max = r.max(g).max(b);
+        let min = r.min(g).min(b);
+        let c = max - min;
+        if c == 0.0 {
+            return 0.0;
+        }
+        let h = if max == r {
+            ((g - b) / c).rem_euclid(6.0)
+        } else if max == g {
+            (b - r) / c + 2.0
+        } else {
+            (r - g) / c + 4.0
+        };
+        (h * 60.0).rem_euclid(360.0)
+    }
+
+    /// The shortest angular distance between two hues, in degrees.
+    fn hue_separation(a: Color, b: Color) -> f64 {
+        let d = (hue_deg(a) - hue_deg(b)).abs();
+        d.min(360.0 - d)
     }
 
     /// The palette law, in the form a future edit would actually break.
     ///
-    /// The guard has outlived three recolours now (aurora → gold → sky →
-    /// green), which is the point: each time, the *shape* of the law survived
+    /// The guard has outlived four recolours now (aurora → gold → sky → green →
+    /// blue), which is the point: each time, the *shape* of the law survived
     /// and only the hue it names changed. Keep rewriting it rather than deleting
     /// it.
     ///
-    /// The green recolour changed the law in one real way. Under the sky brand,
-    /// green belonged to success alone, so "no role near the accent" could be
-    /// absolute. The brand is now green *and so is success* — the two are the
-    /// one permitted collision (both mean "good", told apart by glyph: ▶ active
-    /// vs ✓ done). So the reservation now reads: the accent is green, success
-    /// may share the green family, and **every other role** must stay clear of
-    /// the accent.
+    /// The blue recolour changed the law in two real ways. First, the ground is
+    /// no longer neutral: deep space is a blue-cast near-black on purpose, so
+    /// the old "the canvas may not carry a cast" clause inverts into "the canvas
+    /// must carry the *right* cast". Second, the green brand had one permitted
+    /// neighbour (success, also green, told apart by ▶ vs ✓). A blue brand has
+    /// none: success, warning and danger are all far from blue, so the
+    /// reservation is absolute again — which is the stronger law.
     ///
     /// What must hold now:
-    ///   1. The accent is the generated brand green — not a local literal that
-    ///      drifted, not one of the retired hues, and actually green.
-    ///   2. The ground is neutral. A green accent on a green-tinted ground loses
-    ///      the separation that makes it read as a signal, so the canvas may
-    ///      not carry a colour cast.
-    ///   3. Warning ramps warm (r > g > b — amber, not the retired orange) and
-    ///      success ramps green; success shares the family but not the value.
-    ///   4. The brand green is reserved. Every role *except* the success family
-    ///      must sit far enough from it to be told apart.
+    ///   1. The accent is the generated brand blue — not a local literal that
+    ///      drifted, not one of the retired hues, and actually blue. It is the
+    ///      *bright* tone, because almost every call site paints text with it.
+    ///   2. The ground is deep space: blue-cast, and never true black, or the
+    ///      accent screams instead of speaking.
+    ///   3. Warning ramps warm (r > g > b — amber, not the retired orange),
+    ///      success ramps green, danger ramps red.
+    ///   4. The brand blue is reserved. Every chromatic role must sit at least
+    ///      30° of hue away from it, with no exceptions.
+    ///   5. Gold is identity, not status: it stays clear of the brand blue *and*
+    ///      is never a status value (see `gold_is_never_a_status_colour`).
     #[test]
-    fn palette_law_green_is_the_brand() {
+    fn palette_law_blue_is_the_brand() {
         const RETIRED_AURORA_CYAN: Color = Color::Rgb(0x3F, 0xE0, 0xFF);
         const RETIRED_EMBER_FLAME: Color = Color::Rgb(0xFF, 0x7E, 0x5F);
         const RETIRED_EMBER_CRIMSON: Color = Color::Rgb(0xC2, 0x18, 0x5B);
@@ -916,24 +1200,33 @@ mod tests {
         /// The old glacier blue, retired *because* it collided with the sky
         /// accent — the exact failure this test's clause 4 still prevents.
         const RETIRED_AGENT_ICE: Color = Color::Rgb(0xA8, 0xC7, 0xF0);
-        /// The sky blue this recolour retired: the brand is green now, and no
-        /// token may drift back to the old accent or its deep stop.
+        /// The sky blue of two recolours ago. The brand is blue again but a
+        /// *different* blue; no token may drift back to the old pair.
         const RETIRED_SKY: Color = Color::Rgb(0x7D, 0xD3, 0xFC);
         const RETIRED_SKY_DEEP: Color = Color::Rgb(0x38, 0xBD, 0xF8);
         /// The warning orange the "get rid of the orange" pass removed; warning
         /// is amber-yellow now and must not slide back to it.
         const RETIRED_WARNING_ORANGE: Color = Color::Rgb(0xFF, 0x8A, 0x1F);
+        /// The terminal green this recolour retired, and its deep stop.
+        const RETIRED_PHOSPHOR_GREEN: Color = Color::Rgb(0x00, 0xE6, 0x76);
+        const RETIRED_PHOSPHOR_GREEN_DEEP: Color = Color::Rgb(0x00, 0xB2, 0x5A);
+        /// The vermilion light-theme brand ("ember") and its deep stop.
+        const RETIRED_EMBER: Color = Color::Rgb(0xFF, 0x3D, 0x1F);
+        const RETIRED_EMBER_DEEP: Color = Color::Rgb(0xD6, 0x2E, 0x0E);
 
-        // 1. The accent comes from the palette, not a drifted local literal, and
-        //    it is green (g dominant).
-        assert_eq!(ACCENT, palette::BRAND, "the accent must be the brand green");
-        let Color::Rgb(ar, ag, ab) = ACCENT else {
-            panic!("ACCENT must be a truecolor token");
-        };
-        assert!(
-            ag > ar && ag > ab,
-            "the brand accent must be green-dominant"
+        // 1. The accent comes from the palette, not a drifted local literal, it
+        //    is the text-safe bright tone, and it is blue (b dominant).
+        assert_eq!(
+            ACCENT,
+            palette::BRAND_BRIGHT,
+            "the accent must be the bright brand blue"
         );
+        for (blue, name) in [(ACCENT, "ACCENT"), (ACCENT_FILL, "ACCENT_FILL")] {
+            let Color::Rgb(r, g, b) = blue else {
+                panic!("{name} must be a truecolor token");
+            };
+            assert!(b > r && b > g, "{name} must be blue-dominant");
+        }
 
         // The retired hues are gone from every token and alias.
         let mut all: Vec<Color> = ALL_RGB_TOKENS.to_vec();
@@ -948,38 +1241,47 @@ mod tests {
             CODE,
         ]);
         all.extend(BRAND_STOPS);
+        all.extend(LIGHT_REMAP.iter().map(|(_, to)| *to));
         for token in &all {
             for (retired, name) in [
                 (RETIRED_AURORA_CYAN, "aurora cyan"),
                 (RETIRED_EMBER_FLAME, "ember flame"),
                 (RETIRED_EMBER_CRIMSON, "ember crimson"),
-                (RETIRED_GOLD, "gold"),
-                (RETIRED_GOLD_DEEP, "deep gold"),
+                (RETIRED_GOLD, "the retired gold"),
+                (RETIRED_GOLD_DEEP, "the retired deep gold"),
                 (RETIRED_AGENT_ICE, "agent ice"),
                 (RETIRED_SKY, "sky blue"),
                 (RETIRED_SKY_DEEP, "deep sky blue"),
                 (RETIRED_WARNING_ORANGE, "warning orange"),
+                (RETIRED_PHOSPHOR_GREEN, "phosphor green"),
+                (RETIRED_PHOSPHOR_GREEN_DEEP, "deep phosphor green"),
+                (RETIRED_EMBER, "ember vermilion"),
+                (RETIRED_EMBER_DEEP, "deep ember vermilion"),
             ] {
                 assert_ne!(*token, retired, "a token still holds {name}");
             }
         }
 
-        // 2. The ground is neutral — no channel may outrun another, or the
-        //    canvas takes on a cast that competes with the accent.
-        for (ground, name) in [(GROUND, "GROUND"), (SURFACE, "SURFACE")] {
-            let Color::Rgb(r, _g, b) = ground else {
+        // 2. The ground is deep space: a blue cast, and never true black. Pure
+        //    black makes the accent scream; the cast is what lets it speak.
+        for (ground, name) in [
+            (VOID, "VOID"),
+            (GROUND, "GROUND"),
+            (SURFACE, "SURFACE"),
+            (RAISED, "RAISED"),
+        ] {
+            let Color::Rgb(r, g, b) = ground else {
                 panic!("{name} must be a truecolor token");
             };
             assert!(
-                u32::from(b) - u32::from(r) <= 0x14,
-                "{name} carries a colour cast ({ground:?}); the canvas must stay neutral"
+                b > r && b >= g,
+                "{name} ({ground:?}) must carry the deep-space blue cast"
             );
+            assert_ne!(ground, Color::Rgb(0, 0, 0), "{name} must not be true black");
         }
 
         // 3. Warning ramps warm (r > g > b — amber, no longer the orange that
-        //    dominated the transcript) and success ramps green; success shares
-        //    the green family with the brand but is a distinct value, told apart
-        //    by glyph, never by hue alone.
+        //    dominated the transcript), success ramps green, danger ramps red.
         let Color::Rgb(wr, wg, wb) = WARNING else {
             panic!("WARNING must be a truecolor token");
         };
@@ -988,42 +1290,47 @@ mod tests {
             panic!("SUCCESS must be a truecolor token");
         };
         assert!(sg > sr && sg > sb, "success must be green-dominant");
-        assert_ne!(
-            OK, ACCENT,
-            "success and the brand accent must be distinct values"
-        );
+        let Color::Rgb(dr, dg, db) = DANGER else {
+            panic!("DANGER must be a truecolor token");
+        };
+        assert!(dr > dg && dr > db, "danger must be red-dominant");
 
-        // 4. The brand green is reserved for brand / active / progress. Every
-        //    role EXCEPT the success family may not sit close enough to be
-        //    confused with it at a glance — which is how `AGENT_ICE` died.
-        //    Success is the one permitted neighbour (both green, ▶ vs ✓).
+        // 4. The brand blue is reserved for brand / active / focus / progress.
+        //    No chromatic role may sit within 30° of it — which is how
+        //    `AGENT_ICE` died, and the clause has no exceptions now that success
+        //    is no longer a neighbour of the brand hue.
         for (role, name) in [
             (WARN, "WARN"),
             (BAD, "BAD"),
+            (OK, "OK"),
             (RUN, "RUN"),
             (HELD, "HELD"),
             (VIOLET, "VIOLET"),
             (AMBER, "AMBER"),
             (TEAL, "TEAL"),
+            (MAGENTA, "MAGENTA"),
+            (GOLD, "GOLD"),
+            (GOLD_BRIGHT, "GOLD_BRIGHT"),
+            (GOLD_DEEP, "GOLD_DEEP"),
             (CODE, "CODE"),
             (SYNTAX_KEYWORD, "SYNTAX_KEYWORD"),
             (SYNTAX_STRING, "SYNTAX_STRING"),
             (SYNTAX_NUMBER, "SYNTAX_NUMBER"),
         ] {
-            assert_ne!(role, ACCENT, "{name} must not be the reserved brand green");
-            let Color::Rgb(r, g, b) = role else {
-                panic!("{name} must be a truecolor token");
-            };
-            // Squared euclidean distance in RGB. 0x30 per channel is roughly
-            // where two tones stop being tellable apart in a terminal cell.
-            let d = (i32::from(r) - i32::from(ar)).pow(2)
-                + (i32::from(g) - i32::from(ag)).pow(2)
-                + (i32::from(b) - i32::from(ab)).pow(2);
+            assert_ne!(role, ACCENT, "{name} must not be the reserved brand blue");
+            assert_ne!(role, ACCENT_FILL, "{name} must not be the brand fill");
+            let sep = hue_separation(role, ACCENT);
             assert!(
-                d > 3 * 0x30 * 0x30,
-                "{name} ({role:?}) sits too close to the brand accent to be told apart"
+                sep >= 30.0,
+                "{name} ({role:?}) is {sep:.1}° from the brand accent; \
+                 30° is the floor for two hues to be told apart in a cell"
             );
         }
+
+        // 5. The brand's own tones are the only things allowed near it, and the
+        //    bright/fill pair really is one hue family.
+        assert!(hue_separation(ACCENT_FILL, ACCENT) < 10.0);
+        assert!(hue_separation(ACCENT_DEEP, ACCENT) < 10.0);
     }
 
     #[test]
@@ -1132,11 +1439,61 @@ mod tests {
     #[test]
     fn degrade_buffer_resolves_every_cell_when_degraded() {
         let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 1, 1));
-        buf.content[0].fg = ACCENT; // → 42 (256) / 10 (16)
-        buf.content[0].bg = VIOLET; // → 141 (256) / 13 (16)
+        buf.content[0].fg = ACCENT; // → 75 (256) / 12 (16)
+        buf.content[0].bg = VIOLET; // → 98 (256) / 13 (16)
         degrade_buffer(&mut buf, ColorMode::Ansi256);
-        assert_eq!(buf.content[0].fg, Color::Indexed(42));
-        assert_eq!(buf.content[0].bg, Color::Indexed(141));
+        assert_eq!(buf.content[0].fg, Color::Indexed(75));
+        assert_eq!(buf.content[0].bg, Color::Indexed(98));
+    }
+
+    /// The two degraded paths must still separate the things a reader has to
+    /// tell apart. Nearest-by-RGB alone does not guarantee that (it is what
+    /// would have put `gold` on an orange cube entry), so the pairs that carry
+    /// meaning are asserted rather than assumed.
+    #[test]
+    fn degraded_paths_keep_meaningful_pairs_distinguishable() {
+        let idx = |c: Color, m: ColorMode| match resolve(c, m) {
+            Color::Indexed(i) => i,
+            other => panic!("{c:?} did not resolve to an index in {m:?}: {other:?}"),
+        };
+        for mode in [ColorMode::Ansi256, ColorMode::Ansi16] {
+            // Status must stay three different colours.
+            assert_ne!(idx(OK, mode), idx(WARN, mode), "{mode:?}: ok vs warn");
+            assert_ne!(idx(OK, mode), idx(BAD, mode), "{mode:?}: ok vs bad");
+            assert_ne!(idx(WARN, mode), idx(BAD, mode), "{mode:?}: warn vs bad");
+            // The accent must not collapse onto a status or onto the canvas.
+            for (other, name) in [
+                (OK, "ok"),
+                (WARN, "warn"),
+                (BAD, "bad"),
+                (GROUND, "ground"),
+                (TEXT_PRIMARY, "text-primary"),
+            ] {
+                assert_ne!(
+                    idx(ACCENT, mode),
+                    idx(other, mode),
+                    "{mode:?}: accent collapsed onto {name}"
+                );
+            }
+            // Gold is brand chrome and warning is a status; they may never
+            // become the same cell, at any depth.
+            for gold in [GOLD, GOLD_BRIGHT, GOLD_DEEP] {
+                assert_ne!(
+                    idx(gold, mode),
+                    idx(WARN, mode),
+                    "{mode:?}: {gold:?} collapsed onto warning"
+                );
+            }
+            // The progress fill keeps a head-to-tail ramp.
+            assert_ne!(
+                idx(ACCENT_DEEP, mode),
+                idx(ACCENT, mode),
+                "{mode:?}: the progress fill lost its ramp"
+            );
+            // The ground ladder keeps at least ground/raised apart, so a
+            // selected row still reads.
+            assert_ne!(idx(GROUND, mode), idx(RAISED, mode), "{mode:?}: select bg");
+        }
     }
 
     #[test]
@@ -1144,12 +1501,27 @@ mod tests {
         use std::sync::atomic::Ordering;
         // remap_theme is pure — exercise it directly rather than mutating the
         // process-global active theme (which other tests read).
-        assert_eq!(remap_theme(ACCENT, LIGHT_REMAP), palette::EMBER);
+        assert_eq!(remap_theme(ACCENT, LIGHT_REMAP), palette::BRAND_INK);
+        assert_eq!(remap_theme(ACCENT_FILL, LIGHT_REMAP), palette::BRAND_INK);
+        assert_eq!(
+            remap_theme(ACCENT_DEEP, LIGHT_REMAP),
+            palette::BRAND_INK_DEEP
+        );
+        assert_eq!(remap_theme(GOLD, LIGHT_REMAP), palette::GOLD_INK);
+        assert_eq!(remap_theme(VOID, LIGHT_REMAP), palette::PAPER);
         assert_eq!(remap_theme(GROUND, LIGHT_REMAP), palette::PAPER);
         assert_eq!(remap_theme(TEXT_PRIMARY, LIGHT_REMAP), palette::INK);
         assert_eq!(remap_theme(OK, LIGHT_REMAP), palette::SUCCESS_INK);
+        // Every dark token the deck can paint has a paper counterpart, or the
+        // light theme would show a dark-ground colour on white.
+        for token in ALL_RGB_TOKENS {
+            assert!(
+                LIGHT_REMAP.iter().any(|(from, _)| from == token),
+                "{token:?} has no LIGHT_REMAP entry"
+            );
+        }
         // An unmapped colour (an interpolated gradient cell) passes through.
-        let mid = lerp_rgb(palette::EMBER_DEEP, palette::EMBER, 0.5);
+        let mid = lerp_rgb(palette::BRAND_DEEP, palette::BRAND_BRIGHT, 0.5);
         assert_eq!(remap_theme(mid, LIGHT_REMAP), mid);
         // Every LIGHT_REMAP key is a distinct value (aliases share one entry).
         for (i, (from, _)) in LIGHT_REMAP.iter().enumerate() {
@@ -1194,8 +1566,9 @@ mod tests {
 
     #[test]
     fn brand_gradient_spans_deep_to_bright_accent() {
-        // The default theme is `stella-dark`, so the stops are the green accent
-        // pair; `primary_stops` swaps them for ember under `stella-light`.
+        // The default theme is `stella-dark`, so the stops are the blue accent
+        // pair; `primary_stops` swaps them for the paper blues under
+        // `stella-light`.
         assert_eq!(brand_gradient(0.0), ACCENT_DEEP);
         assert_eq!(brand_gradient(1.0), ACCENT);
         // Monotonic, clamped, never panics across the range.
@@ -1204,6 +1577,21 @@ mod tests {
         }
         assert_eq!(brand_gradient(-1.0), ACCENT_DEEP);
         assert_eq!(brand_gradient(2.0), ACCENT);
+        // The bright end is exactly what `crate::progress` falls back to when
+        // the terminal cannot render the gradient — the fill must not change
+        // colour with the terminal's depth.
+        assert_eq!(brand_gradient(1.0), ACCENT);
+    }
+
+    #[test]
+    fn gold_gradient_spans_deep_to_bright_gold() {
+        assert_eq!(gold_gradient(0.0), GOLD_DEEP);
+        assert_eq!(gold_gradient(1.0), GOLD_BRIGHT);
+        for i in 0..=20 {
+            let _ = gold_gradient(f64::from(i) / 20.0);
+        }
+        assert_eq!(gold_gradient(-1.0), GOLD_DEEP);
+        assert_eq!(gold_gradient(2.0), GOLD_BRIGHT);
     }
 
     #[test]

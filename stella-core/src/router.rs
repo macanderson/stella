@@ -273,8 +273,8 @@ impl CircuitBreaker {
 
 /// A breaker-forced provider substitution — maps directly onto
 /// `AgentEvent::ProviderFallback`'s fields. `stella-core` has no event
-/// channel; `driver.rs` is the one place that turns this into the real
-/// event. Never constructed for an intentional routing choice (e.g. judge's
+/// channel; `stella-pipeline` is what turns this into the real event (see
+/// the module docs). Never constructed for an intentional routing choice (e.g. judge's
 /// cross-family preference) — only when the originally preferred provider
 /// was unavailable (L-M7: fallback is always visible, never silent).
 #[derive(Debug, Clone, PartialEq, Eq)]

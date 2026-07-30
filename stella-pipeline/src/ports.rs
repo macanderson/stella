@@ -119,6 +119,20 @@ pub struct Recall {
     /// The CGP usage report for the request (`docs/context-reuse.md` §2).
     /// `None` when the port has no CGP host behind it to report one.
     pub usage: Option<ContextUsage>,
+    /// Wall-clock milliseconds this recall took, measured by the port that
+    /// performed it (#875). Recall is on the first-token path of every turn,
+    /// so this is the one number that says whether context retrieval is the
+    /// reason a turn felt slow. `0` means "not measured" — the ports with
+    /// nothing to recall do not time an empty answer.
+    pub latency_ms: u32,
+    /// Whether the IVF approximate-nearest-neighbour accelerator fired, or
+    /// `None` when this recall path does not report it. Paired with
+    /// `latency_ms` because a slow recall with a cold index is a different
+    /// problem, with a different fix, from a slow recall that used the index
+    /// and was still slow. Tri-state because the CGP host fan-out does not
+    /// carry the flag across the provider-result boundary — see the protocol
+    /// event for why `false` would be a worse answer than `None`.
+    pub used_ann_index: Option<bool>,
 }
 
 impl Recall {
@@ -128,6 +142,8 @@ impl Recall {
         Self {
             frames,
             usage: None,
+            latency_ms: 0,
+            used_ann_index: None,
         }
     }
 
@@ -191,6 +207,8 @@ impl Recall {
                 .collect(),
             provider_mix,
             usage: self.usage.clone(),
+            latency_ms: self.latency_ms,
+            used_ann_index: self.used_ann_index,
         })
     }
 }
@@ -765,6 +783,8 @@ mod tests {
                 recalled("code-graph", "sym_c", Some("sha256:cc")),
             ],
             usage: None,
+            latency_ms: 42,
+            used_ann_index: Some(true),
         };
         let Some(stella_protocol::AgentEvent::ContextRecall {
             frames,

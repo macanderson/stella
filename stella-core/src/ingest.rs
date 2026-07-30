@@ -26,9 +26,11 @@
 //! is a deterministic function of its inputs. That keeps the policy — which is
 //! the part worth arguing about — unit-testable without a fixture tree.
 
+pub mod freshness;
 pub mod gate;
 pub mod record;
 
+pub use freshness::{Retention, retention_for};
 pub use gate::{GateOutcome, gate_proposal};
 pub use record::{
     AppliesTo, ContextFile, Defaults, Enforcement, EnforcementMode, Force, Link, LinkRelation,

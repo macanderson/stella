@@ -3,8 +3,6 @@
 //! finishes. This is the tab dispatcher and the one place the deck's chrome is
 //! drawn.
 
-use std::time::Duration;
-
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -22,12 +20,7 @@ use crate::deck::{DeckTab, PrInfo, WorkspaceModel};
 use crate::deck_ui::DeckUi;
 use crate::render::{render_slash_popup, scroll_window_start, slash_popup_area};
 use crate::textline::{self, pr_status_label, stage_label};
-use crate::{fx, splash, theme, views};
-
-/// How long the deck fades in from muted after the splash hands off.
-const REVEAL_MS: u32 = 350;
-/// How long the amber sweep plays over the content pane on a tab change.
-const TAB_SWITCH_MS: u32 = 180;
+use crate::{splash, theme, views};
 
 /// The accent prompt prefix on every composer row. Chrome, not content — it
 /// is never part of the submitted string and the caret cannot enter it.
@@ -36,12 +29,6 @@ const PROMPT_PREFIX: &str = ">>> ";
 const PROMPT_PREFIX_W: usize = 4;
 /// One reserved column on the composer's right for the scroll indicator.
 const COMPOSER_GUTTER_W: usize = 1;
-/// Half-period of the caret blink, in deck-clock ms.
-const CARET_BLINK_MS: u64 = 530;
-/// Per-step period of the working-prompt chevron chase, in deck-clock ms —
-/// one `>` lights per step, so the sweep across all three completes every
-/// `3 × PROMPT_CHASE_MS`.
-const PROMPT_CHASE_MS: u64 = 130;
 
 pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     let area = frame.area();
@@ -62,7 +49,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
 
     // The splash owns the whole frame until it finishes / is skipped.
     if !ui.splash.is_done() {
-        splash::render(&ui.splash, area, buf);
+        splash::render(&ui.splash, model.latest_model(), area, buf);
         return;
     }
 
@@ -114,14 +101,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
 
     render_trace_strip(model, bands[2], buf);
     crate::progress::render(model, ui, bands[3], buf);
-    // The prompt chevrons animate only while the focused agent's turn is in
-    // flight — the same `Running && !no_anim` liveness the progress bar uses.
-    let working = model
-        .agents
-        .get(ui.focused)
-        .is_some_and(|a| a.status == crate::envelope::AgentStatus::Running)
-        && !ui.no_anim;
-    render_composer(ui, &c_layout, model.now_ms, working, bands[4], buf);
+    render_composer(&c_layout, bands[4], buf);
     render_composer_footer(model, ui, &c_layout, bands[5], buf);
     render_status_bar(model, ui, bands[6], buf);
 
@@ -155,27 +135,6 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     }
     // (The former ENGINE overlay is gone: the engine panel is the full-width
     // body of the SETTINGS tab — see `views::settings::render`.)
-
-    // Deck motion (crate::fx), scrubbed like the splash: each frame builds a
-    // fresh effect and processes it once at its wall-clock elapsed, so no
-    // Effect is persisted in the (Clone + Debug) ui state. Colors only —
-    // content/glyphs are never moved, so render tests stay byte-stable.
-    if let Some(at) = ui.tab_switched_at {
-        let elapsed = at.elapsed();
-        if elapsed < Duration::from_millis(u64::from(TAB_SWITCH_MS)) {
-            let mut sweep = fx::tab_switch(TAB_SWITCH_MS);
-            fx::apply(&mut sweep, elapsed, content, buf);
-        } else {
-            ui.tab_switched_at = None; // motion finished — stop rebuilding it
-        }
-    }
-    if let Some(done_at) = ui.splash.finished_at() {
-        let elapsed = done_at.elapsed();
-        if elapsed < Duration::from_millis(u64::from(REVEAL_MS)) {
-            let mut reveal = fx::fade_in(REVEAL_MS);
-            fx::apply(&mut reveal, elapsed, area, buf);
-        }
-    }
 
     if ui.help_open {
         render_help(ui, area, buf);
@@ -995,14 +954,11 @@ const DECK_COMPOSER_MAX_ROWS: usize = 4;
 /// an empty composer is a single `>>> ` line with the caret right after it.
 /// Beyond [`DECK_COMPOSER_MAX_ROWS`] the box stops growing and scrolls, showing
 /// a slim thumb in the right gutter while keeping the caret in view.
-fn render_composer(
-    ui: &DeckUi,
-    layout: &ComposerLayout,
-    now_ms: u64,
-    working: bool,
-    area: Rect,
-    buf: &mut Buffer,
-) {
+///
+/// The caret is **steady**, not blinking: a blink carries no information the
+/// reversed cell doesn't already carry, and a terminal has no
+/// `prefers-reduced-motion` for a reader who needs it off.
+fn render_composer(layout: &ComposerLayout, area: Rect, buf: &mut Buffer) {
     let visible = (area.height as usize).max(1);
     let total = layout.rows.len();
     // Scroll so the caret's row is always within the visible window.
@@ -1012,50 +968,20 @@ fn render_composer(
         layout.cursor_row + 1 - visible
     };
 
-    // A gentle caret blink, coalesced into the deck's one render tick (a pure
-    // function of the clock — no timer). `--no-anim` pins it solid.
-    let caret_on = ui.no_anim || (now_ms / CARET_BLINK_MS).is_multiple_of(2);
     let cursor_style = theme::accent().add_modifier(Modifier::REVERSED);
     let mut lines: Vec<Line<'static>> = Vec::new();
     for (i, row) in layout.rows.iter().enumerate().skip(first).take(visible) {
-        // The accent `>>> ` prefix rides every row and scrolls with it. While
-        // the focused agent is working it becomes a left-to-right chevron
-        // chase — one bright `>` marching over two dim ones — a pure function
-        // of the deck clock on the same tick as the caret blink. An idle agent
-        // or `--no-anim` pins it to the static accent prefix. Either way it is
+        // The accent `>>> ` prefix rides every row and scrolls with it —
         // exactly the four columns `PROMPT_PREFIX_W` reserves.
-        let mut spans = if working {
-            let lit = ((now_ms / PROMPT_CHASE_MS) % 3) as usize;
-            let mut prefix: Vec<Span<'static>> = (0..3)
-                .map(|j| {
-                    let color = if j == lit {
-                        theme::ACCENT
-                    } else {
-                        theme::ACCENT_DEEP
-                    };
-                    Span::styled(">", Style::default().fg(color))
-                })
-                .collect();
-            prefix.push(Span::raw(" "));
-            prefix
-        } else {
-            vec![Span::styled(
-                PROMPT_PREFIX,
-                Style::default().fg(theme::ACCENT),
-            )]
-        };
+        let mut spans = vec![Span::styled(
+            PROMPT_PREFIX,
+            Style::default().fg(theme::ACCENT),
+        )];
         if i == layout.cursor_row {
             let (before, under, after) = split_row_at(row, layout.cursor_col);
             let under_ch = under.map(String::from).unwrap_or_else(|| " ".into());
             spans.push(Span::styled(before, theme::body()));
-            spans.push(Span::styled(
-                under_ch,
-                if caret_on {
-                    cursor_style
-                } else {
-                    theme::body()
-                },
-            ));
+            spans.push(Span::styled(under_ch, cursor_style));
             spans.push(Span::styled(after, theme::body()));
         } else {
             spans.push(Span::styled(row.clone(), theme::body()));
@@ -1240,21 +1166,17 @@ pub(crate) fn render_status_bar(model: &WorkspaceModel, ui: &DeckUi, area: Rect,
     const CTX_WINDOW: u64 = 200_000;
     let ctx_frac = (ctx_tokens as f64 / CTX_WINDOW as f64).min(1.0);
 
-    // STAGE with its pulsing ember dot (truecolor only — a lightened RGB has
-    // no indexed fallback, so lesser terminals get a steady flame dot).
+    // STAGE with a steady dot. It used to pulse on truecolor terminals via an
+    // interpolated `lighten`, which carried no information the stage word did
+    // not already carry AND had no `theme::FALLBACKS` entry — so the one cell
+    // that animated was also the one cell `degrade_buffer` could not narrow
+    // for a 256/16-colour terminal. A theme token is both quieter and
+    // recolourable.
     let stage_txt = focused
         .and_then(|a| a.model.hud.stage)
         .map(stage_label)
         .unwrap_or("idle");
-    let dot_color = if ui.color_mode.is_truecolor() && !ui.no_anim {
-        let t = (model.now_ms % 1200) as f64 / 1200.0;
-        // Lightened → interpolated, so read the active primary directly (the
-        // theme remap can't reach an interpolated cell). Flat `else` keeps
-        // ACCENT_DEEP, which the remap does recolour.
-        theme::lighten(theme::primary_deep(), (0.5 - (t - 0.5).abs()) * 0.7)
-    } else {
-        theme::ACCENT_DEEP
-    };
+    let dot_color = theme::ACCENT_DEEP;
 
     // Cache economics panel (#267/#269) — CACHE hit%/volumes, SAVED dollars,
     // WARMTH countdown; the pricing/TTL math already happened in the producer.
@@ -1627,6 +1549,19 @@ fn tab_shortcuts(tab: DeckTab) -> &'static [(&'static str, &'static str)] {
             ("←", "SESSIONS overlay — every session on this machine"),
             ("→", "CONTEXT overlay — active skills + MCP servers"),
             ("ctrl-g", "INSPECT — the context sent on any recorded call"),
+            // The overlay had no row for answering a card at all, while the
+            // global `⏎` row below promised the prompt would "run as its own
+            // agent" — so a reviewer typing at a scope card had every reason to
+            // expect the sidecar they got. Both halves are documented now.
+            (
+                "a / t / x",
+                "scope card: approve · trim · abort — type it, then ⏎",
+            ),
+            (
+                "text ⏎",
+                "scope card: what to change — the plan is re-planned from it",
+            ),
+            ("esc", "scope card: abort it (the one key that acts alone)"),
         ],
         DeckTab::Agents => &[
             ("← →", "switch panes — executions / installed"),
@@ -1698,7 +1633,13 @@ const GLOBAL_SHORTCUTS: &[(&str, &str)] = &[
     // `composer::classify_enter`): a bare ⏎ dispatches, a *modified* ⏎ breaks
     // the line. The composer footer advertises the same pair — these rows must
     // not drift from it.
-    ("⏎", "queue the prompt — mid-turn it runs as its own agent"),
+    // The parenthetical is load-bearing: the unqualified promise ("runs as its
+    // own agent") is what a reviewer read while a scope card was waiting, and
+    // the sidecar it describes is exactly what swallowed their answer.
+    (
+        "⏎",
+        "queue the prompt — mid-turn it runs as its own agent (unless a card waits)",
+    ),
     ("⌘⏎ / ⌃⏎ / ⌥⏎", "insert a line break in the prompt"),
     ("!cmd", "run a shell command NOW (skips the queue)"),
     ("/", "slash commands — ↑↓ pick · tab completes · ⏎ runs"),

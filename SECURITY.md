@@ -55,6 +55,44 @@ of the sharper edges (no SSRF guard on `web` tools, the sandbox covering
 `bash` only, materially weaker guarantees off Unix) are deliberate and recorded
 there.
 
+## Verifying a release
+
+Every artifact published by `.github/workflows/release.yml` carries two
+independent guarantees, and they answer different questions:
+
+- **`SHA256SUMS`** proves the tarball was not corrupted or truncated. It is
+  fetched from the same release over the same channel as the artifact it
+  vouches for, so it does *not* establish origin — anything able to replace one
+  could replace both.
+- **A Sigstore build-provenance attestation** (`actions/attest-build-provenance`)
+  proves the artifact was built by this repository's release workflow at a
+  specific commit. It covers the tarballs *and* `SHA256SUMS`, and it cannot be
+  reissued by whoever holds the release. No signing key is involved, so there
+  is none to leak or rotate.
+
+`install.sh` checks the checksum always, and checks provenance whenever `gh` is
+on `PATH`. A verifier that runs and **rejects** an artifact is always fatal. A
+verifier that cannot run (no `gh`, a `gh` too old, or a release predating
+provenance) is a warning — so to demand the strong guarantee, ask for it:
+
+```bash
+STELLA_REQUIRE_PROVENANCE=1 curl -fsSL https://raw.githubusercontent.com/macanderson/stella/main/install.sh | sh
+```
+
+To verify an already-downloaded artifact by hand:
+
+```bash
+gh attestation verify stella-<version>-<target>.tar.gz --repo macanderson/stella
+```
+
+Releases cut through the degraded local path (`scripts/release.sh`, used only
+when GitHub Actions cannot run — see RELEASING.md) carry **no attestation** and
+will be refused by `STELLA_REQUIRE_PROVENANCE=1`. Those releases say so in their
+notes.
+
+A binary that fails provenance verification is a report-worthy event under
+"install.sh / release integrity" above — please do not install it.
+
 ## Supported versions
 
 Pre-1.0, only the latest release (and `main`) receive security fixes.

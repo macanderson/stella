@@ -20,9 +20,9 @@
 1576 stella-cli/src/candidate_ws.rs
 4537 stella-cli/src/command_deck.rs
 2095 stella-core/src/bus.rs
-2125 stella-core/src/driver.rs
+2138 stella-core/src/driver.rs
 2820 stella-core/src/driver/tests.rs
-1759 stella-fleet/src/fleet.rs
+1849 stella-fleet/src/fleet.rs
 1609 stella-model/src/anthropic/tests.rs
 1780 stella-model/src/bedrock.rs
 1948 stella-model/src/openai.rs

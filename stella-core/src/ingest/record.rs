@@ -305,6 +305,24 @@ impl Record {
         self.record_hash = Some(record_hash(self)?);
         Ok(())
     }
+
+    /// The truth probe that may be re-run to re-check this record's claim, if
+    /// any. Returns the record's own probe only when it is **honored** for the
+    /// record's origin — a gated probe (`command_succeeds`/`http_ok`) is never
+    /// honored on an imported/inferred record, so it is filtered out and can
+    /// never run during a staleness sweep. `None` when there is no probe or it
+    /// is gated. Origin defaults to `imported` (ingest output) when unset.
+    pub fn honored_probe(&self) -> Option<&Probe> {
+        let probe = self.truth.as_ref()?.probe.as_ref()?;
+        let origin = self.origin.unwrap_or(Origin::Imported);
+        super::gate::probe_honored(origin, probe.kind).then_some(probe)
+    }
+
+    /// The record's `on_expiry` policy string (`stale`/`drop`/`block`), if set —
+    /// what to do when a re-check refutes the claim.
+    pub fn on_expiry(&self) -> Option<&str> {
+        self.truth.as_ref()?.on_expiry.as_deref()
+    }
 }
 
 /// Normalize a lineage id into the id-body slug (`ctx.acme.web.pkg-manager` →

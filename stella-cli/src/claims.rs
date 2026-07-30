@@ -110,10 +110,19 @@ fn pid_alive(pid: u32) -> bool {
 /// does the hole reopen; claims cover the structured file tools, and the
 /// witness/verify ladder covers the rest.
 fn mutating_path<'i>(name: &str, input: &'i Value) -> Option<&'i str> {
-    if matches!(name, "write_file" | "edit_file" | "delete_file") {
-        input.get("path").and_then(Value::as_str)
-    } else {
-        None
+    match name {
+        "write_file" | "edit_file" | "delete_file" => input.get("path").and_then(Value::as_str),
+        // apply_edits carries its paths in a batch; the first edit's path
+        // stands in for claim attribution — a multi-file batch is still one
+        // claim-worthy mutation, and attributing it to one path beats leaving
+        // it entirely unclaimed.
+        "apply_edits" => input
+            .get("edits")
+            .and_then(Value::as_array)
+            .and_then(|edits| edits.first())
+            .and_then(|e| e.get("path"))
+            .and_then(Value::as_str),
+        _ => None,
     }
 }
 

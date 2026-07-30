@@ -1,24 +1,31 @@
 "use client";
 
 /**
- * The per-page footer every docs page renders: share menu, the GitHub repo
- * button, the Sponsor button, and the free-and-open-source license line.
+ * The per-page footer every docs page renders: a share menu, the repository
+ * link, the sponsor link, and the licence line.
  *
- * Taste rules: quiet chrome (borders + muted text, no gradients), the
- * GitHub button is GitHub-themed (octocat + repo slug on a near-black tile,
- * inverted in dark mode), share targets are plain text rows (no faux brand
- * icons), and everything keys off the Fumadocs tokens so both themes read.
+ * This is the only client component on the site. It earns that: the share menu
+ * needs an open/closed state, an outside-click listener, and the clipboard —
+ * none of which a server component can do. Everything else here is static.
+ *
+ * Taste rules: quiet chrome (a rule and muted text, no fills and no gradients),
+ * share targets are plain text rows rather than a wall of faux brand icons, and
+ * every colour is a Fumadocs or brand token so both themes read. The repository
+ * button used to be a near-black tile with an inverted dark variant, hardcoded
+ * to Tailwind's `neutral-900`; a raw palette colour in the one component that
+ * sits on every page is exactly how a design system springs a leak.
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy, Heart, Share2 } from "lucide-react";
+import { Check, Copy, Share2 } from "lucide-react";
 
 const REPO_URL = "https://github.com/macanderson/stella";
 const SPONSOR_URL = "https://github.com/sponsors/macanderson";
+const LICENSE_URL = "https://github.com/macanderson/stella/blob/main/LICENSING.md";
 
 function GitHubMark({ className }: { className?: string }) {
   return (
-    <svg role="img" viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden>
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden>
       <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12" />
     </svg>
   );
@@ -41,14 +48,21 @@ function ShareMenu({ path, title }: { path: string; title: string }) {
   const [copied, setCopied] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
-  // Close on any outside click — the usual dropdown contract.
+  // Close on an outside click or on Escape — the usual dropdown contract.
   useEffect(() => {
     if (!open) return;
     const onClick = (e: MouseEvent) => {
       if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
     document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
   }, [open]);
 
   // The canonical URL is computed at click time from the real origin, so
@@ -73,7 +87,7 @@ function ShareMenu({ path, title }: { path: string; title: string }) {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-fd-border bg-fd-card px-2.5 py-1.5 text-xs font-medium text-fd-muted-foreground transition-colors hover:text-fd-foreground"
+        className="inline-flex items-center gap-1.5 text-xs text-fd-muted-foreground transition-colors hover:text-fd-foreground"
       >
         <Share2 className="size-3.5" aria-hidden />
         Share
@@ -81,7 +95,7 @@ function ShareMenu({ path, title }: { path: string; title: string }) {
       {open && (
         <div
           role="menu"
-          className="absolute bottom-full right-0 z-20 mb-2 w-52 rounded-lg border border-fd-border bg-fd-popover p-1 shadow-lg"
+          className="absolute bottom-full right-0 z-20 mb-2 w-52 rounded-md border border-fd-border bg-fd-popover p-1"
         >
           {shareTargets(absoluteUrl(), title).map((target) => (
             <a
@@ -91,7 +105,7 @@ function ShareMenu({ path, title }: { path: string; title: string }) {
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => setOpen(false)}
-              className="block rounded-md px-2.5 py-1.5 text-xs text-fd-popover-foreground hover:bg-fd-accent"
+              className="block rounded px-2.5 py-1.5 text-xs text-fd-popover-foreground hover:bg-fd-accent"
             >
               {target.label}
             </a>
@@ -100,7 +114,7 @@ function ShareMenu({ path, title }: { path: string; title: string }) {
             type="button"
             role="menuitem"
             onClick={copy}
-            className="flex w-full items-center gap-1.5 rounded-md px-2.5 py-1.5 text-left text-xs text-fd-popover-foreground hover:bg-fd-accent"
+            className="flex w-full items-center gap-1.5 rounded px-2.5 py-1.5 text-left text-xs text-fd-popover-foreground hover:bg-fd-accent"
           >
             {copied ? <Check className="size-3.5" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
             {copied ? "Copied" : "Copy link"}
@@ -113,53 +127,48 @@ function ShareMenu({ path, title }: { path: string; title: string }) {
 
 export function PageFooter({ path, title }: { path: string; title: string }) {
   return (
-    <footer className="mt-12 border-t border-fd-border pt-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <a
-            href={REPO_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-900 px-2.5 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-85 dark:bg-white dark:text-neutral-900"
-          >
-            <GitHubMark className="size-3.5" />
-            macanderson/stella
-          </a>
-          <a
-            href={SPONSOR_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-fd-border bg-fd-card px-2.5 py-1.5 text-xs font-medium text-fd-muted-foreground transition-colors hover:text-fd-foreground"
-          >
-            <Heart className="size-3.5" aria-hidden />
-            Sponsor
-          </a>
-        </div>
-        <ShareMenu path={path} title={title} />
-      </div>
-      <p className="mt-4 text-xs leading-relaxed text-fd-muted-foreground">
-        Stella is <strong className="font-semibold text-fd-foreground">totally free and open source</strong>,
-        licensed <strong className="font-semibold text-fd-foreground">AGPL&nbsp;3.0</strong> — use it, fork it,
-        ship it; if you distribute a modified Stella or run one as a service, you publish your changes too.
-        Writing closed-source code <em>with</em> Stella is unaffected. Need to embed it in a proprietary
-        product? A{" "}
+    <footer className="mt-16 border-t border-fd-border pt-5 text-xs text-fd-muted-foreground">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
         <a
-          href="https://github.com/macanderson/stella/blob/main/LICENSING.md"
-          className="underline underline-offset-4 hover:text-fd-foreground"
+          href={REPO_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 transition-colors hover:text-fd-foreground"
         >
-          commercial license
-        </a>{" "}
-        is available. No account and no Community/default telemetry egress. An explicitly enrolled Oxagen
-        Enterprise managed seat has one signed, content-free operational exception. {" "}
+          <GitHubMark className="size-3.5" />
+          macanderson/stella
+        </a>
+        <a
+          href={SPONSOR_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="transition-colors hover:text-fd-foreground"
+        >
+          Sponsor
+        </a>
+        <div className="ms-auto">
+          <ShareMenu path={path} title={title} />
+        </div>
+      </div>
+      <p className="mt-4 max-w-prose leading-relaxed">
+        Stella is free and open source under{" "}
+        <a href={LICENSE_URL} className="underline underline-offset-4 hover:text-fd-foreground">
+          AGPL 3.0
+        </a>
+        : use it, fork it, ship it. Distributing a modified Stella or running one as a service means
+        publishing your changes; writing closed-source code <em>with</em> Stella does not. A
+        commercial licence is available for embedding it in a proprietary product.
+      </p>
+      <p className="mt-2 max-w-prose leading-relaxed">
+        No account, and no telemetry egress on the Community default —{" "}
         <a
           href="/docs/telemetry#oxagen-enterprise-managed-export"
-          className="underline underline-offset-2 hover:text-fd-foreground"
+          className="underline underline-offset-4 hover:text-fd-foreground"
         >
-          Enterprise telemetry boundary →
-        </a>{" "}
-        <a href="/docs/donate" className="underline underline-offset-2 hover:text-fd-foreground">
-          What that means →
+          an explicitly enrolled Oxagen Enterprise managed seat has one signed, content-free
+          operational exception
         </a>
+        .
       </p>
     </footer>
   );

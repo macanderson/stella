@@ -273,6 +273,21 @@ impl SessionMemory {
         &self.task_id
     }
 
+    /// Tell memory which execution this turn's reflection belongs to, so the
+    /// model's self-review can be stored against it.
+    ///
+    /// Called by every path that begins an execution and later reflects. Not
+    /// test-gated, unlike `set_task_id` above: the whole point is the shipped
+    /// paths calling it, and a path that forgets to silently loses that turn's
+    /// self-rating rather than failing loudly, so the callers are the feature.
+    ///
+    /// (`set_task_id` is deliberately named in prose rather than linked. It is
+    /// `#[cfg(test)]`, so it does not exist in a doc build at all, and an
+    /// intra-doc link to it fails `-D warnings` rather than resolving.)
+    pub fn set_execution_id(&mut self, execution_id: i64) {
+        self.execution_id = Some(execution_id);
+    }
+
     /// Open memory with workspace skill injection governed by the session's
     /// immutable authority snapshot. Context recall itself remains evidence.
     pub fn open_with_authority(
@@ -333,6 +348,7 @@ impl SessionMemory {
                     // Phase 3 (#714)
                     lifecycle_enabled: tuning::session_lifecycle_enabled(workspace_root),
                     task_id: default_task_id(),
+                    execution_id: None,
                 })
             }
             Err(e) => {

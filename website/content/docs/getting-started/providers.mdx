@@ -110,7 +110,7 @@ stella --model bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0 run "harden 
   above. The secondary variables (`AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
   `AWS_REGION`) are read from the environment and **nowhere else**: no
   `credentials.toml` entry, no `settings.json` field, no prompt. See
-  [Amazon Bedrock](/docs/api-providers/bedrock) for the full split.
+  [Amazon Bedrock](/docs/api-providers#amazon-bedrock) for the full split.
 </Callout>
 
 ## Local / any OpenAI-compatible server
@@ -140,4 +140,4 @@ are held back by the
 [trust boundary](/docs/configuration/settings#the-project-trust-boundary) until you set
 `STELLA_TRUST_PROJECT=1`. Ready-to-paste setups, organized by use case, live in
 [Examples &amp; recipes](/docs/examples) — including the
-[Z.ai coding-plan recipe](/docs/examples/zai-coding-plan).
+[Z.ai coding-plan recipe](/docs/api-providers#zai).

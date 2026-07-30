@@ -672,6 +672,7 @@ const TOML_KEYWORDS: [&str; 4] = ["true", "false", "inf", "nan"];
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     /// Flatten runs back to their source text.
     fn rebuilt(runs: &[(String, Option<Tok>)]) -> String {
@@ -698,6 +699,58 @@ mod tests {
         ] {
             let rebuilt: String = tokenize(code, lang).into_iter().map(|(t, _)| t).collect();
             assert_eq!(rebuilt, code, "tokenizer dropped/added chars for {code:?}");
+        }
+    }
+
+    const ALL_LANGS: [Lang; 5] = [
+        Lang::Rust,
+        Lang::TsJs,
+        Lang::Python,
+        Lang::Markdown,
+        Lang::Toml,
+    ];
+
+    // Losslessness as a property, not a list of examples.
+    //
+    // `tokenizer_is_lossless_across_languages` above picks nine strings, and
+    // not one of them holds a `snake_case` identifier — so an underscore bug in
+    // here would have passed it. That is not hypothetical: the transcript's
+    // markdown renderer had exactly that bug, deleting the `_` from
+    // `tool_use_id` (see `markdown::parse_inline_spans`). A highlighter is the
+    // same shape of code — it walks characters and re-emits them — so it gets
+    // the same guarantee, stated over arbitrary input rather than a sample.
+    proptest! {
+        #[test]
+        fn tokenize_re_emits_every_character_unchanged(text in ".{0,120}") {
+            for lang in ALL_LANGS {
+                prop_assert_eq!(
+                    rebuilt(&tokenize(&text, lang)),
+                    text.clone(),
+                    "{:?} altered the text",
+                    lang
+                );
+            }
+        }
+    }
+
+    /// The identifier shapes that broke the markdown renderer, run past every
+    /// highlighter. Cheap, and it names the regression in the failure output.
+    #[test]
+    fn identifier_heavy_lines_survive_every_highlighter() {
+        for text in [
+            "let tool_use_id = cache_creation_input_tokens;",
+            "def __init__(self, _private, stop_reason): pass",
+            "stop_reason = \"end_turn\"  # __all__",
+            "prose with _emphasis_ and __bold__ and snake_case_name",
+            "MAX__DOUBLE__UNDERSCORE and a_b_c_d_e",
+        ] {
+            for lang in ALL_LANGS {
+                assert_eq!(
+                    rebuilt(&tokenize(text, lang)),
+                    text,
+                    "{lang:?} altered {text:?}"
+                );
+            }
         }
     }
 

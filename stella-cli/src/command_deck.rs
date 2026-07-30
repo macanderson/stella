@@ -1254,6 +1254,14 @@ pub async fn run_deck_session(
         );
         if let Some((_, id)) = &execution {
             last_execution_id = Some(*id);
+            // Tell memory which execution it is reflecting on, before the turn
+            // runs. The post-turn self-review is stored 1:1 with an execution,
+            // so a loop that cannot name the row writes nothing — which is why
+            // `self_rating` was NULL on every reflection row this deck ever
+            // recorded, and the Observatory's self-improve panels sat empty.
+            if let Some(m) = &mut memory {
+                m.set_execution_id(*id);
+            }
         }
         let files_before = registry.files_touched().len();
         let started_unix = crate::memory::unix_now_secs();
@@ -1651,7 +1659,7 @@ pub async fn run_deck_session(
                         }
                         // Scope review IS engine-driven now: the pipeline's
                         // `DeckApprovalGate` parks on this channel, so the
-                        // card's a/t/x keypress becomes its `ScopeDecision`.
+                        // reviewer's answer becomes its `ScopeDecision`.
                         Some(WorkspaceInput::ToAgent {
                             input: UserInput::ScopeDecision(decision), ..
                         }) => {
@@ -2152,7 +2160,22 @@ async fn service_mcp_action(
         }
         WorkspaceInput::McpRefresh => send_mcp_snapshot(cfg, mcp, disabled, in_tx).await,
         WorkspaceInput::McpRemove { name } => {
-            let _ = crate::mcp_cmd::remove(&cfg.workspace_root, name);
+            match crate::mcp_cmd::remove(&cfg.workspace_root, name) {
+                Ok(true) => {}
+                // Not an error, but not what the operator asked for either:
+                // the row is gone from the tab and `.stella/mcp.toml` never
+                // had it. Silence here reads as success.
+                Ok(false) => {
+                    let _ = in_tx.send(chrome_note(format!(
+                        "mcp: `{name}` was not configured in .stella/mcp.toml — nothing removed\n"
+                    )));
+                }
+                Err(e) => {
+                    let _ = in_tx.send(chrome_note(format!(
+                        "mcp: could not remove `{name}`: {e}\n"
+                    )));
+                }
+            }
             send_mcp_snapshot(cfg, mcp, disabled, in_tx).await;
         }
         WorkspaceInput::McpAuth {
@@ -2160,12 +2183,19 @@ async fn service_mcp_action(
             field,
             value,
         } => {
-            let _ = crate::mcp_cmd::set_credential(
+            if let Err(e) = crate::mcp_cmd::set_credential(
                 &cfg.workspace_root,
                 server,
                 field,
                 value.reveal().to_string(),
-            );
+            ) {
+                // The single worst failure to swallow on this tab: the user
+                // typed a secret at a masked prompt, saw the tab refresh, and
+                // had no way to know it never reached disk.
+                let _ = in_tx.send(chrome_note(format!(
+                    "mcp: could not store the `{field}` credential for `{server}`: {e}\n"
+                )));
+            }
             send_mcp_snapshot(cfg, mcp, disabled, in_tx).await;
         }
         WorkspaceInput::McpSearch { query } => {
@@ -2174,9 +2204,20 @@ async fn service_mcp_action(
         }
         WorkspaceInput::McpInstall { name } => {
             let registry_url = crate::mcp_cmd::resolve_registry_url(&cfg.workspace_root);
-            if let Ok((alias, option)) = crate::mcp_cmd::resolve_install(&registry_url, name).await
-            {
-                let _ = crate::mcp_cmd::install(&cfg.workspace_root, &alias, option.transport);
+            // Both halves of an install can fail for reasons the operator can
+            // act on — an unreachable registry, a name that is not in it, a
+            // read-only `.stella/mcp.toml`. Every one of them used to end with
+            // the tab refreshing unchanged and no explanation anywhere.
+            let outcome = match crate::mcp_cmd::resolve_install(&registry_url, name).await {
+                Ok((alias, option)) => {
+                    crate::mcp_cmd::install(&cfg.workspace_root, &alias, option.transport)
+                }
+                Err(e) => Err(e),
+            };
+            if let Err(e) = outcome {
+                let _ = in_tx.send(chrome_note(format!(
+                    "mcp: could not install `{name}`: {e}\n"
+                )));
             }
             send_mcp_snapshot(cfg, mcp, disabled, in_tx).await;
         }
@@ -4237,7 +4278,7 @@ async fn run_lead_turn(
 /// Deck-mode seams, all named:
 /// - **Scope review is interactive** ([`DeckApprovalGate`]). A plan over the
 ///   thresholds raises the deck's approval card and the turn parks until the
-///   user answers (a/t/x) — the deck runs `headless: false` because it *can*
+///   user answers at the card — the deck runs `headless: false` because it *can*
 ///   ask. It fails closed only if the deck itself goes away mid-gate.
 /// - **The session's system prompt stays.** It was assembled once at deck
 ///   startup (byte-stable for the cache prefix, L-E8); toggling `/pipeline`

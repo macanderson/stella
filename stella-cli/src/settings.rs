@@ -44,7 +44,11 @@ mod private;
 #[cfg(test)]
 #[path = "settings/private_state_tests.rs"]
 mod private_state_tests;
+mod unknown;
 pub use authority::{AuthorityPolicy, ManagedAuthoritySettings};
+pub(crate) use unknown::{
+    ENGINE_AGENT_FIELDS, ENGINE_AGENT_NAMES, ENGINE_PARAM_FIELDS, ENGINE_ROOT_FIELDS,
+};
 // Only `ContextSettings` is consumed today (the inert `Settings::context`
 // field). The nested types (`LearningMode`, `GovernanceMode`, …) live in
 // `settings::context`; a later phase re-exports them here as it wires them in.
@@ -676,7 +680,8 @@ impl ToolsSettings {
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct UiSettings {
     /// The TUI colour theme slug (`stella-dark` | `stella-light`). Unset — or
-    /// unrecognised — falls back to the default (`stella-dark`, terminal green).
+    /// unrecognised — falls back to the default (`stella-dark`, electric blue
+    /// on deep space; see `docs/brand/BRAND.md`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
 }

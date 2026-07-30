@@ -66,23 +66,51 @@ confidence-threshold = 0.9
 ignore = true
 
 [advisories]
-# A yanked dependency is a warning, not a hard failure.
-yanked = "warn"
-# Benign advisories to tolerate (real vulnerabilities still fail the gate):
-# - RUSTSEC-2025-0057: `fxhash` is unmaintained (no known vulnerability) —
-#   a transitive hash-function dep of `scraper`→`selectors` (the web-tools
-#   HTML parser). Informational, not a security issue; unavoidable without
-#   dropping `scraper`.
+# A yanked crate is a hard failure. Crates are most often yanked *because*
+# something is wrong with them — a broken build, a semver violation, or a
+# security problem that has not yet been written up as a RUSTSEC advisory — and
+# this workspace ships a signed binary that executes model-directed code, so
+# "we are shipping a version its own author withdrew" is something to learn
+# before a release, not after. The cost is that an upstream yank can turn CI
+# red with no local change; the fix in that case is to bump the dependency (or,
+# in a genuine emergency, set this back to "warn" for the one PR).
+yanked = "deny"
+# Report unmaintained-crate advisories for the WHOLE graph, not just the
+# workspace's own direct dependencies (cargo-deny's default is "workspace").
+# The unmaintained crates that actually reach a binary are almost always
+# transitive — the last one here was `fxhash`, four levels down under
+# `scraper`→`selectors` — so the default setting would not have seen it.
+unmaintained = "all"
+# No advisories are currently suppressed, and the default answer to a new one
+# is to fix or drop the dependency rather than add an entry here.
 #
-# (RUSTSEC-2024-0436 / `paste` was dropped from this list when the
-# `ratatui-comfy-tabs` dependency was removed — it was the only thing pulling
-# `paste` into the tree. cargo-deny warns on ignores that match nothing.)
-ignore = ["RUSTSEC-2025-0057"]
+# Both former entries are gone because the crates they covered left the tree,
+# not because the advisories were re-judged: RUSTSEC-2024-0436 (`paste`) went
+# with the `ratatui-comfy-tabs` removal, and RUSTSEC-2025-0057 (`fxhash`,
+# unmaintained) went when `selectors` moved to `rustc-hash` — verified absent
+# from Cargo.lock and from `cargo tree`. A stale entry is not free: cargo-deny
+# warns on an ignore that matches nothing, and a suppression left lying around
+# silently re-arms the moment the crate returns by another path.
+ignore = []
 
 [bans]
-# Multiple versions of the same crate is a warning, not a failure — the bundled
-# C deps (rusqlite, tree-sitter grammars) legitimately pull duplicate minor
-# versions. Tighten to "deny" here if the tree ever needs to be pinned flat.
+# Multiple versions of the same crate is a warning, not a failure. Every
+# duplicate in the tree today has been traced to a transitive edge the
+# workspace cannot flatten from here, and the honest way to record that is a
+# warning plus this inventory — NOT a list of `skip` entries, which would
+# suppress these and any future duplicate alike:
+#
+#   base64    0.22 (reqwest, hyper-util, wiremock)  vs 0.23 (workspace)
+#   sha2      0.10 (contextgraph-host, pinned rev)  vs 0.11 (workspace)
+#   rand      0.9  (proptest, dev-only)             vs 0.10 (workspace)
+#   getrandom 0.2  (ring, under rustls)             vs 0.3/0.4
+#   itertools 0.14 (ratatui-core)                   vs 0.15
+#   syn       2    (clap_derive, darling, cssparser) vs 3 (async-trait,
+#                  thiserror-impl) — an ecosystem-wide transition, not ours
+#
+# plus the digest/block-buffer/crypto-common/cpufeatures cluster, which tracks
+# the sha2 0.10-vs-0.11 split above. Re-audit this list before tightening to
+# "deny"; a duplicate that is NOT on it is a real regression worth chasing.
 multiple-versions = "warn"
 wildcards = "warn"
 

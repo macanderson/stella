@@ -1,0 +1,120 @@
+---
+title: stella commands
+description: List the custom slash commands this workspace offers, or convert markdown command definitions to TOML — the scriptable half of the custom-command surface.
+---
+
+`stella commands` is the CLI half of [custom slash commands](/docs/agent-tools/commands). It lists what this workspace actually offers — resolved through the same authority gate the slash menu uses — and converts markdown definitions to TOML.
+
+Offline: reads and writes local definition files, no API key.
+
+## Synopsis
+
+```bash
+stella commands list
+stella commands convert [<dir>] [--dry-run] [--force]
+```
+
+## What it does
+
+### `stella commands list`
+
+List the custom slash commands this workspace offers, with the file each came from and its argument hint.
+
+The listing goes through the **same authority-gated loader the chat surfaces use**, on the real resolved policy. That is deliberate: a command hidden from the composer must not appear here, and one the composer offers must not be missing here. So if a command you wrote does not show up, the answer is usually the project's [authority policy](/docs/agent-tools/permissions) rather than a parse error.
+
+```bash
+stella commands list
+```
+
+Project-scope prompts are withheld from an **untrusted** project, so a freshly cloned repo's commands do not appear — and do not run — until you say the repo is trusted:
+
+```bash
+# A cloned repo, not yet trusted: project commands are withheld
+stella commands list
+# → no custom commands — add one under .stella/commands/
+
+# Trusted: the same workspace lists them, with the file each came from
+STELLA_TRUST_PROJECT=1 stella commands list
+# → /review          Review the working diff like our team d… <focus-areas>
+#     .stella/commands/review.toml
+#   /vercel:deploy    Ship it to production.
+#     .stella/commands/vercel/deploy.toml
+```
+
+<Callout type="info">
+Because the listing resolves the *real* policy rather than a permissive default, `list` under-reporting is a **correct** answer about what will actually run. If a command you wrote is missing, check the repo's trust before you check the file — see [Permissions](/docs/agent-tools/permissions).
+</Callout>
+
+<Callout type="warn">
+`STELLA_TRUST_PROJECT=1` is a statement about the repository, not about one command. It also enables project-scope lifecycle hooks and the MCP servers declared in `.stella/mcp.toml` — both of which spawn processes. Do not set it for a repo you have not read.
+</Callout>
+
+### `stella commands convert`
+
+Convert markdown command definitions to TOML. Reads `<dir>`, writes a `<slug>.toml` beside each `<slug>.md`, and **leaves the markdown in place**.
+
+<CardGrid size="md">
+  <OptionCard name="<dir>" defaultValue=".stella/commands/">
+    Directory to convert.
+  </OptionCard>
+  <OptionCard name="--dry-run">
+    Show what would be written without writing anything.
+  </OptionCard>
+  <OptionCard name="--force">
+    Overwrite a `<slug>.toml` that already exists.
+  </OptionCard>
+</CardGrid>
+
+```bash
+# Look before you write
+stella commands convert --dry-run
+
+# Convert the default directory
+stella commands convert
+
+# A different directory, replacing existing TOML
+stella commands convert .claude/commands --force
+```
+
+## Why conversion is deliberate, and never part of `init`
+
+[`stella init`](/docs/commands/init) **symlinks** `.claude/commands/` rather than copying it. That link is the point: commands you maintain for another agent tool stay live, and editing them there updates what Stella offers with no second step.
+
+A converted copy trades that live link for two things TOML does better — a typed `allowed-tools` list, and a delimiter-free `prompt` (no frontmatter fence to escape inside a prompt that itself contains markdown). Both are real wins, and neither is worth taking your live link away without being asked. So conversion is a command you run, not something `init` does to you.
+
+<Callout type="warn">
+Converting a symlinked `.claude/commands/` directory writes TOML into the tool that owns those files, and the resulting `.toml` no longer tracks edits made to the `.md`. Prefer converting definitions that live in `.stella/commands/`.
+</Callout>
+
+## The two formats are the same command
+
+TOML is a spelling, not a feature tier. Both formats carry exactly the same fields and produce the same definition, so nothing is gained or lost by converting, and a workspace can hold both.
+
+```toml
+# .stella/commands/review.toml
+name = "review"
+description = "Review the working diff like our team does."
+argument-hint = "<pr-number>"
+allowed-tools = ["read_file", "grep", "repo_diff"]
+disable-model-invocation = true
+prompt = """
+Review the working diff for $ARGUMENTS the way our team does:
+correctness first, then the gate, then naming.
+"""
+```
+
+A definition one level down is namespaced by its directory — `commands/vercel/deploy.toml` becomes `/vercel:deploy`.
+
+## Related
+
+<CardGrid size="sm">
+  <SpecCard title="Custom Commands" href="/docs/agent-tools/commands">
+    Authoring the definitions — both formats, argument expansion, and where they live.
+  </SpecCard>
+  <SpecCard title="Permissions" href="/docs/agent-tools/permissions">
+    The authority policy that decides which definitions resolve at all.
+  </SpecCard>
+  <SpecCard title="stella init" href="/docs/commands/init">
+    What `init` symlinks, and why it does not convert.
+  </SpecCard>
+</CardGrid>

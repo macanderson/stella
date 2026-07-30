@@ -17,4 +17,15 @@ fn main() {
     };
 
     println!("cargo:rustc-env=STELLA_BUILD_VERSION={build_version}");
+
+    // Build identity for the long `--version`. A bug report that says only
+    // "stella 0.6.8" leaves the two questions that actually matter — which
+    // machine was this built for, and was it a debug build? — to a round trip.
+    // Cargo always provides both to a build script, so neither can be absent;
+    // the fallbacks exist so a `build.rs` invoked outside cargo cannot panic
+    // the build over a cosmetic string.
+    let target = env::var("TARGET").unwrap_or_else(|_| "unknown".to_string());
+    let profile = env::var("PROFILE").unwrap_or_else(|_| "unknown".to_string());
+    println!("cargo:rustc-env=STELLA_BUILD_TARGET={target}");
+    println!("cargo:rustc-env=STELLA_BUILD_PROFILE={profile}");
 }

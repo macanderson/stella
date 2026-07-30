@@ -26,6 +26,7 @@ mod agents_installed;
 mod arena;
 mod attachments;
 mod auth_cmd;
+mod build_info;
 mod cache_insight;
 mod candidate_ws;
 mod claims;
@@ -75,6 +76,7 @@ mod skill_manager;
 mod stats;
 mod storage_cmd;
 mod subsession;
+mod term_policy;
 mod tool_foundry;
 mod tool_policy;
 mod tool_switches;
@@ -98,7 +100,6 @@ pub(crate) mod test_env {
     }
 }
 
-use std::io::IsTerminal;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -133,47 +134,27 @@ pub(crate) fn note_json_summary_emitted() {
 /// The version of the `--output-format json|stream-json` summary envelope this
 /// build emits. Every summary object carries it — the pipeline summary, the raw
 /// step-loop summary, and the pre-flight error envelope — so a consumer can
-/// branch on the shape it was handed instead of sniffing for keys. A version
-/// stamped on only some summaries would be worse than none: a script could not
-/// rely on reading it.
+/// branch on the shape instead of sniffing for keys.
 ///
-/// All three envelopes are built from structs with the version declared first,
-/// so a derived `Serialize` puts it at the head of the object. That is a
-/// courtesy to whoever reads the output by eye, not a promise: key order stays
-/// outside the contract and consumers must read by key. Building any of them
-/// with `serde_json::json!` would quietly undo it — a `json!` object is a
-/// sorted map, which buries `schema_version` mid-envelope.
-///
-/// # Why version at all
-///
-/// The envelope's key set is a contract with every script that parses it, and
-/// the cost of adding the stamp rises with the number of consumers. Today it is
-/// additive and harmless; after the first external script pins the current
-/// shape, it is a compatibility negotiation (#644). This is the same reasoning
-/// that versioned the drain wire format ahead of its transport — see
-/// `DRAIN_SCHEMA_VERSION` in `stella-store`.
+/// All three envelopes are structs with the version declared first, so a derived
+/// `Serialize` heads the object — a courtesy, not a promise: key order stays
+/// outside the contract and consumers must read by key. Building any with
+/// `serde_json::json!` would undo that (a `json!` object is a sorted map that
+/// buries `schema_version` mid-envelope).
 ///
 /// # When to bump
 ///
-/// Increment when a consumer written against the previous version could break:
+/// Increment only when a consumer written against the previous version could
+/// break: a key removed or renamed, a value's type changed, or a key's *meaning*
+/// changed while its name and type stay the same. Do **not** bump for a purely
+/// additive key — consumers must ignore keys they do not recognize, so an
+/// addition cannot break a correct client and bumping would burn the signal
+/// (#644).
 ///
-/// - a key is removed or renamed,
-/// - a key's value type changes (`string` → `object`, scalar → array),
-/// - a key's *meaning* changes while its name and type stay the same.
-///
-/// Do **not** increment for purely additive change — a new key appended to the
-/// envelope. Consumers are required to ignore keys they do not recognize (the
-/// same discipline rule 1 of the event-stream contract imposes), so an addition
-/// cannot break a correct client, and bumping for one would burn the signal.
-///
-/// The `events` array is deliberately **out of scope**: the event vocabulary
-/// carries its own forward-compatibility contract
-/// (`website/content/docs/event-stream-compatibility.mdx`), and a new event type
-/// never bumps this number. Everything else the envelope owns — including the
-/// nested `verdict`, `reflection`, and `files_touched` payloads — is covered.
-///
-/// The consumer-facing statement of this rule lives in
-/// `website/content/docs/scripting.mdx`; keep the two in step.
+/// The `events` array is out of scope: the event vocabulary carries its own
+/// forward-compatibility contract and never bumps this number. The
+/// consumer-facing statement lives in `website/content/docs/scripting.mdx`; keep
+/// the two in step.
 pub(crate) const SUMMARY_SCHEMA_VERSION: u32 = 1;
 
 /// The stdout envelope for a failure under `--output-format json|stream-json`,
@@ -236,7 +217,8 @@ fn emit_error_summary(format: OutputFormat, msg: &str) {
 #[derive(Parser)]
 #[command(
     name = "stella",
-    version = version_static(),
+    version = build_info::version_static(),
+    long_version = build_info::long_version_static(),
     about = "A fast, BYOK, model-agnostic terminal coding agent"
 )]
 struct Cli {
@@ -708,6 +690,23 @@ enum Command {
         cmd: AuthCmd,
     },
 
+    /// Print a shell completion script for stella to stdout.
+    ///
+    /// Install it the way your shell expects, e.g.
+    ///
+    ///     bash: stella completions bash > /etc/bash_completion.d/stella
+    ///
+    ///     zsh:  stella completions zsh  > "${fpath[1]}/_stella"
+    ///
+    ///     fish: stella completions fish > ~/.config/fish/completions/stella.fish
+    ///
+    /// Offline, writes nothing, and needs no API key.
+    Completions {
+        /// bash | zsh | fish | powershell | elvish
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+
     /// Print the version and exit
     Version,
 }
@@ -864,32 +863,6 @@ pub enum McpCmd {
     Usage,
 }
 
-/// NUL boundaries prevent LLVM's string pooling from adjoining identifier
-/// characters to the version bytes. The claim launcher can therefore attest
-/// the full compile-time identity without executing the binary.
-const BUILD_VERSION_IDENTITY: &str = concat!("\0", env!("STELLA_BUILD_VERSION"), "\0");
-
-/// The version string shown by `--version` and `stella version`. `build.rs`
-/// turns an optional compile-time `STELLA_BUILD_GIT_SHA` into one contiguous
-/// literal; this returns the interior of the deliberately delimited identity.
-/// Ordinary release builds still carry the bare package version.
-fn version_string() -> &'static str {
-    &BUILD_VERSION_IDENTITY[1..BUILD_VERSION_IDENTITY.len() - 1]
-}
-
-/// clap's `version` attribute needs a `'static` string.
-fn version_static() -> &'static str {
-    version_string()
-}
-
-/// Whether `chat` should launch the Command Deck: an explicit `--plain` or
-/// STELLA_PLAIN=1 opts out, and both stdin and stdout must be real terminals
-/// (raw mode + the alternate screen are meaningless on a pipe).
-fn use_deck(plain_flag: bool) -> bool {
-    let plain_env = std::env::var_os("STELLA_PLAIN").is_some_and(|v| !v.is_empty() && v != "0");
-    !plain_flag && !plain_env && std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
-}
-
 /// `stella resume --list`: every session in the machine-wide registry,
 /// newest activity first, with the rows resumable from THIS directory
 /// marked `↩`. Local reads only — works with zero API keys.
@@ -961,6 +934,11 @@ fn main() -> ExitCode {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
 
+    // Before the first byte reaches a terminal: a dumb terminal renders ANSI
+    // literally, so every diagnostic below (credential handoff failures
+    // included) has to already know that.
+    term_policy::apply_dumb_terminal_policy();
+
     // Everything user-global lives at ~/.stella; move data from the legacy
     // split layout (platform data dir + ~/.config/stella) before any store,
     // settings, or extension loader resolves a path.
@@ -1006,6 +984,16 @@ fn main() -> ExitCode {
     }
 
     let cli = Cli::parse();
+
+    // A machine-readable run has nobody to answer a masked password prompt,
+    // and its caller is blocked reading stdout for an object that would never
+    // come. Decided here, once, while the requested format is in hand.
+    if matches!(
+        cli.globals.output_format,
+        OutputFormat::Json | OutputFormat::StreamJson
+    ) {
+        config::forbid_interactive_credentials();
+    }
 
     enterprise_telemetry::start_best_effort_flush();
     loaded_env
@@ -1091,6 +1079,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         Some(Command::Proposals { cmd }) => {
             return proposals_cmd::run_proposals(cmd);
         }
+        // Reads context-record TOML + the tree; no store, model, or API key.
+        Some(Command::Context { cmd }) => return context_cmd::run(cmd),
         // #831 first slice. Reads loop-bench result files + the local ledger;
         // writes settings only on `--promote`. No provider, no API key.
         Some(Command::Tune { cmd }) => {
@@ -1213,8 +1203,16 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // diagnosable without a working model configuration.
             return doctor::run_doctor(*repair);
         }
+        Some(Command::Completions { shell }) => {
+            // Generated from the live `Command` tree, so a new subcommand or
+            // flag is completable the day it lands — a hand-written script
+            // would be stale by the next release.
+            let mut command = <Cli as clap::CommandFactory>::command();
+            clap_complete::generate(*shell, &mut command, "stella", &mut std::io::stdout());
+            return Ok(());
+        }
         Some(Command::Version) => {
-            println!("stella v{}", version_string());
+            println!("stella v{}", build_info::version_string());
             return Ok(());
         }
         Some(Command::Resume { list: true, .. }) => {
@@ -1248,7 +1246,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 cli.globals.model.as_deref(),
                 cli.globals.api_key.as_deref(),
                 cli.globals.base_url.as_deref(),
-                cli.globals.no_anim,
+                term_policy::animation_disabled(cli.globals.no_anim),
             ),
         );
     }
@@ -1368,13 +1366,13 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // The Command Deck (tabbed TUI) is the default chat surface on a
             // real terminal; `--plain` / STELLA_PLAIN=1 / a non-TTY stream
             // falls back to the line-based REPL.
-            if use_deck(cli.globals.plain) {
+            if term_policy::use_deck(cli.globals.plain) {
                 signals::block_on_interruptible(
                     rt()?,
                     command_deck::run_deck_session(
                         &cfg,
                         cli.globals.budget,
-                        cli.globals.no_anim,
+                        term_policy::animation_disabled(cli.globals.no_anim),
                         None,
                     ),
                 )?;
@@ -1390,7 +1388,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // actual reopen, which is a full deck session (durable state is
             // a deck feature — the plain REPL has no session to restore).
             debug_assert!(!list, "handled before provider resolution");
-            if !use_deck(cli.globals.plain) {
+            if !term_policy::use_deck(cli.globals.plain) {
                 return Err(
                     "`stella resume` reopens a Command Deck session and needs a real \
                      terminal (it cannot combine with --plain / STELLA_PLAIN / a piped \
@@ -1407,7 +1405,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 command_deck::run_deck_session(
                     &cfg,
                     cli.globals.budget,
-                    cli.globals.no_anim,
+                    term_policy::animation_disabled(cli.globals.no_anim),
                     Some(request),
                 ),
             )?;
@@ -1435,12 +1433,14 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         | Command::Memory { .. }
         | Command::Scoreboard
         | Command::Ingest(_)
+        | Command::Context { .. }
         | Command::Mcp { .. }
         | Command::Connect { .. }
         | Command::Auth { .. }
         | Command::Observe { .. }
         | Command::Models { .. }
         | Command::Doctor { .. }
+        | Command::Completions { .. }
         | Command::Version => {
             unreachable!("handled before provider resolution")
         }

@@ -41,6 +41,16 @@ pub(crate) const MAX_LISTED_REFLECTIONS: usize = 500;
 /// behaviour instead.
 pub(crate) const TOOL_CALL_SCAN_WINDOW: usize = 10_000;
 
+/// Running tool calls carried inline on the live stream
+/// ([`Observatory::live`]).
+///
+/// A bound rather than a limit anyone should reach: this counts calls
+/// *concurrently in flight*, which even a wide fleet fan-out keeps in the
+/// dozens. The cap exists so a workspace whose rows were left `running` by a
+/// pre-v18 binary — before anything swept them — cannot make every frame of
+/// the stream enormous.
+pub(crate) const MAX_RUNNING_CALLS: usize = 200;
+
 /// Everything that can go wrong serving observatory data.
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
@@ -331,6 +341,7 @@ impl Observatory {
         out["steps"] = Value::Array(steps);
         out["tools"] = Value::Array(tools);
         out["files"] = Value::Array(files);
+        out["recall"] = Value::Array(recall_timings(&conn, id)?);
         out["reflection"] = if reflection == json!({}) {
             Value::Null
         } else {
@@ -415,7 +426,7 @@ impl Observatory {
         );
         let mut stmt = match conn.prepare(&sql) {
             Ok(stmt) => stmt,
-            Err(e) if is_missing_table(&e) => return Ok(json!([])),
+            Err(e) if is_missing_schema(&e) => return Ok(json!([])),
             Err(e) => return Err(e.into()),
         };
         let scanned = stmt.query_map([], |r| {
@@ -718,6 +729,128 @@ impl Observatory {
         Ok(Value::Array(rows))
     }
 
+    /// A cheap fingerprint of everything the dashboard draws — the change
+    /// detector behind the live stream.
+    ///
+    /// This is the query the server runs several times a second, so it must
+    /// stay trivial: four `max()`/`count()` probes that SQLite answers from
+    /// index or table metadata, with no join, no scan, and no aggregation
+    /// over history. Comparing two fingerprints answers "is there anything
+    /// new?" without paying for a single one of the payload queries — which
+    /// is the whole reason the browser can stop re-aggregating all of history
+    /// on a timer.
+    ///
+    /// `events` moves on every persisted event, so it alone is a near-total
+    /// change signal. The other three are carried because they can move
+    /// without it: an execution row opens before its first event, and the
+    /// `finished_at` stamp and per-day rollups land after the last one.
+    pub fn cursor(&self) -> Result<Value, DbError> {
+        let Some(conn) = self.store() else {
+            return Ok(json!({ "events": 0, "executions": 0, "tool_calls": 0, "telemetry": 0 }));
+        };
+        // `max(rowid)` is monotonic and never reused while rows are only
+        // appended; `count(*)` catches the in-place UPDATEs a tool result
+        // makes, which do not move any maximum.
+        let one = |sql: &str| -> Result<i64, DbError> {
+            match conn.query_row(sql, [], |r| r.get::<_, i64>(0)) {
+                Ok(v) => Ok(v),
+                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0),
+                Err(e) if is_missing_schema(&e) => Ok(0),
+                Err(e) => Err(e.into()),
+            }
+        };
+        Ok(json!({
+            "events": one("SELECT coalesce(max(rowid), 0) FROM events")?,
+            "executions": one("SELECT coalesce(max(id), 0) FROM executions")?,
+            // Counted, not maxed: a `tool_result` closes an existing row in
+            // place. A cursor built only from maxima would miss every
+            // completion and the dashboard would show calls that never
+            // finish.
+            "tool_calls": one("SELECT count(*) FROM tool_calls")?,
+            "tool_calls_running": one("SELECT count(*) FROM tool_calls WHERE state = 'running'")?,
+            "telemetry": one("SELECT coalesce(max(rowid), 0) FROM telemetry")?,
+        }))
+    }
+
+    /// The in-flight slice: executions that have not closed out, and the tool
+    /// calls currently running under them.
+    ///
+    /// Small by construction — this is "what is happening right now", not
+    /// history — so the live stream can carry it inline on every change
+    /// instead of making the client come back for it. Both queries read
+    /// through partial indexes (`executions_unfinished`,
+    /// `tool_calls_by_state`) that hold only the open rows, so the cost
+    /// tracks concurrent work rather than accumulated work.
+    ///
+    /// `elapsed_ms` is computed here rather than in the browser because the
+    /// timestamps are the database's clock, and a client whose clock is
+    /// skewed would otherwise render negative durations.
+    pub fn live(&self) -> Result<Value, DbError> {
+        let Some(conn) = self.store() else {
+            return Ok(json!({ "executions": [], "running_calls": [] }));
+        };
+        let executions = collect_rows(
+            &conn,
+            "SELECT e.id, e.kind, e.prompt, e.provider, e.model, e.started_at,
+                    CAST((julianday('now') - julianday(e.started_at)) * 86400000 AS INTEGER),
+                    coalesce(tc.calls, 0), coalesce(tc.running, 0), coalesce(tc.errors, 0),
+                    coalesce(t.steps, 0), coalesce(t.input_tokens, 0),
+                    coalesce(t.output_tokens, 0), coalesce(t.cost_usd, 0)
+             FROM executions e
+             LEFT JOIN (SELECT execution_id, count(*) AS calls,
+                               count(*) FILTER (WHERE state = 'running') AS running,
+                               count(*) FILTER (WHERE state = 'error')   AS errors
+                        FROM tool_calls GROUP BY execution_id) tc
+               ON tc.execution_id = e.id
+             LEFT JOIN (SELECT execution_id, count(*) AS steps,
+                               sum(input_tokens)  AS input_tokens,
+                               sum(output_tokens) AS output_tokens,
+                               sum(cost_usd)      AS cost_usd
+                        FROM telemetry GROUP BY execution_id) t
+               ON t.execution_id = e.id
+             WHERE e.finished_at IS NULL
+             ORDER BY e.id DESC",
+            |r| {
+                Ok(json!({
+                    "id": r.get::<_, i64>(0)?,
+                    "kind": r.get::<_, String>(1)?,
+                    "prompt": truncate(r.get::<_, String>(2)?, 160),
+                    "provider": r.get::<_, String>(3)?,
+                    "model": r.get::<_, String>(4)?,
+                    "started_at": r.get::<_, String>(5)?,
+                    "elapsed_ms": r.get::<_, Option<i64>>(6)?.unwrap_or(0).max(0),
+                    "tool_calls": r.get::<_, i64>(7)?,
+                    "tool_calls_running": r.get::<_, i64>(8)?,
+                    "tool_errors": r.get::<_, i64>(9)?,
+                    "steps": r.get::<_, i64>(10)?,
+                    "input_tokens": r.get::<_, i64>(11)?,
+                    "output_tokens": r.get::<_, i64>(12)?,
+                    "cost_usd": r.get::<_, f64>(13)?,
+                }))
+            },
+        )?;
+        let running_calls = collect_rows(
+            &conn,
+            &format!(
+                "SELECT execution_id, seq, name, surface, ts,
+                        CAST((julianday('now') - julianday(ts)) * 86400000 AS INTEGER)
+                 FROM tool_calls WHERE state = 'running'
+                 ORDER BY execution_id DESC, seq DESC LIMIT {MAX_RUNNING_CALLS}"
+            ),
+            |r| {
+                Ok(json!({
+                    "execution_id": r.get::<_, i64>(0)?,
+                    "seq": r.get::<_, i64>(1)?,
+                    "name": r.get::<_, String>(2)?,
+                    "surface": r.get::<_, String>(3)?,
+                    "started_at": r.get::<_, String>(4)?,
+                    "elapsed_ms": r.get::<_, Option<i64>>(5)?.unwrap_or(0).max(0),
+                }))
+            },
+        )?;
+        Ok(json!({ "executions": executions, "running_calls": running_calls }))
+    }
+
     /// Fleet ledger: every fan-out run with its tasks, attempts, commits.
     pub fn fleet(&self) -> Result<Value, DbError> {
         let Some(conn) = self.fleet_conn() else {
@@ -744,6 +877,51 @@ impl Observatory {
         )?;
         Ok(Value::Array(rows))
     }
+}
+
+/// One execution's context-recall timings, read out of its event stream
+/// (#875).
+///
+/// Recall sits on the **first-token path of every turn**, so a slow one
+/// delays everything after it — and it was invisible in the dashboard, the
+/// receipt and the log alike. A cold store, a large corpus, or a wedged
+/// embedding call looked exactly like a fast recall right until it became a
+/// timeout, at which point the operator still could not tell recall was the
+/// bottleneck.
+///
+/// Read from `events` rather than from a projection of its own, and only on
+/// the per-execution detail route. The filter is `execution_id`-first, which
+/// the `UNIQUE (execution_id, seq)` index serves directly, so this touches
+/// one turn's events rather than scanning the table. The same query without
+/// that filter — a global recall-latency trend — would scan every event in
+/// history, which is not something the polled routes can afford; earning
+/// that view means a projection, not a wider `WHERE`.
+///
+/// `latency_ms` absent (a stream recorded before the field existed) reads as
+/// `null`, not `0`: "not measured" and "instant" are different facts and the
+/// dashboard must not draw one as the other.
+fn recall_timings(conn: &Connection, execution_id: i64) -> Result<Vec<Value>, DbError> {
+    collect_rows_for(
+        conn,
+        execution_id,
+        "SELECT ts,
+                json_extract(payload, '$.latency_ms'),
+                json_extract(payload, '$.used_ann_index'),
+                json_extract(payload, '$.tokens'),
+                json_array_length(json_extract(payload, '$.frames'))
+         FROM events
+         WHERE execution_id = ?1 AND event_type = 'context_recall'
+         ORDER BY seq ASC",
+        |r| {
+            Ok(json!({
+                "ts": r.get::<_, String>(0)?,
+                "latency_ms": r.get::<_, Option<i64>>(1)?,
+                "used_ann_index": r.get::<_, Option<i64>>(2)?.map(|v| v != 0),
+                "tokens": r.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                "frames": r.get::<_, Option<i64>>(4)?.unwrap_or(0),
+            }))
+        },
+    )
 }
 
 /// The promoted-rules query, shared by [`Observatory::rules`] and
@@ -801,7 +979,7 @@ where
 {
     let mut stmt = match conn.prepare(sql) {
         Ok(stmt) => stmt,
-        Err(e) if is_missing_table(&e) => return Ok(Vec::new()),
+        Err(e) if is_missing_schema(&e) => return Ok(Vec::new()),
         Err(e) => return Err(e.into()),
     };
     let rows = stmt.query_map([], map)?;
@@ -819,7 +997,7 @@ where
 {
     let mut stmt = match conn.prepare(sql) {
         Ok(stmt) => stmt,
-        Err(e) if is_missing_table(&e) => return Ok(Vec::new()),
+        Err(e) if is_missing_schema(&e) => return Ok(Vec::new()),
         Err(e) => return Err(e.into()),
     };
     let rows = stmt.query_map([id], map)?;
@@ -835,16 +1013,52 @@ fn or_empty(result: rusqlite::Result<Value>) -> Result<Value, DbError> {
     match result {
         Ok(v) => Ok(v),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(json!({})),
-        Err(e) if is_missing_table(&e) => Ok(json!({})),
+        Err(e) if is_missing_schema(&e) => Ok(json!({})),
         Err(e) => Err(e.into()),
     }
 }
 
-fn is_missing_table(e: &rusqlite::Error) -> bool {
-    matches!(
-        e,
-        rusqlite::Error::SqliteFailure(_, Some(msg)) if msg.contains("no such table")
-    )
+/// Whether an error is "this file is older than this query", rather than a
+/// real failure.
+///
+/// The observatory opens every database `SQLITE_OPEN_READ_ONLY` and therefore
+/// **never runs migrations** — that is the point, an observer must not mutate
+/// what it observes. The direct consequence is that it can be pointed at a
+/// store several schema versions behind the binary reading it: upgrade
+/// `stella`, open the dashboard before running a single turn, and nothing has
+/// yet had a reason to open that file read-write.
+///
+/// So a missing table has always degraded to an empty payload here. A missing
+/// **column** is the same state and was not covered, which is a sharper edge:
+/// a new query against an older file 500s the whole route rather than
+/// blanking one panel. That is exactly how the v18 `tool_calls.state` column
+/// took down `/api/v1/cursor` on any workspace that had not been migrated
+/// yet — found by pointing this crate at an untouched copy of a real store.
+///
+/// Both are answered the same way: report what the file can support and stay
+/// up. A dashboard that renders an older store with one section empty is
+/// strictly better than one that refuses to render at all, and the section
+/// fills in the moment a turn migrates the file.
+/// Both `rusqlite` variants are matched, and that is not defensive padding —
+/// they carry these two failures **differently**, verified against the
+/// version in `Cargo.lock`:
+///
+/// ```text
+/// SELECT count(*) FROM no_such_table -> SqliteFailure  { msg: "no such table: …" }
+/// SELECT bogus FROM sqlite_master    -> SqlInputError  { msg: "no such column: …" }
+/// ```
+///
+/// Matching only `SqliteFailure` — which is what the missing-table check did,
+/// correctly, for the case it was written for — silently fails to catch a
+/// missing column, so the degradation never fires and the route 500s anyway.
+/// That is precisely how this bug got here.
+fn is_missing_schema(e: &rusqlite::Error) -> bool {
+    let message = match e {
+        rusqlite::Error::SqliteFailure(_, Some(msg)) => msg.as_str(),
+        rusqlite::Error::SqlInputError { msg, .. } => msg.as_str(),
+        _ => return false,
+    };
+    message.contains("no such table") || message.contains("no such column")
 }
 
 /// Shallow-merge `extra`'s fields into `base` (both must be objects).

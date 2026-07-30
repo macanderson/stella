@@ -497,20 +497,20 @@ fn any_key_dismisses_the_splash_first() {
 }
 
 #[test]
-fn splash_cues_replay_and_release_the_cinematic() {
+fn splash_cues_replay_and_release_the_launch_mark() {
     let mut model = WorkspaceModel::new();
     let mut ui = DeckUi::default();
     ui.splash.skip(); // the deck is up; `/init` arrives later
     assert!(ui.splash.is_done());
 
-    // Replay: a fresh held splash owns the frame again…
+    // Replay: a fresh held mark owns the frame again for as long as init runs…
     ingest_inbound(&Inbound::Splash(SplashCue::Replay), &mut model, &mut ui);
-    assert!(!ui.splash.is_done(), "replay restarts the cinematic");
+    assert!(!ui.splash.is_done(), "replay re-holds the mark over init");
 
-    // …and Release is what lets its timeline run out (exact timing is
-    // splash::tests territory — here we only pin that the cue routes).
+    // …and Release hands straight back to the deck — a fast init must never
+    // be made to wait out a reveal (exact timing is `splash::tests`).
     ingest_inbound(&Inbound::Splash(SplashCue::Release), &mut model, &mut ui);
-    assert!(!ui.splash.is_done(), "the battle floor still plays out");
+    assert!(ui.splash.is_done(), "release cuts straight to the deck");
 }
 
 #[test]
@@ -522,7 +522,7 @@ fn no_anim_sessions_ignore_splash_replays() {
     ingest_inbound(&Inbound::Splash(SplashCue::Replay), &mut model, &mut ui);
     assert!(
         ui.splash.is_done(),
-        "a no-anim session never replays the cinematic"
+        "a no-anim session never re-holds the launch mark"
     );
 }
 
@@ -1071,7 +1071,10 @@ fn focused_scope_gate_routes_decision_to_that_agent() {
         },
     });
     let mut ui = ready_ui();
-    let action = handle_deck_key(ch('a'), &model, &mut ui);
+    // `a` is typed then sent — no letter commits on its own (see
+    // `deck_ui::gates` for why).
+    handle_deck_key(ch('a'), &model, &mut ui);
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
     assert_eq!(
         action,
         DeckAction::Send(WorkspaceInput::ToAgent {
@@ -1098,33 +1101,37 @@ fn scope_decision_latches_until_a_fresh_review_rearms() {
     let mut ui = ready_ui();
     ingest_inbound(&scope_review, &mut model, &mut ui);
 
+    handle_deck_key(ch('a'), &model, &mut ui);
     assert_eq!(
-        handle_deck_key(ch('a'), &model, &mut ui),
+        handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
         DeckAction::Send(WorkspaceInput::ToAgent {
             agent: "lead".into(),
             input: UserInput::ScopeDecision(ScopeDecision::Approve),
         })
     );
     // The gate stays pending until the engine's follow-on event, but the
-    // latch keeps a second press from re-sending — it types instead.
+    // latch keeps a second submit from re-sending — it enqueues as an ordinary
+    // prompt instead, which is the correct reading once the card is answered.
     assert!(model.agents[0].model.pending_scope_review.is_some());
     handle_deck_key(ch('a'), &model, &mut ui);
     assert_eq!(
-        ui.composer.buffer(),
-        "a",
-        "second press types, never re-sends"
+        handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::Enqueue { text: "a".into() }),
+        "an answered card does not take a second decision"
     );
 
-    // A FRESH review re-arms the decision keys.
-    handle_deck_key(key(KeyCode::Backspace), &model, &mut ui);
+    // A FRESH review re-arms the gate.
     ingest_inbound(&scope_review, &mut model, &mut ui);
+    for c in "x".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
     assert_eq!(
-        handle_deck_key(ch('x'), &model, &mut ui),
+        handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
         DeckAction::Send(WorkspaceInput::ToAgent {
             agent: "lead".into(),
             input: UserInput::ScopeDecision(ScopeDecision::Abort),
         }),
-        "a new card re-arms the decision keys"
+        "a new card re-arms the gate"
     );
 }
 
@@ -1179,19 +1186,19 @@ fn ask_user_answer_latches_until_a_fresh_question_rearms() {
 }
 
 #[test]
-fn set_tab_stamps_the_switch_moment_only_on_change() {
+fn tab_and_backtab_walk_the_tab_bar() {
     let model = model_with(&["lead"]);
     let mut ui = ready_ui();
-    assert!(ui.tab_switched_at.is_none(), "no motion before any switch");
+    assert_eq!(ui.tab, DeckTab::Session);
 
-    // The key path routes through set_tab and stamps the moment.
     handle_deck_key(key(KeyCode::Tab), &model, &mut ui);
     assert_eq!(ui.tab, DeckTab::Agents);
-    let first = ui.tab_switched_at.expect("tab switch stamped");
+    handle_deck_key(key(KeyCode::BackTab), &model, &mut ui);
+    assert_eq!(ui.tab, DeckTab::Session);
 
-    // Switching to the SAME tab must not restart the sweep.
-    ui.set_tab(DeckTab::Agents);
-    assert_eq!(ui.tab_switched_at, Some(first));
+    // Re-selecting the active tab is a no-op, not an error.
+    ui.set_tab(DeckTab::Session);
+    assert_eq!(ui.tab, DeckTab::Session);
 }
 
 #[test]
