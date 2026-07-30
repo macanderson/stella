@@ -616,6 +616,20 @@ where
     /// names what blocked. Acquisition is re-entrant per holder, so a
     /// duplicate path within one task is harmless.
     ///
+    /// Paths are claimed in **sorted order**, not in the order the task
+    /// declared them. [`Fleet::run_wave`] dispatches a wave concurrently, so
+    /// two siblings that overlap on `{a, b}` and declare them in opposite
+    /// orders would otherwise each win one row and each fail on the other —
+    /// the classic lock-ordering inversion, and here it costs BOTH tasks
+    /// rather than one (acquisition never blocks, so it surfaces as two
+    /// spurious [`FleetError::ClaimConflict`]s instead of a hang). A single
+    /// global order makes the outcome deterministic: whoever takes the lowest
+    /// contended path takes them all, and at most one sibling loses.
+    ///
+    /// Only the acquisition ORDER is canonicalized; `task.claims` itself is
+    /// untouched, and [`ClaimGuard`] still releases over the declared slice —
+    /// release order cannot deadlock, since it never waits.
+    ///
     /// Returns the [`ClaimGuard`] that owns the release: the caller holds it
     /// for the attempt's duration, and the rows go away when it drops —
     /// including on a panicking worker or a cancelled dispatch.
@@ -636,7 +650,9 @@ where
         // Every holder this run mints is `<run_id>/<task_id>`, so a refusal
         // naming one of those is a live sibling of ours.
         let own_prefix = format!("{}/", self.config.run_id);
-        for (i, path) in task.claims.iter().enumerate() {
+        let mut ordered: Vec<&String> = task.claims.iter().collect();
+        ordered.sort_unstable();
+        for (i, path) in ordered.iter().copied().enumerate() {
             let mut outcome = store.acquire_file_lock(path, &holder);
             // A refusal may be a ghost: a crashed run cannot release its own
             // claims, so its rows outlive it and fail every later run in
@@ -678,7 +694,7 @@ where
                 },
                 Err(e) => FleetError::Claims(e),
             };
-            for claimed in &task.claims[..i] {
+            for claimed in &ordered[..i] {
                 let _ = store.release_file_lock(claimed, &holder);
             }
             return Err(failure);
@@ -1281,6 +1297,80 @@ mod tests {
         f.dispatch(&sibling)
             .await
             .expect("partial claims roll back");
+    }
+
+    /// Claims are acquired in a canonical (sorted) order, not the order the
+    /// task declared them — the lock-ordering invariant that keeps two
+    /// concurrent siblings from each winning one path of an overlapping set
+    /// and then both failing on the other.
+    ///
+    /// The inversion itself needs two dispatches interleaved mid-acquisition,
+    /// which no deterministic test can stage. So this pins the property that
+    /// PREVENTS it, and pins it where the two orders visibly disagree: a rival
+    /// holds BOTH contended paths, and the task declares them in reverse
+    /// order. Declaration order reports the conflict on the declared-first
+    /// path (`src/z.rs`); canonical order reports it on the sorted-first one
+    /// (`src/a.rs`). Only one of those can be observed, so the assertion
+    /// cannot pass under the old behaviour.
+    #[tokio::test]
+    async fn claims_are_acquired_in_sorted_order_not_declaration_order() {
+        let store = Store::in_memory().unwrap();
+        let live_rival = format!("fleet-{}/t9", std::process::id());
+        assert!(store.acquire_file_lock("src/a.rs", &live_rival).unwrap());
+        assert!(store.acquire_file_lock("src/z.rs", &live_rival).unwrap());
+
+        let f = fleet(
+            FakeWorker::new(0.10),
+            OkGit::new(),
+            BudgetGuard::new(BudgetMode::Observed, None, None),
+            FleetConfig::new("run1", "HEAD"),
+        )
+        .with_claim_store(store);
+
+        // Declared z-then-a; both are blocked, so whichever is TRIED first is
+        // the one the conflict names.
+        let task = Task::new("t1", "t1", "p").claims(["src/z.rs", "src/a.rs"]);
+        match f.dispatch(&task).await {
+            Err(FleetError::ClaimConflict { path, .. }) => assert_eq!(
+                path, "src/a.rs",
+                "acquisition must follow sorted order, not declaration order"
+            ),
+            other => panic!("expected a claim conflict, got {other:?}"),
+        }
+    }
+
+    /// The rollback half of the canonical order: a task whose sorted-later
+    /// path conflicts must release the sorted-EARLIER paths it already took,
+    /// even though those are not a prefix of the declared slice. Getting the
+    /// rollback slice wrong (`task.claims[..i]` against a reordered `i`) would
+    /// strand a live row under this run's own holder.
+    #[tokio::test]
+    async fn a_conflict_rolls_back_the_paths_taken_before_it_in_sorted_order() {
+        let store = Store::in_memory().unwrap();
+        let live_rival = format!("fleet-{}/t9", std::process::id());
+        // Only the sorted-LAST path is blocked, so `src/a.rs` is acquired
+        // first and must roll back. Declared last-first to make the declared
+        // prefix (`src/z.rs`) different from the acquired one (`src/a.rs`).
+        assert!(store.acquire_file_lock("src/z.rs", &live_rival).unwrap());
+
+        let f = fleet(
+            FakeWorker::new(0.10),
+            OkGit::new(),
+            BudgetGuard::new(BudgetMode::Observed, None, None),
+            FleetConfig::new("run1", "HEAD"),
+        )
+        .with_claim_store(store);
+
+        let task = Task::new("t1", "t1", "p").claims(["src/z.rs", "src/a.rs"]);
+        assert!(matches!(
+            f.dispatch(&task).await,
+            Err(FleetError::ClaimConflict { .. })
+        ));
+        // `src/a.rs` was taken before the conflict and must be free again.
+        let sibling = Task::new("t2", "t2", "p").claims(["src/a.rs"]);
+        f.dispatch(&sibling)
+            .await
+            .expect("the sorted-earlier claim must roll back");
     }
 
     /// #613 — the escape hatch for claims already stranded in the field.

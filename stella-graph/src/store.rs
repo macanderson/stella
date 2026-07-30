@@ -130,6 +130,24 @@ CREATE INDEX IF NOT EXISTS code_graph_storage_level  ON code_graph_storage_objec
 CREATE INDEX IF NOT EXISTS code_graph_storage_parent ON code_graph_storage_objects(parent_id);
 "#;
 
+/// Largest source file this index will read, in bytes.
+///
+/// Nothing upstream bounds file size: [`crate::walk`]'s deny-list is
+/// structural (directory names), and `generated::looks_minified` only catches
+/// long-LINE shapes. A newline-per-statement `dump.sql`, a bindgen/protobuf
+/// output committed outside any vendor directory, or a large fixture with a
+/// recognized extension therefore reached `fs::read` whole and then
+/// tree-sitter — whose syntax tree runs several times the source size, so the
+/// real peak is a multiple of the file. One such file in a workspace could
+/// take the process out during `stella init`, and the crash is attributed to
+/// indexing rather than to the file.
+///
+/// 4 MiB sits far above any hand-written source file (the largest file in this
+/// workspace is ~100 KiB) while capping the peak at a few tens of MiB. A file
+/// over it is counted in [`IndexStats::files_skipped_too_large`] and skipped —
+/// never an error, matching every other per-file failure mode here (L-L1).
+pub(crate) const MAX_INDEXABLE_BYTES: u64 = 4 * 1024 * 1024;
+
 /// Outcome of one index pass. `files_parsed` is the honest parse-invocation
 /// count the byte-compat skip test asserts against.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -143,6 +161,9 @@ pub struct IndexStats {
     /// convention, or the minified-content heuristic. Surfaced by `stella
     /// init` as "skipped N generated files" (issue #272).
     pub files_skipped_generated: usize,
+    /// Files skipped for exceeding [`MAX_INDEXABLE_BYTES`] — never read, so
+    /// they cost a `stat` rather than their own bytes plus a syntax tree.
+    pub files_skipped_too_large: usize,
     pub files_unreadable: usize,
     pub parse_failures: usize,
     pub files_pruned: usize,
@@ -316,6 +337,21 @@ fn index_one(
 ) -> Result<(), GraphError> {
     stats.files_seen += 1;
     let rel = rel_path(root, abs);
+
+    // Size gate BEFORE the read, so an oversize file costs a `stat` rather
+    // than its own bytes plus a syntax tree several times larger. See
+    // [`MAX_INDEXABLE_BYTES`]. A file already indexed while small and since
+    // grown past the cap has its row dropped, the same retroactive cleanup
+    // the generated-exclusion branch below does — otherwise its stale
+    // symbols would answer queries forever.
+    if let Ok(metadata) = std::fs::metadata(abs)
+        && metadata.len() > MAX_INDEXABLE_BYTES
+    {
+        stats.files_skipped_too_large += 1;
+        stats.files_pruned +=
+            tx.execute("DELETE FROM code_graph_files WHERE path = ?1", params![rel])?;
+        return Ok(());
+    }
 
     let content = match std::fs::read(abs) {
         Ok(bytes) => bytes,
@@ -1370,6 +1406,87 @@ mod tests {
         assert!(
             definitions(&conn, "legacyThing").unwrap().is_empty(),
             "a stale pre-fix row must be retroactively pruned, not hidden behind the byte-compat skip"
+        );
+        assert_eq!(file_count(&conn).unwrap(), 0);
+    }
+
+    /// A file over [`MAX_INDEXABLE_BYTES`] is skipped without ever being read.
+    ///
+    /// Nothing upstream bounded size: the walk denies by directory NAME and
+    /// `looks_minified` only catches long-LINE shapes, so a newline-per-line
+    /// giant with a recognized extension went straight into `fs::read` and
+    /// then tree-sitter, whose tree is a multiple of the source. The content
+    /// here is deliberately ordinary, well-formed, short-lined source — every
+    /// other exclusion signal says "index me", so only the size gate can be
+    /// what skips it.
+    #[test]
+    fn a_file_over_the_size_cap_is_skipped_and_never_parsed() {
+        let ws = tempdir().unwrap();
+        let dbdir = tempdir().unwrap();
+        let root = canon(&ws);
+        let db = dbdir.path().join("context.db");
+
+        // Short lines, real syntax — indistinguishable from hand-written
+        // source to every filter except the size cap.
+        let mut huge = String::with_capacity(MAX_INDEXABLE_BYTES as usize + 4096);
+        let mut n = 0u32;
+        while (huge.len() as u64) <= MAX_INDEXABLE_BYTES {
+            huge.push_str(&format!("function generated_{n}() {{ return {n}; }}\n"));
+            n += 1;
+        }
+        fs::write(root.join("huge.js"), &huge).unwrap();
+        fs::write(root.join("small.js"), "function keeper() {}\n").unwrap();
+
+        let grammars = Grammars::load().unwrap();
+        let mut conn = open(&db).unwrap();
+        let stats = index_tree(&mut conn, &root, &grammars).unwrap();
+
+        assert_eq!(stats.files_skipped_too_large, 1, "{stats:?}");
+        assert_eq!(stats.files_parsed, 1, "only the small file is parsed");
+        assert!(
+            definitions(&conn, "generated_0").unwrap().is_empty(),
+            "nothing from an oversize file may enter the index"
+        );
+        assert!(
+            !definitions(&conn, "keeper").unwrap().is_empty(),
+            "an oversize neighbour must not stop the rest of the pass"
+        );
+    }
+
+    /// The retroactive half, mirroring the generated-exclusion case: a file
+    /// indexed while small and since grown past the cap must have its row
+    /// dropped, not left answering queries with symbols that no longer
+    /// describe the file.
+    #[test]
+    fn a_file_that_grows_past_the_cap_has_its_stale_row_pruned() {
+        let ws = tempdir().unwrap();
+        let dbdir = tempdir().unwrap();
+        let root = canon(&ws);
+        let db = dbdir.path().join("context.db");
+        let path = root.join("grower.js");
+        fs::write(&path, "function wasSmall() {}\n").unwrap();
+
+        let grammars = Grammars::load().unwrap();
+        let mut conn = open(&db).unwrap();
+        index_tree(&mut conn, &root, &grammars).unwrap();
+        assert!(
+            !definitions(&conn, "wasSmall").unwrap().is_empty(),
+            "indexed normally while under the cap"
+        );
+
+        let mut huge = String::from("function wasSmall() {}\n");
+        let mut n = 0u32;
+        while (huge.len() as u64) <= MAX_INDEXABLE_BYTES {
+            huge.push_str(&format!("function grew_{n}() {{ return {n}; }}\n"));
+            n += 1;
+        }
+        fs::write(&path, &huge).unwrap();
+        let stats = index_tree(&mut conn, &root, &grammars).unwrap();
+
+        assert_eq!(stats.files_skipped_too_large, 1);
+        assert!(
+            definitions(&conn, "wasSmall").unwrap().is_empty(),
+            "a stale row from before the file grew must be pruned"
         );
         assert_eq!(file_count(&conn).unwrap(), 0);
     }

@@ -868,6 +868,27 @@ fn version_static() -> &'static str {
     version_string()
 }
 
+/// Honour `TERM=dumb` by switching ANSI output off process-wide.
+///
+/// The `colored` crate already respects `NO_COLOR`, `CLICOLOR*`, and a
+/// non-tty stream, but not `TERM` — so a dumb terminal (Emacs `M-x shell`,
+/// a bare serial console, an editor's build pane, `TERM=dumb` in CI) got the
+/// full escape-sequence treatment and rendered it literally. Every other Unix
+/// tool that colours output treats `dumb` as "this terminal cannot", so
+/// stella does too. An explicit `CLICOLOR_FORCE` still wins: it is the
+/// documented way to say "I know what my terminal is", and `colored`'s own
+/// override resolution keeps honouring it because this only sets the default
+/// when the user has not forced anything.
+fn apply_dumb_terminal_policy() {
+    let forced = std::env::var_os("CLICOLOR_FORCE").is_some_and(|v| !v.is_empty() && v != "0");
+    if forced {
+        return;
+    }
+    if std::env::var_os("TERM").is_some_and(|term| term == "dumb") {
+        colored::control::set_override(false);
+    }
+}
+
 /// Whether `chat` should launch the Command Deck: an explicit `--plain` or
 /// STELLA_PLAIN=1 opts out, and both stdin and stdout must be real terminals
 /// (raw mode + the alternate screen are meaningless on a pipe).
@@ -947,6 +968,11 @@ fn main() -> ExitCode {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
 
+    // Before the first byte reaches a terminal: a dumb terminal renders ANSI
+    // literally, so every diagnostic below (credential handoff failures
+    // included) has to already know that.
+    apply_dumb_terminal_policy();
+
     // Everything user-global lives at ~/.stella; move data from the legacy
     // split layout (platform data dir + ~/.config/stella) before any store,
     // settings, or extension loader resolves a path.
@@ -992,6 +1018,16 @@ fn main() -> ExitCode {
     }
 
     let cli = Cli::parse();
+
+    // A machine-readable run has nobody to answer a masked password prompt,
+    // and its caller is blocked reading stdout for an object that would never
+    // come. Decided here, once, while the requested format is in hand.
+    if matches!(
+        cli.globals.output_format,
+        OutputFormat::Json | OutputFormat::StreamJson
+    ) {
+        config::forbid_interactive_credentials();
+    }
 
     enterprise_telemetry::start_best_effort_flush();
     loaded_env
