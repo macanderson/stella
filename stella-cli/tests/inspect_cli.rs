@@ -21,7 +21,7 @@ fn block(block_id: &str, kind: &str, content: &str) -> ContextBlockRow {
         origin_step: 0,
         call_id: None,
         memory_id: None,
-        token_cost: 10,
+        token_cost: Some(10),
         content_digest: format!("sha256:{block_id}"),
         citation_label: None,
         // Gap kinds carry their preimage locally — this is the field that makes
@@ -34,7 +34,7 @@ fn entry(block_id: &str, message_index: u64) -> ManifestBlockRow {
     ManifestBlockRow {
         block_id: block_id.into(),
         cache_zone: "cacheable".into(),
-        token_cost: 10,
+        token_cost: Some(10),
         resident_since_step: 0,
         message_index,
         call_id: None,

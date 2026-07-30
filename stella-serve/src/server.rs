@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
 //! The HTTP/SSE transport over [`Session`].
 //!
 //! Endpoints (all under a bearer token except `/healthz`):
@@ -5,18 +8,29 @@
 //! | Method + path | Purpose |
 //! |---|---|
 //! | `GET /healthz` | liveness |
-//! | `POST /v1/turns` | start a turn ([`TurnRequest`] body) → `{ "turn_id": … }` |
+//! | `GET /v1/metrics` | counters ([`crate::observe::Snapshot`]) — authenticated, pull-only |
+//! | `POST /v1/turns` | start a turn (`TurnRequest` body) → `{ "turn_id": … }` |
 //! | `GET /v1/turns/{id}/events` | SSE stream of [`ServerFrame`]s until `turn_complete` |
-//! | `POST /v1/turns/{id}/tool-result` | answer a `tool_request` ([`ToolResultIn`]) |
-//! | `POST /v1/turns/{id}/provider-result` | answer a `provider_request` ([`ProviderResultIn`]) |
+//! | `POST /v1/turns/{id}/tool-result` | answer a `tool_request` (`ToolResultIn`) |
+//! | `POST /v1/turns/{id}/provider-result` | answer a `provider_request` (`ProviderResultIn`) |
 //! | `POST /v1/turns/{id}/cancel` | end an in-flight turn → `{ "status": "cancelled" }` |
 //!
 //! Any other method on one of those paths is a `405` carrying `Allow`; any
-//! other path is a `404`.
+//! other path is a `404`. The handlers themselves live in `src/routes.rs`; this
+//! module is the transport — listener, connection fold, turn registry, throttle.
 //!
 //! The SSE stream is the engine → host direction; the two result POSTs are the
 //! host → engine direction. Together they are the reverse tool-call protocol —
 //! the engine never runs a model or tool call itself.
+//!
+//! # Every connection produces exactly one record
+//!
+//! [`handle_conn`] is a fold, not a router: it opens a `RequestRecord` before
+//! the first byte is parsed, delegates to [`route`], and emits the terminal
+//! record on the way out — including when the peer hung up unanswered, and
+//! including when the connection failed. The router's sixteen exits do not know
+//! a record exists. See `src/observe/record.rs` for why that indirection is
+//! load-bearing rather than decorative.
 //!
 //! # A stream is a subscription, not a fire-and-forget
 //!
@@ -57,24 +71,20 @@ use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::time::Duration;
 
 use rand::Rng as _;
-use serde::{Deserialize, Serialize};
-use stella_core::{BudgetGuard, EngineConfig};
-use stella_protocol::{BudgetMode, CompletionMessage, ToolSchema};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::accept::{self, AcceptAction, AcceptBackoff};
-use crate::frame::{
-    ProviderOutcomeIn, ProviderResultIn, ServerFrame, ToolResultIn, TurnOutcomeWire,
+use crate::http::{BodyOutcome, ReadOutcome, discard_body, read_body, read_head};
+use crate::observe::event::{
+    AcceptKind, RefusalReason, RequestId, Route, ServeEvent, ShutdownReason, TurnRef, millis,
 };
-use crate::http::{
-    BodyOutcome, ReadOutcome, Request, discard_body, read_body, read_head, write_json,
-    write_json_with_headers, write_sse_frame, write_sse_head,
-};
+use crate::observe::record::{RequestRecord, Responder};
+use crate::observe::{Metrics, SharedObserver};
 use crate::pending::Pending;
-use crate::session::{Session, SessionSpec};
+use crate::routes::{self, error_body};
+use crate::session::Session;
 
-/// How to bind and authenticate the server.
+/// How to bind, authenticate, and observe the server.
 pub struct ServeConfig {
     /// Address to bind. `127.0.0.1:0` picks a free loopback port (tests); a
     /// containerized deployment binds `0.0.0.0:<port>`.
@@ -83,88 +93,28 @@ pub struct ServeConfig {
     /// the auth gate — the server may bind a non-loopback address behind the
     /// host's private network.
     pub token: String,
+    /// Where boundary events go. `crate::observe::standard()` is the production
+    /// wiring (counters + a JSONL sink on stderr); tests substitute a
+    /// `Capture` so they can assert on typed events.
+    pub observer: SharedObserver,
+    /// The counters `GET /v1/metrics` reports. Must be the same `Metrics` that
+    /// is inside `observer`, or the endpoint reports zeros while the log looks
+    /// healthy — [`ServeConfig::new`] wires both correctly.
+    pub metrics: Arc<Metrics>,
 }
 
-/// Body of `POST /v1/turns`. The host owns prompt assembly, model selection, and
-/// the tool set; engine knobs are optional overrides on top of the defaults.
-#[derive(Debug, Deserialize)]
-struct TurnRequest {
-    provider_id: String,
-    #[serde(default)]
-    tools: Vec<ToolSchema>,
-    messages: Vec<CompletionMessage>,
-    #[serde(default)]
-    budget: BudgetSpec,
-    #[serde(default)]
-    max_steps: Option<usize>,
-    /// Per-reverse-request deadline override, in milliseconds. Omitted means
-    /// [`SessionSpec::DEFAULT_REVERSE_REQUEST_TIMEOUT`].
-    #[serde(default)]
-    reverse_request_timeout_ms: Option<u64>,
-}
-
-/// Spend policy for a turn — the serializable projection of a [`BudgetGuard`].
-#[derive(Debug, Deserialize)]
-struct BudgetSpec {
-    #[serde(default = "budget_mode_off")]
-    mode: BudgetMode,
-    #[serde(default)]
-    turn_limit_usd: Option<f64>,
-    #[serde(default)]
-    session_limit_usd: Option<f64>,
-}
-
-impl Default for BudgetSpec {
-    fn default() -> Self {
+impl ServeConfig {
+    /// The production wiring: bind, token, and the standard observability stack.
+    #[must_use]
+    pub fn new(bind: SocketAddr, token: String) -> Self {
+        let (observer, metrics) = crate::observe::standard();
         Self {
-            mode: BudgetMode::Off,
-            turn_limit_usd: None,
-            session_limit_usd: None,
+            bind,
+            token,
+            observer,
+            metrics,
         }
     }
-}
-
-fn budget_mode_off() -> BudgetMode {
-    BudgetMode::Off
-}
-
-/// Response to `POST /v1/turns`.
-#[derive(Debug, Serialize)]
-struct TurnCreated<'a> {
-    turn_id: &'a str,
-}
-
-/// Ceiling on a host-supplied [`TurnRequest::max_steps`].
-///
-/// The step cap is the engine's belt-and-suspenders backstop against a turn
-/// that never terminates, and the host also supplies the budget mode (which may
-/// be `Off`), so an unclamped `max_steps` lets a caller remove the last bound on
-/// a turn that already holds an OS thread. `EngineConfig::default` uses 200;
-/// 10 000 is fifty times that — far above any turn a real agentic task runs,
-/// while still terminating in bounded time.
-const MAX_SERVED_STEPS: usize = 10_000;
-
-/// Validate a host-supplied step cap: `None` when it is unusable (`0` produces
-/// a zero-iteration turn that aborts with the misleading "reached the step cap
-/// (0)"), otherwise the value clamped down to [`MAX_SERVED_STEPS`].
-fn validate_max_steps(requested: usize) -> Option<usize> {
-    (requested > 0).then(|| requested.min(MAX_SERVED_STEPS))
-}
-
-/// Ceiling on a host-supplied reverse-request deadline: one hour.
-///
-/// Same reasoning as [`MAX_SERVED_STEPS`]. The deadline is what bounds a turn
-/// holding an OS thread on a host that never answers, so letting a caller set it
-/// to `u64::MAX` would hand back the unbounded wait it exists to remove. An hour
-/// is far past any legitimate model call or tool run.
-const MAX_REVERSE_REQUEST_TIMEOUT: Duration = Duration::from_secs(3600);
-
-/// Validate a host-supplied reverse-request deadline: `None` when it is unusable
-/// (`0` would expire every reverse request before the host could possibly
-/// answer, making the turn fail rather than run), otherwise clamped down to
-/// [`MAX_REVERSE_REQUEST_TIMEOUT`].
-fn validate_reverse_request_timeout(requested_ms: u64) -> Option<Duration> {
-    (requested_ms > 0).then(|| Duration::from_millis(requested_ms).min(MAX_REVERSE_REQUEST_TIMEOUT))
 }
 
 /// Ceiling on turns registered at once.
@@ -183,49 +133,52 @@ fn validate_reverse_request_timeout(requested_ms: u64) -> Option<Duration> {
 /// keeps it a queue — see there for why reclamation is driven by this cap
 /// rather than by a ceiling of its own.
 ///
-/// This is a const rather than a [`ServeConfig`] field on purpose, matching
-/// [`MAX_SERVED_STEPS`] and [`MAX_REVERSE_REQUEST_TIMEOUT`]: these are the
-/// server's own safety backstops, not host-tunable policy. A host that could
-/// raise the cap could remove it, which is exactly what it exists to prevent.
+/// This is a const rather than a [`ServeConfig`] field on purpose, matching the
+/// ceilings in `routes.rs`: these are the server's own safety backstops, not
+/// host-tunable policy. A host that could raise the cap could remove it, which
+/// is exactly what it exists to prevent.
 const MAX_LIVE_TURNS: usize = 32;
-
-/// How long a rejected caller is told to wait before retrying, in seconds.
-///
-/// Turns end when the host finishes streaming them, so the queue drains on the
-/// order of a turn's length; 5 seconds is short enough to keep a well-behaved
-/// host responsive without inviting a tight retry loop.
-const RETRY_AFTER_SECS: &str = "5";
 
 /// One registered turn. `pending` answers reverse requests (shared, always
 /// available); `session` is taken exactly once by the SSE stream.
-struct Entry {
+pub(crate) struct Entry {
     /// Registration order, so reclamation can name the *oldest* abandoned turn.
     ///
     /// Deliberately not derived from the turn id: ids are 128 random bits (see
     /// [`new_turn_id`]) precisely so that nothing can be inferred from one, and
     /// that includes age. This counter is internal and never leaves the process.
     seq: u64,
-    pending: Pending,
-    session: Mutex<Option<Session>>,
+    pub(crate) pending: Pending,
+    pub(crate) session: Mutex<Option<Session>>,
 }
 
 /// Shared server state across connections.
-struct ServerState {
+pub(crate) struct ServerState {
     token: String,
     turns: Mutex<HashMap<String, Arc<Entry>>>,
     /// Monotonic source of [`Entry::seq`]. Registration ordering only — the
     /// turn id is random and owes nothing to this.
     counter: AtomicU64,
     unauthorized: Mutex<TokenBucket>,
+    observer: SharedObserver,
+    metrics: Arc<Metrics>,
 }
 
 impl ServerState {
-    fn turns(&self) -> MutexGuard<'_, HashMap<String, Arc<Entry>>> {
+    pub(crate) fn turns(&self) -> MutexGuard<'_, HashMap<String, Arc<Entry>>> {
         self.turns.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    fn lookup(&self, id: &str) -> Option<Arc<Entry>> {
+    pub(crate) fn lookup(&self, id: &str) -> Option<Arc<Entry>> {
         self.turns().get(id).cloned()
+    }
+
+    pub(crate) fn observer(&self) -> &SharedObserver {
+        &self.observer
+    }
+
+    pub(crate) fn metrics(&self) -> &Metrics {
+        &self.metrics
     }
 
     /// Admit a turn and hand back its id, or `None` when the server is at
@@ -238,39 +191,68 @@ impl ServerState {
     /// insert, so the cap could be exceeded by exactly the number of racing
     /// callers.
     ///
+    /// `start` receives the minted id: a session has to carry its own
+    /// [`TurnRef`] into every record it emits, and only this function — holding
+    /// the registry lock — can mint one.
+    ///
     /// The session is started by `start` *inside* the lock, and only once a slot
     /// is known to be free. `Session::start` is synchronous (it spawns a thread
     /// and returns), so holding the lock across it is sound — there is no await
     /// in this block. Starting it before the cap check would spawn, then
     /// immediately drop, a thread for every refused request, which hands a
     /// caller the very thread churn the cap exists to prevent.
-    fn register_turn(&self, start: impl FnOnce() -> Session) -> Option<String> {
-        let mut turns = self.turns();
-        reclaim_finished_unstreamed(&mut turns, MAX_LIVE_TURNS);
-        if turns.len() >= MAX_LIVE_TURNS {
-            return None;
-        }
-        let id = new_turn_id();
-        // Insert through the vacant entry rather than `insert`, which would
-        // *replace* on a collision: the displaced turn's `Session` would drop
-        // (cancelling a turn its owner is still using) and two callers would
-        // hold the same id. 128 random bits make this unreachable in practice;
-        // going through the entry API makes it unreachable by construction, so
-        // the guarantee does not rest on the id width alone. Refusing is
-        // fail-closed — the caller renders it as the cap's 429, which is the
-        // wrong reason for the right answer, and is preferable to either
-        // silently cancelling a live turn or panicking a request thread.
-        let slot = match turns.entry(id.clone()) {
-            hash_map::Entry::Occupied(_) => return None,
-            hash_map::Entry::Vacant(slot) => slot,
+    pub(crate) fn register_turn(&self, start: impl FnOnce(&str) -> Session) -> Option<String> {
+        let outcome = {
+            let mut turns = self.turns();
+            reclaim_finished_unstreamed(&mut turns, MAX_LIVE_TURNS, &self.observer);
+            if turns.len() >= MAX_LIVE_TURNS {
+                Err((RefusalReason::AtCapacity, turns.len()))
+            } else {
+                let id = new_turn_id();
+                // Insert through the vacant entry rather than `insert`, which
+                // would *replace* on a collision: the displaced turn's `Session`
+                // would drop (cancelling a turn its owner is still using) and
+                // two callers would hold the same id. 128 random bits make this
+                // unreachable in practice; going through the entry API makes it
+                // unreachable by construction, so the guarantee does not rest on
+                // the id width alone. Refusing is fail-closed — the caller
+                // renders it as the cap's 429, which is the wrong reason for the
+                // right answer, and is preferable to either silently cancelling
+                // a live turn or panicking a request thread. It is also the one
+                // refusal worth recording separately: if it ever fires, the RNG
+                // is the story.
+                match turns.entry(id.clone()) {
+                    hash_map::Entry::Occupied(_) => Err((RefusalReason::IdCollision, turns.len())),
+                    hash_map::Entry::Vacant(slot) => {
+                        let session = start(&id);
+                        slot.insert(Arc::new(Entry {
+                            seq: self.counter.fetch_add(1, Ordering::Relaxed),
+                            pending: session.pending(),
+                            session: Mutex::new(Some(session)),
+                        }));
+                        Ok(id)
+                    }
+                }
+            }
         };
-        let session = start();
-        slot.insert(Arc::new(Entry {
-            seq: self.counter.fetch_add(1, Ordering::Relaxed),
-            pending: session.pending(),
-            session: Mutex::new(Some(session)),
-        }));
-        Some(id)
+        // Emitted outside the registry lock: an observer is caller-supplied and
+        // may do I/O, and holding the one lock every route contends on across
+        // someone else's `write` is how a log sink becomes a latency spike.
+        let live_turns = self.turns().len();
+        match outcome {
+            Ok(id) => {
+                self.observer.emit(&ServeEvent::TurnCreated {
+                    turn: TurnRef::new(&id),
+                    live_turns,
+                });
+                Some(id)
+            }
+            Err((reason, _)) => {
+                self.observer
+                    .emit(&ServeEvent::TurnRefused { reason, live_turns });
+                None
+            }
+        }
     }
 
     /// How long this 401 should be held before it is answered. `Duration::ZERO`
@@ -307,6 +289,10 @@ impl ServerState {
 /// only dropped when its slot is the difference between admitting the next turn
 /// and answering `429`. A reclaimed id answers an honest `404`.
 ///
+/// Every eviction is reported ([`ServeEvent::TurnReclaimed`]), with the count of
+/// frames nobody ever read. This used to be a silent `HashMap::remove`, which
+/// made a host that abandons turns indistinguishable from one that does not.
+///
 /// Lock order is registry → session, the same direction `handle_events` uses
 /// (its registry lookup releases the registry lock before it takes the session
 /// slot). This function is the one place that holds *both*, and it never blocks
@@ -321,7 +307,11 @@ impl ServerState {
 /// Bounding that is a backpressure change in `Session`, not a registry one.
 /// What is bounded here is the count — at most [`MAX_LIVE_TURNS`] turns' worth
 /// of buffered frames can be pinned at once, instead of one per create forever.
-fn reclaim_finished_unstreamed(turns: &mut HashMap<String, Arc<Entry>>, target: usize) {
+fn reclaim_finished_unstreamed(
+    turns: &mut HashMap<String, Arc<Entry>>,
+    target: usize,
+    observer: &SharedObserver,
+) {
     // Below the target there is nothing to make room for, so the common path
     // costs one length check and allocates nothing.
     if turns.len() < target {
@@ -357,7 +347,23 @@ fn reclaim_finished_unstreamed(turns: &mut HashMap<String, Arc<Entry>>, target: 
         .map(|(_, id)| id.to_string())
         .collect();
     for id in doomed {
+        // Count what is being thrown away *before* removing it: the entry owns
+        // the buffered frames, so after the remove there is nothing left to ask.
+        let buffered_frames = turns
+            .get(&id)
+            .map_or(0, |entry| match entry.session.try_lock() {
+                Ok(session) => session.as_ref().map_or(0, Session::buffered_frames),
+                Err(TryLockError::WouldBlock) => 0,
+                Err(TryLockError::Poisoned(poisoned)) => poisoned
+                    .into_inner()
+                    .as_ref()
+                    .map_or(0, Session::buffered_frames),
+            });
         turns.remove(&id);
+        observer.emit(&ServeEvent::TurnReclaimed {
+            turn: TurnRef::new(&id),
+            buffered_frames,
+        });
     }
 }
 
@@ -420,7 +426,8 @@ impl TokenBucket {
 /// listener that is structurally unusable — or one that has accepted nothing for
 /// the whole give-up streak — returns. `src/accept.rs` holds the full
 /// classification and the reasoning; `stella-observatory` applies the same policy
-/// from its own copy.
+/// from its own copy, and the two files are guarded byte-identical, so the
+/// reporting added here lives at the call site rather than in that module.
 ///
 /// # Operational limits
 ///
@@ -453,20 +460,34 @@ impl TokenBucket {
 ///
 /// Reverse requests *are* bounded (see [`SessionSpec::reverse_request_timeout`]),
 /// and a turn can be ended early with `POST /v1/turns/{id}/cancel`.
+///
+/// [`SessionSpec::reverse_request_timeout`]: crate::SessionSpec::reverse_request_timeout
 pub async fn serve(config: ServeConfig, on_ready: impl FnOnce(SocketAddr)) -> std::io::Result<()> {
     let listener = TcpListener::bind(config.bind).await?;
-    on_ready(listener.local_addr()?);
+    let bound = listener.local_addr()?;
     let state = Arc::new(ServerState {
         token: config.token,
         turns: Mutex::new(HashMap::new()),
         counter: AtomicU64::new(0),
         unauthorized: Mutex::new(TokenBucket::new()),
+        observer: config.observer,
+        metrics: config.metrics,
     });
+    state.observer.emit(&ServeEvent::Listening {
+        addr: bound.to_string(),
+    });
+    on_ready(bound);
     let mut backoff = AcceptBackoff::new();
+    // Mirrors `AcceptBackoff`'s own streak. Kept here rather than exposed from
+    // `accept.rs` because that file is guarded byte-identical against
+    // `stella-observatory`'s copy — reporting is this server's concern, not the
+    // shared policy's.
+    let mut streak = 0_u32;
     loop {
         let stream = match listener.accept().await {
             Ok((stream, _)) => {
                 backoff.succeeded();
+                streak = 0;
                 stream
             }
             Err(err) => match accept::classify(&err) {
@@ -474,18 +495,37 @@ pub async fn serve(config: ServeConfig, on_ready: impl FnOnce(SocketAddr)) -> st
                 // listener is fine, and this cannot spin (see `accept`).
                 AcceptAction::Retry => {
                     backoff.succeeded();
+                    streak = 0;
                     continue;
                 }
                 // Exhaustion, or a condition `io::ErrorKind` cannot name. Sleep
                 // so it cannot busy-loop, and give up if it never clears.
-                AcceptAction::Backoff => match backoff.next_delay() {
-                    Some(delay) => {
-                        tokio::time::sleep(delay).await;
-                        continue;
+                AcceptAction::Backoff => {
+                    streak += 1;
+                    let kind = accept_kind(&err);
+                    match backoff.next_delay() {
+                        Some(delay) => {
+                            state.observer.emit(&ServeEvent::AcceptBackoff {
+                                kind,
+                                delay_ms: millis(delay),
+                                streak,
+                            });
+                            tokio::time::sleep(delay).await;
+                            continue;
+                        }
+                        None => {
+                            state
+                                .observer
+                                .emit(&ServeEvent::AcceptGaveUp { kind, streak });
+                            shutting_down(&state);
+                            return Err(err);
+                        }
                     }
-                    None => return Err(err),
-                },
-                AcceptAction::Fatal => return Err(err),
+                }
+                AcceptAction::Fatal => {
+                    shutting_down(&state);
+                    return Err(err);
+                }
             },
         };
         // Nagle off. Every frame on this wire gates the next engine step — a
@@ -495,15 +535,61 @@ pub async fn serve(config: ServeConfig, on_ready: impl FnOnce(SocketAddr)) -> st
         let _ = stream.set_nodelay(true);
         let state = Arc::clone(&state);
         // Per-connection errors (client hangup, bad request) stay local to the
-        // connection; the accept loop keeps serving.
+        // connection; the accept loop keeps serving. The error is no longer
+        // discarded — `RequestRecord::close` names it before this returns.
         tokio::spawn(async move {
             let _ = handle_conn(stream, state).await;
         });
     }
 }
 
-/// Serve one connection: read the head, authenticate, then — and only then —
-/// read the body and route.
+/// Which exhaustion class an accept error belongs to, mirroring `accept.rs`'s
+/// own split without modifying that (drift-guarded) file.
+fn accept_kind(err: &std::io::Error) -> AcceptKind {
+    match err.kind() {
+        std::io::ErrorKind::OutOfMemory => AcceptKind::Exhaustion,
+        // EMFILE/ENFILE/ENOBUFS have no `ErrorKind`, so they land here too —
+        // "unnameable" is the honest label for what we can actually tell.
+        _ => AcceptKind::Unnameable,
+    }
+}
+
+fn shutting_down(state: &Arc<ServerState>) {
+    state.observer.emit(&ServeEvent::ShuttingDown {
+        reason: ShutdownReason::ListenerFailed,
+        live_turns: state.turns().len(),
+    });
+}
+
+/// Serve one connection, and report it exactly once.
+///
+/// The record is opened before the head is read and closed after the router
+/// returns, so there is no path — malformed request, oversized head, timeout,
+/// silent hangup, I/O failure mid-response — that produces no record. That is
+/// the whole reason [`route`] exists as a separate function: distributing
+/// "remember to report" across its sixteen exits is one refactor away from
+/// being silently false, which is exactly how the PROOF rail (#901) shipped a
+/// surface that reported only on the happy path.
+async fn handle_conn(mut stream: TcpStream, state: Arc<ServerState>) -> std::io::Result<()> {
+    let mut record = RequestRecord::opening(RequestId::generate());
+    // Read the head first so the peer's correlation id can be adopted, but note
+    // the record already exists: a peer that never completes a head still gets
+    // one, with the generated id and a `status: None`.
+    let head = read_head(&mut stream).await;
+    if let Ok(ReadOutcome::Request(req)) = &head
+        && let Some(supplied) = req.header("x-request-id").and_then(RequestId::from_header)
+    {
+        record.adopt_request_id(supplied);
+    }
+    let mut responder = Responder::new(&mut stream, record.request_id().clone());
+    let outcome = route(&mut responder, &mut record, &state, head).await;
+    let wrote = responder.wrote();
+    record.close(state.observer(), wrote, &outcome);
+    outcome
+}
+
+/// Route one request: authenticate on the head, then — and only then — read the
+/// body and dispatch.
 ///
 /// The two-phase read is the whole point of the ordering here. Buffering the
 /// body first meant an *unauthenticated* peer could make the server hold up to
@@ -513,52 +599,66 @@ pub async fn serve(config: ServeConfig, on_ready: impl FnOnce(SocketAddr)) -> st
 /// request costs one 8 KiB drain buffer. The body is still taken off the socket
 /// before the response is written: closing with unread bytes in flight makes the
 /// kernel RST, and a peer that gets an RST mid-send never reads its 401.
-async fn handle_conn(mut stream: TcpStream, state: Arc<ServerState>) -> std::io::Result<()> {
-    let mut req = match read_head(&mut stream).await? {
+///
+/// Knows nothing about records beyond filling in what it learns. Its caller owns
+/// the reporting.
+async fn route(
+    res: &mut Responder<'_>,
+    record: &mut RequestRecord,
+    state: &Arc<ServerState>,
+    head: std::io::Result<ReadOutcome>,
+) -> std::io::Result<()> {
+    let mut req = match head? {
         ReadOutcome::Request(req) => req,
-        // A peer that never sent anything is owed nothing.
+        // A peer that never sent anything is owed nothing — but it is still
+        // recorded, as a request with no status.
         ReadOutcome::Hangup => return Ok(()),
         ReadOutcome::TooLarge => {
-            return write_json(
-                &mut stream,
-                "413 Payload Too Large",
-                &error_body("request exceeded the server's size limit"),
-            )
-            .await;
+            return res
+                .json(
+                    "413 Payload Too Large",
+                    &error_body("request exceeded the server's size limit"),
+                )
+                .await;
         }
         ReadOutcome::Malformed => {
-            return write_json(
-                &mut stream,
-                "400 Bad Request",
-                &error_body("malformed HTTP request"),
-            )
-            .await;
+            return res
+                .json("400 Bad Request", &error_body("malformed HTTP request"))
+                .await;
         }
         ReadOutcome::UnsupportedTransferEncoding => {
-            return write_json(
-                &mut stream,
-                "501 Not Implemented",
-                &error_body(
-                    "chunked transfer-encoding is not supported; send a Content-Length body",
-                ),
-            )
-            .await;
+            return res
+                .json(
+                    "501 Not Implemented",
+                    &error_body(
+                        "chunked transfer-encoding is not supported; send a Content-Length body",
+                    ),
+                )
+                .await;
         }
         ReadOutcome::Timeout => {
-            return write_json(
-                &mut stream,
-                "408 Request Timeout",
-                &error_body("request was not completed in time"),
-            )
-            .await;
+            return res
+                .json(
+                    "408 Request Timeout",
+                    &error_body("request was not completed in time"),
+                )
+                .await;
         }
     };
+    record.set_method(&req.method);
+
     let path = req.path.split('?').next().unwrap_or(&req.path).to_string();
     let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    let (route, turn_id) = classify(&segs);
+    record.set_route(route);
+    let turn_id = turn_id.map(str::to_string);
+    if let Some(id) = turn_id.as_deref() {
+        record.set_turn(id);
+    }
 
-    if req.method == "GET" && segs.as_slice() == ["healthz"] {
-        discard_body(&mut stream, &mut req).await;
-        return write_json(&mut stream, "200 OK", br#"{"status":"ok"}"#).await;
+    if route == Route::Healthz && req.method == "GET" {
+        discard_body(res.stream_mut(), &mut req).await;
+        return routes::handle_health(res).await;
     }
     // Compared in constant time: `==` on a `&str` stops at the first differing
     // byte, which leaks the shared secret one byte at a time to a caller that
@@ -569,175 +669,119 @@ async fn handle_conn(mut stream: TcpStream, state: Arc<ServerState>) -> std::io:
         None => false,
     };
     if !authorized {
-        discard_body(&mut stream, &mut req).await;
+        discard_body(res.stream_mut(), &mut req).await;
         // Rate-limited by holding the response, never by changing it: the
         // body and status a guesser sees are identical whether or not the
         // bucket was empty, so the throttle leaks nothing about its own state.
         // The sleep is `tokio::time::sleep` on this connection's task, so a
-        // held 401 costs one task, not a runtime thread.
+        // held 401 costs one task, not a runtime thread. `held_ms` is recorded
+        // because that asymmetry — invisible outside, visible inside — is
+        // precisely what makes a sustained guess identifiable.
         let delay = state.unauthorized_delay();
         if !delay.is_zero() {
             tokio::time::sleep(delay).await;
         }
-        return write_json(
-            &mut stream,
-            "401 Unauthorized",
-            br#"{"error":"missing or invalid bearer token"}"#,
-        )
-        .await;
+        state.observer().emit(&ServeEvent::Unauthorized {
+            request_id: record.request_id().clone(),
+            route,
+            held_ms: millis(delay),
+        });
+        return res
+            .json(
+                "401 Unauthorized",
+                br#"{"error":"missing or invalid bearer token"}"#,
+            )
+            .await;
     }
 
     // Routes that carry no body are matched before the body is read, so a GET
     // with a stray `Content-Length` is drained rather than parsed.
-    match (req.method.as_str(), segs.as_slice()) {
-        ("GET", ["v1", "turns", id, "events"]) => {
-            let id = (*id).to_string();
-            discard_body(&mut stream, &mut req).await;
-            return handle_events(&mut stream, &state, &id).await;
+    match (req.method.as_str(), route) {
+        ("GET", Route::Metrics) => {
+            discard_body(res.stream_mut(), &mut req).await;
+            return routes::handle_metrics(res, state).await;
         }
-        ("POST", ["v1", "turns", id, "cancel"]) => {
-            let id = (*id).to_string();
-            discard_body(&mut stream, &mut req).await;
-            return handle_cancel(&mut stream, &state, &id).await;
+        ("GET", Route::TurnEvents) => {
+            discard_body(res.stream_mut(), &mut req).await;
+            return routes::handle_events(
+                res,
+                record,
+                state,
+                turn_id.as_deref().unwrap_or_default(),
+            )
+            .await;
+        }
+        ("POST", Route::TurnCancel) => {
+            discard_body(res.stream_mut(), &mut req).await;
+            return routes::handle_cancel(res, state, turn_id.as_deref().unwrap_or_default()).await;
         }
         // The body-bearing routes fall through to the read below.
-        ("POST", ["v1", "turns"] | ["v1", "turns", _, "tool-result" | "provider-result"]) => {}
+        ("POST", Route::TurnsCreate | Route::TurnToolResult | Route::TurnProviderResult) => {}
+        (_, Route::Unrouted) => {
+            discard_body(res.stream_mut(), &mut req).await;
+            return res.json("404 Not Found", br#"{"error":"not found"}"#).await;
+        }
         // A known resource reached with the wrong method is a 405 naming what
         // it does accept, not a 404 claiming the route does not exist — the
         // difference between "you typed the path wrong" and "you used the
         // wrong verb" is the whole diagnostic value of the status code.
-        (_, ["healthz"]) => return method_not_allowed(&mut stream, &mut req, "GET").await,
-        (_, ["v1", "turns"]) => return method_not_allowed(&mut stream, &mut req, "POST").await,
-        (_, ["v1", "turns", _, "events"]) => {
-            return method_not_allowed(&mut stream, &mut req, "GET").await;
-        }
-        (
-            _,
-            [
-                "v1",
-                "turns",
-                _,
-                "tool-result" | "provider-result" | "cancel",
-            ],
-        ) => {
-            return method_not_allowed(&mut stream, &mut req, "POST").await;
-        }
-        _ => {
-            discard_body(&mut stream, &mut req).await;
-            return write_json(&mut stream, "404 Not Found", br#"{"error":"not found"}"#).await;
-        }
+        (_, known) => return routes::method_not_allowed(res, &mut req, allowed(known)).await,
     }
 
-    if let BodyOutcome::Timeout = read_body(&mut stream, &mut req).await? {
-        return write_json(
-            &mut stream,
-            "408 Request Timeout",
-            &error_body("request was not completed in time"),
-        )
-        .await;
+    if let BodyOutcome::Timeout = read_body(res.stream_mut(), &mut req).await? {
+        return res
+            .json(
+                "408 Request Timeout",
+                &error_body("request was not completed in time"),
+            )
+            .await;
     }
+    record.set_bytes_in(req.body.len() as u64);
 
-    match segs.as_slice() {
-        ["v1", "turns"] => handle_create(&mut stream, &state, &req.body).await,
-        ["v1", "turns", id, "tool-result"] => {
-            handle_tool_result(&mut stream, &state, id, &req.body).await
-        }
-        ["v1", "turns", id, "provider-result"] => {
-            handle_provider_result(&mut stream, &state, id, &req.body).await
+    let id = turn_id.as_deref().unwrap_or_default();
+    match route {
+        Route::TurnsCreate => routes::handle_create(res, state, &req.body).await,
+        Route::TurnToolResult => routes::handle_tool_result(res, state, id, &req.body).await,
+        Route::TurnProviderResult => {
+            routes::handle_provider_result(res, state, id, &req.body).await
         }
         // Unreachable: the match above admits exactly the three body-bearing
         // routes. Answering rather than panicking keeps a future edit that
         // widens that match from taking down a request thread.
-        _ => write_json(&mut stream, "404 Not Found", br#"{"error":"not found"}"#).await,
+        _ => res.json("404 Not Found", br#"{"error":"not found"}"#).await,
     }
 }
 
-/// `405` naming the methods this path accepts, per RFC 9110 §15.5.6 (the
-/// `Allow` header is mandatory on a 405 — a status that says "wrong verb"
-/// without saying which verb is right is half an answer).
-async fn method_not_allowed(
-    stream: &mut TcpStream,
-    req: &mut Request,
-    allow: &str,
-) -> std::io::Result<()> {
-    discard_body(stream, req).await;
-    write_json_with_headers(
-        stream,
-        "405 Method Not Allowed",
-        &[("Allow", allow)],
-        &error_body(&format!("method not allowed; this path accepts {allow}")),
-    )
-    .await
+/// Map a path to its route template and, where it has one, the turn id.
+///
+/// Classification is deliberately independent of the method, so a `405` records
+/// which resource was addressed rather than collapsing to "unrouted" — the
+/// difference between "you used the wrong verb on `/v1/turns`" and "you asked
+/// for a path that does not exist" is exactly what makes a record diagnostic.
+fn classify<'a>(segs: &[&'a str]) -> (Route, Option<&'a str>) {
+    match segs {
+        ["healthz"] => (Route::Healthz, None),
+        ["v1", "metrics"] => (Route::Metrics, None),
+        ["v1", "turns"] => (Route::TurnsCreate, None),
+        ["v1", "turns", id, "events"] => (Route::TurnEvents, Some(id)),
+        ["v1", "turns", id, "tool-result"] => (Route::TurnToolResult, Some(id)),
+        ["v1", "turns", id, "provider-result"] => (Route::TurnProviderResult, Some(id)),
+        ["v1", "turns", id, "cancel"] => (Route::TurnCancel, Some(id)),
+        _ => (Route::Unrouted, None),
+    }
 }
 
-async fn handle_create(
-    stream: &mut TcpStream,
-    state: &ServerState,
-    body: &[u8],
-) -> std::io::Result<()> {
-    let turn: TurnRequest = match serde_json::from_slice(body) {
-        Ok(turn) => turn,
-        Err(err) => {
-            return write_json(
-                stream,
-                "400 Bad Request",
-                &error_body(&format!("invalid turn request: {err}")),
-            )
-            .await;
-        }
-    };
-
-    let mut config = EngineConfig::default();
-    if let Some(max_steps) = turn.max_steps {
-        let Some(effective) = validate_max_steps(max_steps) else {
-            return write_json(
-                stream,
-                "400 Bad Request",
-                &error_body("max_steps must be at least 1"),
-            )
-            .await;
-        };
-        config.max_steps = effective;
+/// The `Allow` header value for a known route.
+fn allowed(route: Route) -> &'static str {
+    match route {
+        Route::Healthz | Route::Metrics | Route::TurnEvents => "GET",
+        Route::TurnsCreate
+        | Route::TurnToolResult
+        | Route::TurnProviderResult
+        | Route::TurnCancel => "POST",
+        // Never reached: `Unrouted` is answered as a 404 before this is called.
+        Route::Unrouted => "",
     }
-    let mut reverse_request_timeout = SessionSpec::DEFAULT_REVERSE_REQUEST_TIMEOUT;
-    if let Some(requested_ms) = turn.reverse_request_timeout_ms {
-        let Some(effective) = validate_reverse_request_timeout(requested_ms) else {
-            return write_json(
-                stream,
-                "400 Bad Request",
-                &error_body("reverse_request_timeout_ms must be at least 1"),
-            )
-            .await;
-        };
-        reverse_request_timeout = effective;
-    }
-    let spec = SessionSpec {
-        provider_id: turn.provider_id,
-        tools: turn.tools,
-        messages: turn.messages,
-        config,
-        budget: BudgetGuard::new(
-            turn.budget.mode,
-            turn.budget.turn_limit_usd,
-            turn.budget.session_limit_usd,
-        ),
-        reverse_request_timeout,
-    };
-
-    // Admission, reclamation and registration all happen under one lock hold
-    // inside `register_turn` — see there for why.
-    let Some(id) = state.register_turn(|| Session::start(spec)) else {
-        return write_json_with_headers(
-            stream,
-            "429 Too Many Requests",
-            &[("Retry-After", RETRY_AFTER_SECS)],
-            &error_body("too many live turns; retry after in-flight turns finish"),
-        )
-        .await;
-    };
-
-    let body = serde_json::to_vec(&TurnCreated { turn_id: &id }).unwrap_or_default();
-    write_json(stream, "200 OK", &body).await
 }
 
 /// Mint a turn id that cannot be guessed from another turn's id.
@@ -746,7 +790,8 @@ async fn handle_create(
 /// still the actual auth gate, but a sequential id makes every *other* live turn
 /// addressable to anyone who learns one — a turn id in a log line, an error
 /// report, or a proxy access log hands over the whole namespace. 128 bits from
-/// the OS CSPRNG removes that second, accidental way in.
+/// the OS CSPRNG removes that second, accidental way in. Records carry only a
+/// truncated [`TurnRef`], so this server's own log is not that leak either.
 fn new_turn_id() -> String {
     let mut bytes = [0_u8; 16];
     rand::rng().fill_bytes(&mut bytes);
@@ -757,218 +802,6 @@ fn new_turn_id() -> String {
         let _ = write!(id, "{byte:02x}");
     }
     id
-}
-
-async fn handle_events(
-    stream: &mut TcpStream,
-    state: &ServerState,
-    id: &str,
-) -> std::io::Result<()> {
-    let Some(entry) = state.lookup(id) else {
-        return write_json(stream, "404 Not Found", &error_body("unknown turn")).await;
-    };
-    // Take the session out in its own scope so the (non-`Send`) mutex guard is
-    // dropped before any `.await` — the connection future must stay `Send`.
-    let taken = {
-        entry
-            .session
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .take()
-    };
-    let mut session = match taken {
-        Some(session) => session,
-        None => {
-            return write_json(
-                stream,
-                "409 Conflict",
-                &error_body("events are already being streamed for this turn"),
-            )
-            .await;
-        }
-    };
-
-    // From here the session is out of the registry entry and owned by this
-    // connection, so every exit path must also drop the registry entry —
-    // otherwise a turn whose stream never opened lingers in the map forever.
-    if let Err(err) = write_sse_head(stream).await {
-        state.turns().remove(id);
-        return Err(err);
-    }
-    {
-        // Split so the frame loop can watch the *read* half while it waits.
-        // Without that, a host that vanishes mid-turn is only noticed at the
-        // next write — and the engine may be parked on a reverse request for
-        // the whole `reverse_request_timeout` (up to an hour) before it
-        // produces one. The turn would keep an OS thread and a registry slot
-        // for a client that is provably gone, and the host would be billed for
-        // whatever the engine went on to ask for. Watching for EOF turns that
-        // into a cancellation within one poll.
-        let (mut peer, mut out) = stream.split();
-        let mut scratch = [0_u8; 1024];
-        // A GET on a `Connection: close` stream has nothing left to send, so
-        // inbound bytes are a protocol violation. Tolerate a little (a client
-        // library that pipelines a probe) but never spin discarding an
-        // unbounded stream of them.
-        let mut stray = 0_usize;
-        const MAX_STRAY_BYTES: usize = 8 * 1024;
-        loop {
-            let frame = tokio::select! {
-                read = peer.read(&mut scratch) => match read {
-                    // EOF or a reset: the subscriber is gone. Stop streaming;
-                    // dropping `session` below cancels the turn.
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        stray += n;
-                        if stray > MAX_STRAY_BYTES {
-                            break;
-                        }
-                        continue;
-                    }
-                },
-                frame = session.next_frame() => match frame {
-                    Some(frame) => frame,
-                    None => break,
-                },
-            };
-            let done = matches!(frame, ServerFrame::TurnComplete { .. });
-            if write_sse_frame(&mut out, &sse_json(&frame)).await.is_err() {
-                break;
-            }
-            if done {
-                break;
-            }
-        }
-    }
-    // Drop the session *before* the socket teardown: `Drop for Session`
-    // cancels the turn, so a stream that ended early (client gone, stray
-    // bytes) releases the engine thread now rather than at the end of scope.
-    drop(session);
-    // The turn is finished streaming; drop it so its thread and registry entry
-    // are reclaimed.
-    state.turns().remove(id);
-    stream.shutdown().await
-}
-
-/// Render one frame as the JSON payload of an SSE `data:` line.
-///
-/// Every [`ServerFrame`] is built from serde-clean types, so the failure arm is
-/// unreachable in practice — but "unreachable" is not "harmless". It used to
-/// emit `{}`, a frame with no `type` at all: a host would skip it silently, and
-/// if the frame it replaced was the terminal `TurnComplete`, the stream would
-/// simply end with the turn's outcome and settled cost never reported. A
-/// synthesized terminal frame keeps the stream's contract — every turn ends with
-/// exactly one `turn_complete` — and names the cause instead of losing it.
-fn sse_json(frame: &ServerFrame) -> String {
-    encode_or_abort(frame)
-}
-
-fn encode_or_abort<T: Serialize>(value: &T) -> String {
-    match serde_json::to_string(value) {
-        Ok(json) => json,
-        Err(err) => serde_json::to_string(&ServerFrame::TurnComplete {
-            outcome: TurnOutcomeWire::Aborted {
-                reason: format!("the engine produced a frame the server could not encode: {err}"),
-                cost_usd: 0.0,
-            },
-        })
-        // The fallback's fallback: a literal that is valid on the wire, so the
-        // stream still terminates with a `turn_complete` no matter what.
-        .unwrap_or_else(|_| {
-            r#"{"type":"turn_complete","outcome":{"status":"aborted","reason":"frame encoding failed","cost_usd":0.0}}"#
-                .to_string()
-        }),
-    }
-}
-
-async fn handle_tool_result(
-    stream: &mut TcpStream,
-    state: &ServerState,
-    id: &str,
-    body: &[u8],
-) -> std::io::Result<()> {
-    let Some(entry) = state.lookup(id) else {
-        return write_json(stream, "404 Not Found", &error_body("unknown turn")).await;
-    };
-    let result: ToolResultIn = match serde_json::from_slice(body) {
-        Ok(result) => result,
-        Err(err) => {
-            return write_json(
-                stream,
-                "400 Bad Request",
-                &error_body(&format!("invalid tool result: {err}")),
-            )
-            .await;
-        }
-    };
-    match entry
-        .pending
-        .resolve_tool(&result.request_id, result.output)
-    {
-        Ok(()) => write_json(stream, "200 OK", br#"{"status":"ok"}"#).await,
-        Err(err) => write_json(stream, "409 Conflict", &error_body(&err.to_string())).await,
-    }
-}
-
-async fn handle_provider_result(
-    stream: &mut TcpStream,
-    state: &ServerState,
-    id: &str,
-    body: &[u8],
-) -> std::io::Result<()> {
-    let Some(entry) = state.lookup(id) else {
-        return write_json(stream, "404 Not Found", &error_body("unknown turn")).await;
-    };
-    let posted: ProviderResultIn = match serde_json::from_slice(body) {
-        Ok(posted) => posted,
-        Err(err) => {
-            return write_json(
-                stream,
-                "400 Bad Request",
-                &error_body(&format!("invalid provider result: {err}")),
-            )
-            .await;
-        }
-    };
-    let result = match posted.outcome {
-        ProviderOutcomeIn::Ok { result } => Ok(result),
-        ProviderOutcomeIn::Error { error } => Err(error.into()),
-    };
-    match entry.pending.resolve_provider(&posted.request_id, result) {
-        Ok(()) => write_json(stream, "200 OK", br#"{"status":"ok"}"#).await,
-        Err(err) => write_json(stream, "409 Conflict", &error_body(&err.to_string())).await,
-    }
-}
-
-/// `POST /v1/turns/{id}/cancel` — end an in-flight turn.
-///
-/// Answers once the turn is *signalled*, not once it has unwound: the parked
-/// engine step wakes immediately, but the turn still needs a moment to produce
-/// its terminal frame, and a host streaming `/events` is the one that observes
-/// that. Blocking this response on it would deadlock a single-connection client.
-async fn handle_cancel(
-    stream: &mut TcpStream,
-    state: &ServerState,
-    id: &str,
-) -> std::io::Result<()> {
-    // Remove and signal, so a second cancel — or a late result POST — gets an
-    // honest 404 rather than silently doing nothing. Scoped so the (non-`Send`)
-    // guard is dropped before the await below.
-    let removed = { state.turns().remove(id) };
-    let Some(entry) = removed else {
-        return write_json(stream, "404 Not Found", &error_body("unknown turn")).await;
-    };
-    entry.pending.cancel();
-    // Dropping our `Arc` here is what reclaims a turn whose stream never opened:
-    // the registry no longer holds it, so this may be the last handle, and
-    // `Drop for Session` releases the engine thread. A turn that *is* streaming
-    // keeps its own handle and unwinds through `handle_events` as usual.
-    drop(entry);
-    write_json(stream, "200 OK", br#"{"status":"cancelled"}"#).await
-}
-
-fn error_body(message: &str) -> Vec<u8> {
-    serde_json::to_vec(&serde_json::json!({ "error": message })).unwrap_or_default()
 }
 
 /// Compare two secrets without an early exit, so the time taken does not depend
@@ -988,6 +821,11 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::observe::Capture;
+    use crate::observe::event::ServeEvent;
+    use crate::session::SessionSpec;
+    use stella_core::{BudgetGuard, EngineConfig};
+    use stella_protocol::{BudgetMode, CompletionMessage};
 
     /// A brute-force run against the only credential this service has must
     /// stop being free after the burst. Driven over an injected `Instant` so
@@ -996,87 +834,56 @@ mod tests {
     fn sustained_401s_are_throttled_once_the_burst_is_spent() {
         let start = std::time::Instant::now();
         let mut bucket = TokenBucket::new();
-
-        for i in 0..UNAUTHORIZED_BURST as usize {
+        for attempt in 0..UNAUTHORIZED_BURST as usize {
             assert_eq!(
                 bucket.take(start),
                 Duration::ZERO,
-                "401 #{i} is within the burst and must not be delayed"
+                "attempt {attempt} is within the burst and must not be delayed"
             );
         }
         assert_eq!(
             bucket.take(start),
             UNAUTHORIZED_PENALTY,
-            "the first 401 past the burst pays the penalty"
+            "the first attempt past the burst is held"
+        );
+        // Half a second of refill at 2/sec is exactly one token.
+        assert_eq!(
+            bucket.take(start + Duration::from_millis(500)),
+            Duration::ZERO
         );
         assert_eq!(
-            bucket.take(start),
+            bucket.take(start + Duration::from_millis(500)),
             UNAUTHORIZED_PENALTY,
-            "and it keeps paying while the bucket is empty"
+            "and it is spent again immediately"
         );
+    }
 
-        // One second later the bucket has refilled by UNAUTHORIZED_REFILL_PER_SEC.
-        let later = start + Duration::from_secs(1);
-        for _ in 0..UNAUTHORIZED_REFILL_PER_SEC as usize {
+    #[test]
+    fn refill_is_capped_at_the_burst_size() {
+        let start = std::time::Instant::now();
+        let mut bucket = TokenBucket::new();
+        // An hour idle must not bank an hour of tokens.
+        let later = start + Duration::from_secs(3600);
+        for _ in 0..UNAUTHORIZED_BURST as usize {
             assert_eq!(bucket.take(later), Duration::ZERO);
         }
         assert_eq!(bucket.take(later), UNAUTHORIZED_PENALTY);
     }
 
-    /// The bucket must not bank credit indefinitely: an idle server does not
-    /// hand a later attacker an unbounded free run.
-    #[test]
-    fn refill_is_capped_at_the_burst_size() {
-        let start = std::time::Instant::now();
-        let mut bucket = TokenBucket::new();
-        for _ in 0..UNAUTHORIZED_BURST as usize {
-            assert_eq!(bucket.take(start), Duration::ZERO);
-        }
-        let much_later = start + Duration::from_secs(3600);
-        for i in 0..UNAUTHORIZED_BURST as usize {
-            assert_eq!(bucket.take(much_later), Duration::ZERO, "burst slot {i}");
-        }
-        assert_eq!(
-            bucket.take(much_later),
-            UNAUTHORIZED_PENALTY,
-            "an hour idle buys one burst, not an hour's worth of attempts"
-        );
-    }
-
-    #[test]
-    fn zero_steps_is_refused_rather_than_silently_accepted() {
-        // `for step in 0..0` runs no iterations and aborts with "reached the
-        // step cap (0)" — a turn that never called the model reporting the
-        // backstop that never fired.
-        assert_eq!(validate_max_steps(0), None);
-    }
-
-    #[test]
-    fn step_cap_is_clamped_to_the_ceiling() {
-        assert_eq!(validate_max_steps(1), Some(1));
-        assert_eq!(validate_max_steps(200), Some(200));
-        assert_eq!(validate_max_steps(MAX_SERVED_STEPS), Some(MAX_SERVED_STEPS));
-        assert_eq!(
-            validate_max_steps(MAX_SERVED_STEPS + 1),
-            Some(MAX_SERVED_STEPS)
-        );
-        assert_eq!(
-            validate_max_steps(usize::MAX),
-            Some(MAX_SERVED_STEPS),
-            "an unbounded step loop must not be reachable from the wire"
-        );
-    }
-
-    fn test_state() -> ServerState {
-        ServerState {
+    fn test_state() -> (ServerState, Arc<Capture>) {
+        let capture = Arc::new(Capture::new());
+        let state = ServerState {
             token: String::new(),
             turns: Mutex::new(HashMap::new()),
             counter: AtomicU64::new(0),
             unauthorized: Mutex::new(TokenBucket::new()),
-        }
+            observer: capture.clone(),
+            metrics: Arc::new(Metrics::new()),
+        };
+        (state, capture)
     }
 
-    fn test_spec() -> SessionSpec {
+    fn test_spec(turn_id: &str) -> SessionSpec {
         SessionSpec {
             provider_id: "mock".to_string(),
             tools: Vec::new(),
@@ -1084,13 +891,15 @@ mod tests {
             config: EngineConfig::default(),
             budget: BudgetGuard::new(BudgetMode::Off, None, None),
             reverse_request_timeout: SessionSpec::DEFAULT_REVERSE_REQUEST_TIMEOUT,
+            turn: TurnRef::new(turn_id),
+            observer: crate::observe::null_observer(),
         }
     }
 
     /// A session that has already produced its terminal frame: cancelled
     /// before it can park, then waited on until its thread exits.
-    fn finished_session() -> Session {
-        let session = Session::start(test_spec());
+    fn finished_session(turn_id: &str) -> Session {
+        let session = Session::start(test_spec(turn_id));
         session.cancel();
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         while !session.is_finished() {
@@ -1110,7 +919,7 @@ mod tests {
     /// forever.
     #[test]
     fn a_finished_unstreamed_turn_is_reclaimed_to_admit_a_new_one() {
-        let state = test_state();
+        let (state, capture) = test_state();
         let ids: Vec<String> = (0..MAX_LIVE_TURNS)
             .map(|_| {
                 state
@@ -1138,6 +947,21 @@ mod tests {
             "only as many as needed are reclaimed — the second-oldest stays"
         );
         assert!(state.lookup(&next).is_some(), "the new turn is registered");
+
+        // The eviction is *reported*. It used to be a silent `HashMap::remove`,
+        // which is what made a host that abandons turns indistinguishable from
+        // one that does not.
+        let reclaimed = capture.find(|e| matches!(e, ServeEvent::TurnReclaimed { .. }));
+        assert!(
+            reclaimed.is_some(),
+            "reclaiming a turn must not be silent — that is the discarded work \
+             this dimension is scored on"
+        );
+        assert_eq!(
+            capture.count(|e| matches!(e, ServeEvent::TurnCreated { .. })),
+            MAX_LIVE_TURNS + 1,
+            "every admitted turn is recorded"
+        );
     }
 
     /// Reclamation must never touch a live turn: a still-running turn parked on
@@ -1145,9 +969,9 @@ mod tests {
     /// oldest entry in the registry.
     #[test]
     fn a_live_turn_is_never_reclaimed() {
-        let state = test_state();
+        let (state, _capture) = test_state();
         let live = state
-            .register_turn(|| Session::start(test_spec()))
+            .register_turn(|id| Session::start(test_spec(id)))
             .expect("the first turn is always admitted");
         for _ in 0..MAX_LIVE_TURNS {
             state
@@ -1165,93 +989,84 @@ mod tests {
 
     /// When nothing can be reclaimed, the cap holds: a registry full of *live*
     /// turns refuses the next one rather than dropping a turn out from under a
-    /// host that is still using it.
+    /// host that is still using it — and says so, because a 429 storm that
+    /// produces no record is one of the four situations #930 names.
     #[test]
     fn a_registry_full_of_live_turns_refuses_the_next() {
-        let state = test_state();
+        let (state, capture) = test_state();
         for _ in 0..MAX_LIVE_TURNS {
             state
-                .register_turn(|| Session::start(test_spec()))
+                .register_turn(|id| Session::start(test_spec(id)))
                 .expect("the registry has room");
         }
         assert!(
             state
-                .register_turn(|| Session::start(test_spec()))
+                .register_turn(|id| Session::start(test_spec(id)))
                 .is_none(),
             "no live turn may be reclaimed, so the cap must refuse"
         );
-    }
-
-    /// A value whose `Serialize` always fails, standing in for the frame
-    /// encoding failure that real [`ServerFrame`]s cannot produce. Without it
-    /// the fallback would be untestable — and an untested fallback on the one
-    /// path that carries a turn's outcome is how `{}` sat on the wire.
-    struct Unserializable;
-
-    impl Serialize for Unserializable {
-        fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
-            Err(serde::ser::Error::custom("nope"))
-        }
-    }
-
-    /// A frame that cannot be encoded must still leave the stream terminated:
-    /// the old `{}` fallback was a frame with no `type`, so a host skipped it
-    /// silently and — when the lost frame was the terminal one — never learned
-    /// the turn's outcome or its settled cost.
-    #[test]
-    fn an_unencodable_frame_becomes_a_terminal_aborted_frame_not_an_empty_object() {
-        let json = encode_or_abort(&Unserializable);
-        let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON on the wire");
-        assert_eq!(value["type"], "turn_complete", "{json}");
-        assert_eq!(value["outcome"]["status"], "aborted", "{json}");
         assert!(
-            value["outcome"]["reason"]
-                .as_str()
-                .is_some_and(|r| r.contains("nope")),
-            "the cause must survive, not be swallowed: {json}"
+            capture
+                .find(|e| matches!(
+                    e,
+                    ServeEvent::TurnRefused {
+                        reason: RefusalReason::AtCapacity,
+                        ..
+                    }
+                ))
+                .is_some(),
+            "a refusal at capacity must be visible from outside the process"
         );
     }
 
+    /// A path is classified independently of its method, so a 405 still records
+    /// which resource was addressed.
     #[test]
-    fn an_ordinary_frame_encodes_unchanged() {
-        let json = sse_json(&ServerFrame::TurnComplete {
-            outcome: TurnOutcomeWire::Completed {
-                text: "done".to_string(),
-                cost_usd: 0.5,
-            },
-        });
-        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(value["outcome"]["text"], "done");
-        assert_eq!(value["outcome"]["cost_usd"], 0.5);
+    fn paths_classify_to_templates_and_surrender_their_turn_id() {
+        let split = |path: &'static str| -> Vec<&'static str> {
+            path.split('/').filter(|s| !s.is_empty()).collect()
+        };
+        assert_eq!(classify(&split("/healthz")), (Route::Healthz, None));
+        assert_eq!(classify(&split("/v1/metrics")), (Route::Metrics, None));
+        assert_eq!(classify(&split("/v1/turns")), (Route::TurnsCreate, None));
+        assert_eq!(
+            classify(&split("/v1/turns/turn-abc/events")),
+            (Route::TurnEvents, Some("turn-abc"))
+        );
+        assert_eq!(
+            classify(&split("/v1/turns/turn-abc/tool-result")),
+            (Route::TurnToolResult, Some("turn-abc"))
+        );
+        assert_eq!(
+            classify(&split("/v1/turns/turn-abc/provider-result")),
+            (Route::TurnProviderResult, Some("turn-abc"))
+        );
+        assert_eq!(
+            classify(&split("/v1/turns/turn-abc/cancel")),
+            (Route::TurnCancel, Some("turn-abc"))
+        );
+        assert_eq!(classify(&split("/nope")), (Route::Unrouted, None));
+        assert_eq!(classify(&split("/v1/turns/a/b/c")), (Route::Unrouted, None));
     }
 
+    /// Every routable path must name a verb in its `Allow` header, or a 405 is
+    /// half an answer.
     #[test]
-    fn zero_reverse_request_deadline_is_refused() {
-        // A 0 ms deadline expires before the host could possibly answer, so
-        // every turn would fail on its first reverse request.
-        assert_eq!(validate_reverse_request_timeout(0), None);
-    }
-
-    #[test]
-    fn reverse_request_deadline_is_clamped_to_the_ceiling() {
-        assert_eq!(
-            validate_reverse_request_timeout(50),
-            Some(Duration::from_millis(50))
-        );
-        assert_eq!(
-            validate_reverse_request_timeout(300_000),
-            Some(Duration::from_secs(300)),
-            "the default is expressible from the wire"
-        );
-        assert_eq!(
-            validate_reverse_request_timeout(MAX_REVERSE_REQUEST_TIMEOUT.as_millis() as u64),
-            Some(MAX_REVERSE_REQUEST_TIMEOUT)
-        );
-        assert_eq!(
-            validate_reverse_request_timeout(u64::MAX),
-            Some(MAX_REVERSE_REQUEST_TIMEOUT),
-            "a caller must not be able to restore the unbounded wait the \
-             deadline exists to remove"
-        );
+    fn every_known_route_names_an_allowed_method() {
+        for route in [
+            Route::Healthz,
+            Route::Metrics,
+            Route::TurnsCreate,
+            Route::TurnEvents,
+            Route::TurnToolResult,
+            Route::TurnProviderResult,
+            Route::TurnCancel,
+        ] {
+            assert!(
+                matches!(allowed(route), "GET" | "POST"),
+                "{} has no allowed method",
+                route.template()
+            );
+        }
     }
 }

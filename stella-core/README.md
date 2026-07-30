@@ -53,7 +53,8 @@ HTTP client, no SQLite. `stella-cli`, `stella-tools`, `stella-mcp`,
 | [`src/glob.rs`](src/glob.rs), [`src/mining.rs`](src/mining.rs), [`src/summarize.rs`](src/summarize.rs) | Non-public shared helpers: the `*`-only glob matcher behind rule guards and hook matchers; the lexical mining primitives the rules and skills miners share (they were once two byte-identical copies); the overflow summarizer's prompt and span rendering. |
 | [`src/discovery.rs`](src/discovery.rs) | The ranker behind `tool_search`/`skill_search`/`mcp_search`: `select:` lookups, `+required` terms, field-weighted scoring. |
 | [`src/extensions.rs`](src/extensions.rs) | Custom commands and agents parsed from markdown, plus `plan_extension_sync` for adopting `.claude/`/`.agents/` definitions. |
-| [`src/goal.rs`](src/goal.rs) | The goal loop: worker turn → judge verdict → feedback, bounded by round cap, budget and turn abort. |
+| [`src/subagent.rs`](src/subagent.rs) | `Engine::run_sub_agent` — a bounded child turn with its own carved budget and its own (discarded) transcript, returning only a capped summary. `goal.rs`'s judge is one. |
+| [`src/goal.rs`](src/goal.rs) | The goal loop: worker turn → judge verdict → feedback, bounded by round cap, budget and turn abort. The judge runs as a sub-agent. |
 | [`src/router.rs`](src/router.rs) | Role → model resolution over a caller-supplied `ProviderProfile`, plus the per-provider circuit breaker. |
 | [`src/tasks.rs`](src/tasks.rs) | `TaskBoard` — the transition rules behind the `task_*` tools; records `SpawnRequest`s rather than spawning. |
 | [`src/mcp_usage.rs`](src/mcp_usage.rs) | The MCP usage record/ledger types, homed here so `stella-mcp` and `stella-tools` need no edge between them. |
@@ -86,6 +87,23 @@ anything: `BudgetGuard::evaluate`/`record_spend` return a
 `TurnOutcome::Aborted`. The one place the engine may interrupt a running tool is
 `EngineConfig::tool_timeout` (15 minutes by default), and it surfaces as a
 `ToolOutput::Error` the model can route around — a tool result, not a turn abort.
+
+**A sub-agent is a child turn whose transcript is thrown away.**
+`Engine::run_sub_agent` ([`src/subagent.rs`](src/subagent.rs)) builds a second
+`Engine` over the parent's fields, runs one turn against a *local*
+`Vec<CompletionMessage>`, and returns a character-capped summary. The value is
+context economy, not parallelism (`stella fleet` already has that): work the
+parent would otherwise carry — and re-send on every later step for the rest of
+the session — is absorbed by a transcript that goes out of scope. The budget is
+**carved**, `min(requested, parent headroom)` via `BudgetGuard::carve`, so
+`--budget` stays a hard ceiling once turns nest, and the child's spend settles
+back into the parent exactly once on every path (`settle_child`) — including a
+failure, because a child that aborted still spent what it spent. Failure is a
+typed `SubAgentOutcome`, never an `Err` that kills the parent turn, and an
+aborted child salvages its last answer rather than losing paid work with the
+context it lived in. Tools default to read-only, which is also the *fast*
+default: read-only calls engage the speculation pump, so a read-only child hides
+its I/O behind generation.
 
 **Exactly-once is a guarantee about mutating tools only.**
 `retry_with_backoff_observed` wraps the model call together with that attempt's
@@ -141,9 +159,19 @@ system message and the latest user message are never touched.
 - **`run_session_start_hooks` is not called by `run_turn`.** `SessionStart` is a
   session-level event and `run_turn` runs many times per session; the caller
   invokes it once and folds the output into the system prompt it builds.
-- **`Engine::with_sleeper` is the only constructor.** The crate exports the
-  `Sleeper` port but no production implementation — wiring a real one is the
-  binary's job, and tests wire a no-op to run retries at zero wall-clock cost.
+- **`Engine::with_sleeper` is the only *public* constructor,** and it cannot
+  carry `gate`/`steering`/`hooks` — those are builder-set private fields. A
+  nested turn built through it silently drops all three, which is the bug
+  `goal.rs::assess` shipped with. Do not hand-roll a child engine: call
+  [`src/subagent.rs`](src/subagent.rs)'s `run_sub_agent`, which constructs the
+  child in-crate and carries every seam. The crate still exports the `Sleeper`
+  port with no production implementation — wiring a real one is the binary's
+  job, and tests wire a no-op to run retries at zero wall-clock cost.
+- **A sub-agent's steering is filtered, not inherited.** `drain_steering` is
+  destructive by contract, so a child that inherited the parent's `TurnSteering`
+  would swallow a message the user addressed to the parent. `ChildSteering`
+  forwards the (non-destructive, latched) soft stop and returns nothing for the
+  drain.
 - **`context_record` is not `stella-context`,** and it is not the live rules
   path either: `rules::metadata` still drives that. The two coexist by decision —
   do not merge them, and read the subsumption table in

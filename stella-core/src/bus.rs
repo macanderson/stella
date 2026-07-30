@@ -570,13 +570,13 @@ impl HookBus {
             .turn_id = turn_id;
     }
 
-    /// Set (or clear) the ambient agent id (fleet/subagent attribution).
-    pub fn set_agent(&self, agent_id: Option<String>) {
-        self.inner
-            .context
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .agent_id = agent_id;
+    /// Set (or clear) the ambient agent id (fleet/subagent attribution),
+    /// returning the id it replaced — which makes attribution nestable: a
+    /// sub-agent (`crate::subagent`) restores what it displaced instead of
+    /// clearing, so a grandchild's exit cannot un-attribute its parent.
+    pub fn set_agent(&self, agent_id: Option<String>) -> Option<String> {
+        let mut context = self.inner.context.lock().unwrap_or_else(|p| p.into_inner());
+        std::mem::replace(&mut context.agent_id, agent_id)
     }
 
     // ---- registration ------------------------------------------------

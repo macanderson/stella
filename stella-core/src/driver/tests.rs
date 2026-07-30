@@ -58,9 +58,9 @@ impl Provider for ScriptedProvider {
     fn id(&self) -> &str {
         &self.id
     }
-    async fn complete(
+    async fn complete_ref(
         &self,
-        _req: CompletionRequest,
+        _req: CompletionRequestRef<'_>,
     ) -> Result<CompletionResultAlias, ProviderError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         let mut script = self.script.lock().await;
@@ -152,15 +152,15 @@ impl Provider for SpeculatingProvider {
     fn id(&self) -> &str {
         "speculating"
     }
-    async fn complete(
+    async fn complete_ref(
         &self,
-        _req: CompletionRequest,
+        _req: CompletionRequestRef<'_>,
     ) -> Result<CompletionResultAlias, ProviderError> {
         unreachable!("the engine must drive complete_observed, never bare complete")
     }
-    async fn complete_observed(
+    async fn complete_observed_ref(
         &self,
-        _req: CompletionRequest,
+        _req: CompletionRequestRef<'_>,
         observer: &dyn stella_protocol::ToolCallObserver,
     ) -> Result<CompletionResultAlias, ProviderError> {
         if self.step.fetch_add(1, Ordering::SeqCst) == 0 {
@@ -417,15 +417,15 @@ impl Provider for FlakySpeculatingProvider {
     fn id(&self) -> &str {
         "flaky-speculating"
     }
-    async fn complete(
+    async fn complete_ref(
         &self,
-        _req: CompletionRequest,
+        _req: CompletionRequestRef<'_>,
     ) -> Result<CompletionResultAlias, ProviderError> {
         unreachable!("the engine must drive complete_observed, never bare complete")
     }
-    async fn complete_observed(
+    async fn complete_observed_ref(
         &self,
-        _req: CompletionRequest,
+        _req: CompletionRequestRef<'_>,
         observer: &dyn stella_protocol::ToolCallObserver,
     ) -> Result<CompletionResultAlias, ProviderError> {
         match self.invocation.fetch_add(1, Ordering::SeqCst) {
@@ -585,15 +585,15 @@ impl Provider for StreamingTextProvider {
     fn id(&self) -> &str {
         "streaming"
     }
-    async fn complete(
+    async fn complete_ref(
         &self,
-        _req: CompletionRequest,
+        _req: CompletionRequestRef<'_>,
     ) -> Result<CompletionResultAlias, ProviderError> {
         unreachable!("the engine must drive complete_observed, never bare complete")
     }
-    async fn complete_observed(
+    async fn complete_observed_ref(
         &self,
-        _req: CompletionRequest,
+        _req: CompletionRequestRef<'_>,
         observer: &dyn stella_protocol::ToolCallObserver,
     ) -> Result<CompletionResultAlias, ProviderError> {
         observer.text_delta("Hel");
@@ -700,9 +700,9 @@ impl Provider for WedgedProvider {
     fn id(&self) -> &str {
         "wedged"
     }
-    async fn complete(
+    async fn complete_ref(
         &self,
-        _req: CompletionRequest,
+        _req: CompletionRequestRef<'_>,
     ) -> Result<CompletionResultAlias, ProviderError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         std::future::pending().await
@@ -2818,3 +2818,4 @@ mod budget_boundaries;
 mod compute_passes;
 mod steer_midturn;
 mod usage_completeness;
+mod zero_copy_request;

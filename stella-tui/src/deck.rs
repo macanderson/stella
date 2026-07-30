@@ -503,7 +503,11 @@ impl WorkspaceModel {
             | Inbound::RecordedCalls(_)
             | Inbound::InspectedCall(_)
             | Inbound::ShowHelp
-            | Inbound::Splash(_) => {}
+            | Inbound::Splash(_)
+            // The whole point of `Notice`: a system notification is not agent
+            // or user speech, so the fold must NOT give it a transcript row.
+            // It is view state only (`DeckUi::notice`).
+            | Inbound::Notice(_) => {}
         }
     }
 
@@ -946,6 +950,11 @@ fn event_intensity(ev: &AgentEvent) -> u8 {
         // the stage boundaries it interleaves with, so a well-proven turn does
         // not read as busier than an unproven one doing the same edits.
         AgentEvent::Proof { .. } => 170,
+        // A sub-agent bracket is a boundary, pitched with `Stage` for the
+        // same reason: the child's real work already registers through its
+        // forwarded tool calls and metering, so pricing the bracket as work
+        // too would double-count one child as a burst of activity.
+        AgentEvent::SubAgent { .. } => 170,
         // Explicit rather than falling through the wildcard: an undecodable
         // event is real activity, so it should register on the sparkline, but
         // this build cannot know whether it was hot (an edit) or cool (a
@@ -976,7 +985,12 @@ fn status_from_event(ev: &AgentEvent) -> Option<AgentStatus> {
         | AgentEvent::TextDelta { .. }
         | AgentEvent::Reasoning { .. }
         | AgentEvent::ToolStart { .. }
-        | AgentEvent::ToolResult { .. } => Some(AgentStatus::Running),
+        | AgentEvent::ToolResult { .. }
+        // A child turn is the parent working, so the lane stays Running
+        // rather than falling through to "no lifecycle change". Explicit
+        // because the wildcard below would otherwise let a long child run —
+        // whose own narration is filtered out — read as an idle agent.
+        | AgentEvent::SubAgent { .. } => Some(AgentStatus::Running),
         _ => None,
     }
 }
@@ -1133,6 +1147,27 @@ fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
         AgentEvent::TaskUpdate { tasks } => {
             let done = tasks.iter().filter(|t| !t.status.is_open()).count();
             (TraceKind::Other, format!("tasks {done}/{}", tasks.len()))
+        }
+        // A sub-agent bracket is the only trace of a child turn — its own
+        // events are filtered at the parent boundary — so it names the child
+        // and, on the way out, what the parent saved by not carrying its work.
+        AgentEvent::SubAgent { phase } => {
+            use stella_protocol::SubAgentPhase;
+            (
+                TraceKind::Other,
+                match phase {
+                    SubAgentPhase::Started { agent_id, .. } => format!("sub-agent {agent_id} ↴"),
+                    SubAgentPhase::Finished {
+                        agent_id,
+                        status,
+                        absorbed_messages,
+                        ..
+                    } => format!(
+                        "sub-agent {agent_id} {} ({absorbed_messages} msgs absorbed)",
+                        format!("{status:?}").to_lowercase()
+                    ),
+                },
+            )
         }
         AgentEvent::ProviderFallback { from, to, .. } => {
             (TraceKind::Other, format!("fallback {from}→{to}"))

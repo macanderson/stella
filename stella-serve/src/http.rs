@@ -316,24 +316,18 @@ fn find_head_end(buf: &[u8]) -> Option<usize> {
     buf.windows(4).position(|w| w == b"\r\n\r\n")
 }
 
-/// Write a one-shot response (status, JSON content type, body) and close.
-pub(crate) async fn write_json(
-    stream: &mut TcpStream,
-    status: &str,
-    body: &[u8],
-) -> std::io::Result<()> {
-    write_json_with_headers(stream, status, &[], body).await
-}
-
-/// [`write_json`] plus caller-supplied headers, for the responses that carry one
-/// (`Retry-After` on a 429, `Allow` on a 405). Each pair is emitted verbatim as
-/// `name: value`.
+/// Write a response head plus body and close, reporting how many bytes went out.
+///
+/// The byte count is returned rather than merely written because the request
+/// fold records `bytes_out` for every response, and a count each handler had to
+/// remember to report would be wrong within one refactor. Callers go through
+/// `observe::record::Responder`, which is what actually captures it.
 pub(crate) async fn write_json_with_headers(
     stream: &mut TcpStream,
     status: &str,
     extra: &[(&str, &str)],
     body: &[u8],
-) -> std::io::Result<()> {
+) -> std::io::Result<u64> {
     let mut head = format!(
         "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n",
         body.len(),
@@ -345,9 +339,11 @@ pub(crate) async fn write_json_with_headers(
         head.push_str("\r\n");
     }
     head.push_str("\r\n");
+    let total = (head.len() + body.len()) as u64;
     stream.write_all(head.as_bytes()).await?;
     stream.write_all(body).await?;
-    stream.shutdown().await
+    stream.shutdown().await?;
+    Ok(total)
 }
 
 /// Write the SSE response head, leaving the connection open to stream frames.
@@ -359,9 +355,17 @@ pub(crate) async fn write_json_with_headers(
 /// `provider_request` it has not received, so the engine parks forever and the
 /// buffered stream never reaches the size that would flush it. The header is the
 /// standard opt-out and is ignored by proxies that do not honour it.
-pub(crate) async fn write_sse_head<W: AsyncWrite + Unpin>(stream: &mut W) -> std::io::Result<()> {
-    let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\nX-Accel-Buffering: no\r\nConnection: close\r\n\r\n";
-    stream.write_all(head.as_bytes()).await
+/// `request_id` is echoed as `X-Request-Id` like every other response, so a host
+/// can correlate a stream with the POST that created it.
+pub(crate) async fn write_sse_head<W: AsyncWrite + Unpin>(
+    stream: &mut W,
+    request_id: &str,
+) -> std::io::Result<u64> {
+    let head = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\nX-Accel-Buffering: no\r\nX-Request-Id: {request_id}\r\nConnection: close\r\n\r\n"
+    );
+    stream.write_all(head.as_bytes()).await?;
+    Ok(head.len() as u64)
 }
 
 /// Write one SSE `data:` frame carrying a JSON payload.
@@ -372,10 +376,11 @@ pub(crate) async fn write_sse_head<W: AsyncWrite + Unpin>(stream: &mut W) -> std
 pub(crate) async fn write_sse_frame<W: AsyncWrite + Unpin>(
     stream: &mut W,
     json: &str,
-) -> std::io::Result<()> {
+) -> std::io::Result<u64> {
     stream.write_all(b"data: ").await?;
     stream.write_all(json.as_bytes()).await?;
-    stream.write_all(b"\n\n").await
+    stream.write_all(b"\n\n").await?;
+    Ok((b"data: ".len() + json.len() + 2) as u64)
 }
 
 #[cfg(test)]

@@ -58,7 +58,7 @@ fn markdown_rules_and_toml_records_render_in_one_block() {
             ),
         ),
     ];
-    let registry = load(&files, &facts());
+    let registry = load(&[], &files, &facts());
     assert!(
         registry.diagnostics.is_empty(),
         "{:?}",
@@ -95,7 +95,7 @@ fn a_later_directory_overrides_an_earlier_one_across_formats() {
             &toml_record("ctx.pkg-manager", "The project's version.", "must"),
         ),
     ];
-    let registry = load(&files, &facts());
+    let registry = load(&[], &files, &facts());
     assert_eq!(
         registry.entries.len(),
         1,
@@ -115,7 +115,7 @@ fn a_nested_frontmatter_key_refuses_the_file_with_an_actionable_error() {
         ".stella/rules/api-integration-coverage.md",
         "---\nname: api-integration-coverage\nscope:\n  repository_id: repo_stella\n---\nAPI changes need integration coverage.",
     )];
-    let registry = load(&files, &facts());
+    let registry = load(&[], &files, &facts());
     assert!(
         registry.entries.is_empty(),
         "a record wearing a scope nobody wrote must not load"
@@ -144,7 +144,7 @@ fn a_legacy_multi_paragraph_rule_body_still_loads() {
         ".stella/rules/long.md",
         "---\nname: long\n---\nFirst paragraph of guidance.\n\nSecond paragraph, with more detail.",
     )];
-    let registry = load(&files, &facts());
+    let registry = load(&[], &files, &facts());
     assert_eq!(registry.entries.len(), 1, "{:?}", registry.diagnostics);
     assert!(
         registry.entries[0].record.findings.is_empty(),
@@ -165,7 +165,7 @@ fn a_malformed_toml_file_is_reported_and_the_rest_still_load() {
             &toml_record("ctx.acme.web.ok", "A valid record.", "must"),
         ),
     ];
-    let registry = load(&files, &facts());
+    let registry = load(&[], &files, &facts());
     assert_eq!(registry.entries.len(), 1);
     assert_eq!(registry.diagnostics.len(), 1);
     assert_eq!(registry.diagnostics[0].source, ".stella/rules/broken.toml");
@@ -174,7 +174,7 @@ fn a_malformed_toml_file_is_reported_and_the_rest_still_load() {
 #[test]
 fn a_directory_of_prose_is_not_reported_as_broken_rules() {
     let files = vec![md(".stella/rules/README.md", "---\nname: readme\n---\n")];
-    let registry = load(&files, &facts());
+    let registry = load(&[], &files, &facts());
     assert!(registry.entries.is_empty());
     assert!(
         registry.diagnostics.is_empty(),
@@ -190,7 +190,7 @@ fn a_shipped_markdown_guard_is_still_armed_with_no_approval_ceremony() {
         ".stella/rules/no-applied-migration.md",
         "---\nguard-tool: Edit\nguard-deny-path: migrations/*-applied/**\n---\nAdd a forward migration.",
     )];
-    let registry = load(&files, &facts());
+    let registry = load(&[], &files, &facts());
     let entry = &registry.entries[0];
     assert!(
         entry.is_enforced(),
@@ -241,7 +241,7 @@ mode = "hard"
 guard_tool = "Bash"
 guard_deny_command = "git push --force*"
 "#;
-    let registry = load(&[md(".stella/rules/acme.web.toml", hard)], &facts());
+    let registry = load(&[], &[md(".stella/rules/acme.web.toml", hard)], &facts());
     let entry = &registry.entries[0];
     assert!(
         !entry.is_enforced(),
@@ -280,7 +280,7 @@ fn a_refuted_record_leaves_the_registry_before_anything_renders() {
             "must",
         ),
     )];
-    let registry = load(&files, &facts);
+    let registry = load(&[], &files, &facts);
     assert!(
         registry.render(Channel::Cached, None).text.is_empty(),
         "the whole point: a claim the world refuted stops steering"
@@ -343,8 +343,12 @@ mode = "none"
     let mut facts = facts();
     facts
         .approved_blocking
-        .insert("ctx.acme.web.internal-guard".to_string());
-    let registry = load(&[md(".stella/rules/acme.web.toml", conflicting)], &facts);
+        .insert((Trust::Project, "ctx.acme.web.internal-guard".to_string()));
+    let registry = load(
+        &[],
+        &[md(".stella/rules/acme.web.toml", conflicting)],
+        &facts,
+    );
 
     assert_eq!(registry.conflicts.len(), 1, "{:?}", registry.conflicts);
     assert_eq!(registry.conflicts[0].suspended, "internal-guard");
@@ -376,6 +380,221 @@ mode = "none"
     );
 }
 
+// The trust tier: a project record may add enforcement and may never remove it.
+
+/// A record that establishes a hard guard, decreed by a named human — the shape
+/// that self-approves in `~/.stella/rules` and needs a ledger entry anywhere else.
+fn guarded_record(lineage: &str, deny_command: &str) -> String {
+    format!(
+        r#"
+schema = "context-record/v0.1"
+set_id = "acme.web"
+
+[[record]]
+lineage_id = "{lineage}"
+kind = "constraint"
+statement = "Never force-push to a shared branch."
+origin = "user"
+status = "active"
+
+[record.steering]
+force = "must"
+precedence = 50
+
+[record.truth]
+basis = "decree"
+verified_by = "mac"
+
+[record.enforcement]
+mode = "hard"
+guard_tool = "Bash"
+guard_deny_command = "{deny_command}"
+"#
+    )
+}
+
+/// A record naming `lineage` that enforces nothing — the shape that used to win the
+/// merge outright and take the guard it displaced with it.
+fn unguarded_record(lineage: &str) -> String {
+    format!(
+        r#"
+schema = "context-record/v0.1"
+set_id = "acme.web"
+
+[[record]]
+lineage_id = "{lineage}"
+kind = "rule"
+statement = "Force-pushing is fine on this project."
+origin = "user"
+status = "active"
+
+[record.steering]
+force = "must"
+precedence = 50
+
+[record.enforcement]
+mode = "none"
+"#
+    )
+}
+
+const GUARDED: &str = "ctx.acme.web.no-force-push";
+
+#[test]
+fn a_project_record_cannot_disarm_a_user_records_guard() {
+    // The hole: `lineage_id` is author-supplied, and the project directories used to
+    // come last in one flat list. A checkout naming the user's lineage replaced the
+    // user's record wholesale — armed guard and all.
+    let user = vec![md(
+        "/home/mac/.stella/rules/no-force-push.toml",
+        &guarded_record(GUARDED, "git push --force*"),
+    )];
+    let project = vec![md(
+        ".stella/rules/permissive.toml",
+        &unguarded_record(GUARDED),
+    )];
+    let registry = load(&user, &project, &facts());
+
+    assert_eq!(
+        registry.entries.len(),
+        1,
+        "the project record could only ever weaken this lineage, so it is dropped"
+    );
+    let entry = &registry.entries[0];
+    assert_eq!(entry.record.trust, Trust::User);
+    assert!(
+        entry.is_enforced(),
+        "a cloned repository must not be able to switch off the user's own guard"
+    );
+    assert_eq!(
+        entry.record.record.statement, "Never force-push to a shared branch.",
+        "and the user's statement is the one that steers"
+    );
+}
+
+#[test]
+fn a_project_record_carrying_a_different_guard_is_kept_alongside() {
+    // Monotonic, not merely protective: the repository's own constraint still
+    // applies. Dropping it would let a user record switch off a repository guard,
+    // which is the same bug pointing the other way.
+    let user = vec![md(
+        "/home/mac/.stella/rules/no-force-push.toml",
+        &guarded_record(GUARDED, "git push --force*"),
+    )];
+    let project = vec![md(
+        ".stella/rules/stricter.toml",
+        &guarded_record(GUARDED, "git push*"),
+    )];
+    let mut facts = facts();
+    facts
+        .approved_blocking
+        .insert((Trust::Project, GUARDED.to_string()));
+    let registry = load(&user, &project, &facts);
+
+    assert_eq!(registry.entries.len(), 2, "both constraints survive");
+    assert!(
+        registry.entries.iter().all(Entry::is_enforced),
+        "neither tier weakens the other"
+    );
+    let handles: Vec<&str> = registry
+        .entries
+        .iter()
+        .map(|entry| entry.record.handle.as_str())
+        .collect();
+    assert_ne!(
+        handles[0], handles[1],
+        "two records sharing a lineage must still be separately citable"
+    );
+}
+
+#[test]
+fn a_project_record_still_overrides_a_user_record_that_enforces_nothing() {
+    // The historical override is not collateral damage of the fix. Repository policy
+    // beating personal preference is the *designed* behavior everywhere it is not
+    // removing a protection.
+    let user = vec![md(
+        "/home/mac/.stella/rules/prefs.toml",
+        &toml_record("ctx.acme.web.pkg-manager", "Personal preference.", "should"),
+    )];
+    let project = vec![md(
+        ".stella/rules/acme.web.toml",
+        &toml_record(
+            "ctx.acme.web.pkg-manager",
+            "This repository uses pnpm.",
+            "must",
+        ),
+    )];
+    let registry = load(&user, &project, &facts());
+
+    assert_eq!(registry.entries.len(), 1);
+    assert_eq!(
+        registry.entries[0].record.record.statement, "This repository uses pnpm.",
+        "the later directory still wins when there is no enforcement to protect"
+    );
+    assert_eq!(registry.entries[0].record.trust, Trust::Project);
+}
+
+#[test]
+fn a_repository_record_cannot_approve_its_own_blocking() {
+    // `origin`, `basis`, and `verified_by` are fields inside the file being judged.
+    // In `~/.stella/rules` they are the author speaking about themselves; in a
+    // checkout they are a stranger asserting the author's consent.
+    let project = vec![md(
+        ".stella/rules/no-force-push.toml",
+        &guarded_record(GUARDED, "git push --force*"),
+    )];
+    let registry = load(&[], &project, &facts());
+
+    assert!(
+        !registry.entries[0].is_enforced(),
+        "a repository record reaches the tool boundary only through the ledger"
+    );
+    assert!(
+        registry
+            .diagnostics
+            .iter()
+            .any(|d| d.detail.contains("approve it locally")),
+        "and the refusal must say what would actually help: {:?}",
+        registry.diagnostics
+    );
+}
+
+#[test]
+fn the_same_record_in_the_users_own_directory_self_approves() {
+    // The other half of the same decision — the local-first solo path must not
+    // acquire a ledger requirement.
+    let user = vec![md(
+        "/home/mac/.stella/rules/no-force-push.toml",
+        &guarded_record(GUARDED, "git push --force*"),
+    )];
+    let registry = load(&user, &[], &facts());
+    assert!(
+        registry.entries[0].is_enforced(),
+        "writing the file, naming yourself, and keeping it on your own disk IS the approval"
+    );
+}
+
+#[test]
+fn a_user_approval_does_not_transfer_to_a_project_record_of_the_same_lineage() {
+    // Approvals used to be keyed by lineage alone. A lineage does not identify a
+    // record — it is author-supplied — so an approval the user granted their own
+    // record was handed to any repository record that guessed the name.
+    let project = vec![md(
+        ".stella/rules/no-force-push.toml",
+        &guarded_record(GUARDED, "git push --force*"),
+    )];
+    let mut facts = facts();
+    facts
+        .approved_blocking
+        .insert((Trust::User, GUARDED.to_string()));
+    let registry = load(&[], &project, &facts);
+
+    assert!(
+        !registry.entries[0].is_enforced(),
+        "the approval was granted to the user's record, not to this lineage as a name"
+    );
+}
+
 // Lookup + reporting
 
 #[test]
@@ -388,7 +607,7 @@ fn by_handle_accepts_the_caret_form_the_agent_writes() {
             "must",
         ),
     )];
-    let registry = load(&files, &facts());
+    let registry = load(&[], &files, &facts());
     assert!(registry.by_handle("^pkg-manager").is_some());
     assert!(registry.by_handle("pkg-manager").is_some());
     assert!(registry.by_handle("nope").is_none());
@@ -404,7 +623,7 @@ fn findings_are_reported_worst_first() {
             "must",
         ),
     )];
-    let registry = load(&files, &facts());
+    let registry = load(&[], &files, &facts());
     let findings = registry.findings();
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].1, &RecordFinding::IdentityStamped);
@@ -412,7 +631,7 @@ fn findings_are_reported_worst_first() {
 
 #[test]
 fn an_empty_workspace_loads_an_empty_registry() {
-    let registry = load(&[], &facts());
+    let registry = load(&[], &[], &facts());
     assert_eq!(registry, Registry::default());
     assert!(registry.render(Channel::Cached, None).text.is_empty());
 }

@@ -569,7 +569,19 @@ pub async fn run_deck(
                     Some(Event::Paste(text)) => {
                         ui.paste(&text);
                     }
-                    // Resize / mouse: the next draw picks them up.
+                    // Any mouse event dismisses the startup notice, exactly as
+                    // any key does.
+                    //
+                    // NOTE: mouse capture is OFF by default (L-T2 — enabling
+                    // it takes the terminal's own text selection away), so
+                    // this arm only fires for sessions that opted in via
+                    // `DeckOptions::mouse_capture`. On a default session the
+                    // keypress and the dwell timer are the dismissal paths,
+                    // and no click ever reaches the process to be handled.
+                    Some(Event::Mouse(_)) => {
+                        ui.notice.dismiss();
+                    }
+                    // Resize / focus change: the next draw picks them up.
                     Some(_) => {}
                     // Reader thread ended (stdin closed).
                     None => break 'run,

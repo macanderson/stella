@@ -232,6 +232,64 @@ pub fn goal_verdict(round: usize, met: bool, reasoning: &str) -> EventLine {
     }
 }
 
+/// A sub-agent's lifecycle bracket (#922) — the only place a reader sees
+/// that a bounded child turn ran at all, since the child's own narration is
+/// dropped at the parent boundary by design.
+///
+/// The finish line leads with what the child *saved*: the messages it
+/// absorbed are context the parent never has to re-send, and that number is
+/// the whole reason the primitive exists. Cost sits beside it so the trade
+/// reads at a glance.
+pub fn sub_agent(phase: &stella_protocol::SubAgentPhase) -> EventLine {
+    use stella_protocol::{SubAgentPhase, SubAgentStatus};
+    match phase {
+        SubAgentPhase::Started {
+            agent_id,
+            instruction_preview,
+            write_access,
+            ..
+        } => EventLine {
+            glyph: "⤷",
+            tone: Tone::Muted,
+            strong: false,
+            body: format!(
+                "sub-agent {agent_id} ({}): {instruction_preview}",
+                if *write_access { "write" } else { "read-only" }
+            ),
+            detail: None,
+        },
+        SubAgentPhase::Finished {
+            agent_id,
+            status,
+            cost_usd,
+            steps,
+            absorbed_messages,
+            reason,
+            ..
+        } => {
+            let (glyph, tone) = match status {
+                SubAgentStatus::Completed => ("✓", Tone::Success),
+                SubAgentStatus::Incomplete => ("○", Tone::Warn),
+                SubAgentStatus::Refused => ("✗", Tone::Error),
+            };
+            EventLine {
+                glyph,
+                tone,
+                strong: false,
+                body: match reason {
+                    Some(reason) => format!("sub-agent {agent_id}: {reason}"),
+                    None => format!("sub-agent {agent_id} done"),
+                },
+                detail: Some(format!(
+                    "· {steps} step{} · {absorbed_messages} msgs absorbed · {}",
+                    if *steps == 1 { "" } else { "s" },
+                    fmt_cost(*cost_usd)
+                )),
+            }
+        }
+    }
+}
+
 pub fn file_change(path: &str, kind: FileChangeKind) -> EventLine {
     EventLine {
         glyph: "±",
@@ -454,6 +512,7 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
         | AgentEvent::RetriesExhausted { .. }
         | AgentEvent::PolicyDecision { .. } => None,
         AgentEvent::Unknown { event_type, .. } => Some(unknown_event(event_type)),
+        AgentEvent::SubAgent { phase } => Some(sub_agent(phase)),
         AgentEvent::Retry { attempt, reason } => Some(retry(*attempt, reason)),
         AgentEvent::Steered { text } => Some(steered(text)),
         AgentEvent::Compaction {
@@ -984,6 +1043,30 @@ mod tests {
             AgentEvent::Complete {
                 model: "m".into(),
                 cost_usd: 0.0,
+            },
+            // Both phases of a sub-agent bracket (#922): the child's own
+            // narration is filtered out at the parent boundary, so if these
+            // two rows do not render, a child turn is completely invisible.
+            AgentEvent::SubAgent {
+                phase: stella_protocol::SubAgentPhase::Started {
+                    agent_id: "search-1".into(),
+                    instruction_preview: "find it".into(),
+                    budget_usd: Some(0.1),
+                    write_access: false,
+                    depth: 1,
+                },
+            },
+            AgentEvent::SubAgent {
+                phase: stella_protocol::SubAgentPhase::Finished {
+                    agent_id: "search-1".into(),
+                    status: stella_protocol::SubAgentStatus::Completed,
+                    summary: "it is in retry.rs".into(),
+                    truncated: false,
+                    cost_usd: 0.004,
+                    steps: 5,
+                    absorbed_messages: 9,
+                    reason: None,
+                },
             },
         ];
         for event in &annotations {

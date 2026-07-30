@@ -37,7 +37,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stella_protocol::{
-    CompletionMessage, CompletionRequest, CompletionResult, CompletionUsage, FinishReason,
+    CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage, FinishReason,
     MessageRole, ProviderError, ToolCall,
 };
 
@@ -605,8 +605,11 @@ impl Provider for BedrockProvider {
         "bedrock"
     }
 
-    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
-        let (system_text, mut messages) = to_bedrock_messages(&req.messages);
+    async fn complete_ref(
+        &self,
+        req: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
+        let (system_text, mut messages) = to_bedrock_messages(req.messages);
         let cache = supports_cache_points(&self.model);
         let mut system: Vec<BedrockSystemBlock> = system_text
             .into_iter()
@@ -681,7 +684,7 @@ impl Provider for BedrockProvider {
             system,
             messages,
             inference_config,
-            tool_config: to_bedrock_tool_config(&req.tools),
+            tool_config: to_bedrock_tool_config(req.tools),
             additional_model_request_fields: reasoning_config
                 .map(|reasoning_config| BedrockAdditionalFields { reasoning_config }),
         };
@@ -1188,6 +1191,7 @@ pub(crate) mod sigv4 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use stella_protocol::CompletionRequest;
     use stella_protocol::tool::ToolSchema;
     use stella_protocol::{ToolOutput, ToolResult};
     use wiremock::matchers::{body_string_contains, header_regex, method, path};

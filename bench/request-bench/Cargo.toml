@@ -1,0 +1,20 @@
+[package]
+name = "request-bench"
+# Deliberately NOT `version.workspace = true`: like `loop-bench`, this is a dev
+# harness rather than a shipped artifact, so it stays off the release train that
+# syncs the product crates in lockstep.
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Allocator-churn + wall-clock A/B for the per-attempt model-request build (#921)"
+publish = false
+
+[[bin]]
+name = "request-bench"
+path = "src/main.rs"
+
+[dependencies]
+serde_json.workspace = true
+stella-protocol = { path = "../../stella-protocol" }

@@ -1091,13 +1091,13 @@ fn skill_usage_records_per_execution_version_rows() {
     // id, so only the first minting call was ever recorded). v16 adds the
     // compiled frame's identity to the receipt header — two nullable columns,
     // not a table, because the frame IS the manifest (ADR 0006 as amended).
-    // v17 drops the never-wired graph_nodes/graph_edges seam and the
-    // query-less agent_uses_by_agent/reflections_by_kind indexes. v18 turns
+    // v17 drops the never-wired graph seam and the query-less indexes. v18 turns
     // `tool_calls` into a LIVE projection — a `state` column ('running' |
-    // 'ok' | 'error') plus the two indexes the live writer reads through, so
-    // an in-flight turn's calls are visible while it runs and a crashed one's
-    // are recoverable from the log.
-    assert_eq!(SCHEMA_VERSION, 18);
+    // 'ok' | 'error') plus the two indexes the live writer reads through, so an
+    // in-flight turn's calls are visible while it runs and a crashed one's are
+    // recoverable from the log. v19 recounts every stored block cost under one
+    // shared token rule, NULL when that block's preimage is gone (#925).
+    assert_eq!(SCHEMA_VERSION, 19);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")

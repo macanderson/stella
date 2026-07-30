@@ -56,8 +56,10 @@ mod accept;
 mod error;
 mod frame;
 mod http;
+pub mod observe;
 mod pending;
 mod remote;
+mod routes;
 mod server;
 mod session;
 
@@ -66,6 +68,7 @@ pub use frame::{
     ProviderErrorWire, ProviderOutcomeIn, ProviderResultIn, ServerFrame, ToolResultIn,
     TurnOutcomeWire,
 };
+pub use observe::{Metrics, Observer, ServeEvent, SharedObserver};
 pub use pending::Pending;
 pub use server::{ServeConfig, serve};
 pub use session::{Session, SessionSpec};

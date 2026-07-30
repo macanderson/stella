@@ -20,7 +20,20 @@ pub struct ContextBlockRow {
     pub origin_step: u64,
     pub call_id: Option<String>,
     pub memory_id: Option<String>,
-    pub token_cost: u32,
+    /// This block's cost under [`stella_protocol::tokens`]'s rule — the one
+    /// rule, the same one `estimated_input_tokens` is summed with.
+    ///
+    /// `None` means **not derivable**, not "free". A block's cost is a function
+    /// of its preimage, and the v18 → v19 migration recomputed every stored row
+    /// from the preimage the store still holds; for blocks whose preimage the
+    /// journal never carried (spec §6.4's synthetic and discarded-speculation
+    /// results, and any execution whose tool events were never journaled) there
+    /// is nothing left to derive a cost from. Carrying the old character-count
+    /// number for those would leave the column mixing two units forever, which
+    /// is the thing #925 was — so an underivable cost is absent rather than
+    /// wrong. Live emission always knows the content, so the writer never
+    /// stores `None`; only history can.
+    pub token_cost: Option<u32>,
     pub content_digest: String,
     pub citation_label: Option<String>,
     /// Local-only preimage for gap kinds the journal cannot resolve (system
@@ -35,7 +48,12 @@ pub struct ContextBlockRow {
 pub struct ManifestBlockRow {
     pub block_id: String,
     pub cache_zone: String,
-    pub token_cost: u32,
+    /// Joined back from `context_blocks`. `None` covers both ways a cost can be
+    /// unknown — the manifest cited a block that was never registered, and the
+    /// block's preimage is no longer in the store (see
+    /// [`ContextBlockRow::token_cost`]). A caller summing these must decide
+    /// what an unknown addend means rather than silently reading it as zero.
+    pub token_cost: Option<u32>,
     pub resident_since_step: u64,
     /// The sent-message this block belonged to; reconstruction regroups blocks
     /// sharing a `message_index` back into one `CompletionMessage` (spec §5.1).
@@ -83,7 +101,7 @@ impl Store {
     /// double-count — matching the content-addressed identity contract.
     pub fn record_context_block(&self, execution_id: i64, row: &ContextBlockRow) -> Result<()> {
         let origin_step = sqlite_i64("context block origin step", row.origin_step)?;
-        let token_cost = i64::from(row.token_cost);
+        let token_cost = row.token_cost.map(i64::from);
         self.lock().execute(
             "INSERT OR IGNORE INTO context_blocks
                (execution_id, block_id, kind, origin_turn, origin_step, call_id, memory_id,
@@ -195,7 +213,7 @@ impl Store {
                     origin_step: r.get::<_, i64>(3)? as u64,
                     call_id: r.get(4)?,
                     memory_id: r.get(5)?,
-                    token_cost: r.get::<_, i64>(6)? as u32,
+                    token_cost: r.get::<_, Option<i64>>(6)?.map(|c| c as u32),
                     content_digest: r.get(7)?,
                     citation_label: r.get(8)?,
                     content: r.get(9)?,
@@ -234,10 +252,13 @@ impl Store {
                     Ok(ManifestBlockRow {
                         block_id: r.get(0)?,
                         cache_zone: r.get(1)?,
-                        // token_cost may be NULL if the block row is missing (a
-                        // manifest referencing an unregistered block — a bug worth
-                        // surfacing, not crashing on); default 0.
-                        token_cost: r.get::<_, Option<i64>>(2)?.unwrap_or(0) as u32,
+                        // NULL from either side: the LEFT JOIN found no block
+                        // row (a manifest citing an unregistered block), or the
+                        // block's own cost is not derivable. Both are "unknown",
+                        // and both are now surfaced as such rather than
+                        // flattened to 0 — a zero is indistinguishable from a
+                        // genuinely empty block when a caller sums the column.
+                        token_cost: r.get::<_, Option<i64>>(2)?.map(|c| c as u32),
                         resident_since_step: r.get::<_, i64>(3)? as u64,
                         message_index: r.get::<_, i64>(4)? as u64,
                         call_id: r.get(5)?,
@@ -346,7 +367,7 @@ mod tests {
             origin_step: step,
             call_id: Some(format!("call_{step}")),
             memory_id: None,
-            token_cost: 100 + step as u32,
+            token_cost: Some(100 + step as u32),
             content_digest: format!("sha256:{id}"),
             citation_label: None,
             content: None,
@@ -398,7 +419,7 @@ mod tests {
                 ManifestBlockRow {
                     block_id: "blk_sys".into(),
                     cache_zone: "stable_prefix".into(),
-                    token_cost: 100,
+                    token_cost: Some(100),
                     resident_since_step: 0,
                     message_index: 0,
                     call_id: None,
@@ -406,7 +427,7 @@ mod tests {
                 ManifestBlockRow {
                     block_id: "blk_tail".into(),
                     cache_zone: "volatile".into(),
-                    token_cost: 103,
+                    token_cost: Some(103),
                     resident_since_step: 3,
                     message_index: 1,
                     call_id: Some("call_a".into()),
@@ -423,7 +444,7 @@ mod tests {
         assert_eq!(back[0].resident_since_step, 0);
         assert_eq!(back[1].block_id, "blk_tail");
         // token_cost is joined back from context_blocks (the block's property).
-        assert_eq!(back[1].token_cost, 103);
+        assert_eq!(back[1].token_cost, Some(103));
     }
 
     #[test]
@@ -448,7 +469,7 @@ mod tests {
                 .map(|i| ManifestBlockRow {
                     block_id: format!("blk_{i}"),
                     cache_zone: "cacheable".into(),
-                    token_cost: 1,
+                    token_cost: Some(1),
                     resident_since_step: 0,
                     message_index: 0,
                     call_id: None,

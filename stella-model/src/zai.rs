@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stella_protocol::{
-    CompletionMessage, CompletionRequest, CompletionResult, CompletionUsage, FinishReason,
+    CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage, FinishReason,
     MessageRole, ProviderError, ReasoningEffort, ToolCall,
 };
 
@@ -895,13 +895,16 @@ impl Provider for ZaiProvider {
         &self.id
     }
 
-    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+    async fn complete_ref(
+        &self,
+        req: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
         self.complete_inner(req, None).await
     }
 
-    async fn complete_observed(
+    async fn complete_observed_ref(
         &self,
-        req: CompletionRequest,
+        req: CompletionRequestRef<'_>,
         observer: &dyn ToolCallObserver,
     ) -> Result<CompletionResult, ProviderError> {
         self.complete_inner(req, Some(observer)).await
@@ -909,15 +912,15 @@ impl Provider for ZaiProvider {
 }
 
 impl ZaiProvider {
-    /// The one request/stream/aggregate body behind both `complete` and
-    /// `complete_observed` — the observer is threaded down to the stream
+    /// The one request/stream/aggregate body behind both `complete_ref` and
+    /// `complete_observed_ref` — the observer is threaded down to the stream
     /// aggregator, which announces each tool call as soon as the next one
     /// starts streaming. That is the only per-call boundary this dialect
     /// emits mid-stream, and it leaves the turn's last call unannounced —
     /// see [`ToolCallAccumulator::announced`] for what that costs.
     async fn complete_inner(
         &self,
-        req: CompletionRequest,
+        req: CompletionRequestRef<'_>,
         observer: Option<&dyn ToolCallObserver>,
     ) -> Result<CompletionResult, ProviderError> {
         // Some upstreams OpenRouter fronts make reasoning mandatory and answer
@@ -927,14 +930,15 @@ impl ZaiProvider {
         // default. Same family of provider-quirk gate as the sampling-param and
         // thinking-shape omissions in the sibling adapters.
         let disables_reasoning = self.id == "openrouter" && req.reasoning == Some(false);
-        // Only that one path can ever need a second attempt, so only it pays
-        // for the retained copy: the request owns the whole replayed message
-        // history, and cloning it on every turn of every identity would
-        // duplicate the conversation once per model call for nothing.
+        // Keeping the request for a possible resend used to mean retaining a
+        // copy of the whole replayed message history, so the fast path was
+        // written to avoid paying for it. Since #921 the request is a borrowed
+        // `Copy` view, so both arms are the same nothing and the branch stays
+        // only because the *resend* is what needs guarding, not the copy.
         if !disables_reasoning {
             return self.complete_attempt(req, observer, false).await;
         }
-        match self.complete_attempt(req.clone(), observer, false).await {
+        match self.complete_attempt(req, observer, false).await {
             Err(ProviderError::Terminal(detail)) if rejects_disabled_reasoning(&detail) => {
                 self.complete_attempt(req, observer, true).await
             }
@@ -947,7 +951,7 @@ impl ZaiProvider {
     /// applies its own default instead of rejecting the request.
     async fn complete_attempt(
         &self,
-        req: CompletionRequest,
+        req: CompletionRequestRef<'_>,
         observer: Option<&dyn ToolCallObserver>,
         force_default_reasoning: bool,
     ) -> Result<CompletionResult, ProviderError> {
@@ -957,7 +961,7 @@ impl ZaiProvider {
         let params = req.params.unwrap_or_default();
         let body = ZaiRequest {
             model: &self.model,
-            messages: to_zai_messages(&req.messages),
+            messages: to_zai_messages(req.messages),
             stream: true,
             max_tokens: req.max_output_tokens,
             temperature: req.temperature,
@@ -994,7 +998,7 @@ impl ZaiProvider {
             reasoning_effort: (self.id == "xai" && xai_supports_reasoning_effort(&self.model))
                 .then(|| xai_reasoning_effort(req.reasoning, req.effort))
                 .flatten(),
-            tools: to_zai_tools(&req.tools),
+            tools: to_zai_tools(req.tools),
             usage: self
                 .usage_accounting
                 .then_some(ZaiUsageInclude { include: true }),

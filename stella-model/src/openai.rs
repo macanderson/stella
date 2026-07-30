@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stella_protocol::{
-    CompletionMessage, CompletionRequest, CompletionResult, CompletionUsage, FinishReason,
+    CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage, FinishReason,
     MessageRole, ProviderError, ReasoningEffort, ServiceTier, ToolCall, ToolCallObserver,
     Verbosity,
 };
@@ -552,13 +552,16 @@ impl Provider for OpenAiProvider {
         "openai"
     }
 
-    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+    async fn complete_ref(
+        &self,
+        req: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
         self.complete_inner(req, None).await
     }
 
-    async fn complete_observed(
+    async fn complete_observed_ref(
         &self,
-        req: CompletionRequest,
+        req: CompletionRequestRef<'_>,
         observer: &dyn ToolCallObserver,
     ) -> Result<CompletionResult, ProviderError> {
         self.complete_inner(req, Some(observer)).await
@@ -566,17 +569,17 @@ impl Provider for OpenAiProvider {
 }
 
 impl OpenAiProvider {
-    /// Shared body of [`Provider::complete`] and
-    /// [`Provider::complete_observed`]. The request has always set
+    /// Shared body of [`Provider::complete_ref`] and
+    /// [`Provider::complete_observed_ref`]. The request has always set
     /// `stream: true` and the response has always been consumed as SSE; the
     /// only difference is whether anything is told about the parts as they
     /// land.
     async fn complete_inner(
         &self,
-        req: CompletionRequest,
+        req: CompletionRequestRef<'_>,
         observer: Option<&dyn ToolCallObserver>,
     ) -> Result<CompletionResult, ProviderError> {
-        let (instructions, input) = to_openai_input(&req.messages);
+        let (instructions, input) = to_openai_input(req.messages);
         let params = req.params.unwrap_or_default();
         let body = OpenAiRequest {
             model: &self.model,
@@ -606,7 +609,7 @@ impl OpenAiProvider {
             text: params.verbosity.map(|verbosity| OpenAiText {
                 verbosity: map_verbosity(verbosity),
             }),
-            tools: to_openai_tools(&req.tools),
+            tools: to_openai_tools(req.tools),
             // `reasoning == Some(false)` suppresses the reasoning object even
             // when an effort is pinned — an explicit off must win. A bare
             // `Some(true)` with no effort turns thinking on at the API's
@@ -828,6 +831,7 @@ async fn aggregate_openai_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use stella_protocol::CompletionRequest;
     use stella_protocol::tool::ToolSchema;
     use wiremock::matchers::{body_string_contains, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -1145,7 +1149,7 @@ mod tests {
         (result, observer)
     }
 
-    /// #612 -- OpenAI already streamed on the wire; only `complete_observed`
+    /// #612 -- OpenAI already streamed on the wire; only `complete_observed_ref`
     /// was missing, so it inherited the trait's silent default and the deck
     /// stayed blank for the whole turn.
     #[tokio::test]

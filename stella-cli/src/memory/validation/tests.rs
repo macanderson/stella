@@ -164,7 +164,7 @@ fn the_verdict_is_deterministic_validation_attached_to_the_latest_use_once() {
                 origin_step: 0,
                 call_id: None,
                 memory_id: Some(id.clone()),
-                token_cost: 10,
+                token_cost: Some(10),
                 content_digest: "sha256:0".into(),
                 citation_label: Some("label".into()),
                 content: None,

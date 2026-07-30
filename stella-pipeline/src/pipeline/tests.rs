@@ -16,7 +16,7 @@ use stella_core::router::{CircuitBreaker, ProviderProfile, RoleTable};
 use stella_core::{Clock, ToolExecutor};
 use stella_protocol::event::BudgetMode;
 use stella_protocol::{
-    CompletionRequest, CompletionResult, CompletionUsage, FileChangeKind, MessageRole,
+    CompletionRequestRef, CompletionResult, CompletionUsage, FileChangeKind, MessageRole,
     ProviderError, ScopeProposal, ToolOutput, ToolSchema,
 };
 use tokio::sync::Mutex as TokioMutex;
@@ -228,7 +228,10 @@ impl Provider for ScriptedProvider {
     fn id(&self) -> &str {
         "scripted"
     }
-    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+    async fn complete_ref(
+        &self,
+        req: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
         self.seen.lock().unwrap().push(
             req.messages
                 .iter()

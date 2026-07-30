@@ -107,6 +107,13 @@ pub fn entry_fields(entry: &TranscriptEntry) -> Vec<&str> {
         E::MediaComplete { label, path, .. } => vec![label, path],
         E::JudgeVerdict { summary, .. } | E::ScopeReview { summary, .. } => vec![summary],
         E::GoalVerdict { reasoning, .. } => vec![reasoning],
+        // The child's id and task are the searchable part; its summary never
+        // reaches the transcript, by design.
+        E::SubAgent {
+            agent_id,
+            instruction_preview,
+            ..
+        } => vec![agent_id, instruction_preview],
         E::AskUser { question, .. } => vec![question],
         E::Commit { sha, message } => vec![sha, message],
         E::Pr { url, .. } => vec![url],

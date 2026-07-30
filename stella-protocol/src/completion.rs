@@ -212,6 +212,121 @@ pub struct CompletionRequest {
     pub tools: Vec<ToolSchema>,
 }
 
+/// A borrowed view of a [`CompletionRequest`] — the currency of the
+/// [`Provider`](crate::provider::Provider) port, and what every adapter
+/// actually serializes from.
+///
+/// # Why the port borrows (#921)
+///
+/// The engine's retry loop drives each attempt through an `FnMut` closure.
+/// Because that closure may be called again, it cannot move its inputs, so an
+/// *owning* request forced every attempt to deep-copy the entire conversation
+/// — every message `String`, every tool call's `serde_json::Value`, every tool
+/// result payload — plus every [`ToolSchema`] with its full JSON parameter
+/// document. On a 200-step turn against a 150k-token transcript with ~60 MCP
+/// tools that is hundreds of megabytes of allocator churn, all discarded
+/// immediately after serialization, and it grows with conversation length —
+/// so the cost peaked exactly when the user was deepest into a session.
+///
+/// This type is `Copy` (slices and scalars only), which is what makes the
+/// single-attempt path — the overwhelmingly common one — free: the closure
+/// holds one view and hands out a fresh copy per attempt without allocating.
+///
+/// # A structural prompt-cache guarantee
+///
+/// The byte-stability contract (L-E8 / #372) says the system prefix at message
+/// index 0 must not move between steps, or every provider's prompt cache is
+/// invalidated on each call. Borrowing makes that property structural rather
+/// than merely observed: the adapter serializes directly off the caller's
+/// slice, so there is no intermediate copy in which drift *could* occur.
+///
+/// Deliberately **not** `Serialize`. A second derive would be a second
+/// authority on the wire shape, and the two could silently diverge on a
+/// `skip_serializing_if` — precisely the drift the byte-stability contract
+/// exists to forbid. Anything that needs bytes goes through
+/// [`CompletionRequestRef::into_owned`], so [`CompletionRequest`] stays the one
+/// serialization shape.
+#[derive(Debug, Clone, Copy)]
+pub struct CompletionRequestRef<'a> {
+    /// The conversation so far, in order, starting with the system message.
+    pub messages: &'a [CompletionMessage],
+    /// Upper bound on generated tokens. `None` uses the provider default.
+    pub max_output_tokens: Option<u32>,
+    /// Sampling temperature. `None` uses the provider default.
+    pub temperature: Option<f32>,
+    /// Reasoning effort for models that support a thinking mode.
+    pub effort: Option<ReasoningEffort>,
+    /// Whether the model's thinking mode is enabled at all — see
+    /// [`CompletionRequest::reasoning`].
+    pub reasoning: Option<bool>,
+    /// Optional sampling/routing overrides ([`GenerationParams`]).
+    pub params: Option<GenerationParams>,
+    /// Tool schemas the model may call ([`ToolSchema`]).
+    pub tools: &'a [ToolSchema],
+}
+
+impl CompletionRequest {
+    /// Borrow this request as the view the provider port takes.
+    ///
+    /// Named `as_borrowed` rather than `as_ref` so it does not shadow the
+    /// meaning of the `AsRef` trait for readers (and so `clippy` does not read
+    /// it as a botched impl of one).
+    #[must_use]
+    pub fn as_borrowed(&self) -> CompletionRequestRef<'_> {
+        // Exhaustive destructure, deliberately without `..`: a field added to
+        // `CompletionRequest` but not threaded through the view is a compile
+        // error right here, rather than a parameter that silently stops
+        // reaching the wire on the hot path while the owned path still carries
+        // it. The two shapes cannot drift apart without the build saying so.
+        let Self {
+            messages,
+            max_output_tokens,
+            temperature,
+            effort,
+            reasoning,
+            params,
+            tools,
+        } = self;
+        CompletionRequestRef {
+            messages,
+            max_output_tokens: *max_output_tokens,
+            temperature: *temperature,
+            effort: *effort,
+            reasoning: *reasoning,
+            params: *params,
+            tools,
+        }
+    }
+}
+
+impl CompletionRequestRef<'_> {
+    /// Materialize an owning [`CompletionRequest`] — the deep copy this type
+    /// exists to avoid, taken explicitly, at the one kind of boundary that
+    /// genuinely needs it: a request that must outlive the borrow (crossing a
+    /// channel, being serialized into a stored frame).
+    #[must_use]
+    pub fn into_owned(self) -> CompletionRequest {
+        let Self {
+            messages,
+            max_output_tokens,
+            temperature,
+            effort,
+            reasoning,
+            params,
+            tools,
+        } = self;
+        CompletionRequest {
+            messages: messages.to_vec(),
+            max_output_tokens,
+            temperature,
+            effort,
+            reasoning,
+            params,
+            tools: tools.to_vec(),
+        }
+    }
+}
+
 /// Token accounting for a single completion, normalized across providers
 /// into one envelope: normalization lives in the adapter, not the caller.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
