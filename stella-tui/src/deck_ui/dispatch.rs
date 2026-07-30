@@ -264,8 +264,10 @@ mod tests {
     #[test]
     fn always_spawn_restores_the_old_silent_fork() {
         let model = model_with_lead(crate::AgentStatus::Running);
-        let mut ui = DeckUi::default();
-        ui.ask_before_spawn = AskBeforeSpawn::AlwaysSpawn;
+        let mut ui = DeckUi {
+            ask_before_spawn: AskBeforeSpawn::AlwaysSpawn,
+            ..Default::default()
+        };
         assert_eq!(
             route(&mut ui, &model, "go".into()),
             Some(WorkspaceInput::Enqueue { text: "go".into() })
