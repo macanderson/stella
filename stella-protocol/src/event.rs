@@ -694,6 +694,19 @@ pub enum AgentEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         compiled_frame: Option<CompiledContextFrameBuilt>,
     },
+    /// One observable step of the proof this turn is building for itself.
+    ///
+    /// The pipeline already decided all of this — it read the diff, bought or
+    /// declined a witness, watched a command fail and then pass — and until
+    /// now kept every step to itself. A run that proves its work looked
+    /// identical to one that did not, because the only proof artifact on the
+    /// stream was the verdict at the end. These are the intermediate
+    /// observations, emitted as they are made, so a renderer can show the
+    /// proof accumulating **beside** the work instead of announcing it after.
+    ///
+    /// Strictly observability: no consumer decides anything from these, and
+    /// the verdict remains the authority on whether the work is verified.
+    Proof { step: ProofStep },
     /// A verification verdict — from the deterministic ladder (flip oracle,
     /// touched-tests-green) or the model judge (L-E11: deterministic-first;
     /// model judges handle only inconclusive evidence).
@@ -874,6 +887,7 @@ agent_event_tags! {
     ContextWrite => "context_write",
     BlockRegistered => "block_registered",
     StepManifest => "step_manifest",
+    Proof => "proof",
     JudgeVerdict => "judge_verdict",
     ScopeReview => "scope_review",
     AskUser => "ask_user",
@@ -1036,6 +1050,80 @@ pub struct JudgeEvidence {
     /// take it on faith.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence_refs: Vec<String>,
+}
+
+/// Which code state a [`ProofStep::Oracle`] observation was made against.
+///
+/// The distinction is the whole content of a flip: the same command failing in
+/// `Baseline` and passing in `Candidate` is proof, while either result twice
+/// against one tree is a tree observed twice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProofTree {
+    /// The pre-execution tree — the code as it was before this turn touched it.
+    Baseline,
+    /// The executed tree — the code as this turn left it.
+    Candidate,
+}
+
+/// One step of the proof a turn builds for its own work, in the order the
+/// pipeline makes the observation. Carried by [`AgentEvent::Proof`].
+///
+/// Additive to the wire contract in both directions: an older reader sees the
+/// whole event as [`AgentEvent::Unknown`], and a reader that knows `Proof` but
+/// not a future step tags it `Unknown` at the step level rather than guessing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ProofStep {
+    /// What assurance this turn is going to buy, stated by triage **before**
+    /// any of it happens.
+    ///
+    /// Emitted first, and the reason the rail can be honest at all. Every
+    /// other step reports something that *did* happen, so a turn where the
+    /// answer is "we decided not to" produced no steps and left the surface
+    /// with nothing to say — which is exactly the case that dominates in
+    /// practice. A declared plan turns that silence into a statement: the
+    /// witness row reads "waived by triage" from the first second of the
+    /// turn instead of implying a test is still coming.
+    Assurance {
+        /// Whether an independently authored witness test was called for.
+        witness: bool,
+        /// Whether a model judge was called for on inconclusive evidence.
+        judge: bool,
+    },
+    /// The warrant read the diff and answered "does this change need a test".
+    /// Emitted once per candidate, before any witness is bought — a change
+    /// with nothing to prove is a *stated* outcome here, never silence.
+    Warrant {
+        required: bool,
+        /// The stated reason when no test is warranted; `None` when one is.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+        /// Size of the change the answer was read from.
+        diff_lines: u32,
+    },
+    /// An independent model authored the failing witness, and its bytes are
+    /// pinned: any later change to `path` fails the candidate closed.
+    WitnessAuthored {
+        path: String,
+        /// The command that arms the flip oracle.
+        command: String,
+        /// The accepted artifact's fingerprint — what tamper exclusion compares
+        /// against for the rest of the run.
+        fingerprint: String,
+    },
+    /// A warranted witness could not be *produced* (no independent author, an
+    /// author that got stuck, a failed graft). The work stands; it is simply
+    /// unproven, and saying so is the point.
+    WitnessUnavailable { reason: String },
+    /// The flip oracle observed one run of the tracked command against one
+    /// tree. A fail in `Baseline` followed by a pass in `Candidate` is the
+    /// flip; anything else is not.
+    Oracle {
+        command: String,
+        passed: bool,
+        tree: ProofTree,
+    },
 }
 
 /// What a `ScopeReview` gate presents for approval before a large plan

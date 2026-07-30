@@ -55,7 +55,7 @@ use stella_core::router::FallbackInfo;
 use stella_core::{BudgetGuard, Engine, EngineConfig, EventSender, Router, TurnOutcome};
 use stella_protocol::{
     AgentEvent, CompletionMessage, ContextUsage, JudgeEvidence, MessageRole, ModelCallRole,
-    ModelRef, Provider, Role, StageKind,
+    ModelRef, ProofStep, ProofTree, Provider, Role, StageKind,
 };
 
 use crate::candidate::{
@@ -962,7 +962,7 @@ impl<'a> Pipeline<'a> {
         // assurance down. It fires on one shape (a bare deletion of a named
         // artifact) where an authored witness has nothing to fail against and
         // the author can only invent something vacuous.
-        Ok(match assessment {
+        let resolved = match assessment {
             Some(assessment) => {
                 let class = resolve_task_class(Some(assessment.class), goal);
                 TaskAssessment {
@@ -980,7 +980,25 @@ impl<'a> Pipeline<'a> {
                     ..TaskAssessment::from_class(class)
                 }
             }
-        })
+        };
+        // The turn's assurance PLAN, published the moment it is decided and
+        // before any later stage can fail, abort, or decline to run.
+        //
+        // Every other proof step reports something that happened, so the most
+        // common outcome by far — triage deciding this change does not warrant
+        // a test — used to produce no steps at all and leave the surface with
+        // nothing to say about the thing it exists to say. A declared plan
+        // makes "we chose not to" a statement rather than an absence.
+        //
+        // Not emitted for a conversational turn: there is no work, so there is
+        // no assurance question, and answering an unasked one is noise.
+        if !resolved.conversational {
+            self.emit_proof(ProofStep::Assurance {
+                witness: resolved.wants_witness(),
+                judge: resolved.wants_judge(),
+            });
+        }
+        Ok(resolved)
     }
 
     // Conversational fast path
@@ -1627,6 +1645,11 @@ impl<'a> Pipeline<'a> {
         {
             let pre = surface.tests.run_test(cmd.invocation).await;
             oracle.observe(cmd.command, pre.passed());
+            self.emit_proof(ProofStep::Oracle {
+                command: cmd.command.to_string(),
+                passed: pre.passed(),
+                tree: ProofTree::Baseline,
+            });
         }
 
         // Snapshot untracked files (with content fingerprints) BEFORE
@@ -1671,6 +1694,21 @@ impl<'a> Pipeline<'a> {
             // A clean lookup: nothing to verify.
             return state.into_unverified();
         }
+
+        // The warrant's answer, published from the one place that always runs
+        // for a verifying candidate. `witness_on_demand` and
+        // `warranted_completion` each re-ask it (the call is pure and cheap),
+        // but neither is reached on every path — authoring is skipped whenever
+        // there is no independent author, and the completion shortcut returns
+        // early when a test IS required. Emitting from either would make the
+        // rail's first row appear only on some runs, which is the failure this
+        // whole surface exists to end.
+        let warrant = warrant(&state.diff_text, state.file_changes);
+        self.emit_proof(ProofStep::Warrant {
+            required: warrant.is_required(),
+            reason: warrant.reason().map(|r| r.sentence().to_string()),
+            diff_lines: state.diff_lines,
+        });
 
         // Buy the witness now, or not at all. Everything above this line has
         // already happened, so the diff is evidence rather than a prediction —
@@ -2043,6 +2081,11 @@ impl<'a> Pipeline<'a> {
                 let post = surface.tests.run_test(cmd.invocation).await;
                 let passed = post.passed();
                 oracle.observe(cmd.command, passed);
+                self.emit_proof(ProofStep::Oracle {
+                    command: cmd.command.to_string(),
+                    passed,
+                    tree: ProofTree::Candidate,
+                });
                 (Some(passed), post.stderr_tail)
             }
             None => (None, String::new()),
@@ -2434,18 +2477,22 @@ impl<'a> Pipeline<'a> {
         };
         match self.resolve_provider(Role::Judge) {
             Ok(judge) if judge.model_ref != worker.model_ref => true,
+            // Both arms report through `unproven`, not a bare `warn`. A
+            // witness triage asked for and the wiring cannot supply is
+            // precisely `WitnessUnavailable` — routing it to the warning
+            // channel alone left the rail's witness row with no statement, so
+            // it fell through to the backstop's "not reported" when the real
+            // answer was known all along and worth naming.
             Ok(_) => {
-                self.warn(format!(
-                    "no witness author independent of the worker (judge and worker both \
-                     resolved to `{}`); continuing without an authored witness",
+                self.unproven(format!(
+                    "no author independent of the worker (judge and worker both resolved to `{}`)",
                     worker.model_ref
                 ));
                 false
             }
             Err(_) => {
-                self.warn(
-                    "no witness author independent of the worker (the judge role is \
-                     unresolvable); continuing without an authored witness"
+                self.unproven(
+                    "no author independent of the worker (the judge role is unresolvable)"
                         .to_string(),
                 );
                 false
@@ -2484,6 +2531,14 @@ impl<'a> Pipeline<'a> {
 
     fn emit(&self, event: AgentEvent) {
         let _ = self.events.send(event);
+    }
+
+    /// Publish one step of the proof this turn is building for itself. Pure
+    /// observability — nothing downstream reads these back, and dropping them
+    /// changes no decision — but a run that proves its work used to be
+    /// indistinguishable on the stream from one that did not.
+    fn emit_proof(&self, step: ProofStep) {
+        self.emit(AgentEvent::Proof { step });
     }
 }
 

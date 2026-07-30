@@ -1,12 +1,12 @@
 # Context reuse: identity, accounting, consent, and verification
 
-<!-- NORMATIVE-HOME: macanderson/context-graph-protocol @ 6f8d7ef (contextgraph/1.0-draft) -->
+<!-- NORMATIVE-HOME: macanderson/context-graph-protocol @ eeba49c (contextgraph/1.0-draft) -->
 
 <!--
   VENDORED — do not edit this copy.
 
   Source: macanderson/context-graph-protocol, docs/context-reuse.md
-  Rev:    6f8d7ef13b2528c26913c6472405408ba2584a85
+  Rev:    eeba49cef9a7604bd910d4faa871702869144ed0
 
   This is the normative contract cited by 23 rustdoc comments across five
   crates (stella-cli, stella-context, stella-graph, stella-pipeline,

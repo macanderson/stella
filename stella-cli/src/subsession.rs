@@ -33,7 +33,7 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::{oneshot, watch};
 
 use crate::agent;
-use crate::command_deck::{now_ms, prompt_line, spawn_forwarder};
+use crate::command_deck::{LEAD, now_ms, prompt_line, spawn_forwarder};
 use crate::config::Config;
 use crate::runtime::TokioSleeper;
 
@@ -678,6 +678,19 @@ pub(crate) fn drain_queue(
             agent: lane.clone(),
             text: text.clone(),
         });
+        // Say so where the user is actually looking. Until now the only trace
+        // of a spawn was a trace-strip row and a new dashboard lane on another
+        // tab, so a prompt typed mid-turn appeared to do nothing — the deck
+        // silently started a second agent and never said which one or how to
+        // reach it. `ShellEvent` is the transcript-only channel (no status
+        // flip, no counters, no second trace row), which is exactly right for
+        // a notice about a lane other than the one it prints on.
+        let _ = in_tx.send(Inbound::ShellEvent {
+            agent: LEAD.to_string(),
+            event: AgentEvent::Text {
+                delta: spawn_notice(&lane, &text),
+            },
+        });
         let (stop_tx, stop_rx) = oneshot::channel();
         let (pause_tx, pause_rx) = watch::channel(false);
         let spec = SubSessionSpec {
@@ -701,6 +714,24 @@ pub(crate) fn drain_queue(
             pause_rx,
         );
     }
+}
+
+/// The lead-transcript notice a spawn prints: that the prompt started, which
+/// lane took it, that this turn is unaffected, and — the part that was missing
+/// entirely — the keys in and back out again.
+///
+/// The navigation line repeats on every spawn rather than only the first.
+/// Workers are capped at [`MAX_CONCURRENT`], so this is a handful of lines per
+/// session at worst, and a hint the user has to remember from ten minutes ago
+/// is a hint that isn't there.
+pub(crate) fn spawn_notice(lane: &str, prompt: &str) -> String {
+    format!(
+        "▸ {lane} started in parallel — {}\n  \
+         This turn keeps running; {lane} does not block it.\n  \
+         Open it: AGENTS tab (tab) → ↑↓ select {lane} → ⏎.  \
+         Back here: AGENTS → select {LEAD} → ⏎.\n",
+        prompt_line(prompt, 56),
+    )
 }
 
 /// Respawn an ended lane from its retained spec — the Restart verb. `false`
@@ -826,6 +857,56 @@ pub(crate) async fn shutdown_workers(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The spawn notice is the only thing standing between a mid-turn prompt
+    /// and looking like it did nothing, so its four jobs are pinned: name the
+    /// lane, say this turn is unaffected, say how to open the lane, and say
+    /// how to get back. A prettier wording is fine; a wording that drops one
+    /// of these is the regression.
+    #[test]
+    fn the_spawn_notice_names_the_lane_and_the_keys_in_and_out() {
+        let notice = spawn_notice("req:1", "fix the flaky witness test");
+
+        assert!(
+            notice.contains("req:1"),
+            "the notice must name the lane that took the prompt: {notice}"
+        );
+        assert!(
+            notice.contains("fix the flaky witness test"),
+            "the notice must echo the prompt so the user can tell which one it \
+             was: {notice}"
+        );
+        assert!(
+            notice.contains("does not block"),
+            "the notice must say the running turn is unaffected — that is the \
+             whole point of dispatching to a worker: {notice}"
+        );
+        assert!(
+            notice.contains("AGENTS"),
+            "the notice must name the tab that reaches the lane: {notice}"
+        );
+        assert!(
+            notice.contains(LEAD),
+            "the notice must say how to get BACK to the lead, not just in: \
+             {notice}"
+        );
+    }
+
+    /// A long prompt is truncated rather than dumped into the transcript — the
+    /// notice is a signpost, not a second copy of the prompt.
+    #[test]
+    fn the_spawn_notice_truncates_a_long_prompt() {
+        let long = "x".repeat(400);
+        let notice = spawn_notice("req:2", &long);
+        assert!(
+            !notice.contains(&long),
+            "the full prompt must not be inlined verbatim"
+        );
+        assert!(
+            notice.lines().count() <= 4,
+            "the notice must stay a few lines — it prints on every spawn: {notice}"
+        );
+    }
 
     #[test]
     fn workers_clone_the_exact_parent_media_journal() {

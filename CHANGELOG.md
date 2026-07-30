@@ -26,6 +26,18 @@ record of *changes*, curated by the person who made them.
 
 ## [Unreleased]
 
+## [0.6.8] — 2026-07-30
+
+### Fixed
+
+- The transcript no longer eats underscores in identifiers. `tool_use_id`
+  rendered as "tooluseid" with an italic "use", because the markdown renderer
+  accepted `_` as an emphasis delimiter mid-word — so every `snake_case` field
+  and API property name in an agent's prose was silently rewritten. `_` now
+  only delimits emphasis on a word boundary (CommonMark's intraword rule), and
+  `__` is always literal so `__init__` and `__all__` survive too. `_emphasis_`
+  and `**bold**` are unchanged.
+
 ## [0.6.7] — 2026-07-30
 
 ## [0.6.6] — 2026-07-30
