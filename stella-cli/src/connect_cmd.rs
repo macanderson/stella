@@ -16,7 +16,6 @@ use stella_tools::tracker_auth::{
     TrackerProvider, TrackerStore, fetch_account_label, github_device_login, linear_oauth_login,
     now_secs,
 };
-use zeroize::Zeroizing;
 
 /// Entry point for `stella connect <cmd>`.
 pub fn run(cmd: &crate::ConnectCmd) -> Result<(), String> {

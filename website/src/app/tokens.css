@@ -31,8 +31,11 @@
   --stella-ground: #080a0f; /* app background */
   --stella-surface: #0b0f17; /* cards, panels */
   --stella-raised: #101623; /* popovers, selected rows */
-  --stella-hairline: #182031; /* seam — decorative only */
-  --stella-hairline-strong: #232d42; /* seam where a boundary must read */
+  --stella-hairline: #182031; /* seam — decorative only, 1.2:1 */
+  --stella-hairline-strong: #232d42; /* heavier seam — 1.4:1, still decorative */
+  --stella-hairline-contrast: #525f80; /* 3.0:1 on surface, 3.1:1 on ground —
+                                        * the only dark seam that may carry
+                                        * structure alone (BRAND.md) */
 
   /* ── Ground — paper ───────────────────────────────────────────────────── */
   --stella-paper: #ffffff;
