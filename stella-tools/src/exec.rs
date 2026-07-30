@@ -483,20 +483,20 @@ async fn drive_split(
     )
     .await
     {
-            Ok(Ok(output)) => {
-                #[cfg(unix)]
-                guard.disarm();
-                output
-            }
-            // Wait failure leaves the child's state unknown — the still-armed
-            // guard kills the group on return rather than leak it.
-            Ok(Err(e)) => return Err(format!("command failed: {e}")),
-            Err(_) => {
-                #[cfg(unix)]
-                guard.kill_now();
-                return Err(format!("`{command}` timed out after {timeout_secs}s"));
-            }
-        };
+        Ok(Ok(output)) => {
+            #[cfg(unix)]
+            guard.disarm();
+            output
+        }
+        // Wait failure leaves the child's state unknown — the still-armed
+        // guard kills the group on return rather than leak it.
+        Ok(Err(e)) => return Err(format!("command failed: {e}")),
+        Err(_) => {
+            #[cfg(unix)]
+            guard.kill_now();
+            return Err(format!("`{command}` timed out after {timeout_secs}s"));
+        }
+    };
 
     Ok((
         output.status.code().unwrap_or(-1),

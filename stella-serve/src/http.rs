@@ -553,7 +553,10 @@ mod tests {
             panic!("a well-formed request must parse");
         };
         discard_body(&mut stream, &mut req).await;
-        assert!(req.body.is_empty(), "a discarded body is never materialized");
+        assert!(
+            req.body.is_empty(),
+            "a discarded body is never materialized"
+        );
         // Exactly `Content-Length` bytes were consumed: what follows is
         // untouched, which is what proves the drain is bounded by the declared
         // length rather than reading to EOF.

@@ -613,7 +613,10 @@ async fn a_known_path_with_the_wrong_method_is_405_with_an_allow_header() {
     stream.write_all(request.as_bytes()).await.unwrap();
     let mut response = String::new();
     stream.read_to_string(&mut response).await.unwrap();
-    assert!(response.contains("405"), "wrong method on create: {response}");
+    assert!(
+        response.contains("405"),
+        "wrong method on create: {response}"
+    );
     assert!(
         response.to_ascii_lowercase().contains("allow: post"),
         "{response}"
