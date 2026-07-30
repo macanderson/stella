@@ -1252,17 +1252,7 @@ pub async fn run_deck_session(
             cfg,
             Some(&session_record.id),
         );
-        if let Some((_, id)) = &execution {
-            last_execution_id = Some(*id);
-            // Tell memory which execution it is reflecting on, before the turn
-            // runs. The post-turn self-review is stored 1:1 with an execution,
-            // so a loop that cannot name the row writes nothing — which is why
-            // `self_rating` was NULL on every reflection row this deck ever
-            // recorded, and the Observatory's self-improve panels sat empty.
-            if let Some(m) = &mut memory {
-                m.set_execution_id(*id);
-            }
-        }
+        last_execution_id = authoring::adopt_execution(&execution, &mut memory, last_execution_id);
         let files_before = registry.files_touched().len();
         let started_unix = crate::memory::unix_now_secs();
 

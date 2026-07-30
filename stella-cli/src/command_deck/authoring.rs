@@ -77,6 +77,33 @@ pub(super) fn forward_reflection_events(
     }
 }
 
+/// Adopt this turn's execution record: hand its id to session memory, and
+/// return it as the deck's "last execution" pointer (keeping `previous` when
+/// the store never opened and there is no execution to adopt).
+///
+/// Memory has to be told, because the post-turn self-review
+/// ([`record_and_reflect_turn`] below) is stored 1:1 with an execution, and a
+/// loop that cannot name the row writes nothing at all — which is what left
+/// `execution_reflection.self_rating` NULL on every row this deck recorded and
+/// the Observatory's self-improve panels with nothing to render.
+///
+/// It lives here beside the reflection call, rather than inline in the turn
+/// loop, so the two halves of one contract — name the execution, then reflect
+/// on it — read together.
+pub(super) fn adopt_execution(
+    execution: &Option<(std::sync::Arc<stella_store::Store>, i64)>,
+    memory: &mut Option<SessionMemory>,
+    previous: Option<i64>,
+) -> Option<i64> {
+    let Some((_, id)) = execution.as_ref() else {
+        return previous;
+    };
+    if let Some(memory) = memory {
+        memory.set_execution_id(*id);
+    }
+    Some(*id)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn record_and_reflect_turn(
     memory: &mut Option<SessionMemory>,

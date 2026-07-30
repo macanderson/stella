@@ -277,10 +277,12 @@ impl SessionMemory {
     /// model's self-review can be stored against it.
     ///
     /// Called by every path that begins an execution and later reflects. Not
-    /// test-gated, unlike [`SessionMemory::set_task_id`]: the whole point is the
-    /// shipped paths calling it, and a path that forgets to silently loses that
-    /// turn's self-rating rather than failing loudly, so the callers are the
-    /// feature.
+    /// test-gated the way `set_task_id` above is (plain name, not a doc link —
+    /// that one is `#[cfg(test)]`, so a link to it is unresolvable in a doc
+    /// build and rustdoc's `-D warnings` fails the gate on it): the whole point
+    /// here is the shipped paths calling it, and a path that forgets to
+    /// silently loses that turn's self-rating rather than failing loudly, so
+    /// the callers are the feature.
     pub fn set_execution_id(&mut self, execution_id: i64) {
         self.execution_id = Some(execution_id);
     }
