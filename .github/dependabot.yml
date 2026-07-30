@@ -26,11 +26,23 @@ updates:
         patterns: ["*"]
 
   # Python benchmark harness + Harbor adapter.
+  #
+  # `harbor` itself is excluded from both. Its version is an audited constant,
+  # not a dependency: `secure_launcher` refuses to launch unless the installed
+  # version matches it exactly, and the analyzer, the study-seed freezer, the
+  # protocol, and the RUNBOOK all name the same value. #659 bumped this one
+  # line to 0.20.0 and left the other five sites alone, which made the claim
+  # path unlaunchable until #909 caught it. Moving the pin means re-auditing
+  # the launcher against the new release and updating every site together.
   - package-ecosystem: pip
     directory: /bench
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: harbor
   - package-ecosystem: pip
     directory: /bench/harbor_adapter
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: harbor
