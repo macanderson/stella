@@ -52,6 +52,8 @@ pub mod event;
 pub mod provider;
 pub mod receipt;
 pub mod role;
+#[cfg(feature = "schema")]
+pub mod schema_export;
 pub mod subagent_event;
 pub mod tokens;
 pub mod tool;

@@ -499,6 +499,29 @@ pub fn parse_jsonl(input: &str) -> Result<Vec<AgentEvent>, JsonlError> {
     Ok(events)
 }
 
+/// Run the structural conformance check over a recorded JSONL stream — the
+/// one-call composition of [`parse_jsonl`] and [`validate_stream`].
+///
+/// This is the runnable half of the wire contract, and it checks the half a
+/// JSON Schema cannot. `docs/wire/agentevent.schema.json` describes what one
+/// *event* may look like; the invariants that span several events — legal
+/// stage ordering, `tool_start`/`tool_result` pairing, a single terminal
+/// `Complete`, monotonic budget — are not expressible in JSON Schema at all. A
+/// recording in which every line validates against the schema can still be an
+/// illegal stream, and this is what says so.
+///
+/// `Ok(vec![])` means the recording conforms. `Ok(violations)` means it parsed
+/// but breaks the protocol. `Err` means it is not a readable recording at all
+/// (a malformed *interior* line — a torn tail is tolerated, L-T1).
+///
+/// # Errors
+///
+/// [`JsonlError::MalformedLine`] when an interior line is not a readable
+/// event.
+pub fn conform_jsonl(input: &str) -> Result<Vec<StreamViolation>, JsonlError> {
+    Ok(validate_stream(&parse_jsonl(input)?))
+}
+
 /// Serialize a stream to JSONL (one event per line) — the inverse of
 /// [`parse_jsonl`], used to write fixtures and to emit `--output-format
 /// stream-json`. Never fails: every `AgentEvent` is serde-serializable by

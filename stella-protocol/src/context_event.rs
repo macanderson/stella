@@ -272,6 +272,7 @@ pub struct OutcomeAssessed {
 
 /// Stable-ID payload of `compiled_context_frame_built`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct CompiledContextFrameBuilt {
     /// The compiled frame id.
     pub compiled_frame_id: String,

@@ -30,6 +30,7 @@ pub struct ToolSchema {
 
 /// One tool invocation the model requested.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ToolCall {
     /// Stable id correlating this call to its eventual `ToolResult`.
     pub call_id: String,
@@ -44,6 +45,7 @@ pub struct ToolCall {
 /// The output of running a tool — success or a typed, named failure. Never a
 /// bare string: every tool result is inspectable without string-sniffing.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ToolOutput {
     /// The tool ran to completion.

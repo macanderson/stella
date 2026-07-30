@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 /// an unknown kind read from a newer emitter deserializes to [`BlockKind::Other`]
 /// rather than failing the whole event.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum BlockKind {
     /// Message index 0 — the stable system prefix, never compacted.
@@ -65,6 +66,7 @@ pub enum BlockKind {
 /// manifest time. A structural hint at emission; reconciled against reported
 /// usage by cache attribution (spec §7). Forward-compat via [`CacheZone::Other`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum CacheZone {
     /// At/before the system-block breakpoint — should cache-hit every step.
@@ -87,6 +89,7 @@ pub enum CacheZone {
 /// materialized at all) belongs only in inspectable detail views, never as
 /// the primary identifier (L-C4).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ContextFrameRef {
     /// The provider's own frame id, when the frame was materialized at all.
     /// A detail-view identifier only — never the primary one a surface shows.
@@ -131,6 +134,7 @@ pub struct ContextFrameRef {
 /// birth (spec §4). The join hub: a `RecalledFrame` carries the `memory_id` it
 /// was recalled from; a `ToolResult`/`ToolCall` carries its `call_id`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct BlockOrigin {
     /// Monotonic per session — the `run_turn` that produced the block.
     pub turn_instance: u32,
@@ -154,6 +158,7 @@ pub struct BlockOrigin {
 /// zone at that step, its estimated token cost, and how long it has been
 /// resident. Residency × cost is what makes cost-of-carry a real number.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ManifestEntry {
     pub block_id: String,
     /// Cache position class relative to the last stable breakpoint. Defaults to
@@ -188,6 +193,7 @@ pub struct ManifestEntry {
 
 /// One provider's share of a recall's frame mix.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ProviderShare {
     /// The CGP provider leg the frames came from.
     pub provider: String,
@@ -208,6 +214,7 @@ pub struct ProviderShare {
 /// Content-free by construction: a provider id, three numbers. No frame
 /// titles, bodies, URIs, or query text ever enter this type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ContextProviderUsage {
     /// The host's routing/consent key for the serving provider.
     pub provider_id: String,
@@ -232,6 +239,7 @@ pub struct ContextProviderUsage {
 /// identities locally, so an auditor still walks from a total to its frames
 /// without this type ever carrying one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ContextUsage {
     /// The query's `max_tokens` — the budget this recall was allowed.
     pub budget_requested: u32,
