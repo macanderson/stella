@@ -51,6 +51,7 @@ use crate::deck_ui::{DeckAction, DeckUi};
 use crate::envelope::{AgentScope, ToolPolicyState, ToolRow, ToolScope, WorkspaceInput};
 use crate::render::scroll_window_start;
 use crate::theme;
+use crate::views::settings::SettingsPane;
 
 /// Hint shown when an action needs the snapshot the driver has not delivered
 /// yet (a race right after startup, or a driver error).
@@ -224,6 +225,9 @@ pub fn ingest_policy(ui: &mut DeckUi, state: &ToolPolicyState, status: &Option<S
 pub fn focus_panel(ui: &mut DeckUi) -> DeckAction {
     ui.set_tab(DeckTab::Settings);
     ui.engine.focused = false;
+    // The tab shows one pane at a time — move the nav with the focus so the
+    // editor holding the keyboard is always the one on screen.
+    ui.settings_pane = SettingsPane::Tools;
     let t = &mut ui.tools;
     t.focused = true;
     t.row = 0;
@@ -441,7 +445,10 @@ pub fn render_panel(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
         if t.focused {
             " ⏎/space toggle · x clear · s save user · S save project · r reload · esc done"
         } else {
-            " t edit tool switches"
+            // `e` edits whichever pane the SETTINGS nav is on, so the hint on
+            // the visible panel is `e` — not the pane-specific `t`, which
+            // survives only as an accelerator from the other pane.
+            " e edit tool switches"
         },
         theme::muted(),
     )));

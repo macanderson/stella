@@ -895,6 +895,33 @@ impl Config {
         if let Some(summary) = loaded_env.and_then(crate::credential_status::env_files_summary) {
             println!("  Env files:  {}", summary.dimmed());
         }
+        self.print_role_wiring();
+    }
+
+    /// The four engine roles, what each will actually send, and which setting
+    /// decided it.
+    ///
+    /// Printed unconditionally, including when no engine settings exist — "all
+    /// four ride the session model" is an answer, and a block that appears
+    /// only sometimes cannot be used to check anything.
+    fn print_role_wiring(&self) {
+        use crate::config_wiring::{render, resolve};
+        let configured = discover_configured_providers();
+        let is_provider = |id: &str| configured.iter().any(|c| c.config.id == id);
+        let session = crate::engine_config::ModelSpec {
+            provider: self.provider.id.to_string(),
+            model: self.model_id.clone(),
+        };
+        let wiring = resolve(
+            self.engine_settings.as_ref(),
+            &session,
+            self.model_pinned_by_flag,
+            &is_provider,
+        );
+        println!("\n  {}", "Engine roles".bright_cyan().bold());
+        for line in render(&wiring) {
+            println!("    {line}");
+        }
     }
 }
 

@@ -127,6 +127,129 @@ pub(super) fn unknown_keys_in(path: &Path) -> Vec<String> {
     found
 }
 
+/// Top-level `stella.toml` keys. Deliberately a SEPARATE list from
+/// [`ROOT_FIELDS`]: the TOML document renames three of them
+/// (`agent_engine_config` → `agents`, `enable_recap` → `run.recap`,
+/// `allowed_models` → `models.allowed`) and adds `meta`. Sharing one list
+/// would make a JSON-only key look valid in TOML and vice versa, which is the
+/// exact confusion this pass exists to prevent.
+const TOML_ROOT_FIELDS: &[&str] = &[
+    "meta",
+    "run",
+    "providers",
+    "models",
+    "agents",
+    "tools",
+    "hooks",
+    "mcp",
+    "context",
+    "context_providers",
+    "ui",
+    "authority",
+    "enterprise_telemetry",
+];
+
+const META_FIELDS: &[&str] = &["schema_version", "scope"];
+const RUN_FIELDS: &[&str] = &["recap"];
+const MODELS_FIELDS: &[&str] = &["allowed"];
+const TOML_MCP_FIELDS: &[&str] = &["registry_url", "servers"];
+
+/// `[agents]` — the flat engine fields plus the four agent tables, which live
+/// in the same table because the TOML shape flattens
+/// `agent_engine_config.agents.<name>` up one level.
+const TOML_AGENTS_FIELDS: &[&str] = &[
+    "default_model",
+    "pipeline_judge_model",
+    "pipeline_worker_model",
+    "pipeline_triage_model",
+    "auto_mode",
+    "effort_auto",
+    "reasoning_auto",
+    "headless_scope_bypass",
+    "default",
+    "worker",
+    "judge",
+    "triage",
+];
+
+/// The unrecognized keys in the `stella.toml` at `path`.
+///
+/// Converts to `serde_json::Value` and reuses the same [`closed`] walker rather
+/// than growing a second traversal over `toml::Value`. Two walkers over two
+/// value types would drift the first time a nested block gained a field, and a
+/// drifted walker fails SILENTLY — it stops warning about the very typo it
+/// exists to catch.
+pub(super) fn unknown_toml_keys_in(path: &Path) -> Vec<String> {
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(parsed) = toml::from_str::<toml::Value>(&contents) else {
+        return Vec::new();
+    };
+    let Ok(root) = serde_json::to_value(parsed) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    scan_toml_root(&root, &mut found);
+    found.sort();
+    found.dedup();
+    found
+}
+
+fn scan_toml_root(root: &Value, found: &mut Vec<String>) {
+    let Some(object) = root.as_object() else {
+        return;
+    };
+    for (key, value) in object {
+        if !TOML_ROOT_FIELDS.contains(&key.as_str()) {
+            found.push(key.clone());
+            continue;
+        }
+        match key.as_str() {
+            "meta" => closed("meta", value, META_FIELDS, found),
+            "run" => closed("run", value, RUN_FIELDS, found),
+            "models" => closed("models", value, MODELS_FIELDS, found),
+            "mcp" => closed("mcp", value, TOML_MCP_FIELDS, found),
+            "ui" => closed("ui", value, UI_FIELDS, found),
+            "hooks" => closed("hooks", value, HOOK_EVENTS, found),
+            "providers" => {
+                if let Some(entries) = value.as_object() {
+                    for (id, entry) in entries {
+                        closed(&format!("providers.{id}"), entry, PROVIDER_FIELDS, found);
+                    }
+                }
+            }
+            "agents" => scan_toml_agents(value, found),
+            // `tools`, `context_providers`, `context`, `authority`, and
+            // `enterprise_telemetry` are open maps or types owned elsewhere —
+            // same treatment as the JSON walker gives them.
+            _ => {}
+        }
+    }
+}
+
+fn scan_toml_agents(agents: &Value, found: &mut Vec<String>) {
+    closed("agents", agents, TOML_AGENTS_FIELDS, found);
+    let Some(map) = agents.as_object() else {
+        return;
+    };
+    for name in ENGINE_AGENT_NAMES {
+        let Some(agent) = map.get(*name) else {
+            continue;
+        };
+        let prefix = format!("agents.{name}");
+        closed(&prefix, agent, ENGINE_AGENT_FIELDS, found);
+        if let Some(params) = agent.get("params") {
+            closed(
+                &format!("{prefix}.params"),
+                params,
+                ENGINE_PARAM_FIELDS,
+                found,
+            );
+        }
+    }
+}
+
 /// Flag every key of `value` (when it is an object) outside `allowed`,
 /// prefixed with `prefix`.
 fn closed(prefix: &str, value: &Value, allowed: &[&str], found: &mut Vec<String>) {

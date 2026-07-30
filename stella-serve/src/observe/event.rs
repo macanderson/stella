@@ -291,6 +291,32 @@ pub enum StreamEndReason {
     SessionEnded,
 }
 
+impl StreamEndReason {
+    /// Whether this ending means *the subscriber* went away while the turn
+    /// itself is still worth keeping — the condition for parking it rather than
+    /// cancelling it outright.
+    ///
+    /// Two reasons qualify, and they are two names for one event. A stream
+    /// reads the peer's half while it writes frames, so a subscriber that hangs
+    /// up is discovered by whichever of the two notices first: the read, as EOF
+    /// ([`Self::PeerDisconnected`]), or the next write, as a broken pipe
+    /// ([`Self::WriteFailed`]). Those races are decided by `tokio::select!`,
+    /// which polls its branches in a deliberately randomized order — so without
+    /// this, a coin flip inside the runtime decided whether a host that dropped
+    /// its connection could resume the turn it had already paid a model call
+    /// for, or got `404 unknown turn` on reconnect. The distinction is still
+    /// worth *recording* (a failed write says the socket died mid-frame, an EOF
+    /// says it closed cleanly); it is not worth a different lifecycle.
+    ///
+    /// Everything else is final. [`Self::StrayBytes`] is a peer that is very
+    /// much still there and speaking the protocol wrongly; the rest describe
+    /// the *turn* ending, and a finished turn has nothing left to resume.
+    #[must_use]
+    pub fn leaves_the_turn_resumable(self) -> bool {
+        matches!(self, Self::PeerDisconnected | Self::WriteFailed)
+    }
+}
+
 /// Which port raised a reverse request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -587,6 +613,49 @@ mod tests {
             assert_eq!(event, back, "round trip changed the value: {json}");
             let again = serde_json::to_string(&back).expect("re-serialize");
             assert_eq!(json, again, "round trip is not byte-stable");
+        }
+    }
+
+    /// A subscriber hanging up is *one* event with two names, because the
+    /// stream discovers it from whichever of its two halves touches the dead
+    /// socket first — the read, as EOF, or the next write, as a broken pipe.
+    /// Both must keep the turn resumable.
+    ///
+    /// This is the invariant, not a restatement of the implementation: the two
+    /// are raced by a `tokio::select!` that randomizes which branch it polls,
+    /// so when only `PeerDisconnected` parked the turn, a coin flip inside the
+    /// runtime decided whether a host that dropped its connection could resume
+    /// the turn it had already paid a model call for — the other side of the
+    /// flip cancelled it and answered the reconnect `404 unknown turn`.
+    #[test]
+    fn both_spellings_of_a_hang_up_keep_the_turn_resumable() {
+        assert!(StreamEndReason::PeerDisconnected.leaves_the_turn_resumable());
+        assert!(
+            StreamEndReason::WriteFailed.leaves_the_turn_resumable(),
+            "a write that failed because the subscriber is gone is that \
+             subscriber being gone, and must park the turn exactly as an EOF \
+             does — otherwise which of two ready select! branches the runtime \
+             happens to poll decides whether the turn survives"
+        );
+    }
+
+    /// The other half of the same rule: an ending that is *not* the peer going
+    /// away must stay final, or a settled turn would be parked — holding an OS
+    /// thread and a registry slot for a reconnect that has nothing to resume.
+    #[test]
+    fn an_ending_that_is_not_a_hang_up_is_final() {
+        for reason in [
+            StreamEndReason::TurnComplete,
+            StreamEndReason::ResumeWindowExpired,
+            StreamEndReason::SessionEnded,
+            // The peer is emphatically still there — it is talking, just
+            // wrongly. Nothing to wait for.
+            StreamEndReason::StrayBytes,
+        ] {
+            assert!(
+                !reason.leaves_the_turn_resumable(),
+                "{reason:?} does not describe a subscriber going away"
+            );
         }
     }
 

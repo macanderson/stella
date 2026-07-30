@@ -559,6 +559,9 @@ pub struct DeckUi {
     pub tab: DeckTab,
     /// The AGENTS tab's secondary nav: EXECUTIONS | INSTALLED AGENTS.
     pub agents_pane: AgentsPane,
+    /// The SETTINGS tab's secondary nav: AGENTS | TOOLS. Which editor the tab
+    /// renders full-width, and which one `e` focuses.
+    pub settings_pane: crate::views::settings::SettingsPane,
     /// The INSTALLED AGENTS pane's state.
     pub installed: InstalledPanel,
     /// The SKILLS tab's view state (installed list, search, overlays).
@@ -768,6 +771,7 @@ impl Default for DeckUi {
         Self {
             tab: DeckTab::Session,
             agents_pane: AgentsPane::default(),
+            settings_pane: crate::views::settings::SettingsPane::default(),
             installed: InstalledPanel::default(),
             skills: SkillsPanel::default(),
             issues: IssuesPanel::default(),
@@ -3294,17 +3298,35 @@ pub(crate) fn focused_id(model: &WorkspaceModel, ui: &DeckUi) -> Option<AgentId>
 }
 
 /// The SETTINGS tab's browse keys (non-modal — the composer stays live). The
-/// tab hosts two editors side by side: `e` hands the keyboard to the
-/// `agent_engine_config` editor, `t` to the `tools` switch editor (each one's
-/// own Esc hands it back). Both are gated on a blank composer like every other
-/// tab's letter verb so typing a prompt still works from here. Once focused,
-/// that editor claims every key ahead of this handler (see `handle_deck_key`).
+/// tab hosts two editors behind a secondary nav, exactly like the AGENTS tab:
+/// ←/→ walk AGENTS ↔ TOOLS (one pane on screen at a time) and `e` hands the
+/// keyboard to whichever editor is showing (its own Esc hands it back). `t`
+/// stays as a direct accelerator to the tools editor from either pane — the
+/// key it has always been, now also switching the nav so the editor it focuses
+/// is the one on screen. All of these are gated on a blank composer like every
+/// other tab's letter verb so typing a prompt still works from here. Once
+/// focused, that editor claims every key ahead of this handler (see
+/// `handle_deck_key`), so ←/→ can never move the nav mid-edit.
 fn handle_settings_key(key: KeyEvent, ui: &mut DeckUi, composer_empty: bool) -> Option<DeckAction> {
+    use crate::views::settings::SettingsPane;
     if !composer_empty || !key.modifiers.is_empty() {
         return None;
     }
     match key.code {
-        KeyCode::Char('e') => Some(crate::views::engine::focus_panel(ui)),
+        KeyCode::Left if ui.settings_pane == SettingsPane::Tools => {
+            ui.settings_pane = SettingsPane::Agents;
+            Some(DeckAction::Handled)
+        }
+        KeyCode::Right if ui.settings_pane == SettingsPane::Agents => {
+            ui.settings_pane = SettingsPane::Tools;
+            Some(DeckAction::Handled)
+        }
+        // `e` edits what you are looking at — the one key both panes share,
+        // rather than a per-pane letter to remember.
+        KeyCode::Char('e') => Some(match ui.settings_pane {
+            SettingsPane::Agents => crate::views::engine::focus_panel(ui),
+            SettingsPane::Tools => crate::views::tools::focus_panel(ui),
+        }),
         KeyCode::Char('t') => Some(crate::views::tools::focus_panel(ui)),
         _ => None,
     }

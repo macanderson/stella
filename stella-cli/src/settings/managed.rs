@@ -52,7 +52,7 @@ pub(super) fn managed_settings_path() -> PathBuf {
 }
 
 #[cfg(unix)]
-fn read_managed_settings(path: &Path) -> std::io::Result<String> {
+pub(super) fn read_managed_settings(path: &Path) -> std::io::Result<String> {
     use std::io::Read;
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
@@ -81,7 +81,7 @@ fn read_managed_settings(path: &Path) -> std::io::Result<String> {
 }
 
 #[cfg(not(unix))]
-fn read_managed_settings(_path: &Path) -> std::io::Result<String> {
+pub(super) fn read_managed_settings(_path: &Path) -> std::io::Result<String> {
     Err(std::io::Error::new(
         std::io::ErrorKind::PermissionDenied,
         "secure managed settings are unsupported on this platform",

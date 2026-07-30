@@ -95,7 +95,7 @@ pub fn set_theme(name: ThemeName) -> Result<String, String> {
     let ui = crate::settings::UiSettings {
         theme: Some(name.slug().to_string()),
     };
-    let Some(path) = crate::settings::user_settings_path() else {
+    let Some(path) = crate::settings::user_config_path() else {
         return Err(format!(
             "theme → {} for this session, but it could not be saved for next time: \
              the user settings path is unavailable (is $HOME set?)",

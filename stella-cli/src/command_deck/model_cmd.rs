@@ -90,7 +90,7 @@ pub fn set_default_model(cfg: &Config, id: &str) -> Result<String, String> {
     {
         a.model = None;
     }
-    let path = crate::settings::user_settings_path().ok_or_else(|| {
+    let path = crate::settings::user_config_path().ok_or_else(|| {
         "could not save the default model: the user settings path is unavailable \
          (is $HOME set?)"
             .to_string()

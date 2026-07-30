@@ -37,6 +37,6 @@
 3422 stella-tools/src/registry.rs
 1837 stella-tools/src/scripts.rs
 1744 stella-tui/src/deck_render.rs
-3866 stella-tui/src/deck_ui.rs
-1660 stella-tui/src/views/engine.rs
+4073 stella-tui/src/deck_ui.rs
+1665 stella-tui/src/views/engine.rs
 1533 stella-tui/src/views/session.rs

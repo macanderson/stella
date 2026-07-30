@@ -5,13 +5,16 @@
 # single-file TOML shape. This is the migration target for phase 1: a pure
 # transliteration, no new semantics, no invented keys.
 #
-#   *** THIS FILE DOES NOT LOAD YET. ***
+#   *** THIS FILE NOW LOADS — with one exception, noted below. ***
 #
-# Stella reads `settings.json` (JSON) + `.stella/mcp.toml` today. Nothing
-# parses this file. It exists so the port can be reviewed key-by-key against
-# the running code before any of it is built. Every key below was verified
-# against a serde struct or a `const &[&str]` in the workspace; the source is
-# named in the comment above each block.
+# Phase 1 shipped: drop this at <repo>/stella.toml (or ~/.stella/stella.toml)
+# and stella reads it. `stella migrate config` generates one from an existing
+# settings.json. Every key below was verified against a serde struct or a
+# `const &[&str]`; the source is named in the comment above each block.
+#
+# THE EXCEPTION: `[mcp.servers]` parses but is not consumed yet — MCP servers
+# still load from `.stella/mcp.toml`. Stella says so loudly at startup rather
+# than dropping them silently. Everything else here is live.
 #
 # What this file deliberately does NOT contain:
 #   - `[[integrations]]`, `[models]`, `[pipeline]`, per-agent `tools`,
@@ -23,27 +26,25 @@
 
 
 # -----------------------------------------------------------------------------
-# ROOT SCALARS  ── settings.json `enable_recap`
+# RUN  ── settings.json `enable_recap`
 #
-# THESE MUST COME FIRST, BEFORE ANY TABLE HEADER. This is the sharpest TOML
-# footgun in the whole port: a bare key written *after* a `[table]` silently
-# becomes a key OF that table. Drafting this file, `enable_recap` was placed
-# down beside `[ui]` and silently landed inside `[authority]` instead.
+# The JSON had this as a BARE ROOT SCALAR. TOML gives it a table, because a
+# bare key attaches to whatever `[table]` precedes it — move one line and it
+# silently becomes that table's key.
 #
-# It survived only because `ManagedAuthoritySettings` is
-# `#[serde(deny_unknown_fields)]` — the one strict struct in the schema — so
-# it would have been a loud error. Anywhere else in this file it would have
-# parsed clean and configured nothing.
+# This is not hypothetical. Drafting this very file, `enable_recap` was written
+# beside `[ui]` and landed inside `[authority]`. It surfaced only because
+# `ManagedAuthoritySettings` is the one `deny_unknown_fields` struct in the
+# schema; anywhere else it would have parsed clean and configured nothing.
+# DESIGN.md §6.3 is that finding; `[run]` is the fix.
 #
-# DESIGN.md §6.3 proposes fixing this properly by giving every root scalar a
-# table home (`[run] recap = "on"`) so the shape has no bare keys at all.
-#
-# on = print an end-of-run recap in text mode: a deterministic synthesis of
+# `on` = print an end-of-run recap in text mode: a deterministic synthesis of
 # the outcome (completed/verified/failed/aborted) and what changed, beside the
 # file and cost panels. No model call. Default off.
 # -----------------------------------------------------------------------------
 
-enable_recap = "off"
+[run]
+recap = "off"
 
 
 # -----------------------------------------------------------------------------
@@ -128,6 +129,26 @@ id            = "my-vllm"
 #   agents.<a>.model  >  <flat per-role field>  >  default_model  >  provider default
 # -----------------------------------------------------------------------------
 
+# -----------------------------------------------------------------------------
+# MODELS  ── was settings.json `agent_engine_config.allowed_models`
+#
+# Promoted out of the agents block: it is a statement about MODELS, not about
+# any one agent. Still REPLACES wholesale across scopes rather than
+# concatenating — it is one vocabulary, and merging would make it impossible
+# for a project to narrow the user's list.
+#
+# This block is policy over the model catalog (~/.stella/catalog.db), never a
+# model table. See DESIGN.md §7.2.
+# -----------------------------------------------------------------------------
+
+[models]
+allowed = [
+  "anthropic/claude-fable-5",
+  "zai/glm-5.2",
+  "openrouter/openai/gpt-5.5",
+]
+
+
 [agents]
 # The default agent's model, and the base for every role with no more
 # specific setting. A model string is either `provider/slug`, or a bare slug
@@ -136,16 +157,6 @@ default_model         = "anthropic/claude-fable-5"
 pipeline_worker_model = "zai/glm-5.2"
 pipeline_judge_model  = "openrouter/openai/gpt-5.5"
 pipeline_triage_model = "deepseek/deepseek-chat"
-
-# The model vocabulary the TUI pickers offer and `auto_mode` selects from.
-# REPLACES wholesale across scopes rather than concatenating — it is one
-# vocabulary, and concatenating would make it impossible for a project to
-# narrow the user's list.
-allowed_models = [
-  "anthropic/claude-fable-5",
-  "zai/glm-5.2",
-  "openrouter/openai/gpt-5.5",
-]
 
 # on/off toggles. A dedicated enum, not a bool: a typo must be a loud parse
 # error, never a silently-false setting.
@@ -486,8 +497,8 @@ media_requires_host_approval = "on"
 # Source: stella-cli/src/settings.rs `UiSettings`
 #
 # Whole-block last-wins across scopes; carries no authority.
-# (`enable_recap`, the other misc root, is hoisted to the top of this file —
-#  see the ROOT SCALARS note for why it cannot live here.)
+# (`enable_recap` moved to `[run].recap` — see the RUN block for why a bare
+#  root scalar is not safe in TOML.)
 # -----------------------------------------------------------------------------
 
 [ui]
