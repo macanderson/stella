@@ -21,7 +21,7 @@
 4650 stella-cli/src/command_deck.rs
 2095 stella-core/src/bus.rs
 2125 stella-core/src/driver.rs
-2819 stella-core/src/driver/tests.rs
+2820 stella-core/src/driver/tests.rs
 1759 stella-fleet/src/fleet.rs
 1609 stella-model/src/anthropic/tests.rs
 1780 stella-model/src/bedrock.rs
@@ -38,6 +38,6 @@
 1837 stella-tools/src/scripts.rs
 1783 stella-tui/src/deck_render.rs
 4089 stella-tui/src/deck_ui.rs
-1687 stella-tui/src/model.rs
+1664 stella-tui/src/model.rs
 1660 stella-tui/src/views/engine.rs
-1519 stella-tui/src/views/session.rs
+1509 stella-tui/src/views/session.rs
