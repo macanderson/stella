@@ -93,7 +93,10 @@ paper.
 - The silent-nesting defect above should be made loud on the legacy path
   regardless of this ADR. A parser that promotes a nested key to the top level
   without complaint is the same failure shape as a check that reports OK for
-  inputs it skipped.
+  inputs it skipped. **Done** (issue #891): nested keys are recorded on
+  `Frontmatter::nested_keys` and `rule_from_file_checked` refuses the file with an
+  error naming the keys. `docs/context-pr.md` §6.1's example was corrected to a
+  shape the reader accepts, since it would now fail to load rather than load wrong.
 - ADR 0008's open question — owner-routing policy, deferred to Phase 8 — is
   untouched by this decision.
 
@@ -107,12 +110,15 @@ paper.
   instead be an explicit import source is a behavioural question, not a format
   one, and needs its own decision.
 
-## Open question
+## Open question — answered by ADR 0012
 
 The substrate rule that the current design assumes — context records are files,
 and `sharing_scope` selects *which* file location (repository tree, or
 `~/.stella/rules/` for personal scope) rather than whether it is a file at all —
-is not ratified anywhere. ADR 0002 covers scope versus sharing but does not
-reach storage. If this ADR is ratified, that rule should be written down too,
-because "memories live in the database, context records live in files" is the
-sentence the rest of the design leans on.
+was not ratified anywhere. ADR 0002 covers scope versus sharing but does not
+reach storage.
+
+[ADR 0012](0012-context-record-field-schema.md) writes that rule down as its
+Decision 1, along with the field schema this ADR deferred. Ratifying 0011 without
+0012 leaves the format decided and the contents undecided, which is the state
+that let each module answer the schema question for itself.

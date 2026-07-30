@@ -139,12 +139,52 @@ pub(crate) fn assemble_system_prompt(
         append_workspace_memories(&mut prompt, workspace_root);
         append_exploration_index(&mut prompt, workspace_root);
     }
-    let rules_section = stella_core::rules::render_rules_section(active_rules.as_slice());
+    // The cached channel: `must` and `should` records, grouped by force, each
+    // carrying its `^handle` so the model can name what it followed. Byte-stable by
+    // construction — the truth sweep already demoted or dropped anything whose
+    // freshness is in question, so no clock and no per-turn text enters here
+    // (docs/context-record-examples/07-agent-projection.md).
+    let rules_section = active_rules
+        .registry()
+        .render(stella_core::records::Channel::Cached, None)
+        .text;
     if !rules_section.is_empty() {
         prompt.push('\n');
         prompt.push_str(&rules_section);
     }
     prompt
+}
+
+/// How many characters of volatile records ride the recall block.
+///
+/// The same order as the memory budget above, and for the same reason: the volatile
+/// channel competes with recalled memories and skills for one turn's attention, so a
+/// records set that grew without bound would crowd out the recall it sits beside.
+/// Records over the budget are reported as dropped rather than silently lost — that
+/// gap is `MissingContextKind::NotRendered`.
+pub(crate) const RECORD_CHANNEL_BUDGET: usize = 2_000;
+
+/// Hand `memory` the volatile record channel — `may`/`info` facts and anything the
+/// truth sweep demoted — so it rides the per-turn recall block.
+///
+/// Separate from [`assemble_system_prompt`] because it belongs to a different cache
+/// contract: this text may differ every turn, which is exactly why it must live
+/// after the stable prefix rather than inside it. Written as one call the drivers
+/// make once, rather than three copies of the render-and-set pair, so a fourth
+/// session surface cannot half-wire it.
+pub(crate) fn attach_record_channel(
+    memory: &mut crate::memory::SessionMemory,
+    active_rules: &crate::rules::ResolvedRules,
+) {
+    memory.set_record_channel(
+        active_rules
+            .registry()
+            .render(
+                stella_core::records::Channel::Volatile,
+                Some(RECORD_CHANNEL_BUDGET),
+            )
+            .text,
+    );
 }
 
 /// The workspace-maps half of [`assemble_system_prompt`]: the exploration

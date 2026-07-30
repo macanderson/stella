@@ -138,6 +138,9 @@ pub(super) struct DocSummary {
     pub refuted: usize,
     /// How many were dismissed (compound or quarantined).
     pub dismissed: usize,
+    /// How many were withheld because this workspace already decided about them —
+    /// declined within a cooldown, or already published as a record.
+    pub withheld: usize,
     /// The run cost in USD.
     pub cost_usd: f64,
 }
@@ -222,10 +225,22 @@ async fn extract_document(
         return Err("the model found no durable context to extract".to_string());
     }
 
+    // What this workspace has already decided. A claim the reviewer declined must
+    // not come back while its cooldown holds, and one already kept is a record now
+    // rather than a proposal — re-offering either is how a review surface teaches
+    // people that reviewing accomplishes nothing.
+    let decided =
+        stella_core::records::decision::fold(&crate::context_records::read_decisions(root));
+
     let mut file = ContextFile::new_ingest(set_id, ingest_run_id, defaults.clone());
     let (mut eligible, mut refuted, mut dismissed) = (0usize, 0usize, 0usize);
+    let mut withheld = 0usize;
     for claim in claims {
         let proposal = build_proposal(root, set_id, &defaults, observed_at, eligibility, claim);
+        if !stella_core::records::should_repropose(&decided, &proposal.candidate_id, observed_at) {
+            withheld += 1;
+            continue;
+        }
         if proposal.dismissed_reason.is_some() {
             dismissed += 1;
         } else {
@@ -248,6 +263,7 @@ async fn extract_document(
         eligible,
         refuted,
         dismissed,
+        withheld,
         cost_usd,
     })
 }
@@ -529,6 +545,19 @@ fn report(doc: &NamedDoc, summary: &DocSummary) {
         dismissed,
         format!("(${:.4})", summary.cost_usd).dimmed()
     );
+    // Said out loud, because a claim that silently vanished from a re-run reads as
+    // the extractor having missed it.
+    if summary.withheld > 0 {
+        println!(
+            "    {}",
+            format!(
+                "{} claim(s) withheld — already decided in this workspace (declined within a \
+                 cooldown, or already published). `stella context review` shows the decisions.",
+                summary.withheld
+            )
+            .dimmed()
+        );
+    }
 }
 
 // ── Deterministic mapping helpers ────────────────────────────────────────────

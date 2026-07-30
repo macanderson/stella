@@ -36,6 +36,7 @@ mod commands_cmd;
 mod config;
 mod connect_cmd;
 mod context_cmd;
+mod context_records;
 mod contextgraph;
 mod credential_handoff;
 mod credential_status;
@@ -515,8 +516,13 @@ enum Command {
         cmd: proposals_cmd::ProposalsCmd,
     },
 
-    /// Work with context records — `stella context validate` re-runs each
-    /// record's truth probe and reports stale claims (#888). Offline.
+    /// Review, publish, and explain context records — the reviewable steering
+    /// `stella ingest` extracts from documents you already wrote. `review` shows
+    /// what was proposed and what its truth probe found; `keep`/`edit`/`ignore`
+    /// decide; `list` shows what currently steers; `validate` re-probes every claim
+    /// and reports every finding; `explain` says why a rule applied; `propose` turns
+    /// a record into a reviewable change. Offline: local files only, no API key.
+    /// Epic #897.
     Context {
         #[command(subcommand)]
         cmd: context_cmd::ContextCmd,
@@ -1067,6 +1073,9 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         }
         // Phase 3 (#714). Reads and appends to the local lifecycle ledger
         // only — no provider, no API key.
+        Some(Command::Context { cmd }) => {
+            return context_cmd::run_context(cmd);
+        }
         Some(Command::Proposals { cmd }) => {
             return proposals_cmd::run_proposals(cmd);
         }
@@ -1413,6 +1422,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         | Command::Inspect { .. }
         // Phase 3 (#714)
         | Command::Proposals { .. }
+        // Epic #897
+        | Command::Context { .. }
         // #831 first slice
         | Command::Tune { .. }
         | Command::Stats { .. }
