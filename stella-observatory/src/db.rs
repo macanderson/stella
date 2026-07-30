@@ -426,7 +426,7 @@ impl Observatory {
         );
         let mut stmt = match conn.prepare(&sql) {
             Ok(stmt) => stmt,
-            Err(e) if is_missing_table(&e) => return Ok(json!([])),
+            Err(e) if is_missing_schema(&e) => return Ok(json!([])),
             Err(e) => return Err(e.into()),
         };
         let scanned = stmt.query_map([], |r| {
@@ -755,7 +755,7 @@ impl Observatory {
             match conn.query_row(sql, [], |r| r.get::<_, i64>(0)) {
                 Ok(v) => Ok(v),
                 Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0),
-                Err(e) if is_missing_table(&e) => Ok(0),
+                Err(e) if is_missing_schema(&e) => Ok(0),
                 Err(e) => Err(e.into()),
             }
         };
@@ -979,7 +979,7 @@ where
 {
     let mut stmt = match conn.prepare(sql) {
         Ok(stmt) => stmt,
-        Err(e) if is_missing_table(&e) => return Ok(Vec::new()),
+        Err(e) if is_missing_schema(&e) => return Ok(Vec::new()),
         Err(e) => return Err(e.into()),
     };
     let rows = stmt.query_map([], map)?;
@@ -997,7 +997,7 @@ where
 {
     let mut stmt = match conn.prepare(sql) {
         Ok(stmt) => stmt,
-        Err(e) if is_missing_table(&e) => return Ok(Vec::new()),
+        Err(e) if is_missing_schema(&e) => return Ok(Vec::new()),
         Err(e) => return Err(e.into()),
     };
     let rows = stmt.query_map([id], map)?;
@@ -1013,16 +1013,52 @@ fn or_empty(result: rusqlite::Result<Value>) -> Result<Value, DbError> {
     match result {
         Ok(v) => Ok(v),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(json!({})),
-        Err(e) if is_missing_table(&e) => Ok(json!({})),
+        Err(e) if is_missing_schema(&e) => Ok(json!({})),
         Err(e) => Err(e.into()),
     }
 }
 
-fn is_missing_table(e: &rusqlite::Error) -> bool {
-    matches!(
-        e,
-        rusqlite::Error::SqliteFailure(_, Some(msg)) if msg.contains("no such table")
-    )
+/// Whether an error is "this file is older than this query", rather than a
+/// real failure.
+///
+/// The observatory opens every database `SQLITE_OPEN_READ_ONLY` and therefore
+/// **never runs migrations** — that is the point, an observer must not mutate
+/// what it observes. The direct consequence is that it can be pointed at a
+/// store several schema versions behind the binary reading it: upgrade
+/// `stella`, open the dashboard before running a single turn, and nothing has
+/// yet had a reason to open that file read-write.
+///
+/// So a missing table has always degraded to an empty payload here. A missing
+/// **column** is the same state and was not covered, which is a sharper edge:
+/// a new query against an older file 500s the whole route rather than
+/// blanking one panel. That is exactly how the v18 `tool_calls.state` column
+/// took down `/api/v1/cursor` on any workspace that had not been migrated
+/// yet — found by pointing this crate at an untouched copy of a real store.
+///
+/// Both are answered the same way: report what the file can support and stay
+/// up. A dashboard that renders an older store with one section empty is
+/// strictly better than one that refuses to render at all, and the section
+/// fills in the moment a turn migrates the file.
+/// Both `rusqlite` variants are matched, and that is not defensive padding —
+/// they carry these two failures **differently**, verified against the
+/// version in `Cargo.lock`:
+///
+/// ```text
+/// SELECT count(*) FROM no_such_table -> SqliteFailure  { msg: "no such table: …" }
+/// SELECT bogus FROM sqlite_master    -> SqlInputError  { msg: "no such column: …" }
+/// ```
+///
+/// Matching only `SqliteFailure` — which is what the missing-table check did,
+/// correctly, for the case it was written for — silently fails to catch a
+/// missing column, so the degradation never fires and the route 500s anyway.
+/// That is precisely how this bug got here.
+fn is_missing_schema(e: &rusqlite::Error) -> bool {
+    let message = match e {
+        rusqlite::Error::SqliteFailure(_, Some(msg)) => msg.as_str(),
+        rusqlite::Error::SqlInputError { msg, .. } => msg.as_str(),
+        _ => return false,
+    };
+    message.contains("no such table") || message.contains("no such column")
 }
 
 /// Shallow-merge `extra`'s fields into `base` (both must be objects).

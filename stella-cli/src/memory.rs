@@ -277,7 +277,8 @@ impl SessionMemory {
     /// model's self-review can be stored against it.
     ///
     /// Called by every path that begins an execution and later reflects. Not
-    /// test-gated, unlike [`SessionMemory::set_task_id`]: the whole point is the
+    /// test-gated, unlike `set_task_id` (which is `pub(crate)`, so a public doc
+    /// comment cannot link to it): the whole point is the
     /// shipped paths calling it, and a path that forgets to silently loses that
     /// turn's self-rating rather than failing loudly, so the callers are the
     /// feature.
