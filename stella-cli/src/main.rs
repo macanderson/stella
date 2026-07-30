@@ -26,6 +26,7 @@ mod agents_installed;
 mod arena;
 mod attachments;
 mod auth_cmd;
+mod build_info;
 mod cache_insight;
 mod candidate_ws;
 mod claims;
@@ -73,6 +74,7 @@ mod skill_manager;
 mod stats;
 mod storage_cmd;
 mod subsession;
+mod term_policy;
 mod tool_foundry;
 mod tool_policy;
 mod tool_switches;
@@ -96,7 +98,6 @@ pub(crate) mod test_env {
     }
 }
 
-use std::io::IsTerminal;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -234,8 +235,8 @@ fn emit_error_summary(format: OutputFormat, msg: &str) {
 #[derive(Parser)]
 #[command(
     name = "stella",
-    version = version_static(),
-    long_version = long_version_static(),
+    version = build_info::version_static(),
+    long_version = build_info::long_version_static(),
     about = "A fast, BYOK, model-agnostic terminal coding agent"
 )]
 struct Cli {
@@ -868,101 +869,6 @@ pub enum McpCmd {
     Usage,
 }
 
-/// NUL boundaries prevent LLVM's string pooling from adjoining identifier
-/// characters to the version bytes. The claim launcher can therefore attest
-/// the full compile-time identity without executing the binary.
-const BUILD_VERSION_IDENTITY: &str = concat!("\0", env!("STELLA_BUILD_VERSION"), "\0");
-
-/// The version string shown by `--version` and `stella version`. `build.rs`
-/// turns an optional compile-time `STELLA_BUILD_GIT_SHA` into one contiguous
-/// literal; this returns the interior of the deliberately delimited identity.
-/// Ordinary release builds still carry the bare package version.
-fn version_string() -> &'static str {
-    &BUILD_VERSION_IDENTITY[1..BUILD_VERSION_IDENTITY.len() - 1]
-}
-
-/// clap's `version` attribute needs a `'static` string.
-fn version_static() -> &'static str {
-    version_string()
-}
-
-/// What `--version` prints, as opposed to `-V`'s single line.
-///
-/// clap's convention, which `cargo`/`rustc` both follow: the short flag stays
-/// greppable and the long one answers the questions a bug report otherwise
-/// costs a round trip — which machine this binary was built for, and whether
-/// it is an optimized build. Composed with `concat!` so it is one `'static`
-/// literal with no allocation and no startup work.
-///
-/// Deliberately does NOT restate [`version_string`] through a second code
-/// path: it interpolates the same `STELLA_BUILD_VERSION` literal `build.rs`
-/// stamped, so the two surfaces cannot disagree about the version itself.
-fn long_version_static() -> &'static str {
-    concat!(
-        env!("STELLA_BUILD_VERSION"),
-        "\ntarget:  ",
-        env!("STELLA_BUILD_TARGET"),
-        "\nprofile: ",
-        env!("STELLA_BUILD_PROFILE"),
-    )
-}
-
-/// Honour `TERM=dumb` by switching ANSI output off process-wide.
-///
-/// The `colored` crate already respects `NO_COLOR`, `CLICOLOR*`, and a
-/// non-tty stream, but not `TERM` — so a dumb terminal (Emacs `M-x shell`,
-/// a bare serial console, an editor's build pane, `TERM=dumb` in CI) got the
-/// full escape-sequence treatment and rendered it literally. Every other Unix
-/// tool that colours output treats `dumb` as "this terminal cannot", so
-/// stella does too. An explicit `CLICOLOR_FORCE` still wins: it is the
-/// documented way to say "I know what my terminal is", and `colored`'s own
-/// override resolution keeps honouring it because this only sets the default
-/// when the user has not forced anything.
-fn apply_dumb_terminal_policy() {
-    if dumb_terminal(
-        std::env::var_os("TERM").as_deref(),
-        std::env::var_os("CLICOLOR_FORCE").as_deref(),
-    ) {
-        colored::control::set_override(false);
-    }
-}
-
-/// The decision behind [`apply_dumb_terminal_policy`], kept pure so it can be
-/// tested without reaching for `colored`'s process-global override (which
-/// every other test in this binary renders through).
-fn dumb_terminal(term: Option<&std::ffi::OsStr>, clicolor_force: Option<&std::ffi::OsStr>) -> bool {
-    let forced = clicolor_force.is_some_and(|v| !v.is_empty() && v != "0");
-    !forced && term.is_some_and(|term| term == "dumb")
-}
-
-/// Whether deck animation is off for this invocation: the `--no-anim` flag,
-/// or either environment signal its own help text promises.
-///
-/// The promise was only half kept. `init_fx::animation_enabled` folded
-/// `STELLA_NO_ANIM` and `NO_COLOR` in for the `stella init` cinematic, but the
-/// Command Deck — the surface with the shimmering progress bar and the
-/// blinking caret, and the one an asciinema recording or a CI log actually
-/// captures — was handed the bare flag. So `NO_COLOR=1 stella chat` kept
-/// animating, and the flag's documentation was simply wrong about it.
-///
-/// `NO_COLOR` follows its published rule (present and non-empty);
-/// `STELLA_NO_ANIM` follows this CLI's own house convention for boolean env
-/// vars (`--plain`'s `STELLA_PLAIN`, `env_files`' `STELLA_NO_ENV_FILE`), where
-/// an explicit `0` means off.
-fn animation_disabled(no_anim_flag: bool) -> bool {
-    let stella = std::env::var_os("STELLA_NO_ANIM").is_some_and(|v| !v.is_empty() && v != "0");
-    let no_color = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
-    no_anim_flag || stella || no_color
-}
-
-/// Whether `chat` should launch the Command Deck: an explicit `--plain` or
-/// STELLA_PLAIN=1 opts out, and both stdin and stdout must be real terminals
-/// (raw mode + the alternate screen are meaningless on a pipe).
-fn use_deck(plain_flag: bool) -> bool {
-    let plain_env = std::env::var_os("STELLA_PLAIN").is_some_and(|v| !v.is_empty() && v != "0");
-    !plain_flag && !plain_env && std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
-}
-
 /// `stella resume --list`: every session in the machine-wide registry,
 /// newest activity first, with the rows resumable from THIS directory
 /// marked `↩`. Local reads only — works with zero API keys.
@@ -1037,7 +943,7 @@ fn main() -> ExitCode {
     // Before the first byte reaches a terminal: a dumb terminal renders ANSI
     // literally, so every diagnostic below (credential handoff failures
     // included) has to already know that.
-    apply_dumb_terminal_policy();
+    term_policy::apply_dumb_terminal_policy();
 
     // Everything user-global lives at ~/.stella; move data from the legacy
     // split layout (platform data dir + ~/.config/stella) before any store,
@@ -1307,7 +1213,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             return Ok(());
         }
         Some(Command::Version) => {
-            println!("stella v{}", version_string());
+            println!("stella v{}", build_info::version_string());
             return Ok(());
         }
         Some(Command::Resume { list: true, .. }) => {
@@ -1341,7 +1247,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 cli.globals.model.as_deref(),
                 cli.globals.api_key.as_deref(),
                 cli.globals.base_url.as_deref(),
-                animation_disabled(cli.globals.no_anim),
+                term_policy::animation_disabled(cli.globals.no_anim),
             ),
         );
     }
@@ -1461,13 +1367,13 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // The Command Deck (tabbed TUI) is the default chat surface on a
             // real terminal; `--plain` / STELLA_PLAIN=1 / a non-TTY stream
             // falls back to the line-based REPL.
-            if use_deck(cli.globals.plain) {
+            if term_policy::use_deck(cli.globals.plain) {
                 signals::block_on_interruptible(
                     rt()?,
                     command_deck::run_deck_session(
                         &cfg,
                         cli.globals.budget,
-                        animation_disabled(cli.globals.no_anim),
+                        term_policy::animation_disabled(cli.globals.no_anim),
                         None,
                     ),
                 )?;
@@ -1483,7 +1389,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // actual reopen, which is a full deck session (durable state is
             // a deck feature — the plain REPL has no session to restore).
             debug_assert!(!list, "handled before provider resolution");
-            if !use_deck(cli.globals.plain) {
+            if !term_policy::use_deck(cli.globals.plain) {
                 return Err(
                     "`stella resume` reopens a Command Deck session and needs a real \
                      terminal (it cannot combine with --plain / STELLA_PLAIN / a piped \
@@ -1500,7 +1406,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 command_deck::run_deck_session(
                     &cfg,
                     cli.globals.budget,
-                    animation_disabled(cli.globals.no_anim),
+                    term_policy::animation_disabled(cli.globals.no_anim),
                     Some(request),
                 ),
             )?;
