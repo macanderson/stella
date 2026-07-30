@@ -545,10 +545,10 @@ fn golden_frame_preimage_and_hash_are_pinned() {
     );
 }
 
-const GOLDEN_FRAME_PREIMAGE: &str = r#"{"blocks":[{"block_id":"blk_1a2e1ee86e8551d1b069e12d","cache_zone":"stable_prefix","content_digest":"sha256:aadec3e1342a8b1cd71bc46a3796b4b2fc4ab35cb9822527f31f65d1f610ee90","kind":"system_prefix","message_index":0,"token_cost":8},{"block_id":"blk_901ab18c12179eb804a69d40","cache_zone":"cacheable","content_digest":"sha256:75804d696e4c6efcadc89848672f6a9304612fcf6180cedd429e25ac1cfa1bd1","kind":"user_goal","message_index":1,"token_cost":6},{"block_id":"blk_c49dacefa9f909aca42b2880","cache_zone":"cacheable","call_id":"c1","content_digest":"sha256:6c0ec0938d9f77b7ac74006a2ee21268972407d0c98395fc5b9cc6a0fb1a2602","kind":"tool_call","message_index":2,"token_cost":17},{"block_id":"blk_e7032f26bd4843608dfe31d9","cache_zone":"volatile","call_id":"c1","content_digest":"sha256:bfd1986b0e5cdf2925326cf75fa8d40320722e0a3971274a7844b2147ac927e7","kind":"tool_result","message_index":3,"token_cost":9}],"role":"worker","schema_version":"1.0-draft","step":0,"turn_instance":0}"#;
+const GOLDEN_FRAME_PREIMAGE: &str = r#"{"blocks":[{"block_id":"blk_1a2e1ee86e8551d1b069e12d","cache_zone":"stable_prefix","content_digest":"sha256:aadec3e1342a8b1cd71bc46a3796b4b2fc4ab35cb9822527f31f65d1f610ee90","kind":"system_prefix","message_index":0,"token_cost":8},{"block_id":"blk_901ab18c12179eb804a69d40","cache_zone":"cacheable","content_digest":"sha256:75804d696e4c6efcadc89848672f6a9304612fcf6180cedd429e25ac1cfa1bd1","kind":"user_goal","message_index":1,"token_cost":6},{"block_id":"blk_c49dacefa9f909aca42b2880","cache_zone":"cacheable","call_id":"c1","content_digest":"sha256:6c0ec0938d9f77b7ac74006a2ee21268972407d0c98395fc5b9cc6a0fb1a2602","kind":"tool_call","message_index":2,"token_cost":17},{"block_id":"blk_e7032f26bd4843608dfe31d9","cache_zone":"volatile","call_id":"c1","content_digest":"sha256:bfd1986b0e5cdf2925326cf75fa8d40320722e0a3971274a7844b2147ac927e7","kind":"tool_result","message_index":3,"token_cost":9}],"role":"worker","schema_version":"1.1","step":0,"turn_instance":0}"#;
 const GOLDEN_FRAME_HASH: &str =
-    "sha256:d022c54960f40c84ad82fae068a87e8b857e917605f0d3b549c6af7047e42ff9";
-const GOLDEN_FRAME_ID: &str = "cf_d022c54960f40c84ad82fae0";
+    "sha256:2d6226fa93fd3840a538ca68b2994f9cc8292dd66d6f6aa8f2b79667d8bcc3cf";
+const GOLDEN_FRAME_ID: &str = "cf_2d6226fa93fd3840a538ca68";
 
 #[test]
 fn identical_tool_output_resolves_to_the_same_block_id() {
@@ -584,4 +584,101 @@ fn streamed_preimage_hashes_exactly_like_the_joined_one() {
             );
         }
     }
+}
+
+/// #925's acceptance criterion, stated precisely.
+///
+/// The complaint was not that a receipt's two numbers differ — they always
+/// will, because `estimated_input_tokens` carries per-message framing overhead
+/// that no block accounts for, and because ceiling each block separately
+/// rounds up more often than ceiling each message does. The complaint was that
+/// **the size of the difference was a function of the user's language**: with
+/// blocks counted in characters and the step counted in bytes, a CJK
+/// transcript's summed `token_cost` fell to roughly a third of its
+/// `estimated_input_tokens` while an English one reconciled exactly.
+///
+/// So this pins the property that actually matters: the same transcript
+/// written in ASCII and in CJK must leave the same residual, and that residual
+/// must be explainable by framing and rounding alone — never by content size.
+#[test]
+fn a_receipts_two_numbers_reconcile_the_same_way_in_any_language() {
+    // Structurally identical transcripts. The CJK one is ~3x the bytes of the
+    // ASCII one for the same character count, which is exactly the axis the
+    // old character rule was blind to.
+    let transcript = |sys: &str, goal: &str, out: &str| {
+        vec![
+            CompletionMessage::system(sys),
+            CompletionMessage::user(goal),
+            CompletionMessage {
+                role: MessageRole::Tool,
+                content: String::new(),
+                tool_calls: vec![],
+                tool_results: vec![ToolResult {
+                    call_id: "c1".into(),
+                    output: ToolOutput::Ok {
+                        content: out.into(),
+                    },
+                }],
+                attachments: vec![],
+            },
+        ]
+    };
+
+    let residual = |messages: &[CompletionMessage]| -> i64 {
+        let (tx, mut rx) = unbounded_channel();
+        let events = EventSender::new(tx);
+        let mut ledger = ReceiptLedger::new(0);
+        ledger.set_effective_budget(136_363, 1.0);
+        ledger.emit_step_receipt_estimating(messages, 0, worker("anthropic", "opus"), &events);
+        let (blocks, estimated) = drain(&mut rx)
+            .iter()
+            .find_map(|e| match e {
+                AgentEvent::StepManifest {
+                    blocks,
+                    estimated_input_tokens,
+                    ..
+                } => Some((blocks.clone(), *estimated_input_tokens)),
+                _ => None,
+            })
+            .expect("a manifest was emitted");
+        let summed: u64 = blocks.iter().map(|b| u64::from(b.token_cost)).sum();
+        estimated as i64 - summed as i64
+    };
+
+    let ascii = residual(&transcript(
+        "you are a careful engineer",
+        "fix the failing test",
+        "no changes staged",
+    ));
+    let cjk = residual(&transcript(
+        "あなたは慎重なエンジニアです",
+        "失敗したテストを直して",
+        "変更はありません",
+    ));
+
+    // Three messages, four framing tokens each, plus at most one token of
+    // ceiling slack per block. Nothing here scales with how many bytes the
+    // content has — which is the whole claim.
+    assert!(
+        (0..=20).contains(&ascii),
+        "ASCII residual {ascii} is not framing + rounding"
+    );
+    assert_eq!(
+        ascii, cjk,
+        "the gap between a receipt's two numbers must not depend on the \
+         user's language: ASCII left {ascii}, CJK left {cjk}"
+    );
+
+    // And the regression guard: under the character rule the CJK residual was
+    // dominated by content size, so it grew when the content did. Doubling the
+    // CJK content must not move the residual at all.
+    let cjk_doubled = residual(&transcript(
+        "あなたは慎重なエンジニアですあなたは慎重なエンジニアです",
+        "失敗したテストを直して失敗したテストを直して",
+        "変更はありません変更はありません",
+    ));
+    assert_eq!(
+        cjk, cjk_doubled,
+        "the residual must be a function of message structure, not content size"
+    );
 }

@@ -471,13 +471,12 @@ pub fn select_skills(
 
 // Rendering — the volatile context block injected after the stable prefix
 
-/// Chars-per-token divisor — [`crate::estimator`]'s constant, shared so the
-/// two heuristics can never drift on the divisor (3.5 biases the estimate
-/// high — code/JSON run denser than prose, and over-estimating trims
-/// *earlier*, the safe direction). Counting differs deliberately: this
-/// module counts chars to line up with its char-boundary truncation, the
-/// estimator counts bytes.
-const CHARS_PER_TOKEN: f64 = crate::estimator::CHARS_PER_TOKEN;
+/// Bytes-per-token divisor — [`stella_protocol::tokens`]'s constant, so this
+/// module's budget arithmetic and the receipts plane's costs are the same
+/// scale. It used to share only the divisor while counting chars against the
+/// estimator's bytes; #925 removed that last split, since "the same divisor
+/// over a different unit" is still two answers to one question.
+const BYTES_PER_TOKEN: f64 = stella_protocol::BYTES_PER_TOKEN;
 /// Per-skill body budget before the body is truncated with a marker.
 const SKILL_BODY_TOKEN_BUDGET: u64 = 400;
 /// Total budget for the whole injected section — once exceeded, remaining
@@ -491,23 +490,39 @@ const SKILL_BODY_TRUNCATION_MARKER: &str =
 const SKILLS_SECTION_OMISSION_MARKER: &str =
     "\n[additional lower-ranked skills omitted to fit the context budget]\n";
 
-/// Estimate a string's token cost via the chars/3.5 heuristic (see
-/// [`CHARS_PER_TOKEN`]). Char-based (not byte-based) so it lines up with the
-/// char-boundary truncation in [`truncate_to_tokens`].
-fn estimate_tokens(text: &str) -> u64 {
-    (text.chars().count() as f64 / CHARS_PER_TOKEN).ceil() as u64
-}
-
-/// Truncate `text` to `budget` tokens on a char boundary, appending
+/// Truncate `text` to `budget` tokens, appending
 /// [`SKILL_BODY_TRUNCATION_MARKER`] when it was cut. Returned unchanged when
 /// already within budget.
+///
+/// The budget is a byte budget (the shared rule's unit), and the cut is then
+/// snapped **back** to the nearest char boundary at or below it — never
+/// forward, so the result is always within budget rather than one character
+/// over. Slicing a `String` at a non-boundary would panic, and a body of CJK
+/// or emoji is exactly where a naive byte cut lands mid-character.
 fn truncate_to_tokens(text: &str, budget: u64) -> String {
-    if estimate_tokens(text) <= budget {
+    if stella_protocol::estimate_tokens(text) <= budget {
         return text.to_string();
     }
-    let max_chars = (budget as f64 * CHARS_PER_TOKEN) as usize;
-    let truncated: String = text.chars().take(max_chars).collect();
-    format!("{truncated}{SKILL_BODY_TRUNCATION_MARKER}")
+    let max_bytes = ((budget as f64) * BYTES_PER_TOKEN) as usize;
+    let cut = floor_char_boundary(text, max_bytes);
+    format!("{}{SKILL_BODY_TRUNCATION_MARKER}", &text[..cut])
+}
+
+/// The largest index `<= max` that is a char boundary of `text`.
+///
+/// `str::floor_char_boundary` is still unstable, and the cast-to-usize budget
+/// above can land anywhere inside a multi-byte character. Walking back at most
+/// three bytes is enough: UTF-8 characters are at most four bytes, so a
+/// continuation run is never longer than that.
+fn floor_char_boundary(text: &str, max: usize) -> usize {
+    if max >= text.len() {
+        return text.len();
+    }
+    let mut cut = max;
+    while cut > 0 && !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    cut
 }
 
 /// Render the selected skills into the markdown block the CLI injects as a
@@ -534,7 +549,7 @@ pub fn render_skills_section(selected: &[SelectedSkill]) -> String {
             "\n### {}\n{}\n\n{}\n",
             sel.skill.name, sel.skill.description, body
         );
-        let block_tokens = estimate_tokens(&block);
+        let block_tokens = stella_protocol::estimate_tokens(&block);
         if rendered_any && used_tokens + block_tokens > SKILLS_SECTION_TOKEN_BUDGET {
             out.push_str(SKILLS_SECTION_OMISSION_MARKER);
             break;

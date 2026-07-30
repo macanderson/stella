@@ -178,7 +178,9 @@ AgentEvent::BlockRegistered {
     block_id: String,          // blk_<24 hex of sha256(kind \0 content)>
     kind: BlockKind,
     origin: BlockOrigin,       // which event/tool/turn produced it
-    token_cost: u32,           // estimated tokens at birth (estimator.rs)
+    token_cost: u32,           // estimated tokens at birth — stella_protocol::tokens,
+                               // the one rule (UTF-8 bytes / 3.5), shared with the
+                               // conversation estimator so a receipt's numbers reconcile
     content_digest: String,    // "sha256:<full hex>" — verifies the preimage
     #[serde(default, skip_serializing_if = "Option::is_none")]
     citation_label: Option<String>,  // for recall frames / memory nodes
@@ -258,7 +260,8 @@ struct ManifestEntry {
     block_id: String,
     /// Cache position class relative to the last stable breakpoint (§7).
     cache_zone: CacheZone,
-    token_cost: u32,               // estimated tokens of this block on this step
+    token_cost: u32,               // estimated tokens of this block on this step,
+                                   // same rule as above
     /// Steps this block has been resident so far (drives cost-of-carry, §8).
     resident_since_step: usize,
     /// The tool call THIS occurrence belongs to. Per entry, not per block:
@@ -744,7 +747,9 @@ CREATE TABLE IF NOT EXISTS context_blocks (
   origin_step    INTEGER NOT NULL,
   call_id        TEXT,                 -- for ToolCall/ToolResult
   memory_id      TEXT,                 -- nod_… for RecalledFrame memories
-  token_cost     INTEGER NOT NULL,
+  token_cost     INTEGER,              -- NULL = not derivable: the store no longer
+                                       -- holds this block's preimage (v19, #925).
+                                       -- Never NULL on the live write path.
   content_digest TEXT    NOT NULL,     -- sha256:<hex>
   citation_label TEXT,
   first_seen_ts  INTEGER NOT NULL,
