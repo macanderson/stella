@@ -1436,22 +1436,34 @@ pub async fn run_deck_session(
                             // injection; the `Steered` event is the ack).
                             // Works for both the step-loop lead turn and the
                             // pipeline execute engine — both drain the tap.
-                            if let Some(steer) = text.trim_start().strip_prefix('>') {
-                                steering.push(steer.trim_start().to_string());
-                                continue;
+                            // A turn that is only settling has no boundary
+                            // left, so everything it receives continues the
+                            // thread instead. See `subsession::route_mid_turn`.
+                            match subsession::route_mid_turn(text, steering.is_settling()) {
+                                subsession::MidTurnRoute::Steer(note) => {
+                                    steering.push(note);
+                                }
+                                // Queued but deliberately NOT drained: the
+                                // idle arm at the top of `'session` pops it as
+                                // the lead's next turn.
+                                subsession::MidTurnRoute::NextTurn(text) => {
+                                    queue.push_back(text);
+                                }
+                                subsession::MidTurnRoute::Sidecar(text) => {
+                                    queue.push_back(text);
+                                    subsession::drain_queue(
+                                        &mut queue,
+                                        &mut subs,
+                                        dispatch.held(),
+                                        cfg,
+                                        budget_limit,
+                                        &session_record.id,
+                                        &workspace_name,
+                                        &in_tx,
+                                        &sup_tx,
+                                    );
+                                }
                             }
-                            queue.push_back(text);
-                            subsession::drain_queue(
-                                &mut queue,
-                                &mut subs,
-                                dispatch.held(),
-                                cfg,
-                                budget_limit,
-                                &session_record.id,
-                                &workspace_name,
-                                &in_tx,
-                                &sup_tx,
-                            );
                         }
                         // An explicit front-insert stays a front-insert even
                         // if a turn started before it arrived — the deck's
@@ -4260,6 +4272,12 @@ async fn run_lead_turn(
         }
         engine.run_turn(messages, budget, &tx).await
     };
+    // The model is done and the deck has already painted "done". Everything
+    // below is bookkeeping that can take real time (the forwarder persists
+    // every event of the turn), and across all of it the driver's `select!`
+    // is still reading user input — so latch the flag that tells its prompt
+    // arm to treat what arrives as the next turn, not a sidecar request.
+    steering.mark_settling();
     drop(tx);
     let persistence_complete = forwarder.await.unwrap_or(false);
     claims.release_all();
@@ -4455,6 +4473,8 @@ async fn run_lead_pipeline_turn(
         let pipeline = Pipeline::new(ports, tx.clone(), config);
         pipeline.run(prompt, messages, budget).await
     };
+    // Same settle window as `run_lead_turn` — see `SteeringTap::mark_settling`.
+    steering.mark_settling();
     drop(tx);
     let persistence_complete = forwarder.await.unwrap_or(false);
     claims.release_all();

@@ -30,6 +30,7 @@ pub(crate) fn spinner_glyph(now_ms: u64, no_anim: bool) -> &'static str {
 }
 
 pub mod agents;
+pub mod dispatch_card;
 pub mod engine;
 pub mod files;
 pub mod graph;
