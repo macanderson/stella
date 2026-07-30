@@ -146,6 +146,23 @@ fn chrome_note(text: String) -> Inbound {
     }
 }
 
+/// A **session-startup system notification**: the deck talking about the
+/// session itself — a resumable predecessor, what the code-graph pass
+/// indexed, an `mcp.toml` that went untrusted. Shown in a transient dialog
+/// ([`stella_tui::notice`]); never in the transcript.
+///
+/// Contrast [`chrome_note`], which fabricates an `AgentEvent::Text` and so
+/// reads as though the agent had said it. That is still right for a notice
+/// ANSWERING A USER ACTION mid-session (an `mcp` subcommand's result, "cannot
+/// resume `{id}`") — a reply belongs where the user was looking. Startup
+/// chrome is nobody's reply, and the transcript is the home for agent and
+/// user messages only. Corollary for the call sites: the model fold ignores
+/// this variant, so unlike `chrome_note` it never folds the lead to
+/// `AgentStatus::Running`.
+fn system_notice(text: String) -> Inbound {
+    Inbound::Notice(text)
+}
+
 /// `STELLA_DEBUG=1` → the structured deck log path (L-T8), mirroring the
 /// location `stella_tui::shell::RunOptions` documents. `None` otherwise, and
 /// on any failure to create the directory — a lost debug log never gates the
@@ -409,7 +426,7 @@ pub async fn run_deck_session(
         match stella_store::journal::SessionJournal::open(&sidecar_dir) {
             Ok(j) => Some(j),
             Err(e) => {
-                let _ = deck_tx.send(chrome_note(format!(
+                let _ = deck_tx.send(system_notice(format!(
                     "session journaling unavailable — this session will not be resumable ({e})"
                 )));
                 None
@@ -457,12 +474,12 @@ pub async fn run_deck_session(
         .with_pid(std::process::id());
     lead_meta.model = Some(format!("{}/{}", cfg.provider.id, cfg.model_id));
     let _ = in_tx.send(Inbound::Register(lead_meta));
-    // Custom definitions that failed to load are reported into the
-    // transcript up front — stdout belongs to the alternate screen, and a
+    // Custom definitions that failed to load are reported in the startup
+    // dialog — stdout belongs to the alternate screen, and a
     // silently-missing /command is otherwise undiagnosable. Session chrome:
     // re-checked every boot, so it never journals.
     if let Some(report) = custom.problems_report() {
-        let _ = deck_tx.send(chrome_note(report));
+        let _ = deck_tx.send(system_notice(report));
     }
     // Honest degradation (#266): a user who pinned a reasoning effort for the
     // lead but chose a provider whose adapter has no reasoning control gets a
@@ -478,10 +495,11 @@ pub async fn run_deck_session(
             .and_then(|e| e.agent(crate::settings::EngineAgentKind::Default))
             .and_then(|a| a.effort),
     ) {
-        let _ = deck_tx.send(chrome_note(notice));
+        let _ = deck_tx.send(system_notice(notice));
     }
-    // An idle lead is waiting on the human, not queued behind a supervisor
-    // (sent after the problems report — a Text event folds to `Running`).
+    // An idle lead is waiting on the human, not queued behind a supervisor —
+    // asserted outright, since the startup chrome above no longer folds it to
+    // `Running` (see `system_notice`).
     let _ = in_tx.send(Inbound::Status {
         agent: LEAD.to_string(),
         status: AgentStatus::WaitingInput,
@@ -510,21 +528,21 @@ pub async fn run_deck_session(
                     text: text.clone(),
                 });
             }
-            let _ = deck_tx.send(chrome_note(format!(
+            let _ = deck_tx.send(system_notice(format!(
                 "session restored — {} prompt(s) waiting, dispatch held. Submit anything to \
                  run it first (then the backlog), or ctrl+t to edit the queue.",
                 restored.len()
             )));
             queue.adopt(sidecar_dir.clone(), restored);
         } else {
-            let _ = deck_tx.send(chrome_note(
+            let _ = deck_tx.send(system_notice(
                 "session restored — the conversation continues where it left off.".to_string(),
             ));
         }
     } else if session_registry.latest_resumable(&workspace_path).is_some() {
         // A fresh session in a workspace that has something to go back to:
         // one pointer, so "navigate back in" is discoverable.
-        let _ = deck_tx.send(chrome_note(
+        let _ = deck_tx.send(system_notice(
             "◂ a previous session is resumable — ← (on an empty prompt) opens SESSIONS, ⏎ \
              reopens one; or run `stella resume`."
                 .to_string(),
@@ -614,12 +632,12 @@ pub async fn run_deck_session(
         &cfg.workspace_root,
         registry.clone(),
         Box::new(move |line| {
-            let _ = status_tx.send(chrome_note(line));
+            let _ = status_tx.send(system_notice(line));
         }),
         Box::new(move || {
             // Populate the Graph tab now the index exists (it opened on the
-            // "run stella init" hint), and restore the lead to idle — the
-            // status Text events above fold it to `Running`.
+            // "run stella init" hint), and assert the lead is idle — the
+            // index progress above no longer folds it to `Running`.
             if let Some(snapshot) = agent::graph_snapshot(&ready_root) {
                 let _ = ready_tx.send(Inbound::GraphSnapshot(snapshot));
             }
@@ -1946,14 +1964,14 @@ fn spawn_mcp_connect(
         match plan {
             agent::McpPlan::None => {}
             agent::McpPlan::Invalid(reason) => {
-                let _ = chrome_tx.send(chrome_note(reason));
+                let _ = chrome_tx.send(system_notice(reason));
                 let _ = in_tx.send(Inbound::Status {
                     agent: LEAD.to_string(),
                     status: AgentStatus::WaitingInput,
                 });
             }
             agent::McpPlan::Servers(servers) => {
-                let _ = chrome_tx.send(chrome_note(format!(
+                let _ = chrome_tx.send(system_notice(format!(
                     "connecting {} MCP server(s)…",
                     servers.len()
                 )));
@@ -1967,7 +1985,7 @@ fn spawn_mcp_connect(
                             Some(auth),
                         )
                         .await;
-                        let _ = chrome_tx.send(chrome_note(crate::mcp_cmd::mcp_outcome_report(
+                        let _ = chrome_tx.send(system_notice(crate::mcp_cmd::mcp_outcome_report(
                             &set.connected_names(),
                             set.failed_servers(),
                             &set.over_advertising_servers(),
@@ -1979,14 +1997,14 @@ fn spawn_mcp_connect(
                         let _ = slot.set(Arc::new(set));
                     }
                     Err(error) => {
-                        let _ = chrome_tx.send(chrome_note(format!(
+                        let _ = chrome_tx.send(system_notice(format!(
                             "MCP authentication unavailable: {error} — continuing with native tools only"
                         )));
                     }
                 }
-                // The Text events above fold the lead to `Running`, but no
-                // turn is in flight — restore the idle status or the
-                // dashboard would show a busy lead forever.
+                // No turn is in flight — assert the idle status so the
+                // dashboard cannot show a busy lead. (The chrome above no
+                // longer folds it to `Running`; see `system_notice`.)
                 let _ = in_tx.send(Inbound::Status {
                     agent: LEAD.to_string(),
                     status: AgentStatus::WaitingInput,

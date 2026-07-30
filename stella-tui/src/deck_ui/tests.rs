@@ -513,6 +513,52 @@ fn splash_cues_replay_and_release_the_launch_mark() {
     assert!(ui.splash.is_done(), "release cuts straight to the deck");
 }
 
+/// The invariant this whole path exists for: the transcript is the home for
+/// agent and user messages ONLY. Session chrome used to ride an
+/// `AgentEvent::Text`, which auto-registered a lead lane and gave the notice a
+/// transcript row indistinguishable from the model speaking.
+#[test]
+fn a_system_notice_goes_to_the_dialog_and_never_to_the_transcript() {
+    let mut model = WorkspaceModel::new();
+    let mut ui = DeckUi::default();
+    ui.splash.skip();
+
+    let text = "◂ a previous session is resumable — ← opens SESSIONS";
+    ingest_inbound(&Inbound::Notice(text.to_string()), &mut model, &mut ui);
+
+    assert_eq!(ui.notice.entries(), [text], "the dialog holds the notice");
+    assert!(ui.notice.is_visible(), "and shows it");
+    assert!(
+        model.agents.is_empty(),
+        "a notice must not conjure an agent lane — an Event would have, and \
+         that lane's transcript is exactly where chrome does not belong"
+    );
+}
+
+/// Dismissal is total but not greedy: the notice goes, the keystroke lands.
+/// Swallowing it would eat the first character typed, in precisely the second
+/// or two when the dialog is up and the user is most likely to start typing.
+#[test]
+fn any_key_dismisses_the_startup_notice_without_eating_the_keystroke() {
+    let mut model = WorkspaceModel::new();
+    let mut ui = DeckUi::default();
+    ui.splash.skip();
+    ingest_inbound(
+        &Inbound::Notice("indexing…".to_string()),
+        &mut model,
+        &mut ui,
+    );
+    assert!(ui.notice.is_visible());
+
+    handle_deck_key(key(KeyCode::Char('a')), &model, &mut ui);
+    assert!(!ui.notice.is_visible(), "any key dismisses the dialog");
+    assert_eq!(
+        ui.composer.buffer(),
+        "a",
+        "and the keystroke still reaches the composer"
+    );
+}
+
 #[test]
 fn no_anim_sessions_ignore_splash_replays() {
     let mut model = WorkspaceModel::new();

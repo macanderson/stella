@@ -20,7 +20,7 @@ use crate::deck::{DeckTab, PrInfo, WorkspaceModel};
 use crate::deck_ui::DeckUi;
 use crate::render::{render_slash_popup, scroll_window_start, slash_popup_area};
 use crate::textline::{self, pr_status_label, stage_label};
-use crate::{splash, theme, views};
+use crate::{notice, splash, theme, views};
 
 /// The accent prompt prefix on every composer row. Chrome, not content — it
 /// is never part of the submitted string and the caret cannot enter it.
@@ -135,6 +135,11 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     }
     // (The former ENGINE overlay is gone: the engine panel is the full-width
     // body of the SETTINGS tab — see `views::settings::render`.)
+
+    // Startup system notifications: a transient dialog over the deck, drawn
+    // last but one so help — which the user asked for — still wins the top.
+    // It is a no-op once dismissed or expired, so it costs a branch per frame.
+    notice::render(&ui.notice, area, buf);
 
     if ui.help_open {
         render_help(ui, area, buf);

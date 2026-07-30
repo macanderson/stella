@@ -503,7 +503,11 @@ impl WorkspaceModel {
             | Inbound::RecordedCalls(_)
             | Inbound::InspectedCall(_)
             | Inbound::ShowHelp
-            | Inbound::Splash(_) => {}
+            | Inbound::Splash(_)
+            // The whole point of `Notice`: a system notification is not agent
+            // or user speech, so the fold must NOT give it a transcript row.
+            // It is view state only (`DeckUi::notice`).
+            | Inbound::Notice(_) => {}
         }
     }
 

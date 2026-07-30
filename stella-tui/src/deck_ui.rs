@@ -40,6 +40,7 @@ use crate::envelope::{
 };
 use crate::graph::GraphSnapshot;
 use crate::input::{ScopeDecision, UserInput};
+use crate::notice::NoticeState;
 use crate::scroll::ScrollState;
 use crate::splash::SplashState;
 use crate::views::mcp::{AuthPrompt, AuthStep, McpMode};
@@ -567,6 +568,9 @@ pub struct DeckUi {
     /// The one global composer — typing works from any tab.
     pub composer: Composer,
     pub splash: SplashState,
+    /// Startup system notifications, shown as a transient dialog rather than
+    /// as transcript rows (see [`crate::notice`]).
+    pub notice: NoticeState,
     pub help_open: bool,
     /// Vertical scroll for the help overlay (↑/↓, PageUp/Down, Home/End). Kept
     /// separate from the transcript scroll since the overlay is a different
@@ -763,6 +767,7 @@ impl Default for DeckUi {
             issues: IssuesPanel::default(),
             composer: Composer::with_paste_threshold(crate::composer::DECK_PASTE_LINE_THRESHOLD),
             splash: SplashState::new(),
+            notice: NoticeState::new(),
             help_open: false,
             help_scroll: ScrollState::default(),
             focused: 0,
@@ -1257,6 +1262,13 @@ pub fn ingest_inbound(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut De
         }
         return;
     }
+    // A system notification goes to the transient dialog, never to the
+    // transcript — the transcript is agent and user messages only. Out-of-band
+    // view state like the cue above: the model fold never sees it.
+    if let Inbound::Notice(text) = inbound {
+        ui.notice.push(text.clone());
+        return;
+    }
     // A deregister removes a dashboard row, shifting every index after it:
     // fold it, then repair the focus so the focused AGENT stays focused when
     // an earlier row vanishes. When the focused row itself is removed, its
@@ -1433,6 +1445,15 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
     if !ui.splash.is_done() {
         ui.splash.skip();
         return DeckAction::Handled;
+    }
+
+    // The startup notice is informational, not modal: any key dismisses it,
+    // and — unlike the splash above — the key then goes on to do its normal
+    // job. Swallowing it would eat the first character the user types, and
+    // this dialog is at its most visible in exactly the second or two when
+    // they are most likely to start typing. Dismiss, then fall through.
+    if ui.notice.is_visible() {
+        ui.notice.dismiss();
     }
 
     // Help overlay is modal: scrolling keys drive it, `q`/Esc close it. Only

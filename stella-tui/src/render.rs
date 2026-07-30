@@ -36,7 +36,10 @@ use crate::textline::{self, budget_mode_label, stage_label};
 use crate::ui::{PanelFocus, UiState, ViewportMetrics};
 
 mod entry;
-mod row;
+// `pub(crate)` for `wrap_one_indent` alone: the startup-notice dialog
+// (`crate::notice`) wraps its detail clauses with the same hanging indent the
+// transcript uses, rather than growing a second wrapper beside it.
+pub(crate) mod row;
 use crate::{diff, theme};
 // The transcript content builders moved to `entry` when this file crossed the
 // 1500-line guard; re-exported so `crate::render::transcript_lines` and
