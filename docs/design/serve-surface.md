@@ -21,6 +21,44 @@ Oxagen ADR. That repository is private to Oxagen; this document is the
 
 ---
 
+## As built today — the only routes that exist
+
+**Read this table before writing a client.** Everything after it describes the
+*destination*; this is the surface a request actually reaches, verified end to
+end against a running binary by Oxagen's sidecar smoke test (oxagen #1132).
+Every other path in this document — including the whole `/v1/sessions/...`
+family in the diagram below — is a 404.
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/healthz` | The **only** unauthenticated route. `{"status":"ok"}` |
+| `POST` | `/v1/turns` | Body is `TurnRequest`; returns `{"turn_id":"turn-<32 hex>"}` |
+| `GET` | `/v1/turns/{id}/events` | SSE `data: <ServerFrame>`. Exclusive: a second subscriber gets 409 |
+| `POST` | `/v1/turns/{id}/provider-result` | Answers a `provider_request` |
+| `POST` | `/v1/turns/{id}/tool-result` | Answers a `tool_request` |
+| `POST` | `/v1/turns/{id}/cancel` | The only teardown. There is no `DELETE` |
+
+Three corrections to prose further down that read as present tense but describe
+the destination, and which a client written from them gets wrong:
+
+- **The resource is a turn, not a session.** One `POST /v1/turns` drives exactly
+  one turn; no conversation state is retained between turns and there is no
+  session id. `/readyz` and `/metrics` do not exist either.
+- **No frame carries a `seq`.** The "Wire protocol" section calls each event's
+  `seq` monotonic; there is no such field on `ServerFrame` or `AgentEvent`, and
+  no event history is retained. A reconnect could not resume even if `?after=`
+  were parsed (it is not — the query string is split off and discarded).
+- **Reverse RPC is keyed by `request_id` on its own frame types**, not by a
+  `call_id` on a `tool_start` / `scope_review` / `ask_user` `AgentEvent`. The
+  engine emits dedicated `tool_request` / `provider_request` `ServerFrame`
+  variants whose ids are per-turn counters (`prov-0`, `tool-0`, …). This is the
+  single most dangerous drift in this document for anyone mirroring it in
+  another language: it names the wrong field on the wrong frame.
+
+Also: the tool surface is selected by the `STELLA_SERVE_TOOLS=remote`
+environment variable, not a `--tools remote` flag — the binary parses no flags
+beyond `healthcheck`, `--version` and `--help`.
+
 ## One sentence
 
 Expose the Stella engine as a long-lived, multi-session **service** — a
@@ -101,6 +139,9 @@ tokio runtime**, bridged to the async side by a `Send` oneshot
 multi-thread runtime, sessions addressed by id.
 
 ## Architecture
+
+**The route table in this diagram is the target, not the code.** See
+[As built today](#as-built-today--the-only-routes-that-exist).
 
 ```
 ┌────────────────────────── stella-serve (new crate, the sidecar) ──────────────────────────┐
@@ -214,18 +255,23 @@ per-step checkpoint and crash-resume. This is ADR-033 §6 item 1 and §4.3.
 
 ### Wire protocol
 
-- **Events (engine → host):** newline-delimited `AgentEvent` JSON over SSE,
-  identical to `stream-json`. Each carries a monotonic `seq`. **Planned, not
-  built:** the SSE endpoint is to replay from `?after=<seq>` so a reconnect
-  resumes losslessly (mirroring the Observatory's read model and Oxagen's
-  `agent_events` log discipline). At this baseline no `?after=` parameter is
-  parsed and no event history is retained, so a dropped connection loses
-  whatever was streamed while it was down.
-- **Reverse RPC (host → engine):** the engine surfaces a `tool_start` /
-  `scope_review` / `ask_user` `AgentEvent` carrying a `call_id`; the host runs
-  the governed work and POSTs the result back to
-  `/v1/sessions/:id/{tool-result,approval}` with that `call_id`. The engine's
-  `RemoteToolExecutor::execute` awaits a per-`call_id` oneshot.
+- **Events (engine → host):** `AgentEvent` JSON in SSE `data:` frames, the
+  payload identical to `stream-json`. **Planned, not built:** a monotonic `seq`
+  on each frame, and replay from `?after=<seq>` so a reconnect resumes
+  losslessly (mirroring the Observatory's read model and Oxagen's `agent_events`
+  log discipline). At this baseline **no frame carries a `seq` at all**, no
+  `?after=` parameter is parsed, and no event history is retained — so a dropped
+  connection loses whatever was streamed while it was down.
+- **Reverse RPC (host → engine):** the engine emits a dedicated
+  `ServerFrame::ToolRequest` / `ServerFrame::ProviderRequest` carrying a
+  `request_id` (a per-turn counter — `tool-0`, `prov-0`, …); the host runs the
+  governed work and POSTs the result back to
+  `/v1/turns/{id}/{tool-result,provider-result}` with that `request_id`. The
+  engine's `RemoteToolExecutor::execute` awaits a per-`request_id` oneshot.
+  **Not the same thing as** the `call_id` on a `tool_start` `AgentEvent`: that
+  id is the model's, addresses the tool call inside the transcript, and is not
+  what a resolve POST is keyed by. `scope_review` / `ask_user` have no reverse
+  endpoint at all yet.
 - **Provider deltas:** `RemoteProvider::complete_observed` forwards `text_delta`
   / `tool_call_streamed` as `AgentEvent`s so the browser gets token-level
   streaming (Anthropic + all OpenAI-compatible adapters already emit these;
