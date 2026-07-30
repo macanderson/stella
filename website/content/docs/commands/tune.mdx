@@ -87,8 +87,10 @@ stella tune status
 A/B testing an agent is noisy: the same task list at the same settings does not return the same reward twice. Promoting on a bare mean would ratchet the configuration around on noise, and every such move is invisible to you afterward. So promotion requires the candidate to *confidently* win, `--min-samples` sets a hard floor under both arms, and the write is recorded with a rollback — the three things that make an automatic policy change safe to leave switched on.
 
 <Callout type="warn">
-`--promote` writes to your `settings.json` at the chosen scope. Run without it first and read the comparison; the reported receipt is recorded either way, so nothing is lost by looking.
+`--promote` writes to your `settings.json` at the chosen scope, and it reports the prior value so you can see what it displaced. Run without it first and read the comparison; the receipt is recorded either way, so nothing is lost by looking.
 </Callout>
+
+One promotion side effect is worth knowing: if `effort_auto` was on, promoting **turns it off**, because an automatic effort selector would otherwise override the pinned value the A/B just chose. `stella tune rollback` restores both the prior effort *and* `effort_auto`, so the pair is reverted together rather than leaving you pinned with the selector still disabled.
 
 ## Related
 
