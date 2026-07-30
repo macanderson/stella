@@ -50,9 +50,29 @@ stella chat
     `<list|run>` — list and run the project's package-manager scripts via canonical verbs.
     Offline, no API key.
   </SpecCard>
+  <SpecCard title="stella commands" href="/docs/commands/commands">
+    `<list|convert>` — list the custom slash commands this workspace offers, or convert
+    markdown definitions to TOML. Offline, no API key.
+  </SpecCard>
   <SpecCard title="stella models" href="/docs/commands/models">
     `[refresh|list]` — list configured providers and available models, and manage the live
     model catalog.
+  </SpecCard>
+  <SpecCard title="stella ingest" href="/docs/commands/ingest">
+    `[paths...]` — scan the workspace for markdown steering, or extract named documents into
+    reviewable context-record proposals.
+  </SpecCard>
+  <SpecCard title="stella proposals" href="/docs/commands/proposals">
+    `<list|keep|edit|ignore|refresh>` — review what the adaptive-context loop wants to make
+    durable, before it lands. Offline, no API key.
+  </SpecCard>
+  <SpecCard title="stella tune" href="/docs/commands/tune">
+    `<effort|rollback|status>` — A/B one policy knob over two loop-bench runs and promote the
+    winner reversibly. Offline, no API key.
+  </SpecCard>
+  <SpecCard title="stella scoreboard" href="/docs/commands/scoreboard">
+    What the work cost, and whether anyone said it was good — read from merged and closed pull
+    requests, never from a model.
   </SpecCard>
   <SpecCard title="stella stats" href="/docs/commands/stats">
     `[prune]` — cost, tokens, and resolve rate per provider and model from this

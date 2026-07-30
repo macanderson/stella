@@ -62,8 +62,8 @@ impl Pipeline<'_> {
                     // The cap is on *re-planning*, not on the card: the run
                     // that hits it has already shown the reviewer a card they
                     // can still approve, trim, or abort. Only a further note
-                    // is refused, and the refusal says which keys still work
-                    // rather than ending on an unexplained abort.
+                    // is refused, and the refusal says what still works rather
+                    // than ending on an unexplained abort.
                     if spent_revisions >= MAX_SCOPE_REVISIONS {
                         self.emit(AgentEvent::Error {
                             message: format!(

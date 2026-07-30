@@ -1659,7 +1659,7 @@ pub async fn run_deck_session(
                         }
                         // Scope review IS engine-driven now: the pipeline's
                         // `DeckApprovalGate` parks on this channel, so the
-                        // card's a/t/x keypress becomes its `ScopeDecision`.
+                        // reviewer's answer becomes its `ScopeDecision`.
                         Some(WorkspaceInput::ToAgent {
                             input: UserInput::ScopeDecision(decision), ..
                         }) => {
@@ -4278,7 +4278,7 @@ async fn run_lead_turn(
 /// Deck-mode seams, all named:
 /// - **Scope review is interactive** ([`DeckApprovalGate`]). A plan over the
 ///   thresholds raises the deck's approval card and the turn parks until the
-///   user answers (a/t/x) — the deck runs `headless: false` because it *can*
+///   user answers at the card — the deck runs `headless: false` because it *can*
 ///   ask. It fails closed only if the deck itself goes away mid-gate.
 /// - **The session's system prompt stays.** It was assembled once at deck
 ///   startup (byte-stable for the cache prefix, L-E8); toggling `/pipeline`

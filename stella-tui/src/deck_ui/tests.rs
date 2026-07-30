@@ -1071,7 +1071,10 @@ fn focused_scope_gate_routes_decision_to_that_agent() {
         },
     });
     let mut ui = ready_ui();
-    let action = handle_deck_key(ch('a'), &model, &mut ui);
+    // `a` is typed then sent — no letter commits on its own (see
+    // `deck_ui::gates` for why).
+    handle_deck_key(ch('a'), &model, &mut ui);
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
     assert_eq!(
         action,
         DeckAction::Send(WorkspaceInput::ToAgent {
@@ -1098,33 +1101,37 @@ fn scope_decision_latches_until_a_fresh_review_rearms() {
     let mut ui = ready_ui();
     ingest_inbound(&scope_review, &mut model, &mut ui);
 
+    handle_deck_key(ch('a'), &model, &mut ui);
     assert_eq!(
-        handle_deck_key(ch('a'), &model, &mut ui),
+        handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
         DeckAction::Send(WorkspaceInput::ToAgent {
             agent: "lead".into(),
             input: UserInput::ScopeDecision(ScopeDecision::Approve),
         })
     );
     // The gate stays pending until the engine's follow-on event, but the
-    // latch keeps a second press from re-sending — it types instead.
+    // latch keeps a second submit from re-sending — it enqueues as an ordinary
+    // prompt instead, which is the correct reading once the card is answered.
     assert!(model.agents[0].model.pending_scope_review.is_some());
     handle_deck_key(ch('a'), &model, &mut ui);
     assert_eq!(
-        ui.composer.buffer(),
-        "a",
-        "second press types, never re-sends"
+        handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::Enqueue { text: "a".into() }),
+        "an answered card does not take a second decision"
     );
 
-    // A FRESH review re-arms the decision keys.
-    handle_deck_key(key(KeyCode::Backspace), &model, &mut ui);
+    // A FRESH review re-arms the gate.
     ingest_inbound(&scope_review, &mut model, &mut ui);
+    for c in "x".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
     assert_eq!(
-        handle_deck_key(ch('x'), &model, &mut ui),
+        handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
         DeckAction::Send(WorkspaceInput::ToAgent {
             agent: "lead".into(),
             input: UserInput::ScopeDecision(ScopeDecision::Abort),
         }),
-        "a new card re-arms the decision keys"
+        "a new card re-arms the gate"
     );
 }
 
