@@ -698,9 +698,12 @@ enum Command {
     /// Print a shell completion script for stella to stdout.
     ///
     /// Install it the way your shell expects, e.g.
-    ///   bash: stella completions bash > /etc/bash_completion.d/stella
-    ///   zsh:  stella completions zsh  > "${fpath[1]}/_stella"
-    ///   fish: stella completions fish > ~/.config/fish/completions/stella.fish
+    ///
+    ///     bash: stella completions bash > /etc/bash_completion.d/stella
+    ///
+    ///     zsh:  stella completions zsh  > "${fpath[1]}/_stella"
+    ///
+    ///     fish: stella completions fish > ~/.config/fish/completions/stella.fish
     ///
     /// Offline, writes nothing, and needs no API key.
     Completions {

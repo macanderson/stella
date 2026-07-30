@@ -447,7 +447,7 @@ impl TokenBucket {
 ///   The response says which bound was hit (`408`, `413`, `400`, `501`).
 /// - **Authentication happens on the head**, before the body is read, so the
 ///   memory an *unauthenticated* peer can make this process hold is one 8 KiB
-///   drain buffer rather than [`crate::http`]'s body cap. That matters
+///   drain buffer rather than the request-body cap. That matters
 ///   precisely because connections are uncapped: without it, every anonymous
 ///   connection could cost megabytes for as long as the read deadline allows.
 ///
