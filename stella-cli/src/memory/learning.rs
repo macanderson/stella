@@ -47,6 +47,12 @@ impl SessionMemory {
     /// a failed turn gets a failure-analysis prompt that asks the model to
     /// identify the root cause — the highest-value learning signal in the
     /// system. A succeeded turn gets the conventional "what worked?" prompt.
+    ///
+    /// The same call also returns the model's self-review of the turn, stored
+    /// against [`SessionMemory::set_execution_id`]'s execution — the
+    /// `execution_reflection` half the Observatory's self-improve panels read.
+    /// It rides here rather than in a call of its own because the model already
+    /// has this transcript in front of it.
     pub async fn reflect_and_record(
         &mut self,
         provider: &dyn Provider,
@@ -56,7 +62,7 @@ impl SessionMemory {
         succeeded: bool,
         budget_limit: Option<f64>,
     ) -> ReflectionReport {
-        let lessons = match reflect_on_turn(
+        let reflected = match reflect_on_turn(
             provider,
             model_hint,
             &self.workspace_root,
@@ -67,7 +73,7 @@ impl SessionMemory {
         )
         .await
         {
-            Ok((lessons, cost_usd, events)) => (lessons, cost_usd, events),
+            Ok(outcome) => outcome,
             // The single reflection model call errored. Report it up so the
             // caller can warn (text) or emit an event (stream-json) — this
             // is the fix for the previously-silent reflection failure. Never
@@ -81,7 +87,27 @@ impl SessionMemory {
                 };
             }
         };
-        let (parsed, reflection_cost_usd, reflection_events) = lessons;
+        let (parsed, self_review, reflection_cost_usd, reflection_events) = reflected;
+
+        // One best-effort handle to `.stella/private/store.db` for this whole
+        // persistence pass: the self-review write, the tombstone read and the
+        // reflections-table mirror below all share it rather than each opening
+        // the store again. `None` (a store that won't open) degrades exactly as
+        // before — lessons kept, mirror skipped, never a failed turn.
+        let turn_store = stella_store::Store::open(&self.workspace_root).ok();
+
+        // Store the self-review FIRST, before any of the early returns below.
+        // It is the answer to a different question than the lessons are, and it
+        // survives on its own: a turn can be worth grading and teach nothing
+        // durable (the common case), or emit a lessons array we cannot read
+        // while still having graded itself. Writing it here means neither of
+        // those paths silently discards it.
+        if let (Some(store), Some(execution_id), Some(review)) =
+            (turn_store.as_ref(), self.execution_id, self_review.as_ref())
+            && !review.is_empty()
+        {
+            let _ = store.record_self_review(execution_id, review);
+        }
 
         // A response we could not read is not the same as a turn with nothing
         // to learn, and reporting them identically is how the lifecycle starves
@@ -114,13 +140,6 @@ impl SessionMemory {
         for lesson in &mut lessons {
             lesson.task_id = self.task_id.clone();
         }
-
-        // One best-effort handle to `.stella/private/store.db` for this whole
-        // persistence pass: the tombstone read and the reflections-table
-        // mirror below share it rather than each opening the store again.
-        // `None` (a store that won't open) degrades exactly as before —
-        // lessons kept, mirror skipped, never a failed turn.
-        let turn_store = stella_store::Store::open(&self.workspace_root).ok();
 
         // Drop anything the user has already forgotten, BEFORE it reaches any
         // of the three places this function persists to. Matching is by
@@ -209,11 +228,12 @@ impl SessionMemory {
             }
             if let Some(store) = &turn_store {
                 let _ = store.record_reflection(&stella_store::ReflectionRow {
-                    // No execution id at this seam: `SessionMemory` never
-                    // learns which execution row the turn ran under, and the
-                    // table's contract files id-less rows as cross-turn
-                    // lessons.
-                    execution_id: None,
+                    // Now that the turn tells memory which execution it is
+                    // (`set_execution_id`), a lesson can be traced back to the
+                    // turn that taught it. Still `Option`: a path that has not
+                    // adopted the setter files id-less rows as cross-turn
+                    // lessons, exactly as every row did before.
+                    execution_id: self.execution_id,
                     kind: match lesson.kind {
                         LessonKind::Domain => "domain".to_string(),
                         LessonKind::Process => "process".to_string(),
