@@ -582,11 +582,17 @@ pub(crate) enum Command {
     /// Show current configuration
     Config,
 
-    /// Migrate settings.json to stella.toml (the JSON is kept, never deleted).
-    /// Writes <repo>/stella.toml for the project scope and
-    /// ~/.stella/stella.toml for the user scope, with values serialized from
-    /// what stella actually read — never transcribed. The org-managed scope is
-    /// not migrated: an administrator deploys that file directly.
+    /// Move settings.json to stella.toml
+    ///
+    /// Writes `<repo>/stella.toml` for the project scope and
+    /// `~/.stella/stella.toml` for the user scope, with every value serialized
+    /// from what stella actually read rather than transcribed. The JSON is
+    /// KEPT, never deleted — review the TOML, then remove it yourself; until
+    /// you do, stella reads the TOML and says the JSON is shadowed.
+    ///
+    /// Runs before provider resolution, so a config too broken to start with
+    /// is still migratable. The org-managed scope is not migrated: an
+    /// administrator deploys that file directly.
     Migrate {
         #[command(subcommand)]
         cmd: MigrateCmd,
