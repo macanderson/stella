@@ -474,23 +474,66 @@ struct ZaiImageUrl {
     url: String,
 }
 
-/// GLM vision models ingest images via `image_url` parts; PDFs, audio, and
+/// GLM *vision* models ingest images via `image_url` parts; PDFs, audio, and
 /// video degrade to descriptive text notes in this dialect.
-const ZAI_CAPS: crate::attachment::DialectCaps = crate::attachment::DialectCaps {
-    images: true,
-    pdfs: false,
-    audio: false,
-    video: false,
-};
+///
+/// `images` is deliberately NOT a constant. This dialect is OpenAI-compatible
+/// and serves two very different populations — Z.ai's own GLM slugs and every
+/// free-form slug OpenRouter routes — and the image cap is a property of the
+/// *model*, not the wire format. Z.ai's text-only GLM endpoints reject a
+/// content array outright (`1210: messages.content.type is invalid, allowed
+/// values: ['text']`), which is a **terminal** provider error: one pasted
+/// screenshot kills the whole turn. See [`caps_for`].
+fn caps_for(model: &str) -> crate::attachment::DialectCaps {
+    crate::attachment::DialectCaps {
+        images: model_ingests_images(model),
+        pdfs: false,
+        audio: false,
+        video: false,
+    }
+}
+
+/// Whether `model` can carry image parts on this dialect.
+///
+/// The rule is asymmetric on purpose, because the two failure modes are not
+/// symmetric. Sending an image to a text-only model is a terminal HTTP 400 —
+/// the turn dies and the user's prompt is lost. Withholding one from a model
+/// that could have seen it degrades to a note that *names the file*, so the
+/// model can still open it with a tool and the turn survives. So: deny where
+/// we positively know, permit everywhere else.
+///
+/// "Positively know" is the GLM family, whose vision variants are marked in
+/// the slug by a `v` in the version segment (`glm-4v`, `glm-4.1v`,
+/// `glm-4.5v`). A GLM slug without one is a text model — `glm-4.6`, `glm-5`,
+/// `glm-5.2` — and gets the deny. Every non-GLM slug on this dialect arrives
+/// via a gateway that accepts image parts for its vision models (Anthropic,
+/// OpenAI, Gemini) and would regress if we guessed, so it stays permitted.
+///
+/// The prefix match is on the *last* path segment so gateway-qualified slugs
+/// (`zai/glm-5.2`, `openrouter/z-ai/glm-4.5v`) classify the same as bare ones.
+fn model_ingests_images(model: &str) -> bool {
+    let slug = model.rsplit('/').next().unwrap_or(model).to_ascii_lowercase();
+    let Some(version) = slug.strip_prefix("glm-") else {
+        // Not a GLM model — some other provider behind an OpenAI-compatible
+        // gateway. Unknown, so permitted (see the asymmetry above).
+        return true;
+    };
+    // The version segment runs up to the first `-` (`4.5v-flash` → `4.5v`).
+    // A trailing `v` there is the vision marker.
+    version
+        .split('-')
+        .next()
+        .is_some_and(|v| v.ends_with('v') || v.ends_with("v0"))
+}
 
 /// Content for a user turn: a plain string when there are no attachments,
 /// otherwise a parts array with media before text.
-fn user_content(message: &CompletionMessage) -> ZaiContent {
+fn user_content(message: &CompletionMessage, model: &str) -> ZaiContent {
     if message.attachments.is_empty() {
         return ZaiContent::Text(message.content.clone());
     }
     let mut parts: Vec<ZaiContentPart> =
-        crate::attachment::wire_parts(&message.attachments, ZAI_CAPS)
+        crate::attachment::wire_parts(&message.attachments, caps_for(model))
             .into_iter()
             .map(attachment_part)
             .collect();
@@ -511,7 +554,7 @@ fn attachment_part(part: crate::attachment::WirePart) -> ZaiContentPart {
             },
         },
         crate::attachment::WirePart::Text { text } => ZaiContentPart::Text { text },
-        // Excluded by ZAI_CAPS today; turning one of those caps on without
+        // Excluded by `caps_for` today; turning one of those caps on without
         // adding a part arm lands here — degrade, never abort the turn.
         part @ (crate::attachment::WirePart::Pdf { .. }
         | crate::attachment::WirePart::Audio { .. }
@@ -819,7 +862,9 @@ struct ZaiPromptTokensDetails {
     cache_write_tokens: u64,
 }
 
-fn to_zai_messages(messages: &[CompletionMessage]) -> Vec<ZaiMessage> {
+/// `model` is threaded through only so user turns can resolve their image cap
+/// against the model that will actually receive them ([`caps_for`]).
+fn to_zai_messages(messages: &[CompletionMessage], model: &str) -> Vec<ZaiMessage> {
     let mut out = Vec::new();
     for message in messages {
         match message.role {
@@ -831,7 +876,7 @@ fn to_zai_messages(messages: &[CompletionMessage]) -> Vec<ZaiMessage> {
             }),
             MessageRole::User => out.push(ZaiMessage {
                 role: "user",
-                content: user_content(message),
+                content: user_content(message, model),
                 tool_calls: Vec::new(),
                 tool_call_id: None,
             }),
@@ -961,7 +1006,7 @@ impl ZaiProvider {
         let params = req.params.unwrap_or_default();
         let body = ZaiRequest {
             model: &self.model,
-            messages: to_zai_messages(req.messages),
+            messages: to_zai_messages(req.messages, &self.model),
             stream: true,
             max_tokens: req.max_output_tokens,
             temperature: req.temperature,

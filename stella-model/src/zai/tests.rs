@@ -10,7 +10,7 @@ fn to_zai_messages_maps_all_roles() {
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
     ];
-    let mapped = to_zai_messages(&messages);
+    let mapped = to_zai_messages(&messages, "glm-4.5v");
     assert_eq!(mapped.len(), 2);
     assert_eq!(mapped[0].role, "system");
     assert_eq!(mapped[1].role, "user");
@@ -44,7 +44,7 @@ fn to_zai_messages_frames_tool_results_with_call_ids() {
             attachments: Vec::new(),
         },
     ];
-    let mapped = to_zai_messages(&messages);
+    let mapped = to_zai_messages(&messages, "glm-4.5v");
     assert_eq!(mapped.len(), 2);
     assert_eq!(mapped[0].role, "assistant");
     assert_eq!(mapped[0].tool_calls.len(), 1);
@@ -72,7 +72,7 @@ fn user_attachments_widen_content_to_parts_with_data_uri_images() {
             ],
         ),
     ];
-    let mapped = to_zai_messages(&messages);
+    let mapped = to_zai_messages(&messages, "glm-4.5v");
     // A text-only user turn stays a plain string — byte-stable with the
     // pre-attachment wire format.
     let plain = serde_json::to_value(&mapped[0]).unwrap();
@@ -104,7 +104,7 @@ fn to_zai_messages_marks_error_results_loudly() {
         }],
         attachments: Vec::new(),
     }];
-    let mapped = to_zai_messages(&messages);
+    let mapped = to_zai_messages(&messages, "glm-4.5v");
     assert_eq!(mapped.len(), 1);
     assert!(mapped[0].content.as_text().starts_with("ERROR:"));
 }
@@ -1641,8 +1641,74 @@ async fn openrouter_resends_without_reasoning_when_the_endpoint_mandates_it() {
     );
 }
 
+/// The reported failure: a screenshot pasted into the deck while the worker
+/// was `glm-5.2` became an `image_url` part, and Z.ai answered
+/// `1210: messages.content.type is invalid, allowed values: ['text']` — a
+/// *terminal* provider error that killed the turn. A text-only GLM must get
+/// the degrade note instead, so the turn survives and the model can say what
+/// it cannot see.
+#[test]
+fn a_text_only_glm_degrades_an_image_instead_of_killing_the_turn() {
+    use stella_protocol::{Attachment, AttachmentSource};
+    let shot = Attachment {
+        name: "pasted-1785442896326.png".into(),
+        media_type: "image/png".into(),
+        byte_len: 3,
+        source: AttachmentSource::Data {
+            base64: "aW1n".into(),
+        },
+    };
+    for model in ["glm-5.2", "glm-4.6", "glm-5", "zai/glm-5.2", "GLM-5.2"] {
+        let message =
+            CompletionMessage::user_with_attachments("what is this", vec![shot.clone()]);
+        let ZaiContent::Parts(parts) = user_content(&message, model) else {
+            panic!("{model}: attachments always produce a parts array");
+        };
+        assert!(
+            parts
+                .iter()
+                .all(|p| matches!(p, ZaiContentPart::Text { .. })),
+            "{model} is text-only — no image part may reach the wire: {parts:?}"
+        );
+        let [ZaiContentPart::Text { text }, ..] = parts.as_slice() else {
+            unreachable!()
+        };
+        assert!(
+            text.contains("pasted-1785442896326.png"),
+            "{model}: the note names the file so the model can offer to read it: {text}"
+        );
+    }
+}
+
+/// The other half of the asymmetry: the deny is scoped to GLM text models.
+/// A GLM vision variant still sends the image, and so does every non-GLM slug
+/// this OpenAI-compatible dialect carries for OpenRouter — guessing "no" there
+/// would silently blind Opus/Gemini/GPT behind the gateway.
+#[test]
+fn vision_glms_and_gateway_models_still_send_the_image() {
+    for model in [
+        "glm-4v",
+        "glm-4.1v",
+        "glm-4.5v",
+        "glm-4.5v-flash",
+        "z-ai/glm-4.5v",
+        "anthropic/claude-opus-5",
+        "openai/gpt-5",
+        "google/gemini-3-pro",
+        "moonshotai/kimi-k3",
+    ] {
+        assert!(
+            model_ingests_images(model),
+            "{model} must keep its image parts"
+        );
+    }
+    for model in ["glm-5.2", "glm-4.6", "glm-5", "glm-4-plus"] {
+        assert!(!model_ingests_images(model), "{model} is text-only");
+    }
+}
+
 /// The pdf/audio/video arm of [`attachment_part`] is out of reach only
-/// because `ZAI_CAPS` switches those kinds off. Flipping one of those bools
+/// because [`caps_for`] switches those kinds off. Flipping one of those bools
 /// is a routine one-line edit, so the arm it lands in has to degrade like
 /// every other unsupported attachment instead of aborting the process
 /// mid-turn.
