@@ -79,6 +79,8 @@ def extract_trial(result_path: Path) -> dict[str, Any]:
     def total(name: str) -> int | None:
         return _int(_dict(fields.get(name)).get("total"))
 
+    execution = _dict(result.get("agent_execution"))
+
     return {
         "trial_id": result_path.parent.name,
         "task_name": result.get("task_name") or _dict(config.get("task")).get("name"),
@@ -89,22 +91,64 @@ def extract_trial(result_path: Path) -> dict[str, Any]:
         "exception_message": exception_info.get("exception_message"),
         "started_at": result.get("started_at"),
         "finished_at": result.get("finished_at"),
+        "agent_started_at": execution.get("started_at"),
+        "agent_finished_at": execution.get("finished_at"),
         "n_input_tokens": _int(agent_result.get("n_input_tokens")),
         "n_output_tokens": _int(agent_result.get("n_output_tokens")),
         "n_cache_tokens": _int(agent_result.get("n_cache_tokens")),
-        "usd": _number(accounting.get("usd_total")) or total("usd"),
+        # Harbor records the spend on the agent result; the adapter's accounting
+        # block carries Stella's own per-step totals. Prefer Harbor's, because it
+        # is the same field the claim analyzer bills from.
+        "usd": _number(agent_result.get("cost_usd")) or _number(accounting.get("usd_total")),
         "model_calls": total("model_calls"),
         "tool_calls": total("tool_calls"),
+        # Stella's self-reported terminal state, which is NOT the same thing as
+        # the process exiting: a completed turn whose process lingers is killed
+        # by Harbor's agent timeout and lands here as
+        # status=completed + exception_type=AgentTimeoutError.
+        "stella_status": metadata.get("stella_status"),
+        "stella_steps": _int(metadata.get("stella_steps")),
+        "stella_return_code_state": metadata.get("stella_return_code_state"),
+        "accounting_state": accounting.get("state"),
+        "binary_sha256_verified": metadata.get("stella_binary_sha256_verified_in_container"),
+        "source_commit_verified": metadata.get("stella_source_commit_verified_in_binary"),
     }
+
+
+def find_trial_results(job_dir: Path) -> list[Path]:
+    """Locate per-trial results in a Harbor job directory.
+
+    Harbor 0.6.1 writes one `<task>__<suffix>/result.json` per trial directly
+    under the job directory, alongside the job's own summary `result.json`.
+    Later releases nest them under `trials/`. Accept either, and never mistake
+    the job summary for a trial (it has no `task_name`).
+    """
+    nested = sorted((job_dir / "trials").glob("*/result.json"))
+    if nested:
+        return nested
+    return sorted(
+        path
+        for path in job_dir.glob("*/result.json")
+        if path.parent.name != "trials"
+    )
 
 
 def cmd_extract(args: argparse.Namespace) -> int:
     job_dir = Path(args.job_dir)
-    trials = sorted((job_dir / "trials").glob("*/result.json"))
+    trials = find_trial_results(job_dir)
     if not trials:
-        print(f"no trials under {job_dir / 'trials'}", file=sys.stderr)
+        print(f"no per-trial result.json found under {job_dir}", file=sys.stderr)
         return 1
     rows = [extract_trial(path) for path in trials]
+    # A row with no task name cannot be scored against a per-task denominator,
+    # and silently keying one under `None` would invent a task. Drop it loudly.
+    named = [row for row in rows if row.get("task_name")]
+    if len(named) != len(rows):
+        print(f"WARNING: dropped {len(rows) - len(named)} result(s) with no task_name", file=sys.stderr)
+    rows = named
+    if not rows:
+        print(f"no named trials under {job_dir}", file=sys.stderr)
+        return 1
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w") as handle:
@@ -194,7 +238,10 @@ def cmd_score(args: argparse.Namespace) -> int:
     # rather than silently averaging attempts into it.
     by_task: dict[str, float] = {}
     for row in rows:
-        name = row["task_name"]
+        name = row.get("task_name")
+        if not name:
+            print("FATAL: a trial row has no task_name; refusing to score", file=sys.stderr)
+            return 1
         value = row.get("accuracy")
         value = 0.0 if value is None else float(value)
         by_task[name] = max(by_task.get(name, 0.0), value)
