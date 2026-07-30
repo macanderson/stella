@@ -29,6 +29,7 @@ your provider before budgeting — prices and lineups drift.
 | <ProviderMark id="deepseek" /> `deepseek-chat` | `deepseek` | 128k | 0.27 | 1.10 | 0.07 | Q4 2024 (V3 line, revised through 2025) | The price/performance outlier. Ideal triage model; a very capable budget worker. |
 | <ProviderMark id="zai" /> `glm-5.2` | `zai` | 200k | 0.60 | 2.20 | 0.11 | 2026 | Excellent coding at a fraction of flagship price — Stella's default worker tier. The coding-plan endpoint makes it a subscription workhorse. |
 | <ProviderMark id="bedrock" /> `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | `bedrock` | 200k | 3.00 | 15.00 | 0.30 | Sep 2025 | Claude under AWS governance — for orgs that must keep inference inside their cloud account. |
+| <ProviderMark id="openrouter" /> `moonshotai/kimi-k3` | `openrouter` | 1M | 3.00 | 15.00 | 0.30 | 2026 | Long-context agentic driver, and the OpenRouter default — a 1M window that holds a whole repo while it works. Runs at `xhigh` effort with thinking on. |
 | <ProviderMark id="openrouter" /> `openrouter/auto` | `openrouter` | 128k | gateway-priced | gateway-priced | — | rolling | OpenRouter's meta-router; and any `vendor/model` slug on the gateway routes verbatim (one key, every vendor). |
 
 ## Which model for which role
@@ -151,6 +152,7 @@ shop on — it is the cost of entry you amortize:
 | `grok-4` | `xai` | 3.00 | 3.00 | 1x |
 | `glm-5.2` | `zai` | 0.60 | 0.60 | 1x |
 | `deepseek-chat` | `deepseek` | 0.27 | 0.27 | 1x |
+| `moonshotai/kimi-k3` | `openrouter` | 3.00 | 3.00 | 1x |
 | `openrouter/auto` | `openrouter` | gateway-priced | gateway-priced | — |
 
 The Claude family is the only one in the seed catalog carrying a write premium — and, not

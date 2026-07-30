@@ -1,4 +1,8 @@
 use super::*;
+// Straight from the table's own module rather than a `config` re-export: it
+// is read only here, and a `pub(crate) use` for a test-only name is an
+// unused import in every non-test build.
+use super::providers::COMMON_KEY_ENV_VARS;
 
 /// Every provider's `default_model` here must resolve against
 /// `stella_model::catalog::Catalog::seed()`, or `build_provider`'s

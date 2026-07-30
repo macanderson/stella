@@ -297,6 +297,85 @@ pub fn model_supports_reasoning(provider: &str, model: &str) -> Option<bool> {
         .and_then(|entry| entry.supports_reasoning)
 }
 
+// Provider default posture
+
+/// The OpenRouter default posture, as the settings object a user would have
+/// had to write by hand to get it.
+///
+/// One key reaches every vendor, so the interesting choice on OpenRouter is
+/// not "which model" but "which model per ROLE" — and the roles want
+/// genuinely different things. The driver wants a long-context agentic model
+/// thinking hard; the judge wants a different vendor's strongest reasoner, so
+/// its verdict is not the worker grading its own homework (see
+/// [`spec_family`], which exists precisely to keep those apart); triage wants
+/// something fast and cheap that runs on every turn.
+///
+/// Hence Kimi K3 driving at `xhigh` with thinking on, Opus 5 judging, GLM 5.2
+/// triaging. All three are OpenRouter slugs on the one key, so this costs the
+/// instance no extra configuration — which is the point of it being a default
+/// rather than documentation telling people to write it out.
+///
+/// Being a baseline is what keeps this honest: it composes UNDER the settings
+/// scope chain via [`AgentEngineConfig::layered_over`], so any of it that a
+/// user has an opinion about is theirs, field by field.
+pub fn provider_engine_baseline(provider_id: &str) -> Option<AgentEngineConfig> {
+    if provider_id != "openrouter" {
+        return None;
+    }
+    Some(AgentEngineConfig {
+        // Roles land on the FLAT keys in fully-qualified `provider/slug`
+        // form, NOT on `agents.<role>.model`, and the difference is the whole
+        // reason this is a default rather than an override:
+        // [`AgentEngineConfig::model_for`] reads `agents.<role>.model` BEFORE
+        // the flat key, so a per-agent baseline would outrank a user's
+        // `pipeline_judge_model` — backwards. On the flat key the user's
+        // value simply replaces this one.
+        //
+        // Qualified rather than a bare slug plus an `agents.<role>.provider`
+        // pin for the same reason: a pin survives an overlay that replaces
+        // only the model, so a user retargeting the judge at
+        // `anthropic/claude-fable-5` would have it sent to OpenRouter as a
+        // slug. The prefix travels WITH the model or not at all.
+        pipeline_judge_model: Some("openrouter/anthropic/claude-opus-5".to_string()),
+        pipeline_triage_model: Some("openrouter/z-ai/glm-5.2".to_string()),
+        // Unset: the worker rides the default agent's model, and saying so
+        // twice is how the two drift apart.
+        pipeline_worker_model: None,
+        agents: Some(AgentEngineAgents {
+            // Posture only, no `model`: the driver's model is already
+            // answered by the provider row's `default_model`, and naming it
+            // again here would outrank an explicit `--model`.
+            default: Some(AgentEngineAgent {
+                effort: Some(ReasoningEffort::Xhigh),
+                reasoning: Some(Toggle::On),
+                ..AgentEngineAgent::default()
+            }),
+            ..AgentEngineAgents::default()
+        }),
+        ..AgentEngineConfig::default()
+    })
+}
+
+/// The engine settings a session actually runs on: the user's merged
+/// `agent_engine_config` layered over whatever posture the resolved provider
+/// brings ([`provider_engine_baseline`]).
+///
+/// Keyed on the provider that resolution actually PICKED, not on which
+/// credentials happen to exist. An instance with an OpenRouter key that was
+/// nonetheless pointed at `--model anthropic/…` is an Anthropic session, and
+/// quietly routing its judge through a different gateway — and a different
+/// bill — would be the config surprising its user.
+pub fn engine_with_provider_baseline(
+    provider_id: &str,
+    configured: &Option<AgentEngineConfig>,
+) -> Option<AgentEngineConfig> {
+    match (provider_engine_baseline(provider_id), configured) {
+        (Some(baseline), Some(user)) => Some(user.layered_over(&baseline)),
+        (Some(baseline), None) => Some(baseline),
+        (None, configured) => configured.clone(),
+    }
+}
+
 /// The effort levels that DO something for a model served by `provider_id`.
 /// Two constraints intersect here:
 /// - the model: a catalog-confirmed non-reasoning model has no levels at
@@ -321,6 +400,14 @@ pub fn effort_levels(
     }
     if provider_id == "zai" {
         return &[];
+    }
+    // OpenRouter is OpenAI-compatible on the wire but NOT in this vocabulary:
+    // its `reasoning.effort` accepts the full ladder and normalizes each tier
+    // onto the routed model, so offering `xhigh`/`max` here promises a
+    // distinction the request can genuinely express (see
+    // `zai::map_openrouter_effort`).
+    if provider_id == "openrouter" {
+        return &["low", "medium", "high", "xhigh", "max"];
     }
     match dialect {
         Dialect::Anthropic | Dialect::Bedrock => &["low", "medium", "high", "xhigh", "max"],
@@ -607,6 +694,120 @@ mod tests {
         serde_json::from_str(json).expect("valid engine config json")
     }
 
+    /// The whole point of the baseline is that it resolves to real, routable
+    /// specs through the SAME path a hand-written config takes — not to a
+    /// shape that only looks right in the struct.
+    #[test]
+    fn openrouter_baseline_routes_every_role_through_the_gateway() {
+        let engine = provider_engine_baseline("openrouter").expect("openrouter has a baseline");
+
+        let judge = model_spec_for(&engine, EngineAgentKind::Judge, &is_builtin).unwrap();
+        assert_eq!(judge.provider, "openrouter");
+        assert_eq!(judge.model, "anthropic/claude-opus-5");
+
+        let triage = model_spec_for(&engine, EngineAgentKind::Triage, &is_builtin).unwrap();
+        assert_eq!(triage.provider, "openrouter");
+        assert_eq!(triage.model, "z-ai/glm-5.2");
+
+        // The driver's posture, but NOT its model: pinning the model here
+        // would outrank an explicit `--model`, and the provider row already
+        // answers it.
+        let default = tuning_for(&engine, EngineAgentKind::Default);
+        assert_eq!(default.effort, Some(ReasoningEffort::Xhigh));
+        assert_eq!(default.reasoning, Some(true));
+        assert_eq!(engine.model_for(EngineAgentKind::Default), None);
+        assert!(model_spec_for(&engine, EngineAgentKind::Default, &is_builtin).is_none());
+    }
+
+    /// Judge diversity is the reason Opus 5 is the judge rather than another
+    /// Kimi. `spec_family` reads an OpenRouter spec's family from the routed
+    /// vendor prefix, so this is the check that the default actually achieves
+    /// the cross-family split it claims.
+    #[test]
+    fn openrouter_baseline_judge_is_a_different_family_from_the_driver() {
+        let engine = provider_engine_baseline("openrouter").unwrap();
+        let judge = model_spec_for(&engine, EngineAgentKind::Judge, &is_builtin).unwrap();
+        let driver = ModelSpec {
+            provider: "openrouter".to_string(),
+            model: crate::config::PROVIDERS
+                .iter()
+                .find(|p| p.id == "openrouter")
+                .unwrap()
+                .default_model
+                .to_string(),
+        };
+        assert_eq!(spec_family(&driver), "moonshotai");
+        assert_eq!(spec_family(&judge), "anthropic");
+        assert_ne!(spec_family(&driver), spec_family(&judge));
+    }
+
+    #[test]
+    fn no_other_provider_carries_a_baseline() {
+        for provider in crate::config::PROVIDERS
+            .iter()
+            .filter(|p| p.id != "openrouter")
+        {
+            assert!(
+                provider_engine_baseline(provider.id).is_none(),
+                "{} unexpectedly has a default posture",
+                provider.id
+            );
+        }
+    }
+
+    /// A baseline that could displace a configured value would not be a
+    /// default. Each user field must win while the untouched roles survive.
+    #[test]
+    fn configured_settings_beat_the_baseline_field_by_field() {
+        let user = engine_from_json(
+            r#"{"pipeline_judge_model": "openrouter/openai/gpt-5.5",
+                "headless_scope_bypass": "on",
+                "agents": {"default": {"effort": "low"}}}"#,
+        );
+        let merged =
+            engine_with_provider_baseline("openrouter", &Some(user)).expect("baseline applies");
+
+        // The user's judge wins...
+        let judge = model_spec_for(&merged, EngineAgentKind::Judge, &is_builtin).unwrap();
+        assert_eq!(judge.model, "openai/gpt-5.5");
+        // ...their effort wins over the baseline's xhigh...
+        let default = tuning_for(&merged, EngineAgentKind::Default);
+        assert_eq!(default.effort, Some(ReasoningEffort::Low));
+        // ...the baseline still answers where they said nothing (reasoning,
+        // and the triage role they never mentioned)...
+        assert_eq!(default.reasoning, Some(true));
+        let triage = model_spec_for(&merged, EngineAgentKind::Triage, &is_builtin).unwrap();
+        assert_eq!(triage.model, "z-ai/glm-5.2");
+        // ...and the field `overlay` used to drop survives the extra layer.
+        assert!(merged.headless_scope_bypass_on());
+    }
+
+    /// Keyed on the provider that resolution PICKED. An OpenRouter key in the
+    /// environment must not quietly re-route an Anthropic session's judge
+    /// through a different gateway — and a different bill.
+    #[test]
+    fn a_non_openrouter_session_is_left_exactly_as_configured() {
+        let user = engine_from_json(r#"{"default_model": "anthropic/claude-fable-5"}"#);
+        let merged = engine_with_provider_baseline("anthropic", &Some(user.clone()));
+        assert_eq!(merged, Some(user));
+        assert_eq!(engine_with_provider_baseline("anthropic", &None), None);
+    }
+
+    /// OpenRouter accepts the full effort ladder and normalizes it onto the
+    /// routed model, so the picker must offer the tier the default pins.
+    #[test]
+    fn openrouter_offers_the_effort_tier_its_baseline_pins() {
+        let levels = effort_levels_for_spec("openrouter", "moonshotai/kimi-k3");
+        assert!(levels.contains(&"xhigh"), "got {levels:?}");
+        assert!(levels.contains(&"max"), "got {levels:?}");
+        // The direct OpenAI shapes still stop at high — only the gateway
+        // normalizes the top tiers.
+        assert_eq!(
+            effort_levels_for_spec("openai", "gpt-5.5"),
+            ["low", "medium", "high"]
+        );
+    }
+
     #[test]
     fn parse_model_spec_splits_provider_prefixes_and_resolves_bare_slugs() {
         // provider/slug — including a routed slug that itself contains `/`.
@@ -832,10 +1033,14 @@ mod tests {
             &["low", "medium", "high"]
         );
         // Unknown capability must not restrict — the provider's own full
-        // vocabulary stays offered.
+        // vocabulary stays offered. For OpenRouter that vocabulary is the
+        // whole ladder, not the OpenAI-compatible three: the gateway accepts
+        // `xhigh`/`max` and normalizes them onto the routed model, so unlike
+        // the direct OpenAI shapes above, offering them promises something
+        // the request can actually express.
         assert_eq!(
             effort_levels("openrouter", Dialect::OpenaiCompatible, None),
-            &["low", "medium", "high"]
+            &["low", "medium", "high", "xhigh", "max"]
         );
 
         // The spec form resolves dialect + capability from the tables: the
