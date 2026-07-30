@@ -7659,8 +7659,8 @@ blocks the work.
 ### 3. Scope review
 
 If the plan's blast radius crosses any of three configured thresholds, Stella
-pauses for an interactive **scope review** — you approve, trim, or abort the
-plan before any file changes:
+pauses for an interactive **scope review** — you approve, trim, revise, or
+abort the plan before any file changes:
 
     Fires when the plan has strictly more than this many steps.
     Fires when the plan's estimated files-touched count strictly exceeds this.
@@ -7670,6 +7670,14 @@ The comparison is strict `>` on every axis, so a plan sitting exactly at a
 threshold passes without a gate. Headless runs must opt in to bypass this gate
 explicitly — `agent_engine_config.headless_scope_bypass: "on"` — and there is
 no silent auto-approve: without it, a plan over the thresholds ends the run.
+
+**Answering the card.** `a` approves, `t` trims to the largest prefix that
+would not have tripped review, `x` aborts. You can also just **type what you
+want changed and press ⏎** — the plan goes back to the planner carrying your
+note, and the new plan is reviewed the same way. A bare `ok`/`yes` typed at the
+card approves it; a bare `no` aborts. Revision is bounded at two re-plans per
+turn, since each one is a fresh planner call — after that the keys are the way
+through.
 
 ### 4. Witness
 

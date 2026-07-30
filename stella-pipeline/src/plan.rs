@@ -197,7 +197,19 @@ fn balanced_span(text: &str, open: char, close: char) -> Option<&str> {
 /// **Never** includes the running transcript — the whole point of the split.
 /// The recall frames are cited by label (L-C4), and their content is included
 /// as grounding.
-pub fn build_planner_prompt(goal: &str, recall: &[RecalledFrame], repo_structure: &str) -> String {
+///
+/// `revision` is the reviewer's note from a rejected scope card
+/// ([`crate::ScopeDecision::Revise`]) — `None` on the first plan of a turn. It
+/// is placed *after* the goal and marked as overriding, because the plan it is
+/// correcting was already a defensible reading of the goal alone: a planner
+/// that weighs the two equally tends to re-emit the plan the human just
+/// rejected.
+pub fn build_planner_prompt(
+    goal: &str,
+    recall: &[RecalledFrame],
+    repo_structure: &str,
+    revision: Option<&str>,
+) -> String {
     let mut prompt = String::new();
     prompt.push_str(
         "You are the planner for a coding agent. Produce a short ordered plan of \
@@ -209,6 +221,17 @@ pub fn build_planner_prompt(goal: &str, recall: &[RecalledFrame], repo_structure
     prompt.push_str("## Goal\n");
     prompt.push_str(goal.trim());
     prompt.push_str("\n\n");
+
+    if let Some(note) = revision.map(str::trim).filter(|n| !n.is_empty()) {
+        prompt.push_str(
+            "## Revision requested (overrides the goal where they disagree)\n\
+             A human reviewed your previous plan for this goal, rejected it, and \
+             asked for this instead. Follow it exactly — do not re-emit the \
+             rejected plan, and do not add steps it did not ask for.\n",
+        );
+        prompt.push_str(note);
+        prompt.push_str("\n\n");
+    }
 
     if !recall.is_empty() {
         prompt.push_str("## Recalled context\n");
@@ -345,6 +368,7 @@ mod tests {
             "Fix the failing budget test",
             &recall,
             "crates/\n  stella-core/src/budget.rs",
+            None,
         );
         assert!(prompt.contains("Fix the failing budget test"));
         assert!(prompt.contains("engine driver (driver.rs)"));
@@ -355,9 +379,44 @@ mod tests {
 
     #[test]
     fn planner_prompt_omits_empty_recall_and_structure_sections() {
-        let prompt = build_planner_prompt("goal", &[], "");
+        let prompt = build_planner_prompt("goal", &[], "", None);
         assert!(!prompt.contains("Recalled context"));
         assert!(!prompt.contains("Repository structure"));
+    }
+
+    /// A turn's first plan must not mention a revision — the section only
+    /// exists once a human has rejected something.
+    #[test]
+    fn planner_prompt_omits_the_revision_section_without_a_note() {
+        let prompt = build_planner_prompt("goal", &[], "", None);
+        assert!(!prompt.contains("Revision requested"));
+    }
+
+    /// The reviewer's note reaches the planner verbatim, marked as overriding
+    /// the goal — the plan it replaces was already a fair reading of the goal.
+    #[test]
+    fn planner_prompt_carries_the_revision_note_and_marks_it_overriding() {
+        let prompt = build_planner_prompt(
+            "add issue keybindings",
+            &[],
+            "",
+            Some("only the ctrl+O dialog, skip the rest"),
+        );
+        assert!(prompt.contains("Revision requested"));
+        assert!(prompt.contains("overrides the goal"));
+        assert!(prompt.contains("only the ctrl+O dialog, skip the rest"));
+        // The goal survives alongside it — a revision narrows the goal, it
+        // does not replace the reason the turn exists.
+        assert!(prompt.contains("add issue keybindings"));
+    }
+
+    /// A whitespace-only note is not an instruction. Emitting the section for
+    /// it would tell the planner a human had asked for something and then hand
+    /// it nothing to act on.
+    #[test]
+    fn planner_prompt_treats_a_blank_revision_as_no_revision() {
+        let prompt = build_planner_prompt("goal", &[], "", Some("   \n  "));
+        assert!(!prompt.contains("Revision requested"));
     }
 
     #[test]
