@@ -3,9 +3,12 @@
 //! the already-large `command_deck` dispatcher: the parser, the live switch,
 //! and the settings write live here; `command_deck` only wires them to `say`.
 //!
-//! Two themes ship. `stella-dark` (terminal green on true black) is the
-//! default; `stella-light` (the logo's ember red-orange on paper white) is its
-//! complement. The switch itself is a per-frame buffer remap in
+//! Two themes ship. `stella-dark` (electric blue on deep space) is the
+//! default; `stella-light` is the same blue on paper. Both were described here
+//! — and to users, through [`blurb`] — in the vocabulary of two retired
+//! identities: a terminal-green dark theme and an ember red-orange light one,
+//! neither of which any surface has rendered for two recolours. See
+//! `docs/brand/BRAND.md`. The switch itself is a per-frame buffer remap in
 //! [`stella_tui::theme`], so it takes effect on the next frame with nothing to
 //! re-lay-out — this module only flips the global and writes `ui.theme`.
 
@@ -51,10 +54,15 @@ fn theme_menu() -> String {
 }
 
 /// A one-line description of what each theme looks like.
+///
+/// Printed to users by `/theme`, which made it the most visible piece of
+/// retired-identity prose left in the product: it named a terminal green and an
+/// ember red-orange that nothing has rendered since two recolours ago. Both
+/// themes carry the same electric-blue brand hue; the ground is what differs.
 fn blurb(theme: ThemeName) -> &'static str {
     match theme {
-        ThemeName::StellaDark => "terminal green on true black (default)",
-        ThemeName::StellaLight => "ember red-orange on paper white",
+        ThemeName::StellaDark => "electric blue on deep space (default)",
+        ThemeName::StellaLight => "electric blue on paper",
     }
 }
 

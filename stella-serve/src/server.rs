@@ -11,9 +11,22 @@
 //! | `POST /v1/turns/{id}/provider-result` | answer a `provider_request` ([`ProviderResultIn`]) |
 //! | `POST /v1/turns/{id}/cancel` | end an in-flight turn → `{ "status": "cancelled" }` |
 //!
+//! Any other method on one of those paths is a `405` carrying `Allow`; any
+//! other path is a `404`.
+//!
 //! The SSE stream is the engine → host direction; the two result POSTs are the
 //! host → engine direction. Together they are the reverse tool-call protocol —
 //! the engine never runs a model or tool call itself.
+//!
+//! # A stream is a subscription, not a fire-and-forget
+//!
+//! `GET /v1/turns/{id}/events` owns the turn for its lifetime: the session is
+//! taken out of the registry (a second subscriber gets `409`), and the stream
+//! ending — for any reason, including the client hanging up — cancels the turn
+//! and reclaims its thread. That is why the stream watches its own read half
+//! while it waits for frames: a turn parked on a reverse request produces
+//! nothing to write, so a disconnect would otherwise go unnoticed until the
+//! reverse-request deadline expired minutes later.
 //!
 //! # Cancellation
 //!
@@ -431,7 +444,12 @@ impl TokenBucket {
 ///   process per tenant.
 /// - **Reads are bounded** by a deadline and by separate head and body caps; a
 ///   peer that dribbles a request head is dropped rather than parked forever.
-///   The response says which bound was hit (`408`, `413`, `400`).
+///   The response says which bound was hit (`408`, `413`, `400`, `501`).
+/// - **Authentication happens on the head**, before the body is read, so the
+///   memory an *unauthenticated* peer can make this process hold is one 8 KiB
+///   drain buffer rather than the request-body cap. That matters
+///   precisely because connections are uncapped: without it, every anonymous
+///   connection could cost megabytes for as long as the read deadline allows.
 ///
 /// Reverse requests *are* bounded (see [`SessionSpec::reverse_request_timeout`]),
 /// and a turn can be ended early with `POST /v1/turns/{id}/cancel`.
@@ -593,7 +611,15 @@ async fn handle_conn(mut stream: TcpStream, state: Arc<ServerState>) -> std::io:
         (_, ["v1", "turns", _, "events"]) => {
             return method_not_allowed(&mut stream, &mut req, "GET").await;
         }
-        (_, ["v1", "turns", _, "tool-result" | "provider-result" | "cancel"]) => {
+        (
+            _,
+            [
+                "v1",
+                "turns",
+                _,
+                "tool-result" | "provider-result" | "cancel",
+            ],
+        ) => {
             return method_not_allowed(&mut stream, &mut req, "POST").await;
         }
         _ => {

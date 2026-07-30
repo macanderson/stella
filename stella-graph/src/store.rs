@@ -161,8 +161,12 @@ pub struct IndexStats {
     /// convention, or the minified-content heuristic. Surfaced by `stella
     /// init` as "skipped N generated files" (issue #272).
     pub files_skipped_generated: usize,
-    /// Files skipped for exceeding [`MAX_INDEXABLE_BYTES`] — never read, so
+    /// Files skipped for exceeding the 4 MiB indexing ceiling — never read, so
     /// they cost a `stat` rather than their own bytes plus a syntax tree.
+    ///
+    /// The ceiling is deliberately not public: it is a memory-safety bound on
+    /// tree-sitter, whose tree runs several times the size of its source, not
+    /// a promise about which files get indexed.
     pub files_skipped_too_large: usize,
     pub files_unreadable: usize,
     pub parse_failures: usize,

@@ -1,16 +1,16 @@
 :root {
-  --stella-ink: #0B0B0C;
-  --stella-sub: #9AA0A6;
-  --stella-chevron: #C9CDD2;
-  --stella-cursor: #FF3D1F;
+  --stella-ink: #0A0F1A;
+  --stella-sub: #525C6E;
+  --stella-chevron: #1550C8;
+  --stella-cursor: #B5831F;
   --stella-paper: #FFFFFF;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --stella-ink: #F5F6F7;
-    --stella-sub: #7D838A;
-    --stella-chevron: #45494F;
-    --stella-cursor: #FF4B2A;
-    --stella-paper: #0B0B0C;
+    --stella-ink: #F2F5FA;
+    --stella-sub: #8E97A8;
+    --stella-chevron: #5AA0FF;
+    --stella-cursor: #F5C145;
+    --stella-paper: #05070C;
   }
 }

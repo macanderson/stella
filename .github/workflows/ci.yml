@@ -115,7 +115,17 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-file-size.sh
 
-      - name: Install Rust stable
+      # NOTE: despite the action's name, this job does not build on `stable`.
+      # rust-toolchain.toml pins the repo to a concrete toolchain (1.97.0), and
+      # rustup honors that file for every cargo invocation inside the checkout —
+      # so this step exists to put *a* rustup on PATH, and the pinned toolchain
+      # (with the clippy/rustfmt components rust-toolchain.toml declares) is
+      # what actually runs fmt, clippy, doc, test and the release smoke below.
+      # The `components:` here apply to stable and are effectively inert; they
+      # are kept so the step still works if the pin is ever removed.
+      # The declared MSRV floor (rust-version = 1.90) is exercised separately,
+      # by msrv.yml.
+      - name: Install Rust (rustup; the build uses the rust-toolchain.toml pin)
         id: rust
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
@@ -124,6 +134,24 @@ jobs:
 
       - if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      # Nothing else in this job passes `--locked`, so a PR that edits a
+      # manifest without committing the regenerated Cargo.lock builds green
+      # here and breaks the paths that DO pin: install.sh's
+      # `cargo install --locked --git --tag`, the Homebrew formula's
+      # `cargo install --locked`, release.yml's `cargo build --release
+      # --locked`, docker-serve.yml, and msrv.yml. Those all fail at release
+      # time instead of review time.
+      #
+      # `cargo metadata` rather than `--locked` on the build steps: it is a
+      # sub-second resolve that reports the drift precisely, instead of making
+      # every later step's failure mode ambiguous between "lock is stale" and
+      # "code is broken".
+      - name: Cargo.lock is in sync with the manifests
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        run: |
+          cargo metadata --locked --format-version 1 > /dev/null \
+            || { echo "::error::Cargo.lock is out of sync with the manifests. Run 'cargo check --workspace' and commit the updated Cargo.lock."; exit 1; }
 
       - name: cargo fmt --check
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}

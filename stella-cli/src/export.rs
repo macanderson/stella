@@ -71,8 +71,17 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
     let html = render_dashboard(&usage_stats, &dumps, &watermark);
 
     // Assemble the ZIP.
+    //
+    // Owner-only, directory and archive both. #817 masks *credentials* from
+    // the dumps, but what remains is still the whole session: every prompt,
+    // every tool argument, every touched file's content. That was landing at
+    // the process umask (0644 on a stock system) inside the project tree, so on
+    // a shared machine or a multi-user build box any other account could read
+    // the complete transcript. The rest of the tree treats data of this
+    // sensitivity as `.stella/private/`; the export is no less sensitive for
+    // being a file the user later chooses to share deliberately.
     let exports_dir = workspace_root.join(".stella").join("exports");
-    std::fs::create_dir_all(&exports_dir).map_err(|e| format!("create exports dir: {e}"))?;
+    create_private_dir(&exports_dir)?;
     let zip_path = exports_dir.join(format!("session-{folder}.zip"));
 
     let mut zip = ZipWriter::new();
@@ -101,9 +110,34 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
     )?;
 
     let bytes = zip.finish()?;
-    std::fs::write(&zip_path, &bytes).map_err(|e| format!("write archive: {e}"))?;
+    stella_store::durable::write_atomic(&zip_path, &bytes, stella_store::durable::MODE_PRIVATE)
+        .map_err(|e| format!("write archive: {e}"))?;
 
     Ok(zip_path)
+}
+
+/// Create `dir` (and parents) owner-only. An existing directory is tightened
+/// too: an archive written 0600 into a 0755 directory is still listed by
+/// everyone, and a directory created by an older build is exactly the case
+/// that needs fixing.
+fn create_private_dir(dir: &Path) -> Result<(), String> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder
+        .create(dir)
+        .map_err(|e| format!("create exports dir: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("restrict exports dir: {e}"))?;
+    }
+    Ok(())
 }
 
 /// Redact credentials from one table's JSON dump (#817). Parses the array and
@@ -121,6 +155,18 @@ fn redact_dump(json: &str) -> String {
         }
         Err(_) => stella_core::redact::redact_secrets(json).text,
     }
+}
+
+/// A theme token as a CSS `#rrggbb` literal.
+///
+/// The dashboard is a standalone HTML file, so its palette has to be inlined —
+/// but inlining was being done by hand, and the hand-written block drifted two
+/// whole recolours behind the identity while sitting in an artifact users mail
+/// around. Generating the values means the export cannot disagree with the
+/// terminal it came from.
+fn css_hex(color: ratatui::style::Color) -> String {
+    let (r, g, b) = crate::tui::token_rgb(color);
+    format!("#{r:02x}{g:02x}{b:02x}")
 }
 
 /// Recursively replace every string value in `value` with its redacted form.
@@ -294,6 +340,22 @@ fn render_dashboard(
     let stats_json =
         script_json(&serde_json::to_string(usage_stats).unwrap_or_else(|_| "[]".into()));
 
+    // The `:root` custom properties, resolved from the live theme rather than
+    // typed into the template — see the `:root` block's own note.
+    let c_ground = css_hex(stella_tui::theme::GROUND);
+    let c_surface = css_hex(stella_tui::theme::SURFACE);
+    let c_raised = css_hex(stella_tui::theme::RAISED);
+    let c_text = css_hex(stella_tui::theme::TEXT_PRIMARY);
+    let c_text2 = css_hex(stella_tui::theme::TEXT_SECONDARY);
+    let c_text3 = css_hex(stella_tui::theme::TEXT_TERTIARY);
+    let c_brand = css_hex(stella_tui::theme::ACCENT);
+    let c_brand_fill = css_hex(stella_tui::theme::ACCENT_FILL);
+    let c_violet = css_hex(stella_tui::theme::VIOLET);
+    let c_success = css_hex(stella_tui::theme::SUCCESS);
+    let c_warn = css_hex(stella_tui::theme::WARNING);
+    let c_danger = css_hex(stella_tui::theme::DANGER);
+    let c_rule = css_hex(stella_tui::theme::HAIRLINE_STRONG);
+
     format!(
         r##"<!DOCTYPE html>
 <html lang="en">
@@ -308,23 +370,26 @@ fn render_dashboard(
 <title>Stella Session Telemetry — {watermark}</title>
 <style>
   :root {{
-    /* Brand palette — stella-tui/src/palette.rs. This export is a standalone
-       file a user mails around, so the tokens are inlined rather than
-       imported; keep them in step with palette.rs. */
-    --bg: #000000;
-    --surface: #0a0e14;
-    --raised: #141c26;
-    --text: #f3f6fa;
-    --text2: #98a6ba;
-    --text3: #6c7b90;
-    --sky: #7dd3fc;
-    --sky-deep: #38bdf8;
-    --violet: #a78bfa;
-    --azure: #4d9fff;
-    --success: #4ade80;
-    --warn: #ff8a1f;
-    --danger: #ff5c7a;
-    --rule: #24313f;
+    /* Brand palette, INTERPOLATED from stella_tui::theme rather than typed
+       here. The export is a standalone file a user mails around or attaches to
+       a PR, so the tokens must be inlined — but "inlined" was being done by
+       hand, and the hand-written block had gone two recolours stale: a true
+       black ground and the retired sky/violet pair, on the artifact that
+       represents the product to whoever opens it. Values that ship to a reader
+       are generated now; only the variable NAMES live in this string. */
+    --bg: {c_ground};
+    --surface: {c_surface};
+    --raised: {c_raised};
+    --text: {c_text};
+    --text2: {c_text2};
+    --text3: {c_text3};
+    --brand: {c_brand};
+    --brand-fill: {c_brand_fill};
+    --violet: {c_violet};
+    --success: {c_success};
+    --warn: {c_warn};
+    --danger: {c_danger};
+    --rule: {c_rule};
   }}
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   body {{
@@ -333,7 +398,7 @@ fn render_dashboard(
     line-height: 1.5; padding: 24px; max-width: 1280px; margin: 0 auto;
   }}
   h1 {{ font-size: 1.8rem; margin-bottom: 4px; color: var(--text); }}
-  h2 {{ font-size: 1.25rem; margin: 32px 0 12px; color: var(--sky); border-bottom: 1px solid var(--rule); padding-bottom: 8px; }}
+  h2 {{ font-size: 1.25rem; margin: 32px 0 12px; color: var(--brand); border-bottom: 1px solid var(--rule); padding-bottom: 8px; }}
   .watermark {{ color: var(--text3); font-size: 0.85rem; margin-bottom: 24px; font-family: monospace; }}
   .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 8px; }}
   .kpi {{
@@ -364,8 +429,8 @@ fn render_dashboard(
   .pie-legend {{ display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px; font-size: 0.8rem; }}
   .pie-legend span {{ display: flex; align-items: center; gap: 4px; }}
   .dot {{ width: 10px; height: 10px; border-radius: 2px; display: inline-block; }}
-  .insight {{ background: var(--surface); border-left: 3px solid var(--sky); padding: 12px 16px; border-radius: 0 8px 8px 0; margin-bottom: 8px; font-size: 0.9rem; }}
-  .insight .insight-label {{ color: var(--sky); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }}
+  .insight {{ background: var(--surface); border-left: 3px solid var(--brand); padding: 12px 16px; border-radius: 0 8px 8px 0; margin-bottom: 8px; font-size: 0.9rem; }}
+  .insight .insight-label {{ color: var(--brand); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }}
   .footer {{ margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--rule); color: var(--text3); font-size: 0.75rem; }}
 </style>
 </head>
@@ -528,7 +593,7 @@ barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.in
     .map(f=>({{label:f.path, value:(f.lines_added||0)+(f.lines_removed||0), display:'+'+(f.lines_added||0)+'/-'+(f.lines_removed||0)}}))
     .sort((a,b)=>b.value-a.value)
     .slice(0,15);
-  barChart('file-chart', data, '--azure');
+  barChart('file-chart', data, '--brand-fill');
 }})();
 
 // ── Execution outcomes ──────────────────────────────────────────────────
@@ -1106,6 +1171,66 @@ mod tests {
         assert!(content.contains("manifest"), "manifest is present");
     }
 
+    /// #817 masks credentials from the dump, but what remains is the whole
+    /// session — every prompt, tool argument, and touched file's content. It
+    /// was written at the process umask (0644 on a stock system) inside the
+    /// project tree, so on a shared machine any other account could read the
+    /// complete transcript just by looking. Archive and directory are both
+    /// owner-only now; the directory matters as much as the file, because an
+    /// archive nobody can open is still an archive everybody can list.
+    #[cfg(unix)]
+    #[test]
+    fn the_export_archive_and_its_directory_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        use stella_store::TelemetryRow;
+
+        let tmp = tempfile::tempdir().unwrap();
+        {
+            let store = Store::open(tmp.path()).unwrap();
+            store
+                .record_telemetry(
+                    1,
+                    &TelemetryRow {
+                        step: 0,
+                        call_role: "worker".into(),
+                        provider: "anthropic".into(),
+                        model: "claude-test".into(),
+                        input_tokens: 10,
+                        estimated_input_tokens: 10,
+                        output_tokens: 2,
+                        cache_read_tokens: 0,
+                        cache_miss_tokens: 0,
+                        cache_write_tokens: 0,
+                        cost_usd: 0.001,
+                        duration_ms: 5,
+                        retries: 0,
+                        tool_calls: 0,
+                        usage_complete: true,
+                    },
+                )
+                .unwrap();
+        }
+
+        // A pre-existing world-readable exports dir (an older build's) must be
+        // tightened, not accepted.
+        let exports = tmp.path().join(".stella/exports");
+        std::fs::create_dir_all(&exports).unwrap();
+        std::fs::set_permissions(&exports, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let zip_path = export_session(tmp.path()).unwrap();
+
+        assert_eq!(
+            std::fs::metadata(&zip_path).unwrap().permissions().mode() & 0o777,
+            0o600,
+            "the session archive must not be readable by other accounts"
+        );
+        assert_eq!(
+            std::fs::metadata(&exports).unwrap().permissions().mode() & 0o777,
+            0o700,
+            "the exports directory must not be listable by other accounts"
+        );
+    }
+
     #[test]
     fn full_export_pipeline_errors_on_empty_store() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1117,6 +1242,51 @@ mod tests {
             result.unwrap_err().contains("no session telemetry"),
             "error message is helpful"
         );
+    }
+
+    /// The dashboard's `:root` palette is generated from the live theme, not
+    /// typed into the template. The block it replaced was two recolours stale
+    /// — a true-black ground and the retired sky/violet pair — in an artifact
+    /// users mail around and attach to PRs, so it was the most widely seen
+    /// remnant of a retired identity in the product.
+    #[test]
+    fn the_dashboard_palette_is_generated_from_the_live_theme() {
+        let html = render_dashboard(&[], &[], "2026-01-01 00:00:00");
+
+        for (var, token) in [
+            ("--bg", stella_tui::theme::GROUND),
+            ("--brand", stella_tui::theme::ACCENT),
+            ("--brand-fill", stella_tui::theme::ACCENT_FILL),
+            ("--violet", stella_tui::theme::VIOLET),
+            ("--text3", stella_tui::theme::TEXT_TERTIARY),
+        ] {
+            let declaration = format!("{var}: {};", css_hex(token));
+            assert!(
+                html.contains(&declaration),
+                "expected `{declaration}` in the dashboard's :root block"
+            );
+        }
+
+        // The retired values must not survive anywhere in the document —
+        // including the chart JS, which referenced a `--azure` the `:root`
+        // block no longer defines.
+        for retired in [
+            "#7dd3fc", "#38bdf8", "#a78bfa", "#6c7b90", "#4d9fff", "--sky", "--azure",
+        ] {
+            assert!(
+                !html.contains(retired),
+                "retired brand value `{retired}` still ships in the dashboard"
+            );
+        }
+
+        // Every custom property the chart code asks for must exist, or the bar
+        // renders with no colour at all.
+        for used in ["--brand-fill", "--violet", "--success"] {
+            assert!(
+                html.contains(&format!("{used}: #")),
+                "chart JS references `{used}` but :root never defines it"
+            );
+        }
     }
 
     /// The watermark is the one store-supplied value that reaches markup
