@@ -634,13 +634,14 @@ mod tests {
     #[test]
     fn home_directory_is_never_a_project_scope() {
         let tmp = tempfile::tempdir().unwrap();
-        // Resolved, because `find_base` documents `start` as a `getcwd` result
-        // — already symlink-free — and canonicalizes only `home` to match it.
-        // On macOS a temp dir is reached through `/var -> /private/var`, so
-        // handing the raw path in compares `/var/…` against a canonicalized
-        // `/private/var/…`, they miss, and home is not recognized as home. The
-        // symlink sibling below gets this right; this test did not, and failed
-        // on every macOS run while the code under test was correct.
+        // Canonicalized, like `a_symlinked_home_is_still_never_a_project_scope`
+        // below. `find_base` documents `start` as `getcwd` — already resolved —
+        // and canonicalizes only `home`, so a raw `tempfile` path fails this on
+        // macOS, where the temp root is always a symlink (`/var` →
+        // `/private/var`): the guard compares `/var/folders/…` against
+        // `/private/var/folders/…`, never matches, and returns the directory it
+        // exists to refuse. Linux `/tmp` is not a symlink, so the raw path
+        // passed in CI and failed for every macOS dev.
         let home = std::fs::canonicalize(tmp.path()).unwrap();
         write(&home, ".env", "HOME_LEVEL=nope\n");
         // Running *in* $HOME must not load `~/.env`.
