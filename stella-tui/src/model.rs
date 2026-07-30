@@ -24,6 +24,7 @@ use stella_protocol::{
 
 use std::collections::VecDeque;
 
+mod error_rows;
 pub mod file_state;
 #[cfg(test)]
 pub use file_state::DIFF_HISTORY;
@@ -674,10 +675,14 @@ impl SessionModel {
                 // An aborted model call never commits its text — without
                 // this the un-committed preview would linger indefinitely.
                 self.streaming_text.clear();
-                self.transcript.push(TranscriptEntry::Error {
-                    message: message.clone(),
-                    retryable: *retryable,
-                });
+                // One failure, one row — see `error_rows` for why the same
+                // error can arrive twice.
+                if !error_rows::repeats_the_last_row(&self.transcript, message, *retryable) {
+                    self.transcript.push(TranscriptEntry::Error {
+                        message: message.clone(),
+                        retryable: *retryable,
+                    });
+                }
             }
             AgentEvent::Complete { model, cost_usd } => {
                 self.hud.stage = Some(StageKind::Complete);
@@ -1354,6 +1359,29 @@ mod tests {
             model.apply(&terminal);
             assert!(model.pending_scope_review.is_none());
         }
+    }
+
+    /// One abort, one row. The pipeline emits `Error` for an abort it decided
+    /// and also returns `Aborted`, which the host re-emits — the reported
+    /// screenshot showed "aborted at scope review" twice and it read as two
+    /// failed attempts.
+    #[test]
+    fn an_identical_error_repeated_immediately_is_reported_once() {
+        let mut model = SessionModel::new();
+        let err = AgentEvent::Error {
+            message: "aborted at scope review".into(),
+            retryable: false,
+        };
+        model.apply(&err);
+        model.apply(&err);
+        assert_eq!(
+            model
+                .transcript
+                .iter()
+                .filter(|e| matches!(e, TranscriptEntry::Error { .. }))
+                .count(),
+            1
+        );
     }
 
     #[test]

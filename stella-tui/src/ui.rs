@@ -271,13 +271,16 @@ pub fn handle_key(key: KeyEvent, model: &SessionModel, ui: &mut UiState) -> Shel
     // the keys must build the prompt, not silently approve/trim/abort the gate.
     // Mirrors the deck (`crate::deck_ui`) and the ask_user quick-pick's
     // "only when nothing is typed" rule.
+    //
+    // The submit chord then sends that typed message *to the card* — the other
+    // half of the same rule, and the half that was missing. Without it the keys
+    // build a prompt the gate never sees, which on the deck meant a sidecar
+    // sub-session ran with the reviewer's words while the review sat parked.
     if model.pending_scope_review.is_some()
         && !ui.scope_answered
-        && ui.composer.buffer().is_empty()
-        && let Some(decision) = scope_decision_for(key.code)
+        && let Some(action) = handle_scope_key(key, ui)
     {
-        ui.scope_answered = true;
-        return ShellAction::Submit(UserInput::ScopeDecision(decision));
+        return action;
     }
 
     // A pending, unanswered `ask_user` question: a number key quick-picks an
@@ -345,14 +348,32 @@ fn handle_ask_user_key(
     }
 }
 
-/// The scope-card key bindings, or `None` for a key that isn't a decision.
-fn scope_decision_for(code: KeyCode) -> Option<ScopeDecision> {
-    match code {
-        KeyCode::Char('a') => Some(ScopeDecision::Approve),
-        KeyCode::Char('t') => Some(ScopeDecision::Trim),
-        KeyCode::Char('x') | KeyCode::Esc => Some(ScopeDecision::Abort),
-        _ => None,
+/// The scope-card key bindings: `a`/`t`/`x`/`Esc` from an empty composer, or
+/// the submit chord over typed text (read by [`ScopeDecision::from_typed`]).
+/// Returns `None` to fall through to normal composer editing, so a note can be
+/// typed and can span lines.
+fn handle_scope_key(key: KeyEvent, ui: &mut UiState) -> Option<ShellAction> {
+    let empty = ui.composer.buffer().is_empty();
+    let decision = match key.code {
+        KeyCode::Char('a') if empty => ScopeDecision::Approve,
+        KeyCode::Char('t') if empty => ScopeDecision::Trim,
+        KeyCode::Char('x') | KeyCode::Esc if empty => ScopeDecision::Abort,
+        KeyCode::Enter if classify_enter(&key) == EnterAction::Submit => {
+            match ui.composer.take_submission() {
+                Some(submission) => ScopeDecision::from_typed(&submission.text),
+                // An empty submit while a card is pending: force an explicit
+                // answer rather than sending a blank one.
+                None => return Some(ShellAction::Ignored),
+            }
+        }
+        _ => return None,
+    };
+    // Whitespace-only text is not an answer — keep the card up.
+    if matches!(&decision, ScopeDecision::Revise { note } if note.is_empty()) {
+        return Some(ShellAction::Ignored);
     }
+    ui.scope_answered = true;
+    Some(ShellAction::Submit(UserInput::ScopeDecision(decision)))
 }
 
 fn handle_composer_key(key: KeyEvent, ui: &mut UiState) -> ShellAction {
@@ -759,6 +780,55 @@ mod tests {
             handle_key(ch('a'), &model, &mut ui),
             ShellAction::Submit(UserInput::ScopeDecision(ScopeDecision::Approve))
         );
+    }
+
+    /// The other half of that rule, and the half that was missing: the typed
+    /// message has to reach the card when it is submitted. Deferring the keys
+    /// to the composer only helps if the composer's contents can still answer
+    /// the review — otherwise typing is a way to make the gate unanswerable.
+    #[test]
+    fn a_typed_message_is_submitted_to_the_scope_card_as_a_revision() {
+        let model = model_with_scope();
+        let mut ui = UiState::default();
+        for c in "only the dialog".chars() {
+            handle_key(ch(c), &model, &mut ui);
+        }
+        assert_eq!(
+            handle_key(key(KeyCode::Enter), &model, &mut ui),
+            ShellAction::Submit(UserInput::ScopeDecision(ScopeDecision::Revise {
+                note: "only the dialog".into()
+            }))
+        );
+        assert!(ui.scope_answered, "the card is answered, not bypassed");
+    }
+
+    /// A bare yes word typed at the card approves it — the reviewer who types
+    /// "ok" and hits ⏎ means approve, and sending them to hunt for `a` is the
+    /// kind of small refusal that teaches people the card is broken.
+    #[test]
+    fn a_bare_yes_typed_at_the_scope_card_approves() {
+        let model = model_with_scope();
+        let mut ui = UiState::default();
+        for c in "ok".chars() {
+            handle_key(ch(c), &model, &mut ui);
+        }
+        assert_eq!(
+            handle_key(key(KeyCode::Enter), &model, &mut ui),
+            ShellAction::Submit(UserInput::ScopeDecision(ScopeDecision::Approve))
+        );
+    }
+
+    /// An empty submit forces an explicit answer rather than sending a blank
+    /// note — and, critically, must not fall through to the prompt path.
+    #[test]
+    fn an_empty_submit_at_the_scope_card_is_ignored() {
+        let model = model_with_scope();
+        let mut ui = UiState::default();
+        assert_eq!(
+            handle_key(key(KeyCode::Enter), &model, &mut ui),
+            ShellAction::Ignored
+        );
+        assert!(!ui.scope_answered);
     }
 
     #[test]

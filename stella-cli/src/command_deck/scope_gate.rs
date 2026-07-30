@@ -66,6 +66,11 @@ impl DeckApprovalGate {
             DeckScopeDecision::Trim => ScopeDecision::Trim {
                 keep_steps: (0..self.max_steps.min(step_count)).collect(),
             },
+            // The reviewer typed a note instead of pressing a key. It passes
+            // through verbatim — the pipeline folds it into the next planner
+            // prompt, so anything this layer "helpfully" normalized would be
+            // words the human did not write.
+            DeckScopeDecision::Revise { note } => ScopeDecision::Revise { note },
         }
     }
 }

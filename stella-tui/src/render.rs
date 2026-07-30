@@ -507,6 +507,14 @@ pub(crate) fn render_scope_review(
                 Style::new().fg(theme::DANGER).add_modifier(Modifier::BOLD),
             ),
             Span::styled("abort", Style::new().fg(theme::INK)),
+            // The typed path has to be on the card. It is now the only way to
+            // say "not like that — do this", and an affordance nobody is told
+            // about is one the next reviewer discovers by having their words
+            // routed somewhere they did not expect.
+            Span::styled(
+                "  ·  or type what to change and ⏎ to re-plan",
+                Style::new().fg(theme::TEXT_TERTIARY),
+            ),
         ])
     });
     // Warning, not the accent. A scope gate is the deck waiting on *you*, and

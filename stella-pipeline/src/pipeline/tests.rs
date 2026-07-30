@@ -172,12 +172,21 @@ impl RepoStatusPort for SeqRepoStatus {
 /// one ordered queue (the resolver hands the same provider to every role).
 struct ScriptedProvider {
     script: TokioMutex<VecDeque<CompletionResult>>,
+    /// Every prompt this provider was asked to complete, in order — so a test
+    /// can assert what actually reached the model, not just what came back.
+    seen: std::sync::Mutex<Vec<String>>,
 }
 impl ScriptedProvider {
     fn new(results: Vec<CompletionResult>) -> Self {
         Self {
             script: TokioMutex::new(results.into_iter().collect()),
+            seen: std::sync::Mutex::new(Vec::new()),
         }
+    }
+
+    /// The message text of each request, one joined string per call.
+    fn prompts(&self) -> Vec<String> {
+        self.seen.lock().unwrap().clone()
     }
 }
 #[async_trait]
@@ -185,7 +194,14 @@ impl Provider for ScriptedProvider {
     fn id(&self) -> &str {
         "scripted"
     }
-    async fn complete(&self, _req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+        self.seen.lock().unwrap().push(
+            req.messages
+                .iter()
+                .map(|m| m.content.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
         let mut q = self.script.lock().await;
         q.pop_front()
             .ok_or_else(|| ProviderError::Terminal("scripted provider exhausted".into()))
