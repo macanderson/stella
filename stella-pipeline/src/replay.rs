@@ -241,6 +241,9 @@ pub fn event_signature(event: &AgentEvent) -> String {
         AgentEvent::Proof { step } => {
             use stella_protocol::ProofStep;
             match step {
+                ProofStep::Assurance { witness, judge } => {
+                    format!("proof:assurance:{witness}:{judge}")
+                }
                 ProofStep::Warrant { required, .. } => format!("proof:warrant:{required}"),
                 ProofStep::WitnessAuthored { .. } => "proof:witness_authored".to_string(),
                 ProofStep::WitnessUnavailable { .. } => "proof:witness_unavailable".to_string(),

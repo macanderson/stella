@@ -328,14 +328,25 @@ pub trait TestRunner: Send + Sync {
 }
 
 /// One file the winning best-of-N candidate changed, as applied to the real
-/// tree by [`CandidateWorkspace::adopt`]. Paths are repo-relative; the kind
-/// feeds the `FileChange` events the pipeline emits for adopted work (the
-/// session's own file tracking never saw the winner's edits — they happened
-/// inside the snapshot).
+/// tree by [`CandidateWorkspace::adopt`]. Paths are repo-relative.
+///
+/// This is the whole `FileChange` the pipeline emits for adopted work, because
+/// the session's own recorder never saw the winner's edits — they happened
+/// inside a shadow worktree, against a registry deliberately left unattached
+/// (a losing candidate's edits must never be announced as the user's). So the
+/// delta has to come from the adoption itself: `git`'s own `--numstat` for the
+/// counts, and its patch text, sliced per file, for `diff`.
+///
+/// `added`/`removed` default to `0` and `diff` to `None` only for an
+/// implementation that cannot measure them — which reads in the Files tab as
+/// "changed, extent unknown", not as "nothing changed".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdoptedChange {
     pub path: String,
     pub kind: FileChangeKind,
+    pub added: u32,
+    pub removed: u32,
+    pub diff: Option<String>,
 }
 
 /// A typed candidate-isolation failure.

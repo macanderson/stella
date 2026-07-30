@@ -229,7 +229,7 @@ async fn unavailable_independent_witness_degrades_instead_of_aborting() {
         events.iter().any(|event| matches!(
             event,
             AgentEvent::Error { message, retryable: true }
-                if message.contains("no witness author independent of the worker")
+                if message.contains("no author independent of the worker")
         )),
         "the degradation is announced once: {events:?}"
     );

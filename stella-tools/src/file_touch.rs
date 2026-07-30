@@ -320,14 +320,63 @@ pub fn count_lines(content: &str) -> u64 {
 /// pathologically large single-file rewrites.
 const LCS_AREA_CAP: usize = 4_000_000;
 
-/// Line-based diff counts between two file contents: `(added, removed)`.
-/// Common prefix/suffix lines are trimmed first; the middle is compared with
-/// an exact longest-common-subsequence, so `added = new − LCS` and
-/// `removed = old − LCS` — the minimal line edit script.
-pub fn line_diff(old: &str, new: &str) -> (u64, u64) {
+/// Cap on the lines the rendered changed region keeps per side, so a
+/// whole-file rewrite cannot balloon the event stream that carries it.
+const REGION_MAX_LINES: usize = 200;
+
+/// A unified diff of just the region that changed, positioned so a viewer's
+/// line-number gutter is correct: `@@ -start,count +start,count @@` followed by
+/// the trimmed middle — every dropped line, then every gained one.
+///
+/// This is the *display* companion to [`line_diff`], built from the same
+/// prefix/suffix trim, and it is deliberately coarse: the hunk is the whole
+/// changed span rather than an LCS-minimal interleaving, because the tree has
+/// no unified-diff generator and a wrong-but-pretty diff is worse than an
+/// honest blunt one. Callers must take their `+`/`-` **counts** from
+/// [`line_diff`], never by re-counting this text — that re-derivation is the
+/// bug this pair exists to end (the two disagree by design whenever the
+/// changed span contains a common subsequence).
+///
+/// `None` when nothing changed, so an unchanged file carries no diff at all.
+pub fn changed_region_diff(old: &str, new: &str) -> Option<String> {
     let old_lines: Vec<&str> = old.lines().collect();
     let new_lines: Vec<&str> = new.lines().collect();
+    let (start, old_end, new_end) = trimmed_middle(&old_lines, &new_lines);
+    let old_mid = &old_lines[start..old_end];
+    let new_mid = &new_lines[start..new_end];
+    if old_mid.is_empty() && new_mid.is_empty() {
+        return None;
+    }
 
+    let mut out = format!(
+        "@@ -{},{} +{},{} @@\n",
+        start + 1,
+        old_mid.len(),
+        start + 1,
+        new_mid.len()
+    );
+    for (side, prefix) in [(old_mid, '-'), (new_mid, '+')] {
+        for line in side.iter().take(REGION_MAX_LINES) {
+            out.push(prefix);
+            out.push_str(line);
+            out.push('\n');
+        }
+        if side.len() > REGION_MAX_LINES {
+            // A leading space keeps the marker out of any line counter that
+            // reads this text, and out of the rendered change lines.
+            out.push_str(&format!(
+                " … ({} more lines)\n",
+                side.len() - REGION_MAX_LINES
+            ));
+        }
+    }
+    Some(out)
+}
+
+/// The half-open span `[start, old_end)` / `[start, new_end)` that remains
+/// after trimming the common prefix and suffix — the only region either the
+/// counts or the rendered diff needs to look at.
+fn trimmed_middle(old_lines: &[&str], new_lines: &[&str]) -> (usize, usize, usize) {
     let mut start = 0;
     while start < old_lines.len() && start < new_lines.len() && old_lines[start] == new_lines[start]
     {
@@ -339,6 +388,22 @@ pub fn line_diff(old: &str, new: &str) -> (u64, u64) {
         old_end -= 1;
         new_end -= 1;
     }
+    (start, old_end, new_end)
+}
+
+/// Line-based diff counts between two file contents: `(added, removed)`.
+/// Common prefix/suffix lines are trimmed first; the middle is compared with
+/// an exact longest-common-subsequence, so `added = new − LCS` and
+/// `removed = old − LCS` — the minimal line edit script.
+///
+/// These are the authoritative numbers for a `U` touch: the ledger, the
+/// telemetry payload and the TUI all report *these*, so the surfaces cannot
+/// contradict each other.
+pub fn line_diff(old: &str, new: &str) -> (u64, u64) {
+    let old_lines: Vec<&str> = old.lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
+
+    let (start, old_end, new_end) = trimmed_middle(&old_lines, &new_lines);
 
     let old_mid = &old_lines[start..old_end];
     let new_mid = &new_lines[start..new_end];
@@ -378,6 +443,83 @@ mod tests {
         assert_eq!(count_lines("a\nb"), 2);
         assert_eq!(count_lines("a\nb\nc\n"), 3);
         assert_eq!(count_lines("\n\n"), 2);
+    }
+
+    #[test]
+    fn changed_region_diff_positions_the_hunk_and_shows_both_sides() {
+        let diff = changed_region_diff("a\nb\nc\n", "a\nX\nY\nc\n").expect("something changed");
+        // Common prefix `a` is line 1, so the changed span starts at line 2 —
+        // a viewer's gutter numbers the hunk correctly off this header.
+        assert!(diff.starts_with("@@ -2,1 +2,2 @@\n"), "{diff}");
+        assert!(diff.contains("-b\n"), "the dropped line: {diff}");
+        assert!(diff.contains("+X\n") && diff.contains("+Y\n"), "{diff}");
+        assert!(
+            !diff.contains("a\n") || !diff.contains(" a"),
+            "prefix trimmed"
+        );
+    }
+
+    #[test]
+    fn changed_region_diff_is_none_when_nothing_moved() {
+        assert!(changed_region_diff("same\n", "same\n").is_none());
+        assert!(changed_region_diff("", "").is_none());
+    }
+
+    #[test]
+    fn changed_region_diff_renders_whole_file_create_and_delete() {
+        // Body lines only — the `@@` header legitimately contains both signs.
+        let body = |d: &str| -> Vec<String> { d.lines().skip(1).map(str::to_string).collect() };
+
+        let created = changed_region_diff("", "one\ntwo\n").expect("a create shows its content");
+        assert!(created.starts_with("@@ -1,0 +1,2 @@\n"), "{created}");
+        assert_eq!(
+            body(&created),
+            vec!["+one", "+two"],
+            "a create is all additions"
+        );
+
+        let deleted = changed_region_diff("one\ntwo\n", "").expect("a delete shows what went");
+        assert!(deleted.starts_with("@@ -1,2 +1,0 @@\n"), "{deleted}");
+        assert_eq!(
+            body(&deleted),
+            vec!["-one", "-two"],
+            "a delete is all removals"
+        );
+    }
+
+    #[test]
+    fn changed_region_diff_caps_each_side_and_says_so() {
+        let big: String = (0..REGION_MAX_LINES + 25)
+            .map(|i| format!("l{i}\n"))
+            .collect();
+        let diff = changed_region_diff("", &big).expect("changed");
+        let plus = diff.lines().filter(|l| l.starts_with('+')).count();
+        assert_eq!(plus, REGION_MAX_LINES, "the rendering is bounded");
+        assert!(diff.contains("… (25 more lines)"), "and says what it cut");
+        // The elision marker is space-prefixed, so it can never read as a
+        // change line to anything that scans this text.
+        assert!(diff.lines().any(|l| l.starts_with(' ')));
+    }
+
+    /// The reason the counts are transported rather than recounted: this
+    /// rendering is deliberately coarse, so counting it gives a DIFFERENT
+    /// number than the authoritative delta whenever the changed span shares
+    /// lines. Any surface that re-derives from the text is wrong by exactly
+    /// this gap.
+    #[test]
+    fn counting_the_rendered_region_is_not_the_authoritative_delta() {
+        let old = "a\nkeep\nb\n";
+        let new = "x\nkeep\ny\n";
+        assert_eq!(line_diff(old, new), (2, 2), "LCS keeps the shared `keep`");
+        let diff = changed_region_diff(old, new).expect("changed");
+        let added = diff.lines().filter(|l| l.starts_with('+')).count();
+        let removed = diff.lines().filter(|l| l.starts_with('-')).count();
+        assert_eq!(
+            (added, removed),
+            (3, 3),
+            "the rendered span includes the shared line on both sides — which \
+             is why `line_diff` is the number of record"
+        );
     }
 
     #[test]

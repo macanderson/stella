@@ -295,7 +295,10 @@ fn render_diff_pane(
     let body = bands[1];
     let inner_h = body.height as usize;
     let diff_text = record.and_then(|rec| find_diff(model, rec));
-    let (added, removed) = diff_text.map(diff::count_diff_lines).unwrap_or((0, 0));
+    // The footer states the RECORD's measured delta — the same number its row
+    // shows. It used to count the rendered diff instead, so the row and the
+    // footer could disagree about one file.
+    let (added, removed) = record.map(|r| (r.added, r.removed)).unwrap_or((0, 0));
     match diff_text {
         Some(text) if !text.is_empty() => {
             let lines = diff::body_lines(text, record.map(|r| r.path.as_str()));
@@ -363,6 +366,8 @@ mod tests {
             event: AgentEvent::FileChange {
                 path: "src/new_file.rs".into(),
                 kind: FileChangeKind::Created,
+                added: 2,
+                removed: 0,
                 diff: Some("+one\n+two\n".into()),
             },
         });
@@ -371,6 +376,8 @@ mod tests {
             event: AgentEvent::FileChange {
                 path: "src/existing.rs".into(),
                 kind: FileChangeKind::Modified,
+                added: 2,
+                removed: 1,
                 diff: Some("@@ -1,2 +1,3 @@\n context\n-old\n+new\n+another\n".into()),
             },
         });
@@ -431,6 +438,8 @@ mod tests {
             event: AgentEvent::FileChange {
                 path: "src/no_diff.rs".into(),
                 kind: FileChangeKind::Deleted,
+                added: 0,
+                removed: 0,
                 diff: None,
             },
         });
@@ -457,6 +466,8 @@ mod tests {
                 event: AgentEvent::FileChange {
                     path: "src/read_me.rs".into(),
                     kind: FileChangeKind::Read,
+                    added: 0,
+                    removed: 0,
                     diff: None,
                 },
             });

@@ -1,6 +1,6 @@
 # Context Frame Specification
 
-<!-- NORMATIVE-HOME: macanderson/context-graph-protocol @ 6f8d7ef (contextgraph/1.0-draft) -->
+<!-- NORMATIVE-HOME: macanderson/context-graph-protocol @ eeba49c (contextgraph/1.0-draft) -->
 
 > **Normative home — read this first.** The *atomic* Context Frame (one retrieval
 > envelope: a single snippet/symbol/fact/doc/memory/episode/graph node with its
@@ -12,10 +12,12 @@
 > repository**, not this one: `SPEC.md`, `docs/adr/0007-protocol-product-boundary.md`,
 > and the reconciliation delta table `docs/adaptive-context-reconciliation.md`.
 > The latter two are the outcome of
-> [context-graph-protocol#27](https://github.com/macanderson/context-graph-protocol/issues/27)
-> and are **not yet published at the revision pinned above** — until #27 lands
-> they name the intended home of that decision rather than a document you can
-> open. Do not read `docs/adr/0007-…` as this workspace's `docs/adr/0007-immutable-promotion-history.md`.
+> [context-graph-protocol#27](https://github.com/macanderson/context-graph-protocol/issues/27),
+> which has **landed**: all three are published at the revision pinned above and
+> are documents you can open. (They were unpublished when this header was first
+> written, which is why it used to say so.) Do not read `docs/adr/0007-…` as this
+> workspace's `docs/adr/0007-immutable-promotion-history.md` — different repo,
+> colliding number.
 >
 > **What this document is.** A host-side design doc for Stella's *adaptive-context
 > runtime*. The "Context Frame" it describes below is the **task-wide compiled

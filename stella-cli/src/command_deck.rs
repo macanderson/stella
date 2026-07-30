@@ -32,11 +32,17 @@
 //!   for the deck's `AskUserAnswer`, then echoes the answer back as that
 //!   card's `ToolResult` — the documented event-pure path that clears the
 //!   pending gate (`stella_tui::model`).
-//! - **File changes** ([`FileChangeTap`]): the engine emits no `FileChange`
-//!   events today (the plain renderer reads the registry ledger after the
-//!   turn). The tap wraps the tool stack and synthesizes `FileChange`s — with
-//!   pseudo-diffs built from the tool inputs — when a mutating file tool
-//!   succeeds, so the Files tab and diff panel are live during the turn.
+//! - **File changes**: `ToolRegistry::record_touch` emits every `FileChange`,
+//!   because it is already the one place that knows what a file tool did — it
+//!   holds the pre- and post-images and writes the session's file-touch ledger
+//!   from them. Each turn points it at that turn's channel
+//!   (`registry.attach_events`), so the Files tab, the diff panel, the audit log
+//!   and the exported telemetry all report the same numbers. This replaced a
+//!   `FileChangeTap` that wrapped the tool stack and re-derived changes from
+//!   tool *inputs*: it knew four tool names (so bulk `apply_edits` and
+//!   `web_download` were invisible), assumed one `path` per call, synthesized
+//!   pseudo-diffs, and sat on only one of three tool stacks — worker lanes
+//!   announced nothing at all.
 //! - **Cancel** (`Stop` / `UserInput::Cancel`): the engine has no abort input;
 //!   cancelling drops the in-flight turn future at its next await point and
 //!   truncates the partial turn out of the conversation so the next prompt
@@ -81,8 +87,8 @@ use stella_pipeline::{
     PipelineStatus,
 };
 use stella_protocol::{
-    AgentEvent, CiStatus, CompletionMessage, CompletionRequest, FileChangeKind, ModelRef, PrStatus,
-    TaskItem, ToolOutput, ToolSchema,
+    AgentEvent, CiStatus, CompletionMessage, CompletionRequest, ModelRef, PrStatus, TaskItem,
+    ToolOutput, ToolSchema,
 };
 use stella_store::Store;
 use stella_tools::ToolRegistry;
@@ -122,10 +128,6 @@ pub(crate) const LEAD: &str = "lead";
 /// the deck io's card must be cleared by the deck io's own echoed
 /// `ToolResult`, never by an unrelated result.
 static NEXT_DECK_ASK: AtomicU64 = AtomicU64::new(0);
-
-/// Cap on the lines a synthesized pseudo-diff retains per side — a whole-file
-/// write must not balloon the event log the deck folds.
-const PSEUDO_DIFF_MAX_LINES: usize = 200;
 
 pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
@@ -4097,8 +4099,8 @@ async fn run_deck_command(
 
 /// One engine turn for the lead agent: the deck-mode analogue of
 /// `agent::run_turn` — same engine, same tool stack, same persistence —
-/// with the stdout renderer replaced by [`spawn_forwarder`] and the tool
-/// stack wrapped in the [`FileChangeTap`].
+/// with the stdout renderer replaced by [`spawn_forwarder`] and the registry's
+/// file-change recorder pointed at this turn's channel.
 #[allow(clippy::too_many_arguments)]
 async fn run_lead_turn(
     provider: &dyn Provider,
@@ -4138,13 +4140,16 @@ async fn run_lead_turn(
 
     // Claim-on-first-write over the shared tree (crate::claims): wraps the
     // base executor, so a refused write surfaces as the tool's own error —
-    // FileChangeTap's is_error early-return keeps phantom events out.
+    // and the recorder only records SUCCESSFUL touches, so a refused write
+    // leaves no phantom row.
     // Released after the turn settles, cancel included.
     let claims = ClaimTap::new(
         base_tools,
         execution.as_ref().map(|(store, _)| store.clone()),
         claim_holder,
     );
+    // This turn's file changes ride this turn's channel.
+    registry.attach_events(stella_core::EventSender::new(tx.clone()));
 
     // Same structural drop-order rule as `agent::run_turn`: every tx clone
     // lives in this scope so dropping `tx` after it closes the channel.
@@ -4164,13 +4169,8 @@ async fn run_lead_turn(
         let tools = crate::discovery::DiscoveryToolSet::new(&permitted, cfg.workspace_root.clone())
             .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
             .with_activation(activated.clone());
-        let tapped = FileChangeTap {
-            inner: &tools,
-            events: tx.clone(),
-            root: cfg.workspace_root.clone(),
-        };
         let tapped = TaskTap {
-            inner: &tapped,
+            inner: &tools,
             events: tx.clone(),
             registry,
             supervisor: Some(sup_tx.clone()),
@@ -4287,6 +4287,10 @@ async fn run_lead_pipeline_turn(
         execution.as_ref().map(|(store, _)| store.clone()),
         claim_holder,
     );
+    // As in `run_lead_turn`: the recorder announces on this turn's channel.
+    // Candidate registries are deliberately left unattached — a candidate's
+    // edits live in a shadow worktree and are only the user's once adopted.
+    registry.attach_events(stella_core::EventSender::new(tx.clone()));
 
     let result = {
         let customs =
@@ -4298,13 +4302,8 @@ async fn run_lead_pipeline_turn(
         let tools = crate::discovery::DiscoveryToolSet::new(&permitted, cfg.workspace_root.clone())
             .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
             .with_activation(activated.clone());
-        let tapped = FileChangeTap {
-            inner: &tools,
-            events: tx.clone(),
-            root: cfg.workspace_root.clone(),
-        };
         let tapped = TaskTap {
-            inner: &tapped,
+            inner: &tools,
             events: tx.clone(),
             registry,
             supervisor: Some(sup_tx.clone()),
@@ -4495,57 +4494,6 @@ impl AskUserIo for DeckAskUserIo {
     }
 }
 
-// ── FileChange synthesis ────────────────────────────────────────────────────
-
-/// A [`ToolExecutor`] wrapper that emits `AgentEvent::FileChange` when a
-/// file-touching built-in succeeds, so the deck's Files tab / diff panel and
-/// ledger are live during the turn. The diff is synthesized from the tool's
-/// own input (`edit_file` carries old/new verbatim; `write_file` the full
-/// content; `delete_file` reads the file before executing) — an honest
-/// approximation until the tool layer emits real diffs on the event path.
-/// Successful `read_file` calls emit too (kind `Read`, no diff) — the Files
-/// tab counts reads per file, matching the registry ledger's `R` events.
-struct FileChangeTap<'a> {
-    inner: &'a dyn ToolExecutor,
-    events: UnboundedSender<AgentEvent>,
-    root: PathBuf,
-}
-
-#[async_trait]
-impl ToolExecutor for FileChangeTap<'_> {
-    fn schemas(&self) -> Vec<ToolSchema> {
-        self.inner.schemas()
-    }
-
-    async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
-        // Pre-state, captured before the mutation: existence decides
-        // Created-vs-Modified for write_file; content is delete_file's diff.
-        let pre = match (name, input.get("path").and_then(Value::as_str)) {
-            ("write_file", Some(p)) => Some((self.root.join(p).exists(), None)),
-            ("delete_file", Some(p)) => {
-                Some((true, std::fs::read_to_string(self.root.join(p)).ok()))
-            }
-            _ => None,
-        };
-
-        let output = self.inner.execute(name, input).await;
-        if output.is_error() {
-            return output;
-        }
-
-        // Most tools yield one change; `apply_edits` yields one per distinct
-        // path in the batch (so every file a transactional call touched lands
-        // in the Files tab). A `dry_run` apply_edits yields none — nothing was
-        // written.
-        for (path, kind, diff) in file_change_of(name, input, pre) {
-            let _ = self
-                .events
-                .send(AgentEvent::FileChange { path, kind, diff });
-        }
-        output
-    }
-}
-
 /// Mirrors the task board into the event stream: after any `task_*` tool
 /// call the FULL board snapshot rides the turn's channel as
 /// `AgentEvent::TaskUpdate` — persisted by the forwarder, so replay shows
@@ -4583,136 +4531,6 @@ impl ToolExecutor for TaskTap<'_> {
         }
         output
     }
-}
-
-/// The `(path, kind, pseudo-diff)` tuples for one successful file-touching
-/// tool call — an empty vec for tools that don't touch files. `pre` is
-/// `(existed_before, old_content)` as captured by the tap. Most tools yield
-/// exactly one tuple; `apply_edits` yields one per distinct path in the batch
-/// (edits composed in first-touch order), so the Files tab lists every file a
-/// single transactional call touched. A `dry_run` apply_edits yields nothing.
-fn file_change_of(
-    name: &str,
-    input: &Value,
-    pre: Option<(bool, Option<String>)>,
-) -> Vec<(String, FileChangeKind, Option<String>)> {
-    let text = |key: &str| input.get(key).and_then(Value::as_str);
-    match name {
-        "read_file" => text("path")
-            .map(|p| vec![(p.to_string(), FileChangeKind::Read, None)])
-            .unwrap_or_default(),
-        "write_file" => {
-            let path = match text("path") {
-                Some(p) => p,
-                None => return Vec::new(),
-            };
-            let existed = pre.map(|(existed, _)| existed).unwrap_or(false);
-            let kind = if existed {
-                FileChangeKind::Modified
-            } else {
-                FileChangeKind::Created
-            };
-            vec![(
-                path.to_string(),
-                kind,
-                text("content").map(|c| pseudo_diff("", c)),
-            )]
-        }
-        "edit_file" => {
-            let path = match text("path") {
-                Some(p) => p,
-                None => return Vec::new(),
-            };
-            let diff = match (text("old_string"), text("new_string")) {
-                (Some(old), Some(new)) => Some(pseudo_diff(old, new)),
-                _ => None,
-            };
-            vec![(path.to_string(), FileChangeKind::Modified, diff)]
-        }
-        "delete_file" => {
-            let path = match text("path") {
-                Some(p) => p,
-                None => return Vec::new(),
-            };
-            let old = pre.and_then(|(_, content)| content);
-            vec![(
-                path.to_string(),
-                FileChangeKind::Deleted,
-                old.map(|c| pseudo_diff(&c, "")),
-            )]
-        }
-        "apply_edits" => {
-            // dry_run validates but writes nothing — emit no FileChange.
-            if input
-                .get("dry_run")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-            {
-                return Vec::new();
-            }
-            let Some(edits) = input.get("edits").and_then(|v| v.as_array()) else {
-                return Vec::new();
-            };
-            // One entry per distinct path; edits to the same file compose in
-            // first-touch order, matching how edit_file renders old→new.
-            let mut per_path: Vec<(String, String, String)> = Vec::new();
-            for edit in edits {
-                let Some(path) = edit.get("path").and_then(Value::as_str) else {
-                    continue;
-                };
-                let old = edit.get("old_string").and_then(Value::as_str).unwrap_or("");
-                let new = edit.get("new_string").and_then(Value::as_str).unwrap_or("");
-                match per_path.iter_mut().find(|(p, _, _)| p == path) {
-                    Some(slot) => {
-                        if !slot.1.is_empty() {
-                            slot.1.push('\n');
-                        }
-                        if !slot.2.is_empty() {
-                            slot.2.push('\n');
-                        }
-                        slot.1.push_str(old);
-                        slot.2.push_str(new);
-                    }
-                    None => per_path.push((path.to_string(), old.to_string(), new.to_string())),
-                }
-            }
-            per_path
-                .into_iter()
-                .map(|(path, old, new)| {
-                    (
-                        path,
-                        FileChangeKind::Modified,
-                        Some(pseudo_diff(&old, &new)),
-                    )
-                })
-                .collect()
-        }
-        _ => Vec::new(),
-    }
-}
-
-/// A minimal unified-diff-shaped rendering of `old` → `new`: `-` lines then
-/// `+` lines, each side capped at [`PSEUDO_DIFF_MAX_LINES`] with an elision
-/// marker (prefixed with a space so line counters ignore it).
-fn pseudo_diff(old: &str, new: &str) -> String {
-    let mut out = String::new();
-    let mut side = |content: &str, prefix: char| {
-        for (index, line) in content.lines().enumerate() {
-            if index == PSEUDO_DIFF_MAX_LINES {
-                out.push_str(&format!(
-                    " … ({} more lines)\n",
-                    content.lines().count() - PSEUDO_DIFF_MAX_LINES
-                ));
-                break;
-            }
-            out.push(prefix);
-            out.push_str(line);
-            out.push('\n');
-        }
-    };
-    side(old, '-');
-    side(new, '+');
-    out
 }
 
 #[cfg(test)]

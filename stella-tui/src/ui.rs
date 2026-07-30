@@ -995,6 +995,8 @@ mod tests {
         model.apply(&AgentEvent::FileChange {
             path: "a.rs".into(),
             kind: stella_protocol::FileChangeKind::Modified,
+            added: 1,
+            removed: 1,
             diff: Some("@@\n-a\n+b".into()),
         });
         let mut ui = UiState::default();
@@ -1015,6 +1017,8 @@ mod tests {
             &AgentEvent::FileChange {
                 path: "a.rs".into(),
                 kind: stella_protocol::FileChangeKind::Created,
+                added: 0,
+                removed: 0,
                 diff: None,
             },
             &mut model,

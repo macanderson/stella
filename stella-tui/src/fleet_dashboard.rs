@@ -410,13 +410,16 @@ impl FleetBoard {
                     None => display,
                 });
             }
-            AgentEvent::FileChange { path, kind, diff } => {
-                // Enrich the last action with the +A-B the tool produced, and
-                // keep the diff for the focused task's detail pane.
-                let (added, removed) = diff
-                    .as_deref()
-                    .map(crate::diff::count_diff_lines)
-                    .unwrap_or((0, 0));
+            AgentEvent::FileChange {
+                path,
+                kind,
+                added,
+                removed,
+                diff,
+            } => {
+                // Enrich the last action with the +A-B the recorder measured,
+                // and keep the diff for the focused task's detail pane.
+                let (added, removed) = (*added, *removed);
                 let verb = row
                     .last_tool_name
                     .clone()

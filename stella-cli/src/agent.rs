@@ -268,6 +268,10 @@ async fn run_pipeline_one_shot(
     // Journal the policy/extension audit plane through the same stream
     // (receipts spec §6.4) — a no-op unless a hook bus is attached.
     registry.bridge_policy_plane(tx.clone());
+    // File changes ride the same stream, from the recorder that already
+    // computes the session's file-touch ledger — so a run's live output, its
+    // journal and its exported telemetry cannot disagree about what changed.
+    registry.attach_events(tx.clone());
     let renderer = spawn_renderer(
         rx,
         format,
@@ -2088,6 +2092,10 @@ async fn run_turn(
     // Journal the policy/extension audit plane through the same stream
     // (receipts spec §6.4) — a no-op unless a hook bus is attached.
     registry.bridge_policy_plane(tx.clone());
+    // File changes ride the same stream, from the recorder that already
+    // computes the session's file-touch ledger — so a run's live output, its
+    // journal and its exported telemetry cannot disagree about what changed.
+    registry.attach_events(tx.clone());
     let renderer = spawn_renderer(
         rx,
         format,
