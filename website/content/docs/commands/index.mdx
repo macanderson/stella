@@ -79,6 +79,11 @@ stella chat
     What the work cost, and whether anyone said it was good — read from merged and closed pull
     requests, never from a model.
   </SpecCard>
+  <SpecCard title="stella arena" href="/docs/commands/arena">
+    The [arena-bench](https://github.com/macanderson/arena-bench) harness adapter — run one
+    benchmark episode and record the trace journal the arena runner judges. For benchmarking
+    Stella, not for using it.
+  </SpecCard>
   <SpecCard title="stella stats" href="/docs/commands/stats">
     `[prune]` — cost, tokens, and resolve rate per provider and model from this
     workspace's telemetry. `prune` bounds that store's growth, and never destroys
@@ -91,6 +96,10 @@ stella chat
   <SpecCard title="stella cloud" href="/docs/commands/cloud">
     `<status|register>` — show or set the org and workspace identity that scopes hub rows.
     A stub today: it persists ids locally, and the OAuth login lands later.
+  </SpecCard>
+  <SpecCard title="stella telemetry" href="/docs/commands/telemetry">
+    `<status|flush|rollover-discard>` — inspect, flush, or explicitly discard the managed
+    enterprise operational spool. Disabled by default; needs a signed org-managed enrollment.
   </SpecCard>
   <SpecCard title="stella inspect" href="/docs/commands/inspect">
     Show the exact context a past model call was sent, verified against the digests
@@ -136,10 +145,9 @@ stella chat
 
 Each command page in this section documents its usage synopsis, behavior, relevant flags, and realistic examples.
 
-Two subcommands are deliberately absent from the list above because they are not part of the day-to-day surface:
+Every subcommand `stella --help` lists has a page here, and a test asserts it: `every_subcommand_has_a_reference_page` in `stella-cli` diffs the live clap command tree against this section's `meta.json`, so a new subcommand cannot land undocumented.
 
-- `stella telemetry` (`status` / `flush` / `rollover-discard`) manages the managed enterprise operational spool. It is disabled by default and requires a signed org-managed enrollment — see the [Enterprise telemetry boundary](/docs/telemetry#oxagen-enterprise-managed-export).
-- `stella arena` is the [arena-bench](https://github.com/macanderson/arena-bench) harness adapter. It runs a benchmark task from a `--task-dir` and records the trace journal the arena runner scores; it is for benchmarking Stella, not for using it.
+Two of them are specialized rather than day-to-day. `stella arena` is a benchmark-harness adapter for measuring Stella, not for doing work with it; `stella telemetry` operates the managed enterprise spool and is disabled without a signed org-managed enrollment.
 
 ## Global flags
 

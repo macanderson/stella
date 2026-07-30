@@ -5,6 +5,20 @@ flip oracle, the evidence ladder, witness authoring, the judge escalation
 path, and best-of-N candidate scoring (`verify.rs`, `witness.rs`,
 `candidate.rs`, and the verify/revise wiring in `pipeline.rs`).
 
+## Related tracks
+
+This roadmap covers verification only. The **self-improvement** track — Stella
+authoring its own tools, tuning its own policy from evals, maintaining its own
+source, and distilling its own trajectories (issues #830–#836) — is documented
+at [`website/content/docs/self-improvement.mdx`](website/content/docs/self-improvement.mdx),
+published as [Self-improvement](https://stella.oxagen.sh/docs/self-improvement).
+
+The two are coupled in one direction: every self-authored change in that track
+has to clear the machinery described here. A self-authored tool needs a witness
+that flips, and a self-authored PR needs the same evidence ladder as any other
+work. Weakening verification weakens every self-improvement guarantee that
+depends on it.
+
 ## Where we are today
 
 The current design (L-E11) is deterministic-first and already avoids the two
