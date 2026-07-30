@@ -279,17 +279,27 @@ pub async fn run(
                     // (the guard enabled it), so the composer can fold it
                     // into a chip instead of replaying N raw Enter keys.
                     Some(Event::Paste(text)) => {
-                        // Modal gates swallow paste like any other non-gate
-                        // input — never queue text into the hidden composer.
-                        if model.pending_scope_review.is_none() && model.pending_ask_user.is_none()
-                        {
+                        // A pending gate takes typed free text as its answer —
+                        // a scope-review note, an `ask_user` reply — and the
+                        // composer stays on screen throughout (it is an
+                        // unconditional band; see `render`). So paste lands in
+                        // the composer here too: swallowing it meant a reviewer
+                        // could *type* a note but not paste one, which is the
+                        // same answer arriving by a different key.
+                        //
+                        // Verbatim text while a gate is pending, though — no
+                        // attachment probe. A pasted path is part of the
+                        // sentence being written ("only the file at src/x.rs"),
+                        // and a gate answer carries no attachments, so turning
+                        // it into a chip would silently drop it on submit.
+                        let gated = model.pending_scope_review.is_some()
+                            || model.pending_ask_user.is_some();
+                        match (gated, crate::attach::probe_path_attachment(&text)) {
                             // A paste that names a media file on disk (drag &
                             // drop) attaches the file itself; anything else
                             // stays literal text.
-                            match crate::attach::probe_path_attachment(&text) {
-                                Some(att) => ui.composer.attach(att),
-                                None => ui.composer.paste(&text),
-                            }
+                            (false, Some(att)) => ui.composer.attach(att),
+                            _ => ui.composer.paste(&text),
                         }
                     }
                     // Resize/other events: the next draw picks them up.

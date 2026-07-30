@@ -26,8 +26,19 @@
 //! owned data: prompt builders, the response parser, the watchlist delta, and
 //! the tamper check. Running the witness engine turn, executing the authored
 //! command, and the one bounded repair retry live in [`crate::pipeline`].
+//!
+//! # Fails now, and could fail meaningfully
+//!
+//! "The test must fail first" is necessary and not sufficient: a test with no
+//! assertions, one asserting only over constants, or a bare `#[should_panic]`
+//! all fail now and flip green without constraining the change.
+//! [`density::screen_witness_source`] is the static half of the answer — a
+//! lexical screen the `create_witness_test` boundary applies to the authored
+//! bytes, so a vacuous artifact is refused inside the author's own turn rather
+//! than after a baseline run and a repair turn have been paid for (#863).
 
 pub mod airlock;
+pub mod density;
 pub mod warrant;
 
 use std::collections::HashMap;
@@ -573,6 +584,11 @@ pub fn witness_prompt(goal: &str, recall: &[RecalledFrame], repo_structure: &str
          and .NET may use their filename conventions.\n\
          - The test must fail NOW for the RIGHT reason (it exercises the missing/broken \
          behavior), not because of a typo, a missing import, or a harness error.\n\
+         - ASSERT on a value the goal decides. A test with no assertions, one comparing \
+         constants (`assert_eq!(2, 2)`), one comparing a value to itself, or a bare \
+         `#[should_panic]` / `raises(Exception)` is REFUSED at creation — each of those \
+         flips green without constraining the change. Name the expected panic if a panic \
+         is what you mean to prove.\n\
          - Use `create_witness_test`; no general write, edit, process, network, or external \
          action is available in this role.\n\
          - The command must directly name this artifact and an exact test: for Rust use \
@@ -1106,6 +1122,11 @@ mod tests {
         assert!(p.contains("src/"));
         assert!(p.contains("memory: retries"));
         assert!(p.contains("ONE NEW test file"));
+        // The density screen refuses at creation (#863), so the prompt has to
+        // state the rule — a refusal the author could not have anticipated
+        // costs the same round trip the screen exists to save.
+        assert!(p.contains("assert_eq!(2, 2)"), "{p}");
+        assert!(p.contains("REFUSED"), "{p}");
     }
 
     #[test]

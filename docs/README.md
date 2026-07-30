@@ -7,11 +7,10 @@ Stella *user* should read.
 
 What lives here is the material that isn't site content: design specs a
 maintainer reads before changing the engine, the decision record behind those
-specs, the research papers, and the brand assets. There are two deliberate
-exceptions. [`why-stella.md`](why-stella.md) is written for an evaluator rather
+specs, the research papers, and the brand assets. There is one deliberate
+exception: [`why-stella.md`](why-stella.md) is written for an evaluator rather
 than a contributor but stays in the repo so it renders on GitHub without a
-round trip to the site. [`llms.txt`](llms.txt) *is* site content, but generated
-rather than authored — see the table below.
+round trip to the site.
 
 | Path | What it is |
 |---|---|
@@ -23,7 +22,6 @@ rather than authored — see the table below.
 | [`why-stella.md`](why-stella.md) | The technical overview, written for someone evaluating Stella rather than contributing to it. |
 | [`context-pr.md`](context-pr.md) | The canonical Context PR specification: how durable steering is proposed, reviewed, published, and retired through Git. |
 | [`replay-golden-trajectories.md`](replay-golden-trajectories.md) | How the golden-trajectory replay fixtures are recorded and refreshed. |
-| [`llms.txt`](llms.txt) | **Generated, do not edit.** Every documentation-site page as one Markdown file (the file's own header carries the current page count), for pasting into a model's context whole. Rebuild with `make llms-txt` after changing `website/content/docs/`; `node website/scripts/build-llms-txt.mjs --check` fails if it is stale. |
 
 Three documents — [`design/context-frame-spec.md`](design/context-frame-spec.md),
 [`design/directive-schema.md`](design/directive-schema.md), and the vendored
