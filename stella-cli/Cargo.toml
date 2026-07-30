@@ -23,11 +23,11 @@ formula = "stella"
 
 [dependencies]
 stella-protocol = { path = "../stella-protocol" }
-contextgraph-types = { git = "https://github.com/macanderson/context-graph-protocol", rev = "6f8d7ef13b2528c26913c6472405408ba2584a85" }
-contextgraph-host = { git = "https://github.com/macanderson/context-graph-protocol", rev = "6f8d7ef13b2528c26913c6472405408ba2584a85" }
+contextgraph-types = { git = "https://github.com/macanderson/context-graph-protocol", rev = "eeba49cef9a7604bd910d4faa871702869144ed0" }
+contextgraph-host = { git = "https://github.com/macanderson/context-graph-protocol", rev = "eeba49cef9a7604bd910d4faa871702869144ed0" }
 # The host execution-trace journal + replay oracles (sketch stage) — the
 # vocabulary `stella arena` records for the arena-bench runner to judge.
-contextgraph-trace = { git = "https://github.com/macanderson/context-graph-protocol", rev = "6f8d7ef13b2528c26913c6472405408ba2584a85" }
+contextgraph-trace = { git = "https://github.com/macanderson/context-graph-protocol", rev = "eeba49cef9a7604bd910d4faa871702869144ed0" }
 stella-core = { path = "../stella-core" }
 stella-model = { path = "../stella-model" }
 stella-tools = { path = "../stella-tools" }
@@ -62,7 +62,7 @@ rpassword.workspace = true
 # makes conformance an install/enable-time ADMISSION GATE for external
 # stdio/HTTP providers, so a non-conformant source is refused before it can
 # serve a turn. The same suite still audits the in-tree providers in tests.
-contextgraph-conformance = { git = "https://github.com/macanderson/context-graph-protocol", rev = "6f8d7ef13b2528c26913c6472405408ba2584a85" }
+contextgraph-conformance = { git = "https://github.com/macanderson/context-graph-protocol", rev = "eeba49cef9a7604bd910d4faa871702869144ed0" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }

@@ -311,6 +311,18 @@ pub enum Admission {
     NonConformant { id: String, failures: String },
     /// The transport could not be established (spawn failed, handshake
     /// refused, endpoint unreachable).
+    ///
+    /// Also where a **C7** refusal would land if it reached here — a plaintext
+    /// `http://` URL to a non-loopback provider, which `contextgraph-host`
+    /// refuses before any bytes leave the machine. In practice it does not
+    /// reach here: [`conformance_refusal`] connects first, so the same refusal
+    /// surfaces as [`Self::NonConformant`] with the C7 message in the failing
+    /// `handshake` check's evidence. That is safe but misattributing — it blames
+    /// the provider for what is an operator typo. Reporting it honestly needs
+    /// CGP to export its loopback rule (today `is_loopback_host` is private to
+    /// `contextgraph-host::http`), because the alternative — reimplementing
+    /// "which hosts are loopback" in Stella — would duplicate a normative
+    /// protocol rule in the host, where the two copies can drift.
     Unreachable { id: String, error: String },
     /// The provider declares off-machine egress scopes with no recorded
     /// consent.
@@ -455,10 +467,17 @@ async fn conformance_refusal(id: &str, target: ProviderTarget) -> Option<Admissi
 }
 
 /// Establish the transport and register the provider on the session host.
+///
+/// The HTTP leg passes **no credential** (C8). Stella has never had a way to
+/// declare one in `context_providers`, so there is no bearer token for the host
+/// to attach — and therefore none it could leak into a log or an error. If
+/// credentialed providers are ever configurable, the token belongs in
+/// `contextgraph_host::http::Credential`, which the host is required to keep out
+/// of its own diagnostics, not in a URL Stella prints in an [`Admission`].
 async fn connect(host: &mut Host, id: &str, endpoint: &ProviderEndpoint) -> Result<(), String> {
     let result = match endpoint {
         ProviderEndpoint::Stdio { program, args } => host.add_stdio(id, program, args).await,
-        ProviderEndpoint::Http { url } => host.add_http(id, url.clone()).await,
+        ProviderEndpoint::Http { url } => host.add_http(id, url.clone(), None).await,
     };
     result.map_err(|error| error.to_string())
 }
