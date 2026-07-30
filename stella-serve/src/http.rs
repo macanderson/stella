@@ -6,6 +6,13 @@
 //! Deliberately minimal: one request per connection, `Connection: close`, an
 //! SSE writer that streams frames until the turn ends and then closes. Enough
 //! for a governed sidecar behind the host, not a general-purpose server.
+//!
+//! Reading a request is **two steps, not one** — [`read_head`], then
+//! [`read_body`] or [`discard_body`]. `server.rs` authenticates in between, so
+//! an unauthenticated peer can never make this process buffer [`MAX_BODY_BYTES`]
+//! on its behalf; a refused request costs one [`DISCARD_CHUNK_BYTES`] scratch
+//! buffer instead. Both steps share one deadline, so splitting the read does not
+//! double how long a peer may hold a connection.
 
 use std::time::Duration;
 
@@ -319,7 +326,8 @@ pub(crate) async fn write_json(
 }
 
 /// [`write_json`] plus caller-supplied headers, for the responses that carry one
-/// (`Retry-After` on a 429). Each pair is emitted verbatim as `name: value`.
+/// (`Retry-After` on a 429, `Allow` on a 405). Each pair is emitted verbatim as
+/// `name: value`.
 pub(crate) async fn write_json_with_headers(
     stream: &mut TcpStream,
     status: &str,
@@ -553,7 +561,10 @@ mod tests {
             panic!("a well-formed request must parse");
         };
         discard_body(&mut stream, &mut req).await;
-        assert!(req.body.is_empty(), "a discarded body is never materialized");
+        assert!(
+            req.body.is_empty(),
+            "a discarded body is never materialized"
+        );
         // Exactly `Content-Length` bytes were consumed: what follows is
         // untouched, which is what proves the drain is bounded by the declared
         // length rather than reading to EOF.

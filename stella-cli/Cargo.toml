@@ -49,6 +49,7 @@ futures-util.workspace = true
 tokio = { workspace = true, features = ["sync", "signal"] }
 async-trait.workspace = true
 clap.workspace = true
+clap_complete.workspace = true
 colored.workspace = true
 toml.workspace = true
 dotenvy.workspace = true
@@ -57,6 +58,11 @@ tempfile.workspace = true
 # Masked TTY prompt for `stella connect … --token` (same crate stella-model
 # uses for the interactive API-key prompt).
 rpassword.workspace = true
+# Wipes the raw prompt buffers `stella auth set` and `stella connect` read a
+# secret into — the copies the caller never sees, which would otherwise be
+# dropped intact into freed heap. `stella-model` already zeroizes the `ApiKey`
+# these become; this closes the same hole one layer up, at the terminal.
+zeroize.workspace = true
 # The protocol's own conformance suite (SPEC.md 3.6), pinned to the same rev as
 # the types/host we consume. A RUNTIME dependency, not just a dev one: #453
 # makes conformance an install/enable-time ADMISSION GATE for external

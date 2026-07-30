@@ -1014,7 +1014,32 @@ fn csp_admits_everything_the_embedded_dashboard_actually_uses() {
     // A header value may not carry a newline — it would split the head.
     assert!(!CSP.contains('\r') && !CSP.contains('\n'));
     assert!(INDEX_HTML.contains("<style>") && INDEX_HTML.contains("<script>"));
-    assert!(INDEX_HTML.contains("src=\"/assets/mark.svg\""));
+    // Every asset the page names must be same-origin *and* actually routed.
+    // Asserted over whichever attribute carries it rather than a fixed
+    // `src="…"`: the mark moved from an `<img src>` to a `<link rel=icon
+    // href>`, which is the same same-origin fetch and the same CSP question,
+    // but silently failed a literal-string check. What matters is that no
+    // reference points off-origin and none points at a 404.
+    let root = tempfile::tempdir().expect("temp workspace");
+    for attr in ["src=\"", "href=\""] {
+        for (_, rest) in INDEX_HTML
+            .match_indices(attr)
+            .map(|(i, m)| (i, &INDEX_HTML[i + m.len()..]))
+        {
+            let target = rest.split('"').next().unwrap_or_default();
+            assert!(
+                target.starts_with('/') || target.starts_with('#'),
+                "the page must reference nothing off-origin, found {target:?}"
+            );
+            if target.starts_with('/') {
+                assert_ne!(
+                    respond(root.path(), target).status,
+                    "404 Not Found",
+                    "the page references {target:?}, which no route serves"
+                );
+            }
+        }
+    }
 }
 
 /// Padding the request line to the 8 KiB head cap used to be served: the

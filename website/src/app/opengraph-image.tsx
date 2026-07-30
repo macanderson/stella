@@ -1,29 +1,29 @@
 import { ImageResponse } from "next/og";
 import {
+  CURSOR_RECT,
   MARK_PATH,
-  MARK_VIEW_BOX,
   WORDMARK_PATH,
   WORDMARK_VIEW_BOX,
 } from "@/components/brand";
 
 /**
  * The social card, generated at build time (next/og) so it stays in sync with
- * the brand and carries no static binary.
+ * the brand and ships no static binary.
  *
- * It is the brand lockup on the deepest ground: a sky mark beside a paper
- * wordmark on navy. That split is the palette's rule 4 — the wordmark stays
- * ink/paper, the mark carries the hue — and it is what makes the card read as
- * Stella at thumbnail size, where the tagline is illegible anyway.
+ * It is the lockup on the deepest ground: the mark and wordmark in `text-
+ * primary`, the cursor block in `gold`. That split is BRAND.md's Logo table —
+ * the glyph and wordmark are ink, the cursor carries the identity gold — and it
+ * is what makes the card read as Stella at thumbnail size, where the tagline is
+ * illegible anyway.
  *
  * Both glyphs are drawn from their outlines rather than set as text, so the
  * card shows the real logo instead of whatever face the renderer falls back to.
  *
- * Colours are literals rather than CSS vars because Satori resolves no
- * cascade; they are the tokens from src/app/tokens.css (which mirrors
- * stella-tui/src/palette.rs), named inline — edit them together.
- * Measured on `night` #000000: wordmark 19.40:1, mark 12.60:1, tagline 8.50:1,
- * footer 4.71:1. Keep the markup inside Satori's supported subset — plain
- * <path> fills only, no gradients, masks, or filters.
+ * Colours are literals rather than CSS vars because Satori resolves no cascade.
+ * They are the tokens from src/app/tokens.css, named inline — edit them
+ * together. Measured on `void` #05070C: wordmark 18.4:1, cursor 12.1:1, tagline
+ * 6.9:1, footer 4.9:1. Keep the markup inside Satori's supported subset — plain
+ * <path>/<rect> fills only, no gradients, masks, or filters.
  */
 export const alt =
   "Stella — a fast, BYOK, model-agnostic terminal coding agent that proves its work";
@@ -40,8 +40,8 @@ export default function OpengraphImage() {
           display: "flex",
           flexDirection: "column",
           justifyContent: "space-between",
-          background: "#000000", // night
-          color: "#f3f6fa", // text-primary
+          background: "#05070c", // void
+          color: "#f2f5fa", // text-primary
           padding: "80px",
         }}
       >
@@ -51,34 +51,28 @@ export default function OpengraphImage() {
               display: "flex",
               alignItems: "center",
               gap: "14px",
-              border: "1px solid #24313f", // hairline
-              borderRadius: "9999px",
-              padding: "12px 26px",
               fontSize: "28px",
-              color: "#98a6ba", // text-secondary
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+              color: "#8e97a8", // text-secondary
             }}
           >
-            <span style={{ color: "#7dd3fc", fontWeight: 700 }}>{">_"}</span>
+            <span style={{ color: "#f5c145" }}>{"▊"}</span>
             <span>a terminal coding agent</span>
           </div>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column" }}>
-          {/* The lockup: sky mark, paper wordmark. */}
-          <div style={{ display: "flex", alignItems: "center", gap: "36px" }}>
-            <svg
-              viewBox={MARK_VIEW_BOX}
-              width={132}
-              height={132}
-              fill="#7dd3fc" // sky — the mark is the one place the hue lives
-            >
-              <path d={MARK_PATH} />
+          <div style={{ display: "flex", alignItems: "center", gap: "40px" }}>
+            <svg viewBox="0 0 148 100" width={196} height={132}>
+              <path d={MARK_PATH} fill="#f2f5fa" />
+              <rect {...CURSOR_RECT} fill="#f5c145" />
             </svg>
             <svg
               viewBox={WORDMARK_VIEW_BOX}
               width={440}
               height={130}
-              fill="#f3f6fa" // text-primary — the wordmark never takes the accent
+              fill="#f2f5fa"
             >
               <path d={WORDMARK_PATH} />
             </svg>
@@ -88,7 +82,7 @@ export default function OpengraphImage() {
               display: "flex",
               marginTop: "30px",
               fontSize: "42px",
-              color: "#98a6ba", // text-secondary
+              color: "#8e97a8", // text-secondary
               maxWidth: "940px",
               lineHeight: 1.25,
             }}
@@ -104,7 +98,7 @@ export default function OpengraphImage() {
             justifyContent: "space-between",
             alignItems: "center",
             fontSize: "28px",
-            color: "#6c7b90", // text-tertiary — 4.85:1 on night
+            color: "#737d92", // text-tertiary — 4.9:1 on void
           }}
         >
           <div style={{ display: "flex" }}>stella.oxagen.sh</div>

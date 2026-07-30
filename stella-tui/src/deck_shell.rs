@@ -7,7 +7,7 @@
 //!
 //! It differs from [`crate::shell::run`] in one structural way: a fixed
 //! **animation/resource tick** (~30 fps) is a third `select!` arm. A live
-//! dashboard — CPU gauges, elapsed timers, sparklines, tachyonfx transitions —
+//! dashboard — CPU gauges, elapsed timers, sparklines, the run progress bar —
 //! must repaint on a clock, not only when the agent streams. That tick is also
 //! where the clock advances and the resource monitor samples, so all
 //! time-based UI shares one heartbeat.
@@ -360,8 +360,8 @@ pub async fn run_deck(
     ui.slash_commands = opts.slash_commands.clone();
     ui.color_mode = color_mode;
     ui.no_anim = no_anim;
-    // A no-anim session collapses the launch cinematic to one brief static
-    // wordmark frame (and `ingest_inbound` drops any later replay cues).
+    // A no-anim session lights the launch mark immediately, with no reveal
+    // step (and `ingest_inbound` drops any later replay cues).
     ui.splash.set_reduced(no_anim);
     // Enter semantics follow the terminal's actual capability (see
     // `crate::term::TerminalGuard::kitty` and `crate::composer::classify_enter`).

@@ -137,30 +137,152 @@ enum HydratedBody {
     Base64(String),
 }
 
+impl HydratedBody {
+    /// Retained heap bytes — what [`PathCache`] budgets against. Base64 is
+    /// ~4/3 of the file it came from, so this is measured on the hydrated
+    /// string rather than inferred from the file length.
+    fn retained_bytes(&self) -> usize {
+        match self {
+            HydratedBody::Text(text) => text.len(),
+            HydratedBody::Base64(encoded) => encoded.len(),
+        }
+    }
+}
+
 /// One cached path payload, valid while the file's `(mtime, len)`
-/// fingerprint holds.
+/// fingerprint holds. `last_used` is the cache's logical clock at the last
+/// hit, which is what makes eviction least-recently-used rather than
+/// arbitrary.
 struct CachedPayload {
     modified: Option<SystemTime>,
     len: u64,
     body: HydratedBody,
+    last_used: u64,
 }
 
-/// Process-wide cache of hydrated [`AttachmentSource::Path`] payloads. The
-/// conversation replays every turn, so without it every model call re-read
-/// and re-encoded every path attachment for the rest of the session —
-/// invisible for a screenshot, pathological for a large payload on a long
-/// session. Keyed by path and validated against the file's `(mtime, len)` on
-/// every lookup, so an edited file re-hydrates on its next turn. Bounded by
-/// what the user actually attaches: one live entry per distinct path,
-/// replaced in place when the file changes.
-static PATH_CACHE: OnceLock<Mutex<HashMap<PathBuf, CachedPayload>>> = OnceLock::new();
+/// Total hydrated bytes [`PATH_CACHE`] will hold. The cache is a
+/// process-wide `static` on a deck session that runs for hours, so an
+/// unbudgeted one is a leak with extra steps: every distinct path ever
+/// attached stayed resident for the life of the process, at ~4/3 the file's
+/// size once base64-encoded, with nothing evicting and no per-entry ceiling.
+/// A handful of screenshots is invisible; a session that attaches a few
+/// hundred, or one video, is not.
+///
+/// 64 MiB holds hundreds of screenshots — the case the cache exists for —
+/// while capping the worst case at a fixed, nameable number.
+const MAX_CACHE_BYTES: usize = 64 * 1024 * 1024;
+
+/// Bounded, least-recently-used cache of hydrated
+/// [`AttachmentSource::Path`] payloads. The conversation replays every turn,
+/// so without it every model call re-read and re-encoded every path
+/// attachment for the rest of the session — invisible for a screenshot,
+/// pathological for a large payload on a long session. Keyed by path and
+/// validated against the file's `(mtime, len)` on every lookup, so an edited
+/// file re-hydrates on its next turn.
+///
+/// A miss is a re-read, never a failure, so eviction is always safe: the
+/// cache is a latency optimization with no correctness role. That is what
+/// lets the budget be enforced bluntly.
+#[derive(Default)]
+struct PathCache {
+    entries: HashMap<PathBuf, CachedPayload>,
+    /// Sum of `entries`' `retained_bytes`, maintained incrementally so the
+    /// budget check never walks the map.
+    bytes: usize,
+    /// Monotonic logical clock stamped onto an entry on insert and on hit.
+    tick: u64,
+}
+
+impl PathCache {
+    /// Look up a fresh entry, stamping it as most-recently-used. `None` on a
+    /// miss OR on a stale fingerprint — the caller re-hydrates either way.
+    fn get_fresh(
+        &mut self,
+        path: &Path,
+        modified: Option<SystemTime>,
+        len: u64,
+        want_text: bool,
+    ) -> Option<HydratedBody> {
+        let entry = self.entries.get_mut(path)?;
+        // The stored form must also be the one this kind consumes — the same
+        // path re-attached under a different media type recomputes.
+        let fresh = entry.modified == modified
+            && entry.len == len
+            && matches!(
+                (&entry.body, want_text),
+                (HydratedBody::Text(_), true) | (HydratedBody::Base64(_), false)
+            );
+        if !fresh {
+            return None;
+        }
+        self.tick += 1;
+        entry.last_used = self.tick;
+        Some(entry.body.clone())
+    }
+
+    /// Retain `body` for `path`, evicting least-recently-used entries until
+    /// it fits. A payload larger than the whole budget is simply not
+    /// retained — caching it could only be paid for by evicting everything
+    /// else, and it would still be the next thing evicted.
+    fn store(
+        &mut self,
+        path: PathBuf,
+        modified: Option<SystemTime>,
+        len: u64,
+        body: &HydratedBody,
+    ) {
+        // Replacing an entry frees its old bytes first, so a re-hydrated
+        // file is never double-counted against the budget.
+        self.remove(&path);
+        let size = body.retained_bytes();
+        if size > MAX_CACHE_BYTES {
+            return;
+        }
+        // Linear scan per eviction, which is right here: evictions are rare
+        // (only when the budget is actually reached) and the map is small by
+        // construction, so a heap would cost more bookkeeping than it saves.
+        while self.bytes + size > MAX_CACHE_BYTES {
+            let Some(victim) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_used)
+                .map(|(key, _)| key.clone())
+            else {
+                // Nothing left to evict; `size <= MAX_CACHE_BYTES` above
+                // guarantees the loop cannot reach here, but an empty map
+                // must break rather than spin.
+                return;
+            };
+            self.remove(&victim);
+        }
+        self.tick += 1;
+        self.bytes += size;
+        self.entries.insert(
+            path,
+            CachedPayload {
+                modified,
+                len,
+                body: body.clone(),
+                last_used: self.tick,
+            },
+        );
+    }
+
+    fn remove(&mut self, path: &Path) {
+        if let Some(old) = self.entries.remove(path) {
+            self.bytes = self.bytes.saturating_sub(old.body.retained_bytes());
+        }
+    }
+}
+
+static PATH_CACHE: OnceLock<Mutex<PathCache>> = OnceLock::new();
 
 /// The path cache's guard. A poisoned lock is recovered rather than
 /// propagated — the worst a poisoned cache can hold is a stale entry the
 /// fingerprint check re-validates anyway, and this module's contract is that
 /// an attachment never aborts a turn.
-fn path_cache() -> std::sync::MutexGuard<'static, HashMap<PathBuf, CachedPayload>> {
-    let cache = PATH_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+fn path_cache() -> std::sync::MutexGuard<'static, PathCache> {
+    let cache = PATH_CACHE.get_or_init(|| Mutex::new(PathCache::default()));
     match cache.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -173,18 +295,8 @@ fn hydrate_path(path: &str, want_text: bool) -> std::io::Result<HydratedBody> {
     let meta = std::fs::metadata(path)?;
     let modified = meta.modified().ok();
     let len = meta.len();
-    if let Some(entry) = path_cache().get(Path::new(path)) {
-        // The stored form must also be the one this kind consumes — the same
-        // path re-attached under a different media type recomputes.
-        let fresh = entry.modified == modified
-            && entry.len == len
-            && matches!(
-                (&entry.body, want_text),
-                (HydratedBody::Text(_), true) | (HydratedBody::Base64(_), false)
-            );
-        if fresh {
-            return Ok(entry.body.clone());
-        }
+    if let Some(body) = path_cache().get_fresh(Path::new(path), modified, len, want_text) {
+        return Ok(body);
     }
     let bytes = std::fs::read(path)?;
     let body = if want_text {
@@ -192,14 +304,7 @@ fn hydrate_path(path: &str, want_text: bool) -> std::io::Result<HydratedBody> {
     } else {
         HydratedBody::Base64(BASE64.encode(&bytes))
     };
-    path_cache().insert(
-        PathBuf::from(path),
-        CachedPayload {
-            modified,
-            len,
-            body: body.clone(),
-        },
-    );
+    path_cache().store(PathBuf::from(path), modified, len, &body);
     Ok(body)
 }
 
@@ -460,6 +565,95 @@ mod tests {
         // A different length breaks the fingerprint: re-hydrated.
         std::fs::write(&path, b"cccccc").expect("rewrite payload");
         assert_eq!(encoded(&att), BASE64.encode(b"cccccc"));
+    }
+
+    /// The cache is a process-wide `static` on a session that runs for
+    /// hours, so its budget is the difference between an optimization and a
+    /// leak. Driven against [`PathCache`] directly rather than through the
+    /// global: eviction is a property of the data structure, and the global
+    /// is shared with every other test in this binary.
+    #[test]
+    fn the_path_cache_evicts_least_recently_used_instead_of_growing_forever() {
+        let body = |n: usize| HydratedBody::Base64("x".repeat(n));
+        let path = |n: usize| PathBuf::from(format!("/tmp/a{n}.png"));
+        // Three entries, each a third of the budget plus a slack byte, so the
+        // third cannot land until something leaves.
+        let third = MAX_CACHE_BYTES / 3 + 1;
+
+        let mut cache = PathCache::default();
+        cache.store(path(0), None, 0, &body(third));
+        cache.store(path(1), None, 0, &body(third));
+        // Touch 0 so 1 — not insertion-order-oldest 0 — is the LRU victim.
+        assert!(
+            cache.get_fresh(&path(0), None, 0, false).is_some(),
+            "entry 0 is fresh and must hit"
+        );
+        cache.store(path(2), None, 0, &body(third));
+
+        assert!(
+            cache.entries.contains_key(&path(0)),
+            "the recently used entry must survive"
+        );
+        assert!(
+            !cache.entries.contains_key(&path(1)),
+            "the least recently used entry is the one evicted"
+        );
+        assert!(cache.entries.contains_key(&path(2)), "the new entry lands");
+        assert!(
+            cache.bytes <= MAX_CACHE_BYTES,
+            "the budget is a bound, not a suggestion: {} bytes",
+            cache.bytes
+        );
+    }
+
+    /// A payload larger than the whole budget is hydrated and returned but
+    /// never retained — caching it could only be paid for by evicting
+    /// everything else, and it would be the next thing evicted anyway.
+    #[test]
+    fn a_payload_larger_than_the_whole_budget_is_never_retained() {
+        let mut cache = PathCache::default();
+        let keeper = PathBuf::from("/tmp/keeper.png");
+        cache.store(keeper.clone(), None, 0, &HydratedBody::Base64("x".into()));
+
+        cache.store(
+            PathBuf::from("/tmp/whale.mp4"),
+            None,
+            0,
+            &HydratedBody::Base64("x".repeat(MAX_CACHE_BYTES + 1)),
+        );
+
+        assert!(
+            !cache.entries.contains_key(Path::new("/tmp/whale.mp4")),
+            "an over-budget payload must not be retained"
+        );
+        assert!(
+            cache.entries.contains_key(&keeper),
+            "and it must not have evicted anything on its way out"
+        );
+        assert_eq!(cache.bytes, 1);
+    }
+
+    /// Re-hydrating a path must free the old payload's bytes before charging
+    /// the new one. Getting this wrong leaks budget rather than memory — the
+    /// counter drifts up until the cache evicts everything and never caches
+    /// again, which is silent and would only show as a mystery slowdown.
+    #[test]
+    fn replacing_an_entry_does_not_double_count_its_bytes() {
+        let mut cache = PathCache::default();
+        let path = PathBuf::from("/tmp/edited.txt");
+        for len in [10usize, 20, 30, 40] {
+            cache.store(
+                path.clone(),
+                None,
+                len as u64,
+                &HydratedBody::Text("x".repeat(len)),
+            );
+            assert_eq!(
+                cache.bytes, len,
+                "only the live payload is charged to the budget"
+            );
+        }
+        assert_eq!(cache.entries.len(), 1);
     }
 
     /// The cache stores the one form a kind consumes; the same path attached

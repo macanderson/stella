@@ -600,10 +600,6 @@ pub struct DeckUi {
     pub files_diff_open: bool,
     pub files_diff_scroll: ScrollState,
     pub metrics: DeckMetrics,
-    /// When the active tab last changed — `deck_render` drives the
-    /// [`crate::fx::tab_switch`] sweep from it, then clears it once the
-    /// motion has played out. `None` = no sweep in flight.
-    pub tab_switched_at: Option<std::time::Instant>,
     /// The slash-command vocabulary offered by the `/` popup (an input — the
     /// caller owns the real list, exactly like the single-session shell).
     pub slash_commands: Vec<SlashCommand>,
@@ -782,7 +778,6 @@ impl Default for DeckUi {
             files_diff_open: false,
             files_diff_scroll: ScrollState::default(),
             metrics: DeckMetrics::default(),
-            tab_switched_at: None,
             slash_commands: Vec::new(),
             slash_selected: 0,
             thinking_expanded: false,
@@ -837,14 +832,9 @@ impl DeckUi {
         }
     }
 
-    /// Switch the active tab, stamping the moment so the render layer can
-    /// play the [`crate::fx::tab_switch`] sweep. Same-tab is a no-op — a
-    /// re-press must not restart the motion.
+    /// Switch the active tab. Same-tab is a no-op.
     pub fn set_tab(&mut self, tab: DeckTab) {
-        if tab != self.tab {
-            self.tab = tab;
-            self.tab_switched_at = Some(std::time::Instant::now());
-        }
+        self.tab = tab;
     }
 
     /// Route a bracketed paste to whichever surface owns the keyboard, in the
@@ -1250,11 +1240,11 @@ pub fn ingest_inbound(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut De
         ta.loading = false;
         return;
     }
-    // Launch-cinematic cues: the driver replays the splash held open over a
-    // running init (`/init`, session startup) and releases it when init
-    // finishes. Out-of-band view state like `ShowHelp`. `--no-anim`
-    // sessions ignore the replay — their contract is a static frame — and a
-    // release on a splash that never held is a harmless no-op.
+    // Launch-mark cues: the driver holds the mark open over a running init
+    // (`/init`, session startup) and releases it when init finishes.
+    // Out-of-band view state like `ShowHelp`. `--no-anim` sessions ignore the
+    // replay — their contract is a static frame — and a release on a mark
+    // that never held is a harmless no-op.
     if let Inbound::Splash(cue) = inbound {
         match cue {
             SplashCue::Replay => {

@@ -41,6 +41,11 @@ async-trait = "0.1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 futures-util = "0.3"
 clap = { version = "4", features = ["derive", "env"] }
+# Shell completion generation for `stella completions <shell>`. Same major
+# version line as `clap` itself (they release in lockstep and the generator
+# reads clap's own `Command` tree), MIT OR Apache-2.0, and it pulls in nothing
+# beyond `clap_builder`, which is already resident.
+clap_complete = "4"
 colored = "3"
 libc = "0.2"
 rand = "0.10"

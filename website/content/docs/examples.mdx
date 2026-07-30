@@ -1,0 +1,508 @@
+---
+title: Examples & recipes
+description: Complete, copy-pasteable settings files — pick the row that matches your keys and budget, paste the config, verify with stella config.
+---
+
+Pick the profile that matches the keys you hold, paste its file whole, and verify with
+`stella config`. Every snippet below is a complete `~/.stella/settings.json`, not a
+fragment.
+
+## Pick a profile
+
+| Profile | Keys needed | Worker | Judge | Triage | Medium task |
+| --- | --- | --- | --- | --- | --- |
+| [Single key](#single-key) | 1 | your model | same model | same model | varies |
+| [Dirt cheap](#dirt-cheap) | 2 | `deepseek-chat` | `glm-5.2` | `deepseek-chat` | $0.01 – $0.10 |
+| [Balanced](#balanced) | 3 | `glm-5.2` | `claude-fable-5` | `deepseek-chat` | $0.05 – $0.50 |
+| [Maximum quality](#maximum-quality) | 3 | `claude-fable-5` | `gpt-5.5` | `deepseek-chat` | $0.40 – $2.50 |
+| [One gateway key](#one-gateway-key-openrouter) | 1 | any vendor | any vendor | any vendor | as routed |
+| [Local / air-gapped](#local-and-air-gapped) | 0 | your server | your server | your server | $0 |
+| [Enterprise cloud](#enterprise-cloud-vertex-and-bedrock) | cloud creds | Vertex or Bedrock | same | same | contract rates |
+
+Estimates are for a medium task — a focused multi-file change with one revision — at
+catalog list prices with prompt caching working normally. Your real numbers are in
+[`stella stats`](/docs/commands/stats) and the [Observatory](/docs/telemetry/dashboard).
+
+## Where the money goes
+
+<PipelineFlowDiagram />
+
+| Stage | Model calls | Rough size | Cost share |
+| --- | --- | --- | --- |
+| Triage | 1 | ~1–2k in, ~1 token out | negligible |
+| Plan | 1 (+1 repair, rarely) | ~5–15k in, ~1k out | small |
+| Witness | ~1 engine turn | ~10–30k in, ~1–2k out | only without `--test-command` |
+| **Execute** | **5–40+ steps** | **~100–500k in (mostly cached), ~5–30k out** | **most of the bill** |
+| Verify | 0 | — | free (deterministic ladder) |
+| Judge | 0–1 per verification | ~3–10k in, ~0.5–1k out | cents |
+| Revise | 0–2 extra execute rounds | like Execute, smaller | proportional |
+
+Three consequences:
+
+1. **The worker's output price dominates.** Moving the worker from $15/Mtok output to
+   $2.20 (Fable 5 → GLM-5.2) changes the bill roughly 5–7×. Moving the judge barely
+   changes it at all.
+2. **A flagship judge is cheap insurance.** One judge call is a few thousand input tokens
+   and under a thousand out — 1–2¢ on `gpt-5.5`, 2–3¢ on `claude-fable-5`. Make it a
+   *different family* than the worker. Arm `--test-command` and many runs skip it.
+3. **Prompt caching does the heavy lifting.** Stella keeps the system prefix byte-stable
+   so most execute-step input bills at the cached rate, 4–10× cheaper. See the
+   [context engine](/docs/context-engine).
+
+Multipliers: [goal mode](/docs/agent-modes#outcome-driven-goal-mode) repeats rounds until
+the judge signs off, up to 8. [Fleets](/docs/agent-fleets) run one pipeline per task, and
+`--budget` is enforced fleet-wide across the concurrency width. Cap either with
+`--budget <usd>`, a hard limit enforced between steps.
+
+## Single key
+
+Everything here works with one key. This is the setup most people should run first.
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."   # or OPENAI_API_KEY, ZAI_API_KEY, DEEPSEEK_API_KEY
+
+stella config                            # confirm provider, model, redacted key preview
+stella run "fix the flaky retry test"
+```
+
+That is already a working setup — auto-detection does the rest, every pipeline role rides
+the same model, and the deterministic half of the
+[verification ladder](/docs/inference-pipeline) still gates the result.
+
+Two habits make one-key runs materially better:
+
+```bash
+# Arm the flip oracle — deterministic verification, judge often skipped entirely
+stella run --test-command "cargo test -p api" "add cursor pagination to /orders"
+
+# Cap the spend — enforced between steps, aborts cleanly
+stella --budget 2.00 goal "the linter passes and the snapshot tests are green"
+```
+
+When every role is the same family, make the judge *behave* differently — strict prompt,
+high effort:
+
+```json title="~/.stella/settings.json"
+{
+  "agent_engine_config": {
+    "default_model": "anthropic/claude-fable-5",
+    "pipeline_worker_model": "anthropic/claude-fable-5",
+    "pipeline_judge_model": "anthropic/claude-fable-5",
+    "pipeline_triage_model": "anthropic/claude-fable-5",
+
+    "allowed_models": ["anthropic/claude-fable-5"],
+
+    "auto_mode": "off",
+    "effort_auto": "off",
+    "reasoning_auto": "on",
+
+    "agents": {
+      "worker": { "effort": "high" },
+      "judge": {
+        "effort": "high",
+        "prompt": "You are a strict, evidence-first code judge. Claimed success without deterministic evidence is a FAIL."
+      },
+      "triage": { "effort": "low" }
+    }
+  }
+}
+```
+
+`reasoning_auto: "on"` puts thinking on for worker, judge, and default agents and off for
+triage, so per-agent `reasoning` is left out on purpose — the auto would override it.
+`effort_auto` stays off, which is what lets the per-agent `effort` values apply.
+
+To use another provider, swap the four model strings and `allowed_models`:
+
+| Key you hold | Model string | Window | $/Mtok in/out | Effort honoured? |
+| --- | --- | --- | --- | --- |
+| Anthropic | `anthropic/claude-fable-5` | 200k | 3.00 / 15.00 | yes, all five tiers |
+| OpenAI | `openai/gpt-5.5` | 400k | 1.25 / 10.00 | yes; `xhigh`/`max` → `high` |
+| Z.ai | `zai/glm-5.2` | 200k | 0.60 / 2.20 | **no — dropped on the wire** |
+| DeepSeek | `deepseek/deepseek-chat` | 128k | 0.27 / 1.10 | **no — dropped on the wire** |
+
+Where effort is dropped, differentiate the judge with its `prompt` instead. Only OpenAI
+puts `service_tier` on the wire, so `"params": { "service_tier": "priority" }` is worth
+adding to an OpenAI judge and inert everywhere else.
+
+<Callout type="warn">
+  A same-family judge shares the worker's blind spots — it is real review, not independent
+  review. Compensate deterministically: arm `--test-command` wherever a test can express
+  "done", and treat the judge as a regression net rather than the main gate.
+</Callout>
+
+## Dirt cheap
+
+Point every role at the cheapest capable models, turn thinking off where it doesn't pay,
+cap output, and put a hard `--budget` under it. Good for lint sweeps, docstrings, and
+mechanical migrations.
+
+```json title="~/.stella/settings.json"
+{
+  "agent_engine_config": {
+    "pipeline_worker_model": "deepseek/deepseek-chat",
+    "pipeline_judge_model": "zai/glm-5.2",
+    "pipeline_triage_model": "deepseek/deepseek-chat",
+    "default_model": "deepseek/deepseek-chat",
+
+    "allowed_models": ["deepseek/deepseek-chat", "zai/glm-5.2"],
+
+    "auto_mode": "off",
+    "effort_auto": "off",
+    "reasoning_auto": "off",
+
+    "agents": {
+      "worker": {
+        "effort": "low",
+        "reasoning": "off",
+        "params": { "max_tokens": 8192 }
+      },
+      "judge": { "effort": "medium", "reasoning": "on" },
+      "triage": { "reasoning": "off" }
+    }
+  }
+}
+```
+
+```bash
+export DEEPSEEK_API_KEY="sk-..."   # worker and triage
+export ZAI_API_KEY="..."           # judge
+
+stella --budget 0.25 run "add docstrings to every public function in src/api/"
+stella stats --format table
+```
+
+DeepSeek and Z.ai both drop `effort` on the wire, so the `effort` lines above record
+intent only — `reasoning: "off"` and `params.max_tokens` are what actually do the work.
+The judge stays a *different family* than the worker with thinking on; the whole judge
+call costs a fraction of a cent.
+
+<Callout type="warn">
+  Cheap models revise more and resolve less on hard tasks, and a run that fails three
+  times isn't cheap. Watch **$/resolved** in the
+  [Observatory](/docs/telemetry/dashboard); when a chore class keeps failing here, move
+  that class to [balanced](#balanced).
+</Callout>
+
+## Balanced
+
+The daily driver. The worker emits ~85% of your tokens and the judge almost none, so
+spend down on the worker and keep a flagship judge as cheap insurance.
+
+```json title="~/.stella/settings.json"
+{
+  "agent_engine_config": {
+    "pipeline_worker_model": "zai/glm-5.2",
+    "pipeline_judge_model": "anthropic/claude-fable-5",
+    "pipeline_triage_model": "deepseek/deepseek-chat",
+    "default_model": "zai/glm-5.2",
+
+    "allowed_models": [
+      "zai/glm-5.2",
+      "anthropic/claude-fable-5",
+      "openai/gpt-5.5",
+      "deepseek/deepseek-chat"
+    ],
+
+    "auto_mode": "off",
+    "effort_auto": "on",
+    "reasoning_auto": "on"
+  }
+}
+```
+
+```bash
+export ZAI_API_KEY="..."                # worker
+export ANTHROPIC_API_KEY="sk-ant-..."   # judge
+export DEEPSEEK_API_KEY="sk-..."        # triage
+
+stella run "add pagination to the /orders endpoint and update its tests" \
+  --test-command "pnpm test orders"
+```
+
+The autos encode the sensible mapping — judge high, worker medium, triage low; thinking on
+everywhere except triage — and they *override* any per-agent `effort`/`reasoning`, which
+is why this profile carries no `agents` block. Roughly 5–7× cheaper than
+[maximum quality](#maximum-quality) with the same class of judge watching the result.
+
+Swap the worker to `gemini/gemini-3-pro` when tasks need the 1M window; at $1.25/$10.00
+it is exactly `gpt-5.5`'s list price. For one hard task, `--model` outranks the settings
+for that invocation and leaves judge, triage, and autos in place:
+
+```bash
+stella --model anthropic/claude-fable-5 run "the hard one"
+```
+
+## Maximum quality
+
+The strongest worker, an equally serious judge from a *different family*, effort and
+thinking high. For gnarly multi-file changes and unfamiliar codebases.
+
+```json title="~/.stella/settings.json"
+{
+  "agent_engine_config": {
+    "pipeline_worker_model": "anthropic/claude-fable-5",
+    "pipeline_judge_model": "openai/gpt-5.5",
+    "pipeline_triage_model": "deepseek/deepseek-chat",
+    "default_model": "anthropic/claude-fable-5",
+
+    "allowed_models": [
+      "anthropic/claude-fable-5",
+      "openai/gpt-5.5",
+      "gemini/gemini-3-pro",
+      "deepseek/deepseek-chat"
+    ],
+
+    "auto_mode": "off",
+    "effort_auto": "off",
+    "reasoning_auto": "off",
+
+    "agents": {
+      "worker": { "effort": "xhigh", "reasoning": "on" },
+      "judge": {
+        "effort": "high",
+        "reasoning": "on",
+        "prompt": "You are a strict, evidence-first code judge. Claimed success without deterministic evidence is a FAIL.",
+        "params": { "service_tier": "priority" }
+      },
+      "triage": { "effort": "low", "reasoning": "off" }
+    }
+  }
+}
+```
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."   # worker
+export OPENAI_API_KEY="sk-..."          # judge
+export DEEPSEEK_API_KEY="sk-..."        # triage
+
+stella --budget 8.00 run \
+  "port the auth middleware to the new session store; all tests must pass" \
+  --test-command "cargo test -p auth"
+```
+
+The judge is GPT-5.5 rather than another Claude because cross-family judging is the point.
+`service_tier: "priority"` is only worth setting here — OpenAI's is the one dialect that
+puts it on the wire. Autos are off so the per-agent values stand.
+
+<Callout type="info">
+  If Fable 5 resolves in one attempt what cheaper models need three for, this profile can
+  be the *cheap* one per outcome. Check **$/resolved** after a week before concluding
+  otherwise.
+</Callout>
+
+## One gateway key (OpenRouter)
+
+Cross-family judging with one billing relationship instead of three.
+
+```json title="~/.stella/settings.json"
+{
+  "agent_engine_config": {
+    "default_model": "openrouter/anthropic/claude-fable-5",
+    "pipeline_worker_model": "openrouter/anthropic/claude-fable-5",
+
+    "auto_mode": "off",
+    "effort_auto": "on",
+    "reasoning_auto": "on",
+
+    "agents": {
+      "judge":  { "provider": "openrouter", "model": "openai/gpt-5.5" },
+      "triage": { "provider": "openrouter", "model": "deepseek/deepseek-chat" }
+    }
+  }
+}
+```
+
+```bash
+export OPENROUTER_API_KEY="sk-or-..."
+stella run "add cursor pagination to /orders" --test-command "pnpm test orders"
+```
+
+Judge-diversity logic reads the routed slug's vendor prefix, so
+`openrouter/openai/gpt-5.5` counts as OpenAI and `auto_mode` works through the gateway.
+Gateway slugs are unpriced locally, so on an all-OpenRouter `allowed_models` list the
+price tier ties at zero and the choice comes down to family plus written order — put your
+preferred judge first. The [OpenRouter section](/docs/api-providers#openrouter) covers
+the first-slash split and the `openrouter/openrouter/auto` doubling.
+
+## Local and air-gapped
+
+Point Stella at any OpenAI-compatible local server. No key, no metering, no cloud.
+
+```bash
+# Ollama
+stella --model local/llama3.3 --base-url http://localhost:11434/v1 chat
+
+# vLLM / LM Studio / llama.cpp — same shape, different port
+stella --model local/qwen2.5-coder --base-url http://localhost:8000/v1 run "…"
+```
+
+For a daily setup, define the endpoint once as a config-defined provider in **user
+scope** and it behaves like a built-in:
+
+```json title="~/.stella/settings.json"
+{
+  "providers": {
+    "ollama": {
+      "base_url": "http://localhost:11434/v1",
+      "default_model": "qwen2.5-coder:32b",
+      "api_key": "local"
+    }
+  },
+  "agent_engine_config": {
+    "default_model": "ollama/qwen2.5-coder:32b",
+    "pipeline_judge_model": "ollama/llama3.3",
+    "agents": {
+      "judge": { "prompt": "You are a strict, evidence-first code judge." }
+    }
+  }
+}
+```
+
+`effort` is dropped on local endpoints, so the judge is differentiated by its `prompt`.
+The [local-server section](/docs/api-providers#local-servers) has the dialect and
+credential rules.
+
+For a strict air gap, turn off the one remaining automatic outbound call — the
+model-catalog refresh from `models.dev`, at most once per 24h:
+
+```bash
+export STELLA_CATALOG_AUTO_REFRESH=0
+
+stella config    # every resolved value, computed from local files alone
+stella doctor    # checks the local session store's integrity; reads local state only
+```
+
+Community/default telemetry stays in `.stella/private/store.db`, the
+[Observatory](/docs/telemetry/dashboard) binds `127.0.0.1`, memories and the code graph
+are files in your workspace, and `stella init` works offline with a heuristic fallback.
+Leave [Oxagen Enterprise telemetry](/docs/telemetry#oxagen-enterprise-managed-export)
+unenrolled and configure only loopback model endpoints.
+
+<Callout type="info">
+  Local models have no catalog prices, so `stella stats` dollar columns read zero and
+  `--budget` has nothing to meter against. Bound runs with `--test-command` and goal-mode
+  round caps instead.
+</Callout>
+
+## Enterprise cloud (Vertex and Bedrock)
+
+When models must flow through your existing cloud agreement. Both providers sit **last**
+in auto-detection, so pin them explicitly. Setup and credential rules are in
+[API providers](/docs/api-providers#google-vertex-ai); this is the org-wide half.
+
+The **org-managed scope** is the enterprise deployment surface: a `settings.json` outside
+any repo, shipped by MDM, that every Stella on the machine inherits.
+
+```json title="/Library/Application Support/stella/settings.json (macOS) · /etc/stella/settings.json (Linux)"
+{
+  "providers": {
+    "vertex": { "name": "Acme Vertex (approved)" },
+    "openai": { "base_url": "https://llm-gateway.acme.internal/v1" }
+  },
+  "agent_engine_config": {
+    "default_model": "vertex/gemini-3-pro",
+    "allowed_models": [
+      "vertex/gemini-3-pro",
+      "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    ]
+  },
+  "tools": { "web": "off" },
+  "authority": {
+    "project_prompts": "off",
+    "project_custom_tools": "off"
+  },
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "repo_push",
+        "hooks": [ { "command": "/usr/local/bin/acme-push-policy", "timeoutMs": 10000 } ] }
+    ]
+  }
+}
+```
+
+| Key | Effect |
+| --- | --- |
+| `STELLA_MANAGED_SETTINGS` | Overrides the platform path with an explicit file — the CI and container route |
+| `allowed_models` | Constrains model pickers and `auto_mode`. **Replaces wholesale** across scopes |
+| `hooks` | Always load from this scope, no trust flag needed. Concatenate across scopes; no scope can remove another's |
+| `tools` | A managed `off` is a **ceiling** — no lower scope can grant it back, even a trusted project |
+| `authority.project_prompts` | `off` keeps a repo from replacing an agent's system prompt. Honoured only from this file |
+| `authority.project_custom_tools` | `off` keeps `.stella/tools/` manifests from loading even on a trusted repo |
+
+## Team-shared settings
+
+A team setup divides work across the three
+[settings scopes](/docs/configuration/settings#the-scope-hierarchy): the repo carries what
+is true for everyone, each user carries keys and taste, the org carries policy.
+
+Commit `domains.toml`, `memories/`, `rules/`, `skills/`, `commands/`, `tools/`,
+`mcp.toml`, and `settings.json` (as long as it holds no inline `api_key`). Ignore the
+local state:
+
+```text title=".gitignore"
+.stella/private/
+.stella/worktrees/
+.stella/exports/
+```
+
+```json title=".stella/settings.json (committed)"
+{
+  "providers": {
+    "zai": { "api_key_env": "ACME_ZAI_KEY" }
+  },
+  "tools": { "web": "off" },
+  "agent_engine_config": {
+    "default_model": "zai/glm-5.2",
+    "pipeline_judge_model": "anthropic/claude-fable-5"
+  },
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "bash",
+        "hooks": [ { "command": "./scripts/guard.sh", "timeoutMs": 5000 } ] }
+    ]
+  }
+}
+```
+
+`api_key_env` points every teammate at one variable name while each supplies their own
+value, so rotation is a vault change rather than a settings edit.
+
+<Callout type="warn">
+  A fresh clone's `hooks`, `providers.*.base_url`/`api_key`/`api_key_env`,
+  `mcp.registry_url`, `context_providers`, per-agent `prompt`s, and the whole of
+  `.stella/mcp.toml` are held back until the user opts in — otherwise any repo you clone
+  could run commands on your machine or route your keys through its server.
+
+  ```bash
+  export STELLA_TRUST_PROJECT=1   # scope it per-repo with direnv or a shell guard
+  ```
+
+  A stderr notice names anything skipped. `STELLA_PROJECT_HOOKS=1` is the narrower legacy
+  form: it trusts hooks, MCP, and context providers but leaves credential routing gated.
+  See [the project trust boundary](/docs/configuration/settings#the-project-trust-boundary).
+</Callout>
+
+Merge semantics you will rely on:
+
+| Setting | Rule |
+| --- | --- |
+| `providers`, `agent_engine_config` | Merge per field — even `agents.<role>.params` composes per knob |
+| `hooks` | Concatenate. Org, repo, and personal hooks all fire; none replaces another |
+| `tools`, `mcp` | Last scope wins per key. Untrusted, a repo may narrow the tool surface, never widen it |
+| `allowed_models` | Replaces wholesale — whichever scope sets it owns the entire list |
+
+Scope precedence for everything that merges is **user → org-managed → project**, later
+winning. The exception runs the other way: an org-managed `tools` denial is a ceiling
+applied last.
+
+## Verify any of these
+
+```bash
+stella models    # every provider with its key status and credential source
+stella config    # the resolved provider, model, and a redacted key preview
+stella stats     # after a run: cost and resolve rate per provider and model
+```
+
+Let the observed **$/resolved** number, not the sticker price, pick your lineup — see the
+[model guide](/docs/api-providers/models).

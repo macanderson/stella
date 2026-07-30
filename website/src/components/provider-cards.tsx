@@ -11,6 +11,11 @@ import { ProviderLogo } from "@/components/provider-logos";
  * ever found by a reader who tries it and fails. One typed record, two call
  * sites.
  *
+ * The card shows the provider's name as text beside its logomark rather than
+ * as a wordmark lockup. The name is then selectable, searchable, and indexed;
+ * a wordmark is none of those, and ten of them side by side turned the grid
+ * into a logo wall.
+ *
  * The wire `dialect` is worth carrying per provider: it is what "vendor-
  * agnostic" actually cashes out to. Stella speaks each vendor's own protocol
  * rather than normalizing everything through one OpenAI-shaped adapter, so the
@@ -142,7 +147,7 @@ export function ProviderGrid({ only }: { only?: string[] }) {
         <SpecCard
           key={p.id}
           href={p.href}
-          logo={<ProviderLogo id={p.id} size={24} />}
+          title={<ProviderLogo id={p.id} size={20} />}
           meta={[
             { label: "id", value: p.id },
             { label: "Env var", value: p.env },

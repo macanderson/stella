@@ -496,20 +496,20 @@ fn any_key_dismisses_the_splash_first() {
 }
 
 #[test]
-fn splash_cues_replay_and_release_the_cinematic() {
+fn splash_cues_replay_and_release_the_launch_mark() {
     let mut model = WorkspaceModel::new();
     let mut ui = DeckUi::default();
     ui.splash.skip(); // the deck is up; `/init` arrives later
     assert!(ui.splash.is_done());
 
-    // Replay: a fresh held splash owns the frame again…
+    // Replay: a fresh held mark owns the frame again for as long as init runs…
     ingest_inbound(&Inbound::Splash(SplashCue::Replay), &mut model, &mut ui);
-    assert!(!ui.splash.is_done(), "replay restarts the cinematic");
+    assert!(!ui.splash.is_done(), "replay re-holds the mark over init");
 
-    // …and Release is what lets its timeline run out (exact timing is
-    // splash::tests territory — here we only pin that the cue routes).
+    // …and Release hands straight back to the deck — a fast init must never
+    // be made to wait out a reveal (exact timing is `splash::tests`).
     ingest_inbound(&Inbound::Splash(SplashCue::Release), &mut model, &mut ui);
-    assert!(!ui.splash.is_done(), "the battle floor still plays out");
+    assert!(ui.splash.is_done(), "release cuts straight to the deck");
 }
 
 #[test]
@@ -521,7 +521,7 @@ fn no_anim_sessions_ignore_splash_replays() {
     ingest_inbound(&Inbound::Splash(SplashCue::Replay), &mut model, &mut ui);
     assert!(
         ui.splash.is_done(),
-        "a no-anim session never replays the cinematic"
+        "a no-anim session never re-holds the launch mark"
     );
 }
 
@@ -1178,19 +1178,19 @@ fn ask_user_answer_latches_until_a_fresh_question_rearms() {
 }
 
 #[test]
-fn set_tab_stamps_the_switch_moment_only_on_change() {
+fn tab_and_backtab_walk_the_tab_bar() {
     let model = model_with(&["lead"]);
     let mut ui = ready_ui();
-    assert!(ui.tab_switched_at.is_none(), "no motion before any switch");
+    assert_eq!(ui.tab, DeckTab::Session);
 
-    // The key path routes through set_tab and stamps the moment.
     handle_deck_key(key(KeyCode::Tab), &model, &mut ui);
     assert_eq!(ui.tab, DeckTab::Agents);
-    let first = ui.tab_switched_at.expect("tab switch stamped");
+    handle_deck_key(key(KeyCode::BackTab), &model, &mut ui);
+    assert_eq!(ui.tab, DeckTab::Session);
 
-    // Switching to the SAME tab must not restart the sweep.
-    ui.set_tab(DeckTab::Agents);
-    assert_eq!(ui.tab_switched_at, Some(first));
+    // Re-selecting the active tab is a no-op, not an error.
+    ui.set_tab(DeckTab::Session);
+    assert_eq!(ui.tab, DeckTab::Session);
 }
 
 #[test]

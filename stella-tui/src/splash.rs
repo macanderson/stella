@@ -1,95 +1,77 @@
-//! The animated launch cinematic shown on deck launch and replayed on `/init`.
+//! The launch mark: one still frame, shown only while session init is
+//! genuinely still running.
 //!
-//! The timeline is a four-phase movie, never shorter than ~6 seconds:
+//! This is deliberately **not** a cinematic. A terminal has no
+//! `prefers-reduced-motion`, so the only accessible default is not to animate;
+//! and a startup animation is time the user did not ask to spend. The mark
+//! therefore earns its screen time by standing in for work that is actually
+//! happening: the deck holds it open across session init (code-graph build +
+//! MCP connect) and drops it the instant [`SplashState::release`] says init is
+//! done — even mid-fade. If there is no init to cover, it is gone in well
+//! under a second.
 //!
-//! 1. **Battle** ([`crate::invaders`]) — a Space Invaders skirmish over a
-//!    drifting starfield: the cannon picks off invaders, the fleet returns
-//!    fire, ships explode. Runs at least [`BATTLE_MIN`]; while the splash is
-//!    **held** open over a still-running init (session startup, `/init`) the
-//!    battle loops until [`SplashState::release`] — the movie covers the
-//!    wait, however long a first launch's indexing takes.
-//! 2. **Reveal** — the STELLA block-art wordmark ([`tui_big_text`])
-//!    materializes cell-by-cell (a seeded [`tachyonfx`] coalesce), stars
-//!    still falling behind it.
-//! 3. **Hold** — the wordmark stands fully lit.
-//! 4. **Fade** — the whole frame fades out to the deck.
+//! What it draws is the lockup from `docs/brand/BRAND.md`: the chevron, the
+//! `stella` wordmark, and the block cursor — plus the build version and the
+//! resolved model once one is known. Colours come from [`crate::theme`]'s
+//! semantic roles, never from raw palette constants, so the mark follows the
+//! identity rather than pinning a copy of it.
 //!
-//! The splash stays **skippable** on any key so it can never block getting
-//! to work, and `--no-anim` (CI, recordings) collapses it to a brief static
-//! wordmark. `render` takes `&SplashState` (immutable — the deck draws every
-//! frame with no `&mut` path back into the model), so the animation is
-//! *scrubbed* from elapsed time rather than driven by persisted effects:
-//! each frame builds a **fresh** seeded effect and processes it once with a
-//! synthetic elapsed duration. Since a `tachyonfx::EffectTimer` only cares
-//! about total elapsed time (not how it got there), one `process` call lands
-//! exactly where continuous real-time playback would have.
+//! The one presentational concession is a **single** fade step: for the first
+//! [`REVEAL`] the mark renders muted, then in its real colours. One step, not
+//! a per-cell choreography — and it is a pure function of elapsed time, so two
+//! renders at the same `t` produce byte-identical buffers and a dropped frame
+//! scrubs correctly instead of stalling a timeline.
 
 use std::time::{Duration, Instant};
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
-use tachyonfx::{Duration as FxDuration, EffectTimer, Interpolation, SimpleRng, fx};
-use tui_big_text::{BigText, PixelSize};
 
-use crate::{invaders, theme};
+use crate::theme;
 
-/// Minimum battle time before the wordmark may reveal — also the loop the
-/// battle wraps at while held. With the wordmark phases on top, the whole
-/// movie always runs ≥ ~6.3s (the product floor is 5s).
-pub const BATTLE_MIN: Duration = Duration::from_millis(3500);
+/// How long the mark renders muted before stepping to its real colours. One
+/// step, and short enough that a fast init cuts through it (see
+/// [`SplashState::release`]) rather than being made to wait for it.
+pub const REVEAL: Duration = Duration::from_millis(180);
 
-/// The wordmark phases: patterned coalesce in, full-lit hold, fade out.
-const REVEAL: Duration = Duration::from_millis(1300);
-const WORDMARK_HOLD: Duration = Duration::from_millis(600);
-const FADE: Duration = Duration::from_millis(900);
+/// How long an **unheld** splash stays up after the reveal step. An unheld
+/// splash is covering nothing, so this is the whole of its life past
+/// [`REVEAL`] — long enough to read the mark, short enough not to be a wait.
+const UNHELD_HOLD: Duration = Duration::from_millis(420);
 
 /// A held splash that never hears `release()` (a driver that died mid-init)
-/// still ends: past this cap the battle concedes and the reveal plays. Any
-/// key skips long before this matters.
+/// still ends: past this cap it hands off regardless. Any key skips long
+/// before this matters.
 const HOLD_FAILSAFE: Duration = Duration::from_secs(120);
 
-/// `--no-anim`: the whole cinematic collapses to this brief static wordmark.
-const REDUCED_TOTAL: Duration = Duration::from_millis(1200);
+/// `--no-anim` / `STELLA_NO_ANIM` / `NO_COLOR`: the mark is lit from the first
+/// frame (no reveal step) and stands for exactly this long. A recording gets
+/// one static frame rather than a transition.
+const REDUCED_TOTAL: Duration = Duration::from_millis(900);
 
-/// Below this width/height, `tui-big-text`'s wordmark (48 cols wide, plus
-/// subtitle and breathing room) won't fit legibly — fall back to a single
-/// styled line instead of clipping it.
-const MIN_WORDMARK_WIDTH: u16 = 50;
-const MIN_WORDMARK_HEIGHT: u16 = 8;
+/// Narrower than this and the version/model line has nowhere to go — the mark
+/// renders alone rather than wrapping into nonsense.
+const MIN_DETAIL_WIDTH: u16 = 28;
 
-/// Terminals at least this tall get the full 8-row block glyphs
-/// ([`PixelSize::Full`]); shorter ones get the 4-row half-height packing.
-const FULL_GLYPH_MIN_HEIGHT: u16 = 20;
-
-/// Where the timeline stands right now — the render dispatch.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Phase {
-    /// Mid-battle; carries the absolute elapsed seconds (the scene wraps it).
-    Battle(f32),
-    /// Wordmark coalescing in; carries local progress `0.0..1.0`.
-    Reveal(f32),
-    /// Wordmark fully lit.
-    Hold,
-    /// Whole frame fading out; carries local progress `0.0..1.0`.
-    Fade(f32),
-    /// Movie over — the deck owns the frame.
-    Over,
-}
+/// The lockup, left to right: chevron · wordmark · block cursor.
+const CHEVRON: &str = "› ";
+const WORDMARK: &str = "stella";
+const CURSOR: &str = "▮";
 
 /// Ephemeral splash timing. Not part of the model — pure presentation.
 #[derive(Debug, Clone)]
 pub struct SplashState {
     start: Instant,
-    /// When `skip()` dismissed the splash early, if it did — the moment the
-    /// deck took over, used by [`Self::finished_at`].
+    /// When `skip()` dismissed the mark early, if it did.
     skipped_at: Option<Instant>,
-    /// Held open over a running init: the battle loops until `release()`.
+    /// Held open over a running init: the mark stands until `release()`.
     held: bool,
     /// When `release()` ended the hold (init finished).
     released_at: Option<Instant>,
-    /// `--no-anim`: collapse to a brief static wordmark, ignore hold cues.
+    /// `--no-anim`: no reveal step, one static frame, ignore hold cues.
     reduced: bool,
 }
 
@@ -110,9 +92,9 @@ impl SplashState {
         }
     }
 
-    /// A splash held open over a running init: the battle loops until
-    /// [`Self::release`]. The driver replays the cinematic this way at
-    /// session start and on `/init`.
+    /// A splash held open over a running init: the mark stands until
+    /// [`Self::release`]. The driver opens one this way at session start and
+    /// on `/init`.
     pub fn new_held() -> Self {
         Self {
             held: true,
@@ -120,24 +102,25 @@ impl SplashState {
         }
     }
 
-    /// Init finished — let the timeline advance to the wordmark and fade.
-    /// The battle still runs out its [`BATTLE_MIN`] floor first, so a fast
-    /// init never truncates the movie below the product minimum. Idempotent;
-    /// a no-op on an unheld splash.
+    /// Init finished — hand off to the deck **now**.
+    ///
+    /// Deliberately not floored by any minimum screen time: a fast init must
+    /// cut straight to a usable deck, not be made to sit out the rest of a
+    /// reveal. Idempotent; a no-op on an unheld splash (which is covering
+    /// nothing and ends on its own).
     pub fn release(&mut self) {
         if self.held && self.released_at.is_none() {
             self.released_at = Some(Instant::now());
         }
     }
 
-    /// `--no-anim` / `STELLA_NO_ANIM` / `NO_COLOR`: collapse the cinematic
-    /// to a brief static wordmark (no battle, no effects).
+    /// `--no-anim` / `STELLA_NO_ANIM` / `NO_COLOR`: light the mark from the
+    /// first frame and hold it briefly, with no reveal step.
     pub fn set_reduced(&mut self, reduced: bool) {
         self.reduced = reduced;
     }
 
-    /// Dismiss immediately (any key). Idempotent — the first skip wins, so
-    /// `finished_at` stays stable under repeated keypresses.
+    /// Dismiss immediately (any key). Idempotent — the first skip wins.
     pub fn skip(&mut self) {
         if self.skipped_at.is_none() {
             self.skipped_at = Some(Instant::now());
@@ -148,203 +131,92 @@ impl SplashState {
         self.start.elapsed()
     }
 
-    /// When the battle phase ends, relative to `start` — or `None` while the
-    /// splash is held open and init hasn't finished (the battle loops).
-    fn battle_end(&self) -> Option<Duration> {
-        if self.reduced {
-            return Some(Duration::ZERO);
-        }
-        if !self.held {
-            return Some(BATTLE_MIN);
-        }
-        match self.released_at {
-            Some(at) => Some(BATTLE_MIN.max(at.duration_since(self.start))),
-            None if self.elapsed() >= HOLD_FAILSAFE => Some(HOLD_FAILSAFE),
-            None => None,
-        }
-    }
-
-    /// The whole movie's length, once known ([`Self::battle_end`]).
+    /// The mark's total screen time, when it is knowable — `None` only while a
+    /// held splash is still waiting on init.
     fn total(&self) -> Option<Duration> {
         if self.reduced {
             return Some(REDUCED_TOTAL);
         }
-        self.battle_end()
-            .map(|be| be + REVEAL + WORDMARK_HOLD + FADE)
+        if !self.held {
+            return Some(REVEAL + UNHELD_HOLD);
+        }
+        self.released_at.map(|at| at.duration_since(self.start))
     }
 
-    fn phase(&self) -> Phase {
-        if self.skipped_at.is_some() {
-            return Phase::Over;
-        }
-        let e = self.elapsed();
-        if self.reduced {
-            return if e < REDUCED_TOTAL {
-                Phase::Hold
-            } else {
-                Phase::Over
-            };
-        }
-        let be = match self.battle_end() {
-            None => return Phase::Battle(e.as_secs_f32()),
-            Some(be) => be,
-        };
-        if e < be {
-            Phase::Battle(e.as_secs_f32())
-        } else if e < be + REVEAL {
-            Phase::Reveal((e - be).as_secs_f32() / REVEAL.as_secs_f32())
-        } else if e < be + REVEAL + WORDMARK_HOLD {
-            Phase::Hold
-        } else if e < be + REVEAL + WORDMARK_HOLD + FADE {
-            Phase::Fade((e - be - REVEAL - WORDMARK_HOLD).as_secs_f32() / FADE.as_secs_f32())
-        } else {
-            Phase::Over
-        }
-    }
-
-    /// True once the splash should hand off to the deck.
+    /// True once the mark should hand off to the deck.
     pub fn is_done(&self) -> bool {
-        self.phase() == Phase::Over
-    }
-
-    /// The moment the splash finished (skipped or played out), or `None`
-    /// while it is still playing. The deck uses this to time its reveal fade
-    /// (`deck_render` drives [`crate::fx::fade_in`] from it).
-    pub fn finished_at(&self) -> Option<Instant> {
-        if let Some(at) = self.skipped_at {
-            return Some(at);
+        if self.skipped_at.is_some() {
+            return true;
         }
         match self.total() {
-            Some(total) if self.elapsed() >= total => Some(self.start + total),
-            _ => None,
+            Some(total) => self.elapsed() >= total,
+            // Held and un-released: standing, unless the driver died mid-init.
+            None => self.elapsed() >= HOLD_FAILSAFE,
         }
+    }
+
+    /// Whether the reveal step has landed — the mark renders muted before it
+    /// and in its real colours after. A reduced splash is lit immediately.
+    fn lit(&self) -> bool {
+        self.reduced || self.elapsed() >= REVEAL
     }
 }
 
-/// Draw the current frame of the cinematic. Battle → coalescing wordmark →
-/// hold → fade, all scrubbed from [`SplashState`]'s clock; reduced splashes
-/// render one static wordmark frame.
-pub fn render(state: &SplashState, area: Rect, buf: &mut Buffer) {
-    if state.reduced {
-        render_wordmark_or_fallback(area, buf);
+/// Draw the launch mark. `model` is the resolved model id once the session
+/// knows one; it is omitted rather than guessed at when it does not.
+///
+/// A pure function of `(state.elapsed(), state flags, area, model)` — two calls
+/// at the same elapsed time write byte-identical buffers.
+pub fn render(state: &SplashState, model: Option<&str>, area: Rect, buf: &mut Buffer) {
+    if state.is_done() || area.width == 0 || area.height == 0 {
         return;
     }
-    let elapsed = state.elapsed().as_secs_f32();
-    match state.phase() {
-        Phase::Over => {}
-        Phase::Battle(t) => invaders::render(t, area, buf),
-        Phase::Reveal(local) => {
-            invaders::render_stars(elapsed, area, buf);
-            let block = render_wordmark_or_fallback(area, buf);
-            // The patterned reveal: a seeded coalesce scrubbed to `local`,
-            // applied to the wordmark block only so the starfield behind it
-            // doesn't flicker in and out with the effect's cell pattern.
-            let mut effect = fx::coalesce(EffectTimer::new(
-                FxDuration::from(REVEAL),
-                Interpolation::QuadOut,
-            ))
-            .with_rng(SimpleRng::new(crate::fx::FX_SEED));
-            crate::fx::apply(
-                &mut effect,
-                REVEAL.mul_f32(local.clamp(0.0, 1.0)),
-                block,
-                buf,
-            );
-        }
-        Phase::Hold => {
-            invaders::render_stars(elapsed, area, buf);
-            render_wordmark_or_fallback(area, buf);
-        }
-        Phase::Fade(local) => {
-            invaders::render_stars(elapsed, area, buf);
-            render_wordmark_or_fallback(area, buf);
-            // Fade the whole frame — wordmark and stars — down to the ground
-            // color for the handoff.
-            let mut effect = fx::fade_to(
-                theme::GROUND,
-                theme::GROUND,
-                EffectTimer::new(FxDuration::from(FADE), Interpolation::QuadIn),
-            );
-            crate::fx::apply(&mut effect, FADE.mul_f32(local.clamp(0.0, 1.0)), area, buf);
-        }
-    }
-}
-
-/// Draw the wordmark (or the tiny-terminal fallback) and return the block it
-/// occupies, for effects that should touch only the wordmark.
-fn render_wordmark_or_fallback(area: Rect, buf: &mut Buffer) -> Rect {
-    if area.width < MIN_WORDMARK_WIDTH || area.height < MIN_WORDMARK_HEIGHT {
-        render_fallback(area, buf)
+    // The lockup's three parts carry three different roles: the chevron is the
+    // interactive/brand signal, the wordmark is ink, the cursor block is the
+    // identity gold. All three are semantic theme tokens, so they follow the
+    // identity and — unlike an interpolated RGB — still degrade through
+    // `theme::degrade_buffer` on a 256- or 16-colour terminal.
+    let (chev_style, ink_style, cursor_style, dim_style) = if state.lit() {
+        (
+            theme::accent(),
+            Style::new().fg(theme::INK).add_modifier(Modifier::BOLD),
+            Style::new().fg(theme::GOLD),
+            theme::muted(),
+        )
     } else {
-        render_wordmark(area, buf)
+        // The single reveal step: before it lands, the whole lockup is one
+        // muted tone.
+        let muted = theme::muted();
+        (muted, muted, muted, muted)
+    };
+
+    let mut lines: Vec<Line<'static>> = vec![
+        Line::from(vec![
+            Span::styled(CHEVRON, chev_style),
+            Span::styled(WORDMARK, ink_style),
+            Span::styled(CURSOR, cursor_style),
+        ])
+        .alignment(Alignment::Center),
+    ];
+    // The detail line is the only part that needs room; drop it rather than
+    // wrap the version across two rows on a narrow terminal.
+    if area.width >= MIN_DETAIL_WIDTH && area.height >= 2 {
+        let mut detail = format!("v{}", env!("CARGO_PKG_VERSION"));
+        if let Some(model) = model {
+            detail.push_str(" · ");
+            detail.push_str(model);
+        }
+        lines.push(Line::from(Span::styled(detail, dim_style)).alignment(Alignment::Center));
     }
-}
 
-/// The full wordmark: a big block-art "STELLA" in the Stella brand sky over a
-/// muted "command deck" subtitle, vertically centered as one block. Tall terminals
-/// get the full 8-row glyphs; shorter ones the 4-row half-height packing.
-fn render_wordmark(area: Rect, buf: &mut Buffer) -> Rect {
-    let (pixel_size, title_height) = if area.height >= FULL_GLYPH_MIN_HEIGHT {
-        (PixelSize::Full, 8)
-    } else {
-        (PixelSize::HalfHeight, 4)
-    };
-    const GAP: u16 = 1;
-    const SUBTITLE_HEIGHT: u16 = 1;
-    let block_height = title_height + GAP + SUBTITLE_HEIGHT;
-
-    let top = area.y + (area.height.saturating_sub(block_height)) / 2;
-
-    let title_area = Rect {
+    let height = (lines.len() as u16).min(area.height);
+    let block = Rect {
         x: area.x,
-        y: top,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
         width: area.width,
-        height: title_height,
+        height,
     };
-    let wordmark = BigText::builder()
-        .pixel_size(pixel_size)
-        .style(theme::accent())
-        .alignment(Alignment::Center)
-        .lines(vec![Line::from("STELLA")])
-        .build();
-    wordmark.render(title_area, buf);
-
-    let subtitle_area = Rect {
-        x: area.x,
-        y: top + title_height + GAP,
-        width: area.width,
-        height: SUBTITLE_HEIGHT,
-    };
-    let subtitle =
-        Line::from(Span::styled("command deck", theme::muted())).alignment(Alignment::Center);
-    Paragraph::new(subtitle).render(subtitle_area, buf);
-
-    Rect {
-        x: area.x,
-        y: top,
-        width: area.width,
-        height: block_height.min(area.height),
-    }
-}
-
-/// Compact single-line fallback for terminals too small for the big-text
-/// wordmark — still centered, still on-brand, never clipped or garbled.
-fn render_fallback(area: Rect, buf: &mut Buffer) -> Rect {
-    let line = Line::from(vec![
-        Span::styled("✦ STELLA", theme::accent()),
-        Span::styled(" — command deck", theme::muted()),
-    ])
-    .alignment(Alignment::Center);
-
-    let y = area.y + (area.height.saturating_sub(1)) / 2;
-    let row = Rect {
-        x: area.x,
-        y,
-        width: area.width,
-        height: area.height.min(1),
-    };
-    Paragraph::new(line).render(row, buf);
-    row
+    Paragraph::new(lines).render(block, buf);
 }
 
 #[cfg(test)]
@@ -372,11 +244,15 @@ mod tests {
     }
 
     fn draw(state: &SplashState, w: u16, h: u16) -> Vec<String> {
+        draw_with(state, None, w, h)
+    }
+
+    fn draw_with(state: &SplashState, model: Option<&str>, w: u16, h: u16) -> Vec<String> {
         let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
         terminal
             .draw(|f| {
                 let area = f.area();
-                render(state, area, f.buffer_mut());
+                render(state, model, area, f.buffer_mut());
             })
             .unwrap();
         buffer_rows(terminal.backend().buffer())
@@ -392,22 +268,20 @@ mod tests {
         }
     }
 
-    /// Total un-held movie length, in ms — the point past which `is_done()`.
-    fn total_ms() -> u64 {
-        (BATTLE_MIN + REVEAL + WORDMARK_HOLD + FADE).as_millis() as u64
+    fn unheld_total_ms() -> u64 {
+        (REVEAL + UNHELD_HOLD).as_millis() as u64
     }
 
     #[test]
-    fn the_movie_runs_at_least_five_seconds() {
-        // The product floor: the cinematic may never be shorter than 5s.
-        assert!(total_ms() >= 5_000, "movie is {}ms", total_ms());
-    }
-
-    #[test]
-    fn new_state_is_not_done_and_starts_in_battle() {
-        let state = SplashState::new();
-        assert!(!state.is_done());
-        assert!(matches!(state.phase(), Phase::Battle(_)));
+    fn an_unheld_mark_is_gone_in_under_a_second() {
+        // It covers no work, so it may not cost the user real time.
+        assert!(
+            unheld_total_ms() < 1_000,
+            "unheld splash runs {}ms",
+            unheld_total_ms()
+        );
+        assert!(!state_at(0).is_done());
+        assert!(state_at(unheld_total_ms() + 50).is_done());
     }
 
     #[test]
@@ -419,7 +293,7 @@ mod tests {
     }
 
     #[test]
-    fn skip_finishes_the_splash_immediately() {
+    fn skip_finishes_the_mark_immediately() {
         let mut state = SplashState::new();
         assert!(!state.is_done());
         state.skip();
@@ -427,52 +301,39 @@ mod tests {
     }
 
     #[test]
-    fn timeline_walks_battle_reveal_hold_fade_done() {
-        let battle = BATTLE_MIN.as_millis() as u64;
-        assert!(matches!(state_at(battle - 200).phase(), Phase::Battle(_)));
-        assert!(matches!(state_at(battle + 200).phase(), Phase::Reveal(_)));
-        let hold_at = battle + REVEAL.as_millis() as u64 + 100;
-        assert_eq!(state_at(hold_at).phase(), Phase::Hold);
-        let fade_at = hold_at + WORDMARK_HOLD.as_millis() as u64 + 100;
-        assert!(matches!(state_at(fade_at).phase(), Phase::Fade(_)));
-        assert_eq!(state_at(total_ms() + 100).phase(), Phase::Over);
-    }
-
-    #[test]
-    fn a_held_splash_loops_the_battle_until_released() {
-        // Held + un-released, way past BATTLE_MIN: still in battle, not done.
+    fn a_held_mark_stands_until_init_releases_it() {
         let mut state = SplashState {
             held: true,
             ..state_at(10_000)
         };
-        assert!(matches!(state.phase(), Phase::Battle(_)));
-        assert!(!state.is_done());
-        assert!(state.finished_at().is_none());
-
-        // Release: battle ends at the release moment (past the floor), and
-        // the wordmark phases run from there.
+        assert!(!state.is_done(), "held over a running init");
         state.release();
-        assert!(matches!(state.phase(), Phase::Reveal(_)));
+        assert!(
+            state.is_done(),
+            "release hands off at once — a fast init must not wait on the mark"
+        );
     }
 
+    /// The behaviour the old cinematic got backwards: an init that finishes
+    /// before the reveal step lands must cut straight to the deck rather than
+    /// hold the user on an animation with nothing behind it.
     #[test]
-    fn an_early_release_still_honors_the_battle_floor() {
-        // Init finished after 1s — the battle still runs out BATTLE_MIN.
+    fn an_early_release_cuts_straight_through_the_reveal() {
         let mut state = SplashState {
             held: true,
-            ..state_at(1_000)
+            ..state_at(20)
         };
+        assert!(!state.lit(), "still inside the reveal step");
         state.release();
-        assert!(matches!(state.phase(), Phase::Battle(_)));
-        assert_eq!(state.battle_end(), Some(BATTLE_MIN));
+        assert!(state.is_done());
     }
 
     #[test]
-    fn release_is_a_no_op_on_an_unheld_splash() {
+    fn release_is_a_no_op_on_an_unheld_mark() {
         let mut state = state_at(100);
         state.release();
         assert!(state.released_at.is_none());
-        assert_eq!(state.battle_end(), Some(BATTLE_MIN));
+        assert!(!state.is_done());
     }
 
     #[test]
@@ -483,119 +344,97 @@ mod tests {
         };
         assert!(
             state.is_done(),
-            "a held splash that never hears release() must still end"
+            "a held mark that never hears release() must still end"
         );
     }
 
     #[test]
-    fn finished_at_is_none_while_playing_then_stable_once_done() {
-        // Still playing: no finish moment yet.
-        assert!(state_at(100).finished_at().is_none());
-
-        // Played out: finishes exactly at start + the full movie.
-        let timed_out = state_at(total_ms() + 500);
-        let fin = timed_out.finished_at().expect("past the timeline");
-        assert_eq!(
-            fin,
-            timed_out.start + BATTLE_MIN + REVEAL + WORDMARK_HOLD + FADE
+    fn the_mark_and_its_build_line_render() {
+        let rows = draw_with(
+            &state_at(REVEAL.as_millis() as u64 + 10),
+            Some("glm-4.6"),
+            60,
+            12,
         );
-
-        // Skipped: the first skip pins the moment; a second skip won't move it.
-        let mut skipped = SplashState::new();
-        skipped.skip();
-        let first = skipped.finished_at().expect("skip finishes the splash");
-        skipped.skip();
-        assert_eq!(skipped.finished_at(), Some(first));
-    }
-
-    #[test]
-    fn the_battle_paints_the_frame() {
-        let rows = draw(&state_at(1_200), 80, 24);
-        assert!(has_non_space(&rows), "mid-battle frames are never blank");
-    }
-
-    #[test]
-    fn the_reveal_ends_with_the_wordmark_fully_visible() {
-        // Just past the coalesce: the STELLA block glyphs are materialized.
-        let at = BATTLE_MIN.as_millis() as u64 + REVEAL.as_millis() as u64 + 100;
-        let rows = draw(&state_at(at), 80, 24);
+        let text = rows.join("\n");
+        assert!(text.contains("stella"), "the wordmark renders:\n{text}");
+        assert!(text.contains('▮'), "the block cursor renders:\n{text}");
         assert!(
-            rows.iter().any(|r| r.contains('█')),
-            "block-art wordmark should be visible at the hold"
+            text.contains(concat!("v", env!("CARGO_PKG_VERSION"))),
+            "the build version renders:\n{text}"
         );
         assert!(
-            rows.iter().any(|r| r.contains("command deck")),
-            "subtitle should be visible at the hold"
+            text.contains("glm-4.6"),
+            "the resolved model renders:\n{text}"
         );
     }
 
+    /// The property the whole scrub design rests on: the frame is a function
+    /// of elapsed time and nothing else, so a dropped frame lands exactly
+    /// where continuous playback would have.
     #[test]
-    fn tall_terminals_get_the_full_height_glyphs() {
-        let at = BATTLE_MIN.as_millis() as u64 + REVEAL.as_millis() as u64 + 100;
-        let tall = draw(&state_at(at), 80, 30);
-        let short = draw(&state_at(at), 80, 16);
-        let block_rows = |rows: &[String]| rows.iter().filter(|r| r.contains('█')).count();
+    fn two_renders_at_the_same_elapsed_time_are_byte_identical() {
+        for ms in [0, 50, REVEAL.as_millis() as u64 + 5, 400] {
+            let state = state_at(ms);
+            let a = draw_with(&state, Some("glm-4.6"), 60, 12);
+            let b = draw_with(&state, Some("glm-4.6"), 60, 12);
+            assert_eq!(a, b, "frames at t={ms}ms diverged");
+        }
+    }
+
+    #[test]
+    fn the_reveal_is_one_step_from_muted_to_lit() {
+        assert!(!state_at(0).lit());
+        assert!(state_at(REVEAL.as_millis() as u64 + 1).lit());
+        // Both steps still paint the mark — the step is colour, not presence,
+        // so nothing ever pops into existence.
+        assert!(has_non_space(&draw(&state_at(0), 60, 12)));
+        assert!(has_non_space(&draw(
+            &state_at(REVEAL.as_millis() as u64 + 1),
+            60,
+            12
+        )));
+    }
+
+    #[test]
+    fn a_narrow_terminal_keeps_the_mark_and_drops_the_detail_line() {
+        let rows = draw_with(&state_at(200), Some("glm-4.6"), 12, 4);
+        let text = rows.join("\n");
+        assert!(text.contains("stella"), "the mark survives:\n{text}");
         assert!(
-            block_rows(&tall) > block_rows(&short),
-            "PixelSize::Full should paint more glyph rows than HalfHeight"
+            !text.contains("glm-4.6"),
+            "the detail line is dropped, never wrapped:\n{text}"
         );
     }
 
     #[test]
-    fn renders_the_compact_fallback_on_a_tiny_terminal() {
-        let at = BATTLE_MIN.as_millis() as u64 + REVEAL.as_millis() as u64 + 100;
-        let rows = draw(&state_at(at), 30, 5);
-        let text = rows.join("");
-        assert!(
-            text.contains("STELLA"),
-            "tiny terminals get the literal fallback line"
-        );
-    }
-
-    #[test]
-    fn a_reduced_splash_is_one_brief_static_wordmark() {
-        let mut state = state_at(100);
+    fn a_reduced_mark_is_lit_from_the_first_frame() {
+        let mut state = state_at(0);
         state.set_reduced(true);
-        assert_eq!(state.phase(), Phase::Hold);
-        let rows = draw(&state, 80, 24);
-        assert!(has_non_space(&rows), "reduced splash shows the wordmark");
+        assert!(state.lit(), "no reveal step under --no-anim");
+        assert!(!state.is_done());
 
         let mut over = state_at(REDUCED_TOTAL.as_millis() as u64 + 100);
         over.set_reduced(true);
-        assert!(over.is_done(), "reduced splash ends after its brief hold");
-        assert!(over.finished_at().is_some());
+        assert!(over.is_done(), "reduced mark ends after its brief hold");
     }
 
     #[test]
-    fn a_reduced_splash_ignores_hold_cues() {
-        let mut state = SplashState {
+    fn a_reduced_mark_ignores_hold_cues() {
+        let state = SplashState {
             held: true,
+            reduced: true,
             ..state_at(REDUCED_TOTAL.as_millis() as u64 + 100)
         };
-        state.set_reduced(true);
-        assert!(state.is_done(), "reduced splashes never loop the battle");
+        assert!(state.is_done(), "reduced marks never wait on init");
     }
 
     #[test]
-    fn render_does_not_panic_across_the_whole_timeline() {
-        // Battle, the hand-offs, reveal, hold, fade, and past the end — at
-        // full, small-battle, fallback, and degenerate sizes.
-        let battle = BATTLE_MIN.as_millis() as u64;
-        let marks = [
-            0,
-            400,
-            1_750,
-            battle - 30,
-            battle + 30,
-            battle + 700,
-            battle + REVEAL.as_millis() as u64 + 100,
-            battle + (REVEAL + WORDMARK_HOLD).as_millis() as u64 + 100,
-            total_ms() - 30,
-            total_ms() + 200,
-        ];
-        for &(w, h) in &[(80_u16, 24_u16), (44, 14), (30, 5), (0, 0), (1, 1)] {
+    fn render_does_not_panic_at_any_size_or_time() {
+        let marks = [0, 90, REVEAL.as_millis() as u64 + 5, unheld_total_ms() + 200];
+        for &(w, h) in &[(80_u16, 24_u16), (44, 14), (30, 5), (0, 0), (1, 1), (28, 2)] {
             for &ms in &marks {
-                let _ = draw(&state_at(ms), w, h);
+                let _ = draw_with(&state_at(ms), Some("glm-4.6"), w, h);
             }
             let mut skipped = SplashState::new();
             skipped.skip();
@@ -604,13 +443,16 @@ mod tests {
     }
 
     #[test]
-    fn a_skipped_splash_renders_nothing() {
+    fn a_finished_mark_renders_nothing() {
         let mut state = SplashState::new();
         state.skip();
-        let rows = draw(&state, 80, 24);
         assert!(
-            !has_non_space(&rows),
-            "a skipped splash must leave the frame to the deck"
+            !has_non_space(&draw(&state, 80, 24)),
+            "a finished mark must leave the frame to the deck"
+        );
+        assert!(
+            !has_non_space(&draw(&state_at(unheld_total_ms() + 200), 80, 24)),
+            "a played-out mark must leave the frame to the deck"
         );
     }
 }

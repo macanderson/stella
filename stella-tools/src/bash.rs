@@ -290,7 +290,7 @@ impl Tool for Bash {
             }
         };
 
-        // Capture pid before wait_with_output takes ownership.
+        // Capture pid before the capped wait takes ownership.
         #[cfg(unix)]
         let pid = child.id().unwrap_or(0) as i32;
         // Cancellation backstop: a dropped future (Esc, the engine's tool
