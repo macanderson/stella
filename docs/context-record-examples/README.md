@@ -1,9 +1,14 @@
 # Context record examples
 
-Worked examples of the TOML context-record surface. These are **illustrative, not
-normative** — `docs/context-pr.md` remains the canonical specification, and
-nothing here is loaded by the engine. They exist so the schema can be argued
-against concretely before it is implemented.
+Worked examples of the TOML context-record surface. For the fields they cover
+these are **the schema reference**: [ADR 0012](../adr/0012-context-record-field-schema.md)
+ratified that schema on 2026-07-30 and retired this file's former "illustrative,
+not ratified" caveat, and `stella-core/src/records/` implements it.
+
+`docs/context-pr.md` remains the canonical specification for the workflow around
+records, and none of these files is loaded by the engine — they are examples, not
+fixtures. What changed is that the shapes below are now decided rather than
+proposed, so a disagreement with one is a disagreement with a ratified ADR.
 
 ## The shape
 
