@@ -239,16 +239,6 @@ pub struct SessionMemory {
     /// The `executions` row this session's next reflection belongs to, set by
     /// the turn that opened it.
     ///
-    /// The post-turn self-review is stored 1:1 with an execution, so without
-    /// this the loop has nothing to key the write on — which is why
-    /// `execution_reflection.self_rating` was NULL on every row ever written,
-    /// and the Observatory's self-improve panels had no data to show. `None`
-    /// degrades exactly as before: lessons still mine, the self-review is
-    /// dropped rather than written against a guessed row.
-    execution_id: Option<i64>,
-    /// The volatile context-record channel — `may`/`info` records and anything the
-    /// truth sweep demoted (epic #897).
-    ///
     /// It rides the recall block rather than the cached system prefix because that
     /// is what `force` means: `must`/`should` are unconditional and cacheable,
     /// facts are only worth tokens when they apply. Set once per session by
