@@ -7,10 +7,11 @@
 
 use clap::{CommandFactory, Parser};
 
-use super::{
-    AuthCmd, BUILD_VERSION_IDENTITY, Cli, Command, ConnectCmd, OutputFormat, TelemetryCmd,
-    error_summary_json, long_version_static, version_static, version_string,
+use super::build_info::{
+    BUILD_VERSION_IDENTITY, long_version_static, version_static, version_string,
 };
+use super::term_policy::{animation_disabled, dumb_terminal};
+use super::{AuthCmd, Cli, Command, ConnectCmd, OutputFormat, TelemetryCmd, error_summary_json};
 
 /// `-V` stays one greppable line; `--version` answers the two questions a bug
 /// report otherwise costs a round trip. Both must agree about the version
@@ -176,33 +177,21 @@ fn a_dumb_terminal_disables_colour_unless_the_user_forces_it() {
     use std::ffi::OsStr;
     let term = |s: &str| Some(OsStr::new(s)).map(|o| o.to_owned());
 
-    assert!(super::dumb_terminal(term("dumb").as_deref(), None));
+    assert!(dumb_terminal(term("dumb").as_deref(), None));
     // Force is the documented "I know what my terminal is" escape hatch and
     // must outrank the heuristic, in both spellings of "off".
-    assert!(!super::dumb_terminal(
+    assert!(!dumb_terminal(
         term("dumb").as_deref(),
         term("1").as_deref()
     ));
-    assert!(super::dumb_terminal(
-        term("dumb").as_deref(),
-        term("0").as_deref()
-    ));
-    assert!(super::dumb_terminal(
-        term("dumb").as_deref(),
-        term("").as_deref()
-    ));
+    assert!(dumb_terminal(term("dumb").as_deref(), term("0").as_deref()));
+    assert!(dumb_terminal(term("dumb").as_deref(), term("").as_deref()));
 
     // Real terminals, and an unset TERM, are left entirely alone — the tty
     // and NO_COLOR checks `colored` already performs stay the authority.
-    assert!(!super::dumb_terminal(
-        term("xterm-256color").as_deref(),
-        None
-    ));
-    assert!(!super::dumb_terminal(
-        term("dumb-but-not-really").as_deref(),
-        None
-    ));
-    assert!(!super::dumb_terminal(None, None));
+    assert!(!dumb_terminal(term("xterm-256color").as_deref(), None));
+    assert!(!dumb_terminal(term("dumb-but-not-really").as_deref(), None));
+    assert!(!dumb_terminal(None, None));
 }
 
 /// `--no-anim`'s help promises "Also forced on by STELLA_NO_ANIM or NO_COLOR",
@@ -227,22 +216,22 @@ fn the_env_signals_no_anim_advertises_actually_force_it() {
         std::env::remove_var("NO_COLOR");
     }
 
-    assert!(!super::animation_disabled(false), "clean env animates");
-    assert!(super::animation_disabled(true), "the flag alone suffices");
+    assert!(!animation_disabled(false), "clean env animates");
+    assert!(animation_disabled(true), "the flag alone suffices");
 
     unsafe { std::env::set_var("STELLA_NO_ANIM", "1") };
-    assert!(super::animation_disabled(false));
+    assert!(animation_disabled(false));
     // House convention for boolean env vars in this CLI (`STELLA_PLAIN`,
     // `STELLA_NO_ENV_FILE`): an explicit `0` means off.
     unsafe { std::env::set_var("STELLA_NO_ANIM", "0") };
-    assert!(!super::animation_disabled(false));
+    assert!(!animation_disabled(false));
     unsafe { std::env::remove_var("STELLA_NO_ANIM") };
 
     unsafe { std::env::set_var("NO_COLOR", "1") };
-    assert!(super::animation_disabled(false));
+    assert!(animation_disabled(false));
     // NO_COLOR's published rule: present *and non-empty*.
     unsafe { std::env::set_var("NO_COLOR", "") };
-    assert!(!super::animation_disabled(false));
+    assert!(!animation_disabled(false));
 
     restore("STELLA_NO_ANIM", prior_anim);
     restore("NO_COLOR", prior_color);

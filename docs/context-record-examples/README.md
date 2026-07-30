@@ -195,16 +195,25 @@ compressing each one.
 
 **No float confidence.** `confidence` is an integer 0–100.
 
-## Open questions
+## Open questions — resolved by ADR 0012
 
-1. Is `set_id` stable enough to appear in citations? It is a repo slug today,
-   and forks or renames would invalidate every citation that embeds it.
-2. `applies_to.tasks` is an open vocabulary. A misspelled task name no longer
-   hides a rule from the agent — `must`/`should` records inject regardless — but
-   it still skews scoring, because the record looks like it never had a chance to
-   matter. Ratify the vocabulary, or warn on unrecognized names.
-3. `review_every` (recurring) versus the existing `review_after` (one-shot).
-   The recurring form is better, but it is a change to a shipped field.
-4. `tags` overlaps `applies_to`. It is cheap (8 bytes per record here) and aimed
-   at human browsing rather than matching, but if nothing consumes it, it is the
-   next field to cut.
+All four, plus the handle-collision question in `07-agent-projection.md`, are
+answered in [ADR 0012](../adr/0012-context-record-field-schema.md) and implemented
+in `stella-core/src/records/`:
+
+1. **`set_id` in citations** → nothing cites it. The citation key is the
+   `^handle`, derived from `lineage_id`; `set_id` is a grouping namespace and the
+   last-resort tiebreaker, so a fork or rename invalidates no citation
+   (Decision 3).
+2. **`applies_to.tasks`** → closed vocabulary, and an unrecognized name is a
+   reported warning rather than a load failure. A typo that matches nothing and
+   reports nothing is indistinguishable from a task that never came up
+   (Decision 5).
+3. **`review_every` vs `review_after`** → both, in their own homes.
+   `review_every` is the record surface's field; `review_after` stays on the
+   markdown/lifecycle path and is not migrated (Decision 6).
+4. **`tags`** → kept, for human browsing only, and never read by a matcher. A
+   field that is *sometimes* semantic is one nobody can predict (Decision 7).
+5. **Handle collisions** (`07`) → the renderer lengthens only the handles that
+   collide, never spends lineage that cannot disambiguate, and tiebreaks on
+   content so handles do not depend on load order (Decision 4).

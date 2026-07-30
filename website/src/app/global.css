@@ -1,23 +1,32 @@
 /**
  * Stella docs — the semantic layer.
  *
- * tokens.css holds the raw palette (BRAND.md, verbatim). This file decides
- * which token is foreground in which mode, sets the typographic scale, and
- * calms the page chrome. Do not put a hex literal here: add a token to
- * tokens.css and reference it, so the site and BRAND.md can never drift.
+ * Brand system: electric blue and gold on deep space (docs/brand/BRAND.md is
+ * the normative source). This site
+ * used to be deliberately hueless ("paper & ink, no accent colour"), which was
+ * the right call while the repo carried three rival palettes and a neutral site
+ * refused to arbitrate. That is settled now: there is one normative palette,
+ * and this file consumes it.
  *
  * Three rules the rest of the file obeys:
  *
- * 1. BLUE IS INTERACTION. Links, focus rings, the active nav item, the primary
- *    action. Nothing decorative is blue, so blue always means "you can act on
- *    this". Dark mode links use `brand-bright` (7.4:1), not `brand` (5.1:1) —
- *    body-sized text needs the brighter tone.
- * 2. GOLD IS IDENTITY. The mark's cursor block and the section marker on the
- *    landing page. It never carries status; `warning` is amber and always
- *    arrives with a glyph.
- * 3. STRUCTURE COMES FROM SPACE AND TYPE, NOT FROM BOXES. A card is a rule and
- *    a heading. Hairlines are seams, not containers, and never the sole carrier
- *    of a grouping — the markup carries that.
+ * The brand accent is asymmetric between the modes, and that is deliberate
+ * rather than an oversight. Electric blue on white is far under what body text
+ * needs, so on the light ground it is never text: it appears only as a FILL
+ * under an ink label, and light-mode accent text is ink. On the dark ground
+ * `brand-bright` is 7.4:1 and carries brand, active/running, and progress.
+ * `--stella-brand-ink` (7.0:1 on paper) is the only brand *text* tone light
+ * mode may use.
+ *
+ * The accent is also reserved: brand, active, progress. Not a general-purpose
+ * highlight — if everything is blue, nothing is.
+ *
+ * Semantic reservation: info/warn/error/success callouts keep Fumadocs' default
+ * blue/amber/red/green (from the imported neutral/preset css). Those are
+ * FUNCTIONAL status colors, not brand accents — a warning must not read as
+ * decoration — so they stay as-is.
+ *
+ * The landing-page layer is namespaced `lp-*` so it never leaks into /docs.
  */
 @import "tailwindcss";
 @import "fumadocs-ui/css/neutral.css";
@@ -59,49 +68,57 @@
  * ═════════════════════════════════════════════════════════════════════════ */
 
 :root {
-  color-scheme: light;
-
-  /* Mode-aware brand tones that components reference, so one token flips every
+  /* Mode-aware "accent" that COMPONENTS reference (icons, diagram strokes,
+   * prompt, brand headline word, marks). RULE 1: on paper this is ink, never
+   * the accent — electric blue does not clear AA as text on white. The `.dark`
+   * block lifts it to `brand-bright`, where it is 7.4:1. One token flips every
    * mark with the theme. */
-  --stella-accent: var(--stella-brand-ink); /* 7.0:1 on paper */
-  --stella-mark: var(--stella-gold-ink); /* the logo cursor, 5.5:1 */
-  /* Two tiers of rule, and only two. `--color-fd-border` below is decoration:
-   * it separates things that are already separated by spacing and a heading,
-   * so its contrast does not have to clear anything. `--stella-rule` is
-   * structure — the stroke of a diagram box, the edge of a terminal transcript
-   * — where the border IS the only thing saying two regions differ, and WCAG
-   * 1.4.11's 3:1 floor applies.
-   *
-   * BRAND.md defines a structural seam per theme, kept deliberately close in
-   * ratio — 3.0:1 on surface, 3.2:1 on paper — so one 1px rule does not read
-   * as two different weights depending on the theme. */
-  --stella-rule: var(--stella-paper-hairline-contrast); /* 3.2:1 — structural */
-  /* The third text tier: for a label whose value beside it is the thing being
-   * read. 4.7:1 on paper — AA, with nothing to spare, so it is never used on
-   * `snow` (4.4:1 there). */
-  --stella-faint: var(--stella-ink-tertiary);
+  --stella-accent: var(--stella-ink-primary);
+  --stella-accent-fill: var(--stella-ink-primary); /* solid fill (CTA) — inverted label */
+  --stella-accent-muted: var(--stella-ink-secondary); /* quieter mark tone, 6.7:1 */
 
-  /* Primary action: a blue fill with a paper label — 7.0:1 either way round. */
-  --stella-cta-bg: var(--stella-brand-ink);
+  /* Legacy alias. Only --stella-azure is still consumed (diagrams.tsx); it is
+   * repointed at the mode-aware accent so diagrams keep inverting with the
+   * theme. Its siblings (--stella-amber/-cyan/-violet/-azure-deep/-ice) named a
+   * palette that no longer exists and had no consumers left, so they were
+   * retired rather than repointed — a dead alias pointing somewhere plausible is
+   * how the last palette drifted. */
+  --stella-azure: var(--stella-accent);
+
+  /* CTA (inverted primary) surfaces — an ink button on paper. */
+  --stella-cta-bg: var(--stella-ink-primary);
   --stella-cta-fg: var(--stella-paper);
   --stella-cta-bg-hover: var(--stella-brand-ink-deep);
 
+  /* The other three mode-aware component tokens. They live beside
+   * `--stella-accent` because they flip with the theme for the same reason it
+   * does, and this file spends all three: `mark` on the logo cursor, `rule` on
+   * table and diagram strokes, `faint` on de-emphasised captions. An undefined
+   * custom property is invalid at computed-value time — it does not error, it
+   * silently falls back — so a missing definition here renders as a plausible
+   * wrong colour instead of failing the build. */
+  --stella-mark: var(--stella-gold-ink); /* the logo cursor — 5.5:1 on paper */
+  --stella-rule: var(--stella-paper-hairline-contrast); /* 3.3:1 — structural */
+  --stella-faint: var(--stella-ink-tertiary); /* 4.7:1 on paper */
+
+  /* Light mode — paper ground, ink type. Accent text is ink; the brand accent
+   * appears here only as a fill with an ink label on it. */
   --color-fd-background: var(--stella-paper);
-  --color-fd-foreground: var(--stella-ink-primary); /* 19.2:1 */
-  --color-fd-muted: var(--stella-snow);
-  --color-fd-muted-foreground: var(--stella-ink-secondary); /* 6.7:1 */
+  --color-fd-foreground: var(--stella-ink-primary);
+  --color-fd-muted: #fafafa;
+  --color-fd-muted-foreground: var(--stella-ink-secondary); /* 6.7:1 on paper */
   --color-fd-card: var(--stella-paper);
   --color-fd-card-foreground: var(--stella-ink-primary);
   --color-fd-popover: var(--stella-paper);
   --color-fd-popover-foreground: var(--stella-ink-primary);
-  --color-fd-border: var(--stella-paper-hairline);
-  --color-fd-accent: var(--stella-snow); /* hover / selected surface */
+  --color-fd-border: #eaeaea; /* neutral hairline */
+  --color-fd-accent: var(--stella-snow); /* hover/selected surface */
   --color-fd-accent-foreground: var(--stella-ink-primary);
-  --color-fd-primary: var(--stella-brand-ink); /* links, active nav */
-  --color-fd-primary-foreground: var(--stella-paper);
+  --color-fd-primary: var(--stella-ink-primary); /* links/active = ink, 19.2:1 on paper */
+  --color-fd-primary-foreground: var(--stella-paper); /* text on an ink fill */
   --color-fd-secondary: var(--stella-snow);
   --color-fd-secondary-foreground: var(--stella-ink-primary);
-  --color-fd-ring: var(--stella-brand-ink); /* focus, 7.0:1 */
+  --color-fd-ring: var(--stella-ink-primary); /* focus ring — 19.2:1 on paper */
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -109,18 +126,29 @@
  * ═════════════════════════════════════════════════════════════════════════ */
 
 .dark {
-  color-scheme: dark;
+  /* Dark mode — deep-space ground, electric-blue accent. This is where the
+   * brand hue lives: `brand-bright` is 7.4:1 on the ground and carries brand,
+   * active, and progress. Links stay text-primary (18.1:1) rather than brand,
+   * because a page of blue links would make the accent a general-purpose
+   * highlight. */
+  --stella-accent: var(--stella-brand-bright);
+  --stella-accent-fill: var(--stella-brand-bright);
+  --stella-accent-muted: var(--stella-text-secondary); /* 8.50:1 on ground */
 
-  --stella-accent: var(--stella-brand-bright); /* 7.4:1 on ground */
-  --stella-mark: var(--stella-gold); /* 11.9:1 */
+  /* The CTA is the one place the accent fills on the dark side too — an ink
+   * label on a brand fill, so the button reads the same way in both modes. */
+  --stella-cta-bg: var(--stella-brand-bright);
+  --stella-cta-fg: var(--stella-ink-primary);
+  --stella-cta-bg-hover: var(--stella-brand-deep);
+
+  /* Dark counterparts of the three component tokens the light block sets.
+   * `rule` is the one that must clear 3:1 — it is the only seam here allowed to
+   * carry structure on its own, which is exactly what `hairline-contrast`
+   * exists for; `hairline` and `hairline-strong` measure 1.2:1 and 1.4:1 and
+   * stay decorative (BRAND.md). */
+  --stella-mark: var(--stella-gold); /* the logo cursor — 11.9:1 on ground */
   --stella-rule: var(--stella-hairline-contrast); /* 3.1:1 — structural */
   --stella-faint: var(--stella-text-tertiary); /* 4.8:1 on ground */
-
-  /* A `brand-bright` fill with a `void` label reads 7.6:1 — white on `brand`
-   * would be 3.9:1 and fail, so the dark CTA inverts instead of tinting. */
-  --stella-cta-bg: var(--stella-brand-bright);
-  --stella-cta-fg: var(--stella-void);
-  --stella-cta-bg-hover: var(--stella-brand);
 
   --color-fd-background: var(--stella-ground);
   --color-fd-foreground: var(--stella-text-primary); /* 18.1:1 */
@@ -137,67 +165,7 @@
   --color-fd-primary-foreground: var(--stella-void);
   --color-fd-secondary: var(--stella-raised);
   --color-fd-secondary-foreground: var(--stella-text-primary);
-  --color-fd-ring: var(--stella-brand-bright); /* focus, 7.4:1 */
-}
-
-/* fumadocs-ui/css/neutral.css re-tints the dark sidebar with raw greys. Point
- * it back at the palette so the whole page is one colour system. */
-.dark #nd-sidebar {
-  --color-fd-muted: var(--stella-surface);
-  --color-fd-secondary: var(--stella-raised);
-  --color-fd-muted-foreground: var(--stella-text-secondary);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
- * Base
- * ═════════════════════════════════════════════════════════════════════════ */
-
-@layer base {
-  html {
-    -webkit-text-size-adjust: 100%;
-    /* Anchor targets clear the sticky header instead of hiding under it. */
-    scroll-padding-top: 5rem;
-  }
-
-  body {
-    font-family: var(--font-sans);
-    font-synthesis-weight: none;
-    text-rendering: optimizeLegibility;
-    -webkit-font-smoothing: antialiased;
-  }
-
-  code,
-  kbd,
-  pre,
-  samp {
-    font-family: var(--font-mono);
-    font-variant-ligatures: none;
-  }
-
-  /* One focus treatment everywhere: a 2px brand ring, offset so it clears the
-   * element's own edge. Never removed, only ever restyled. */
-  :focus-visible {
-    outline: 2px solid var(--color-fd-ring);
-    outline-offset: 2px;
-    border-radius: 2px;
-  }
-
-  ::selection {
-    background: color-mix(in oklab, var(--stella-accent) 24%, transparent);
-  }
-
-  /* Honour the system preference globally rather than per-component, so a new
-   * animation cannot ship without inheriting the opt-out. */
-  @media (prefers-reduced-motion: reduce) {
-    *,
-    *::before,
-    *::after {
-      animation-duration: 0.01ms !important;
-      animation-iteration-count: 1 !important;
-      transition-duration: 0.01ms !important;
-      scroll-behavior: auto !important;
-    }
-  }
+  --color-fd-ring: var(--stella-brand-bright); /* focus ring — brand-bright, 7.4:1 on ground */
 }
 
 /* Skip link — first thing in the tab order on every page, invisible until it
@@ -653,19 +621,35 @@
   }
 }
 
-.lp-h2 {
-  font-size: var(--stella-type-xl);
-  line-height: 1.25;
-  letter-spacing: -0.018em;
-  font-weight: 600;
-  text-wrap: balance;
+/* The mark carries the brand hue (rule 4): electric blue on the deep-space
+ * ground, ink on paper. It rides --stella-accent rather than the foreground so
+ * it inverts with the theme — the blue does not clear AA on white and can never
+ * be the light-mode mark. */
+.lp-mark {
+  color: var(--stella-accent);
 }
 
-.lp-lead {
-  font-size: var(--stella-type-md);
-  line-height: 1.6;
-  max-width: 58ch;
-  color: var(--color-fd-muted-foreground);
+/* ───────────────────────────────────────────────────────────────────────────
+ * Command Deck — the interactive, live fleet demo on the landing page.
+ *
+ * The one place the neutral brand spends color: STATUS. Stella's own TUI marks
+ * a run's outcome — done / needs input / failed — with the same green / amber /
+ * red it uses in the terminal, and those are FUNCTIONAL, not decorative (the
+ * same exception the docs already make for callouts). So here, and only here,
+ * color enters — and only as work RESOLVES. A queued task is muted, a running
+ * task is neutral foreground (a calm pulse, no hue), and color arrives at the
+ * moment a task proves out. Emphasis still comes from contrast and motion; the
+ * color earns its place by carrying meaning, exactly like the CLI it mirrors.
+ *
+ * Each token is mode-aware so it clears AA on both true-white and true-black.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --deck-ok: var(--stella-success-ink); /* done — 5.76:1 on paper */
+  --deck-warn: var(--stella-warning-ink); /* needs input — 5.49:1 on paper */
+  --deck-bad: var(--stella-danger-ink); /* failed — 5.88:1 on paper */
+  --deck-run: var(--stella-accent); /* running — ink on paper; RULE 1 */
+  --deck-queued: var(--stella-ink-secondary); /* queued — 6.7:1 on paper */
 }
 
 /* The brand name set in running text — the wordmark's own face, so the name

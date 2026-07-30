@@ -14,6 +14,29 @@ use serde::{Deserialize, Serialize};
 use super::{Confidence, RecordValidationError};
 
 /// How a context record was used within a task (lifecycle §). Closed set.
+///
+/// These are the same three observations the Context Graph Protocol defines for
+/// retrieval attribution (`SPEC.md` §14, A2: `selected`, `rendered`, `cited`),
+/// spelled identically — and that identity is load-bearing enough to be gated by
+/// a test (`stella-cli`'s
+/// `the_ledger_names_the_same_three_attribution_observations_as_the_protocol`,
+/// the only place that sees both this crate and `contextgraph-types`).
+///
+/// Two differences from CGP's `ContextUse` are deliberate, not drift:
+///
+/// - **Shape.** CGP carries all three as independent booleans on one record;
+///   these are one row per observation. Both express the case that matters —
+///   rendered but never cited, i.e. the tokens were paid and nothing came of it.
+/// - **Key.** CGP keys attribution by `FrameId`, the `(provider id, frame id,
+///   content_digest)` triple, and A1 forbids minting a separate id for it. These
+///   records are keyed by `context_record_id`: the identity of a record in
+///   Stella's own memory substrate, which is a *different thing* than a frame a
+///   provider served. Per CGP ADR 0007 the record/lifecycle layer is host-owned,
+///   so a host-side key here is correct; A1 binds frame attribution, which this
+///   crate does not emit.
+///
+/// **Do not** rename a variant here to "improve" it. The strings reach a database
+/// column, a lifecycle event payload, and a protocol vocabulary at once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextUseKind {

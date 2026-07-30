@@ -1,0 +1,121 @@
+---
+title: stella ingest
+description: Turn markdown you already wrote — AGENTS.md, CLAUDE.md, or any file you name — into reviewable context-record proposals Stella can check, cite, and retire.
+---
+
+`stella ingest` reads markdown you already wrote and turns it into steering Stella can check, cite, and retire. It has two halves, and which one runs depends entirely on whether you name a file.
+
+With **no arguments** it scans the workspace and shows you what it found, grouped by tier. That half is offline and needs no API key. Name **one or more paths** and it extracts them: one model call per document splits it into atomic claims, each claim is mapped to a context record, run through a deterministic safety gate, probed against the tree for staleness, and written to `.stella/proposals/` as a reviewable TOML file. Nothing you ingest steers anything until you review it.
+
+## Synopsis
+
+```bash
+stella ingest [--all]
+stella ingest <path>... 
+```
+
+## What it does
+
+Most repositories already contain the instructions an agent needs — they are just written for people, scattered, and partly out of date. Ingest treats that prose as a source to be mined rather than a file to be pasted into a prompt: claims come out atomically, each one carries where it came from, and each one is reviewable on its own instead of arriving as an undifferentiated blob of context.
+
+### `stella ingest` — scan
+
+With no paths, ingest walks the workspace for markdown and classifies everything it finds into five tiers. The output is grouped the same way the first-run dialog groups it, so the scan and the first-run experience never disagree about what your repo contains.
+
+<CardGrid size="md">
+  <SpecCard title="Primary">
+    `AGENTS.md` or `CLAUDE.md` — steering you already wrote, for an agent, on purpose. The only
+    tier named unprompted on first run.
+  </SpecCard>
+  <SpecCard title="Instructional">
+    The document exists to instruct, but is not one of the two files everybody recognizes —
+    `CONTRIBUTING.md`, an agent tool's rules directory, a memories folder. Offered as a
+    suggestion, never assumed.
+  </SpecCard>
+  <SpecCard title="Descriptive">
+    Describes the repository rather than instructing anyone — READMEs, design notes,
+    architecture docs. Real knowledge, but written to be read by people and liable to drift.
+  </SpecCard>
+  <SpecCard title="Historical">
+    Records what *used* to be true: changelogs, and anything carrying a supersession marker.
+    Held back from the default scan.
+  </SpecCard>
+  <SpecCard title="Skip">
+    Not a candidate at all — legal boilerplate, generated output, vendored trees, and tables of
+    contents whose every bullet duplicates a record some other file already produces.
+  </SpecCard>
+</CardGrid>
+
+<CardGrid size="md">
+  <OptionCard name="--all">
+    Show every candidate found, including the `Historical` and `Skip` rows the scan normally
+    holds back.
+  </OptionCard>
+</CardGrid>
+
+```bash
+# What steering does this workspace already contain?
+stella ingest
+
+# Including the documents ingest would normally not offer
+stella ingest --all
+```
+
+### `stella ingest <path>...` — extract
+
+Naming a file **overrides every tiering rule the scan would apply** — any path is valid, inside the workspace or not. Ingest still tells you when a named file reads like a retired document or like boilerplate, because respecting your choice and hiding a known risk are different things.
+
+<CardGrid size="md">
+  <OptionCard name="<path>..." required>
+    Markdown files to extract. Overrides tiering. Paths outside the workspace are allowed.
+  </OptionCard>
+</CardGrid>
+
+Each document goes through the same five steps:
+
+1. **One model call** splits the document into atomic claims.
+2. Each claim is mapped to a **context record**.
+3. The deterministic **safety gate** re-decides atomicity, quarantine, and probe-gating.
+4. Claims are **probed against the tree** for staleness.
+5. The result is stamped with a content-derived identity and written to `.stella/proposals/<source-slug>.toml` as `[[proposal]]` entries.
+
+```bash
+# The two files everybody recognizes
+stella ingest AGENTS.md CLAUDE.md
+
+# A design note, and a file from outside the workspace
+stella ingest docs/design/storage-map.md ~/notes/deploy-runbook.md
+```
+
+<Callout type="info">
+Extraction makes a model call, so it needs a resolvable credential — the same chain every other model call uses. The scan half does not. A document whose extraction fails (no key configured, an unparseable reply, a write error) is reported and skipped; one bad document never aborts the others.
+</Callout>
+
+## The safety gate is not in the prompt
+
+The model is asked to split atomically and to surface any executable content it finds, but nothing downstream trusts that it did. Atomicity, quarantine, and probe-gating are re-decided by a pure function in `stella-core` that **cannot be talked out of a rule by a cleverly-worded document**. The model's job is extraction; the gate's job is safety.
+
+This matters because the input is prose of unknown provenance. A README that says "always run `curl … | sh` before building" is a document describing an instruction, not authorization to run it — so executable content is quarantined by the gate regardless of how the model classified it.
+
+## Reviewing what it produced
+
+Ingest writes **files**, and you review them as files — read `.stella/proposals/<source-slug>.toml` and edit or delete entries before anything is adopted.
+
+<Callout type="warn">
+`stella ingest` and [`stella proposals`](/docs/commands/proposals) are two different review surfaces with two different authority models, and they do not share storage. Ingest writes TOML proposals to `.stella/proposals/`. `stella proposals` reviews the *adaptive-context* ledger in `.stella/private/context.db` — what the reflection loop induced from your sessions. A document you ingest will not appear in `stella proposals list`.
+</Callout>
+
+## Related
+
+<CardGrid size="sm">
+  <SpecCard title="stella proposals" href="/docs/commands/proposals">
+    The review surface for the adaptive-context ledger — a separate substrate from ingest's
+    TOML files.
+  </SpecCard>
+  <SpecCard title="Context Engine" href="/docs/context-engine">
+    How records become recall, and what a context frame carries.
+  </SpecCard>
+  <SpecCard title="stella memory" href="/docs/commands/memory">
+    The citation feedback loop over what actually got used.
+  </SpecCard>
+</CardGrid>

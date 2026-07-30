@@ -160,6 +160,7 @@ pub mod integrity;
 pub mod journal;
 pub mod notify;
 pub mod prune;
+pub mod reflection;
 pub mod scoreboard;
 pub mod sessions;
 pub mod usage;
@@ -1149,34 +1150,6 @@ impl Store {
         Ok(fold_mcp_usage_stats(&calls))
     }
 
-    /// Record (or replace) the agent's self-review for one turn, 1:1 with its
-    /// execution.
-    pub fn record_execution_reflection(
-        &self,
-        execution_id: i64,
-        r: &ExecutionReflectionRow,
-    ) -> Result<()> {
-        self.lock().execute(
-            "INSERT OR REPLACE INTO execution_reflection \
-             (execution_id, prompt, delivered, self_rating, what_went_well, \
-              what_to_improve, critique, produced_output, wrote_files, truncated) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                execution_id,
-                r.prompt,
-                r.delivered.map(|b| b as i64),
-                r.self_rating,
-                r.what_went_well,
-                r.what_to_improve,
-                r.critique,
-                r.produced_output as i64,
-                r.wrote_files as i64,
-                r.truncated as i64,
-            ],
-        )?;
-        Ok(())
-    }
-
     /// Append a durable reflection/lesson, returning its row id.
     pub fn record_reflection(&self, r: &ReflectionRow) -> Result<i64> {
         let conn = self.lock();
@@ -1186,65 +1159,6 @@ impl Store {
             params![r.execution_id, r.kind, r.content, r.domains, r.occurred_at],
         )?;
         Ok(conn.last_insert_rowid())
-    }
-
-    /// Derive and record the objective half of this turn's
-    /// `execution_reflection` — prompt, plus `produced_output` / `wrote_files`
-    /// / `truncated` computed from the event and file-touch logs. The model's
-    /// self-review fields are left empty here; a producer that captures a
-    /// model-emitted self-assessment can `INSERT OR REPLACE` over this row.
-    pub fn finalize_execution_reflection(&self, execution_id: i64) -> Result<()> {
-        let (prompt, produced_output, wrote_files, truncated) = {
-            let conn = self.lock();
-            let prompt: String = conn
-                .query_row(
-                    "SELECT prompt FROM executions WHERE id = ?1",
-                    params![execution_id],
-                    |r| r.get(0),
-                )
-                .optional()?
-                .unwrap_or_default();
-            let produced_output: bool = conn.query_row(
-                "SELECT COUNT(*) FROM events \
-                 WHERE execution_id = ?1 AND event_type IN ('text', 'tool_start')",
-                params![execution_id],
-                |r| r.get::<_, i64>(0),
-            )? > 0;
-            // "output-token limit" is the phrase every truncation emitter
-            // shares (stella-core's empty-turn abort, stella-model's
-            // truncated tool-input error); no wider net — a bare "truncated"
-            // substring also matched unrelated failures that merely mention
-            // the word (a torn fixture, a cut-short MCP tool list).
-            let truncated: bool = conn.query_row(
-                "SELECT COUNT(*) FROM events \
-                 WHERE execution_id = ?1 AND event_type = 'error' \
-                   AND payload LIKE '%output-token limit%'",
-                params![execution_id],
-                |r| r.get::<_, i64>(0),
-            )? > 0;
-            let wrote_files: bool = conn.query_row(
-                "SELECT COUNT(*) FROM files_touched \
-                 WHERE execution_id = ?1 \
-                   AND (ops LIKE '%C%' OR ops LIKE '%U%' OR ops LIKE '%D%')",
-                params![execution_id],
-                |r| r.get::<_, i64>(0),
-            )? > 0;
-            (prompt, produced_output, wrote_files, truncated)
-        };
-        self.record_execution_reflection(
-            execution_id,
-            &ExecutionReflectionRow {
-                prompt,
-                delivered: None,
-                self_rating: None,
-                what_went_well: String::new(),
-                what_to_improve: String::new(),
-                critique: String::new(),
-                produced_output,
-                wrote_files,
-                truncated,
-            },
-        )
     }
 
     /// Assemble the user-tier [`usage::ExecutionRollupRow`] for one execution

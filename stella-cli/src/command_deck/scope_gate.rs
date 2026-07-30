@@ -18,7 +18,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 /// than 5 steps, 8 files, or $1.00 — a dead end: the turn aborted with advice
 /// to set `headless_scope_bypass`, a setting only `stella run` reads, so
 /// following the advice changed nothing. Meanwhile the TUI's approval card
-/// and its a/t/x keys were fully built and wired to nothing.
+/// and its decision keys were fully built and wired to nothing.
 ///
 /// This closes that loop the same way `DeckAskUserIo` closes `ask_user`: emit
 /// the card, park on a channel, let the input pump deliver the keypress. The
@@ -145,6 +145,24 @@ mod tests {
             gate(5).decide(DeckScopeDecision::Trim, 9),
             ScopeDecision::Trim {
                 keep_steps: vec![0, 1, 2, 3, 4]
+            }
+        );
+    }
+
+    /// A note passes through verbatim. This layer must not normalize it: the
+    /// pipeline folds it into the next planner prompt, so any "helpful" rewrite
+    /// here puts words the human did not write in front of the planner.
+    #[test]
+    fn a_revision_note_passes_through_untouched() {
+        assert_eq!(
+            gate(5).decide(
+                DeckScopeDecision::Revise {
+                    note: "  only the Ctrl+O dialog — skip Ctrl+W!  ".to_string()
+                },
+                9
+            ),
+            ScopeDecision::Revise {
+                note: "  only the Ctrl+O dialog — skip Ctrl+W!  ".to_string()
             }
         );
     }

@@ -196,8 +196,53 @@ because a pattern was observed.
 
 ### 6.1 Format
 
-The file remains the shipped markdown contract (§3), extended with canonical
-promotion metadata from lifecycle §14:
+Two formats load, and which one to write is settled by
+[ADR 0011](adr/0011-context-records-are-toml.md): a **context record** is TOML;
+**existing markdown rules keep loading** and are not migrated.
+
+The TOML surface — the one to write new records in — is specified by
+[`docs/context-record-examples/`](context-record-examples/) and its field schema
+by [ADR 0012](adr/0012-context-record-field-schema.md):
+
+```toml
+schema = "context-record/v0.1"
+set_id = "acme.web"
+
+[defaults]
+sharing_scope = "repository"
+origin = "inferred"
+status = "active"
+
+[defaults.provenance]
+source_kind = "document"
+source_uri = "AGENTS.md"
+commit = "6ee3d4a"
+
+[[record]]
+lineage_id = "ctx.acme.web.api-integration-coverage"
+kind = "rule"
+statement = "API endpoint changes should include integration coverage."
+
+[record.steering]
+force = "should"
+precedence = 50
+
+[record.steering.applies_to]
+paths = ["src/api/**", "routes/**"]
+tasks = ["test"]
+
+[record.truth]
+basis = "measured"
+confidence = 91
+review_every = "P90D"
+```
+
+`record_id` and `record_hash` are omitted on purpose: identity is **derived**
+from content (ADR 0004), so the loader stamps both on first load and re-ingesting
+unchanged content is a no-op rather than a new revision.
+
+The legacy markdown contract (§3) still loads, with canonical promotion metadata
+from lifecycle §14:
 
 ```markdown
 ---
@@ -210,8 +255,7 @@ record_kind: directive
 directive_kind: rule
 record_status: active
 origin: inferred
-scope:
-  repository_id: repo_stella
+scope_paths: src/api/**, routes/**
 sharing_scope: repository
 enforcement: advisory
 confidence: 91
@@ -226,6 +270,14 @@ record_hash: sha256:record...
 
 API endpoint changes should include integration coverage.
 ```
+
+Note `scope_paths` as a single line. Earlier drafts of this section showed a
+nested `scope:` block, which **does not load**: the markdown reader is single-line
+by contract (ADR 0011), and it used to strip the indentation and promote
+`repository_id` to a sibling of `record_id` without complaining — producing a
+record wearing a scope nobody wrote. That silent flattening is now a loud refusal
+(issue #891), so the old example would fail to load rather than load wrong.
+Nested structure is what the TOML surface is for.
 
 Rules:
 
@@ -462,17 +514,31 @@ stella memory list          # citation counts and promotion eligibility
 stella memory promote <id>  # evidence-gated promotion to .stella/rules/<id>.md
 ```
 
-Specified by this document (the `stella context` family):
+The `stella context` family (epic #897 — offline, local files only, no API key):
 
 ```text
-stella context propose               # candidate -> diff -> local commit or PR
-stella context explain <rule>        # provenance, evidence, efficacy for a rule
-stella context simulate <file>       # match preview against recent history
-stella context promote <candidate>   # promote with explicit enforcement level
+stella ingest <doc>                  # document -> reviewable TOML proposals
+stella context review                # what was proposed, and what its probe found
+stella context keep <id> [--enforce] # publish it as a record the engine loads
+stella context edit <id> --statement # publish your wording instead
+stella context ignore <id> --reason  # decline, with a re-proposal cooldown
+stella context list                  # what currently steers this workspace
+stella context validate              # re-probe every claim; non-zero if any must not steer
+stella context explain <handle>      # provenance, evidence, enforcement, efficacy
+stella context propose <handle>      # branch + single-concern diff + PR body
 ```
 
 Each flow presents candidate, evidence, exact diff, owners, and expected
-effect before anything is committed or opened.
+effect before anything is committed or opened. `--enforce` on `keep` is a
+*separate* grant from keeping: authorizing a record to deny a tool call is not the
+same decision as agreeing with it (§11).
+
+Still specified and not built:
+
+```text
+stella context simulate <file>       # match preview against recent history
+stella context promote <candidate>   # promote an existing record's enforcement level
+```
 
 ### Pull-request integration
 

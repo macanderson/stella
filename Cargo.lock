@@ -396,7 +396,7 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 [[package]]
 name = "contextgraph-conformance"
 version = "0.1.0"
-source = "git+https://github.com/macanderson/context-graph-protocol?rev=eeba49cef9a7604bd910d4faa871702869144ed0#eeba49cef9a7604bd910d4faa871702869144ed0"
+source = "git+https://github.com/macanderson/context-graph-protocol?rev=c5fb2fec5820494ab6921dc088c03d7f43301fa7#c5fb2fec5820494ab6921dc088c03d7f43301fa7"
 dependencies = [
  "async-trait",
  "clap",
@@ -405,13 +405,14 @@ dependencies = [
  "contextgraph-types",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
 ]
 
 [[package]]
 name = "contextgraph-host"
 version = "0.1.0"
-source = "git+https://github.com/macanderson/context-graph-protocol?rev=eeba49cef9a7604bd910d4faa871702869144ed0#eeba49cef9a7604bd910d4faa871702869144ed0"
+source = "git+https://github.com/macanderson/context-graph-protocol?rev=c5fb2fec5820494ab6921dc088c03d7f43301fa7#c5fb2fec5820494ab6921dc088c03d7f43301fa7"
 dependencies = [
  "async-trait",
  "contextgraph-types",
@@ -428,7 +429,7 @@ dependencies = [
 [[package]]
 name = "contextgraph-trace"
 version = "0.1.0"
-source = "git+https://github.com/macanderson/context-graph-protocol?rev=eeba49cef9a7604bd910d4faa871702869144ed0#eeba49cef9a7604bd910d4faa871702869144ed0"
+source = "git+https://github.com/macanderson/context-graph-protocol?rev=c5fb2fec5820494ab6921dc088c03d7f43301fa7#c5fb2fec5820494ab6921dc088c03d7f43301fa7"
 dependencies = [
  "contextgraph-types",
  "serde",
@@ -439,7 +440,7 @@ dependencies = [
 [[package]]
 name = "contextgraph-types"
 version = "0.1.0"
-source = "git+https://github.com/macanderson/context-graph-protocol?rev=eeba49cef9a7604bd910d4faa871702869144ed0#eeba49cef9a7604bd910d4faa871702869144ed0"
+source = "git+https://github.com/macanderson/context-graph-protocol?rev=c5fb2fec5820494ab6921dc088c03d7f43301fa7#c5fb2fec5820494ab6921dc088c03d7f43301fa7"
 dependencies = [
  "serde",
 ]
@@ -2963,7 +2964,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stella-cli"
-version = "0.6.10"
+version = "0.6.12"
 dependencies = [
  "async-trait",
  "clap",
@@ -3005,7 +3006,7 @@ dependencies = [
 
 [[package]]
 name = "stella-context"
-version = "0.6.10"
+version = "0.6.12"
 dependencies = [
  "async-trait",
  "contextgraph-types",
@@ -3021,7 +3022,7 @@ dependencies = [
 
 [[package]]
 name = "stella-core"
-version = "0.6.10"
+version = "0.6.12"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3039,7 +3040,7 @@ dependencies = [
 
 [[package]]
 name = "stella-fleet"
-version = "0.6.10"
+version = "0.6.12"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3058,7 +3059,7 @@ dependencies = [
 
 [[package]]
 name = "stella-graph"
-version = "0.6.10"
+version = "0.6.12"
 dependencies = [
  "contextgraph-types",
  "notify",
@@ -3085,7 +3086,7 @@ dependencies = [
 
 [[package]]
 name = "stella-mcp"
-version = "0.6.10"
+version = "0.6.12"
 dependencies = [
  "async-trait",
  "base64 0.23.0",
@@ -3107,7 +3108,7 @@ dependencies = [
 
 [[package]]
 name = "stella-media"
-version = "0.6.10"
+version = "0.6.12"
 dependencies = [
  "async-trait",
  "base64 0.23.0",
@@ -3129,7 +3130,7 @@ dependencies = [
 
 [[package]]
 name = "stella-model"
-version = "0.6.10"
+version = "0.6.12"
 dependencies = [
  "async-trait",
  "base64 0.23.0",
@@ -3151,7 +3152,7 @@ dependencies = [
 
 [[package]]
 name = "stella-observatory"
-version = "0.6.10"
+version = "0.6.12"
 dependencies = [
  "rusqlite",
  "serde_json",
@@ -3166,7 +3167,7 @@ dependencies = [
 
 [[package]]
 name = "stella-pipeline"
-version = "0.6.10"
+version = "0.6.12"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3183,7 +3184,7 @@ dependencies = [
 
 [[package]]
 name = "stella-protocol"
-version = "0.6.10"
+version = "0.6.12"
 dependencies = [
  "async-trait",
  "serde",
@@ -3194,7 +3195,7 @@ dependencies = [
 
 [[package]]
 name = "stella-serve"
-version = "0.6.10"
+version = "0.6.12"
 dependencies = [
  "async-trait",
  "rand 0.10.2",
@@ -3208,7 +3209,7 @@ dependencies = [
 
 [[package]]
 name = "stella-store"
-version = "0.6.10"
+version = "0.6.12"
 dependencies = [
  "base64 0.23.0",
  "libc",
@@ -3223,7 +3224,7 @@ dependencies = [
 
 [[package]]
 name = "stella-tools"
-version = "0.6.10"
+version = "0.6.12"
 dependencies = [
  "async-trait",
  "base64 0.23.0",
@@ -3249,7 +3250,7 @@ dependencies = [
 
 [[package]]
 name = "stella-tui"
-version = "0.6.10"
+version = "0.6.12"
 dependencies = [
  "arboard",
  "crossterm",

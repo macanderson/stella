@@ -25,6 +25,44 @@ stella chat --plain
 
 The default **Command Deck** presents the session as a set of tabs — **SESSION** (the transcript), **AGENTS** (executions & installed agents), **TRACES**, **GRAPH**, **FILES**, **SKILLS**, **MCP**, **ISSUES** (your connected GitHub/Linear tracker, with instant type-ahead), and **SETTINGS** (the home of all config, incl. the engine-config panel). Slash commands jump between tabs and run actions, and `?` opens a tab-aware key list. The **plain REPL** (`--plain`) is a single scrolling line-based loop with a smaller command set — handy for narrow terminals, screen readers, and recordings.
 
+### Typing while a turn is running
+
+You never have to wait for a turn to finish, and what happens to your text depends on one character:
+
+<CardGrid size="md">
+  <SpecCard title="Steer this turn — `> …`">
+    A message prefixed `>` is injected into the **running** turn at its next step boundary.
+    A `Steered` line in the transcript is the acknowledgement. Works for both the step-loop
+    turn and the pipeline's execute stage.
+  </SpecCard>
+  <SpecCard title="Anything else — a new sub-session">
+    A plain prompt does **not** interrupt the turn. It becomes its own sub-session, dispatched
+    alongside the one already running, and the deck says so rather than leaving you guessing
+    whether your text landed. Only slot exhaustion or a slash command leaves it queued for the
+    lead instead.
+  </SpecCard>
+</CardGrid>
+
+```text
+> also update the changelog        ← steers the turn in flight
+fix the flaky login test           ← starts a separate sub-session
+```
+
+<Callout type="info">
+A bare `⏎` **always** submits, even while an agent is busy — that is what makes the two
+behaviors above possible without waiting. The one exception is a **pending gate on the focused
+agent** (a scope review or an `ask_user` question): there the submit answers the gate rather
+than steering or starting anything. Answer it first, then steer.
+</Callout>
+
+A *modified* `⏎` (`⌘⏎` / `⌃⏎` / `⌥⏎`) inserts a line break instead of submitting, and the break
+is kept verbatim in the prompt. On a terminal that cannot report the chord it folds back to a
+plain submit.
+
+Esc soft-stops the current turn without ending the session. See
+[Agent engine paths](/docs/agent-engine-paths) for how steering interacts with each execution
+path.
+
 ### Multimodal input
 
 Prompts are multimodal: mention a path to an image, PDF, audio, or video file in your message and Stella attaches the file itself as model input alongside your text. In the deck, **Ctrl-V** pastes an image straight from the clipboard as an attachment.

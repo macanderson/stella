@@ -107,7 +107,7 @@ Confirm what you built:
 
 ```bash
 ./target/release/stella-serve --version
-# stella-serve 0.6.8
+# stella-serve 0.6.10
 ```
 
 Record that version in your repo next to the client code. The wire format is
@@ -413,7 +413,7 @@ Reporting a rate limit as `terminal` silently disables the backoff you wanted.
 
 ## What is not built yet
 
-Verified absent as of 0.6.8, so design around them rather than discovering them:
+Re-verified absent as of 0.6.10, so design around them rather than discovering them:
 
 - **No stream resumption.** Frames carry no sequence number and no history is
   retained. A dropped connection loses whatever streamed while it was down.

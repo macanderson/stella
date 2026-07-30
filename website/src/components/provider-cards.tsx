@@ -122,7 +122,7 @@ export const PROVIDER_CATALOG: ProviderSpec[] = [
     href: "/docs/api-providers#openrouter",
     blurb: "One key, hundreds of models — the gateway when you would rather not manage keys.",
     env: "OPENROUTER_API_KEY",
-    defaultModel: "openrouter/auto",
+    defaultModel: "moonshotai/kimi-k3",
     dialect: "OpenAI-compatible",
   },
   {

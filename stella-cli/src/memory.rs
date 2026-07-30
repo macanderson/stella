@@ -230,6 +230,16 @@ pub struct SessionMemory {
     /// this is off the learning loop runs exactly the lexical path that ships
     /// today and writes nothing to the lifecycle ledger.
     lifecycle_enabled: bool,
+    /// The volatile context-record channel — `may`/`info` records and anything the
+    /// truth sweep demoted (epic #897).
+    ///
+    /// It rides the recall block rather than the cached system prefix because that
+    /// is what `force` means: `must`/`should` are unconditional and cacheable,
+    /// facts are only worth tokens when they apply. Set once per session by
+    /// [`Self::set_record_channel`] from the already-resolved rule registry —
+    /// re-deriving it here would re-walk the rule directories and re-run the truth
+    /// sweep on every turn.
+    record_channel: Option<String>,
 }
 
 impl SessionMemory {
@@ -261,6 +271,21 @@ impl SessionMemory {
     #[cfg(test)]
     pub(crate) fn task_id_for_test(&self) -> &str {
         &self.task_id
+    }
+
+    /// Tell memory which execution this turn's reflection belongs to, so the
+    /// model's self-review can be stored against it.
+    ///
+    /// Called by every path that begins an execution and later reflects. Not
+    /// test-gated, unlike `set_task_id` above: the whole point is the shipped
+    /// paths calling it, and a path that forgets to silently loses that turn's
+    /// self-rating rather than failing loudly, so the callers are the feature.
+    ///
+    /// (`set_task_id` is deliberately named in prose rather than linked. It is
+    /// `#[cfg(test)]`, so it does not exist in a doc build at all, and an
+    /// intra-doc link to it fails `-D warnings` rather than resolving.)
+    pub fn set_execution_id(&mut self, execution_id: i64) {
+        self.execution_id = Some(execution_id);
     }
 
     /// Open memory with workspace skill injection governed by the session's
@@ -310,6 +335,7 @@ impl SessionMemory {
                     suppression::suppression_reader(workspace_root, store.clone()),
                 );
                 Some(Self {
+                    record_channel: None,
                     store,
                     host,
                     domains,
@@ -322,6 +348,7 @@ impl SessionMemory {
                     // Phase 3 (#714)
                     lifecycle_enabled: tuning::session_lifecycle_enabled(workspace_root),
                     task_id: default_task_id(),
+                    execution_id: None,
                 })
             }
             Err(e) => {

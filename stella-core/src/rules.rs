@@ -171,6 +171,28 @@ pub struct Frontmatter {
     /// last scalar still wins in `data` for legacy compatibility; consumers
     /// that need schema validation can reject the ambiguity explicitly.
     pub duplicate_keys: Vec<String>,
+    /// Keys that appeared **indented under another key** — a YAML nested
+    /// mapping this single-line parser cannot represent.
+    ///
+    /// Recorded rather than acted on here, for the same reason as
+    /// `duplicate_keys`: this parser is shared with skills and extensions, and
+    /// what a nested key *means* differs per consumer. [`rule_from_file`]
+    /// refuses to load a rule that has any.
+    ///
+    /// Why this matters (ADR 0011, Consequences): the parser strips
+    /// indentation, so `docs/context-pr.md` §6.1's own example
+    ///
+    /// ```text
+    /// scope:
+    ///   repository_id: repo_stella
+    /// ```
+    ///
+    /// used to promote `repository_id` to the top level as a sibling of
+    /// `record_id`, leave `scope` empty, and report nothing. The record loaded,
+    /// wearing a scope it did not have. That is the same failure shape as a
+    /// guard script printing OK while skipping most of its inputs — the output
+    /// says success and the work did not happen.
+    pub nested_keys: Vec<String>,
     pub body: String,
 }
 
@@ -193,20 +215,23 @@ pub(crate) fn strip_matched_quotes(value: &str) -> &str {
 /// flattens a YAML block sequence — a key with an empty scalar followed by
 /// `- item` lines — onto that key as a comma-separated value, so list-typed
 /// fields reach consumers in one shape no matter how the author wrote them.
+///
+/// A key **indented under another key** is recorded in
+/// [`Frontmatter::nested_keys`] rather than silently promoted to the top level.
+/// See that field's docs for why the silent promotion was a defect and not a
+/// convenience.
 pub fn parse_frontmatter(raw: &str) -> Frontmatter {
     let text = raw.strip_prefix('\u{feff}').unwrap_or(raw);
     if !text.starts_with("---") {
         return Frontmatter {
-            data: HashMap::new(),
-            duplicate_keys: Vec::new(),
             body: text.trim().to_string(),
+            ..Frontmatter::default()
         };
     }
     let Some(rel_end) = text.get(3..).and_then(|rest| rest.find("\n---")) else {
         return Frontmatter {
-            data: HashMap::new(),
-            duplicate_keys: Vec::new(),
             body: text.trim().to_string(),
+            ..Frontmatter::default()
         };
     };
     let end = 3 + rel_end;
@@ -221,14 +246,20 @@ pub fn parse_frontmatter(raw: &str) -> Frontmatter {
 
     let mut data = HashMap::new();
     let mut duplicate_keys = Vec::new();
+    let mut nested_keys = Vec::new();
     // The key whose scalar value was empty on its own line — the head of a
     // possible YAML block sequence (`tools:` followed by `- Read` lines).
     let mut pending_list_key: Option<String> = None;
+    // The indentation the block's own keys sit at, taken from the first key seen.
+    // Anything deeper is a nested mapping. Read from the file rather than assumed
+    // to be zero so a frontmatter block someone indented wholesale still parses.
+    let mut base_indent: Option<usize> = None;
     for line in header.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
+        let indent = line.len() - line.trim_start().len();
         // A `- item` line under an empty-valued key is a block-sequence
         // element: flatten it onto that key. Without a pending key the
         // line falls through to the scalar path (and is skipped when it
@@ -251,17 +282,28 @@ pub fn parse_frontmatter(raw: &str) -> Frontmatter {
         };
         let key = trimmed[..colon].trim();
         let value = strip_matched_quotes(trimmed[colon + 1..].trim());
-        if !key.is_empty() {
-            if data.contains_key(key) && !duplicate_keys.iter().any(|seen| seen == key) {
-                duplicate_keys.push(key.to_string());
-            }
-            data.insert(key.to_string(), value.to_string());
-            pending_list_key = value.is_empty().then(|| key.to_string());
+        if key.is_empty() {
+            continue;
         }
+        let base = *base_indent.get_or_insert(indent);
+        if indent > base {
+            // A nested mapping. Record it and DO NOT promote it: writing it to
+            // `data` is what made a mangled record look like a valid one.
+            if !nested_keys.iter().any(|seen| seen == key) {
+                nested_keys.push(key.to_string());
+            }
+            continue;
+        }
+        if data.contains_key(key) && !duplicate_keys.iter().any(|seen| seen == key) {
+            duplicate_keys.push(key.to_string());
+        }
+        data.insert(key.to_string(), value.to_string());
+        pending_list_key = value.is_empty().then(|| key.to_string());
     }
     Frontmatter {
         data,
         duplicate_keys,
+        nested_keys,
         body,
     }
 }
@@ -299,24 +341,80 @@ fn guard_from(data: &HashMap<String, String>) -> Option<RuleGuard> {
     })
 }
 
+/// Why a rule file did not load at all.
+///
+/// Distinct from [`RuleMetadataError`], which describes a rule that loaded with
+/// unusable metadata: these refuse the file. The distinction is the point —
+/// legacy metadata-free rules must keep working, so only a defect that makes the
+/// *rule itself* untrustworthy is fatal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuleFileError {
+    /// No frontmatter `name` and no usable filename stem.
+    MissingId,
+    /// Frontmatter but no rule statement.
+    EmptyStatement,
+    /// A nested frontmatter mapping. This parser is single-line by contract
+    /// (ADR 0011: new fields land in the TOML schema, and this parser is not
+    /// extended), so a nested key cannot be represented — and promoting it
+    /// silently produced a record wearing a scope it did not have.
+    NestedFrontmatterKeys(Vec<String>),
+}
+
+impl std::fmt::Display for RuleFileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingId => write!(f, "no rule name: add `name:` frontmatter"),
+            Self::EmptyStatement => write!(
+                f,
+                "no rule statement: the body after the frontmatter fence is empty"
+            ),
+            Self::NestedFrontmatterKeys(keys) => write!(
+                f,
+                "nested frontmatter key(s) {} — this markdown reader parses single-line \
+                 `key: value` only, so a nested mapping cannot be loaded without silently \
+                 flattening it. Write the field as a single line, or author the record as \
+                 TOML under .stella/rules/*.toml (ADR 0011)",
+                keys.join(", ")
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RuleFileError {}
+
 /// Parse one rule file's raw content into a [`Rule`]. `None` when the file
-/// has no usable id or an empty body — "a rule needs a name and a
-/// statement" (TS: `ruleFromFile`).
+/// cannot be loaded at all — "a rule needs a name and a statement" (TS:
+/// `ruleFromFile`), plus the nesting refusal. Use [`rule_from_file_checked`]
+/// when the caller can report *why*.
 pub fn rule_from_file(path: &str, raw: &str) -> Option<Rule> {
+    rule_from_file_checked(path, raw).ok()
+}
+
+/// [`rule_from_file`] with the reason it failed.
+pub fn rule_from_file_checked(path: &str, raw: &str) -> Result<Rule, RuleFileError> {
     let fm = parse_frontmatter(raw);
+    // Checked before anything else is read off `fm.data`: a file with a nested
+    // mapping has already lost information, and every field decision made from
+    // it after that point is made on a record the author did not write.
+    if !fm.nested_keys.is_empty() {
+        return Err(RuleFileError::NestedFrontmatterKeys(fm.nested_keys));
+    }
     let id = fm
         .data
         .get("name")
         .cloned()
         .unwrap_or_else(|| file_stem(path));
-    if id.is_empty() || fm.body.trim().is_empty() {
-        return None;
+    if id.is_empty() {
+        return Err(RuleFileError::MissingId);
+    }
+    if fm.body.trim().is_empty() {
+        return Err(RuleFileError::EmptyStatement);
     }
     let (metadata, metadata_errors) = match metadata_from_frontmatter(&fm) {
         Ok(metadata) => (metadata, Vec::new()),
         Err(errors) => (None, errors),
     };
-    Some(Rule {
+    Ok(Rule {
         id,
         description: fm.data.get("description").cloned().unwrap_or_default(),
         text: fm.body.trim().to_string(),

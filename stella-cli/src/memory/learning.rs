@@ -27,6 +27,12 @@ use super::{
 #[cfg(test)]
 mod guarantees;
 
+/// What [`SessionMemory::retain_unknown`] drops and keeps. A child module for
+/// the same reason as [`guarantees`]: the filter is private, and it is the
+/// filter itself that needs pinning, not the turn that happens to call it.
+#[cfg(test)]
+mod dedupe;
+
 impl SessionMemory {
     /// Post-turn self-reflection: one cheap model call producing 0-3
     /// durable lessons, stored as domain-tagged reflection memories AND
@@ -41,6 +47,12 @@ impl SessionMemory {
     /// a failed turn gets a failure-analysis prompt that asks the model to
     /// identify the root cause — the highest-value learning signal in the
     /// system. A succeeded turn gets the conventional "what worked?" prompt.
+    ///
+    /// The same call also returns the model's self-review of the turn, stored
+    /// against [`SessionMemory::set_execution_id`]'s execution — the
+    /// `execution_reflection` half the Observatory's self-improve panels read.
+    /// It rides here rather than in a call of its own because the model already
+    /// has this transcript in front of it.
     pub async fn reflect_and_record(
         &mut self,
         provider: &dyn Provider,
@@ -50,7 +62,7 @@ impl SessionMemory {
         succeeded: bool,
         budget_limit: Option<f64>,
     ) -> ReflectionReport {
-        let lessons = match reflect_on_turn(
+        let reflected = match reflect_on_turn(
             provider,
             model_hint,
             &self.workspace_root,
@@ -61,7 +73,7 @@ impl SessionMemory {
         )
         .await
         {
-            Ok((lessons, cost_usd, events)) => (lessons, cost_usd, events),
+            Ok(outcome) => outcome,
             // The single reflection model call errored. Report it up so the
             // caller can warn (text) or emit an event (stream-json) — this
             // is the fix for the previously-silent reflection failure. Never
@@ -75,7 +87,27 @@ impl SessionMemory {
                 };
             }
         };
-        let (parsed, reflection_cost_usd, reflection_events) = lessons;
+        let (parsed, self_review, reflection_cost_usd, reflection_events) = reflected;
+
+        // One best-effort handle to `.stella/private/store.db` for this whole
+        // persistence pass: the self-review write, the tombstone read and the
+        // reflections-table mirror below all share it rather than each opening
+        // the store again. `None` (a store that won't open) degrades exactly as
+        // before — lessons kept, mirror skipped, never a failed turn.
+        let turn_store = stella_store::Store::open(&self.workspace_root).ok();
+
+        // Store the self-review FIRST, before any of the early returns below.
+        // It is the answer to a different question than the lessons are, and it
+        // survives on its own: a turn can be worth grading and teach nothing
+        // durable (the common case), or emit a lessons array we cannot read
+        // while still having graded itself. Writing it here means neither of
+        // those paths silently discards it.
+        if let (Some(store), Some(execution_id), Some(review)) =
+            (turn_store.as_ref(), self.execution_id, self_review.as_ref())
+            && !review.is_empty()
+        {
+            let _ = store.record_self_review(execution_id, review);
+        }
 
         // A response we could not read is not the same as a turn with nothing
         // to learn, and reporting them identically is how the lifecycle starves
@@ -109,13 +141,6 @@ impl SessionMemory {
             lesson.task_id = self.task_id.clone();
         }
 
-        // One best-effort handle to `.stella/private/store.db` for this whole
-        // persistence pass: the tombstone read and the reflections-table
-        // mirror below share it rather than each opening the store again.
-        // `None` (a store that won't open) degrades exactly as before —
-        // lessons kept, mirror skipped, never a failed turn.
-        let turn_store = stella_store::Store::open(&self.workspace_root).ok();
-
         // Drop anything the user has already forgotten, BEFORE it reaches any
         // of the three places this function persists to. Matching is by
         // restatement, not equality: the loop re-learns paraphrases, so a
@@ -124,6 +149,18 @@ impl SessionMemory {
         // at recall is what makes forgetting durable — an unsuppressed lesson
         // would land in the log and stay re-mineable forever.
         let lessons = self.retain_unforgotten(turn_store.as_ref(), lessons);
+        // Then drop what we already know. The loop re-learns the same facts in
+        // slightly different words every turn, and only byte-identical content
+        // collapses on its own (a memory's lineage is seeded from its content
+        // hash), so paraphrases accumulate unchecked.
+        //
+        // Measured on a live treatment store: 23 stored memories encoding
+        // **six** distinct facts, with "commands are registered in registry.py"
+        // held seven separate times — 61% of the store was restatement. That is
+        // not merely untidy. Recall has a budget, so three slots spent on three
+        // phrasings of one fact are three slots not spent on the other five,
+        // and the store gets worse at covering the codebase the longer it runs.
+        let lessons = self.retain_unknown(lessons);
 
         if lessons.is_empty() {
             return ReflectionReport {
@@ -191,11 +228,12 @@ impl SessionMemory {
             }
             if let Some(store) = &turn_store {
                 let _ = store.record_reflection(&stella_store::ReflectionRow {
-                    // No execution id at this seam: `SessionMemory` never
-                    // learns which execution row the turn ran under, and the
-                    // table's contract files id-less rows as cross-turn
-                    // lessons.
-                    execution_id: None,
+                    // Now that the turn tells memory which execution it is
+                    // (`set_execution_id`), a lesson can be traced back to the
+                    // turn that taught it. Still `Option`: a path that has not
+                    // adopted the setter files id-less rows as cross-turn
+                    // lessons, exactly as every row did before.
+                    execution_id: self.execution_id,
                     kind: match lesson.kind {
                         LessonKind::Domain => "domain".to_string(),
                         LessonKind::Process => "process".to_string(),
@@ -271,6 +309,54 @@ impl SessionMemory {
                 !stella_store::is_suppressed(&l.lesson, forgotten.iter().map(String::as_str))
             })
             .collect()
+    }
+
+    /// Drop lessons that restate something the store already holds.
+    ///
+    /// The same predicate [`Self::retain_unforgotten`] uses, pointed at live
+    /// memories instead of tombstones. The machinery for "is this the same
+    /// lesson in different words" already existed; it had simply never been
+    /// asked the question *do we know this already*, only *did the user delete
+    /// this*.
+    ///
+    /// Deliberately silent about *re-*learning: a fact mined twice is weak
+    /// evidence it matters, and a future change could raise salience on the
+    /// existing memory instead of discarding the restatement. Discarding is the
+    /// conservative half — it cannot make the store worse, and it is what stops
+    /// one fact crowding out five at recall time.
+    ///
+    /// Restatement matching is fuzzy by construction (`SIMILARITY_THRESHOLD`
+    /// over token sets, the same predicate [`stella_store::is_suppressed`]
+    /// applies), so this can drop a genuinely new lesson that happens to share
+    /// most of its vocabulary with an old one. That trade is the same one
+    /// forgetting already makes,
+    /// and it errs the right way here: a missed new memory costs one fact,
+    /// while an unchecked duplicate costs a recall slot on every future turn.
+    fn retain_unknown(&self, lessons: Vec<ReflectionLesson>) -> Vec<ReflectionLesson> {
+        let known: Vec<String> = match self.store.memory_nodes() {
+            // Compare against the memory's own text, which is what a later
+            // recall would inject — the display label is truncated.
+            Ok(nodes) => nodes.into_iter().map(|n| n.content).collect(),
+            // A store we cannot read is not evidence that nothing is stored, so
+            // keep the lessons rather than risk dropping the first ones a fresh
+            // workspace ever learns.
+            Err(_) => return lessons,
+        };
+        let mut kept: Vec<ReflectionLesson> = Vec::with_capacity(lessons.len());
+        for lesson in lessons {
+            // Check against this batch too: one reflection call returns up to
+            // three lessons and routinely says the same thing twice.
+            let already =
+                stella_store::is_suppressed(&lesson.lesson, known.iter().map(String::as_str))
+                    || stella_store::is_suppressed(
+                        &lesson.lesson,
+                        kept.iter().map(|l: &ReflectionLesson| l.lesson.as_str()),
+                    );
+            if !already {
+                kept.push(lesson);
+            }
+        }
+        kept
     }
 
     /// Mine the whole reflection log for recurring lessons and auto-create
