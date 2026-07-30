@@ -45,6 +45,20 @@ use super::super::ingest::record::Force;
 use super::LoadedRecord;
 use super::sweep::Disposition;
 
+/// The cached block's heading, including the one instruction that makes attribution
+/// happen rather than merely be possible.
+///
+/// The handle is the attribution key, but a key nobody is asked to use stays unused:
+/// a model handed `^pkg-manager` and no instruction produces prose about package
+/// managers and cites nothing, so `ContextUseKind::Cited` would remain empty for a
+/// reason that has nothing to do with whether the record helped.
+///
+/// It lives in the heading rather than on its own line for a reason worth stating:
+/// the heading is amortised across every record in the block, so the instruction
+/// costs a handful of tokens once instead of a clause per bullet — the same argument
+/// that made grouping by force worth doing.
+const CACHED_HEADING: &str = "\n## Workspace rules (cite the ^handle of any you apply)";
+
 /// Which of the two prompt channels a record renders into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Channel {
@@ -156,7 +170,7 @@ pub fn render_channel(
 /// `## Workspace rules`, grouped `### Must` then `### Should`.
 fn render_cached(inputs: &[&RenderInput<'_>], budget_chars: Option<usize>) -> RenderedChannel {
     let mut out = RenderedChannel {
-        text: "\n## Workspace rules".to_string(),
+        text: CACHED_HEADING.to_string(),
         ..RenderedChannel::default()
     };
     for (force, heading) in [(Force::Must, "### Must"), (Force::Should, "### Should")] {
@@ -294,7 +308,7 @@ mod tests {
         );
         assert_eq!(
             out.text,
-            "\n## Workspace rules\
+            "\n## Workspace rules (cite the ^handle of any you apply)\
              \n\n### Must\
              \n- This repository uses pnpm exclusively. ^pkg-manager\
              \n- Development runs on Node 22.x. ^node-version\
