@@ -1,4 +1,5 @@
 use super::*;
+use stella_protocol::CompletionRequest;
 use stella_protocol::tool::ToolSchema;
 use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};

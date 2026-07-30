@@ -13,7 +13,10 @@ impl Provider for DelayedProvider {
         "delayed"
     }
 
-    async fn complete(&self, _req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+    async fn complete_ref(
+        &self,
+        _req: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
         tokio::time::sleep(self.delay).await;
         self.result
             .lock()

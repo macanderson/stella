@@ -20,7 +20,7 @@ use serde_json::Value;
 use stella_core::ports::ToolExecutor;
 use stella_core::retry::Sleeper;
 use stella_protocol::{
-    CompletionRequest, CompletionResult, Provider, ProviderError, ToolOutput, ToolSchema,
+    CompletionRequestRef, CompletionResult, Provider, ProviderError, ToolOutput, ToolSchema,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -54,7 +54,7 @@ impl Sleeper for TokioSleeper {
     }
 }
 
-/// The `Provider` port as a reverse-RPC to the host. `complete` emits a
+/// The `Provider` port as a reverse-RPC to the host. `complete_ref` emits a
 /// [`ServerFrame::ProviderRequest`] and blocks the step on the host's answer.
 pub(crate) struct RemoteProvider {
     id: String,
@@ -87,7 +87,10 @@ impl Provider for RemoteProvider {
         &self.id
     }
 
-    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+    async fn complete_ref(
+        &self,
+        req: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
         // Refuse to park a cancelled turn. `Cancelled` is not retryable, so this
         // is what unwinds the turn after `POST /v1/turns/{id}/cancel` — including
         // when the engine reaches for the model again after a cancelled tool.
@@ -108,7 +111,12 @@ impl Provider for RemoteProvider {
             .frames
             .send(ServerFrame::ProviderRequest {
                 request_id: request_id.clone(),
-                request: req,
+                // The one boundary that genuinely needs the copy #921 removed
+                // from the engine: this frame outlives the call, crossing from
+                // the session thread to the server runtime, so it cannot
+                // borrow the caller's transcript. Taken explicitly, once, here
+                // — not silently once per retry attempt inside the driver.
+                request: req.into_owned(),
             })
             .is_err()
         {

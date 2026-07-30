@@ -22,7 +22,7 @@
 //!   names and the `global` default, so any host can construct the adapter.
 
 use async_trait::async_trait;
-use stella_protocol::{CompletionRequest, CompletionResult, ProviderError, ToolCallObserver};
+use stella_protocol::{CompletionRequestRef, CompletionResult, ProviderError, ToolCallObserver};
 
 use crate::catalog::{Catalog, Pricing};
 use crate::credential::ApiKey;
@@ -101,13 +101,16 @@ impl Provider for VertexProvider {
         "vertex"
     }
 
-    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+    async fn complete_ref(
+        &self,
+        req: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
         self.complete_inner(req, None).await
     }
 
-    async fn complete_observed(
+    async fn complete_observed_ref(
         &self,
-        req: CompletionRequest,
+        req: CompletionRequestRef<'_>,
         observer: &dyn ToolCallObserver,
     ) -> Result<CompletionResult, ProviderError> {
         self.complete_inner(req, Some(observer)).await
@@ -115,22 +118,22 @@ impl Provider for VertexProvider {
 }
 
 impl VertexProvider {
-    /// Shared body of [`Provider::complete`] and
-    /// [`Provider::complete_observed`]. Vertex already spoke
+    /// Shared body of [`Provider::complete_ref`] and
+    /// [`Provider::complete_observed_ref`]. Vertex already spoke
     /// `streamGenerateContent?alt=sse` and already shared gemini's
     /// aggregator, so it inherits every announce site from that fix — the
     /// two adapters differ only in auth and URL.
     async fn complete_inner(
         &self,
-        req: CompletionRequest,
+        req: CompletionRequestRef<'_>,
         observer: Option<&dyn ToolCallObserver>,
     ) -> Result<CompletionResult, ProviderError> {
-        let (system_instruction, contents) = to_gemini_request_parts(&req.messages);
+        let (system_instruction, contents) = to_gemini_request_parts(req.messages);
         let body = GeminiRequest {
             system_instruction,
             contents,
-            tools: to_gemini_tools(&req.tools),
-            generation_config: build_generation_config(&req),
+            tools: to_gemini_tools(req.tools),
+            generation_config: build_generation_config(req),
         };
 
         let response = self
@@ -163,7 +166,7 @@ impl VertexProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stella_protocol::CompletionMessage;
+    use stella_protocol::{CompletionMessage, CompletionRequest};
     use wiremock::matchers::{header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

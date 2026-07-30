@@ -142,7 +142,7 @@ pub(crate) async fn complete_standalone(
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
-    use stella_protocol::{CompletionUsage, ProviderError};
+    use stella_protocol::{CompletionRequestRef, CompletionUsage, ProviderError};
 
     use super::*;
 
@@ -154,9 +154,9 @@ mod tests {
             "paid-test"
         }
 
-        async fn complete(
+        async fn complete_ref(
             &self,
-            _request: CompletionRequest,
+            _request: CompletionRequestRef<'_>,
         ) -> Result<CompletionResult, ProviderError> {
             Ok(CompletionResult {
                 text: "[]".into(),

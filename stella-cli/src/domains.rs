@@ -305,7 +305,7 @@ pub fn heuristic_domains(root: &Path) -> Domains {
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
-    use stella_protocol::{CompletionResult, CompletionUsage, ProviderError};
+    use stella_protocol::{CompletionRequestRef, CompletionResult, CompletionUsage, ProviderError};
 
     use super::*;
 
@@ -319,9 +319,9 @@ mod tests {
             "paid-domains"
         }
 
-        async fn complete(
+        async fn complete_ref(
             &self,
-            _request: CompletionRequest,
+            _request: CompletionRequestRef<'_>,
         ) -> Result<CompletionResult, ProviderError> {
             let text = self.responses.lock().await.remove(0);
             Ok(CompletionResult {

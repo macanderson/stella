@@ -16,16 +16,16 @@ impl Provider for BilledResultWithBlockedSpeculation {
         "billed-blocked-speculation"
     }
 
-    async fn complete(
+    async fn complete_ref(
         &self,
-        _req: CompletionRequest,
+        _req: CompletionRequestRef<'_>,
     ) -> Result<CompletionResultAlias, ProviderError> {
         unreachable!("the test requires complete_observed")
     }
 
-    async fn complete_observed(
+    async fn complete_observed_ref(
         &self,
-        _req: CompletionRequest,
+        _req: CompletionRequestRef<'_>,
         observer: &dyn stella_protocol::ToolCallObserver,
     ) -> Result<CompletionResultAlias, ProviderError> {
         let call = ToolCall {
