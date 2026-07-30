@@ -593,6 +593,18 @@ fn print_diff(computed: &Diff, baseline: &Baseline, target_label: &str, args: &I
             ", coarse: input too large for an exact diff".to_string()
         }
     );
+    // The submitted prompt has no role, so a role filter cannot apply to it —
+    // and its line then shows as removed, which is true of the two documents
+    // but reads like the prompt was taken away. Say what it means once, rather
+    // than leaving the reader to work it out from a `-` that is technically
+    // correct and practically confusing.
+    if baseline.kind == "prompt" && !matches!(args.only, RoleFilter::All) {
+        println!(
+            "note: the submitted prompt is not one of the {}, so it shows as removed \
+             — everything added is what Stella put there.",
+            args.only.label()
+        );
+    }
     for hunk in &computed.hunks {
         println!("{}", hunk.header().cyan());
         for line in &hunk.lines {
