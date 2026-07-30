@@ -45,10 +45,10 @@ mod private;
 #[path = "settings/private_state_tests.rs"]
 mod private_state_tests;
 mod unknown;
+pub use authority::{AuthorityPolicy, ManagedAuthoritySettings};
 pub(crate) use unknown::{
     ENGINE_AGENT_FIELDS, ENGINE_AGENT_NAMES, ENGINE_PARAM_FIELDS, ENGINE_ROOT_FIELDS,
 };
-pub use authority::{AuthorityPolicy, ManagedAuthoritySettings};
 // Only `ContextSettings` is consumed today (the inert `Settings::context`
 // field). The nested types (`LearningMode`, `GovernanceMode`, …) live in
 // `settings::context`; a later phase re-exports them here as it wires them in.

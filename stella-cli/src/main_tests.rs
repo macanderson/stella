@@ -194,8 +194,14 @@ fn a_dumb_terminal_disables_colour_unless_the_user_forces_it() {
 
     // Real terminals, and an unset TERM, are left entirely alone — the tty
     // and NO_COLOR checks `colored` already performs stay the authority.
-    assert!(!super::dumb_terminal(term("xterm-256color").as_deref(), None));
-    assert!(!super::dumb_terminal(term("dumb-but-not-really").as_deref(), None));
+    assert!(!super::dumb_terminal(
+        term("xterm-256color").as_deref(),
+        None
+    ));
+    assert!(!super::dumb_terminal(
+        term("dumb-but-not-really").as_deref(),
+        None
+    ));
     assert!(!super::dumb_terminal(None, None));
 }
 

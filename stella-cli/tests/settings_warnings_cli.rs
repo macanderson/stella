@@ -35,7 +35,10 @@ fn models(dir: &tempfile::TempDir, home: &tempfile::TempDir) -> Output {
         .env("STELLA_CATALOG_AUTO_REFRESH", "0")
         // Point the org-managed scope at a path that does not exist, so a real
         // /etc/stella/settings.json on the build host cannot affect this.
-        .env("STELLA_MANAGED_SETTINGS", home.path().join("no-managed.json"))
+        .env(
+            "STELLA_MANAGED_SETTINGS",
+            home.path().join("no-managed.json"),
+        )
         .env_remove("STELLA_MODEL")
         .output()
         .expect("run stella models")

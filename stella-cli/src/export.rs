@@ -110,12 +110,8 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
     )?;
 
     let bytes = zip.finish()?;
-    stella_store::durable::write_atomic(
-        &zip_path,
-        &bytes,
-        stella_store::durable::MODE_PRIVATE,
-    )
-    .map_err(|e| format!("write archive: {e}"))?;
+    stella_store::durable::write_atomic(&zip_path, &bytes, stella_store::durable::MODE_PRIVATE)
+        .map_err(|e| format!("write archive: {e}"))?;
 
     Ok(zip_path)
 }
@@ -1185,8 +1181,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn the_export_archive_and_its_directory_are_owner_only() {
-        use stella_store::TelemetryRow;
         use std::os::unix::fs::PermissionsExt;
+        use stella_store::TelemetryRow;
 
         let tmp = tempfile::tempdir().unwrap();
         {

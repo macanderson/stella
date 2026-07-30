@@ -408,10 +408,16 @@ mod tests {
             .await
         {
             crate::exec::Captured::Done(out) => String::from_utf8_lossy(&out.stdout).into_owned(),
-            other => panic!("find must run: {}", matches!(other, crate::exec::Captured::TimedOut)),
+            other => panic!(
+                "find must run: {}",
+                matches!(other, crate::exec::Captured::TimedOut)
+            ),
         };
         assert!(out.contains(".github/workflows/ci.yml"), "{out}");
-        assert!(!out.contains(".git/objects"), "`.git` must be pruned: {out}");
+        assert!(
+            !out.contains(".git/objects"),
+            "`.git` must be pruned: {out}"
+        );
     }
 
     /// Run the real `find` through the fallback builder: `**/*.rs` matches at

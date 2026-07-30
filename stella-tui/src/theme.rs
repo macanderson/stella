@@ -1115,7 +1115,9 @@ mod tests {
                 assert_ne!(agent_color(id), gold, "agent_color({id:?}) returned a gold");
             }
             // And it is not a graph node kind either — a node is a category.
-            for kind in ["function", "method", "struct", "enum", "trait", "file", "module", "?"] {
+            for kind in [
+                "function", "method", "struct", "enum", "trait", "file", "module", "?",
+            ] {
                 assert_ne!(graph_kind_color(kind), gold);
             }
         }
@@ -1275,11 +1277,7 @@ mod tests {
                 b > r && b >= g,
                 "{name} ({ground:?}) must carry the deep-space blue cast"
             );
-            assert_ne!(
-                ground,
-                Color::Rgb(0, 0, 0),
-                "{name} must not be true black"
-            );
+            assert_ne!(ground, Color::Rgb(0, 0, 0), "{name} must not be true black");
         }
 
         // 3. Warning ramps warm (r > g > b — amber, no longer the orange that

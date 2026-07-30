@@ -1168,7 +1168,10 @@ async fn a_recycled_speculation_call_id_reports_the_execution_it_displaces() {
     )
     .await
     .expect("a hung turn means speculation deadlocked the provider/pump join");
-    assert!(matches!(outcome, TurnOutcome::Completed { .. }), "{outcome:?}");
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
 
     let events = drain_events(&mut rx);
     let discards: Vec<&AgentEvent> = events
@@ -1287,7 +1290,10 @@ async fn the_system_prefix_stays_byte_stable_across_a_compacting_turn() {
     ];
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
     let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
-    assert!(matches!(outcome, TurnOutcome::Completed { .. }), "{outcome:?}");
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
 
     let events = drain_events(&mut rx);
     assert!(

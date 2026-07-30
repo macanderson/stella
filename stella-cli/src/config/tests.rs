@@ -1042,8 +1042,7 @@ fn provider_cards_match_the_registry() {
             lands_somewhere,
             "the docs card for `{}` links to `{}` — the bare index, with \
              nothing identifying this provider",
-            provider.id,
-            card.href
+            provider.id, card.href
         );
     }
 
