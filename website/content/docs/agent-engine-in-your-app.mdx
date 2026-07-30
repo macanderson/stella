@@ -1,0 +1,522 @@
+---
+title: How to use Stella as the Agent Engine in your GenAI app
+description: Run Stella's agent loop inside your own product. The engine orchestrates, your app owns every model call, tool call, credential, and byte of data. Includes a working host in 80 lines, and how to license it for a closed-source product.
+---
+
+Writing an agent loop that survives contact with production is a grind. You
+need multi-step tool dispatch, history compaction before the context window
+fills, per-turn spend limits, retry classification that knows a rate limit from
+a bad request, and loop detection for the model that calls the same tool nine
+times. None of that is your product. All of it is on your critical path.
+
+Stella already does it, and you can run it inside your own app without giving
+up control of your models, your tools, or your data.
+
+## What you get, and what you keep
+
+| Stella handles | You keep |
+|---|---|
+| The step loop: model call, tool dispatch, repeat until done | Every model call. Your gateway, your keys, your routing |
+| History compaction and token budgeting | Every tool call. Your sandbox, your RBAC, your database |
+| Retry and backoff, classified by error kind | All metering and billing. The engine reports cost, you record it |
+| Loop detection and step caps | All persistence. The engine stores nothing |
+| Spend guards per turn and per session | Your prompts, your tool schemas, your data |
+
+## The one idea: the engine asks, your app executes
+
+This is the part worth understanding before you write any code, because it
+inverts the usual shape.
+
+Stella's engine does not call your tools. It **asks you to call them**, then
+waits. Same for the model: it does not hold an API key and it does not make an
+HTTP request. It emits a request and parks until your app answers.
+
+```
+your app                          stella engine
+   |                                    |
+   |  POST /v1/turns  (prompt, tools)   |
+   |----------------------------------->|
+   |                                    |
+   |  <-- "run this model call"         |  it needs a completion
+   |  your gateway, your key, your log  |
+   |  POST /v1/turns/{id}/provider-result
+   |----------------------------------->|
+   |                                    |
+   |  <-- "run get_weather(Paris)"      |  the model asked for a tool
+   |  your sandbox, your RBAC           |
+   |  POST /v1/turns/{id}/tool-result   |
+   |----------------------------------->|
+   |                                    |
+   |  <-- turn_complete { text, cost }  |
+```
+
+Two consequences matter for a real product:
+
+**The engine cannot leak what it never has.** `stella-serve` depends on two
+crates, `stella-protocol` and `stella-core`. It has no HTTP client, no TLS
+stack, and no provider adapters. It is not able to reach the network or read a
+provider credential, so a bug in it cannot exfiltrate your keys. That is a
+property of the dependency graph, not a promise.
+
+**Your tests need no API key.** Because your app is the model, you can drive a
+complete multi-step turn from a unit test with a scripted reply. Full agent loop
+coverage, no network, no spend, in milliseconds.
+
+<Callout type="info">
+  This page covers running the engine as a service next to your app. If you want
+  the command-line doors into the same engine (`stella run`, the Command Deck,
+  `stella goal`, fleets), see [Agent Engine Paths](/docs/agent-engine-paths).
+</Callout>
+
+## Pick your integration shape first
+
+The choice changes your licensing obligations, so make it before you build.
+
+| | Sidecar (recommended) | Linked crates |
+|---|---|---|
+| **How** | Run `stella-serve` as a separate process, talk HTTP | `cargo add stella-core`, call the engine in-process |
+| **Your language** | Anything that speaks HTTP | Rust only |
+| **Isolation** | Separate process, separate memory | Shares your process |
+| **Licensing** | Depends on whether you modify it. [Read below](#licensing-agpl-or-commercial) |  A combined work. AGPL, or buy a commercial license |
+
+The sidecar is the recommended shape for a GenAI app, on engineering grounds:
+process isolation, a host you can write in TypeScript or Python, and an engine
+that never shares memory with your application code.
+
+It is not automatically the cheaper licensing answer. Linking the crates into a
+closed-source product clearly needs a commercial license. The sidecar depends on
+what you do with it, and [the section below](#where-the-sidecar-lands) is
+specific about which facts decide it. Do not read "sidecar" as "free."
+
+## Step 1: Build a serve-capable binary
+
+There is no `stella serve` subcommand, and no release tarball contains the
+server. `stella-serve` is a separate crate with its own binary, and the release
+build packages the CLI only. Build it:
+
+```bash
+git clone https://github.com/macanderson/stella
+cd stella
+cargo build --release -p stella-serve --bin stella-serve
+```
+
+It is a fast build. The server pulls in only `stella-protocol` and
+`stella-core`, not the CLI, the TUI, or the tool crates.
+
+Confirm what you built:
+
+```bash
+./target/release/stella-serve --version
+# stella-serve 0.6.8
+```
+
+Record that version in your repo next to the client code. The wire format is
+additive, but a pin plus a round-trip test is how you find out about a change
+on your schedule instead of in production.
+
+## Step 2: Start the server
+
+Every setting is an environment variable. There are no flags beyond
+`healthcheck`, `--version`, and `--help`.
+
+```bash
+export STELLA_SERVE_BIND=127.0.0.1:8137
+export STELLA_SERVE_TOKEN="$(openssl rand -base64 32)"
+export STELLA_SERVE_TOOLS=remote
+./target/release/stella-serve
+# stella-serve listening on 127.0.0.1:8137
+```
+
+| Variable | Meaning |
+|---|---|
+| `STELLA_SERVE_BIND` | Address to bind. Defaults to `127.0.0.1:8080`. Use `0.0.0.0:8080` in a container, and `127.0.0.1:0` in tests to get a free port |
+| `STELLA_SERVE_TOKEN` | Bearer token every request must present. Required |
+| `STELLA_SERVE_TOKEN_FILE` | Path to a file holding the token. Wins over `STELLA_SERVE_TOKEN`, because a mounted secret beats a variable that leaks into `/proc` and every child process |
+| `STELLA_SERVE_TOOLS` | Must be `remote`, the default. The server never exposes a local tool surface |
+
+<Callout type="warn">
+  The bearer token is the only authentication this service has. Generate at
+  least 32 characters. A shorter token starts the server with a warning, not a
+  refusal, so that an upgrade does not become an outage, but do not ship one.
+</Callout>
+
+In tests, bind port `0` and read the port back from the `listening on` line on
+stdout. Picking a random port and hoping it is free is the usual source of flaky
+integration tests.
+
+## Step 3: Learn the six routes
+
+That is the whole surface.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/healthz` | Liveness. The only route with no auth |
+| `POST` | `/v1/turns` | Start a turn. Returns `{"turn_id": "turn-<32 hex>"}` |
+| `GET` | `/v1/turns/{id}/events` | Server-sent events. One `data:` line per frame |
+| `POST` | `/v1/turns/{id}/provider-result` | Answer a model request |
+| `POST` | `/v1/turns/{id}/tool-result` | Answer a tool request |
+| `POST` | `/v1/turns/{id}/cancel` | End a turn. The only teardown, there is no `DELETE` |
+
+A **turn** is the top-level resource. There is no session object, so your app
+owns conversation history and sends it with each turn.
+
+Four frame types arrive on the event stream, tagged by a `type` field:
+
+| `type` | Meaning | You respond? |
+|---|---|---|
+| `event` | A UI event (`text`, `tool_start`, `step_usage`, and about 27 more). Stream it to your frontend | No |
+| `provider_request` | Run a model completion. Carries `request_id` and the assembled conversation | Yes, `provider-result` |
+| `tool_request` | Run a tool. Carries `request_id`, `name`, and `input` | Yes, `tool-result` |
+| `turn_complete` | Terminal. Exactly one per turn, always last | No |
+
+<Callout type="warn">
+  Three things a correct host must not assume. `event` frames are not ordered
+  against request frames, so a `tool_request` can arrive before the `tool_start`
+  event that logically precedes it. Several `tool_request`s can be outstanding
+  at once, because the engine runs read-only tool calls concurrently, so answer
+  by `request_id` and do not serialize them. And the auth check runs before
+  routing, so an unauthenticated request to a wrong path returns 401, not 404. A
+  401 is not proof that your token is wrong.
+</Callout>
+
+## Step 4: Write the host
+
+This is a complete host. It runs on Node 18 or newer with no dependencies. Save
+it as `host.mjs`.
+
+```js
+const BASE = process.env.STELLA_BASE_URL ?? "http://127.0.0.1:8137";
+const TOKEN = process.env.STELLA_SERVE_TOKEN;
+const H = {
+  authorization: `Bearer ${TOKEN}`,
+  "content-type": "application/json",
+};
+
+// 1. Your model. Swap the body of this function for your gateway call.
+async function runModel(request, callNumber) {
+  if (callNumber === 1) {
+    return {
+      text: "",
+      tool_calls: [
+        { call_id: "c1", name: "get_weather", input: { city: "Paris" } },
+      ],
+      usage: { input_tokens: 42, output_tokens: 17 },
+      model: "your-model-id",
+      cost_usd: 0.0002,
+      finish_reason: "tool_calls", // not "tool_use"
+    };
+  }
+  return {
+    text: "It is 18C and clear in Paris.",
+    usage: { input_tokens: 96, output_tokens: 12 },
+    model: "your-model-id",
+    cost_usd: 0.0003,
+    finish_reason: "stop",
+  };
+}
+
+// 2. Your tools. Run them through whatever authorization your app already has.
+async function runTool(name, input) {
+  if (name === "get_weather") {
+    return { ok: { content: `18C, clear skies in ${input.city}.` } };
+  }
+  return { error: { message: `no such tool: ${name}` } };
+}
+
+// 3. Start the turn.
+const created = await fetch(`${BASE}/v1/turns`, {
+  method: "POST",
+  headers: H,
+  body: JSON.stringify({
+    provider_id: "my-app",
+    tools: [
+      {
+        name: "get_weather",
+        description: "Look up the current weather for a city.",
+        input_schema: {
+          type: "object",
+          properties: { city: { type: "string" } },
+          required: ["city"],
+        },
+        read_only: true,
+      },
+    ],
+    messages: [
+      { role: "system", content: "You are a helpful assistant." },
+      { role: "user", content: "What is the weather in Paris?" },
+    ],
+    budget: { mode: "off" },
+    max_steps: 10,
+    reverse_request_timeout_ms: 30000,
+  }),
+});
+if (!created.ok) throw new Error(`create failed: ${created.status}`);
+const { turn_id } = await created.json();
+
+// 4. Stream frames and answer what the engine asks for.
+const stream = await fetch(`${BASE}/v1/turns/${turn_id}/events`, { headers: H });
+const post = (route, body) =>
+  fetch(`${BASE}/v1/turns/${turn_id}/${route}`, {
+    method: "POST",
+    headers: H,
+    body: JSON.stringify(body),
+  });
+
+let modelCalls = 0;
+let buffer = "";
+const decoder = new TextDecoder();
+
+for await (const chunk of stream.body) {
+  buffer += decoder.decode(chunk, { stream: true });
+  let split;
+  while ((split = buffer.indexOf("\n\n")) !== -1) {
+    const record = buffer.slice(0, split);
+    buffer = buffer.slice(split + 2);
+    if (!record.startsWith("data: ")) continue;
+    const frame = JSON.parse(record.slice(6));
+
+    if (frame.type === "event") {
+      console.log("  event:", frame.event.type);
+    } else if (frame.type === "provider_request") {
+      const result = await runModel(frame.request, ++modelCalls);
+      await post("provider-result", {
+        request_id: frame.request_id,
+        status: "ok", // sits beside request_id, not nested
+        result,
+      });
+    } else if (frame.type === "tool_request") {
+      const output = await runTool(frame.name, frame.input);
+      await post("tool-result", { request_id: frame.request_id, output });
+    } else if (frame.type === "turn_complete") {
+      console.log("\noutcome:", frame.outcome);
+      process.exit(frame.outcome.status === "completed" ? 0 : 1);
+    }
+  }
+}
+```
+
+Run it against the server you started in step 2:
+
+```bash
+node host.mjs
+```
+
+```
+  event: stage
+  event: budget_tick
+  event: block_registered
+  event: block_registered
+  event: step_manifest
+  event: step_usage
+  event: tool_start
+  event: tool_result
+  event: budget_tick
+  event: block_registered
+  event: block_registered
+  event: step_manifest
+  event: step_usage
+  event: text
+  event: stage
+  event: complete
+
+outcome: {
+  status: 'completed',
+  text: 'It is 18C and clear in Paris.',
+  cost_usd: 0.0005
+}
+```
+
+You can read the loop in that output. The first `step_usage` is your first model
+call, then `tool_start` and `tool_result` are the dispatch, then a second
+`budget_tick` and `step_usage` are the second model call, and `text` is the
+answer. The `block_registered` and `step_manifest` events are the context
+engine accounting for what went into each prompt.
+
+Two model calls, one tool call, one settled cost. `cost_usd` is the sum of what
+**your** app reported on each model call, which is why your billing system stays
+the authority and the engine stays a reporter.
+
+### What the engine did that you did not have to
+
+Look at the conversation the engine handed you on the second model call:
+
+```json
+[
+  { "role": "system",    "content": "You are a helpful assistant." },
+  { "role": "user",      "content": "What is the weather in Paris?" },
+  { "role": "assistant", "tool_calls": [
+      { "call_id": "c1", "name": "get_weather", "input": { "city": "Paris" } } ] },
+  { "role": "tool",      "tool_results": [
+      { "call_id": "c1",
+        "output": { "ok": { "content": "18C, clear skies in Paris." } } } ] }
+]
+```
+
+It recorded the assistant's tool call, matched your result to it by `call_id`,
+and threaded both back into the history in the shape your provider expects. That
+is the loop. Everything past this point is the same four frames, more times.
+
+## Step 5: Wire in your real model and tools
+
+Three swaps take the example to production.
+
+**Your model.** Replace `runModel` with your gateway call. Map your provider's
+response onto `CompletionResult`. `usage`, `model`, and `cost_usd` are required,
+and `finish_reason` is `stop`, `length`, `tool_calls`, or `content_filter`.
+Anthropic's `tool_use` spelling is rejected with a 400 that names the valid
+values.
+
+**Your tools.** Replace `runTool` with a dispatch into the functions your app
+already exposes, behind the authorization you already enforce. Return
+`{ ok: { content } }` or `{ error: { message } }`. Send failures as the `error`
+arm rather than throwing: the model reads that text and can correct itself,
+which is usually what you want.
+
+**Your errors.** When a model call fails, say why, because the engine's retry
+behavior depends on the class you report:
+
+```js
+await post("provider-result", {
+  request_id: frame.request_id,
+  status: "error",
+  error: { kind: "rate_limited", message: "slow down", retry_after_ms: 500 },
+});
+```
+
+`transport` and `rate_limited` are retried with backoff. `auth`,
+`unknown_model`, `malformed`, `cancelled`, and `terminal` fail the turn at once.
+Reporting a rate limit as `terminal` silently disables the backoff you wanted.
+
+## Production checklist
+
+- **One process per trust boundary.** Several provider and sandbox settings are
+  process-global, so multi-tenant in one process is not safe. Run an engine per
+  tenant, inside the isolation you already use for untrusted code.
+- **Keep the port private.** Bind loopback, or a private network behind the
+  token. There is no `Host` header guard and no CORS handling, so never expose it
+  to a browser directly.
+- **Set a reverse-request deadline.** `reverse_request_timeout_ms` bounds how
+  long the engine waits for your app. It defaults to five minutes and is clamped
+  to one hour. An expired model request fails the turn. An expired tool request
+  becomes a tool error the model can react to.
+- **Cancel turns you abandon.** Each live turn holds an OS thread. `POST
+  /v1/turns/{id}/cancel` releases it. The turn unwinds rather than being killed,
+  so a client streaming events still gets a terminal frame with an `aborted`
+  outcome and its settled cost.
+- **Handle 429.** At most 32 turns can be live at once. Over that you get a 429
+  with `Retry-After: 5`.
+- **The event stream is single-subscriber.** A second `GET` on the same turn's
+  events returns 409. Fan out to your own users from your app, not by opening
+  the stream twice.
+- **Record `step_usage` events.** They carry per-step tokens, cost, model, and
+  duration, which is what you want for cross-checking your own metering.
+
+## What is not built yet
+
+Verified absent as of 0.6.8, so design around them rather than discovering them:
+
+- **No stream resumption.** Frames carry no sequence number and no history is
+  retained. A dropped connection loses whatever streamed while it was down.
+  Persist frames on receipt if you need durability.
+- **No server-side conversation state.** One turn per request. Your app owns
+  history and replays it.
+- **No steering, pause, or approval routes.** The `scope_review` and `ask_user`
+  events have no reverse endpoint yet, so an approval gate has to live in your
+  app, in front of the turn.
+- **No token-level streaming from the engine.** It forwards whole completions.
+  To stream tokens to your users, stream them from your own provider call, which
+  you already control.
+- **No SIGTERM drain**, no `/readyz`, and no `/metrics`.
+- **Most engine knobs are fixed.** Only `max_steps` and
+  `reverse_request_timeout_ms` are settable per turn. Temperature, output token
+  cap, reasoning effort, and the compaction budget come from the engine defaults.
+
+## Licensing: AGPL or commercial
+
+Stella is **dual-licensed**. You choose the track.
+
+| | Open source track | Commercial track |
+|---|---|---|
+| **License** | AGPL-3.0-only | Negotiated commercial license |
+| **Cost** | Free | Paid |
+| **Publish your source** | Yes, including over a network | No |
+| **Best for** | Open source projects, research, internal use | Closed-source products, SaaS, proprietary forks |
+| **How to get it** | Just use it | [licensing@oxagen.sh](mailto:licensing@oxagen.sh) |
+
+### You do not need a commercial license to
+
+- Use Stella as a developer tool, at work, on proprietary code. **Using Stella
+  to write closed-source software does not make that software AGPL.** The
+  license covers Stella and works derived from it, not the output of running it.
+- Run **unmodified** Stella internally, including on your own servers.
+- Evaluate, benchmark, audit, or study it.
+- Build on the [Context Graph
+  Protocol](https://github.com/macanderson/context-graph-protocol), which is a
+  separate project under `MIT OR Apache-2.0` and stays that way. Depending on
+  CGP does not put your project under the AGPL.
+
+### You do need one to
+
+- Ship Stella, or anything derived from it, inside a product whose source you do
+  not publish.
+- Offer a **modified** Stella to third parties over a network without publishing
+  your modifications. This is AGPL section 13, and hosting is not a loophole.
+- Keep a proprietary fork private, or sublicense Stella to your own customers
+  under other terms.
+
+### Where the sidecar lands
+
+Worth being straight about, since it is the shape this page recommends.
+
+Linking `stella-core` into a closed-source binary is the clear case: that is a
+combined work, and it needs a commercial license. A developer running the CLI on
+their own machine is the other clear case, and needs nothing.
+
+The sidecar sits between them, and the answer turns on facts about your
+deployment: whether you modified the engine, and whether your users interact
+with that modified engine over a network. If you run the binary unmodified and
+your app talks to it over HTTP, you are in very different territory than if you
+patched it and shipped the patched version as part of a hosted product.
+
+We are not going to guess at your architecture in a docs page. Email
+[licensing@oxagen.sh](mailto:licensing@oxagen.sh) with a short description and you will get a straight
+answer about whether you need a license at all, including "you do not."
+
+<Callout type="warn">
+  This section is a plain-language summary for orientation. It is not legal
+  advice and it does not modify the
+  [LICENSE](https://github.com/macanderson/stella/blob/main/LICENSE). Where the
+  two disagree, the LICENSE controls. If real money or real risk is involved,
+  talk to your own counsel, and to us.
+</Callout>
+
+### How to buy a commercial license
+
+1. **Email [licensing@oxagen.sh](mailto:licensing@oxagen.sh).** One message starts it. There is no portal
+   and no sales sequence.
+2. **Tell us what you are building and roughly how you will deploy it.** What
+   the product does, whether Stella is linked in or run as a sidecar, whether
+   you modify it, and rough scale (self-hosted or SaaS, number of environments,
+   order of magnitude of users). Pricing depends on scope and deployment size,
+   so this is what determines the number.
+3. **Say what terms you need.** A commercial license removes the reciprocal
+   obligations above. Warranty, indemnity, and support terms, which the AGPL
+   explicitly disclaims, are available and are worth naming up front if your
+   procurement process requires them.
+4. **Get an answer, including whether you need one.** If your use is already
+   fine under the AGPL we will tell you that instead of selling you something.
+
+Full terms, the reasoning behind the dual license, and the note on prior
+releases (everything up to v0.5.14 remains perpetually available under
+`MIT OR Apache-2.0`) are in
+[LICENSING.md](https://github.com/macanderson/stella/blob/main/LICENSING.md).
+
+## Where to go next
+
+- [Agent Engine Paths](/docs/agent-engine-paths): the command-line doors into
+  the same engine.
+- [Event Stream Compatibility](/docs/event-stream-compatibility): the full
+  `AgentEvent` vocabulary you receive in `event` frames.
+- [Inference Pipeline](/docs/inference-pipeline): what the engine does inside a
+  step.
+- [Telemetry](/docs/telemetry): what the engine reports, and how to record it.
