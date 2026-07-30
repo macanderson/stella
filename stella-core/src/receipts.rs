@@ -32,7 +32,7 @@ use stella_protocol::{
     ManifestEntry, MessageRole, ModelCallRole, ToolOutput,
 };
 
-use crate::estimator::{CHARS_PER_TOKEN, estimate_conversation_tokens};
+use crate::estimator::estimate_conversation_tokens;
 use crate::event_sender::EventSender;
 
 /// Who served the call a receipt describes.
@@ -170,22 +170,6 @@ fn zone_tag(zone: CacheZone) -> &'static str {
     }
 }
 
-/// The engine's raw per-block token estimate: one block's content over the
-/// conversation estimator's [`CHARS_PER_TOKEN`] divisor, so a block's cost is
-/// on the same scale as `StepUsage.estimated_input_tokens`.
-///
-/// The counting UNIT differs and is worth stating rather than assuming: this
-/// counts chars, the conversation estimator counts bytes
-/// (`crate::estimator::estimate_message_tokens` sums `str::len`). For ASCII
-/// the two agree exactly; for multi-byte content a manifest's summed
-/// `token_cost` reads lower than the same step's `estimated_input_tokens`.
-/// Reconciling the units is a receipts-fidelity change (every stored
-/// manifest's numbers move), not a comment fix, so the divergence is named
-/// here rather than papered over.
-fn estimate_tokens(content: &str) -> u32 {
-    (content.chars().count() as f64 / CHARS_PER_TOKEN).ceil() as u32
-}
-
 /// Whether a block kind's preimage lives in the event journal (resolved at
 /// reconstruction time) or must be captured locally at emission. Tool I/O and
 /// assistant text ride the journal (`ToolStart`/`ToolResult`/`Text`); the
@@ -289,7 +273,14 @@ impl BlockDigestCache {
         let computed = BlockDigests {
             block_id: block_id(kind, &content),
             content_digest: format!("sha256:{}", sha256_hex(&content)),
-            token_cost: estimate_tokens(&content),
+            // The shared rule, called — this module used to carry its own copy
+            // that counted `chars()` where the conversation estimator counts
+            // bytes, so one receipt held two numbers for the same content that
+            // reconciled only for ASCII (#925). The fix is not a corrected
+            // copy; it is that there is no copy, so `token_cost` and
+            // `estimated_input_tokens` cannot drift again without moving the
+            // one function they both reach through.
+            token_cost: stella_protocol::estimate_token_cost(&content),
         };
         self.entries.insert(key, computed.clone());
         computed
@@ -664,7 +655,17 @@ fn decompose<'a>(
 /// later change to which fields participate must produce different hashes for
 /// the same prompt, or two incompatible preimages would silently share a digest
 /// space and a replay could not tell which scheme minted a stored hash.
-pub const FRAME_SCHEMA_VERSION: &str = "1.0-draft";
+///
+/// `1.1` (#925) is the first bump, and it exercises the constant slightly
+/// beyond its original wording: the participating *fields* did not change, the
+/// **unit of one of them** did. A frame block's `token_cost` used to be a
+/// character count and is now the shared byte-based rule
+/// ([`stella_protocol::tokens`]), so the same prompt hashes differently before
+/// and after — which is exactly the condition the version string exists to keep
+/// out of one digest space. Stored `1.0-draft` hashes remain valid artifacts of
+/// the scheme that minted them; no reader has to branch on the version to know
+/// which rule a hash came from, because the version is inside the preimage.
+pub const FRAME_SCHEMA_VERSION: &str = "1.1";
 
 /// One block as it enters the frame preimage.
 ///

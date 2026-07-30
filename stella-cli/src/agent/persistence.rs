@@ -398,7 +398,11 @@ pub(crate) fn persist_event_detailed(
                 origin_step: origin.step as u64,
                 call_id: origin.call_id.clone(),
                 memory_id: origin.memory_id.clone(),
-                token_cost: *token_cost,
+                // Always `Some` on the live path: the emitter had the block's
+                // content in hand to hash it, so it always knows the cost.
+                // `None` is reachable only for history the v19 migration could
+                // not re-derive (#925).
+                token_cost: Some(*token_cost),
                 content_digest: content_digest.clone(),
                 citation_label: citation_label.clone(),
                 content: content.clone(),
@@ -439,7 +443,7 @@ pub(crate) fn persist_event_detailed(
                     .map(|b| ManifestBlockRow {
                         block_id: b.block_id.clone(),
                         cache_zone: enum_tag(&b.cache_zone),
-                        token_cost: b.token_cost,
+                        token_cost: Some(b.token_cost),
                         resident_since_step: b.resident_since_step as u64,
                         message_index: b.message_index as u64,
                         call_id: b.call_id.clone(),
@@ -702,7 +706,7 @@ mod stream_tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].block_id, "blk_tool1");
         assert_eq!(entries[0].cache_zone, "volatile");
-        assert_eq!(entries[0].token_cost, 40);
+        assert_eq!(entries[0].token_cost, Some(40));
     }
 
     #[test]

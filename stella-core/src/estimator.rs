@@ -6,20 +6,17 @@
 //! input-token ratio per model and corrects the
 //! heuristic with a bounded factor, so the estimate converges on what the
 //! provider's tokenizer actually reports over a session. The uncalibrated
-//! functions remain the char-heuristic baseline; the correction is applied
-//! on top, never by mutating the heuristic's constants.
+//! functions remain the shared byte-heuristic baseline
+//! ([`stella_protocol::tokens`] — the one place the rule is written down, so
+//! this module and the receipts plane cannot disagree on what a token is made
+//! of the way they did before #925); the correction is applied on top, never
+//! by mutating the heuristic's constants.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 
 use stella_protocol::CompletionMessage;
-
-/// Chars-per-token divisor. 4 is the classic English-prose heuristic; code
-/// and JSON run denser (more tokens per char), so we use 3.5 to bias the
-/// estimate high — over-estimating triggers compaction *earlier*, which is
-/// the safe direction (silent truncation by the provider is the failure
-/// mode this exists to prevent).
-pub(crate) const CHARS_PER_TOKEN: f64 = 3.5;
+use stella_protocol::tokens::estimate_tokens_for_bytes;
 
 /// Fixed per-message framing overhead (role tags, separators) in tokens.
 const PER_MESSAGE_OVERHEAD: u64 = 4;
@@ -60,36 +57,47 @@ fn json_len(value: &serde_json::Value) -> usize {
 
 /// Estimate the token cost of one message, including any tool calls, tool
 /// results, and multimodal attachments it carries.
+///
+/// Sums every piece's UTF-8 byte length and divides **once**, rather than
+/// estimating each piece: `ceil` is not additive, so a per-piece sum would
+/// grow with how many tool calls a message happens to carry rather than with
+/// what it contains.
 pub fn estimate_message_tokens(message: &CompletionMessage) -> u64 {
-    let mut chars = message.content.len();
+    // Bytes throughout — `str::len` and `json_len` are both byte lengths, and
+    // the variable is named for what it holds so a later reader cannot mistake
+    // this for a character count the way #925's second estimator did.
+    let mut bytes = message.content.len();
     for call in &message.tool_calls {
-        chars += call.name.len();
-        chars += json_len(&call.input);
+        bytes += call.name.len();
+        bytes += json_len(&call.input);
     }
     for result in &message.tool_results {
-        chars += result.call_id.len();
-        chars += match &result.output {
+        bytes += result.call_id.len();
+        bytes += match &result.output {
             stella_protocol::ToolOutput::Ok { content } => content.len(),
             stella_protocol::ToolOutput::Error { message } => message.len(),
         };
     }
+    let bytes = bytes as u64;
     let attachment_tokens: u64 = message
         .attachments
         .iter()
         .map(estimate_attachment_tokens)
         .sum();
-    (chars as f64 / CHARS_PER_TOKEN).ceil() as u64 + attachment_tokens + PER_MESSAGE_OVERHEAD
+    estimate_tokens_for_bytes(bytes) + attachment_tokens + PER_MESSAGE_OVERHEAD
 }
 
 /// Rough token cost of an attachment payload. Providers price media by their
 /// own units (image tiles, PDF pages, audio seconds), but the request itself
-/// carries the payload as base64 — `bytes × 4/3 ÷ CHARS_PER_TOKEN` tracks
+/// carries the payload as base64 — `bytes × 4/3 ÷ BYTES_PER_TOKEN` tracks
 /// the request-size pressure that budgeting and compaction care about, and
 /// deliberately overestimates in the safe direction for media whose billed
 /// token cost is lower.
 fn estimate_attachment_tokens(attachment: &stella_protocol::Attachment) -> u64 {
-    let base64_chars = attachment.byte_len.saturating_mul(4) / 3;
-    (base64_chars as f64 / CHARS_PER_TOKEN).ceil() as u64
+    // base64 is ASCII by definition, so this is the one place where "bytes"
+    // and "characters" were never in tension.
+    let base64_bytes = attachment.byte_len.saturating_mul(4) / 3;
+    estimate_tokens_for_bytes(base64_bytes)
 }
 
 // Counts whole-transcript estimate walks so a test can pin how many the step
@@ -132,7 +140,8 @@ const CALIBRATION_ALPHA: f64 = 0.3;
 const CALIBRATION_MIN_SAMPLES: u32 = 3;
 
 /// Bounds on the applied correction factor. The lower bound matters most:
-/// the raw estimator is deliberately biased HIGH (see [`CHARS_PER_TOKEN`]),
+/// the raw estimator is deliberately biased HIGH (see
+/// [`stella_protocol::tokens::BYTES_PER_TOKEN`]),
 /// and a factor below 1.0 spends that safety margin — capping it at 0.5
 /// means calibration can at most halve the conservative estimate, so the
 /// calibrated number stays an early-compaction bias, never an invitation to

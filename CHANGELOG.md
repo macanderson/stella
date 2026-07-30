@@ -26,6 +26,28 @@ record of *changes*, curated by the person who made them.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Receipts count tokens one way, and old runs are corrected to match.** A
+  context block's `token_cost` was counted in characters while the same
+  receipt's `estimated_input_tokens` was counted in UTF-8 bytes, so a single
+  receipt held two numbers for the same content that only agreed for ASCII. If
+  you work in Japanese, Chinese, or any script that is not one byte per
+  character — or your tool output contains emoji — a manifest's summed
+  `token_cost` read up to 4x below the step it belonged to, and the size of the
+  error depended on your language. Both numbers now come from one shared
+  function counting UTF-8 bytes, the unit the Context Graph Protocol already
+  specifies. Opening a workspace migrates its store (schema v19): every block
+  already recorded is **recounted from its own preimage**, so past runs are
+  corrected rather than reinterpreted, and `stella inspect` needs no knowledge
+  that the old rule ever existed. Blocks whose preimage the store no longer
+  holds — the reconstruction gaps `stella inspect` already declines to vouch
+  for — record no cost at all rather than keeping a number in the retired unit.
+  The compiled frame's schema version moves to `1.1` accordingly, so frame
+  hashes minted under the two rules cannot collide. ([#925])
+
+[#925]: https://github.com/macanderson/stella/issues/925
+
 ## [0.6.12] — 2026-07-30
 
 ## [0.6.10] — 2026-07-30

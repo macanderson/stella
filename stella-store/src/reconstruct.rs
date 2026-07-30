@@ -68,8 +68,13 @@ fn sha256_hex(s: &str) -> String {
 
 /// Per-execution preimage index built once from the event journal: tool calls
 /// and outputs by `call_id`, and assistant text keyed by its content digest.
+///
+/// `pub(crate)` so the v18 → v19 migration can recompute a stored block's token
+/// cost from the *same* preimage this module reconstructs from. A migration
+/// that resolved preimages its own way would be a second answer to "what bytes
+/// was this block", which is the class of bug #925 was.
 #[derive(Default)]
-struct JournalPreimages {
+pub(crate) struct JournalPreimages {
     tool_calls: HashMap<String, ToolCall>,
     tool_outputs: HashMap<String, ToolOutput>,
     /// `content_digest` ("sha256:<hex>") → the assistant text bytes.
@@ -125,18 +130,8 @@ impl Store {
                 unresolved.push(entry.block_id.clone());
                 continue;
             };
-            // Verify journal-resolved bytes against the recorded digest. Gap
-            // content is stored locally, so its digest-check is tautological and
-            // deliberately skipped as evidence — the proof lives in the
-            // journal-resolved kinds.
-            if block.content.is_none() {
-                let expected = block
-                    .content_digest
-                    .strip_prefix("sha256:")
-                    .unwrap_or(&block.content_digest);
-                if sha256_hex(&content) != expected {
-                    digest_mismatches.push(entry.block_id.clone());
-                }
+            if !content_matches_digest(block, &content) {
+                digest_mismatches.push(entry.block_id.clone());
             }
             // Regroup: a change in message_index starts a new CompletionMessage,
             // whose role is fixed by the first block that opens it.
@@ -166,45 +161,86 @@ impl Store {
     /// Index the execution's `tool_start` / `tool_result` / `text` events into a
     /// preimage lookup. Mirrors [`Store::materialize_tool_calls`]'s read shape.
     fn journal_preimages(&self, execution_id: i64) -> Result<JournalPreimages> {
-        let payloads: Vec<String> = {
-            let conn = self.lock();
-            let mut stmt = conn.prepare(
-                "SELECT payload FROM events \
-                 WHERE execution_id = ?1 AND event_type IN ('tool_start', 'tool_result', 'text') \
-                 ORDER BY seq ASC",
-            )?;
-            let rows = stmt.query_map(params![execution_id], |row| row.get::<_, String>(0))?;
-            rows.collect::<rusqlite::Result<Vec<_>>>()?
-        };
-        let mut out = JournalPreimages::default();
-        for payload in &payloads {
-            let Ok(event) = serde_json::from_str::<AgentEvent>(payload) else {
-                continue;
-            };
-            match event {
-                AgentEvent::ToolStart { call } => {
-                    out.tool_calls.insert(call.call_id.clone(), call);
-                }
-                AgentEvent::ToolResult {
-                    call_id, output, ..
-                } => {
-                    out.tool_outputs.insert(call_id, output);
-                }
-                AgentEvent::Text { delta } => {
-                    out.text_by_digest
-                        .insert(format!("sha256:{}", sha256_hex(&delta)), delta);
-                }
-                _ => {}
-            }
-        }
-        Ok(out)
+        journal_preimages(&self.lock(), execution_id)
     }
+}
+
+/// [`Store::journal_preimages`] against a bare connection, so a migration
+/// holding only its transaction can build the same index.
+pub(crate) fn journal_preimages(
+    conn: &rusqlite::Connection,
+    execution_id: i64,
+) -> Result<JournalPreimages> {
+    let payloads: Vec<String> = {
+        let mut stmt = conn.prepare(
+            "SELECT payload FROM events \
+             WHERE execution_id = ?1 AND event_type IN ('tool_start', 'tool_result', 'text') \
+             ORDER BY seq ASC",
+        )?;
+        let rows = stmt.query_map(params![execution_id], |row| row.get::<_, String>(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let mut out = JournalPreimages::default();
+    for payload in &payloads {
+        let Ok(event) = serde_json::from_str::<AgentEvent>(payload) else {
+            continue;
+        };
+        match event {
+            AgentEvent::ToolStart { call } => {
+                out.tool_calls.insert(call.call_id.clone(), call);
+            }
+            AgentEvent::ToolResult {
+                call_id, output, ..
+            } => {
+                out.tool_outputs.insert(call_id, output);
+            }
+            AgentEvent::Text { delta } => {
+                out.text_by_digest
+                    .insert(format!("sha256:{}", sha256_hex(&delta)), delta);
+            }
+            _ => {}
+        }
+    }
+    Ok(out)
+}
+
+/// Whether resolved bytes really are this block's bytes: they re-hash to the
+/// `content_digest` the receipt recorded.
+///
+/// Gap content is stored locally, so its check is tautological and is
+/// deliberately skipped as evidence — the proof lives in the journal-resolved
+/// kinds.
+///
+/// This is not a formality. [`resolve_content`] finds a tool block's preimage
+/// by `call_id`, but `call_id` does not uniquely identify a *block*: compaction
+/// stubs and ages tool results **in place**, so one call can leave several
+/// content-addressed blocks behind — the full result and each aged form of it.
+/// They all resolve to the same journal event, and only the digest says which
+/// one those bytes actually are. A caller that skips this check does not get a
+/// slightly-off answer; it gets a confident answer about the wrong content.
+pub(crate) fn content_matches_digest(block: &crate::ContextBlockRow, content: &str) -> bool {
+    if block.content.is_some() {
+        return true;
+    }
+    let expected = block
+        .content_digest
+        .strip_prefix("sha256:")
+        .unwrap_or(&block.content_digest);
+    sha256_hex(content) == expected
 }
 
 /// Resolve one block's exact content: gap kinds carry it locally; every other
 /// kind is recovered from the journal preimage index. `None` means the fold
 /// does not carry this block's preimage (a documented non-reconstructable case).
-fn resolve_content(block: &crate::ContextBlockRow, preimages: &JournalPreimages) -> Option<String> {
+///
+/// Resolution alone does **not** establish that the bytes are this block's —
+/// see [`content_matches_digest`], which every caller must apply.
+///
+/// `pub(crate)` for the v18 → v19 migration — see [`JournalPreimages`].
+pub(crate) fn resolve_content(
+    block: &crate::ContextBlockRow,
+    preimages: &JournalPreimages,
+) -> Option<String> {
     if let Some(content) = &block.content {
         return Some(content.clone());
     }
@@ -319,7 +355,7 @@ mod tests {
             origin_step: mi,
             call_id: None,
             memory_id: None,
-            token_cost: 10,
+            token_cost: Some(10),
             content_digest: digest(content),
             citation_label: None,
             content: Some(content.into()),
@@ -339,7 +375,7 @@ mod tests {
             origin_step: 0,
             call_id: call_id.map(str::to_owned),
             memory_id: None,
-            token_cost: 10,
+            token_cost: Some(10),
             content_digest: digest(content),
             citation_label: None,
             content: None,
@@ -350,7 +386,7 @@ mod tests {
         ManifestBlockRow {
             block_id: block_id.into(),
             cache_zone: "cacheable".into(),
-            token_cost: 10,
+            token_cost: Some(10),
             resident_since_step: 0,
             message_index: mi,
             call_id: None,

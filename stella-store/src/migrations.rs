@@ -18,6 +18,10 @@ use crate::ddl::{
 };
 use crate::{Result, StoreError};
 
+mod token_unit;
+
+use token_unit::migrate_v18_to_v19;
+
 /// One schema migration: upgrades an existing database exactly one
 /// `user_version` step, inside the transaction the runner opened for it.
 /// The runner stamps the new version and commits; the migration only
@@ -28,7 +32,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 18] = [
+pub(crate) const MIGRATIONS: [Migration; 19] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -102,6 +106,17 @@ pub(crate) const MIGRATIONS: [Migration; 18] = [
     // ADD COLUMN + CREATE INDEX, both guarded; no existing column changes
     // shape and no row is dropped.
     migrate_v17_to_v18,
+    // v18 → v19: one token-counting rule, applied to history as well as to
+    // new writes (#925). `context_blocks.token_cost` was minted by a
+    // character count while `step_receipt.estimated_input_tokens` was minted
+    // by a byte count, so one receipt held two numbers for the same content
+    // that reconciled only for ASCII. The emitter now calls the one shared
+    // rule; this step recomputes every row already at rest from its own
+    // preimage, so the column holds one unit rather than being read through a
+    // version branch. Rebuilds `context_blocks` to make `token_cost`
+    // nullable — the honest value for a block whose preimage the store no
+    // longer holds.
+    migrate_v18_to_v19,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -122,8 +137,9 @@ pub(crate) const MIGRATIONS: [Migration; 18] = [
     //              (#714), which closed without ever needing a migration —
     //              so per the rule below its line is deleted rather than
     //              left as a hole.
+    //   v18 → v19: CLAIMED above by the token-unit reconciliation (#925).
     //
-    // Nothing is reserved now: take v18 → v19 and add your own line here.
+    // Nothing is reserved now: take v19 → v20 and add your own line here.
     // If a reserved phase ships without needing its slot, delete its line
     // rather than leaving a hole — index order is the contract.
 ];

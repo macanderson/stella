@@ -472,6 +472,14 @@ pub(crate) const PULL_REQUESTS_DDL: &str = "CREATE TABLE IF NOT EXISTS pull_requ
 /// UNIQUE via PRIMARY KEY (execution_id, block_id): a block is registered once
 /// per execution; a byte-identical block re-entering context resolves to the
 /// same id, so the second registration is an idempotent no-op, not data.
+///
+/// `token_cost` is nullable as of v19 (#925), meaning "not derivable from any
+/// preimage this store still holds" — see
+/// [`ContextBlockRow::token_cost`](crate::ContextBlockRow::token_cost). A fresh
+/// file will never contain one: the emitter has the content in hand, so it
+/// always writes a cost. The column is nullable here anyway so a migrated file
+/// and a fresh file have the same shape, which is worth more than a constraint
+/// that only history can violate.
 pub(crate) const CONTEXT_BLOCKS_DDL: &str = "CREATE TABLE IF NOT EXISTS context_blocks (
        execution_id INTEGER NOT NULL,
        block_id TEXT NOT NULL,
@@ -480,7 +488,7 @@ pub(crate) const CONTEXT_BLOCKS_DDL: &str = "CREATE TABLE IF NOT EXISTS context_
        origin_step INTEGER NOT NULL,
        call_id TEXT,
        memory_id TEXT,
-       token_cost INTEGER NOT NULL,
+       token_cost INTEGER,
        content_digest TEXT NOT NULL,
        citation_label TEXT,
        content TEXT,
