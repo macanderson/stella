@@ -889,3 +889,48 @@ fn pinned_protocol_version_is_the_expected_draft() {
         "CGP protocol version changed — re-verify the conformance suite before bumping the pin"
     );
 }
+
+/// `stella_core::context_record::Representation` is a **second** declaration of
+/// the representation vocabulary CGP owns normatively (ADR 0005, `SPEC.md` §6.4
+/// P1–P5). It exists because `stella-core` deliberately carries no
+/// `contextgraph-types` dependency — the record/lifecycle layer is host-owned
+/// per ADR 0007, and keeping the core crate protocol-free is the layering that
+/// makes that true.
+///
+/// The cost of that independence is that the two enums can silently disagree,
+/// and one of them is a wire vocabulary: these strings are what a provider sends
+/// and a host parses. A rename in `stella-core` alone would compile, pass its own
+/// tests, and produce frames no conformant peer understands.
+///
+/// So this is the seam's gate. It lives here because `stella-cli` is the only
+/// crate that sees both types, and it asserts agreement in the only direction
+/// that matters — the serialized form, not the Rust identifiers. If it fails,
+/// the fix is to change whichever side drifted from CGP, never to loosen the
+/// assertion: `stella-core` does not get a vote on protocol spelling.
+#[test]
+fn the_host_record_layer_spells_representations_the_way_the_protocol_does() {
+    use contextgraph_types::Representation as Wire;
+    use stella_core::context_record::Representation as Record;
+
+    for (record, wire) in [
+        (Record::Full, Wire::Full),
+        (Record::Compact, Wire::Compact),
+        (Record::Reference, Wire::Reference),
+    ] {
+        let wire_json = serde_json::to_value(wire).expect("wire representation serializes");
+        let record_json = serde_json::to_value(record).expect("record representation serializes");
+        assert_eq!(
+            record_json, wire_json,
+            "stella-core's `{record:?}` serializes as {record_json} but CGP spells it \
+             {wire_json} — the host record layer drifted from the protocol vocabulary"
+        );
+        // `as_str` is what Stella's own surfaces render and compare on, so it
+        // has to agree with the serialized form too — otherwise the drift just
+        // moves one layer inward instead of being caught.
+        assert_eq!(
+            serde_json::Value::String(record.as_str().to_string()),
+            wire_json,
+            "stella-core's `{record:?}::as_str()` disagrees with CGP's wire spelling"
+        );
+    }
+}
