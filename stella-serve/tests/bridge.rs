@@ -11,6 +11,7 @@ use stella_protocol::{
     BudgetMode, CompletionMessage, CompletionResult, CompletionUsage, ToolCall, ToolOutput,
     ToolSchema,
 };
+use stella_serve::observe::TurnRef;
 use stella_serve::{ServerFrame, Session, SessionSpec, TurnOutcomeWire};
 
 /// Build a mock model result carrying a final text answer and no tool calls —
@@ -65,6 +66,8 @@ fn spec_for(prompt: &str) -> SessionSpec {
         config: EngineConfig::default(),
         budget: BudgetGuard::new(BudgetMode::Off, None, None),
         reverse_request_timeout: SessionSpec::DEFAULT_REVERSE_REQUEST_TIMEOUT,
+        turn: TurnRef::new("turn-bridgetest0"),
+        observer: stella_serve::observe::null_observer(),
     }
 }
 

@@ -13,7 +13,7 @@
 //! server runtime. That cross-runtime wake is the `!Send`-future bridge.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -25,7 +25,47 @@ use stella_protocol::{
 use tokio::sync::{mpsc, oneshot};
 
 use crate::frame::ServerFrame;
+use crate::observe::event::{RequestId, ReverseKind, ServeEvent, millis};
 use crate::pending::Pending;
+
+/// Record that a reverse request reached the host, and start its clock.
+///
+/// Emitted *after* the frame is sent, never before: a request the host never
+/// received was not dispatched, and counting it as such would leave the
+/// in-flight gauge permanently short of an answer.
+fn dispatched(pending: &Pending, request_id: &str, kind: ReverseKind) -> Instant {
+    pending.observer().emit(&ServeEvent::ReverseDispatched {
+        turn: pending.turn().clone(),
+        request_id: RequestId::sanitized(request_id),
+        kind,
+    });
+    Instant::now()
+}
+
+/// Record that the host answered, and how long the engine step waited.
+fn answered(pending: &Pending, request_id: &str, kind: ReverseKind, started: Instant) {
+    pending.observer().emit(&ServeEvent::ReverseAnswered {
+        turn: pending.turn().clone(),
+        request_id: RequestId::sanitized(request_id),
+        kind,
+        waited_ms: millis(started.elapsed()),
+    });
+}
+
+/// Record that the host never answered and the port gave up.
+///
+/// **The** wedge signal. This is the moment a turn has burned its whole
+/// reverse-request deadline waiting on a host that said nothing, and before this
+/// it was a silent `HashMap::remove` inside `Pending::abandon` — the single most
+/// diagnostic event this service can produce, and it produced nothing.
+fn timed_out(pending: &Pending, request_id: &str, kind: ReverseKind, started: Instant) {
+    pending.observer().emit(&ServeEvent::ReverseTimedOut {
+        turn: pending.turn().clone(),
+        request_id: RequestId::sanitized(request_id),
+        kind,
+        waited_ms: millis(started.elapsed()),
+    });
+}
 
 /// How long a reverse request waits for the host before the port gives up.
 ///
@@ -127,16 +167,23 @@ impl Provider for RemoteProvider {
                 "serve host disconnected before the model call could be dispatched".to_string(),
             ));
         }
+        let started = dispatched(&self.pending, &request_id, ReverseKind::Provider);
         match tokio::time::timeout(self.timeout, rx).await {
-            Ok(Ok(result)) => result,
+            Ok(Ok(result)) => {
+                answered(&self.pending, &request_id, ReverseKind::Provider, started);
+                result
+            }
             // Sender dropped. Cancellation is the deliberate case and reports
-            // itself as such; otherwise the session is being torn down.
+            // itself as such; otherwise the session is being torn down. Either
+            // way `Pending`'s own clear reports the discard, so there is no
+            // per-request event here.
             Ok(Err(_)) if self.pending.is_cancelled() => Err(ProviderError::Cancelled),
             Ok(Err(_)) => Err(ProviderError::Transport(
                 "serve host dropped the model call without answering".to_string(),
             )),
             Err(_) => {
                 self.pending.abandon(&request_id);
+                timed_out(&self.pending, &request_id, ReverseKind::Provider, started);
                 // Deliberately `Terminal`, not `Transport`: `Transport` is
                 // retryable, so a host that is simply not answering would be
                 // handed the same unbounded wait again once per retry —
@@ -221,8 +268,12 @@ impl ToolExecutor for RemoteToolExecutor {
                     .to_string(),
             };
         }
+        let started = dispatched(&self.pending, &request_id, ReverseKind::Tool);
         match tokio::time::timeout(self.timeout, rx).await {
-            Ok(Ok(output)) => output,
+            Ok(Ok(output)) => {
+                answered(&self.pending, &request_id, ReverseKind::Tool, started);
+                output
+            }
             Ok(Err(_)) if self.pending.is_cancelled() => ToolOutput::Error {
                 message: "turn cancelled while the tool call was in flight".to_string(),
             },
@@ -231,6 +282,7 @@ impl ToolExecutor for RemoteToolExecutor {
             },
             Err(_) => {
                 self.pending.abandon(&request_id);
+                timed_out(&self.pending, &request_id, ReverseKind::Tool, started);
                 ToolOutput::Error {
                     message: format!(
                         "serve host did not answer the `{name}` tool call within {:?} \

@@ -21,6 +21,8 @@ use stella_protocol::{CompletionResult, ProviderError, ToolOutput};
 use tokio::sync::oneshot;
 
 use crate::error::ServeError;
+use crate::observe::SharedObserver;
+use crate::observe::event::{AbandonReason, MisrouteFault, RequestId, ServeEvent, TurnRef};
 
 /// The reply channel a parked provider step awaits: either the host's completed
 /// model call, or the failure class it wants the engine's retry logic to see.
@@ -33,7 +35,7 @@ enum PendingReply {
 }
 
 /// A cloneable handle to the shared registry. Cloning shares the same map.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Pending {
     inner: Arc<Mutex<HashMap<String, PendingReply>>>,
     /// Latched by [`Pending::cancel`]. The registry is the natural home for the
@@ -41,9 +43,33 @@ pub struct Pending {
     /// that both the HTTP side and the engine thread hold, and cancellation
     /// means exactly "stop waiting on reverse requests".
     cancelled: Arc<AtomicBool>,
+    /// Where this registry's discarded work is reported. Every drop below —
+    /// a misrouted answer, a cancel, a teardown — used to be silent.
+    observer: SharedObserver,
+    turn: TurnRef,
 }
 
 impl Pending {
+    /// A registry that reports what it discards.
+    #[must_use]
+    pub fn new(observer: SharedObserver, turn: TurnRef) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+            cancelled: Arc::new(AtomicBool::new(false)),
+            observer,
+            turn,
+        }
+    }
+
+    /// The observer this registry reports through, for the ports that share it.
+    pub(crate) fn observer(&self) -> &SharedObserver {
+        &self.observer
+    }
+
+    /// This turn's truncated id, for the ports that share it.
+    pub(crate) fn turn(&self) -> &TurnRef {
+        &self.turn
+    }
     /// Register a tool reply channel under `id`. Called by the engine thread
     /// before it emits the request frame, so the entry always exists by the
     /// time the host can answer.
@@ -84,7 +110,7 @@ impl Pending {
     pub fn resolve_tool(&self, id: &str, output: ToolOutput) -> Result<(), ServeError> {
         // A receive-side drop (the engine step was cancelled) is not an error to
         // the host: the request is simply gone.
-        let _ = self.take_tool(id)?.send(output);
+        let _ = self.report_misroute(id, self.take_tool(id))?.send(output);
         Ok(())
     }
 
@@ -95,8 +121,38 @@ impl Pending {
         id: &str,
         result: Result<CompletionResult, ProviderError>,
     ) -> Result<(), ServeError> {
-        let _ = self.take_provider(id)?.send(result);
+        let _ = self
+            .report_misroute(id, self.take_provider(id))?
+            .send(result);
         Ok(())
+    }
+
+    /// Record a host answer that matched nothing, then hand the result back.
+    ///
+    /// This is one of the four situations #930 names as indistinguishable from
+    /// silence: a host answering with the wrong `request_id` got a `409` that
+    /// nobody counted, while the engine step it was meant to answer stayed
+    /// parked until its deadline. The `409` is unchanged — what changes is that
+    /// the server now says so.
+    fn report_misroute<T>(&self, id: &str, taken: Result<T, ServeError>) -> Result<T, ServeError> {
+        if let Err(err) = &taken {
+            let fault = match err {
+                ServeError::UnknownRequest(_) => MisrouteFault::UnknownRequest,
+                ServeError::RequestKindMismatch(..) => MisrouteFault::KindMismatch,
+                // The other variants are session-lifecycle failures and never
+                // reach a resolve; recording them as unknown is the honest
+                // fallback rather than inventing a class.
+                _ => MisrouteFault::UnknownRequest,
+            };
+            self.observer.emit(&ServeEvent::ReverseMisrouted {
+                // Host-supplied, so it goes through the same sanitizer as an
+                // `X-Request-Id`: this value came off the wire, and a log is
+                // exactly where an unsanitized echo becomes a forging vector.
+                request_id: RequestId::sanitized(id),
+                fault,
+            });
+        }
+        taken
     }
 
     /// Drop every in-flight request. Their receivers observe a channel close,
@@ -105,7 +161,28 @@ impl Pending {
     /// outlives it. Teardown mid-turn goes through [`Pending::cancel`] instead:
     /// a bare clear wakes a parked step with a *retryable* error.
     pub(crate) fn clear(&self) {
-        self.lock().clear();
+        self.clear_reporting(AbandonReason::Teardown);
+    }
+
+    /// Drop every in-flight request and report how many were discarded.
+    ///
+    /// Reported only when the count is non-zero: a clean turn leaves nothing
+    /// parked, and an event on every teardown would be noise that trains a
+    /// reader to skip the one that matters.
+    fn clear_reporting(&self, reason: AbandonReason) {
+        let in_flight = {
+            let mut map = self.lock();
+            let count = map.len();
+            map.clear();
+            count
+        };
+        if in_flight > 0 {
+            self.observer.emit(&ServeEvent::ReverseAbandoned {
+                turn: self.turn.clone(),
+                in_flight,
+                reason,
+            });
+        }
     }
 
     /// Cancel the turn: latch the flag, then drop every in-flight request so any
@@ -123,7 +200,7 @@ impl Pending {
     /// always observes the flag already set.
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::SeqCst);
-        self.clear();
+        self.clear_reporting(AbandonReason::Cancelled);
     }
 
     /// Whether [`Pending::cancel`] has been called for this turn.
@@ -189,6 +266,125 @@ impl Pending {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::observe::Capture;
+
+    fn test_pending() -> Pending {
+        Pending::new(
+            crate::observe::null_observer(),
+            TurnRef::new("turn-test0000"),
+        )
+    }
+
+    fn observed_pending() -> (Pending, Arc<Capture>) {
+        let capture = Arc::new(Capture::new());
+        let pending = Pending::new(capture.clone(), TurnRef::new("turn-test0000"));
+        (pending, capture)
+    }
+
+    /// A host that answers with an id nobody is waiting on must be visible.
+    /// Before this, the `409` it received was the only trace, and the engine
+    /// step it meant to answer stayed parked until its deadline with nothing
+    /// in the server's output to say why.
+    #[test]
+    fn a_misrouted_answer_is_recorded_with_its_fault() {
+        let (pending, capture) = observed_pending();
+        let (tx, _rx) = oneshot::channel();
+        assert!(pending.register_provider("prov-0".to_string(), tx));
+
+        // Fabricated id: nothing is registered under it.
+        assert!(
+            pending
+                .resolve_tool(
+                    "nope-1",
+                    ToolOutput::Ok {
+                        content: String::new()
+                    }
+                )
+                .is_err()
+        );
+        // Real id, wrong kind: a provider request answered with a tool result.
+        assert!(
+            pending
+                .resolve_tool(
+                    "prov-0",
+                    ToolOutput::Ok {
+                        content: String::new()
+                    }
+                )
+                .is_err()
+        );
+
+        let faults: Vec<MisrouteFault> = capture
+            .events()
+            .into_iter()
+            .filter_map(|event| match event {
+                ServeEvent::ReverseMisrouted { fault, .. } => Some(fault),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            faults,
+            vec![MisrouteFault::UnknownRequest, MisrouteFault::KindMismatch],
+            "the two ways a host can misroute must be distinguishable"
+        );
+    }
+
+    /// A request id comes off the wire, so it is sanitized before it reaches a
+    /// record — a log is exactly where an unsanitized echo forges lines.
+    #[test]
+    fn a_hostile_request_id_never_reaches_a_record_verbatim() {
+        let (pending, capture) = observed_pending();
+        let hostile = "x\n{\"event\":\"listening\"}";
+        assert!(
+            pending
+                .resolve_tool(
+                    hostile,
+                    ToolOutput::Ok {
+                        content: String::new()
+                    }
+                )
+                .is_err()
+        );
+        let json = serde_json::to_string(&capture.events()[0]).expect("serialize");
+        assert!(!json.contains('\n'), "a record must not span lines: {json}");
+        assert!(
+            json.contains("<unusable>"),
+            "an unusable id is replaced, not escaped and kept: {json}"
+        );
+    }
+
+    /// Cancelling a turn with work in flight discards it — and says how much.
+    /// A clean teardown discards nothing and stays quiet, so the event means
+    /// something when it does appear.
+    #[test]
+    fn abandoned_work_is_counted_and_a_clean_teardown_is_silent() {
+        let (pending, capture) = observed_pending();
+        let (tx, _rx) = oneshot::channel();
+        assert!(pending.register_provider("prov-0".to_string(), tx));
+        let (tx, _rx) = oneshot::channel();
+        assert!(pending.register_tool("tool-0".to_string(), tx));
+
+        pending.cancel();
+        let abandoned: Vec<(usize, AbandonReason)> = capture
+            .events()
+            .into_iter()
+            .filter_map(|event| match event {
+                ServeEvent::ReverseAbandoned {
+                    in_flight, reason, ..
+                } => Some((in_flight, reason)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(abandoned, vec![(2, AbandonReason::Cancelled)]);
+
+        // Nothing left to discard, so nothing more is said.
+        pending.clear();
+        assert_eq!(
+            capture.count(|e| matches!(e, ServeEvent::ReverseAbandoned { .. })),
+            1,
+            "an empty registry must not emit — noise trains readers to skip"
+        );
+    }
 
     /// A cancel that has fully run before a port registers must refuse the
     /// registration: its wake-everyone clear has already happened, so an entry
@@ -196,7 +392,7 @@ mod tests {
     /// deadline with nobody left to wake it.
     #[test]
     fn registration_is_refused_once_cancelled() {
-        let pending = Pending::default();
+        let pending = test_pending();
         pending.cancel();
 
         let (tx, rx) = oneshot::channel();
@@ -217,7 +413,7 @@ mod tests {
     /// (non-retryable), not as an ordinary transport failure.
     #[test]
     fn cancel_after_registration_wakes_the_parked_sender() {
-        let pending = Pending::default();
+        let pending = test_pending();
         let (tx, rx) = oneshot::channel();
         assert!(pending.register_provider("prov-0".to_string(), tx));
 
