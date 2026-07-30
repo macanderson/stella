@@ -44,7 +44,13 @@ mod private;
 #[cfg(test)]
 #[path = "settings/private_state_tests.rs"]
 mod private_state_tests;
+mod toml_config;
+mod toml_io;
+#[cfg(test)]
+#[path = "settings/toml_tests.rs"]
+mod toml_tests;
 mod unknown;
+pub use toml_config::{CURRENT_SCHEMA_VERSION, ConfigScope, TomlConfig};
 pub use authority::{AuthorityPolicy, ManagedAuthoritySettings};
 pub(crate) use unknown::{
     ENGINE_AGENT_FIELDS, ENGINE_AGENT_NAMES, ENGINE_PARAM_FIELDS, ENGINE_ROOT_FIELDS,
