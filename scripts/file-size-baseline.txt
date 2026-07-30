@@ -18,7 +18,7 @@
 1789 stella-cli/src/agent_tests.rs
 2298 stella-cli/src/agent.rs
 1576 stella-cli/src/candidate_ws.rs
-4642 stella-cli/src/command_deck.rs
+4388 stella-cli/src/command_deck.rs
 2095 stella-core/src/bus.rs
 2116 stella-core/src/driver.rs
 2821 stella-core/src/driver/tests.rs
@@ -36,7 +36,7 @@
 1566 stella-tools/src/media.rs
 3422 stella-tools/src/registry.rs
 1837 stella-tools/src/scripts.rs
-1744 stella-tui/src/deck_render.rs
-4073 stella-tui/src/deck_ui.rs
+1745 stella-tui/src/deck_render.rs
+3888 stella-tui/src/deck_ui.rs
 1665 stella-tui/src/views/engine.rs
 1533 stella-tui/src/views/session.rs

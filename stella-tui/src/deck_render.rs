@@ -541,11 +541,12 @@ fn render_context_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
         } else {
             "not connected".to_string()
         };
+        let heading = crate::views::mcp::compact_heading(server);
         let mut spans = vec![
             Span::raw("  "),
             Span::styled(glyph, glyph_style),
             Span::raw(" "),
-            Span::styled(server.name.clone(), Style::default().fg(theme::INK)),
+            Span::styled(heading, Style::default().fg(theme::INK)),
             Span::styled(format!("  [{}]", server.kind), theme::muted()),
             Span::styled(format!("  {state}"), theme::muted()),
             Span::styled(format!("  · {} tools", server.tool_count), theme::muted()),

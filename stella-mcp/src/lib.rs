@@ -83,7 +83,7 @@ pub mod toolset;
 pub mod transport;
 
 pub use client::{HealthState, MAX_TOOLS_PER_SERVER, McpClient, McpToolInfo, ServerHealth};
-pub use config::{McpConfig, McpServerConfig, McpTransport};
+pub use config::{McpConfig, McpServerConfig, McpTransport, ServerCard};
 pub use error::McpError;
 pub use http::HttpTransport;
 pub use oauth::{
@@ -94,5 +94,5 @@ pub use registry::{
     RegistryPage, RegistryServer,
 };
 pub use stdio::StdioTransport;
-pub use toolset::{DEFAULT_CALL_TIMEOUT, DisabledServers, McpToolSet};
+pub use toolset::{DEFAULT_CALL_TIMEOUT, DisabledServers, McpToolSet, ServerIdentity};
 pub use transport::Transport;

@@ -42,6 +42,7 @@ mod context_records;
 mod contextgraph;
 mod credential_handoff;
 mod credential_status;
+mod deck_mcp;
 mod discovery;
 mod doctor;
 mod domains;

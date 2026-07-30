@@ -157,6 +157,17 @@ pub struct Implementation {
     pub name: String,
     #[serde(default)]
     pub version: String,
+    /// Optional human display name (MCP 2025-06-18+). Skipped when absent so
+    /// the `clientInfo` this crate *sends* keeps its established shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Optional publisher URL, when the server advertises one.
+    #[serde(
+        default,
+        rename = "websiteUrl",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub website_url: Option<String>,
 }
 
 /// `initialize` params. Capabilities are an open object; v1 advertises none.
@@ -169,8 +180,8 @@ pub struct InitializeParams {
     pub client_info: Implementation,
 }
 
-/// `initialize` result. Only the negotiated version and (optional) server
-/// info matter to this client; `capabilities` is captured but untyped.
+/// `initialize` result: the negotiated version, the (optional) server info,
+/// and the server's own `instructions`; `capabilities` is captured but untyped.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct InitializeResult {
     #[serde(rename = "protocolVersion", default)]
@@ -179,6 +190,14 @@ pub struct InitializeResult {
     pub capabilities: Value,
     #[serde(rename = "serverInfo", default)]
     pub server_info: Option<Implementation>,
+    /// The server's self-description — free prose it offers about what it is
+    /// and how to use it. Kept for display only: this client never splices a
+    /// server's prose into a prompt, because a third party's text reaching the
+    /// model unbidden is an injection surface, not a feature. For a server
+    /// installed outside a registry it is often the *only* description that
+    /// exists anywhere.
+    #[serde(default)]
+    pub instructions: Option<String>,
 }
 
 /// `tools/list` params — a lone optional pagination cursor.

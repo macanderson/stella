@@ -80,18 +80,58 @@ impl McpConfig {
     /// `candidate_safe` flag is preserved across the reinstall (it is a
     /// human-set policy, not part of the transport the registry publishes).
     pub fn upsert(&mut self, name: impl Into<String>, transport: McpTransport) {
+        self.upsert_with_card(name, transport, ServerCard::default());
+    }
+
+    /// [`McpConfig::upsert`], also recording the publisher's [`ServerCard`] —
+    /// the identity an alias alone cannot carry.
+    ///
+    /// An alias is a sanitized last path segment (`com.stripe/mcp` → `mcp`),
+    /// so a list keyed on it can be a column of names that say nothing about
+    /// what any of the servers *is*. The registry knows; it just was not being
+    /// kept. Re-installing refreshes the card, but an **empty** card never
+    /// erases a populated one: a hand-written entry (or one enriched later)
+    /// must not be blanked by a registry that has since dropped the field.
+    pub fn upsert_with_card(
+        &mut self,
+        name: impl Into<String>,
+        transport: McpTransport,
+        card: ServerCard,
+    ) {
         let name = name.into();
         match self.servers.get_mut(&name) {
-            Some(entry) => entry.transport = transport,
+            Some(entry) => {
+                entry.transport = transport;
+                entry.card.merge_from(card);
+            }
             None => {
                 self.servers.insert(
                     name,
                     McpServerEntry {
                         transport,
                         candidate_safe: false,
+                        card,
                     },
                 );
             }
+        }
+    }
+
+    /// The publisher-supplied identity recorded for `name`, if any.
+    pub fn card(&self, name: &str) -> Option<&ServerCard> {
+        self.servers.get(name).map(|e| &e.card)
+    }
+
+    /// Record (or refresh) `name`'s [`ServerCard`] in place, returning whether
+    /// the server exists to describe. Used to backfill an entry installed
+    /// before cards were kept, from a live registry lookup.
+    pub fn set_card(&mut self, name: &str, card: ServerCard) -> bool {
+        match self.servers.get_mut(name) {
+            Some(entry) => {
+                entry.card.merge_from(card);
+                true
+            }
+            None => false,
         }
     }
 
@@ -132,10 +172,79 @@ impl McpConfig {
     }
 }
 
-/// One server's on-disk entry: its transport plus Best-of-N candidate policy
-/// (issue #248 Phase 1), which lives OUTSIDE the internally-tagged
-/// [`McpTransport`] enum since it applies identically regardless of
-/// transport kind.
+/// What a server *is*, as its publisher describes it — the human half of an
+/// entry, kept beside the machine half (the transport).
+///
+/// Every field is optional and purely informational: nothing here changes how
+/// a server is reached, and a hand-written `mcp.toml` may omit the lot. It
+/// exists because the config key is a sanitized alias
+/// (`com.stripe/mcp` → `mcp`), which is a routing token, not a description —
+/// and until this was recorded, the only way to learn what a configured server
+/// did was to connect to it and read the tool names.
+///
+/// Untrusted display text: these strings come from a registry document a third
+/// party published. They are shown to the operator and never interpreted.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerCard {
+    /// The publisher's display name, when it differs from the alias.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// One-line summary of what the server does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// The fully-qualified registry id (`com.stripe/mcp`) this alias came
+    /// from — the join key for looking the entry up again later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_name: Option<String>,
+    /// Source repository URL, for vetting the publisher.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
+    /// The registry entry's version at install time. Informational only —
+    /// stella pins nothing (see [`crate::registry`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+impl ServerCard {
+    /// Whether the card carries nothing at all (an entry with no recorded
+    /// provenance — every server installed before cards were kept).
+    pub fn is_empty(&self) -> bool {
+        *self == ServerCard::default()
+    }
+
+    /// The best human label for this server given its config alias: the
+    /// publisher's title, else the alias itself.
+    pub fn display_name<'a>(&'a self, alias: &'a str) -> &'a str {
+        self.title
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .unwrap_or(alias)
+    }
+
+    /// Overlay `other`'s populated fields onto this card, field by field.
+    ///
+    /// Per-field rather than wholesale so a partial refresh cannot erase what
+    /// is already known: a registry that answers with a description but no
+    /// repository must not blank a repository recorded earlier.
+    pub fn merge_from(&mut self, other: ServerCard) {
+        fn take(slot: &mut Option<String>, incoming: Option<String>) {
+            if let Some(value) = incoming.filter(|v| !v.trim().is_empty()) {
+                *slot = Some(value);
+            }
+        }
+        take(&mut self.title, other.title);
+        take(&mut self.description, other.description);
+        take(&mut self.registry_name, other.registry_name);
+        take(&mut self.repository, other.repository);
+        take(&mut self.version, other.version);
+    }
+}
+
+/// One server's on-disk entry: its transport, its Best-of-N candidate policy
+/// (issue #248 Phase 1), and the publisher's [`ServerCard`]. Both of the
+/// latter live OUTSIDE the internally-tagged [`McpTransport`] enum since they
+/// apply identically regardless of transport kind.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpServerEntry {
     #[serde(flatten)]
@@ -148,6 +257,12 @@ pub struct McpServerEntry {
     /// never inferred.
     #[serde(default)]
     pub candidate_safe: bool,
+    /// Publisher-supplied identity, recorded at install. Flattened so the
+    /// fields sit beside the transport's rather than in a sub-table — an entry
+    /// stays one readable block in `mcp.toml`, and an absent card writes
+    /// nothing at all.
+    #[serde(default, flatten)]
+    pub card: ServerCard,
 }
 
 /// One named server: its `name` (used as the tool-namespace segment), its
@@ -357,6 +472,121 @@ mod tests {
     fn empty_document_yields_no_servers() {
         let cfg = McpConfig::from_toml_str("").unwrap();
         assert!(cfg.into_servers().is_empty());
+    }
+
+    // ServerCard — the human half of an entry.
+
+    #[test]
+    fn card_round_trips_beside_a_credentialed_stdio_transport() {
+        // The interesting case for the flattened layout: a card's scalars have
+        // to survive serialization alongside the transport's `env` *table*.
+        let mut env = BTreeMap::new();
+        env.insert("LOG".to_string(), "info".to_string());
+        let mut cfg = McpConfig::default();
+        cfg.upsert_with_card(
+            "payments",
+            McpTransport::Stdio {
+                cmd: "npx".into(),
+                args: vec!["-y".into(), "@acme/payments-mcp".into()],
+                env,
+            },
+            ServerCard {
+                title: Some("Acme Payments".into()),
+                description: Some("Charge cards, refund payments, read balances.".into()),
+                registry_name: Some("com.acme/payments".into()),
+                repository: Some("https://github.com/acme/payments-mcp".into()),
+                version: Some("1.4.0".into()),
+            },
+        );
+
+        let text = cfg.to_toml_string().unwrap();
+        let back = McpConfig::from_toml_str(&text).unwrap();
+        let card = back.card("payments").expect("card survives the round trip");
+        assert_eq!(
+            card.description.as_deref(),
+            Some("Charge cards, refund payments, read balances.")
+        );
+        assert_eq!(card.registry_name.as_deref(), Some("com.acme/payments"));
+        assert_eq!(back.get("payments"), cfg.get("payments"));
+    }
+
+    #[test]
+    fn an_entry_without_a_card_writes_no_card_keys() {
+        let mut cfg = McpConfig::default();
+        cfg.upsert(
+            "plain",
+            McpTransport::Http {
+                url: "https://h/mcp".into(),
+                headers: BTreeMap::new(),
+            },
+        );
+        let text = cfg.to_toml_string().unwrap();
+        assert!(!text.contains("description"), "wrote empty keys: {text}");
+        assert!(cfg.card("plain").is_some_and(ServerCard::is_empty));
+    }
+
+    #[test]
+    fn a_document_predating_cards_still_parses() {
+        let cfg = McpConfig::from_toml_str(
+            r#"
+            [servers.fs]
+            transport = "stdio"
+            cmd = "mcp-fs"
+            "#,
+        )
+        .unwrap();
+        assert!(cfg.card("fs").is_some_and(ServerCard::is_empty));
+        assert_eq!(cfg.card("fs").unwrap().display_name("fs"), "fs");
+    }
+
+    #[test]
+    fn reinstalling_never_blanks_a_populated_card() {
+        let mut cfg = McpConfig::default();
+        let transport = McpTransport::Http {
+            url: "https://h/mcp".into(),
+            headers: BTreeMap::new(),
+        };
+        cfg.upsert_with_card(
+            "s",
+            transport.clone(),
+            ServerCard {
+                description: Some("kept".into()),
+                repository: Some("https://example.invalid/r".into()),
+                ..ServerCard::default()
+            },
+        );
+        // A refresh that knows only the description must not erase the repo.
+        cfg.upsert_with_card(
+            "s",
+            transport,
+            ServerCard {
+                description: Some("refreshed".into()),
+                ..ServerCard::default()
+            },
+        );
+        let card = cfg.card("s").unwrap();
+        assert_eq!(card.description.as_deref(), Some("refreshed"));
+        assert_eq!(
+            card.repository.as_deref(),
+            Some("https://example.invalid/r"),
+            "a partial refresh erased a field it knew nothing about"
+        );
+        // Whitespace-only text is not an update either.
+        assert!(!cfg.set_card("missing", ServerCard::default()));
+    }
+
+    #[test]
+    fn display_name_prefers_the_title_and_ignores_blank_ones() {
+        let card = ServerCard {
+            title: Some("Acme Payments".into()),
+            ..ServerCard::default()
+        };
+        assert_eq!(card.display_name("payments"), "Acme Payments");
+        let blank = ServerCard {
+            title: Some("   ".into()),
+            ..ServerCard::default()
+        };
+        assert_eq!(blank.display_name("payments"), "payments");
     }
 
     #[test]

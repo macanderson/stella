@@ -11,7 +11,9 @@
 use std::path::{Path, PathBuf};
 
 use colored::Colorize;
-use stella_mcp::{InstallOption, McpConfig, McpTransport, RegistryClient, RegistryPage};
+use stella_mcp::{
+    InstallOption, McpConfig, McpTransport, RegistryClient, RegistryPage, ServerCard,
+};
 
 use crate::settings::Settings;
 
@@ -185,11 +187,61 @@ pub async fn search(
         .map_err(|e| e.to_string())
 }
 
-/// Install (or overwrite — MCP servers are not versioned) one server entry.
-pub fn install(workspace_root: &Path, alias: &str, transport: McpTransport) -> Result<(), String> {
+/// Install (or overwrite — MCP servers are not versioned) one server entry,
+/// recording the publisher's [`ServerCard`] beside the transport so the local
+/// alias is not the only thing the tab can show later.
+pub fn install(
+    workspace_root: &Path,
+    alias: &str,
+    transport: McpTransport,
+    card: ServerCard,
+) -> Result<(), String> {
     let mut cfg = load_config(workspace_root)?;
-    cfg.upsert(alias, transport);
+    cfg.upsert_with_card(alias, transport, card);
     save_config(workspace_root, &cfg)
+}
+
+/// Look a configured server up in the registry and record what it finds — the
+/// backfill for an entry written before cards were kept, or one installed by
+/// hand.
+///
+/// Matching is by recorded `registry_name` when there is one, else by the
+/// alias, and it is **exact**: a fuzzy match would confidently label a server
+/// with another publisher's description, which is worse than the blank it
+/// replaces. Returns the card it stored, or `None` when the registry has no
+/// entry under either name.
+pub async fn refresh_card(
+    workspace_root: &Path,
+    registry_url: &str,
+    alias: &str,
+) -> Result<Option<ServerCard>, String> {
+    let cfg = load_config(workspace_root)?;
+    if cfg.get(alias).is_none() {
+        return Err(format!(
+            "no MCP server `{alias}` in {}",
+            mcp_toml_path(workspace_root).display()
+        ));
+    }
+    let recorded = cfg.card(alias).and_then(|c| c.registry_name.clone());
+    let query = recorded.clone().unwrap_or_else(|| alias.to_string());
+    let page = search(registry_url, Some(&query), None, 30).await?;
+    let found = page.entries.into_iter().find(|e| {
+        recorded.as_deref() == Some(e.server.name.as_str())
+            || e.server.name == alias
+            || e.server.default_alias() == alias
+    });
+    let Some(entry) = found else {
+        return Ok(None);
+    };
+    let card = entry.server.card();
+    // Re-load rather than reuse `cfg`: the registry round-trip above is a
+    // network call, and an auth write racing it must not be rolled back by a
+    // stale in-memory document.
+    let mut cfg = load_config(workspace_root)?;
+    if cfg.set_card(alias, card.clone()) {
+        save_config(workspace_root, &cfg)?;
+    }
+    Ok(Some(card))
 }
 
 /// Set a credential (env var for stdio, header for http) on a configured
@@ -337,7 +389,7 @@ pub fn usage_stats(workspace_root: &Path) -> Result<Vec<stella_store::McpUsageSt
 pub async fn resolve_install(
     registry_url: &str,
     name: &str,
-) -> Result<(String, InstallOption), String> {
+) -> Result<(String, InstallOption, ServerCard), String> {
     let page = search(registry_url, Some(name), None, 30).await?;
     let entry = page
         .entries
@@ -353,7 +405,7 @@ pub async fn resolve_install(
             "`{name}` publishes neither a runnable package nor a remote endpoint"
         ));
     }
-    Ok((alias, options.remove(0)))
+    Ok((alias, options.remove(0), entry.server.card()))
 }
 
 // ── `stella mcp` subcommand ──────────────────────────────────────────────────
@@ -398,6 +450,7 @@ fn run_list(workspace_root: &Path) -> Result<(), String> {
     }
     for name in cfg.names() {
         let transport = cfg.get(name).expect("name came from the config");
+        let card = cfg.card(name).expect("name came from the config");
         let auth = if transport.has_credentials() {
             format!("· auth: {}", transport.credential_names().join(", ")).dimmed()
         } else {
@@ -406,10 +459,19 @@ fn run_list(workspace_root: &Path) -> Result<(), String> {
         println!(
             "  {} {} {} {}",
             "·".green(),
-            name.bright_magenta(),
+            card.display_name(name).bright_magenta(),
             format!("[{}]", transport.kind_label()).dimmed(),
             auth
         );
+        // The alias is the routing token — the thing to type — so it stays
+        // visible even when a title has taken the headline slot.
+        if card.display_name(name) != name {
+            println!("      {}", format!("alias: {name}").dimmed());
+        }
+        match card.description.as_deref() {
+            Some(desc) => println!("      {}", truncate(desc, 100).dimmed()),
+            None => println!("      {}", endpoint_summary(transport).dimmed()),
+        }
     }
     println!(
         "\n  {}",
@@ -457,9 +519,10 @@ fn run_search(workspace_root: &Path, query: &str, limit: u32) -> Result<(), Stri
 
 fn run_install(workspace_root: &Path, name: &str, alias: Option<String>) -> Result<(), String> {
     let registry_url = resolve_registry_url(workspace_root);
-    let (default_alias, option) = runtime()?.block_on(resolve_install(&registry_url, name))?;
+    let (default_alias, option, card) =
+        runtime()?.block_on(resolve_install(&registry_url, name))?;
     let alias = alias.unwrap_or(default_alias);
-    install(workspace_root, &alias, option.transport)?;
+    install(workspace_root, &alias, option.transport, card)?;
     println!(
         "  {} installed {} as {} ({})",
         "◆".bright_cyan(),
@@ -588,6 +651,55 @@ fn truncate(s: &str, max_chars: usize) -> String {
     format!("{head}…")
 }
 
+/// One line saying where a server actually is: the endpoint URL for http, the
+/// spawn command line for stdio.
+///
+/// This is the fallback identity — the thing that is true of *every* entry,
+/// with or without a registry card. An alias of `mcp` pointing at
+/// `https://mcp.stripe.com/v1` is only mysterious until the URL is on screen.
+///
+/// **Query strings are redacted.** Hosted MCP endpoints are routinely handed
+/// out with the credential in the URL (`?api_key=…`), and this string is
+/// printed to a terminal, shown in a shared screenshot, and pasted into bug
+/// reports. Keys are kept, values become `…`, so the shape of the endpoint
+/// stays readable without the secret riding along. Nothing else in a
+/// transport is secret: `env`/`headers` *values* are never rendered here, only
+/// their names, and a spawn command line is a package name and flags.
+pub fn endpoint_summary(transport: &McpTransport) -> String {
+    match transport {
+        McpTransport::Stdio { cmd, args, .. } => {
+            let mut line = cmd.clone();
+            for arg in args {
+                line.push(' ');
+                line.push_str(arg);
+            }
+            line
+        }
+        McpTransport::Http { url, .. } => redact_query(url),
+    }
+}
+
+/// Replace every query-parameter *value* in `url` with `…`, keeping the keys.
+/// Split on the first `?` only — anything after it is the query, and a `?` in
+/// a path segment is not something a URL is allowed to carry unescaped.
+fn redact_query(url: &str) -> String {
+    let Some((base, query)) = url.split_once('?') else {
+        return url.to_string();
+    };
+    if query.is_empty() {
+        return base.to_string();
+    }
+    let scrubbed: Vec<String> = query
+        .split('&')
+        .map(|pair| match pair.split_once('=') {
+            Some((key, _)) => format!("{key}=…"),
+            // A bare flag carries no value to hide.
+            None => pair.to_string(),
+        })
+        .collect();
+    format!("{base}?{}", scrubbed.join("&"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -608,7 +720,7 @@ mod tests {
             args: vec!["-y".into(), "some-mcp".into()],
             env: BTreeMap::new(),
         };
-        install(&dir, "some", transport.clone()).unwrap();
+        install(&dir, "some", transport.clone(), ServerCard::default()).unwrap();
         let cfg = load_config(&dir).unwrap();
         assert_eq!(cfg.names(), vec!["some"]);
         assert_eq!(cfg.get("some"), Some(&transport));
@@ -710,5 +822,86 @@ mod tests {
             .output()
             .unwrap();
         assert!(ignored.status.success(), "OAuth tokens must never stage");
+    }
+
+    #[test]
+    fn endpoint_summary_is_the_identity_of_last_resort() {
+        // An alias says nothing; the endpoint names the vendor.
+        let http = McpTransport::Http {
+            url: "https://mcp.stripe.com/v1".into(),
+            headers: BTreeMap::new(),
+        };
+        assert_eq!(endpoint_summary(&http), "https://mcp.stripe.com/v1");
+
+        let stdio = McpTransport::Stdio {
+            cmd: "npx".into(),
+            args: vec!["-y".into(), "@stripe/mcp".into()],
+            env: BTreeMap::new(),
+        };
+        assert_eq!(endpoint_summary(&stdio), "npx -y @stripe/mcp");
+    }
+
+    #[test]
+    fn a_credential_in_the_query_string_is_redacted_but_the_host_survives() {
+        // Hosted MCP endpoints routinely carry the key in the URL, and this
+        // string lands in terminals, screenshots, and bug reports.
+        let leaky = McpTransport::Http {
+            url: "https://server.smithery.ai/x/mcp?api_key=sk-live-abc123&profile=default".into(),
+            headers: BTreeMap::new(),
+        };
+        let shown = endpoint_summary(&leaky);
+        assert!(!shown.contains("sk-live-abc123"), "key leaked: {shown}");
+        assert!(shown.contains("server.smithery.ai"), "host lost: {shown}");
+        assert!(shown.contains("api_key=…"), "key name lost: {shown}");
+        assert!(shown.contains("profile=…"), "{shown}");
+    }
+
+    #[test]
+    fn redact_query_leaves_url_shapes_it_has_nothing_to_hide_in() {
+        assert_eq!(redact_query("https://h/mcp"), "https://h/mcp");
+        assert_eq!(redact_query("https://h/mcp?"), "https://h/mcp");
+        // A bare flag carries no value to hide.
+        assert_eq!(redact_query("https://h/mcp?debug"), "https://h/mcp?debug");
+    }
+
+    #[test]
+    fn install_records_the_publishers_card_and_list_can_read_it_back() {
+        let dir = std::env::temp_dir().join(format!("stella-mcp-card-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        install(
+            &dir,
+            "mcp",
+            McpTransport::Http {
+                url: "https://mcp.stripe.com/v1".into(),
+                headers: BTreeMap::new(),
+            },
+            ServerCard {
+                title: Some("Stripe".into()),
+                description: Some("Payments, refunds, and balance reads.".into()),
+                registry_name: Some("com.stripe/mcp".into()),
+                ..ServerCard::default()
+            },
+        )
+        .unwrap();
+
+        // The whole point: the alias `mcp` is now legible after a restart.
+        let cfg = load_config(&dir).unwrap();
+        let card = cfg.card("mcp").unwrap();
+        assert_eq!(card.display_name("mcp"), "Stripe");
+        assert_eq!(card.registry_name.as_deref(), Some("com.stripe/mcp"));
+        assert!(card.description.as_deref().unwrap().contains("refunds"));
+
+        // Setting a credential later must not blow the card away.
+        set_credential(&dir, "mcp", "Authorization", "Bearer x".into()).unwrap();
+        let cfg = load_config(&dir).unwrap();
+        assert_eq!(
+            cfg.card("mcp").unwrap().description,
+            card.description,
+            "an auth write erased the recorded description"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

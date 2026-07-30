@@ -35,15 +35,15 @@ use crate::deck::{DeckTab, WorkspaceModel};
 use crate::deck_ui::gates::handle_focused_gates;
 use crate::envelope::{
     AgentControl, AgentId, AgentScope, AgentStatus, EntityField, EntityHit, Inbound,
-    InstalledAgentEntry, IssueAction, IssueRow, Secret, SkillOp, SkillScope, SkillSearchHit,
-    SkillsView, SplashCue, WorkspaceInput,
+    InstalledAgentEntry, IssueAction, IssueRow, SkillOp, SkillScope, SkillSearchHit, SkillsView,
+    SplashCue, WorkspaceInput,
 };
 use crate::graph::GraphSnapshot;
 use crate::input::{ScopeDecision, UserInput};
 use crate::notice::NoticeState;
 use crate::scroll::ScrollState;
 use crate::splash::SplashState;
-use crate::views::mcp::{AuthPrompt, AuthStep, McpMode};
+use crate::views::mcp::{AuthStep, McpMode};
 
 /// How long a turn-stopping Esc stays armed for the double-Esc escalation: a
 /// second Esc inside this window (with no other key in between) is "full
@@ -1138,6 +1138,13 @@ pub fn ingest_inbound(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut De
         ui.mcp.search = Some(outcome.clone());
         return;
     }
+    if let Inbound::McpDetail(detail) = inbound {
+        // Ignores a detail for a server other than the open inspector's — a
+        // reply can outlive the inspector that asked for it when a registry
+        // lookup is in the middle.
+        ui.mcp.apply_detail(detail.as_ref().clone());
+        return;
+    }
     // `/help` from the driver opens the same overlay the `?` key opens. Reset
     // to the top so re-opening via the command always lands at the start.
     if let Inbound::ShowHelp = inbound {
@@ -1549,7 +1556,11 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
         }
     }
 
-    if is_ctrl_o && ui.tab != DeckTab::Skills {
+    // Ctrl-O is the transcript's expand/collapse *except* on the tabs that
+    // claim it for their own inspector — SKILLS (SKILL.md preview) and MCP
+    // (server detail). Those tabs have no transcript rows on screen, so the
+    // global meaning would be a keypress that visibly does nothing.
+    if is_ctrl_o && !matches!(ui.tab, DeckTab::Skills | DeckTab::Mcp) {
         if let Some(sel) = ui.session_selected {
             // Only a genuinely expandable entry toggles — a no-op press must
             // not bump `expanded_rev` and invalidate the settled fold cache.
@@ -3286,206 +3297,6 @@ pub(crate) fn focused_id(model: &WorkspaceModel, ui: &DeckUi) -> Option<AgentId>
     model.agents.get(ui.focused).map(|a| a.meta.id.clone())
 }
 
-/// MCP tab keys. Three sub-modes: Browse (navigate the configured servers and
-/// act on the selection), Search (type a registry query, then Enter to search
-/// and Enter again to install the highlighted result), and Auth (a two-step
-/// masked credential prompt). Search/Auth are modal — they claim every key so
-/// typing never leaks into the composer — while Browse's letter actions gate on
-/// `composer_empty` so they don't shadow the first character of a prompt.
-fn handle_mcp_key(key: KeyEvent, ui: &mut DeckUi, composer_empty: bool) -> Option<DeckAction> {
-    match ui.mcp.mode {
-        McpMode::Browse => handle_mcp_browse_key(key, ui, composer_empty),
-        McpMode::Search => Some(handle_mcp_search_key(key, ui)),
-        McpMode::Auth => Some(handle_mcp_auth_key(key, ui)),
-    }
-}
-
-fn handle_mcp_browse_key(
-    key: KeyEvent,
-    ui: &mut DeckUi,
-    composer_empty: bool,
-) -> Option<DeckAction> {
-    let count = ui.mcp.servers.len();
-    match key.code {
-        KeyCode::Up => {
-            ui.mcp.selected = ui.mcp.selected.saturating_sub(1);
-            Some(DeckAction::Handled)
-        }
-        KeyCode::Down => {
-            if count > 0 {
-                ui.mcp.selected = (ui.mcp.selected + 1).min(count - 1);
-            }
-            Some(DeckAction::Handled)
-        }
-        // Enter registry-search mode. `s` sits with the tab's other letter
-        // actions (e/a/x/r, all gated on an empty composer). `/` deliberately
-        // does NOT enter search anymore: it belongs to the command menu
-        // everywhere — `/mcp-search` in that menu lands here too.
-        KeyCode::Char('s') if composer_empty => {
-            ui.mcp.mode = McpMode::Search;
-            ui.mcp.status = None;
-            Some(DeckAction::Handled)
-        }
-        // Enable/disable the selected server (session-scoped, live).
-        KeyCode::Char('e') | KeyCode::Char(' ') if composer_empty => {
-            ui.mcp.selected_server().map(|s| {
-                DeckAction::Send(WorkspaceInput::McpToggle {
-                    name: s.name.clone(),
-                })
-            })
-        }
-        // Enter the auth prompt for the selected server, prefilled with its
-        // first configured credential field (if any).
-        KeyCode::Char('a') if composer_empty => {
-            let server = ui.mcp.selected_server()?;
-            let name = server.name.clone();
-            let field = server.auth_fields.first().cloned().unwrap_or_default();
-            ui.mcp.auth = AuthPrompt {
-                server: name,
-                field,
-                value: String::new(),
-                step: AuthStep::Field,
-            };
-            ui.mcp.mode = McpMode::Auth;
-            Some(DeckAction::Handled)
-        }
-        // Start the browser OAuth login for the selected server. Http-only —
-        // a stdio server has no authorization server, so the key explains
-        // instead of firing.
-        KeyCode::Char('o') if composer_empty => {
-            let server = ui.mcp.selected_server()?;
-            let name = server.name.clone();
-            if server.oauth.is_none() {
-                ui.mcp.status = Some(format!(
-                    "{name}: OAuth login applies to http servers (use `a` for env credentials)"
-                ));
-                return Some(DeckAction::Handled);
-            }
-            ui.mcp.status = Some(format!("{name}: starting OAuth login…"));
-            Some(DeckAction::Send(WorkspaceInput::McpOauthLogin {
-                server: name,
-            }))
-        }
-        // Remove the selected server from mcp.toml.
-        KeyCode::Char('x') if composer_empty => ui.mcp.selected_server().map(|s| {
-            DeckAction::Send(WorkspaceInput::McpRemove {
-                name: s.name.clone(),
-            })
-        }),
-        // Rebuild the snapshot.
-        KeyCode::Char('r') if composer_empty => Some(DeckAction::Send(WorkspaceInput::McpRefresh)),
-        _ => None,
-    }
-}
-
-fn handle_mcp_search_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
-    match key.code {
-        KeyCode::Esc => {
-            ui.mcp.mode = McpMode::Browse;
-            ui.mcp.searching = false;
-            DeckAction::Handled
-        }
-        KeyCode::Backspace => {
-            ui.mcp.query.pop();
-            DeckAction::Handled
-        }
-        KeyCode::Up => {
-            ui.mcp.search_selected = ui.mcp.search_selected.saturating_sub(1);
-            DeckAction::Handled
-        }
-        KeyCode::Down => {
-            let items = ui.mcp.search.as_ref().map(|o| o.items.len()).unwrap_or(0);
-            if items > 0 {
-                ui.mcp.search_selected = (ui.mcp.search_selected + 1).min(items - 1);
-            }
-            DeckAction::Handled
-        }
-        KeyCode::Enter => {
-            // Results already match the query → Enter installs the highlight;
-            // otherwise Enter runs the search.
-            if ui.mcp.results_match_query() {
-                match ui.mcp.selected_search_name().map(str::to_string) {
-                    Some(name) => {
-                        ui.mcp.status = Some(format!("installing {name}…"));
-                        // Drop back to the Browse list so the refreshed
-                        // installed-servers snapshot (pushed once the install
-                        // lands) is actually on screen — Search mode would
-                        // otherwise hide it behind now-stale results.
-                        ui.mcp.mode = McpMode::Browse;
-                        DeckAction::Send(WorkspaceInput::McpInstall { name })
-                    }
-                    None => DeckAction::Handled,
-                }
-            } else {
-                let query = ui.mcp.query.trim().to_string();
-                if query.is_empty() {
-                    return DeckAction::Handled;
-                }
-                ui.mcp.searching = true;
-                ui.mcp.search = None;
-                DeckAction::Send(WorkspaceInput::McpSearch { query })
-            }
-        }
-        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            ui.mcp.query.push(c);
-            DeckAction::Handled
-        }
-        // Modal: swallow everything else so nothing leaks to the composer.
-        _ => DeckAction::Handled,
-    }
-}
-
-fn handle_mcp_auth_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
-    match key.code {
-        KeyCode::Esc => {
-            ui.mcp.mode = McpMode::Browse;
-            ui.mcp.auth = AuthPrompt::default();
-            DeckAction::Handled
-        }
-        KeyCode::Enter => match ui.mcp.auth.step {
-            AuthStep::Field => {
-                if ui.mcp.auth.field.trim().is_empty() {
-                    return DeckAction::Handled;
-                }
-                ui.mcp.auth.step = AuthStep::Value;
-                DeckAction::Handled
-            }
-            AuthStep::Value => {
-                let server = ui.mcp.auth.server.clone();
-                let field = ui.mcp.auth.field.trim().to_string();
-                let value = std::mem::take(&mut ui.mcp.auth.value);
-                ui.mcp.mode = McpMode::Browse;
-                ui.mcp.auth = AuthPrompt::default();
-                ui.mcp.status = Some(format!("set credential {field} for {server}"));
-                DeckAction::Send(WorkspaceInput::McpAuth {
-                    server,
-                    field,
-                    value: Secret::new(value),
-                })
-            }
-        },
-        KeyCode::Backspace => {
-            match ui.mcp.auth.step {
-                AuthStep::Field => {
-                    ui.mcp.auth.field.pop();
-                }
-                AuthStep::Value => {
-                    ui.mcp.auth.value.pop();
-                }
-            }
-            DeckAction::Handled
-        }
-        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            match ui.mcp.auth.step {
-                AuthStep::Field => ui.mcp.auth.field.push(c),
-                AuthStep::Value => ui.mcp.auth.value.push(c),
-            }
-            DeckAction::Handled
-        }
-        _ => DeckAction::Handled,
-    }
-}
-
 /// The SETTINGS tab's browse keys (non-modal — the composer stays live). The
 /// tab hosts two editors behind a secondary nav, exactly like the AGENTS tab:
 /// ←/→ walk AGENTS ↔ TOOLS (one pane on screen at a time) and `e` hands the
@@ -4068,6 +3879,10 @@ fn cycle_filter(model: &WorkspaceModel, current: Option<&str>) -> Option<AgentId
         }
     }
 }
+
+/// MCP-tab key handling (inspector / browse / search / auth).
+mod mcp_keys;
+use mcp_keys::handle_mcp_key;
 
 #[cfg(test)]
 mod tests;

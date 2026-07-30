@@ -139,7 +139,7 @@ pub(crate) fn now_ms() -> u64 {
 /// An ephemeral transcript notice for DIRECT deck sends (`deck_tx`), never
 /// the journaled `in_tx` path: boot narration, hints, and guidance that must
 /// not replay (and pile up) every time the session is resumed.
-fn chrome_note(text: String) -> Inbound {
+pub(crate) fn chrome_note(text: String) -> Inbound {
     Inbound::Event {
         agent: LEAD.to_string(),
         event: AgentEvent::Text { delta: text },
@@ -1101,7 +1101,7 @@ pub async fn run_deck_session(
                     // A stray answer/decision/control with no turn in flight
                     // falls through all four no-ops.
                     Some(other) => {
-                        if !service_mcp_action(
+                        if !crate::deck_mcp::service_mcp_action(
                             &other,
                             cfg,
                             mcp_slot.get().map(Arc::as_ref),
@@ -1610,11 +1610,38 @@ pub async fn run_deck_session(
                         | Some(WorkspaceInput::McpRemove { .. })
                         | Some(WorkspaceInput::McpAuth { .. })
                         | Some(WorkspaceInput::McpRefresh) => {}
+                        // The inspector IS serviced mid-turn: it is a read of
+                        // config + the live tool set + telemetry, and the
+                        // alternative is an overlay the user opened that hangs
+                        // on "gathering server detail…" until the turn ends.
+                        // `lookup` is dropped here rather than honored — a
+                        // registry round-trip is the one part that is not a
+                        // local read, and mid-turn is the wrong time to start
+                        // one; the `r` press is repeatable once the turn ends.
+                        Some(WorkspaceInput::McpInspect { name, .. }) => {
+                            let mcp = mcp_slot.get().cloned();
+                            match crate::deck_mcp::mcp_detail(
+                                cfg,
+                                mcp.as_deref(),
+                                &mcp_disabled,
+                                &name,
+                                stella_tui::McpLookupState::Idle,
+                            )
+                            .await
+                            {
+                                Ok(detail) => {
+                                    let _ = in_tx.send(Inbound::McpDetail(Box::new(detail)));
+                                }
+                                Err(error) => {
+                                    let _ = in_tx.send(chrome_note(format!("mcp: {error}\n")));
+                                }
+                            }
+                        }
                         // OAuth login is a spawned browser round-trip — safe
                         // to start mid-turn (its transport picks the tokens
                         // up lazily on the next call either way).
                         Some(WorkspaceInput::McpOauthLogin { server }) => {
-                            spawn_mcp_oauth_login(
+                            crate::deck_mcp::spawn_mcp_oauth_login(
                                 server,
                                 cfg.workspace_root.clone(),
                                 in_tx.clone(),
@@ -2030,239 +2057,13 @@ fn spawn_mcp_connect(
             }
         }
         // Seed the MCP tab with the configured servers and their live state.
-        send_mcp_snapshot(&cfg, slot.get().map(Arc::as_ref), &disabled, &in_tx).await;
+        crate::deck_mcp::send_mcp_snapshot(&cfg, slot.get().map(Arc::as_ref), &disabled, &in_tx)
+            .await;
         // MCP connect settled (or there was nothing to connect) — the other
         // init leg the launch splash waits on.
         release_splash();
     });
     configured
-}
-
-/// Build the MCP tab snapshot: every configured server (`.stella/mcp.toml`)
-/// joined with its live session state — enabled (not in the disabled set),
-/// connected (in the live tool set), health, per-server tool count (derived
-/// from the advertised schemas, so it is 0 the moment a server is disabled),
-/// configured credential field names, and total recorded tool calls.
-async fn mcp_snapshot(
-    cfg: &Config,
-    mcp: Option<&stella_mcp::McpToolSet>,
-    disabled: &stella_mcp::DisabledServers,
-) -> Result<Vec<stella_tui::McpServerInfo>, String> {
-    let config = crate::mcp_cmd::load_config(&cfg.workspace_root)?;
-    let connected: std::collections::HashSet<String> = mcp
-        .map(|s| {
-            s.connected_names()
-                .into_iter()
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default();
-    let health = match mcp {
-        Some(s) => s.health().await,
-        None => Vec::new(),
-    };
-    let schemas = mcp.map(|s| s.schemas()).unwrap_or_default();
-    let dropped = crate::mcp_cmd::dropped_by_server(mcp);
-    let usage = crate::mcp_cmd::usage_stats(&cfg.workspace_root)?;
-    let disabled_set = disabled.lock().unwrap_or_else(|p| p.into_inner()).clone();
-    let oauth_logins: std::collections::HashSet<String> =
-        crate::mcp_cmd::oauth_logged_in(&cfg.workspace_root)?
-            .into_iter()
-            .collect();
-
-    Ok(config
-        .names()
-        .into_iter()
-        .map(|name| {
-            let transport = config.get(name).expect("name came from the config");
-            let enabled = !disabled_set.contains(name);
-            let connected_now = connected.contains(name);
-            let prefix = format!("mcp__{name}__");
-            let tool_count = schemas
-                .iter()
-                .filter(|s| s.name.starts_with(&prefix))
-                .count();
-            let health = crate::mcp_cmd::health_label(&health, name);
-            let calls: u64 = usage
-                .iter()
-                .filter(|s| s.server == name)
-                .map(|s| s.calls.max(0) as u64)
-                .sum();
-            stella_tui::McpServerInfo {
-                name: name.to_string(),
-                kind: transport.kind_label().to_string(),
-                enabled,
-                connected: connected_now,
-                health: connected_now.then_some(health).flatten(),
-                tool_count,
-                dropped_tools: dropped.get(name).copied().unwrap_or(0),
-                auth_fields: transport
-                    .credential_names()
-                    .into_iter()
-                    .map(str::to_string)
-                    .collect(),
-                oauth: (transport.kind_label() == "http").then(|| oauth_logins.contains(name)),
-                calls,
-            }
-        })
-        .collect())
-}
-
-/// Build and push a fresh MCP tab snapshot.
-async fn send_mcp_snapshot(
-    cfg: &Config,
-    mcp: Option<&stella_mcp::McpToolSet>,
-    disabled: &stella_mcp::DisabledServers,
-    in_tx: &mpsc::UnboundedSender<Inbound>,
-) {
-    match mcp_snapshot(cfg, mcp, disabled).await {
-        Ok(rows) => {
-            let _ = in_tx.send(Inbound::McpServers(rows));
-        }
-        Err(error) => {
-            let _ = in_tx.send(Inbound::McpServers(Vec::new()));
-            let _ = in_tx.send(Inbound::McpOauthStatus {
-                server: "MCP state".to_string(),
-                message: error,
-                outcome: Some(false),
-            });
-        }
-    }
-}
-
-/// Run a registry search and shape it for the tab, flagging already-configured
-/// servers and deduping the registry's per-version rows to one per name.
-async fn run_mcp_search(cfg: &Config, query: &str) -> stella_tui::McpSearchOutcome {
-    let query = query.trim().to_string();
-    let configured: std::collections::HashSet<String> =
-        crate::mcp_cmd::load_config(&cfg.workspace_root)
-            .map(|c| c.names().into_iter().map(str::to_string).collect())
-            .unwrap_or_default();
-    let registry_url = crate::mcp_cmd::resolve_registry_url(&cfg.workspace_root);
-    match crate::mcp_cmd::search(&registry_url, Some(&query), None, 20).await {
-        Ok(page) => {
-            let mut seen = std::collections::HashSet::new();
-            let items = page
-                .entries
-                .into_iter()
-                .filter(|e| seen.insert(e.server.name.clone()))
-                .map(|e| {
-                    let alias = e.server.default_alias();
-                    stella_tui::McpSearchItem {
-                        installed: configured.contains(&e.server.name)
-                            || configured.contains(&alias),
-                        kinds: crate::mcp_cmd::install_kinds(&e.server),
-                        description: e.server.description.clone().unwrap_or_default(),
-                        name: e.server.name,
-                    }
-                })
-                .collect();
-            stella_tui::McpSearchOutcome {
-                query,
-                items,
-                error: None,
-                has_more: page.next_cursor.is_some(),
-            }
-        }
-        Err(error) => stella_tui::McpSearchOutcome {
-            query,
-            items: Vec::new(),
-            error: Some(error),
-            has_more: false,
-        },
-    }
-}
-
-/// Service one MCP-tab action from the deck. Returns `true` if `input` was an
-/// MCP verb (so the caller skips its own dispatch). Search/install/remove/auth
-/// touch `.stella/mcp.toml` (and, for search, the registry over HTTP); toggle
-/// flips the shared disabled set that the tool layer consults live.
-async fn service_mcp_action(
-    input: &WorkspaceInput,
-    cfg: &Config,
-    mcp: Option<&stella_mcp::McpToolSet>,
-    disabled: &stella_mcp::DisabledServers,
-    in_tx: &mpsc::UnboundedSender<Inbound>,
-) -> bool {
-    match input {
-        WorkspaceInput::McpToggle { name } => {
-            {
-                let mut set = disabled.lock().unwrap_or_else(|p| p.into_inner());
-                if !set.remove(name) {
-                    set.insert(name.clone());
-                }
-            }
-            send_mcp_snapshot(cfg, mcp, disabled, in_tx).await;
-        }
-        WorkspaceInput::McpRefresh => send_mcp_snapshot(cfg, mcp, disabled, in_tx).await,
-        WorkspaceInput::McpRemove { name } => {
-            match crate::mcp_cmd::remove(&cfg.workspace_root, name) {
-                Ok(true) => {}
-                // Not an error, but not what the operator asked for either:
-                // the row is gone from the tab and `.stella/mcp.toml` never
-                // had it. Silence here reads as success.
-                Ok(false) => {
-                    let _ = in_tx.send(chrome_note(format!(
-                        "mcp: `{name}` was not configured in .stella/mcp.toml — nothing removed\n"
-                    )));
-                }
-                Err(e) => {
-                    let _ = in_tx.send(chrome_note(format!(
-                        "mcp: could not remove `{name}`: {e}\n"
-                    )));
-                }
-            }
-            send_mcp_snapshot(cfg, mcp, disabled, in_tx).await;
-        }
-        WorkspaceInput::McpAuth {
-            server,
-            field,
-            value,
-        } => {
-            if let Err(e) = crate::mcp_cmd::set_credential(
-                &cfg.workspace_root,
-                server,
-                field,
-                value.reveal().to_string(),
-            ) {
-                // The single worst failure to swallow on this tab: the user
-                // typed a secret at a masked prompt, saw the tab refresh, and
-                // had no way to know it never reached disk.
-                let _ = in_tx.send(chrome_note(format!(
-                    "mcp: could not store the `{field}` credential for `{server}`: {e}\n"
-                )));
-            }
-            send_mcp_snapshot(cfg, mcp, disabled, in_tx).await;
-        }
-        WorkspaceInput::McpSearch { query } => {
-            let outcome = run_mcp_search(cfg, query).await;
-            let _ = in_tx.send(Inbound::McpSearchResults(outcome));
-        }
-        WorkspaceInput::McpInstall { name } => {
-            let registry_url = crate::mcp_cmd::resolve_registry_url(&cfg.workspace_root);
-            // Both halves of an install can fail for reasons the operator can
-            // act on — an unreachable registry, a name that is not in it, a
-            // read-only `.stella/mcp.toml`. Every one of them used to end with
-            // the tab refreshing unchanged and no explanation anywhere.
-            let outcome = match crate::mcp_cmd::resolve_install(&registry_url, name).await {
-                Ok((alias, option)) => {
-                    crate::mcp_cmd::install(&cfg.workspace_root, &alias, option.transport)
-                }
-                Err(e) => Err(e),
-            };
-            if let Err(e) = outcome {
-                let _ = in_tx.send(chrome_note(format!(
-                    "mcp: could not install `{name}`: {e}\n"
-                )));
-            }
-            send_mcp_snapshot(cfg, mcp, disabled, in_tx).await;
-        }
-        WorkspaceInput::McpOauthLogin { server } => {
-            spawn_mcp_oauth_login(server.clone(), cfg.workspace_root.clone(), in_tx.clone());
-        }
-        _ => return false,
-    }
-    true
 }
 
 /// Registry hygiene: terminal session records older than this are swept at
@@ -3011,61 +2812,6 @@ fn spawn_notification_poller(in_tx: mpsc::UnboundedSender<Inbound>) {
                 }
             }
         }
-    });
-}
-
-/// Run the browser OAuth login for an http MCP server in the background.
-/// Progress streams to the MCP tab's status line; the authorize URL and the
-/// final outcome also land in the persist-until-read inbox (the browser may
-/// have opened on another screen, and the tab may not be visible).
-fn spawn_mcp_oauth_login(
-    server: String,
-    workspace_root: std::path::PathBuf,
-    in_tx: mpsc::UnboundedSender<Inbound>,
-) {
-    tokio::spawn(async move {
-        let inbox = stella_store::NotificationStore::open_default();
-        let progress_tx = in_tx.clone();
-        let progress_server = server.clone();
-        let progress_inbox = inbox.clone();
-        let mut on_event = move |event: stella_mcp::LoginEvent| {
-            let message = match event {
-                stella_mcp::LoginEvent::Status(line) => line,
-                stella_mcp::LoginEvent::AuthorizeUrl(url) => {
-                    let _ = progress_inbox.push(&stella_store::Notification::new(
-                        format!("MCP OAuth: approve `{progress_server}` in your browser"),
-                        url.clone(),
-                        progress_server.clone(),
-                    ));
-                    format!("approve in your browser: {url}")
-                }
-            };
-            let _ = progress_tx.send(Inbound::McpOauthStatus {
-                server: progress_server.clone(),
-                message,
-                outcome: None,
-            });
-        };
-        let result = crate::mcp_cmd::oauth_login(&workspace_root, &server, &mut on_event).await;
-        let (message, ok) = match result {
-            Ok(()) => ("logged in — tokens auto-refresh".to_string(), true),
-            Err(e) => (e, false),
-        };
-        let title = if ok {
-            format!("MCP OAuth: `{server}` logged in")
-        } else {
-            format!("MCP OAuth: `{server}` login failed")
-        };
-        let _ = inbox.push(&stella_store::Notification::new(
-            title,
-            message.clone(),
-            server.clone(),
-        ));
-        let _ = in_tx.send(Inbound::McpOauthStatus {
-            server,
-            message,
-            outcome: Some(ok),
-        });
     });
 }
 

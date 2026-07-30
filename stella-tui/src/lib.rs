@@ -94,10 +94,11 @@ pub use deck_ui::{
 pub use envelope::{
     AgentControl, AgentId, AgentMeta, AgentScope, AgentStatus, AgentVersionInfo, EngineAgentState,
     EngineConfigState, EngineRole, EntityField, EntityHit, Inbound, InspectMessage, InspectView,
-    InstalledAgentEntry, IssueAction, IssueRow, McpSearchItem, McpSearchOutcome, McpServerInfo,
-    NotificationInfo, RecordedCallInfo, Secret, SessionInfo, SessionPhase, SkillOp, SkillRow,
-    SkillScope, SkillSearchHit, SkillsView, SplashCue, ToolDenial, ToolPolicyState, ToolRow,
-    ToolScope, WorkspaceInput,
+    InstalledAgentEntry, IssueAction, IssueRow, McpLiveIdentity, McpLookupState, McpSearchItem,
+    McpSearchOutcome, McpServerDetail, McpServerInfo, McpToolRow, NotificationInfo,
+    RecordedCallInfo, Secret, SessionInfo, SessionPhase, SkillOp, SkillRow, SkillScope,
+    SkillSearchHit, SkillsView, SplashCue, ToolDenial, ToolPolicyState, ToolRow, ToolScope,
+    WorkspaceInput,
 };
 pub use fleet_dashboard::{
     FleetControl, FleetDashResult, FleetMsg, FleetStatus, TaskSummary, run as run_fleet_dashboard,

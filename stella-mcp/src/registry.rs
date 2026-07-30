@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use crate::config::McpTransport;
+use crate::config::{McpTransport, ServerCard as McpServerCard};
 use crate::error::McpError;
 use crate::http::truncate;
 
@@ -282,6 +282,23 @@ impl RegistryServer {
     /// (non-empty, free of the reserved `__` separator).
     pub fn default_alias(&self) -> String {
         sanitize_alias(&self.name)
+    }
+
+    /// The publisher-facing half of this entry, shaped for `mcp.toml`.
+    ///
+    /// Aliasing is lossy by design — `com.stripe/mcp` installs as `mcp` — and
+    /// the description that would have made that alias legible was, until
+    /// this, read once for the search list and then thrown away. Recording it
+    /// alongside the transport is what lets a configured server say what it is
+    /// without a network round-trip, or a login, to find out.
+    pub fn card(&self) -> McpServerCard {
+        McpServerCard {
+            title: self.title.clone(),
+            description: self.description.clone(),
+            registry_name: Some(self.name.clone()),
+            repository: self.repository.as_ref().map(|r| r.url.clone()),
+            version: self.version.clone(),
+        }
     }
 
     /// Every concrete install target this server offers, remotes first (hosted,
@@ -720,6 +737,38 @@ mod tests {
                 .any(|f| f.location == AuthLocation::Header && f.secret),
             "secret header surfaced as auth"
         );
+    }
+
+    #[test]
+    fn a_registry_entry_yields_the_card_that_makes_its_alias_legible() {
+        let page = RegistryClient::parse_page(SEARCH_PACKAGES).unwrap();
+        let server = &page.entries[0].server;
+        let card = server.card();
+
+        // The alias install would write is lossy; the card is what restores
+        // the meaning it drops.
+        assert_ne!(server.default_alias(), server.name);
+        assert_eq!(card.registry_name.as_deref(), Some(server.name.as_str()));
+        assert_eq!(card.description, server.description);
+        assert_eq!(
+            card.repository,
+            server.repository.as_ref().map(|r| r.url.clone())
+        );
+        assert!(
+            !card.is_empty(),
+            "a registry entry must produce something to show"
+        );
+    }
+
+    #[test]
+    fn an_entry_the_registry_barely_describes_still_records_its_name() {
+        let body = r#"{"servers":[{"server":{"name":"com.x/y"},"_meta":{}}]}"#;
+        let page = RegistryClient::parse_page(body).unwrap();
+        let card = page.entries[0].server.card();
+        assert!(card.description.is_none());
+        // The registry name alone is worth keeping: it is the join key a later
+        // lookup uses to backfill everything else.
+        assert_eq!(card.registry_name.as_deref(), Some("com.x/y"));
     }
 
     #[test]

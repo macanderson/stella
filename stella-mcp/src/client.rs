@@ -98,6 +98,8 @@ pub struct McpClient {
     call_timeout: Duration,
     negotiated_version: String,
     server_info: Option<Implementation>,
+    /// The server's `instructions` from the handshake — display only.
+    instructions: Option<String>,
     tools: Vec<McpToolInfo>,
     /// How many advertised tools were refused past [`MAX_TOOLS_PER_SERVER`]
     /// (#551). Non-fatal: the server is live and every kept tool routes.
@@ -131,6 +133,7 @@ impl McpClient {
             call_timeout: DEFAULT_CALL_TIMEOUT,
             negotiated_version: String::new(),
             server_info: None,
+            instructions: None,
             tools: Vec::new(),
             dropped_tools: 0,
         }
@@ -202,6 +205,7 @@ impl McpClient {
         };
         self.negotiated_version = handshake.negotiated_version;
         self.server_info = handshake.server_info;
+        self.instructions = handshake.instructions;
         self.tools = handshake.tools;
         self.dropped_tools = handshake.dropped_tools;
         // The handshake is itself a completed request round-trip
@@ -447,6 +451,18 @@ impl McpClient {
         self.server_info.as_ref()
     }
 
+    /// The server's handshake `instructions` — its own prose about what it is
+    /// and how to drive it.
+    ///
+    /// Surfaced to the operator and never to the model: this is untrusted text
+    /// a third party controls, and splicing it into a prompt would hand that
+    /// party a channel into the conversation. As an *operator-facing*
+    /// description it is often all there is — a hand-configured server has no
+    /// registry entry to describe it.
+    pub fn instructions(&self) -> Option<&str> {
+        self.instructions.as_deref()
+    }
+
     /// The tools discovered during `initialize` (raw, un-namespaced).
     pub fn tools(&self) -> &[McpToolInfo] {
         &self.tools
@@ -490,6 +506,7 @@ impl McpClient {
 struct Handshake {
     negotiated_version: String,
     server_info: Option<Implementation>,
+    instructions: Option<String>,
     tools: Vec<McpToolInfo>,
     /// Tools refused past [`MAX_TOOLS_PER_SERVER`] (#551) — see
     /// [`McpClient::dropped_tool_count`].
@@ -531,6 +548,8 @@ async fn run_handshake(name: &str, transport: &dyn Transport) -> Result<Handshak
         client_info: Implementation {
             name: CLIENT_NAME.to_string(),
             version: CLIENT_VERSION.to_string(),
+            title: None,
+            website_url: None,
         },
     };
     let raw = transport.request("initialize", to_value(&params)?).await?;
@@ -562,6 +581,7 @@ async fn run_handshake(name: &str, transport: &dyn Transport) -> Result<Handshak
     Ok(Handshake {
         negotiated_version: version,
         server_info: result.server_info,
+        instructions: result.instructions.filter(|i| !i.trim().is_empty()),
         tools,
         dropped_tools,
     })
@@ -599,6 +619,56 @@ mod tests {
         assert_eq!(client.server_info().unwrap().name, "fixture");
         assert_eq!(client.tools().len(), 1);
         assert_eq!(client.tools()[0].name, "echo");
+    }
+
+    #[tokio::test]
+    async fn the_handshake_keeps_the_servers_own_description() {
+        // For a hand-configured server there is no registry entry, so
+        // `instructions` + `title` are the only description that exists
+        // anywhere. They used to be parsed and dropped on the floor.
+        let transport = ScriptedTransport::new();
+        transport.push_ok(
+            "initialize",
+            serde_json::json!({
+                "protocolVersion": PREFERRED_PROTOCOL_VERSION,
+                "serverInfo": {
+                    "name": "stripe-mcp",
+                    "version": "2.1.0",
+                    "title": "Stripe",
+                    "websiteUrl": "https://stripe.com"
+                },
+                "instructions": "Use create_refund to refund a charge."
+            }),
+        );
+        transport.push_ok("tools/list", serde_json::json!({ "tools": [] }));
+        let mut client = McpClient::new("mcp", Box::new(transport));
+        client.initialize().await.unwrap();
+
+        let info = client.server_info().unwrap();
+        assert_eq!(info.title.as_deref(), Some("Stripe"));
+        assert_eq!(info.website_url.as_deref(), Some("https://stripe.com"));
+        assert_eq!(
+            client.instructions(),
+            Some("Use create_refund to refund a charge.")
+        );
+    }
+
+    #[tokio::test]
+    async fn blank_instructions_are_absent_rather_than_an_empty_line() {
+        let transport = ScriptedTransport::new();
+        transport.push_ok(
+            "initialize",
+            serde_json::json!({
+                "protocolVersion": PREFERRED_PROTOCOL_VERSION,
+                "instructions": "   \n  "
+            }),
+        );
+        transport.push_ok("tools/list", serde_json::json!({ "tools": [] }));
+        let mut client = McpClient::new("srv", Box::new(transport));
+        client.initialize().await.unwrap();
+        assert_eq!(client.instructions(), None);
+        // A server that sends none at all is the same story.
+        assert!(client.server_info().is_none());
     }
 
     #[tokio::test]
