@@ -59,7 +59,7 @@ async fn every_frame_carries_a_monotonic_seq_in_the_payload_and_the_sse_id() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_reconnect_replays_the_frames_it_missed_and_the_turn_survives() {
     // A window long enough that the reconnect below is comfortably inside it.
-    let (addr, _capture) = start_observed_server_with(Duration::from_secs(10)).await;
+    let (addr, capture) = start_observed_server_with(Duration::from_secs(10)).await;
     let turn_id = create_turn(addr).await;
     let events_path = format!("/v1/turns/{turn_id}/events");
 
@@ -70,6 +70,12 @@ async fn a_reconnect_replays_the_frames_it_missed_and_the_turn_survives() {
         .expect("the turn produces a first frame");
     let resume_from = first_id.expect("every frame carries an id");
     drop(sse);
+
+    // Resuming means picking a *parked* turn back up, so wait for the server to
+    // have parked it. Racing that tests something else entirely — a second
+    // subscriber arriving while the first is still attached, which is answered
+    // from the retained tail with no live stream behind it.
+    await_parked_after_disconnect(&capture).await;
 
     // Reconnect asking for the WHOLE retained stream (`after=0`), not merely
     // what followed the frame already seen.
@@ -141,7 +147,7 @@ async fn a_reconnect_replays_the_frames_it_missed_and_the_turn_survives() {
 /// the web host — the one this server exists for — resume with no client code.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn last_event_id_resumes_the_same_way_the_after_query_does() {
-    let (addr, _capture) = start_observed_server_with(Duration::from_secs(10)).await;
+    let (addr, capture) = start_observed_server_with(Duration::from_secs(10)).await;
     let turn_id = create_turn(addr).await;
     let events_path = format!("/v1/turns/{turn_id}/events");
 
@@ -151,6 +157,7 @@ async fn last_event_id_resumes_the_same_way_the_after_query_does() {
         .expect("the turn produces a first frame");
     let resume_from = first_id.expect("every frame carries an id");
     drop(sse);
+    await_parked_after_disconnect(&capture).await;
 
     let mut sse = open_sse_resuming(addr, &events_path, TOKEN, resume_from).await;
     let (_, event) = next_event_with_id(&mut sse)
