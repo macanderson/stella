@@ -396,7 +396,7 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 [[package]]
 name = "contextgraph-conformance"
 version = "0.1.0"
-source = "git+https://github.com/macanderson/context-graph-protocol?rev=eeba49cef9a7604bd910d4faa871702869144ed0#eeba49cef9a7604bd910d4faa871702869144ed0"
+source = "git+https://github.com/macanderson/context-graph-protocol?rev=c5fb2fec5820494ab6921dc088c03d7f43301fa7#c5fb2fec5820494ab6921dc088c03d7f43301fa7"
 dependencies = [
  "async-trait",
  "clap",
@@ -405,13 +405,14 @@ dependencies = [
  "contextgraph-types",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
 ]
 
 [[package]]
 name = "contextgraph-host"
 version = "0.1.0"
-source = "git+https://github.com/macanderson/context-graph-protocol?rev=eeba49cef9a7604bd910d4faa871702869144ed0#eeba49cef9a7604bd910d4faa871702869144ed0"
+source = "git+https://github.com/macanderson/context-graph-protocol?rev=c5fb2fec5820494ab6921dc088c03d7f43301fa7#c5fb2fec5820494ab6921dc088c03d7f43301fa7"
 dependencies = [
  "async-trait",
  "contextgraph-types",
@@ -428,7 +429,7 @@ dependencies = [
 [[package]]
 name = "contextgraph-trace"
 version = "0.1.0"
-source = "git+https://github.com/macanderson/context-graph-protocol?rev=eeba49cef9a7604bd910d4faa871702869144ed0#eeba49cef9a7604bd910d4faa871702869144ed0"
+source = "git+https://github.com/macanderson/context-graph-protocol?rev=c5fb2fec5820494ab6921dc088c03d7f43301fa7#c5fb2fec5820494ab6921dc088c03d7f43301fa7"
 dependencies = [
  "contextgraph-types",
  "serde",
@@ -439,7 +440,7 @@ dependencies = [
 [[package]]
 name = "contextgraph-types"
 version = "0.1.0"
-source = "git+https://github.com/macanderson/context-graph-protocol?rev=eeba49cef9a7604bd910d4faa871702869144ed0#eeba49cef9a7604bd910d4faa871702869144ed0"
+source = "git+https://github.com/macanderson/context-graph-protocol?rev=c5fb2fec5820494ab6921dc088c03d7f43301fa7#c5fb2fec5820494ab6921dc088c03d7f43301fa7"
 dependencies = [
  "serde",
 ]
