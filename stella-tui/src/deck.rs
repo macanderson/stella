@@ -929,6 +929,11 @@ fn event_intensity(ev: &AgentEvent) -> u8 {
         AgentEvent::Commit { .. } | AgentEvent::Pr { .. } => 230,
         AgentEvent::BudgetTick { .. } | AgentEvent::StepUsage { .. } => 60,
         AgentEvent::Error { .. } => 255,
+        // A proof step is a decision the run reached, not work it did. It is
+        // real activity on the rail and none on the sparkline — pitched with
+        // the stage boundaries it interleaves with, so a well-proven turn does
+        // not read as busier than an unproven one doing the same edits.
+        AgentEvent::Proof { .. } => 170,
         // Explicit rather than falling through the wildcard: an undecodable
         // event is real activity, so it should register on the sparkline, but
         // this build cannot know whether it was hot (an edit) or cool (a
@@ -965,6 +970,34 @@ fn status_from_event(ev: &AgentEvent) -> Option<AgentStatus> {
 }
 
 /// A trace kind + short human summary for one event.
+/// One trace line for a proof step — the same facts the rail folds, in the
+/// order they were observed, for the reader who wants the history the rail
+/// deliberately discards.
+fn proof_trace(step: &stella_protocol::ProofStep) -> String {
+    use stella_protocol::{ProofStep, ProofTree};
+    match step {
+        ProofStep::Warrant {
+            required: true,
+            diff_lines,
+            ..
+        } => format!("warrant: required ({diff_lines} lines)"),
+        ProofStep::Warrant { reason, .. } => format!(
+            "warrant: {}",
+            reason.as_deref().unwrap_or("no test warranted")
+        ),
+        ProofStep::WitnessAuthored { path, .. } => format!("witness authored: {path}"),
+        ProofStep::WitnessUnavailable { reason } => format!("witness unavailable: {reason}"),
+        ProofStep::Oracle { passed, tree, .. } => format!(
+            "oracle: {} on {}",
+            if *passed { "pass" } else { "fail" },
+            match tree {
+                ProofTree::Baseline => "base",
+                ProofTree::Candidate => "new",
+            }
+        ),
+    }
+}
+
 fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
     use stella_protocol::ToolOutput;
     match ev {
@@ -1052,6 +1085,10 @@ fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
             TraceKind::Context,
             format!("manifest step {step}: {} blocks", blocks.len()),
         ),
+        // Traced under Verdict, the kind that already means "what this run
+        // established": the steps and the verdict are one story, and the trace
+        // log is where a reader reconstructs how the rail got where it is.
+        AgentEvent::Proof { step } => (TraceKind::Verdict, proof_trace(step)),
         AgentEvent::JudgeVerdict { passed, .. } => (
             TraceKind::Verdict,
             if *passed {

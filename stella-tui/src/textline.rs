@@ -440,6 +440,11 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
         // A discarded speculation is internal accounting for read-only work
         // that never reached the transcript — observability, not narration.
         | AgentEvent::SpeculationDiscarded { .. }
+        // Proof steps are the rail's data ([`crate::proof`]), not narration.
+        // They are a state machine whose CURRENT value is the whole point, so
+        // a surface renders the folded rail; replaying each transition as a
+        // scrollback line would bury the answer under its own history.
+        | AgentEvent::Proof { .. }
         // Typed decision events (receipts spec §6.3/§6.4) are the parseable
         // twins of prose the stream already narrates (`Steered`/`Error`
         // carry the loop/budget/retry story; policy denials surface as tool
