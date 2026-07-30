@@ -31,21 +31,29 @@ stella --model deepseek/deepseek-chat run "add a retry to the upload path"
 With no `--model` flag and no configured default, Stella selects the first provider that
 has a resolvable credential, in this preference order:
 
-1. `zai`
-2. `anthropic`
-3. `openai`
-4. `xai`
-5. `deepseek`
-6. `gemini`
-7. `openrouter`
+1. `openrouter` — **first, deliberately**
+2. `zai`
+3. `anthropic`
+4. `openai`
+5. `xai`
+6. `deepseek`
+7. `gemini`
 8. `vertex` and `bedrock` — **last, deliberately**
 
 <Callout type="info">
-  Vertex and Bedrock sit last on purpose: they key off generic cloud credentials
-  (`VERTEX_ACCESS_TOKEN`, `AWS_ACCESS_KEY_ID`) that are often present in a shell for
-  entirely unrelated reasons. Generic cloud credentials must not hijack detection — pin
-  these providers explicitly with `--model vertex/…` or `--model bedrock/…` when you want
-  them. The `local` pseudo-provider is never auto-detected at all.
+  Both ends of this order are arguments about what a credential *means*.
+
+  OpenRouter sits first because `OPENROUTER_API_KEY` is gateway-specific — nobody has one
+  exported by accident — and it reaches every other vendor on this list. An instance
+  holding one has already decided how it wants to route, so Stella gives it a whole
+  [default engine posture](/docs/api-providers/openrouter#the-default-posture), not just a
+  default model.
+
+  Vertex and Bedrock sit last for the mirror-image reason: they key off generic cloud
+  credentials (`VERTEX_ACCESS_TOKEN`, `AWS_ACCESS_KEY_ID`) that are often present in a
+  shell for entirely unrelated reasons. Generic cloud credentials must not hijack
+  detection — pin these providers explicitly with `--model vertex/…` or `--model
+  bedrock/…` when you want them. The `local` pseudo-provider is never auto-detected at all.
 </Callout>
 
 The "configured default" above is a real resolution layer with a name:

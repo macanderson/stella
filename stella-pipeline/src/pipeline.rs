@@ -55,7 +55,7 @@ use stella_core::router::FallbackInfo;
 use stella_core::{BudgetGuard, Engine, EngineConfig, EventSender, Router, TurnOutcome};
 use stella_protocol::{
     AgentEvent, CompletionMessage, JudgeEvidence, MessageRole, ModelCallRole, ModelRef, Provider,
-    Role, StageKind,
+    ProofStep, ProofTree, Role, StageKind,
 };
 
 use crate::candidate::{
