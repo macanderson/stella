@@ -1,4 +1,4 @@
-# Design: `stella.toml` — one config file, and the four features it unlocks
+# Design: `stella.toml` — one config file, and the five features it unlocks
 
 **Status:** Nothing built. This is a proposal. ·
 **Date:** 2026-07-30
@@ -34,8 +34,10 @@ so it should be made deliberately rather than inherited from this doc.
    to serde, and the only defense is a warning printed by a hand-maintained
    key list (`settings/unknown.rs`). A `schema_version` turns forward
    compatibility from a convention into a mechanism.
-3. **Make four capabilities configurable that currently are not**: pipeline
-   stages, per-agent tool scope, named agents, and declarative integrations.
+3. **Make five capabilities configurable that currently are not**: pipeline
+   stages (§4.5), per-agent tool scope and named agents (§4.1, §4.4), model
+   policy over the catalog (§7.2), provider fallback (§4.2), and declarative
+   integrations with multi-backend tools (§5).
 
 **Non-goal: consolidating everything.** Four of the current files should stay
 separate, and §7.1 says why for each. "One config file" means one file for
