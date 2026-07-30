@@ -62,6 +62,11 @@ stella chat
     `[paths...]` — scan the workspace for markdown steering, or extract named documents into
     reviewable context-record proposals.
   </SpecCard>
+  <SpecCard title="stella context" href="/docs/commands/context">
+    `<review|keep|edit|ignore|list|validate|explain|propose>` — decide on the context
+    records `stella ingest` extracted, and ask a live one why it applied. Offline, no
+    API key.
+  </SpecCard>
   <SpecCard title="stella proposals" href="/docs/commands/proposals">
     `<list|keep|edit|ignore|refresh>` — review what the adaptive-context loop wants to make
     durable, before it lands. Offline, no API key.
@@ -119,6 +124,10 @@ stella chat
   <SpecCard title="stella doctor" href="/docs/commands/doctor">
     Check the local state stella owns and exit non-zero if any check fails. `--repair`
     moves a corrupt `store.db` aside — renamed, never deleted.
+  </SpecCard>
+  <SpecCard title="stella completions" href="/docs/commands/completions">
+    `<shell>` — print a shell completion script to stdout. bash, zsh, fish, PowerShell,
+    or elvish.
   </SpecCard>
   <SpecCard title="stella version" href="/docs/commands/version">
     Print the version and exit.

@@ -1,0 +1,275 @@
+---
+title: Understand what a run cost, and why
+description: Follow one expensive run from the dollar figure all the way down to the exact bytes the model was sent — stats, the Observatory, and stella inspect. Entirely local, no API key.
+---
+
+A run cost more than you expected. Most tools can tell you *that*. Stella can
+tell you **which model call**, **what it was sent**, and **what changed between
+that call and the one before it** — from local records, with no network access
+and no API key.
+
+This guide walks that chain top to bottom. Each step narrows the question.
+
+## The chain
+
+```bash
+stella stats                              # 1. which model, and how much
+stella observe --open                     # 2. which run, and where the time went
+stella inspect                            # 3. which call inside that run
+stella inspect 42 --step 3                # 4. what that call was actually sent
+stella inspect 42 --step 3 --diff --only system   # 5. what changed since last time
+```
+
+Everything below reads `<workspace>/.stella/private/store.db` and never writes.
+
+## 1. Which model, and how much — `stella stats`
+
+```bash
+stella stats
+```
+
+Aggregates the local store per provider and model: total tokens, total cost,
+resolve rate, and a `TOTAL` row. It is the "where is the money going" view.
+
+The three columns people miss are the cache-economics ones, and they are usually
+where a surprising bill is explained:
+
+<CardGrid size="md">
+  <OptionCard name="HIT%">
+    Cache-read tokens over total input tokens. Prompt caching is 4–10× cheaper than
+    fresh input, so this number is most of your bill's variance.
+  </OptionCard>
+  <OptionCard name="SAVED ($)">
+    Estimated dollars saved by caching, at today's catalog rates. **Signed** — a
+    negative value means the provider's cache-write premium outran the reads it
+    bought, which is a real incident and not a rounding artifact.
+  </OptionCard>
+  <OptionCard name="TTL REWRITES">
+    Calls whose cached prefix went cold because the gap since the session's previous
+    call exceeded the provider's cache TTL, and got rewritten instead of read back.
+    A session parked between turns pays the write premium again for nothing.
+  </OptionCard>
+</CardGrid>
+
+Two diagnoses worth knowing by heart:
+
+- **`HIT%` near 0 with `CACHE WR` also 0**, on an opt-in provider (Anthropic,
+  Bedrock, Claude-via-OpenRouter) — the cache marker probably never reached the
+  wire. Check the adapter config before concluding the model isn't cacheable.
+- **`CACHE WR` nonzero but `HIT%` low** — the prefix is being *rewritten*
+  between turns instead of reused. Something upstream of the cache breakpoint is
+  changing per turn. Step 5 finds out what.
+
+```bash
+# Everything with a suspiciously cold cache, as JSON.
+stella stats --format json |
+  jq '.[] | select(.cache_hit_rate < 0.2) | {provider, model, cache_hit_rate, cache_expired_rewrites}'
+```
+
+<Callout type="info">
+`stella stats` is **this workspace**. For the same numbers across every project on
+this machine, [`stella usage report`](/docs/commands/usage#stella-usage-report)
+reads the local hub at `~/.stella/usage.db`. Local-only — nothing is uploaded.
+</Callout>
+
+## 2. Which run — the Observatory
+
+```bash
+stella observe --open
+```
+
+A local web dashboard over the same stores, served on `127.0.0.1` only, embedded
+in the binary — no install and no build step. Its executions tab gives you
+per-run drill-down, which is how you get from "this month cost $40" to "this
+*run* cost $4".
+
+Take the **execution id** from the run you care about; the rest of this guide
+uses it.
+
+<Callout type="info">
+The Observatory opens the stores strictly read-only and never exports anything.
+See [the dashboard tour](/docs/telemetry/dashboard) for what each tab shows.
+</Callout>
+
+## 3. Which call inside the run — `stella inspect`
+
+```bash
+stella inspect          # executions that have receipts
+stella inspect 42       # that execution's model calls, with roles and seq numbers
+```
+
+Every model call records a **receipt**: the ordered list of context blocks it
+sent, plus the bytes of the blocks the event journal cannot otherwise resolve.
+`stella inspect 42` lists them, so you rarely have to guess.
+
+A single step can hold several calls, and the numbering is fixed:
+
+<CardGrid size="md">
+  <OptionCard name="--call-seq 0" defaultValue="default">
+    The engine's own worker call. Always `0`.
+  </OptionCard>
+  <OptionCard name="--call-seq 1">
+    The overflow summarizer that may run during that step's compaction.
+  </OptionCard>
+  <OptionCard name="--call-seq 2+">
+    The pipeline's management roles — triage, judge, plan, guidance, conversational.
+  </OptionCard>
+</CardGrid>
+
+Those auxiliary calls assemble prompts that exist nowhere else, so their receipt
+is the only record of what they sent. If a run's cost is concentrated in
+something other than seq `0`, that is itself the finding.
+
+## 4. What the call was sent
+
+```bash
+stella inspect 42 --step 3            # role-delimited transcript
+stella inspect 42 --step 3 --full     # …with nothing elided
+```
+
+This reconstructs the exact `Vec<CompletionMessage>` the model received — system
+prompt included — and re-checks it against the digests taken at emission. The
+banner reports the verdict, and the two failure modes are kept separate because
+they mean very different things:
+
+<CardGrid size="md">
+  <OptionCard name="! N block(s) could not be resolved">
+    A documented coverage gap — budget-abort synthetic tool results, discarded
+    speculation, attachments. The rest of the transcript is still faithful.
+  </OptionCard>
+  <OptionCard name="!! N block(s) did NOT re-hash">
+    The journal is torn or was altered. Treat the reconstruction as untrustworthy.
+  </OptionCard>
+</CardGrid>
+
+## 5. What changed since the previous call — `--diff`
+
+This is the step that actually explains a cache regression, and it is the one
+capability here with no real equivalent elsewhere.
+
+A transcript shows the **sum**. It never shows the **delta**. A system prompt is
+hundreds of stable lines, and finding the paragraph that moved by reading two of
+them side by side is not something a person does reliably.
+
+```bash
+stella inspect 42 --step 0 --diff --only system
+```
+
+```text
+--- execution 41 · turn 0 · step 12 · seq 0 (worker)
++++ turn 0 · step 0 · seq 0 (worker)
++1 added, -0 removed  (system messages)
+@@ -14,3 +14,4 @@
+ - Always read a file before editing it — never edit blind.
++- Prefer `apply_edits` for a change touching several files.
+ - Make minimal, surgical edits.
+```
+
+That single added line is a plausible cause of a cold cache: anything that
+changes above the cache breakpoint invalidates the prefix for the whole turn.
+
+Three baselines, all **same-role** (diffing a worker prompt against a judge
+prompt produces noise, not a delta):
+
+<CardGrid size="md">
+  <OptionCard name="prev" defaultValue="default">
+    Whatever ran immediately before in the same role — the previous step, or the last
+    call of the previous turn when this is a turn's first call. Searches the whole
+    session, because a system prompt is byte-stable *within* an execution by design,
+    so drift can only appear across turns.
+  </OptionCard>
+  <OptionCard name="first">
+    The first call of this role in the session.
+  </OptionCard>
+  <OptionCard name="prompt">
+    Your prompt exactly as you submitted it, before any context was added.
+  </OptionCard>
+</CardGrid>
+
+### Why `prompt` is a baseline at all
+
+The words you type are all you *know* exist when you submit them. The system
+prefix, recalled memories, rules, and skills are added afterwards, and no other
+view shows that mutation.
+
+```bash
+stella inspect 42 --step 0 --diff
+```
+
+```text
+--- prompt as submitted
++++ turn 0 · step 0 · seq 0 (worker)
++8729 added, -0 removed  (all messages)
+```
+
+Three words in, 8,730 lines out. That ratio is the honest answer to "why did a
+one-sentence prompt cost that much".
+
+<Callout type="info">
+"no change" is a **result**, not a failure. `--only system` reporting the prompt
+byte-identical to the previous turn is a direct confirmation that the
+prompt-cache stability invariant is holding — which is exactly what you want to
+see when `HIT%` is healthy.
+</Callout>
+
+## Making it a check instead of an investigation
+
+Everything above has a JSON form, so the forensics can run unattended:
+
+```bash
+# Did the system prompt drift between turns? `base` reports which baseline
+# actually resolved, since `prev` becomes `prompt` when nothing preceded the call.
+stella inspect 42 --step 0 --diff --only system --format json |
+  jq '{base, changed, added, removed}'
+
+# Is the reconstruction trustworthy at all?
+stella inspect 42 --step 3 --format json |
+  jq '{verified, unresolved, digest_mismatches}'
+```
+
+## The other cost question: was it worth it?
+
+Dollars are half the story. `stella scoreboard` answers the other half without
+letting a model grade its own homework — model calls, characters a human had to
+type, follow-ups, and a verdict read from a pull request somebody actually
+merged or closed. An open PR is deliberately **not** a verdict.
+
+```bash
+stella scoreboard
+```
+
+The number worth steering on is **$/resolved**, not sticker price: a cheap model
+that needs three attempts is not cheap. See
+[Examples & recipes](/docs/examples) for the profiles that trade those off.
+
+## Keeping the store from growing forever
+
+`store.db` grows monotonically — every run appends executions, events, tool
+calls, context blocks, and receipts.
+
+```bash
+stella stats prune --older-than 90d --dry-run   # look first; deletion cascades
+stella stats prune --older-than 90d --vacuum    # then keep a quarter of history
+```
+
+Prune is **replication-safe by default**: an execution whose telemetry has not
+yet reached the usage hub is never dropped, so pruning before a sync cannot
+silently destroy cost data you are still billing against. `--force` overrides
+that and is irreversible.
+
+## Next
+
+<CardGrid size="sm">
+  <SpecCard title="stella inspect" href="/docs/commands/inspect">
+    Every flag, the verification banner, and what receipts deliberately cannot show.
+  </SpecCard>
+  <SpecCard title="stella stats" href="/docs/commands/stats">
+    The cache columns and the prune surface in full.
+  </SpecCard>
+  <SpecCard title="Telemetry & budget" href="/docs/telemetry">
+    What the store holds, how to query it yourself, and the two egress paths.
+  </SpecCard>
+  <SpecCard title="Work within a budget" href="/docs/guides/budget">
+    Spending less next time, rather than accounting for it afterwards.
+  </SpecCard>
+</CardGrid>

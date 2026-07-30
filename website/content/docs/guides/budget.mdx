@@ -1,0 +1,220 @@
+---
+title: Work within a budget
+description: A hard dollar ceiling, and what Stella does as it approaches one — where the abort lands, what the scope gate stops before you spend anything, and what compaction does when the transcript outgrows the window.
+---
+
+You have a number in mind and you do not want to find out you passed it
+afterwards. This guide is about the mechanisms that hold a ceiling, in the order
+they fire — one of them before any money is spent at all.
+
+## The flag
+
+```bash
+stella --budget 2.00 run "port the utils module to the new API"
+```
+
+`--budget` is a [global flag](/docs/commands#global-flags), so it can go on
+either side of the subcommand — but the habit of putting it first is a good one,
+because it reads as a property of the whole invocation, which is what it is.
+
+<CardGrid size="md">
+  <SpecCard title="Observed — no --budget">
+    The default. Spend is metered for the end-of-run cost summary and the local store,
+    but never blocks. Use it to find out what a class of task actually costs before
+    picking a ceiling for it.
+  </SpecCard>
+  <SpecCard title="Enforced — --budget <usd>">
+    A hard cap on the **whole run or session** — not per turn, not per round. Must be
+    positive and finite.
+  </SpecCard>
+</CardGrid>
+
+Set it once for a shell or a CI job instead:
+
+```bash
+export STELLA_BUDGET=5
+```
+
+## Where the abort lands
+
+This is the part worth trusting, because it determines whether a tripped budget
+leaves you with work or with wreckage.
+
+The meter is checked **between steps and stages** — never in the middle of a
+tool call. An abort therefore never leaves a half-applied edit, a partially
+written file, or a tool whose side effects landed but whose result never made it
+back into the transcript. Work already committed to disk stays; nothing is
+rolled back.
+
+The exit code is `1`, the same as any other failure. If you need to distinguish
+*budget stopped this* from *this failed*, read the JSON:
+
+```bash
+stella --budget 2.00 --output-format json run "…" | jq '{status, cost_usd, verdict}'
+```
+
+<Callout type="info">
+`--budget` is metered against **catalog prices**. Local and air-gapped models
+have no catalog price, so the dollar columns read zero and a budget has nothing
+to meter against. Bound those runs with `--test-command` and goal-mode round caps
+instead — see [Local and air-gapped](/docs/examples#local-and-air-gapped).
+</Callout>
+
+## The gate that fires *before* you spend
+
+A budget stops a run partway. The [scope review](/docs/inference-pipeline#3-scope-review)
+stops it *before the first edit*, which is usually the outcome you actually
+wanted.
+
+When a plan's blast radius crosses any of three thresholds, Stella pauses and
+shows you the plan:
+
+<CardGrid size="sm">
+  <OptionCard name="max_steps" defaultValue="5">
+    More than this many steps in the plan.
+  </OptionCard>
+  <OptionCard name="max_files" defaultValue="8">
+    Estimated files-touched count above this.
+  </OptionCard>
+  <OptionCard name="max_cost_usd" defaultValue="1.00">
+    Estimated cost above this.
+  </OptionCard>
+</CardGrid>
+
+Every comparison is a strict `>`, so a plan sitting exactly on a threshold
+passes without a gate. At the card, `a` approves, `t` trims to the largest
+prefix that would not have tripped review, `x` aborts — and anything longer than
+one of those words is read as *what you want changed*, sending the plan back to
+the planner with your note attached.
+
+<Callout type="warn">
+Headless runs must opt in to bypassing this gate explicitly —
+`agent_engine_config.headless_scope_bypass: "on"`. Without it there is no silent
+auto-approve: a plan over the thresholds **ends the run**. That is deliberate,
+because a scope gate that quietly approves itself in CI is not a scope gate.
+</Callout>
+
+## What the money is actually spent on
+
+Before tuning anything, know the shape of the bill — most attempts to economize
+target the wrong stage.
+
+| Stage | Model calls | Cost share |
+| --- | --- | --- |
+| Triage | 1 | negligible |
+| Plan | 1 (+1 repair, rarely) | small |
+| Witness | ~1 engine turn | only when you pass no `--test-command` |
+| **Execute** | **5–40+ steps** | **most of the bill** |
+| Verify | 0 | free — the deterministic ladder |
+| Judge | 0–1 per verification | cents |
+
+Three consequences follow, and they are most of what you need:
+
+1. **The worker's output price dominates.** Moving the worker to a cheaper model
+   changes the bill several-fold. Moving the judge barely changes it at all.
+2. **A flagship judge is cheap insurance.** One judge call is a few thousand
+   input tokens and under a thousand out. Keep it in a *different family* than
+   the worker.
+3. **`--test-command` is the strongest cost flag on the CLI.** It arms the
+   deterministic flip oracle, so most runs finish on evidence alone with the
+   **judge skipped entirely** — and it skips the witness-author call too.
+
+```bash
+# Cheapest correct shape: deterministic oracle armed, hard ceiling on top.
+stella --budget 1.50 run --test-command "cargo test -p api" \
+  "add cursor pagination to /orders"
+```
+
+## The multipliers
+
+A ceiling only helps if you know what is pushing against it.
+
+<CardGrid size="md">
+  <OptionCard name="Goal mode">
+    Repeats judged rounds until the objective is met, up to **8**. Each round is a
+    full working turn. `stella monitor` is goal mode, so it has the same shape.
+  </OptionCard>
+  <OptionCard name="Fleets">
+    One pipeline per task. Worker spend meters into the **parent** budget, so
+    `--budget` is a single shared ceiling across the whole fan-out rather than a
+    per-worker allowance — and the run stops early once it trips.
+  </OptionCard>
+  <OptionCard name="Best-of-N">
+    Generates N candidate executions and keeps the best by verification score, at N×
+    the execution cost. Strictly opt-in, for exactly this reason.
+  </OptionCard>
+  <OptionCard name="Revisions">
+    A failed verification sends the worker back with the evidence, bounded at 2
+    revision turns by default.
+  </OptionCard>
+</CardGrid>
+
+## When the transcript outgrows the window
+
+A long run's cost is not only what it does — it is how much conversation it
+carries while doing it. When the transcript approaches the compaction budget
+(**150,000 tokens** by default), Stella compacts it and keeps going, rather than
+failing or silently truncating.
+
+Compaction applies four mechanisms, **least-lossy first**:
+
+1. **Dedup.** A byte-identical tool output appearing more than once keeps only
+   its earliest copy; later ones become a pointer to it.
+2. **Supersession.** When the same call ran twice with identical input, only the
+   latest result reflects current state — the older ones are stale by
+   construction and get stubbed.
+3. **Aging.** Still over budget, large old outputs are middle-out truncated to
+   head plus tail. The head carries the tool's framing (a `PASSED`/`FAILED` line,
+   file headers) and the tail carries the errors, so what survives is the part
+   worth reading.
+4. **Eviction.** Only then are the oldest large tool outputs replaced with a
+   stub — and a result whose call is still the most recent one is never evicted.
+
+The system message and the latest user message are never touched.
+
+<Callout type="info">
+Dedup keeps the **earliest** copy on purpose. Byte-identical content is
+position-independent, so stubbing the later one puts the change in the *newest*
+part of the conversation and leaves the provider's prompt-cache prefix
+byte-identical. Compacting the other way around would save tokens and then lose
+far more money to a cold cache than it saved.
+</Callout>
+
+If a conversation is still over budget after all four passes, an **overflow
+summarizer** runs — a real extra model call, recorded at `--call-seq 1` for that
+step. Seeing those in [`stella inspect`](/docs/commands/inspect) is the sign a
+run's transcript, not its work, is what got expensive.
+
+## Picking the number
+
+Budget by observation, not by intuition. Run the class of task once unbounded,
+read what it cost, then set a ceiling with headroom:
+
+```bash
+stella run "the representative task"      # observed mode
+stella stats --format table               # what it actually cost
+stella --budget 2.00 run "the next one"   # now with a ceiling
+```
+
+The number to steer on over time is **$/resolved**, not sticker price — a cheap
+model that needs three attempts is not cheap. The
+[Observatory](/docs/telemetry/dashboard) tracks it per model, and
+[Examples & recipes](/docs/examples) has complete configurations at four
+different price points.
+
+## Next
+
+<CardGrid size="sm">
+  <SpecCard title="Telemetry & budget" href="/docs/telemetry#budget-observed-vs-enforced">
+    The reference for observed vs. enforced, and what the local store records.
+  </SpecCard>
+  <SpecCard title="Examples & recipes" href="/docs/examples">
+    Complete settings files from dirt-cheap to maximum-quality, with cost estimates.
+  </SpecCard>
+  <SpecCard title="Find out what a run cost" href="/docs/guides/what-a-run-cost">
+    Accounting for a run after the fact, down to the individual model call.
+  </SpecCard>
+  <SpecCard title="Inference pipeline" href="/docs/inference-pipeline">
+    Every stage, what it costs, and when it is skipped.
+  </SpecCard>
+</CardGrid>

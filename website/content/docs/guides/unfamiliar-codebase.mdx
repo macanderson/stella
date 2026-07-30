@@ -1,0 +1,220 @@
+---
+title: Make a change in an unfamiliar codebase
+description: A repository you have never read, and a change that has to land in it. Orient with the code graph, find the blast radius before committing to an approach, and ship the change verified.
+---
+
+You have been handed a repository you did not write. The change itself is
+probably small. The expensive part is finding out *where* it goes and *what
+else* it breaks — and that is exactly the part an agent does badly when its only
+instrument is `grep`.
+
+This guide is about doing that part with the code graph instead.
+
+## The whole thing, first
+
+```bash
+cd the-repo
+stella init                                         # index the codebase
+stella graph importers src/db/schema.ts             # what am I about to break?
+stella run --test-command "pnpm test orders" \
+  "add a nullable `archived_at` column to orders and thread it through the API"
+```
+
+## 1. Index the repository
+
+```bash
+stella init
+```
+
+`stella init` does three things worth knowing here: it infers a **domain
+taxonomy** into `.stella/domains.toml` (the tagging vocabulary memories and
+graph nodes use), it builds the **code-graph index** at
+`.stella/private/codegraph.db`, and it adopts any commands, skills, and agents
+already sitting in `.claude/` or `.agents/` directories as symlinks.
+
+It works **offline** through a heuristic fallback, so it succeeds even with no
+provider credential resolved — useful on a machine where you have not set up
+keys yet.
+
+<Callout type="info">
+`init` is a head start, not a prerequisite. Both `stella graph` and the agent's
+`graph_query` tool **bootstrap the index on first use** if it isn't there, and
+each query runs a catch-up pass over changed files. Running `init` up front just
+means the first query isn't the one that pays for the full index build — and you
+get the domain taxonomy, which querying alone does not produce.
+</Callout>
+
+## 2. Ask the questions you would otherwise guess at
+
+This is the step people skip, and it is the one that pays. Before deciding *how*
+to make a change, find out what depends on the thing you are about to touch.
+
+```bash
+# Where is this defined — and is it defined exactly once?
+stella graph definitions resolveOrderTotal
+
+# Who calls it? This is the review surface for a signature change.
+stella graph references resolveOrderTotal
+
+# Blast radius: who imports the file I am about to edit?
+stella graph importers src/db/schema.ts
+
+# What does this file depend on — what do I need to understand first?
+stella graph imports src/api/orders.ts
+
+# The neighborhood, both directions at once.
+stella graph neighbors src/api/orders.ts
+```
+
+Every one of these is **offline and instant**. It reads the local index, makes
+no model calls, and needs no API key — so it costs nothing and you can afford to
+be thorough. Ask five questions before you write a prompt.
+
+Two of them are worth calling out as habits:
+
+<CardGrid size="md">
+  <SpecCard title="definitions, before a rename">
+    A symbol with two definitions is a rename that silently half-lands. `stella graph
+    definitions` lists every site rather than picking one, so you find that out
+    before the edit and not during review.
+  </SpecCard>
+  <SpecCard title="importers, before an edit">
+    The honest answer to "is this change small?" Twelve importers of a schema file
+    means the change is a migration, whatever the diff size suggests.
+  </SpecCard>
+</CardGrid>
+
+## 3. Let the agent use the same index
+
+The graph is not just a CLI convenience — the agent queries it as the
+`graph_query` tool, and that is the point. Where an agent without one greps for
+a symbol name, gets 200 textual hits, and reads a dozen files to disambiguate
+them, an agent with a graph asks for definitions and gets the answer with a
+citation.
+
+Two related tools ride on the same index:
+
+<CardGrid size="md">
+  <OptionCard name="graph_query">
+    Definitions, references, imports, importers, neighborhood — structural questions,
+    answered structurally.
+  </OptionCard>
+  <OptionCard name="read_symbol">
+    Reads a named symbol's exact source span, resolved through the graph rather than
+    by guessing line offsets. Multiple definitions are listed, never silently chosen.
+  </OptionCard>
+  <OptionCard name="project_overview">
+    One read-only pass for languages, entry points, and layout — the orientation call.
+  </OptionCard>
+  <OptionCard name="gather_context">
+    One deterministic sweep combining greps, globs, symbol lookups, and bounded
+    excerpts, saved as a reusable context pack.
+  </OptionCard>
+</CardGrid>
+
+You do not invoke these yourself. They exist so that the cheapest correct
+answer is also the one the model reaches for first, which is what keeps a run in
+an unfamiliar repository from turning into forty file reads.
+
+## 4. Make the change, with an oracle
+
+Now the actual work. In an unfamiliar codebase the single highest-value thing
+you can supply is the **test command**, because it converts "I think this is
+right" into deterministic evidence:
+
+```bash
+stella run --test-command "pnpm test orders" \
+  "add a nullable archived_at column to orders and thread it through the API"
+```
+
+`--test-command` arms the **flip oracle**: the command must *fail before* the
+change and *pass after* it. A suite that was already green cannot be used as
+proof, which is what makes the flip meaningful rather than decorative.
+
+Don't know the test command in a repo you have never read? Ask the repo:
+
+```bash
+stella scripts list          # canonical verbs — install/build/check/test/lint/format
+```
+
+`stella scripts` detects them statically from the manifests (cargo, npm, uv, go,
+make, just, …). It is offline and needs no API key.
+
+### If you can't express "done" as a test
+
+Then don't pass `--test-command`, and Stella supplies the oracle itself. An
+independent model — the **witness author**, never the worker — writes a minimal
+*failing* test pinning the intended behavior, and that test arms the flip oracle
+instead. Witness files are watched for tampering: a worker that edits the
+witness doesn't get credit for passing it.
+
+The witness is scaffolding, not an inheritance. It encodes a moment ("this code
+doesn't do X yet") rather than an invariant, so it lives and dies inside the
+candidate workspace — you never find an unreviewed, already-satisfied test
+sitting in your test directory afterwards. When it turns out to be worth keeping:
+
+```bash
+stella run --keep-witness "make Plan::validate reject a self-dependency by name"
+```
+
+## 5. Review what actually changed
+
+```bash
+stella graph importers src/db/schema.ts   # re-ask: did the blast radius move?
+git diff
+```
+
+In the [Command Deck](/docs/commands/chat), `/diff` and `/files` are the same
+review from inside the session.
+
+<Callout type="warn">
+Cloning an unfamiliar repository means running unfamiliar configuration. A fresh
+clone's `hooks`, `providers.*.base_url` / `api_key` / `api_key_env`,
+`mcp.registry_url`, `context_providers`, per-agent `prompt`s, and the whole of
+`.stella/mcp.toml` are **held back until you opt in** — otherwise any repo you
+cloned could run commands on your machine or route your keys through its server.
+A stderr notice names anything skipped.
+
+```bash
+export STELLA_TRUST_PROJECT=1   # scope it per-repo with direnv or a shell guard
+```
+
+See [the project trust boundary](/docs/configuration/settings#the-project-trust-boundary).
+</Callout>
+
+## When the repository already documents itself
+
+Most repositories you inherit already contain the instructions an agent needs —
+`AGENTS.md`, `CLAUDE.md`, a `CONTRIBUTING.md`, architecture notes. They are just
+written for people, scattered, and partly out of date.
+
+```bash
+stella ingest                    # what steering does this repo already contain?
+stella ingest AGENTS.md          # extract it into reviewable claims
+stella context review            # read what was proposed, and its probe verdict
+stella context keep a1b2c3       # publish the ones that are actually true
+```
+
+[`stella ingest`](/docs/commands/ingest) mines that prose into atomic claims,
+each carrying its provenance and each **probed against the tree for staleness**
+— which is the part that matters in an inherited repository, where the README
+confidently describes a build system that was replaced two years ago. Nothing
+steers anything until you keep it. [`stella context`](/docs/commands/context) is
+the review surface.
+
+## Next
+
+<CardGrid size="sm">
+  <SpecCard title="stella graph" href="/docs/commands/graph">
+    The five operations and what each `target` means.
+  </SpecCard>
+  <SpecCard title="Context engine" href="/docs/context-engine">
+    How the graph, memories, and rules become recall — and why it stays cheap.
+  </SpecCard>
+  <SpecCard title="stella init" href="/docs/commands/init">
+    Exactly which files initialization generates.
+  </SpecCard>
+  <SpecCard title="Agent tools" href="/docs/agent-tools">
+    The full toolbelt, the read-only partition, and the permission model.
+  </SpecCard>
+</CardGrid>

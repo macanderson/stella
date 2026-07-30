@@ -1,0 +1,82 @@
+---
+title: stella completions
+description: Print a shell completion script for stella to stdout — bash, zsh, fish, PowerShell, or elvish. Offline, writes nothing, needs no API key.
+---
+
+Print a shell completion script for `stella` to **stdout**. It writes nothing
+itself — where the script lands is your shell's business, and yours.
+
+Offline, and needs no API key.
+
+## Synopsis
+
+```bash
+stella completions <shell>
+```
+
+<CardGrid size="sm">
+  <OptionCard name="bash">
+    Sourced from a completion directory, conventionally `/etc/bash_completion.d/`.
+  </OptionCard>
+  <OptionCard name="zsh">
+    A `_stella` file on your `$fpath`.
+  </OptionCard>
+  <OptionCard name="fish">
+    A `.fish` file under `~/.config/fish/completions/`.
+  </OptionCard>
+  <OptionCard name="powershell">
+    Evaluated from your profile.
+  </OptionCard>
+  <OptionCard name="elvish">
+    Sourced from your `rc.elv`.
+  </OptionCard>
+</CardGrid>
+
+## Installing it
+
+Each shell expects the script somewhere different:
+
+```bash
+# bash
+stella completions bash > /etc/bash_completion.d/stella
+
+# zsh — the first directory on your $fpath
+stella completions zsh > "${fpath[1]}/_stella"
+
+# fish
+stella completions fish > ~/.config/fish/completions/stella.fish
+```
+
+```powershell
+# PowerShell — append to your profile
+stella completions powershell | Out-String | Invoke-Expression
+```
+
+Open a new shell afterwards, or re-source your profile.
+
+## What you get
+
+Completion covers the whole CLI surface: every subcommand, every flag, and the
+value enums behind them — so `stella inspect --format <TAB>` offers `text` and
+`json` rather than nothing, and `stella completions <TAB>` offers the five
+shells above.
+
+The [global flags](/docs/commands#global-flags) are registered with every
+subcommand, so they complete in either position — before the subcommand or after
+it.
+
+<Callout type="info">
+The script is generated from the same command definitions the binary parses with,
+so completions cannot drift away from the flags that actually exist. Re-run the
+command after upgrading Stella to pick up new subcommands.
+</Callout>
+
+## Not sure it took?
+
+```bash
+stella completions zsh | head -5    # confirm a script is actually produced
+```
+
+If the output looks right but completion still does nothing, the problem is
+placement rather than generation — check that the target directory is on your
+shell's completion path, and that you started a fresh shell.
