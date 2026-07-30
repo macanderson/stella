@@ -54,6 +54,7 @@ pub mod envelope;
 pub mod fleet_dashboard;
 pub mod graph;
 pub mod markdown;
+pub mod notice;
 pub mod palette;
 pub mod progress;
 pub mod proof;

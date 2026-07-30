@@ -276,6 +276,23 @@ pub enum Inbound {
     /// straight to `DeckUi::splash` by [`crate::deck_ui::ingest_inbound`],
     /// ignored by the model fold — like [`Inbound::ShowHelp`].
     Splash(SplashCue),
+    /// A **system notification** — the deck telling the user something about
+    /// the session itself: that a previous session is resumable, what the
+    /// code-graph index pass found, that an `mcp.toml` went untrusted.
+    ///
+    /// Deliberately not [`Inbound::Event`] with an [`AgentEvent::Text`]: the
+    /// transcript is the home for agent and user messages **only**, and
+    /// routing chrome through it made the deck render machine chatter as
+    /// though the agent had said it — then kept it in the scrollback for the
+    /// rest of the session. This is out-of-band view state, applied straight
+    /// to `DeckUi::notice` by [`crate::deck_ui::ingest_inbound`] and ignored
+    /// by the model fold, like [`Inbound::ShowHelp`] and [`Inbound::Splash`].
+    ///
+    /// The deck shows these as a transient dialog ([`crate::notice`]) that any
+    /// key or mouse event dismisses and that expires on its own; it never
+    /// touches the transcript, so nothing here can be mistaken for the model
+    /// speaking.
+    Notice(String),
     /// A refreshed snapshot of the **cross-process session registry** for the
     /// SESSIONS overlay (empty-prompt `←`). Every running stella session on
     /// this machine, grouped by [`SessionPhase`]. Out-of-band view state like
