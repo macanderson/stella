@@ -4407,6 +4407,7 @@ async fn run_lead_pipeline_turn(
             recall,
             repo: &ws_ports.repo_structure,
             repo_status: &ws_ports.repo_status,
+            touches: &crate::agent::RegistryTouches(registry),
             diagnostics: &ws_ports.diagnostic_runner,
             tests: &ws_ports.test_runner,
             approvals: scope_gate,

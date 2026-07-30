@@ -22,10 +22,12 @@ infrastructure.
 
 <Callout type="info">
 Stella is BYOK and local-first for showcased teams too. Community/default sessions use
-their own provider keys and have zero telemetry egress. An organization may explicitly
-enroll the governed Enterprise mode, which can send only the documented content-free
-operational rollup from process-free eligible runs; the full local store remains on the
-machine.
+their own provider keys and send telemetry nowhere until someone configures a path for it.
+There are [exactly two such paths](/docs/telemetry): the governed Enterprise mode an
+organization may explicitly enroll, which can send only the documented content-free
+operational rollup from process-free eligible runs; and a `drain` block in
+`~/.stella/cloud.json`, which `stella cloud sync` uses to POST staged rows to an org
+intake you name. The full local store stays on the machine either way.
 </Callout>
 
 ## stella-examples

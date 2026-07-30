@@ -5,12 +5,15 @@ description: Show the exact context a past model call was sent, rebuilt from rec
 
 Answer "what did the model actually see?" for any past call. `stella inspect` rebuilds the exact message array a model was sent — system prompt included — from the receipts recorded at the time, and re-checks it against the digests taken at emission. Entirely local; no API key, no network, and it never writes.
 
+Add [`--diff`](#--diff--what-changed-not-what-was-sent) to ask the other question: what did *this* call see that the last one didn't — rendered as a unified diff, including against the prompt you actually typed.
+
 ## Synopsis
 
 ```bash
 stella inspect                                   # executions that have receipts
 stella inspect <EXEC>                            # that execution's model calls
 stella inspect <EXEC> --step <N> [--turn <T>] [--call-seq <S>]
+stella inspect <EXEC> --step <N> --diff [prev|first|prompt] [--only system]
 ```
 
 ## What it does
@@ -38,7 +41,108 @@ It reads `<workspace>/.stella/private/store.db` only. Like `stella stats`, it re
   <OptionCard name="--full">
     Print message bodies in full instead of eliding long ones.
   </OptionCard>
+  <OptionCard name="--diff [BASE]">
+    Render what *changed* instead of the whole context. `prev` (the default),
+    `first`, or `prompt` — see below.
+  </OptionCard>
+  <OptionCard name="--only <ROLE>" defaultValue="all">
+    Restrict a `--diff` to one message role. `system` is the usual reason to
+    reach for it.
+  </OptionCard>
+  <OptionCard name="--context <N>" defaultValue="3">
+    Unchanged lines printed around each change.
+  </OptionCard>
 </CardGrid>
+
+## `--diff` — what changed, not what was sent
+
+The full transcript answers *what did the model see*. It is the wrong tool for
+*what did this call see that the last one didn't*: a system prompt is hundreds
+of stable lines, and spotting the paragraph that moved by reading two of them
+side by side is not something a person can do reliably.
+
+`--diff` renders the same reconstruction as a unified diff — the `@@` hunks,
+`+`/`-` gutter, and `---`/`+++` headers you already read in `git diff`.
+
+```bash
+stella inspect 32 --step 0 --diff --only system
+```
+
+```text
+--- execution 31 · turn 0 · step 12 · seq 0 (worker)
++++ turn 0 · step 0 · seq 0 (worker)
++1 added, -0 removed  (system messages)
+@@ -14,3 +14,4 @@
+ - Always read a file before editing it — never edit blind.
++- Prefer `apply_edits` for a change touching several files.
+ - Make minimal, surgical edits.
+```
+
+### A turn is an execution
+
+Each prompt you submit opens a new **execution** row, and those rows share a
+`session_id`. `turn_instance` counts sub-turns *inside* one execution (goal
+rounds, subagents) and is `0` for nearly every real call — so the comparison a
+person means by "the previous turn" is a comparison across executions.
+
+`--diff prev` therefore searches the whole session, not just the execution you
+named. That matters because a system prompt is **byte-stable across the steps of
+one execution by design** — that is the prompt-cache invariant — so the only
+place it can drift is across turns. A diff that stopped at the execution
+boundary would print "no change" for exactly the comparison worth making. When
+the baseline comes from an earlier execution the `---` header says so, so the
+crossing is never silent.
+
+### The three baselines
+
+<CardGrid size="md">
+  <OptionCard name="prev" defaultValue="default">
+    Whatever ran immediately before in the same role — the previous step, or the
+    last call of the previous turn when this is a turn's first call.
+  </OptionCard>
+  <OptionCard name="first">
+    The first call of this role in the whole session: the first ever turn.
+  </OptionCard>
+  <OptionCard name="prompt">
+    This turn's prompt exactly as you submitted it, before any context was
+    added.
+  </OptionCard>
+</CardGrid>
+
+Baselines are always **same-role**. A step that ran the worker and a judge holds
+two unrelated prompts; diffing across them produces noise, not a delta.
+
+### Why the prompt is a baseline at all
+
+The prompt you type is all you know exists when you submit it. Everything else —
+the system prefix, recalled context, skills, memories — is added afterwards, and
+no other view shows that mutation, because the transcript shows the *sum* and
+never the *delta*.
+
+So the session's very first call, which genuinely has no predecessor, is
+compared against your own words:
+
+```bash
+stella inspect 32 --step 0 --diff
+```
+
+```text
+--- prompt as submitted
++++ turn 0 · step 0 · seq 0 (worker)
++8729 added, -0 removed  (all messages)
+@@ -1,1 +1,8730 @@
++── system ──
++You are Stella, a fast terminal coding agent…
+```
+
+Three words in, 8,730 lines out. `--diff prompt` forces that comparison for any
+call, not just the first.
+
+<Callout type="info">
+"no change" is a result, not a failure. `--only system` reporting the prompt
+byte-identical to the previous turn is a direct check that the prompt-cache
+stability invariant is holding.
+</Callout>
 
 ## Why `--call-seq` exists
 
@@ -100,6 +204,15 @@ failure lists behind it:
 ```bash
 stella inspect 42 --step 3 --format json |
   jq '{verified, unresolved, digest_mismatches}'
+```
+
+Assert in CI that the system prompt did not drift between turns — `base` reports
+which baseline was actually resolved, since `prev` becomes `prompt` when nothing
+preceded the call:
+
+```bash
+stella inspect 42 --step 0 --diff --only system --format json |
+  jq '{base, changed, added, removed}'
 ```
 
 ## What it can't show you

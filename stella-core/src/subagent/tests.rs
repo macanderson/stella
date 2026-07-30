@@ -53,6 +53,9 @@ impl Provider for ScriptedProvider {
         "scripted"
     }
 
+    // `complete_ref` is the trait's required method; `complete` is a default
+    // that delegates to it. Overriding the default left this double missing the
+    // real one, so the crate's tests stopped compiling.
     async fn complete_ref(
         &self,
         _request: CompletionRequestRef<'_>,

@@ -70,6 +70,7 @@ async fn aborted_pipeline_totals_match_every_management_and_execute_usage_record
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
+            touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
             approvals: &approvals,
