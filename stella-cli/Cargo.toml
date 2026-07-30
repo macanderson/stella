@@ -62,8 +62,7 @@ dotenvy.workspace = true
 libc.workspace = true
 tempfile.workspace = true
 # Masked TTY prompt for `stella connect … --token` (same crate stella-model
-# uses for the interactive API-key prompt). `zeroize` wipes the untrimmed
-# prompt buffer, the copy of the secret no caller ever sees.
+# uses for the interactive API-key prompt).
 rpassword.workspace = true
 # Wipes the raw prompt buffers `stella auth set` and `stella connect` read a
 # secret into — the copies the caller never sees, which would otherwise be
