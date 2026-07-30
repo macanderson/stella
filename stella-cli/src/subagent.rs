@@ -36,8 +36,8 @@
 //!
 //! Each child is carved from a session-scoped pool
 //! ([`SessionSubAgents::with_pool_limit`]), which bounds what sub-agents may
-//! cost in total. That pool is **not** what enforces `--budget`: the tool pushes
-//! every child's cost onto the registry's spend ledger, and the engine folds
+//! cost in total. That pool is **not** what enforces `--budget`: every child's
+//! cost is also pushed onto the registry's spend ledger, and the engine folds
 //! it into the *parent's* guard at the next step-boundary check
 //! (`ToolExecutor::drain_sub_agent_spend_usd`). The parent's guard stays the
 //! hard ceiling; the pool is a second, tighter bound on this one category of
@@ -48,6 +48,20 @@
 //! therefore each carve against the same headroom before either settles —
 //! an overshoot bounded by one child's cap, and caught by the parent's guard
 //! at the next step boundary regardless.
+//!
+//! ## Settling is the child's job
+//!
+//! Both ledgers are charged from the child's own thread, the moment its turn
+//! ends — not after the `wait.await` below, and not by the `task` tool after
+//! `dispatch()` returns. Those were the original homes, and both share a
+//! defect: a parent hard cancelled mid-`task` never resumes either line, so a
+//! child that had really spent money landed in *no* ledger at all. Whatever is
+//! still running when the parent goes away has to be what settles, and that is
+//! the thread. Charging late to the session is this ledger's existing doctrine
+//! ("charging the same dollars twice is worse than charging them late");
+//! never charging is not.
+//!
+//! The thread being the sole writer is also what keeps it exactly once.
 //!
 //! # Why a child runs on its own thread
 //!
@@ -98,19 +112,44 @@
 //!   destructive by contract and a child that inherited it would eat a
 //!   message the user addressed to the parent.
 //!
-//! A driver that publishes nothing is not a failure state — a child then runs
-//! bounded by its step cap and its carve, exactly as before.
+//! Every driver that runs turns installs a dispatcher and publishes what it
+//! has: the deck's lead and pipeline turns publish a steering tap (Pause is a
+//! worker-lane verb, so the lead has no gate), and deck worker lanes and fleet
+//! workers publish their `WatchGate`. A driver that publishes nothing is still
+//! not a failure state — a child then runs bounded by its step cap and its
+//! carve, exactly as before.
 //!
-//! One thing this does *not* buy: a hard cancel still cannot reach a child.
-//! The parent's turn future dropping takes the oneshot receiver with it while
-//! the child's thread runs on to its own cap. The soft stop is the
-//! interruption that arrives; that is a reason to prefer it, and it is why
-//! the deck's Esc now ends delegated work instead of orphaning it.
+//! # A cancelled parent: cascade the intent, not the mechanism
+//!
+//! A hard cancel is the *dropping of a future*. That is the entire mechanism,
+//! and it cannot propagate here: the child is an OS thread running `block_on`,
+//! deliberately off the parent's future graph (see above), and a thread cannot
+//! be killed safely in Rust. Nor should it be, even if it could — an abrupt
+//! kill can land mid-tool, which is exactly the half-finished write the
+//! step-boundary rule (L-E6) exists to prevent, and it would discard the
+//! salvaged text an aborted child is specifically designed to hand back.
+//!
+//! So the intent cascades instead of the mechanism. [`ParentGone`] is a drop
+//! guard living in the suspended `dispatch` body; when the parent's turn
+//! future is dropped, it is dropped too, and [`OrphanStop`] reports that to
+//! the child as a soft stop alongside the turn's own. The child ends at its
+//! next boundary with its work salvaged and its spend settled — an orphan
+//! bounded by the model call already in flight, rather than by its whole step
+//! cap.
+//!
+//! The one thing that genuinely cannot be recovered is the child's *report*:
+//! the oneshot receiver went with the cancelled future, so the finding is
+//! written to the event stream and nowhere else. Paying for it and stopping
+//! promptly beats paying for it and running on.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use async_trait::async_trait;
-use stella_core::subagent::{SubAgentDispatcher, SubAgentHost, SubAgentOutcome, SubAgentSpec};
+use stella_core::ports::TurnSteering;
+use stella_core::subagent::{
+    SubAgentDispatcher, SubAgentHost, SubAgentOutcome, SubAgentSpec, push_sub_agent_spend,
+};
 use stella_core::{BudgetGuard, Engine, EngineConfig, EventSender};
 use stella_protocol::Provider;
 use stella_tools::ToolRegistry;
@@ -125,6 +164,55 @@ use crate::runtime::TokioSleeper;
 /// parent's guard is the hard ceiling.
 pub const DEFAULT_POOL_LIMIT_USD: f64 = 2.0;
 
+/// Marks the parent's dispatch as gone once dropped.
+///
+/// A guard, because the drop has to happen on the path nothing else covers:
+/// when a hard cancel drops the parent's turn future, every local in the
+/// suspended `dispatch` body is dropped with it, and this is the only
+/// notification a detached child could ever get. On the ordinary path it drops
+/// after the child has already reported, where flipping the flag is a no-op.
+struct ParentGone(Arc<AtomicBool>);
+
+impl Drop for ParentGone {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+/// The turn's steering, plus "your parent is gone" as one more reason to stop.
+///
+/// A hard cancel cannot cascade as a hard cancel: the child is an OS thread
+/// running `block_on`, not a future in the parent's graph, and a thread cannot
+/// be killed safely — nor should it be mid-tool, which is exactly the write
+/// the boundary rule (L-E6) exists to protect. So the *intent* cascades
+/// instead: the parent's cancel becomes the child's soft stop, taken at its
+/// next step boundary with its work salvaged and its spend settled.
+///
+/// This bounds an orphan to one more model call rather than its full step cap.
+struct OrphanStop {
+    /// The turn's own tap, when its driver published one.
+    turn: Option<Arc<dyn TurnSteering>>,
+    parent_alive: Arc<AtomicBool>,
+}
+
+impl TurnSteering for OrphanStop {
+    /// Never drains the turn's tap. `ChildSteering` already refuses to call
+    /// this, but a view that sits between a child and a destructive drain has
+    /// no business forwarding it even so — the parent's queued messages are
+    /// the parent's.
+    fn drain_steering(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn soft_stop_requested(&self) -> bool {
+        !self.parent_alive.load(Ordering::SeqCst)
+            || self
+                .turn
+                .as_ref()
+                .is_some_and(|turn| turn.soft_stop_requested())
+    }
+}
+
 /// Runs sub-agents for the `task` tool. One per session.
 pub struct SessionSubAgents {
     /// `Arc`, not `Box`: the provider is moved onto each child's thread.
@@ -132,7 +220,10 @@ pub struct SessionSubAgents {
     /// Weak on purpose — the registry owns this dispatcher. See module docs.
     tools: Weak<ToolRegistry>,
     config: EngineConfig,
-    pool: Mutex<BudgetGuard>,
+    /// `Arc` so a clone rides onto the child's thread: the child settles its
+    /// own spend the moment it stops, rather than after a `.await` the parent
+    /// may never reach. See "Settling is the child's job".
+    pool: Arc<Mutex<BudgetGuard>>,
 }
 
 impl SessionSubAgents {
@@ -149,7 +240,11 @@ impl SessionSubAgents {
             provider,
             tools: Arc::downgrade(registry),
             config,
-            pool: Mutex::new(BudgetGuard::new(mode, None, Some(DEFAULT_POOL_LIMIT_USD))),
+            pool: Arc::new(Mutex::new(BudgetGuard::new(
+                mode,
+                None,
+                Some(DEFAULT_POOL_LIMIT_USD),
+            ))),
         }
     }
 
@@ -158,7 +253,7 @@ impl SessionSubAgents {
     pub fn with_pool_limit(self, limit_usd: Option<f64>) -> Self {
         let mode = self.pool.lock().unwrap_or_else(|p| p.into_inner()).mode();
         Self {
-            pool: Mutex::new(BudgetGuard::new(mode, None, limit_usd)),
+            pool: Arc::new(Mutex::new(BudgetGuard::new(mode, None, limit_usd))),
             ..self
         }
     }
@@ -237,10 +332,23 @@ impl SubAgentDispatcher for SessionSubAgents {
         let pool_view = *self.pool.lock().unwrap_or_else(|p| p.into_inner());
         let before = pool_view.session_spent_usd();
 
+        // Flipped by `ParentGone`'s drop below, which runs when this future is
+        // dropped — a hard cancel of the parent's turn. The child polls it as
+        // a soft stop, which is the whole cascade: see "A cancelled parent".
+        let parent_alive = Arc::new(AtomicBool::new(true));
+        let _parent = ParentGone(parent_alive.clone());
+        // Wrap rather than replace: the turn's own stop still has to cross,
+        // and the gate is untouched.
+        let mut controls = controls;
+        let turn = controls.steering.take();
+        controls.steering = Some(Arc::new(OrphanStop { turn, parent_alive }));
+
         // Everything crossing the thread is owned; see the module docs on
         // why the child cannot simply be awaited here.
         let provider = self.provider.clone();
         let config = self.config.clone();
+        let pool = self.pool.clone();
+        let ledger = tools.sub_agent_spend_ledger();
         let (done, wait) = tokio::sync::oneshot::channel();
         let thread = std::thread::Builder::new()
             .name(format!("stella-subagent-{}", spec.agent_id))
@@ -268,7 +376,29 @@ impl SubAgentDispatcher for SessionSubAgents {
                     &mut view,
                     &events,
                 ));
-                let _ = done.send(Ok((outcome, view.session_spent_usd())));
+
+                // Settled HERE, before reporting, and deliberately not after
+                // the `wait.await` below: a parent cancelled mid-`task` never
+                // resumes that await, and dollars this child has already
+                // spent would land in no ledger at all. Charging late to the
+                // session is the ledger's doctrine; never charging is not.
+                //
+                // Exactly once, because this is now the only writer on either
+                // side — the `task` tool no longer charges what it did not
+                // measure.
+                let spent = view.session_spent_usd() - before;
+                if spent > 0.0 {
+                    // The delta, not the view: a sibling may have folded its
+                    // own spend into the pool while this child ran, and
+                    // overwriting with a stale snapshot would erase it.
+                    pool.lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .record_spend(spent);
+                    // The parent's guard is the hard ceiling; this is what the
+                    // engine drains into it at the next step boundary.
+                    push_sub_agent_spend(&ledger, spent);
+                }
+                let _ = done.send(Ok(outcome));
             });
         if let Err(err) = thread {
             return SubAgentOutcome::Refused {
@@ -277,26 +407,15 @@ impl SubAgentDispatcher for SessionSubAgents {
         }
 
         // A child that panicked drops its sender, which lands here as a
-        // refusal rather than unwinding the parent's turn.
-        let (outcome, spent_total) = match wait.await {
-            Ok(Ok(pair)) => pair,
-            Ok(Err(reason)) => return SubAgentOutcome::Refused { reason },
-            Err(_) => {
-                return SubAgentOutcome::Refused {
-                    reason: "the sub-agent thread ended without reporting".to_string(),
-                };
-            }
-        };
-
-        // The delta, not the view: another sibling may have folded its own
-        // spend into the pool while this child ran, and overwriting with a
-        // stale snapshot would erase it.
-        let spent = spent_total - before;
-        if spent > 0.0 {
-            let mut pool = self.pool.lock().unwrap_or_else(|p| p.into_inner());
-            pool.record_spend(spent);
+        // refusal rather than unwinding the parent's turn. Nothing is settled
+        // on this side — the child already did it, on every path.
+        match wait.await {
+            Ok(Ok(outcome)) => outcome,
+            Ok(Err(reason)) => SubAgentOutcome::Refused { reason },
+            Err(_) => SubAgentOutcome::Refused {
+                reason: "the sub-agent thread ended without reporting".to_string(),
+            },
         }
-        outcome
     }
 }
 

@@ -7,7 +7,7 @@
 use std::sync::Mutex;
 
 use stella_core::ports::{ReadOnlyTools, ToolExecutor};
-use stella_core::subagent::{SubAgentReport, drain_sub_agent_spend};
+use stella_core::subagent::SubAgentReport;
 
 use super::*;
 
@@ -27,6 +27,9 @@ impl RecordingDispatcher {
     }
     fn spec(&self) -> SubAgentSpec {
         self.seen.lock().unwrap().clone().expect("dispatch ran")
+    }
+    fn dispatched(&self) -> bool {
+        self.seen.lock().unwrap().is_some()
     }
 }
 
@@ -52,14 +55,11 @@ fn report(summary: &str, cost_usd: f64, truncated: bool) -> SubAgentReport {
     }
 }
 
-fn tool_with(
-    outcome: SubAgentOutcome,
-) -> (SpawnSubAgent, Arc<RecordingDispatcher>, SubAgentSpendLedger) {
+fn tool_with(outcome: SubAgentOutcome) -> (SpawnSubAgent, Arc<RecordingDispatcher>) {
     let dispatcher = RecordingDispatcher::new(outcome);
     let slot: DispatcherSlot = Arc::default();
     *slot.write().unwrap() = Some(dispatcher.clone() as Arc<dyn SubAgentDispatcher>);
-    let spend: SubAgentSpendLedger = Arc::default();
-    (SpawnSubAgent::new(slot, spend.clone()), dispatcher, spend)
+    (SpawnSubAgent::new(slot), dispatcher)
 }
 
 fn call(description: &str, prompt: &str) -> Value {
@@ -67,8 +67,8 @@ fn call(description: &str, prompt: &str) -> Value {
 }
 
 #[tokio::test]
-async fn a_completed_child_returns_its_finding_and_charges_its_cost() {
-    let (tool, dispatcher, spend) = tool_with(SubAgentOutcome::Completed(report(
+async fn a_completed_child_returns_its_finding() {
+    let (tool, dispatcher) = tool_with(SubAgentOutcome::Completed(report(
         "the retry policy is in stella-core/src/retry.rs",
         0.004,
         false,
@@ -87,10 +87,6 @@ async fn a_completed_child_returns_its_finding_and_charges_its_cost() {
         }
         other => panic!("expected Ok, got {other:?}"),
     }
-    assert!(
-        (drain_sub_agent_spend(&spend) - 0.004).abs() < 1e-9,
-        "the child's cost must reach the ledger the engine drains"
-    );
     let spec = dispatcher.spec();
     assert_eq!(spec.instruction, "Which file defines the retry policy?");
     assert_eq!(spec.agent_id, "find-retry-policy");
@@ -101,7 +97,7 @@ async fn write_access_is_never_model_settable() {
     // This tool delegates *research*. A child that could edit would need the
     // parent's review gates around it, which is a different change — so the
     // model cannot ask for it, even explicitly.
-    let (tool, dispatcher, _) = tool_with(SubAgentOutcome::Completed(report("done", 0.0, false)));
+    let (tool, dispatcher) = tool_with(SubAgentOutcome::Completed(report("done", 0.0, false)));
     let mut input = call("do a thing", "go");
     input["write_access"] = json!(true);
     input["max_report_chars"] = json!(10_000_000);
@@ -120,7 +116,7 @@ async fn write_access_is_never_model_settable() {
 async fn a_partial_child_returns_its_evidence_as_ok_not_as_an_error() {
     // The salvaged text is work the parent already paid for. Burying it in an
     // error invites the model to discard it and redo the search.
-    let (tool, _, spend) = tool_with(SubAgentOutcome::Incomplete {
+    let (tool, _) = tool_with(SubAgentOutcome::Incomplete {
         report: report("found three callers so far", 0.02, false),
         reason: "step cap reached".into(),
     });
@@ -142,12 +138,11 @@ async fn a_partial_child_returns_its_evidence_as_ok_not_as_an_error() {
         }
         other => panic!("expected Ok with a partial marker, got {other:?}"),
     }
-    assert!((drain_sub_agent_spend(&spend) - 0.02).abs() < 1e-9);
 }
 
 #[tokio::test]
-async fn a_child_that_produced_nothing_is_an_error_but_still_charges() {
-    let (tool, _, spend) = tool_with(SubAgentOutcome::Incomplete {
+async fn a_child_that_produced_nothing_is_an_error() {
+    let (tool, _) = tool_with(SubAgentOutcome::Incomplete {
         report: report("", 0.01, false),
         reason: "provider unreachable".into(),
     });
@@ -156,15 +151,11 @@ async fn a_child_that_produced_nothing_is_an_error_but_still_charges() {
         .execute(&call("x", "y"), std::path::Path::new("."))
         .await;
     assert!(matches!(out, ToolOutput::Error { .. }), "{out:?}");
-    assert!(
-        (drain_sub_agent_spend(&spend) - 0.01).abs() < 1e-9,
-        "money is owed whatever the outcome"
-    );
 }
 
 #[tokio::test]
 async fn a_truncated_report_says_so_to_the_model() {
-    let (tool, _, _) = tool_with(SubAgentOutcome::Completed(report(
+    let (tool, _) = tool_with(SubAgentOutcome::Completed(report(
         "a long finding",
         0.0,
         true,
@@ -183,7 +174,7 @@ async fn a_truncated_report_says_so_to_the_model() {
 
 #[tokio::test]
 async fn an_unattached_dispatcher_tells_the_model_to_do_the_work_itself() {
-    let tool = SpawnSubAgent::new(Arc::default(), Arc::default());
+    let tool = SpawnSubAgent::new(Arc::default());
     let out = tool
         .execute(&call("x", "y"), std::path::Path::new("."))
         .await;
@@ -198,15 +189,14 @@ async fn an_unattached_dispatcher_tells_the_model_to_do_the_work_itself() {
 
 #[tokio::test]
 async fn a_missing_prompt_is_a_self_correcting_error_and_dispatches_nothing() {
-    let (tool, _, spend) = tool_with(SubAgentOutcome::Completed(report("x", 1.0, false)));
+    let (tool, dispatcher) = tool_with(SubAgentOutcome::Completed(report("x", 1.0, false)));
     let out = tool
         .execute(&json!({ "description": "x" }), std::path::Path::new("."))
         .await;
     assert!(matches!(out, ToolOutput::Error { .. }), "{out:?}");
-    assert_eq!(
-        drain_sub_agent_spend(&spend),
-        0.0,
-        "a rejected call must cost nothing"
+    assert!(
+        !dispatcher.dispatched(),
+        "a rejected call must not reach the dispatcher at all — that, not a          zero ledger, is what makes it cost nothing"
     );
 }
 
@@ -228,7 +218,7 @@ async fn a_child_structurally_cannot_spawn_a_grandchild() {
         }
     }
 
-    let (tool, _, _) = tool_with(SubAgentOutcome::Completed(report("nope", 0.0, false)));
+    let (tool, _) = tool_with(SubAgentOutcome::Completed(report("nope", 0.0, false)));
     let parent = OneTool(tool);
     assert_eq!(parent.schemas().len(), 1, "the parent can see `task`");
 
@@ -258,7 +248,7 @@ fn slug_is_stable_short_and_never_empty() {
 
 #[test]
 fn the_schema_is_not_read_only_which_is_what_makes_nesting_structural() {
-    let tool = SpawnSubAgent::new(Arc::default(), Arc::default());
+    let tool = SpawnSubAgent::new(Arc::default());
     let schema = tool.schema();
     assert_eq!(schema.name, "task");
     assert!(

@@ -390,3 +390,189 @@ async fn controls_come_down_with_the_turn_that_published_them() {
     );
     assert_eq!(provider.calls(), 1, "and the child actually ran");
 }
+
+// ---- a cancelled parent: bounded, and still billed ---------------------
+
+/// Returns a tool call every time, so a child left to itself runs to its step
+/// cap — which is what makes "how many calls did it make" a discriminating
+/// question. The first call parks until released, giving a test a window in
+/// which the child is provably mid-flight.
+struct LoopingPaidProvider {
+    calls: std::sync::atomic::AtomicUsize,
+    hold: tokio::sync::watch::Receiver<bool>,
+    cost_usd: f64,
+}
+
+impl LoopingPaidProvider {
+    fn calls(&self) -> usize {
+        self.calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl Provider for LoopingPaidProvider {
+    fn id(&self) -> &str {
+        "looping-paid"
+    }
+    async fn complete_ref(
+        &self,
+        _request: stella_protocol::CompletionRequestRef<'_>,
+    ) -> Result<stella_protocol::CompletionResult, stella_protocol::ProviderError> {
+        let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if n == 0 {
+            let mut rx = self.hold.clone();
+            while *rx.borrow() {
+                if rx.changed().await.is_err() {
+                    break;
+                }
+            }
+        }
+        Ok(stella_protocol::CompletionResult {
+            text: String::new(),
+            // Distinct arguments per call: identical calls are a stuck loop,
+            // and `loop_detect` is right to abort one.
+            tool_calls: vec![stella_protocol::ToolCall {
+                call_id: format!("c{n}"),
+                name: "read_file".into(),
+                input: json!({ "path": format!("no-such-file-{n}.txt") }),
+            }],
+            usage: stella_protocol::CompletionUsage {
+                reported: true,
+                ..stella_protocol::CompletionUsage::default()
+            },
+            model: "looping-paid".into(),
+            cost_usd: self.cost_usd,
+            finish_reason: None,
+        })
+    }
+}
+
+fn paid_dispatcher(
+    cost_usd: f64,
+) -> (
+    Arc<SessionSubAgents>,
+    Arc<ToolRegistry>,
+    Arc<LoopingPaidProvider>,
+    tokio::sync::watch::Sender<bool>,
+) {
+    let (hold_tx, hold) = tokio::sync::watch::channel(true);
+    let provider = Arc::new(LoopingPaidProvider {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        hold,
+        cost_usd,
+    });
+    let registry = registry();
+    let dispatcher = Arc::new(SessionSubAgents::new(
+        provider.clone(),
+        &registry,
+        EngineConfig::default(),
+        stella_protocol::BudgetMode::Observed,
+    ));
+    (dispatcher, registry, provider, hold_tx)
+}
+
+fn looping_spec() -> SubAgentSpec {
+    SubAgentSpec {
+        // Comfortably more than one, so a child that ignored the orphan stop
+        // would be visibly distinguishable from one that took it.
+        max_steps: 6,
+        ..SubAgentSpec::read_only("orphan", "investigate")
+    }
+}
+
+/// **Cascade the intent, not the mechanism.** A hard cancel cannot propagate
+/// as a hard cancel — the child is an OS thread, not a future in the parent's
+/// graph, and killing a thread mid-tool is exactly what the step-boundary rule
+/// forbids. So the parent's cancel becomes the child's *soft stop*, and the
+/// orphan is bounded to the call already in flight instead of its whole step
+/// cap.
+#[tokio::test]
+async fn cancelling_the_parent_stops_the_child_at_its_next_boundary() {
+    let (dispatcher, _registry, provider, hold_tx) = paid_dispatcher(0.01);
+
+    let running = dispatcher.clone();
+    let child = tokio::spawn(async move { running.dispatch(looping_spec()).await });
+
+    until("the child to be inside its first model call", || {
+        provider.calls() >= 1
+    })
+    .await;
+
+    // Awaiting the aborted handle is what makes this deterministic: it
+    // resolves only once the task has actually been dropped, which is when
+    // `ParentGone` runs.
+    child.abort();
+    assert!(child.await.is_err(), "the dispatch future was cancelled");
+
+    hold_tx
+        .send(false)
+        .expect("the provider is still listening");
+    until("the orphaned child to settle", || {
+        dispatcher.pool.lock().unwrap().session_spent_usd() > 0.0
+    })
+    .await;
+
+    assert_eq!(
+        provider.calls(),
+        1,
+        "the child must stop at the boundary after the call already in \
+         flight — a child that ignored the cancel would run to its step cap"
+    );
+}
+
+/// The sharper half of the same defect. Settlement used to happen after
+/// `wait.await` in the dispatcher and after `dispatch().await` in the tool —
+/// neither of which runs when the parent is cancelled mid-`task`, so a child's
+/// real spend landed in NO ledger. Charging late to the session is the
+/// ledger's doctrine; never charging is not.
+#[tokio::test]
+async fn a_cancelled_parents_child_still_charges_what_it_spent() {
+    let (dispatcher, registry, provider, hold_tx) = paid_dispatcher(0.01);
+    let ledger = registry.sub_agent_spend_ledger();
+
+    let running = dispatcher.clone();
+    let child = tokio::spawn(async move { running.dispatch(looping_spec()).await });
+
+    until("the child to be inside its first model call", || {
+        provider.calls() >= 1
+    })
+    .await;
+    child.abort();
+    assert!(child.await.is_err());
+
+    hold_tx
+        .send(false)
+        .expect("the provider is still listening");
+    until("the orphaned child to settle", || {
+        dispatcher.pool.lock().unwrap().session_spent_usd() > 0.0
+    })
+    .await;
+
+    let charged = stella_core::subagent::drain_sub_agent_spend(&ledger);
+    assert!(
+        (charged - 0.01).abs() < 1e-9,
+        "the engine drains this into the parent's guard at the next step \
+         boundary; got {charged}"
+    );
+    assert!(
+        (dispatcher.pool.lock().unwrap().session_spent_usd() - 0.01).abs() < 1e-9,
+        "and the session pool is charged the same dollars, exactly once"
+    );
+}
+
+/// The ordinary path settles once, through the same single writer. Two
+/// writers (the tool AND the dispatcher) would double-bill every child.
+#[tokio::test]
+async fn an_uncancelled_child_is_charged_exactly_once() {
+    let (dispatcher, registry, _provider, hold_tx) = paid_dispatcher(0.01);
+    let ledger = registry.sub_agent_spend_ledger();
+    hold_tx.send(false).expect("nothing is holding yet");
+
+    dispatcher.dispatch(looping_spec()).await;
+
+    let charged = stella_core::subagent::drain_sub_agent_spend(&ledger);
+    assert!(
+        (charged - 0.06).abs() < 1e-9,
+        "six steps at a cent each, counted once; got {charged}"
+    );
+}

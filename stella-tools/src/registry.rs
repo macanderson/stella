@@ -339,7 +339,6 @@ impl ToolRegistry {
             // on why an unattached dispatcher is still the honest shape.
             Arc::new(crate::subagent::SpawnSubAgent::new(
                 sub_agent_dispatcher.clone(),
-                sub_agent_spend.clone(),
             )),
             // SVG generation is client-side (the model authors the SVG, the
             // pipeline validates/sanitizes) — no provider key needed, so
@@ -571,6 +570,18 @@ impl ToolRegistry {
         controls: stella_core::ports::TurnControls,
     ) -> crate::subagent::TurnControlsGuard {
         crate::subagent::TurnControlsGuard::attach(&self.turn_controls, controls)
+    }
+
+    /// The ledger a dispatcher charges finished children to (cheap clone —
+    /// shared inner), drained by the engine at each step-boundary check.
+    ///
+    /// `pub` because settling is the *dispatcher's* job, per
+    /// [`stella_core::subagent::SubAgentDispatcher`]'s contract: it must
+    /// happen the moment a child stops, on the child's own thread, or a
+    /// parent cancelled mid-`task` leaves paid-for dollars in no ledger at
+    /// all.
+    pub fn sub_agent_spend_ledger(&self) -> stella_core::subagent::SubAgentSpendLedger {
+        self.sub_agent_spend.clone()
     }
 
     /// The current turn's boundary controls — empty between turns, and on a
