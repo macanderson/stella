@@ -249,6 +249,29 @@ fn render_browse(state: &McpTabState, lines: &mut Vec<Line<'static>>, width: usi
     }
 }
 
+/// One server's name for a surface with no room for a second row — the
+/// session-context overlay.
+///
+/// The publisher's name headlines when one is recorded, with the alias in
+/// parentheses. The alias cannot be dropped: it is the tool-namespace segment,
+/// so it is what the operator will actually type. It just cannot stand alone,
+/// because it is a sanitized last path segment — `com.stripe/mcp` installs as
+/// `mcp`, which names nothing.
+///
+/// The MCP tab's two-row list splits these across lines instead — name on the
+/// first, alias and description on the second. This is the one-line form.
+pub fn compact_heading(server: &McpServerInfo) -> String {
+    match server
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    {
+        Some(title) => format!("{title} ({})", server.name),
+        None => server.name.clone(),
+    }
+}
+
 /// A server's first row: selection marker, enable glyph, name, transport,
 /// connection state, and the badges that qualify it.
 fn headline(server: &McpServerInfo, selected: bool) -> Line<'static> {

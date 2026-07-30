@@ -541,14 +541,7 @@ fn render_context_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
         } else {
             "not connected".to_string()
         };
-        // The publisher's name headlines when one is recorded, with the alias
-        // kept beside it — the alias is the tool-namespace segment, so it is
-        // what the operator will actually type, but on its own it names
-        // nothing (`com.stripe/mcp` installs as `mcp`).
-        let heading = match &server.title {
-            Some(title) => format!("{title} ({})", server.name),
-            None => server.name.clone(),
-        };
+        let heading = crate::views::mcp::compact_heading(server);
         let mut spans = vec![
             Span::raw("  "),
             Span::styled(glyph, glyph_style),
