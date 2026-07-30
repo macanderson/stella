@@ -1,0 +1,393 @@
+# =============================================================================
+# stella.next.toml
+#
+# The config shape AFTER the five features in DESIGN.md are built. This is a
+# TARGET, not a plan of record — every block marked NEW needs the
+# corresponding phase in DESIGN.md before it does anything.
+#
+# This file shows the DELTA. Blocks that survive the port unchanged
+# (`[context]`, `[context_providers]`, `[hooks]`, `[authority]`, `[ui]`,
+# `[mcp.servers]`) are shown in `stella.today.toml` and are not repeated here —
+# assume they carry over verbatim.
+#
+# Marker legend:
+#   NEW        does not exist in any form today
+#   EXTENDED   exists, gains fields
+#   RESHAPED   exists, changes shape (needs a migration)
+#   UNCHANGED  ported as-is (see stella.today.toml)
+# =============================================================================
+
+# Root scalars first — see stella.today.toml's ROOT SCALARS note for why.
+# DESIGN.md §6.3 proposes retiring bare root keys entirely; under that
+# proposal this line becomes `[run] recap = "on"` and the footgun disappears.
+enable_recap = "off"
+
+
+# ── UNCHANGED ────────────────────────────────────────────────────────────────
+[meta]
+schema_version = 2      # bumped: §6.1 migration runs 1 -> 2
+scope          = "project"
+
+
+# =============================================================================
+# PROVIDERS  ── EXTENDED
+# =============================================================================
+# Still a table keyed by id, still merged per-id/per-field, still gated by the
+# project trust boundary. Two additions:
+#
+#   enabled     — a provider can be defined and switched off without deleting
+#                 its block. Today the only way to "disable" a provider is to
+#                 remove its credential, which is not a config action.
+#
+#   weight      — overrides the hard-coded auto-detection preference order in
+#                 `PROVIDERS` (openrouter, zai, anthropic, openai, xai,
+#                 deepseek, gemini, vertex, bedrock). Lower runs first.
+#                 Absent = the built-in order.
+#
+# Note what is NOT here: the first example's `region` / `project_id` /
+# `auth` / `api_version` fields. Vertex and Bedrock resolve those from their
+# own env chains inside the adapter, and `Dialect::{Vertex,Bedrock}` are
+# built-in-only precisely because a settings entry cannot express them.
+# Adding them to config means teaching the factory to build those adapters
+# from config, which is its own project — see DESIGN.md §7 (deferred).
+
+[providers.anthropic]
+enabled       = true
+weight        = 10
+api_key_env   = "ANTHROPIC_API_KEY"
+default_model = "claude-fable-5"
+
+[providers.openrouter]
+enabled     = true
+weight      = 20
+api_key_env = "OPENROUTER_API_KEY"
+
+[providers.local-ollama]
+enabled       = true
+weight        = 90            # last resort
+base_url      = "http://localhost:11434/v1"
+dialect       = "openai-compatible"
+default_model = "llama3.1:70b"
+# Most local servers ignore auth entirely. Omitting api_key_env is fine:
+# the `local` dialect defaults to a placeholder key.
+
+
+# =============================================================================
+# MODELS  ── NEW, and deliberately NOT the first example's `[models]`
+# =============================================================================
+# The original example proposed a full model table in config: `family`,
+# `latest_alias`, `pinned_version`, and a `served_by.<provider>.model_id` map
+# per model. That duplicates a live system.
+#
+# Stella already HAS a model catalog: a SQLite store of model cards, pricing
+# versions, and aliases learned from telemetry, refreshed from models.dev on
+# explicit request and from provider-native /models endpoints. A hand-written
+# table in config would rot the week a model ships and would fight the
+# catalog for authority over the same question.
+#
+# So the split is:
+#     catalog = DATA    (the DB — what models exist, what they cost)
+#     config  = POLICY  (this block — which of them this workspace may use)
+
+[models]
+# Which catalog entries this workspace may select. Empty/absent = no
+# restriction. This is `agent_engine_config.allowed_models` promoted out of
+# the agents block, because it is a statement about models, not about agents.
+# Still REPLACES wholesale across scopes rather than concatenating.
+allowed = [
+  "anthropic/claude-fable-5",
+  "anthropic/claude-opus-5",
+  "zai/glm-5.2",
+]
+
+# Resolve a floating family to its newest catalog entry.
+#
+# CRITICAL SEMANTIC, and the one place this design diverges hardest from the
+# original example, which specified resolution "at call time (or on a periodic
+# refresh)":
+#
+#   Resolution happens ONCE, at session start, and the resolved id is written
+#   into the session's receipts.
+#
+# Per-call resolution would break three things at once: prompt-cache prefixes
+# (a changed model id invalidates the cached prefix), cost comparability
+# across turns in one session, and the benchmark contract that the system
+# under test is frozen for the duration of a run. A model that silently moves
+# opus-4.5 -> opus-5 mid-session makes a run un-reproducible and its cost
+# numbers un-addable.
+#
+# `stella models --resolved` prints what a session would pin right now.
+track_latest = ["anthropic/claude-opus"]
+
+# Hard pins. Beat `track_latest` and beat `allowed` (a pin is an explicit
+# statement; refusing it because a vocabulary list is stale would be
+# obstructive). A pinned id absent from the catalog is a named error, not a
+# silent fallback.
+[models.pin]
+"anthropic/claude-opus" = "claude-opus-5-20260514"
+
+
+# =============================================================================
+# AGENTS  ── RESHAPED (closed set -> open set) + EXTENDED
+# =============================================================================
+# Today the agent set is CLOSED: four struct fields — default, worker, judge,
+# triage. A misspelled agent key in JSON is silently ignored.
+#
+# Opening it is what makes the `task` tool configurable. That tool exists and
+# is merged (#922 -> #976/#983), but it dispatches to ONE hard-coded read-only
+# persona with no `agent_type` parameter. Meanwhile `.stella/agents/*.md`
+# holds named markdown personas that are listed by `/agents` and otherwise
+# advisory — they cannot set a model, an effort, or a tool scope.
+#
+# Opening the set joins those two halves: a named agent here is selectable by
+# `task`, and gets a real engine posture.
+#
+# The four built-in names keep their meaning and stay reserved.
+
+[agents]
+default_model         = "anthropic/claude-fable-5"
+pipeline_worker_model = "zai/glm-5.2"
+pipeline_judge_model  = "anthropic/claude-opus-5"
+pipeline_triage_model = "deepseek/deepseek-chat"
+auto_mode             = "off"
+effort_auto           = "on"
+reasoning_auto        = "on"
+headless_scope_bypass = "off"
+# `allowed_models` MOVED to [models].allowed. §6.1 migrates it and warns on
+# the old location for one release.
+
+# ── EXTENDED: a built-in agent gains provider fallback and a tool scope ──
+[agents.judge]
+model  = "anthropic/claude-opus-5"
+effort = "high"
+
+# NEW — provider_preference. First ENABLED provider in the list that can
+# serve this model wins; on a 429/5xx/timeout the request falls through to the
+# next. Today an agent has exactly one `provider` and a rate limit is a failed
+# turn.
+#
+# Fallback is NOT free and the config must not pretend otherwise:
+#   - a different provider serving "the same" model is a different tokenizer,
+#     a different cache, and different pricing
+#   - the fallback provider's resolved model id is recorded per call, so cost
+#     attribution and receipts stay honest across a switch
+#   - `on_exhausted` decides what happens when every provider fails
+provider_preference = ["anthropic", "openrouter"]
+on_exhausted        = "fail"   # fail | degrade  (degrade = fall back to the
+                               # default agent's model rather than ending the
+                               # turn; opt-in, because a silent capability
+                               # drop in a judge is worse than a clean failure)
+
+# NEW — per-agent tool scope. Uses the EXACT SAME grammar as the root
+# [tools] block (name > group > "*"), because a second tool-permission
+# language is how permission bugs happen.
+#
+# Composition: root [tools] is the workspace floor, this narrows it further,
+# and the managed authority ceiling clamps both. An agent can never GRANT a
+# tool the root block or the ceiling denied — narrowing only.
+[agents.judge.tools]
+"*"       = "off"
+read_file = "on"
+grep      = "on"
+glob      = "on"
+
+# ── NEW: a custom named agent, selectable by the `task` tool ──
+[agents.security-reviewer]
+description = "Adversarial security review of a diff — OWASP, injection, secrets"
+model       = "anthropic/claude-opus-5"
+effort      = "xhigh"
+reasoning   = "on"
+# NEW — prompt from a file instead of an inline string.
+#
+# AUTHORITY NOTE: the inline `prompt` field is privileged (a project scope's
+# is discarded unless managed `authority.project_prompts = "on"`). A path
+# indirection must not become a way around that check — `prompt_file` is
+# gated by the SAME authority bit, and the path is resolved inside the
+# workspace root with symlinks refused. See DESIGN.md §4.3.
+prompt_file = ".stella/prompts/security-reviewer.md"
+
+  [agents.security-reviewer.tools]
+  "*"    = "off"
+  file   = "on"    # a whole group
+  search = "on"
+
+
+# =============================================================================
+# PIPELINE  ── NEW
+# =============================================================================
+# Today the staged pipeline (triage -> plan -> witness -> execute -> verify ->
+# judge) is hard-coded in `stella-pipeline`, and the only control is
+# `--no-pipeline`, which turns the entire thing off and drops to the raw
+# step-loop. There is no way to say "skip the judge" or "allow three revision
+# rounds".
+#
+# ONE `enabled` FLAG, NOT TWO. The original example had `[agents.*].enabled`
+# and `[pipeline.stages.*].enabled` both answering "does this run", and
+# acknowledged in its own comment that the pipeline one wins. Two flags for
+# one question desynchronize; this design keeps only the pipeline's.
+
+# NOTE — the six stages below are the READABLE subset, not the vocabulary.
+# `StageKind` (stella-protocol/src/event.rs) has eleven variants: Triage,
+# ContextRecall, Plan, ScopeReview, Witness, Execute, Verify, Judge, Reflect,
+# ContextWrite, Complete. The real block is built against the enum.
+#
+# Three are deliberately NOT configurable here, because each already has an
+# owner and a second switch is how these blocks rot — see DESIGN.md §4.5:
+#   ScopeReview  -> owned by agents.headless_scope_bypass
+#   Complete     -> terminal, not a stage
+#   ContextRecall / ContextWrite / Reflect -> owned by [context]
+
+[pipeline]
+mode = "sequential"   # sequential | triage_route | single_agent
+
+[pipeline.stages.triage]
+enabled   = true
+# What happens to the turn when this stage is off.
+#   skip  — go straight to the next enabled stage
+#   fail  — refuse to run a pipeline that is missing this stage
+on_disable = "skip"
+# `triage_route` mode only: where this stage may dispatch.
+routes_to  = ["worker", "judge"]
+
+[pipeline.stages.plan]
+enabled    = true
+on_disable = "skip"
+
+[pipeline.stages.witness]
+enabled    = true
+on_disable = "skip"
+
+[pipeline.stages.execute]
+enabled    = true
+# Execute is not optional — there is no turn without it.
+on_disable = "fail"
+
+[pipeline.stages.verify]
+enabled    = true
+on_disable = "skip"
+
+[pipeline.stages.judge]
+enabled    = true
+on_disable = "skip"     # worker output is returned unreviewed
+# How many times the judge may bounce work back to the worker.
+max_revisions = 2
+
+
+# =============================================================================
+# INTEGRATIONS  ── NEW
+# =============================================================================
+# The strongest idea in the original example, and the least built.
+#
+# Today: `stella connect github|linear` runs an OAuth flow and writes tokens
+# to `~/.stella/integrations.json`. That is imperative STATE — there is no
+# declarative statement anywhere of "this workspace talks to THIS Jira
+# project", and no way for a tool to be pointed at a different backend
+# without changing the tool.
+#
+# This block is the declarative half. It holds connection SHAPE only:
+# endpoints, project keys, and the NAME of an env var. Never a secret. Tokens
+# stay in integrations.json / the environment exactly as they are now.
+#
+# A loader must FAIL FAST at startup when an integration is enabled and the
+# env var it names is not set — the alternative is discovering it mid-turn,
+# at the moment the tool fires.
+#
+# TRUST: an integration is an egress destination. A project-scope integration
+# can send workspace content to a host the user never approved, so it sits on
+# the same boundary as `context_providers` — untrusted project scope
+# contributes nothing.
+
+[integrations.jira-prod]
+kind           = "jira"
+base_url       = "https://oxagen.atlassian.net"
+project_key    = "OPS"
+user_email_env = "JIRA_USER_EMAIL"     # Jira Cloud: basic auth = email + token
+api_key_env    = "JIRA_API_TOKEN"
+enabled        = true
+
+[integrations.github-main]
+kind        = "github"
+owner       = "macanderson"
+repo        = "stella"
+api_key_env = "GITHUB_TOKEN"
+enabled     = true
+
+[integrations.linear-ops]
+kind        = "linear"
+team_id     = "OXA"
+api_key_env = "LINEAR_API_KEY"
+enabled     = false
+
+
+# =============================================================================
+# TOOLS  ── EXTENDED (the deny-list is UNCHANGED; multi-backend binding is NEW)
+# =============================================================================
+# The root switch map keeps its exact current semantics: an open map, a
+# deny-list, absent = ON, precedence name > group > "*".
+#
+# It is deliberately NOT turned into an enumerated registry. Stella's tool set
+# is only knowable at runtime — built-ins, plus each connected MCP server's
+# tools, plus every .stella/tools/*.toml manifest — so an enumerated config
+# could never name an MCP tool and would drift from the built-ins on every
+# release.
+
+# SCHEMA NOTE — this section is now HETEROGENEOUS: `bash = "off"` is a
+# scalar, `[tools.jira_search]` is a table. Today `ToolsSettings` is a flat
+# `BTreeMap<String, Toggle>`, so this needs a value type of "toggle OR table".
+#
+# The rule, borrowed from Cargo's dependency shorthand (`serde = "1.0"` vs
+# `serde = { version = "1.0", features = [...] }`):
+#
+#     tool = "<toggle>"   IS EXACTLY   [tools.<tool>] enabled = "<toggle>"
+#
+# The string form is sugar, not a second dialect. That keeps a two-line
+# read-only agent two lines while letting one tool carry a backend binding.
+# See DESIGN.md §5.2 — a bare `#[serde(untagged)]` is rejected there because
+# its "data did not match any variant" error is exactly the silent-typo
+# failure this config's loud-error posture exists to prevent.
+
+[tools]
+bash    = "off"
+process = "off"
+
+# ── NEW: binding a tool to an integration ──
+# A tool that needs credentials names an integration instead of embedding a
+# key. This is what makes the integration block load-bearing rather than
+# decorative.
+[tools.jira_search]
+integration = "jira-prod"
+
+# ── NEW: a tool with interchangeable backends ──
+# The "file a follow-up ticket" case: same intent, three possible systems.
+# Listing them here decouples what the agent WANTS from where it LANDS.
+[tools.create_follow_up_task]
+backends        = ["jira-prod", "github-main", "linear-ops"]
+default_backend = "jira-prod"
+
+  [tools.create_follow_up_task.config]
+  # May the calling agent pick a backend via a tool-call argument, or is it
+  # always `default_backend`?
+  agent_may_choose_backend = true
+  # Route through the existing approval gate before the ticket is actually
+  # filed. This is NOT a new confirmation mechanism — it marks the tool as
+  # gated so the deck's existing PreToolUse/approval path handles it.
+  require_confirmation     = true
+  default_labels           = ["from-agent"]
+
+
+# =============================================================================
+# CARRIED OVER VERBATIM — see stella.today.toml
+# =============================================================================
+#   [hooks.*]              concatenate across scopes, project-trust gated
+#   [mcp] / [mcp.servers]  registry_url + the whole of .stella/mcp.toml
+#   [context.*]            7 sub-blocks; retrieval is live, the rest gated on
+#                          context.lifecycle.enabled
+#   [context_providers.*]  CGP sources, project-trust gated
+#   [authority]            managed scope ONLY, deny_unknown_fields, a ceiling
+#   [ui]                   theme
+#
+# STILL SEPARATE FILES, deliberately:
+#   ~/.stella/credentials.toml    secrets, 0600, zeroized — never merged
+#   .stella/tools/<name>.toml     a tool ships next to its script
+#   .stella/domains.toml          generated by `stella init`
+#   .env / .env.local             project dotenv, live shell always wins

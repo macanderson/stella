@@ -1,0 +1,542 @@
+# =============================================================================
+# stella.today.toml
+#
+# Every knob Stella ACTUALLY READS as of 2026-07, rendered in the proposed
+# single-file TOML shape. This is the migration target for phase 1: a pure
+# transliteration, no new semantics, no invented keys.
+#
+#   *** THIS FILE DOES NOT LOAD YET. ***
+#
+# Stella reads `settings.json` (JSON) + `.stella/mcp.toml` today. Nothing
+# parses this file. It exists so the port can be reviewed key-by-key against
+# the running code before any of it is built. Every key below was verified
+# against a serde struct or a `const &[&str]` in the workspace; the source is
+# named in the comment above each block.
+#
+# What this file deliberately does NOT contain:
+#   - `[[integrations]]`, `[models]`, `[pipeline]`, per-agent `tools`,
+#     `provider_preference` — none of those exist. They are in
+#     `stella.next.toml`, with the build plan in `DESIGN.md`.
+#   - credentials. `~/.stella/credentials.toml` stays a separate file, 0600,
+#     zeroized on drop. It is never merged into this one.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# ROOT SCALARS  ── settings.json `enable_recap`
+#
+# THESE MUST COME FIRST, BEFORE ANY TABLE HEADER. This is the sharpest TOML
+# footgun in the whole port: a bare key written *after* a `[table]` silently
+# becomes a key OF that table. Drafting this file, `enable_recap` was placed
+# down beside `[ui]` and silently landed inside `[authority]` instead.
+#
+# It survived only because `ManagedAuthoritySettings` is
+# `#[serde(deny_unknown_fields)]` — the one strict struct in the schema — so
+# it would have been a loud error. Anywhere else in this file it would have
+# parsed clean and configured nothing.
+#
+# DESIGN.md §6.3 proposes fixing this properly by giving every root scalar a
+# table home (`[run] recap = "on"`) so the shape has no bare keys at all.
+#
+# on = print an end-of-run recap in text mode: a deterministic synthesis of
+# the outcome (completed/verified/failed/aborted) and what changed, beside the
+# file and cost panels. No model call. Default off.
+# -----------------------------------------------------------------------------
+
+enable_recap = "off"
+
+
+# -----------------------------------------------------------------------------
+# META  ── NEW IN THE PORT (nothing equivalent exists today)
+#
+# settings.json has no version field. Forward-compat is handled by tolerating
+# unknown keys and warning about them (`settings/unknown.rs`), which cannot
+# tell a typo from a future key. `schema_version` is the one addition phase 1
+# makes, because a migration seam is exactly what the current design lacks.
+#
+# `scope` is a self-declaration checked against the file's LOCATION. It does
+# not choose the scope — the path does. A mismatch is a loud error, because a
+# project file claiming `scope = "managed"` is either a mistake or an attack.
+# -----------------------------------------------------------------------------
+
+[meta]
+schema_version = 1
+scope          = "project"   # "user" | "managed" | "project"
+
+
+# -----------------------------------------------------------------------------
+# PROVIDERS  ── settings.json `providers.<id>`
+# Source: stella-cli/src/settings.rs `ProviderSettings`
+#         stella-cli/src/settings/unknown.rs `PROVIDER_FIELDS`
+#
+# A TABLE keyed by provider id, NOT an array-of-tables. This matters: scopes
+# merge per-id AND per-field (`ProviderSettings::overlay`), so a managed
+# `base_url` and a user `api_key_env` compose into one effective provider.
+# An array-of-tables cannot express that without hand-rolling id-matching.
+#
+# An id matching a built-in OVERRIDES that built-in's defaults. A new id
+# DEFINES a provider, and then `base_url` is required.
+#
+# Built-in ids, in auto-detection preference order
+# (stella-cli/src/config/providers.rs `PROVIDERS`):
+#   openrouter, zai, anthropic, openai, xai, deepseek, gemini, vertex, bedrock
+#   plus the `local` pseudo-provider (never auto-detected).
+#
+# TRUST: `base_url`, `api_key`, and `api_key_env` are credential-routing
+# fields. In an UNTRUSTED project scope all three are discarded and restored
+# from the user/managed merge — a cloned repo cannot redirect where your key
+# is sent. Set STELLA_TRUST_PROJECT=1 to allow it.
+# -----------------------------------------------------------------------------
+
+# Override a built-in: only the fields you want changed.
+[providers.anthropic]
+api_key_env   = "ANTHROPIC_API_KEY"
+default_model = "claude-fable-5"
+
+# Define a new provider. `base_url` required; `dialect` picks the wire adapter.
+# dialect ∈ openai-compatible | openai-responses | anthropic | gemini
+#           | vertex | bedrock              (kebab-case — serde rename_all)
+# `vertex` and `bedrock` are built-in-only: they need project/region
+# resolution a settings entry has no way to express.
+# Source: stella-model/src/factory.rs `Dialect`
+[providers.my-vllm]
+name          = "Internal vLLM"
+base_url      = "http://vllm.internal:8000/v1"
+api_key_env   = "INTERNAL_VLLM_KEY"
+default_model = "meta-llama/Meta-Llama-3.1-70B-Instruct"
+dialect       = "openai-compatible"
+# `id` may restate the key. When present it MUST match, so copy-pasting an
+# entry under a new key cannot silently configure the wrong provider.
+id            = "my-vllm"
+
+# `api_key` (a literal secret) is also accepted here, ranking below env vars
+# and above the interactive prompt. It is omitted from this example on
+# purpose — see DESIGN.md §6, which proposes demoting it at project scope.
+
+
+# -----------------------------------------------------------------------------
+# AGENTS  ── settings.json `agent_engine_config`
+# Source: stella-cli/src/settings.rs `AgentEngineConfig`, `AgentEngineAgent`,
+#         `AgentEngineParams`; unknown.rs ENGINE_{ROOT,AGENT,PARAM}_FIELDS
+#
+# EXACTLY FOUR agents exist, and the set is closed (`AgentEngineAgents` is a
+# struct with four fields, not a map): default, worker, judge, triage.
+# `default` is the interactive/step-loop agent; the other three are the staged
+# pipeline's roles. `Role::Plan` rides the worker's settings.
+#
+# Model precedence per agent:
+#   agents.<a>.model  >  <flat per-role field>  >  default_model  >  provider default
+# -----------------------------------------------------------------------------
+
+[agents]
+# The default agent's model, and the base for every role with no more
+# specific setting. A model string is either `provider/slug`, or a bare slug
+# sent verbatim to THAT provider when the agent's `provider` field is set.
+default_model         = "anthropic/claude-fable-5"
+pipeline_worker_model = "zai/glm-5.2"
+pipeline_judge_model  = "openrouter/openai/gpt-5.5"
+pipeline_triage_model = "deepseek/deepseek-chat"
+
+# The model vocabulary the TUI pickers offer and `auto_mode` selects from.
+# REPLACES wholesale across scopes rather than concatenating — it is one
+# vocabulary, and concatenating would make it impossible for a project to
+# narrow the user's list.
+allowed_models = [
+  "anthropic/claude-fable-5",
+  "zai/glm-5.2",
+  "openrouter/openai/gpt-5.5",
+]
+
+# on/off toggles. A dedicated enum, not a bool: a typo must be a loud parse
+# error, never a silently-false setting.
+auto_mode      = "off"  # on = pick the judge model automatically from
+                        # allowed_models, preferring a different family than
+                        # the worker and ranking by catalog list price
+effort_auto    = "on"   # on = judge high, worker medium, triage low,
+                        # default medium — overrides any per-agent `effort`
+reasoning_auto = "on"   # on = thinking on for judge/worker/default, off for
+                        # triage — overrides any per-agent `reasoning`
+
+# on = a headless run proceeds past scope review instead of stopping at
+# ScopeReviewRequiredHeadless. OFF by default and deliberately so: scope
+# review is what keeps a large blast radius from landing unattended, and a
+# headless surface has nobody to ask. Turn it on only where the tree is
+# disposable and the budget cap is the real guard.
+headless_scope_bypass = "off"
+
+# ---- per-agent overrides. Every field optional = "no opinion" ---------------
+#
+# The JSON nests these one level deeper (`agent_engine_config.agents.judge`).
+# Flattened here to `[agents.judge]` because the agent set is CLOSED — the
+# four names are struct fields, not map keys — so a per-agent table can never
+# collide with a root field. If that set ever opens, this must go back to
+# `[agents.agents.<name>]`.
+
+[agents.judge]
+provider  = "openrouter"      # gateway id; when set, `model` is sent
+model     = "openai/gpt-5.5"  # verbatim as the slug to THIS provider
+effort    = "high"            # low|medium|high|xhigh|max (snake_case)
+reasoning = "on"
+# Replacement system prompt. Workspace memories/rules still append to it —
+# they are additive context, not part of the base instruction set.
+#
+# PRIVILEGED: a project scope's prompt is discarded and restored from the
+# trusted scopes unless managed `authority.project_prompts = "on"`.
+prompt    = "You are a strict code-review judge. Reject on any unproven claim."
+
+  # "Include checkbox" semantics: a present value goes on the wire where the
+  # dialect supports it; absent leaves the provider default untouched.
+  # temperature/max_tokens land on CompletionRequest directly; the rest ride
+  # CompletionRequest::params. An adapter silently drops what its dialect
+  # cannot express — a param must never fail a request.
+  [agents.judge.params]
+  temperature        = 0.2
+  top_p              = 0.9
+  top_k              = 40
+  frequency_penalty  = 0.0
+  presence_penalty   = 0.0
+  repetition_penalty = 1.0
+  max_tokens         = 4096
+  seed               = 42
+  verbosity          = "low"       # low | medium | high
+  service_tier       = "priority"  # auto | default | flex | priority
+
+[agents.worker]
+effort = "medium"
+
+[agents.triage]
+reasoning = "off"
+
+[agents.default]
+effort = "medium"
+
+
+# -----------------------------------------------------------------------------
+# TOOLS  ── settings.json `tools`
+# Source: stella-cli/src/settings.rs `ToolsSettings`
+#         stella-tools/src/policy.rs `ToolPolicy`
+#
+# An OPEN MAP and a DENY-LIST. Absent means ON — Stella ships with every tool
+# available. This is not a registry: it is an overlay on a registry that is
+# only known at runtime (built-ins + each connected MCP server's tools +
+# every `.stella/tools/*.toml` manifest).
+#
+# Precedence, most specific first:
+#   1. exact tool name
+#   2. its group
+#   3. "*"
+# So `{"*" = "off", "read_file" = "on"}` is a read-only agent in two lines.
+#
+# Groups (stella-tools/src/catalog.rs, plus "mcp" and "custom" for tools the
+# catalog does not know):
+#   bash  build  ci  context  file  issue  media  process  repo  scripts
+#   search  session  task  web  |  mcp  custom
+#
+# CEILING: a tool the managed scope denies is denied for good. Neither user
+# nor project can grant it back, and the settings editor renders it LOCKED
+# rather than as a switch that silently does nothing.
+# -----------------------------------------------------------------------------
+
+[tools]
+bash    = "off"   # one tool
+process = "off"   # one whole group
+"*"     = "on"    # the wildcard (quoted — bare * is not a TOML key)
+
+
+# -----------------------------------------------------------------------------
+# HOOKS  ── settings.json `hooks`
+# Source: stella-core/src/hooks.rs `Hooks`, `HookMatcher`, `HookAction`
+#
+# NOTE THE MERGE RULE: hooks CONCATENATE across scopes. They do not overlay.
+# Any scope can add a gate; no scope can remove another's. This is the one
+# block in the file that does not follow the per-field last-wins rule, and
+# the TOML port must preserve it.
+#
+# Event keys are PascalCase (serde rename): SessionStart, PreToolUse,
+# PostToolUse. `matcher` is a glob over the tool name for the two ToolUse
+# events; SessionStart ignores it and runs every action.
+#
+# `timeoutMs` is camelCase (serde rename). Default 60_000, hard cap 600_000.
+# The command receives the event payload as JSON on stdin.
+#
+# TRUST: project-scope hooks are NOT loaded unless STELLA_PROJECT_HOOKS=1 or
+# STELLA_TRUST_PROJECT=1. A hook is arbitrary code execution on `git clone`.
+# -----------------------------------------------------------------------------
+
+[[hooks.SessionStart]]
+  [[hooks.SessionStart.hooks]]
+  type    = "command"
+  command = "./scripts/session-context.sh"
+
+[[hooks.PreToolUse]]
+matcher = "bash"
+  [[hooks.PreToolUse.hooks]]
+  type      = "command"
+  command   = "./scripts/audit-bash.sh"
+  timeoutMs = 5000
+
+[[hooks.PostToolUse]]
+matcher = "write_file"
+  [[hooks.PostToolUse.hooks]]
+  type    = "command"
+  command = "./scripts/fmt-on-write.sh"
+
+
+# -----------------------------------------------------------------------------
+# MCP  ── settings.json `mcp` + the WHOLE of `.stella/mcp.toml`
+# Source: stella-cli/src/settings.rs `McpSettings`
+#         stella-mcp/src/config.rs `McpConfig`, `McpServerEntry`, `McpTransport`
+#
+# `.stella/mcp.toml` is already TOML with a `[servers.<name>]` table, so it
+# folds in verbatim as `[mcp.servers.<name>]`. This is the cheapest
+# consolidation in the whole migration — a prefix, nothing more.
+#
+# TRUST: MCP servers sit on the same code-execution boundary as hooks. A
+# stdio server spawns a process; project scope needs STELLA_TRUST_PROJECT=1.
+#
+# CREDENTIAL SCRUB: a stdio child inherits NO ambient environment except the
+# keys listed in its own `env` table, plus `PATH` (the one deliberate
+# exception, without which `npx`/`uvx`/`docker` could not resolve). An
+# ANTHROPIC_API_KEY in the parent shell can never reach an MCP subprocess.
+# -----------------------------------------------------------------------------
+
+[mcp]
+# Base URL of an MCP Server Registry API (the frozen GET /v0.1/servers
+# contract). Unset = the official registry. Credential-routing-adjacent:
+# discarded from an untrusted project scope.
+registry_url = "https://registry.modelcontextprotocol.io"
+
+[mcp.servers.filesystem]
+transport = "stdio"
+cmd       = "mcp-server-filesystem"
+args      = ["--root", "/workspace"]
+env       = { LOG_LEVEL = "info" }
+# Explicit opt-in for Best-of-N candidate sharing. NEVER inferred from the
+# server's own `read_only_hint`, which is untrusted and cannot distinguish
+# "reads an external system" (safe across candidates) from "reads the local
+# tree" (would read stale bytes from an isolated snapshot).
+candidate_safe = false
+
+[mcp.servers.github]
+transport = "http"
+url       = "https://mcp.example.com/mcp"
+headers   = { Authorization = "Bearer ${GITHUB_MCP_TOKEN}" }
+
+
+# -----------------------------------------------------------------------------
+# CONTEXT  ── settings.json `context`
+# Source: stella-cli/src/settings/context.rs `ContextSettings`
+#
+# Seven sub-blocks. Whole-block last-wins across scopes (not per-field).
+#
+# Two dimensions are deliberately SEPARATE and must not be collapsed:
+#   learning.mode    — how much of the learning loop runs
+#   governance.mode  — who governs promotions
+#
+# Enums here are "loud": an unrecognized value is a hard parse error.
+# Every value below is the shipping default.
+# -----------------------------------------------------------------------------
+
+[context.lifecycle]
+# Ships ON. Setting it false restores every pre-adaptive-context behavior:
+# the recall block is not decomposed, no frame identity is recorded, and the
+# learning loop runs its lexical path. Every other block here except
+# `retrieval` is ignored while this is off.
+enabled = true
+
+[context.learning]
+# off | record_only | advisory
+#   off         — no mining, no proposal induction, no efficacy learning
+#   record_only — capture observations/proposals/uses/outcomes, but never
+#                 select or promote inferred records
+#   advisory    — governed inferred *advisory* use
+mode = "off"
+
+[context.governance]
+mode = "solo"   # solo | team | regulated
+
+[context.promotion.inferred_directive]
+min_observations            = 3
+min_distinct_tasks          = 3
+auto_activate_at_confidence = 85         # 0..=100
+# An inferred directive can never START blocking.
+initial_enforcement         = "advisory" # advisory | blocking
+
+[context.promotion.blocking_directive]
+# A blocking directive always requires explicit human confirmation.
+# Do not turn this off lightly.
+requires_explicit_confirmation = true
+
+[context.efficacy]
+min_attributable_uses                       = 5
+not_helpful_ratio_threshold                 = 0.8  # 0.0..=1.0
+min_attribution_confidence                  = 80   # 0..=100
+receipt_display_min_attribution_confidence  = 80   # 0..=100
+
+[context.retention]
+raw_observation_days           = 30
+proposal_days                  = 30
+inferred_directive_review_days = 180
+
+# UNLIKE the rest of this block, retrieval is LIVE — and live regardless of
+# `lifecycle.enabled`. It configures the retrieval plane that already runs for
+# every user, not the adaptive loop. Every default is exactly the value that
+# shipped hard-coded, so a workspace configuring nothing behaves identically.
+#
+# Out-of-range values are CLAMPED (`RecallTuning::sanitized`), not rejected:
+# this is a file a person edits, and failing a turn over a typo in a tuning
+# knob is a worse answer than ignoring it.
+# Values below are the real constants from stella-context/src/retrieval.rs
+# (DEFAULT_RRF_K and friends), not plausible-looking numbers. Verified.
+[context.retrieval]
+max_frames             = 5      # DEFAULT_RECALL_MAX_FRAMES
+max_tokens             = 1200   # DEFAULT_RECALL_MAX_TOKENS
+rrf_k                  = 60.0   # higher flattens the ranking
+# Weight of recency relative to vector similarity. Damped ON PURPOSE: at
+# parity the newest rows occupy every slot no matter what was asked.
+recency_weight         = 0.15
+mmr_lambda             = 0.7    # 0.0..=1.0, higher favors relevance
+# Mean top-k cosine below which recall falls back to labeled lexical search
+# rather than dressing weak hits up as grounding.
+min_coverage           = 0.15
+coverage_topk          = 5      # how many top hits define that estimate
+max_vector_seeds       = 8      # graph-expansion seeds from strongest hits
+lexical_limit          = 8      # cap on lexical-fallback frames
+# Shortlist size as a multiple of max_frames — what the budget chooses
+# between, and the denominator of the drop report.
+mmr_candidate_multiple = 4
+# The ONE knob here that changes WHICH memories a turn can recall rather than
+# how they are ordered: an approximate index considers a subset of the corpus,
+# so a frame the exact scan would find can be missed. Off by default; every
+# recall it serves says so on `RecallResult::used_ann_index`. Does nothing
+# until `stella memory index` has built one — there is no implicit build,
+# because building is a whole-corpus pass the per-turn path must never pay.
+ann_enabled            = false
+# How many centroid posting lists an enabled probe reads. Higher is more exact
+# and slower; the probe widens past this on its own when the ranking's depth
+# requirements demand it, so this is a FLOOR, not a cap.
+ann_probes             = 12
+
+
+# -----------------------------------------------------------------------------
+# CONTEXT PROVIDERS  ── settings.json `context_providers`
+# Source: stella-cli/src/settings/context_providers.rs
+#
+# Third-party CGP context sources reached over stdio/HTTP. Merged per-entry
+# across scopes like `providers`, so a project may enable a provider the user
+# scope declared without restating its transport.
+#
+# Empty (the shipping default) registers nothing and leaves recall exactly as
+# it is today.
+#
+# TRUST: same code-execution boundary as hooks and MCP. An enabled stdio entry
+# spawns its command at admission time — the conformance suite runs on its own
+# connection first, so the process starts before anything has vetted it. An
+# http entry is no safer: the same untrusted file supplies the
+# `egress_consent` that lets a query payload carrying workspace content leave
+# the machine. An untrusted project scope contributes nothing here.
+# -----------------------------------------------------------------------------
+
+[context_providers.acme-docs]
+transport = "stdio"          # stdio | http
+command   = "acme-context-server"
+args      = ["--index", "./docs"]
+enabled   = true
+
+[context_providers.corp-kb]
+transport       = "http"
+url             = "https://kb.corp.example/cgp"
+enabled         = false
+# Hosts this provider may send workspace content to. Empty = no egress.
+egress_consent  = ["kb.corp.example"]
+consent_grantor = "security@corp.example"
+
+
+# -----------------------------------------------------------------------------
+# AUTHORITY  ── settings.json `authority`   ***MANAGED SCOPE ONLY***
+# Source: stella-cli/src/settings/authority.rs `ManagedAuthoritySettings`
+#
+# Honored ONLY from the org-managed settings file. Present in a user or
+# project file, it is ignored — the containing file IS the policy source.
+#
+# This is the block that makes the whole scope model safe, and it is
+# `#[serde(deny_unknown_fields)]` — the ONE strict object in the schema. A
+# misspelled ceiling must fail loudly rather than silently not apply.
+#
+# It is a CEILING, not a default: it is computed from the managed snapshot
+# alone, so no later fold — including an explicitly trusted project — can
+# raise it.
+#
+# Managed file location:
+#   macOS  /Library/Application Support/stella/settings.json
+#   else   /etc/stella/settings.json
+#   override with STELLA_MANAGED_SETTINGS (also how tests point at a fixture)
+# -----------------------------------------------------------------------------
+
+[authority]
+project_prompts             = "off"  # may a repo replace an agent's system prompt?
+project_custom_tools        = "off"  # may a repo's .stella/tools/*.toml load?
+bash                        = "off"  # hard deny, unraisable
+web                         = "on"
+media_requires_host_approval = "on"
+
+
+# -----------------------------------------------------------------------------
+# UI  ── settings.json `ui`
+# Source: stella-cli/src/settings.rs `UiSettings`
+#
+# Whole-block last-wins across scopes; carries no authority.
+# (`enable_recap`, the other misc root, is hoisted to the top of this file —
+#  see the ROOT SCALARS note for why it cannot live here.)
+# -----------------------------------------------------------------------------
+
+[ui]
+theme = "stella-dark"   # stella-dark | stella-light
+
+
+# -----------------------------------------------------------------------------
+# ENTERPRISE TELEMETRY  ── settings.json `enterprise_telemetry`
+#
+# Captured from MANAGED scope only, parsed as raw JSON and validated fail-open
+# by its own adapter. Shape is deliberately not pinned by the settings schema.
+# Shown here only for completeness of the key inventory.
+# -----------------------------------------------------------------------------
+
+# [enterprise_telemetry]
+# ... adapter-defined ...
+
+
+# =============================================================================
+# FILES THAT STAY SEPARATE  (and why)
+# =============================================================================
+#
+# ~/.stella/credentials.toml    `[credentials] <provider> = "sk-..."`
+#     Stays separate, permanently. Created 0600 from birth, hand-written
+#     redacting Debug, zeroized on drop, loose-permission advisory on read.
+#     A stella.toml at the repo root is far more likely to be committed than
+#     `.stella/settings.json` ever was — merging secrets into it would make
+#     the most-committed file in the workspace the most dangerous one.
+#
+# .stella/tools/<name>.toml     one custom script tool per file
+#     name / description / command (argv, spawned directly, never a shell) /
+#     timeout_ms / [env] / [input_schema] (JSON Schema written as TOML).
+#     Stays per-file: a tool ships NEXT TO its script, and inlining fifty of
+#     them into one config would break that locality. Gated by managed
+#     `authority.project_custom_tools`.
+#
+# .stella/domains.toml          version / inferred_by / [[domain]]
+#     GENERATED by `stella init`, not hand-written. Merging a generated
+#     artifact into a hand-edited file guarantees the generator eventually
+#     clobbers a human edit.
+#
+# ~/.stella/integrations.json   `stella connect` OAuth tokens
+#     STATE, not config. Becomes config in `stella.next.toml` §integrations —
+#     but the tokens themselves stay out of the config file.
+#
+# .env / .env.local             project dotenv
+#     Loaded most-specific-first: .env.<mode>.local, .env.local, .env.
+#     NEVER loaded: .env.example / .sample / .dist, and any non-.local
+#     .env.<mode>. The live shell always wins over a file.
+#
+# .stella/{rules,skills,commands,agents,memories}/
+#     Markdown-with-frontmatter CONTENT, not configuration. Out of scope.
