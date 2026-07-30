@@ -79,6 +79,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
 use crate::context_event::CompiledContextFrameBuilt;
+use crate::subagent_event::SubAgentPhase;
 use crate::tool::{ToolCall, ToolOutput};
 
 // The context-receipts vocabulary lives in `crate::receipt` and is re-exported
@@ -791,6 +792,11 @@ pub enum AgentEvent {
     /// fold stays pure and any single event reconstructs the checklist,
     /// which is what makes dead-session replay show the board as it was.
     TaskUpdate { tasks: Vec<TaskItem> },
+    /// A bounded child turn started or finished — the `Started`/`Finished`
+    /// bracket IS the attribution for every event emitted between them.
+    /// See [`crate::subagent_event`] for what the child forwards and what it
+    /// deliberately drops at that boundary.
+    SubAgent { phase: SubAgentPhase },
     /// The turn failed. `retryable` is the source's own classification (see
     /// [`crate::error::ProviderError::is_retryable`]), never re-derived from
     /// `message` by a consumer.
@@ -920,6 +926,7 @@ agent_event_tags! {
     Commit => "commit",
     Pr => "pr",
     TaskUpdate => "task_update",
+    SubAgent => "sub_agent",
     Error => "error",
     Complete => "complete",
 }

@@ -40,6 +40,7 @@ pub mod scoreboard;
 pub mod self_tuning;
 pub mod skills;
 pub(crate) mod speculation;
+pub mod subagent;
 mod summarize;
 pub mod tasks;
 pub mod tool_foundry;
@@ -84,6 +85,10 @@ pub use skills::{
     SelectedSkill, SelectionConfig, Skill, SkillCandidate, SkillInstallProposal, SkillMineConfig,
     SkillObservation, SkillOrigin, SkillSource, decide_auto_creation, load_skills,
     mine_skill_candidates, render_skills_section, select_skills,
+};
+pub use subagent::{
+    AgentAttribution, ChildSteering, MAX_SUB_AGENT_DEPTH, SubAgentHost, SubAgentOutcome,
+    SubAgentReport, SubAgentSpec, forwards_to_parent,
 };
 pub use tasks::{SpawnRequest, TaskBoard, TaskBoardError};
 pub use tool_foundry::{

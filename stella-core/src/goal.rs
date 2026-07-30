@@ -42,8 +42,8 @@ use stella_protocol::{AgentEvent, CompletionMessage, MessageRole, Provider, Stag
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::budget::BudgetGuard;
-use crate::driver::{Engine, EngineConfig, TurnOutcome};
-use crate::ports::ReadOnlyTools;
+use crate::driver::{Engine, TurnOutcome};
+use crate::subagent::{SubAgentHost, SubAgentOutcome, SubAgentSpec, truncate_chars};
 
 /// Tuning for [`Engine::run_goal`]. `Default` is sized for interactive
 /// use: enough rounds to converge on a real goal, small enough that a
@@ -221,13 +221,32 @@ impl Engine<'_> {
         }
     }
 
-    /// One judge assessment, run as a bounded tool-using engine turn: the
-    /// judge sees the goal + transcript tail and may gather its own
-    /// evidence through a [`ReadOnlyTools`] view of the SAME tool registry
-    /// the worker used (read files, grep, check CI) — structurally unable
-    /// to mutate the workspace it is judging. Spend flows through the same
-    /// `budget` as worker turns. `Err` carries the abort reason (provider
-    /// failure or budget) after retries were exhausted.
+    /// One judge assessment, run as a **sub-agent** (`crate::subagent`): the
+    /// judge sees the goal + transcript tail in its own private transcript
+    /// and may gather its own evidence through a read-only view of the SAME
+    /// tool registry the worker used (read files, grep, check CI) —
+    /// structurally unable to mutate the workspace it is judging. Spend is
+    /// carved from `budget` and settles back into it. `Err` carries the
+    /// abort reason (provider failure or budget) after retries were
+    /// exhausted.
+    ///
+    /// # Why this is the primitive and not a hand-rolled engine
+    ///
+    /// It used to build its own [`Engine`] with [`Engine::with_sleeper`],
+    /// which cannot carry the pause gate, steering, or lifecycle hooks —
+    /// those are builder-set private fields. So a paused session kept
+    /// spending inside the judge, a soft stop could not end a judge turn,
+    /// and `PreToolUse`/`PostToolUse` hooks never fired for the evidence
+    /// the judge gathered. Routing through the sub-agent primitive carries
+    /// all three, and the next nested turn someone adds inherits the fix
+    /// rather than repeating the bug.
+    ///
+    /// # The judge's evidence never enters the goal transcript
+    ///
+    /// Whatever the judge reads to reach its verdict lives and dies in the
+    /// child's transcript. Only the verdict crosses back — which is why a
+    /// judge can afford to be thorough without every later worker round
+    /// paying to re-send its evidence.
     pub async fn assess(
         &self,
         judge: &dyn Provider,
@@ -238,60 +257,76 @@ impl Engine<'_> {
         goal_config: &GoalConfig,
     ) -> Result<(GoalJudgeVerdict, f64), String> {
         let transcript = render_transcript_tail(messages, goal_config.judge_transcript_chars);
-        let mut judge_messages = vec![
-            CompletionMessage::system(JUDGE_SYSTEM_PROMPT),
-            CompletionMessage::user(format!(
+        // The odd slot beside this engine's turn: the judge's own step loop
+        // restarts at step 0 with call_seq 0, so without a turn of its own
+        // its manifests would overwrite the worker receipts they are meant
+        // to sit beside.
+        let turn_instance = self.config.turn_instance.saturating_add(1);
+        let spec = SubAgentSpec {
+            agent_id: format!("judge-{turn_instance}"),
+            system_prompt: Some(JUDGE_SYSTEM_PROMPT.to_string()),
+            instruction: format!(
                 "GOAL:\n{goal}\n\nAGENT TRANSCRIPT (most recent last):\n{transcript}\n\n\
                  Has the goal been fully met? Verify with your tools where the transcript \
                  is not conclusive."
-            )),
-        ];
-        let read_only = ReadOnlyTools::new(self.tools);
-        let mut judge_engine = Engine::with_sleeper(
-            judge,
-            &read_only,
-            EngineConfig {
-                max_output_tokens: goal_config.judge_max_output_tokens,
-                temperature: Some(0.0),
-                // A verdict needs a handful of evidence lookups, not a
-                // work session.
-                max_steps: 8,
-                // The odd slot beside this engine's turn: the judge's own
-                // step loop restarts at step 0 with call_seq 0, so without
-                // a turn of its own its manifests would overwrite the
-                // worker receipts they are meant to sit beside.
-                turn_instance: self.config.turn_instance.saturating_add(1),
-                ..self.config.clone()
-            },
-            self.sleeper,
-        )
-        .with_call_role(stella_protocol::ModelCallRole::Judge);
-        // Share the session's drift calibration: the map is keyed per model
-        // (`crate::estimator::CalibrationMap`), so a cross-family judge
-        // learns its own model's drift without ever blending into the
-        // worker's.
-        judge_engine.calibration = self.calibration;
+            ),
+            // A verdict needs a handful of evidence lookups, not a work
+            // session.
+            max_steps: 8,
+            max_output_tokens: goal_config.judge_max_output_tokens,
+            temperature: Some(0.0),
+            // Sized so a verdict is never clipped: a clipped JSON object
+            // fails [`parse_verdict`] and silently costs a round. The
+            // judge's answer is already token-capped above, so this only
+            // has to stay clear of that bound.
+            max_report_chars: goal_config
+                .judge_max_output_tokens
+                .map_or(VERDICT_REPORT_CHARS, |tokens| {
+                    (tokens as usize).saturating_mul(CHARS_PER_TOKEN_CEILING)
+                }),
+            budget_usd: None,
+            write_access: false,
+            role: stella_protocol::ModelCallRole::Judge,
+            turn_instance,
+            depth: 1,
+            compaction_budget_tokens: None,
+        };
 
-        match judge_engine
-            .run_turn(&mut judge_messages, budget, events)
+        match self
+            .run_sub_agent(SubAgentHost::new(judge), &spec, budget, events)
             .await
         {
-            TurnOutcome::Completed { text, cost_usd } => {
-                let verdict = parse_verdict(&text).unwrap_or_else(|| GoalJudgeVerdict {
+            SubAgentOutcome::Completed(report) => {
+                let verdict = parse_verdict(&report.summary).unwrap_or_else(|| GoalJudgeVerdict {
                     met: false,
                     reasoning: "judge response was not parseable JSON — treated as not met".into(),
                     feedback: format!(
                         "Continue working toward the goal; the previous assessment was \
                          unreadable (judge said: {})",
-                        truncate_chars(&text, 500)
+                        truncate_chars(&report.summary, 500)
                     ),
                 });
-                Ok((verdict, cost_usd))
+                Ok((verdict, report.cost_usd))
             }
-            TurnOutcome::Aborted { reason, .. } => Err(reason),
+            // A partial judgement is not a judgement. The loop's contract is
+            // that it never fabricates a verdict, so salvaged text is
+            // deliberately NOT parsed here — an assessment that did not
+            // finish ends the loop with its reason instead.
+            SubAgentOutcome::Incomplete { reason, .. } | SubAgentOutcome::Refused { reason } => {
+                Err(reason)
+            }
         }
     }
 }
+
+/// Report cap for a judge whose output tokens are unbounded — generous,
+/// since the only thing it protects against is a runaway verdict.
+const VERDICT_REPORT_CHARS: usize = 32_000;
+
+/// Chars-per-token upper bound used to turn an output-token cap into a
+/// character cap. Deliberately above any real tokenizer's ratio so the
+/// derived cap can never be the thing that clips a verdict.
+const CHARS_PER_TOKEN_CEILING: usize = 8;
 
 /// Extract the verdict from judge output that may wrap its JSON in prose or
 /// a code fence: parse the outermost `{ … }` span.
@@ -368,15 +403,6 @@ fn render_transcript_tail(messages: &[CompletionMessage], max_chars: usize) -> S
     }
     kept.reverse();
     kept.join("\n\n")
-}
-
-/// Truncate to `max` characters on a char boundary, appending `…` when cut.
-fn truncate_chars(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        return s.to_string();
-    }
-    let cut: String = s.chars().take(max).collect();
-    format!("{cut}…")
 }
 
 #[cfg(test)]
@@ -801,6 +827,115 @@ mod tests {
             GoalOutcome::Met { rounds, .. } => assert_eq!(rounds, 2),
             other => panic!("expected Met after recovering, got {other:?}"),
         }
+    }
+
+    /// Regression for the bug #922 names in `assess`: it used to build its
+    /// judge with [`Engine::with_sleeper`], which cannot carry the pause
+    /// gate, steering, or hooks — so a paused session kept spending inside
+    /// the judge and a soft stop could not end a judge turn.
+    ///
+    /// Routing through the sub-agent primitive carries all three. The gate
+    /// is the observable one: a judge that polls it is a judge a pause can
+    /// hold.
+    #[tokio::test]
+    async fn the_judge_now_inherits_the_pause_gate_it_used_to_drop() {
+        struct CountingGate(AtomicU32);
+        #[async_trait]
+        impl crate::ports::TurnGate for CountingGate {
+            async fn wait_if_paused(&self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let worker = ScriptedProvider::new(vec![Ok(text_result("did the work", 0.0))]);
+        let judge = ScriptedProvider::new(vec![Ok(text_result(
+            r#"{"met": true, "reasoning": "done", "feedback": ""}"#,
+            0.0,
+        ))]);
+        let tools = NoTools;
+        let gate = CountingGate(AtomicU32::new(0));
+        let engine = Engine::with_sleeper(&worker, &tools, EngineConfig::default(), &NoSleep)
+            .with_gate(&gate);
+        let mut messages = vec![CompletionMessage::system("sys")];
+        let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        let outcome = engine
+            .run_goal(
+                &judge,
+                "goal",
+                &mut messages,
+                &mut budget,
+                &tx,
+                &GoalConfig::default(),
+            )
+            .await;
+
+        assert!(matches!(outcome, GoalOutcome::Met { .. }), "{outcome:?}");
+        assert_eq!(
+            gate.0.load(Ordering::SeqCst),
+            2,
+            "one poll for the worker's step and one for the judge's — before \
+             #922 the judge contributed none, so a paused session kept \
+             spending inside it"
+        );
+    }
+
+    /// The judge's evidence-gathering never enters the goal transcript.
+    ///
+    /// This is the context-economy half of the same change: a judge that
+    /// reads three files to reach a verdict used to be irrelevant to the
+    /// worker's history only by luck (it built a separate `Vec`); now it is
+    /// structural, and the loop's message growth is exactly the messages the
+    /// loop itself appends — the goal, and one feedback line per unmet round.
+    #[tokio::test]
+    async fn a_judged_round_grows_the_transcript_by_its_own_messages_only() {
+        let worker = ScriptedProvider::new(vec![
+            Ok(text_result("attempt one", 0.0)),
+            Ok(text_result("attempt two", 0.0)),
+        ]);
+        let judge = ScriptedProvider::new(vec![
+            Ok(text_result(
+                r#"{"met": false, "reasoning": "not yet", "feedback": "keep going"}"#,
+                0.0,
+            )),
+            Ok(text_result(
+                r#"{"met": true, "reasoning": "done", "feedback": ""}"#,
+                0.0,
+            )),
+        ]);
+        let tools = NoTools;
+        let engine = Engine::with_sleeper(&worker, &tools, EngineConfig::default(), &NoSleep);
+        let mut messages = vec![CompletionMessage::system("sys")];
+        let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        engine
+            .run_goal(
+                &judge,
+                "goal",
+                &mut messages,
+                &mut budget,
+                &tx,
+                &GoalConfig::default(),
+            )
+            .await;
+
+        // system + GOAL + (worker answer, judge feedback) + worker answer.
+        // Nothing the two judges saw or said is in here.
+        assert_eq!(
+            messages.len(),
+            5,
+            "goal transcript grew by {} messages: {:#?}",
+            messages.len(),
+            messages.iter().map(|m| m.role).collect::<Vec<_>>()
+        );
+        assert!(
+            !messages
+                .iter()
+                .any(|message| message.content.contains(JUDGE_SYSTEM_PROMPT)),
+            "the judge's own prompt must never leak into the worker's history"
+        );
     }
 
     #[tokio::test]
