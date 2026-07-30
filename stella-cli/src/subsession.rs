@@ -23,6 +23,7 @@
 //! own `task_assign` requests are reported on its lane instead of spawning.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use stella_core::Engine;
 use stella_core::tasks::SpawnRequest;
@@ -641,8 +642,15 @@ async fn run_worker(
     // `deck-sub` execution wrote files and emitted not one `FileChange`, so the
     // ledger described a session in which the delegated work never happened.
     registry.attach_events(stella_core::EventSender::new(tx.clone()));
+    // `Arc` so the same gate can be published for the turn as well as
+    // borrowed by it: a worker parked at Pause must not keep spending inside
+    // a sub-agent it dispatched (`crate::subagent`). A worker lane installs no
+    // dispatcher today, so nothing reads this yet — it is published anyway
+    // because the gap reopens silently the day one is installed.
+    let gate: Arc<WatchGate> = Arc::new(WatchGate(pause_rx));
+    let _controls = registry
+        .attach_turn_controls(stella_core::ports::TurnControls::none().with_gate(gate.clone()));
     let raced = {
-        let gate = WatchGate(pause_rx);
         let engine = Engine::with_sleeper(
             &*provider,
             &permitted,
@@ -650,7 +658,7 @@ async fn run_worker(
             &TokioSleeper,
         )
         .with_calibration(&calibration)
-        .with_gate(&gate);
+        .with_gate(gate.as_ref());
         let turn = engine.run_turn(&mut messages, &mut budget, &tx);
         // A dropped sender (driver gone at session teardown) must not read
         // as a stop — only an actual signal cancels, so the wait parks

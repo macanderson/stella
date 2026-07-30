@@ -107,7 +107,7 @@ use crate::budget::BudgetGuard;
 use crate::bus::HookBus;
 use crate::driver::{Engine, EngineConfig, TurnOutcome};
 use crate::event_sender::EventSender;
-use crate::ports::{ReadOnlyTools, ToolExecutor, TurnSteering};
+use crate::ports::{ReadOnlyTools, ToolExecutor, TurnControls, TurnSteering};
 
 /// How deep sub-agents may nest. A child of the top-level turn is depth 1.
 ///
@@ -139,9 +139,47 @@ pub const MAX_SUB_AGENT_DEPTH: u8 = 2;
 /// anything at all (its host is gone, no provider is configured) reports
 /// [`SubAgentOutcome::Refused`] so the model gets a tool result it can reason
 /// about rather than the turn dying under it.
+/// # Interruption
+///
+/// A dispatcher is session-scoped and the seams that stop a turn are
+/// turn-scoped, so the two must be joined explicitly: an implementation is
+/// expected to read the *current* turn's [`TurnControls`] at dispatch time
+/// and hand them to the engine it builds, via [`Engine::with_turn_controls`].
+/// Without that a paused session keeps spending inside a child, and a soft
+/// stop ends the parent while the child runs on.
 #[async_trait]
 pub trait SubAgentDispatcher: Send + Sync {
     async fn dispatch(&self, spec: SubAgentSpec) -> SubAgentOutcome;
+}
+
+impl<'a> Engine<'a> {
+    /// Attach a turn's boundary controls in their owned form.
+    ///
+    /// The `&'a` on `controls` rather than on each port is what makes this
+    /// usable from a session-scoped host: it holds the `Arc`s, hands out a
+    /// borrow of the pair for as long as the engine it just built lives, and
+    /// never has to name the lifetime of the turn the seams came from.
+    ///
+    /// Set on the *parent* engine, not the child's — [`Self::run_sub_agent`]
+    /// propagates the gate as-is and narrows the steering to
+    /// [`ChildSteering`], so this one call is what gives a child both the
+    /// pause and the stop while keeping it from stealing the parent's queued
+    /// messages.
+    ///
+    /// Absent seams are left absent rather than overwritten: an engine
+    /// already carrying a per-turn `&dyn` gate keeps it if `controls` has
+    /// none, so this composes with [`Engine::with_gate`] instead of racing
+    /// it.
+    #[must_use]
+    pub fn with_turn_controls(mut self, controls: &'a TurnControls) -> Self {
+        if let Some(gate) = controls.gate.as_deref() {
+            self.gate = Some(gate);
+        }
+        if let Some(steering) = controls.steering.as_deref() {
+            self.steering = Some(steering);
+        }
+        self
+    }
 }
 
 /// Sub-agent spend awaiting fold-in to a parent budget, in USD.

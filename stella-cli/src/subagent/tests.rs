@@ -182,3 +182,211 @@ fn the_task_tool_is_always_advertised_and_never_read_only() {
         "installing a dispatcher does not duplicate the tool"
     );
 }
+
+// ---- turn controls: pause and stop reach a dispatched child ------------
+
+/// Counts how many times a child got as far as asking for a completion. A
+/// child that made a model call is a child the controls failed to hold.
+#[derive(Default)]
+struct CountingProvider(std::sync::atomic::AtomicUsize);
+
+impl CountingProvider {
+    fn calls(&self) -> usize {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl Provider for CountingProvider {
+    fn id(&self) -> &str {
+        "counting"
+    }
+    async fn complete_ref(
+        &self,
+        _request: stella_protocol::CompletionRequestRef<'_>,
+    ) -> Result<stella_protocol::CompletionResult, stella_protocol::ProviderError> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err(stella_protocol::ProviderError::Terminal(
+            "no provider in tests".into(),
+        ))
+    }
+}
+
+/// The deck's `WatchGate` in miniature — private to its driver, so the shape
+/// is reproduced here rather than exported for a test. Counts entries so a
+/// parked child is distinguishable from one that has not started.
+struct PausableGate {
+    rx: tokio::sync::watch::Receiver<bool>,
+    polls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[async_trait]
+impl stella_core::ports::TurnGate for PausableGate {
+    async fn wait_if_paused(&self) {
+        self.polls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut rx = self.rx.clone();
+        while *rx.borrow() {
+            if rx.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+}
+
+fn dispatcher_over(
+    provider: Arc<CountingProvider>,
+    registry: &Arc<ToolRegistry>,
+) -> SessionSubAgents {
+    SessionSubAgents::new(
+        provider,
+        registry,
+        EngineConfig::default(),
+        stella_protocol::BudgetMode::Observed,
+    )
+}
+
+/// Spin until `cond` holds, or fail. Used to observe the child's *own*
+/// thread reaching a boundary without asserting on wall-clock timing — a
+/// fixed sleep would either be flaky or slow, and both are worse than a
+/// bounded poll on an atomic.
+async fn until(label: &str, cond: impl Fn() -> bool) {
+    for _ in 0..2_000 {
+        if cond() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+    }
+    panic!("timed out waiting for {label}");
+}
+
+/// **The gap this closes.** A child dispatched from a tool call runs on its
+/// own thread against a session-scoped dispatcher, so before the turn
+/// published its seams there was nothing connecting the two: Esc ended the
+/// parent and the child kept spending.
+#[tokio::test]
+async fn a_turns_soft_stop_reaches_the_children_it_dispatched() {
+    let provider = Arc::new(CountingProvider::default());
+    let registry = registry();
+    let dispatcher = dispatcher_over(provider.clone(), &registry);
+
+    let tap: Arc<crate::subsession::SteeringTap> = Arc::default();
+    tap.request_soft_stop();
+    let _controls = registry
+        .attach_turn_controls(stella_core::ports::TurnControls::none().with_steering(tap.clone()));
+
+    let outcome = dispatcher
+        .dispatch(SubAgentSpec::read_only(
+            "stoppable",
+            "find the retry policy",
+        ))
+        .await;
+
+    assert!(
+        matches!(&outcome, SubAgentOutcome::Incomplete { reason, .. }
+            if reason.contains(stella_core::driver::SOFT_STOP_REASON)),
+        "got {outcome:?}"
+    );
+    assert_eq!(
+        provider.calls(),
+        0,
+        "a stop latched before the child's first boundary stops it there — \
+         it must not pay for one more call first"
+    );
+}
+
+/// The stop crosses; the messages must not. `drain_steering` is destructive
+/// by contract, so a child that inherited the tap directly would swallow
+/// something the user typed to the parent.
+#[tokio::test]
+async fn a_dispatched_child_never_eats_the_parents_queued_steering() {
+    let provider = Arc::new(CountingProvider::default());
+    let registry = registry();
+    let dispatcher = dispatcher_over(provider.clone(), &registry);
+
+    let tap: Arc<crate::subsession::SteeringTap> = Arc::default();
+    tap.push("actually, check the timeout instead".to_string());
+    let _controls = registry
+        .attach_turn_controls(stella_core::ports::TurnControls::none().with_steering(tap.clone()));
+
+    dispatcher
+        .dispatch(SubAgentSpec::read_only("reader", "read something"))
+        .await;
+
+    assert_eq!(
+        stella_core::ports::TurnSteering::drain_steering(tap.as_ref()),
+        vec!["actually, check the timeout instead".to_string()],
+        "the message must still be there for the parent's next boundary"
+    );
+}
+
+/// Pause means pause, including inside delegated work. The parked child
+/// holds the parent's `task` call open, and both continue on resume.
+#[tokio::test]
+async fn a_paused_turn_parks_its_children_and_resume_releases_them() {
+    let provider = Arc::new(CountingProvider::default());
+    let registry = registry();
+    let dispatcher = Arc::new(dispatcher_over(provider.clone(), &registry));
+
+    let (pause_tx, pause_rx) = tokio::sync::watch::channel(true);
+    let polls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let _controls = registry.attach_turn_controls(
+        stella_core::ports::TurnControls::none().with_gate(Arc::new(PausableGate {
+            rx: pause_rx,
+            polls: polls.clone(),
+        })),
+    );
+
+    let running = dispatcher.clone();
+    let child = tokio::spawn(async move {
+        running
+            .dispatch(SubAgentSpec::read_only("pausable", "investigate"))
+            .await
+    });
+
+    until("the child to reach its first step boundary", || {
+        polls.load(std::sync::atomic::Ordering::SeqCst) > 0
+    })
+    .await;
+    assert_eq!(
+        provider.calls(),
+        0,
+        "parked at the boundary, not spending through the pause"
+    );
+    assert!(!child.is_finished(), "and still parked, not finished");
+
+    pause_tx.send(false).expect("the gate is still listening");
+    child.await.expect("the child thread reports back");
+    assert_eq!(
+        provider.calls(),
+        1,
+        "resume releases it into the very same turn it was parked in"
+    );
+}
+
+/// The counterpart every turn owes: a stop latched by one turn must not
+/// stop the next turn's children. The guard is what makes that structural
+/// rather than a call every driver has to remember on every exit path.
+#[tokio::test]
+async fn controls_come_down_with_the_turn_that_published_them() {
+    let provider = Arc::new(CountingProvider::default());
+    let registry = registry();
+    let dispatcher = dispatcher_over(provider.clone(), &registry);
+
+    {
+        let tap: Arc<crate::subsession::SteeringTap> = Arc::default();
+        tap.request_soft_stop();
+        let _controls = registry
+            .attach_turn_controls(stella_core::ports::TurnControls::none().with_steering(tap));
+    }
+    assert!(registry.turn_controls().is_empty());
+
+    let outcome = dispatcher
+        .dispatch(SubAgentSpec::read_only("next-turn", "work"))
+        .await;
+    assert!(
+        !matches!(&outcome, SubAgentOutcome::Incomplete { reason, .. }
+            if reason.contains(stella_core::driver::SOFT_STOP_REASON)),
+        "last turn's Esc must not stop this turn's children, got {outcome:?}"
+    );
+    assert_eq!(provider.calls(), 1, "and the child actually ran");
+}
