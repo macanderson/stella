@@ -135,7 +135,7 @@ mod providers;
 // Re-exported at the old paths: the table moved for the line ratchet, not
 // for callers, and `crate::config::PROVIDERS` stays the one way to reach it.
 pub use providers::{Dialect, LOCAL_PROVIDER, PROVIDERS, ProviderConfig};
-pub(crate) use providers::no_api_key_error;
+pub(crate) use providers::{COMMON_KEY_ENV_VARS, no_api_key_error};
 
 /// Intern a string as a `&'static str`. `ProviderConfig` is `&'static str`
 /// throughout (it is almost always one of the static [`PROVIDERS`] rows), so
@@ -421,7 +421,9 @@ impl Config {
         // provider and every pipeline role see the same authoritative object.
         // Invalid or non-Unicode JSON aborts without echoing its contents.
         let mut settings = settings.clone();
-        if let Some(engine) = trusted_engine_config_override()? {
+        let trusted_engine = trusted_engine_config_override()?;
+        let engine_is_trusted = trusted_engine.is_some();
+        if let Some(engine) = trusted_engine {
             settings.agent_engine_config = Some(engine);
         }
         let settings = &settings;
@@ -491,13 +493,24 @@ impl Config {
         } else {
             settings.hooks.clone()
         };
-        // Applied HERE, after resolution, because the gateway's default
-        // posture keys off the provider that was actually picked — which is
-        // not knowable before this point.
-        cfg.engine_settings = crate::engine_config::engine_with_provider_baseline(
-            cfg.provider.id,
-            &settings.agent_engine_config,
-        );
+        // The gateway's default posture is applied HERE, after resolution,
+        // because it keys off the provider actually picked — not knowable
+        // before this point.
+        //
+        // A trusted launcher's object is exempt: replacing the engine config
+        // ATOMICALLY is that seam's entire contract (see
+        // `trusted_engine_config_override`), and layering a provider default
+        // underneath is exactly the "silently using a provider default" it
+        // refuses to start with. The benchmark posture is complete or it is
+        // nothing.
+        cfg.engine_settings = if engine_is_trusted {
+            settings.agent_engine_config.clone()
+        } else {
+            crate::engine_config::engine_with_provider_baseline(
+                cfg.provider.id,
+                &settings.agent_engine_config,
+            )
+        };
         cfg.model_pinned_by_flag = model_pinned_by_flag;
         cfg.authority = settings.authority_policy;
         // The managed ceiling is already folded into `settings.tools` by

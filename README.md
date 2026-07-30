@@ -128,20 +128,24 @@ Stella is BYOK and auto-detects the provider from whichever keys you have set.
 
 | Provider               | Env var                                       | Default model                                                                    |
 | ---------------------- | --------------------------------------------- | -------------------------------------------------------------------------------- |
+| **OpenRouter**         | `OPENROUTER_API_KEY`                          | `moonshotai/kimi-k3`                                                             |
 | **Z.ai** (GLM)         | `ZAI_API_KEY`                                 | `glm-5.2`                                                                        |
 | **Anthropic** (Claude) | `ANTHROPIC_API_KEY`                           | `claude-fable-5`                                                                 |
 | **OpenAI** (GPT)       | `OPENAI_API_KEY`                              | `gpt-5.5`                                                                        |
 | **xAI** (Grok)         | `XAI_API_KEY`                                 | `grok-4` — [retires 2026-08-15](https://stella.oxagen.sh/docs/api-providers/xai) |
 | **DeepSeek**           | `DEEPSEEK_API_KEY`                            | `deepseek-chat`                                                                  |
 | **Google Gemini**      | `GEMINI_API_KEY` (alias `GOOGLE_API_KEY`)     | `gemini-3-pro`                                                                   |
-| **OpenRouter**         | `OPENROUTER_API_KEY`                          | `openrouter/auto`                                                                |
 | **Google Vertex AI**   | `VERTEX_ACCESS_TOKEN` + `VERTEX_PROJECT_ID`   | `gemini-3-pro`                                                                   |
 | **Amazon Bedrock**     | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` | `us.anthropic.claude-sonnet-4-5-20250929-v1:0`                                   |
 | **Local**              | _none_ — pass `--base-url`                    | whatever your server hosts                                                       |
 
-OpenRouter's slug keeps its vendor namespace on the wire, so pinning it on the CLI needs
-both halves: `--model openrouter/openrouter/auto`. `--model` splits on the first `/`, and
-the singly-qualified form sends the wire slug `auto`, which OpenRouter does not serve.
+OpenRouter is checked first — its key is gateway-specific, so having one is a deliberate
+choice rather than an accident of your shell — and it brings a whole default posture, not
+just a default model: Kimi K3 driving at `xhigh` with thinking on, `anthropic/claude-opus-5`
+judging, `z-ai/glm-5.2` triaging, all on the one key. Every field of that composes
+underneath your own settings, so anything you configure wins. OpenRouter's slugs keep
+their vendor namespace on the wire, so pinning one on the CLI needs both halves:
+`--model openrouter/moonshotai/kimi-k3`.
 
 ```bash
 export ANTHROPIC_API_KEY=your_key_here     # or OPENAI_API_KEY, GEMINI_API_KEY, …

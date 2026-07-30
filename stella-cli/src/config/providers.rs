@@ -202,7 +202,7 @@ pub static PROVIDERS: &[ProviderConfig] = &[
 /// enumeration lives behind `stella models`, where it is already tabulated
 /// with per-provider key status, instead of hard-wrapping across an
 /// 80-column terminal inside an error message.
-const COMMON_KEY_ENV_VARS: &[&str] = &[
+pub(crate) const COMMON_KEY_ENV_VARS: &[&str] = &[
     "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY",
     "ZAI_API_KEY",
