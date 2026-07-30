@@ -542,3 +542,162 @@ fn pre_flight_failures_emit_a_machine_readable_error_envelope() {
 fn text_output_never_gets_an_error_envelope_on_stdout() {
     assert!(error_summary_json(OutputFormat::Text, "boom").is_none());
 }
+
+/// The docs section every command page lives in.
+const COMMANDS_DOCS_DIR: &str = "website/content/docs/commands";
+
+/// Entries in `meta.json` that are not commands. `index` is the section's own
+/// landing page.
+const NON_COMMAND_PAGES: &[&str] = &["index"];
+
+/// The repository root, from this crate's manifest directory.
+fn repo_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("stella-cli must have a parent directory")
+        .to_path_buf()
+}
+
+/// The `pages` array of the commands section's `meta.json`.
+fn documented_pages() -> Vec<String> {
+    let meta_path = repo_root().join(COMMANDS_DOCS_DIR).join("meta.json");
+    let raw = std::fs::read_to_string(&meta_path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", meta_path.display()));
+    let meta: serde_json::Value = serde_json::from_str(&raw)
+        .unwrap_or_else(|e| panic!("{} is not valid JSON: {e}", meta_path.display()));
+    meta["pages"]
+        .as_array()
+        .expect("meta.json must carry a `pages` array")
+        .iter()
+        .filter_map(|page| page.as_str())
+        // Fumadocs separators (`---Group---`) are layout, not pages.
+        .filter(|page| !page.starts_with("---"))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The top-level subcommand names clap itself would render, minus the ones a
+/// reader never types. `help` is clap's own built-in, and a hidden command is
+/// hidden from `--help` too, so neither owes the docs a page.
+fn top_level_subcommands() -> Vec<String> {
+    Cli::command()
+        .get_subcommands()
+        .filter(|sub| !sub.is_hide_set())
+        .map(|sub| sub.get_name().to_owned())
+        .filter(|name| name != "help")
+        .collect()
+}
+
+/// Every command `stella --help` lists must have a reference page, and every
+/// page must correspond to a real command.
+///
+/// # Why this is a test rather than a script over `--help`
+///
+/// It reads the same `Command` tree `--help` renders, but reads it
+/// *structurally*. Parsing help text would make the gate a hostage to terminal
+/// width, ANSI color, and clap's wrapping — three things that have nothing to
+/// do with whether a command is documented. It also needs no new gate step:
+/// `make gate` already runs the test suite.
+///
+/// # Why both directions
+///
+/// Forward catches the bug that motivated this (#928: seven surfaces shipped
+/// with no page, and nothing noticed). Backward catches its mirror — a page
+/// outliving the command it documents, which is worse than no page, because a
+/// reader has no way to tell a stale page from a current one.
+#[test]
+fn every_subcommand_has_a_reference_page() {
+    let pages = documented_pages();
+    let commands = top_level_subcommands();
+
+    let undocumented: Vec<&String> = commands
+        .iter()
+        .filter(|name| !pages.iter().any(|page| page == *name))
+        .collect();
+    assert!(
+        undocumented.is_empty(),
+        "these subcommands have no page in {COMMANDS_DOCS_DIR}/meta.json: {undocumented:?}\n\
+         add `website/content/docs/commands/<name>.mdx` and list it in `meta.json`"
+    );
+
+    let orphaned: Vec<&String> = pages
+        .iter()
+        .filter(|page| !NON_COMMAND_PAGES.contains(&page.as_str()))
+        .filter(|page| !commands.iter().any(|name| name == *page))
+        .collect();
+    assert!(
+        orphaned.is_empty(),
+        "these pages document no existing subcommand: {orphaned:?}\n\
+         remove the page, or add it to NON_COMMAND_PAGES if it is not a command reference"
+    );
+
+    // A `meta.json` entry with no file behind it renders as a broken nav link.
+    for page in &pages {
+        let path = repo_root()
+            .join(COMMANDS_DOCS_DIR)
+            .join(format!("{page}.mdx"));
+        assert!(
+            path.exists(),
+            "meta.json lists `{page}` but {} does not exist",
+            path.display()
+        );
+    }
+}
+
+/// A command's own page must name every subcommand that command has.
+///
+/// This is the check that would have caught the sharpest half of #928:
+/// `stella memory` had grown to twelve subcommands while its page documented
+/// six, so the reference was provably behind the CLI — and behind the project's
+/// own release notes, which described the missing six in prose.
+///
+/// Nested subcommands do not get their own pages; they are documented inside
+/// the parent's. So the assertion is the same one
+/// `stella-tools/tests/docs_in_sync.rs` makes about the tool registry: the
+/// exact invocation a reader would type, `stella <parent> <child>`, must appear
+/// literally in the parent's page.
+#[test]
+fn every_page_documents_all_of_its_commands_subcommands() {
+    let mut missing: Vec<String> = Vec::new();
+
+    for parent in Cli::command()
+        .get_subcommands()
+        .filter(|s| !s.is_hide_set())
+    {
+        let parent_name = parent.get_name();
+        if parent_name == "help" {
+            continue;
+        }
+        let children: Vec<&str> = parent
+            .get_subcommands()
+            .filter(|child| !child.is_hide_set())
+            .map(clap::Command::get_name)
+            .filter(|name| *name != "help")
+            .collect();
+        if children.is_empty() {
+            continue;
+        }
+
+        let path = repo_root()
+            .join(COMMANDS_DOCS_DIR)
+            .join(format!("{parent_name}.mdx"));
+        let Ok(page) = std::fs::read_to_string(&path) else {
+            // The other test owns "this page is missing entirely"; reporting it
+            // twice would make one omission look like two problems.
+            continue;
+        };
+
+        for child in children {
+            if !page.contains(&format!("stella {parent_name} {child}")) {
+                missing.push(format!("stella {parent_name} {child}"));
+            }
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "these subcommands are not documented on their command's page: {missing:#?}\n\
+         each must appear literally as `stella <parent> <child>` in \
+         {COMMANDS_DOCS_DIR}/<parent>.mdx"
+    );
+}
