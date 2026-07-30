@@ -1366,61 +1366,6 @@ async fn zai_identity_maps_reasoning_to_glm_thinking_object() {
     );
 }
 
-#[tokio::test]
-async fn openrouter_identity_maps_reasoning_to_the_gateway_object() {
-    let server = MockServer::start().await;
-    mock_ok(&server).await;
-
-    let provider = ZaiProvider::new(ApiKey::new("sk-or-test"), "openrouter/auto")
-        .with_base_url(server.uri())
-        .with_identity("openrouter", "OpenRouter");
-    let req = |reasoning, effort| CompletionRequest {
-        messages: vec![CompletionMessage::user("hi")],
-        max_output_tokens: None,
-        temperature: None,
-        effort,
-        tools: vec![],
-        reasoning,
-        params: None,
-    };
-    // Pinned effort (reasoning not suppressed) → {"effort": …}.
-    provider
-        .complete(req(None, Some(ReasoningEffort::Xhigh)))
-        .await
-        .expect("effort");
-    // Explicit off wins even over a pinned effort → {"enabled": false}.
-    provider
-        .complete(req(Some(false), Some(ReasoningEffort::High)))
-        .await
-        .expect("off");
-    // Bare on with no effort → {"enabled": true}.
-    provider.complete(req(Some(true), None)).await.expect("on");
-
-    let requests = server.received_requests().await.expect("recorded requests");
-    let bodies: Vec<String> = requests
-        .iter()
-        .map(|r| String::from_utf8_lossy(&r.body).into_owned())
-        .collect();
-    // Xhigh collapses to "high", the top tier OpenRouter models.
-    assert!(
-        bodies[0].contains("\"reasoning\":{\"effort\":\"high\"}"),
-        "{}",
-        bodies[0]
-    );
-    assert!(
-        bodies[1].contains("\"reasoning\":{\"enabled\":false}"),
-        "{}",
-        bodies[1]
-    );
-    assert!(
-        bodies[2].contains("\"reasoning\":{\"enabled\":true}"),
-        "{}",
-        bodies[2]
-    );
-    // GLM's thinking object is Z.ai-only; OpenRouter never sees it.
-    assert!(!bodies[0].contains("thinking"), "{}", bodies[0]);
-}
-
 /// Identities with no known reasoning field on this dialect (DeepSeek, local,
 /// settings-defined servers) ignore the hint rather than guessing at it — an
 /// unknown key risks a hard 400. (Z.ai, OpenRouter, and xAI DO speak a
@@ -1616,6 +1561,7 @@ async fn zai_identity_never_sends_reasoning_effort_even_when_pinned() {
 }
 
 mod error_classify_tests;
+mod openrouter_effort_tests;
 mod openrouter_stream_tests;
 mod stream_frame_tests;
 

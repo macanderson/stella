@@ -22,13 +22,13 @@ you get when you name none.
 
 | # | Provider | Credential env var | Default model | Wire dialect |
 | --- | --- | --- | --- | --- |
-| 1 | `zai` | `ZAI_API_KEY` | `glm-5.2` | OpenAI-compatible |
-| 2 | `anthropic` | `ANTHROPIC_API_KEY` | `claude-fable-5` | Anthropic Messages |
-| 3 | `openai` | `OPENAI_API_KEY` | `gpt-5.5` | OpenAI Responses |
-| 4 | `xai` | `XAI_API_KEY` | `grok-4` | OpenAI-compatible |
-| 5 | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-chat` | OpenAI-compatible |
-| 6 | `gemini` | `GEMINI_API_KEY` (alias `GOOGLE_API_KEY`) | `gemini-3-pro` | Gemini generateContent |
-| 7 | `openrouter` | `OPENROUTER_API_KEY` | `openrouter/auto` | OpenAI-compatible |
+| 1 | `openrouter` | `OPENROUTER_API_KEY` | `moonshotai/kimi-k3` | OpenAI-compatible |
+| 2 | `zai` | `ZAI_API_KEY` | `glm-5.2` | OpenAI-compatible |
+| 3 | `anthropic` | `ANTHROPIC_API_KEY` | `claude-fable-5` | Anthropic Messages |
+| 4 | `openai` | `OPENAI_API_KEY` | `gpt-5.5` | OpenAI Responses |
+| 5 | `xai` | `XAI_API_KEY` | `grok-4` | OpenAI-compatible |
+| 6 | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-chat` | OpenAI-compatible |
+| 7 | `gemini` | `GEMINI_API_KEY` (alias `GOOGLE_API_KEY`) | `gemini-3-pro` | Gemini generateContent |
 | 8 | `vertex` | `VERTEX_ACCESS_TOKEN` | `gemini-3-pro` | Gemini generateContent |
 | 9 | `bedrock` | `AWS_ACCESS_KEY_ID` | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | Bedrock Converse |
 | — | `local` | `LOCAL_API_KEY` (optional) | none | OpenAI-compatible |
@@ -48,7 +48,7 @@ refresh` re-syncs from [models.dev](https://models.dev).
 | `gemini/gemini-3-pro` | 1M | 1.25 | 10.00 | 0.31 |
 | `vertex/gemini-3-pro` | 1M | 1.25 | 10.00 | 0.31 |
 | `bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0` | 200k | 3.00 | 15.00 | 0.30 |
-| `openrouter/openrouter/auto` | 128k | gateway-priced | gateway-priced | — |
+| `openrouter/moonshotai/kimi-k3` | 1M | 3.00 | 15.00 | 0.30 |
 | `local/*` | server's | 0 | 0 | — |
 
 The [model guide](/docs/api-providers/models) covers which model fits which pipeline role.
@@ -68,7 +68,7 @@ failed:
 | `zai` | `thinking: {type: enabled\|disabled}` | **dropped** | Differentiate a GLM judge with `prompt`, not `effort` |
 | `xai` | `reasoning_effort` | `low`/`medium`/`high`; `xhigh`/`max` collapse | **Gated off entirely on `grok-4`** and its dated snapshots |
 | `deepseek` | not sent | **dropped** | Shape it with `prompt` and `params.max_tokens` |
-| `openrouter` | `reasoning` object | `low`/`medium`/`high`; `xhigh`/`max` collapse | Gateway translates per routed vendor |
+| `openrouter` | `reasoning` object | all five tiers 1:1 | Gateway translates per routed vendor; an unadvertised tier is normalized, not rejected |
 | `bedrock` | legacy `budget_tokens` shape | **dropped** | Converse `inferenceConfig` has slots only for `max_tokens`, `temperature`, `top_p` |
 | `local` | not sent | **dropped** | No portable reasoning field exists across OpenAI-compatible servers |
 
@@ -86,10 +86,18 @@ With no `--model` and no configured default, Stella picks the first provider in 
 matrix above that has a resolvable credential.
 
 <Callout type="info">
-  Vertex and Bedrock sit last because they key off generic cloud credentials
-  (`VERTEX_ACCESS_TOKEN`, `AWS_ACCESS_KEY_ID`) that are often exported for unrelated
-  reasons. Pin them with `--model vertex/…` or `--model bedrock/…`. The `local`
-  pseudo-provider is never auto-detected.
+  Both ends of that rank order are arguments about what a credential *means*.
+
+  OpenRouter sits first because `OPENROUTER_API_KEY` is gateway-specific — nobody has one
+  exported by accident — and it reaches every other vendor in the matrix. An instance
+  holding one has already decided how it wants to route, so Stella gives it a whole
+  [default engine posture](#the-default-posture), not just a default model.
+
+  Vertex and Bedrock sit last for the mirror-image reason: they key off generic cloud
+  credentials (`VERTEX_ACCESS_TOKEN`, `AWS_ACCESS_KEY_ID`) that are often exported for
+  unrelated reasons. Generic cloud credentials must not hijack detection — pin them with
+  `--model vertex/…` or `--model bedrock/…`. The `local` pseudo-provider is never
+  auto-detected.
 </Callout>
 
 A settings-configured `default_model` sits between the `--model` flag and auto-detection:
@@ -294,16 +302,50 @@ cross-model $/resolved comparisons stay meaningful; absolute dollars for `zai/*`
 
 One key, every vendor. Gateway slugs are `vendor/model` and pass through **unseeded** —
 any slug the gateway serves works verbatim, and a typo fails with OpenRouter's own
-400/404 rather than a Stella error.
+400/404 rather than a Stella error. The default model is `moonshotai/kimi-k3`.
+
+#### The default posture
+
+One key reaches every vendor, so on OpenRouter the interesting question is not *which
+model* but **which model per role** — and the roles want genuinely different things. With
+no configuration at all, an OpenRouter instance runs:
+
+| Role | Model | Why |
+| --- | --- | --- |
+| default | `moonshotai/kimi-k3` | long-context agentic driver, at `xhigh` effort with thinking on |
+| judge | `anthropic/claude-opus-5` | a different vendor's strongest reasoner — not the worker grading itself |
+| triage | `z-ai/glm-5.2` | fast and cheap, and it runs on every turn |
+
+Note the judge is deliberately a different **family** from the driver. Stella already
+treats cross-family judging as the goal (see `auto_mode`); this default just reaches it
+without asking you to configure anything.
+
+This is a *baseline*, not a lock. It composes underneath the whole
+[`agent_engine_config`](/docs/configuration/agent-engine-config) scope chain, so any
+field you set is yours — set `pipeline_judge_model` and the judge is whatever you said,
+while the rest of the posture stays. It also applies only when OpenRouter is the provider
+that actually got picked: run `--model anthropic/…` with an OpenRouter key present and you
+have an Anthropic session, with no part of this routed through the gateway.
+
+<Callout type="info">
+  The default used to be `openrouter/auto`, the gateway's own meta-router. A router that
+  picks a different backing model per request is the one thing a coding agent cannot
+  absorb: prompt-cache prefixes stop hitting between turns, tool-call dialect drifts
+  mid-session, and no two turns are comparable when something goes wrong. `openrouter/auto`
+  still works if you pin it — it is simply no longer the default.
+</Callout>
+
+#### Selecting models
 
 ```bash
-stella --model openrouter/openrouter/auto          run "tidy the changelog"
+stella --model openrouter/moonshotai/kimi-k3       run "tidy the changelog"
 stella --model openrouter/openai/gpt-5.5           run "review this diff as a strict judge"
 stella --model openrouter/anthropic/claude-fable-5 run "refactor the scheduler"
+stella --model openrouter/openrouter/auto          run "let the gateway pick per request"
 ```
 
 <Callout type="warn">
-  The doubled prefix on the first line is correct. `--model` splits on the **first** `/`:
+  The doubled prefix on the `openrouter/openrouter/auto` line is correct. `--model` splits on the **first** `/`:
   everything before is the provider id, everything after is the wire slug sent verbatim.
   Every OpenRouter model id is `vendor/model`, and the meta-router's own id is
   `openrouter/auto` — so the full spec is `openrouter` + `/` + `openrouter/auto`. Write

@@ -285,14 +285,29 @@ struct OpenRouterReasoning {
 }
 
 /// Map the engine's one `ReasoningEffort` enum to OpenRouter's
-/// `reasoning.effort`, which only accepts `low`/`medium`/`high`. Same
-/// collapse posture as `openai.rs::map_reasoning_effort`: never drop the
-/// hint, never panic on a variant the gateway doesn't model.
+/// `reasoning.effort`.
+///
+/// This used to collapse `xhigh`/`max` down to `high`, matching
+/// `openai.rs::map_reasoning_effort`, because the gateway modelled only
+/// `low`/`medium`/`high`. It no longer does: OpenRouter documents the full
+/// `none`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max` ladder and normalizes
+/// it onto whatever the routed model exposes. Keeping the collapse meant the
+/// top two tiers were a lie — a user pinning `xhigh` got `high` on the wire,
+/// silently, with nothing to distinguish it from asking for `high`.
+///
+/// Sending a tier the routed model does not itself advertise under
+/// `reasoning.supported_efforts` is safe: the gateway normalizes rather than
+/// rejects (verified against `moonshotai/kimi-k3`, which advertises only
+/// `max`/`high`/`low` and accepts `xhigh` without error). That matters here
+/// because the OpenRouter default posture pins `xhigh` for every routed
+/// model, and a 400 on an unadvertised tier would break every turn.
 fn map_openrouter_effort(effort: ReasoningEffort) -> &'static str {
     match effort {
         ReasoningEffort::Low => "low",
         ReasoningEffort::Medium => "medium",
-        ReasoningEffort::High | ReasoningEffort::Xhigh | ReasoningEffort::Max => "high",
+        ReasoningEffort::High => "high",
+        ReasoningEffort::Xhigh => "xhigh",
+        ReasoningEffort::Max => "max",
     }
 }
 
