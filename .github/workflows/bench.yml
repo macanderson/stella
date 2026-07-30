@@ -4,20 +4,26 @@ name: bench
 # is not covered by the Rust `ci.yml` gate, so it silently drifted red once
 # (adapter suite 224/2 — a posture-hash + stale-fixture drift caught only by hand
 # during TB2.1 run prep). This workflow gates those suites so it cannot recur.
-# Scoped to bench/ changes so ordinary Rust PRs don't pay for it.
+#
+# It has to be a REQUIRED status check to be worth anything. #659 proved that:
+# an automated dependency bump moved `harbor==0.6.1` — an audited constant that
+# `secure_launcher` refuses to start without — this workflow ran, reported
+# FAILURE, and the PR merged twelve minutes later, because a check that is not
+# required does not block a merge. It stayed broken for five days, and only
+# #909's attempt to actually run the harness noticed.
+#
+# A required check must report on EVERY pull request. A workflow filtered with
+# `on.pull_request.paths` does not run at all when nothing matches, so its check
+# never reports, and a required context that never reports blocks the PR
+# forever. That is why the path filter now lives in a step rather than the
+# trigger: the job always runs and always reports, and only the expensive part
+# is conditional. An ordinary Rust PR pays one runner start-up, not two pytest
+# suites.
 
 on:
   pull_request:
-    paths:
-      - "bench/harbor_adapter/**"
-      - "bench/terminal_bench_analysis/**"
-      - ".github/workflows/bench.yml"
   push:
     branches: [main]
-    paths:
-      - "bench/harbor_adapter/**"
-      - "bench/terminal_bench_analysis/**"
-      - ".github/workflows/bench.yml"
   workflow_dispatch:
 
 concurrency:
@@ -32,20 +38,47 @@ jobs:
   pytest:
     name: harbor_adapter + analyzer pytest
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Needed to diff against the PR base for the scope check below.
+          fetch-depth: 0
+
+      - name: Does this change touch the bench tooling?
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # Anything that is not a PR (push to main, manual dispatch) always
+          # runs the suites: main is the branch whose green-ness is claimed.
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$BASE_SHA"...HEAD \
+            | grep -Eq '^(bench/harbor_adapter/|bench/terminal_bench_analysis/|\.github/workflows/bench\.yml$)'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No bench-tooling changes in this PR — suites skipped." >> "$GITHUB_STEP_SUMMARY"
+            echo "The check still reports, so it can be a required context." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Install uv
+        if: steps.scope.outputs.changed == 'true'
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
 
       - name: harbor_adapter — sync (locked) + pytest
+        if: steps.scope.outputs.changed == 'true'
         working-directory: bench/harbor_adapter
         run: |
           uv sync --locked --extra dev
           uv run --no-sync pytest -q
 
       - name: terminal_bench_analysis — sync (locked) + pytest
+        if: steps.scope.outputs.changed == 'true'
         working-directory: bench/terminal_bench_analysis
         run: |
           uv sync --locked --extra dev
