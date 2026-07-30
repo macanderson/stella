@@ -55,8 +55,10 @@ dotenvy.workspace = true
 libc.workspace = true
 tempfile.workspace = true
 # Masked TTY prompt for `stella connect … --token` (same crate stella-model
-# uses for the interactive API-key prompt).
+# uses for the interactive API-key prompt). `zeroize` wipes the untrimmed
+# prompt buffer, the copy of the secret no caller ever sees.
 rpassword.workspace = true
+zeroize.workspace = true
 # The protocol's own conformance suite (SPEC.md 3.6), pinned to the same rev as
 # the types/host we consume. A RUNTIME dependency, not just a dev one: #453
 # makes conformance an install/enable-time ADMISSION GATE for external
