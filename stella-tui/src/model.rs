@@ -661,6 +661,14 @@ impl SessionModel {
             | AgentEvent::BlockRegistered { .. }
             | AgentEvent::StepManifest { .. } => {}
             AgentEvent::Error { message, retryable } => {
+                // A terminal error ends the turn without a `Complete`, so the
+                // rail has to close here too — an aborted run is exactly when
+                // a reader most needs to know what was and was not proven, and
+                // exactly when rows would otherwise hang on `pending` forever.
+                // A retryable error is a warning mid-flight; the turn goes on.
+                if !*retryable {
+                    self.proof.finish();
+                }
                 self.pending_scope_review = None;
                 self.pending_ask_user = None;
                 // An aborted model call never commits its text — without
@@ -676,6 +684,11 @@ impl SessionModel {
                 self.hud.model = Some(model.clone());
                 self.hud.final_cost_usd = Some(*cost_usd);
                 self.hud.complete = true;
+                // Close the proof rail: anything the run never reported now
+                // says so, rather than reading `pending` on a turn that is
+                // over. See `crate::proof` — this is the half of the invariant
+                // that does not depend on the pipeline cooperating.
+                self.proof.finish();
                 self.pending_scope_review = None;
                 self.pending_ask_user = None;
                 self.streaming_text.clear();

@@ -250,7 +250,7 @@ async fn authored_witness_degrades_when_judge_is_worker() {
         events.iter().any(|event| matches!(
             event,
             AgentEvent::Error { message, retryable: true }
-                if message.contains("no witness author independent of the worker")
+                if message.contains("no author independent of the worker")
         )),
         "the degradation is announced once: {events:?}"
     );

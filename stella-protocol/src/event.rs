@@ -1058,6 +1058,22 @@ pub enum ProofTree {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ProofStep {
+    /// What assurance this turn is going to buy, stated by triage **before**
+    /// any of it happens.
+    ///
+    /// Emitted first, and the reason the rail can be honest at all. Every
+    /// other step reports something that *did* happen, so a turn where the
+    /// answer is "we decided not to" produced no steps and left the surface
+    /// with nothing to say — which is exactly the case that dominates in
+    /// practice. A declared plan turns that silence into a statement: the
+    /// witness row reads "waived by triage" from the first second of the
+    /// turn instead of implying a test is still coming.
+    Assurance {
+        /// Whether an independently authored witness test was called for.
+        witness: bool,
+        /// Whether a model judge was called for on inconclusive evidence.
+        judge: bool,
+    },
     /// The warrant read the diff and answered "does this change need a test".
     /// Emitted once per candidate, before any witness is bought — a change
     /// with nothing to prove is a *stated* outcome here, never silence.
