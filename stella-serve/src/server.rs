@@ -150,9 +150,10 @@ pub const DEFAULT_RESUME_GRACE: Duration = Duration::from_secs(30);
 
 /// Ceiling on [`ServeConfig::resume_grace`]: five minutes.
 ///
-/// Same reasoning as [`MAX_LIVE_TURNS`] and the route ceilings: the bound
-/// exists to stop an abandoned turn holding an OS thread and a live model call
-/// indefinitely, so a host that could set it to infinity could remove it.
+/// Same reasoning as the live-turn cap and the route ceilings (both private,
+/// deliberately): the bound exists to stop an abandoned turn holding an OS
+/// thread and a live model call indefinitely, so a host that could set it to
+/// infinity could remove it.
 pub const MAX_RESUME_GRACE: Duration = Duration::from_secs(300);
 
 impl ServeConfig {

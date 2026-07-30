@@ -71,5 +71,5 @@ pub use frame::{
 };
 pub use observe::{Metrics, Observer, ServeEvent, SharedObserver};
 pub use pending::Pending;
-pub use server::{ServeConfig, serve};
+pub use server::{DEFAULT_RESUME_GRACE, MAX_RESUME_GRACE, ServeConfig, serve};
 pub use session::{Session, SessionSpec};
