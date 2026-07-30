@@ -34,10 +34,25 @@ SCHEMA = "stella-tb21-dev-baseline-manifest-v1"
 
 
 def _run(*command: str) -> str | None:
+    """Captured stdout, or None if the command could not run or said nothing."""
     try:
         return subprocess.run(command, capture_output=True, text=True, timeout=60).stdout.strip() or None
     except (OSError, subprocess.SubprocessError):
         return None
+
+
+def _succeeds(*command: str) -> bool:
+    """Whether the command exited 0.
+
+    Separate from `_run` on purpose: `git merge-base --is-ancestor` answers
+    entirely through its exit status and prints nothing, so reading its stdout
+    reports every commit as *not* an ancestor — including `origin/main` itself.
+    Provenance is exactly the claim that must not be quietly wrong.
+    """
+    try:
+        return subprocess.run(command, capture_output=True, timeout=60).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def _posture(model: str) -> dict[str, Any]:
@@ -119,10 +134,9 @@ def main() -> int:
         "system_under_test": {
             "commit": args.sut_commit,
             "describe": _run("git", "describe", "--tags", args.sut_commit),
-            "is_ancestor_of_main": _run(
+            "is_ancestor_of_main": _succeeds(
                 "git", "merge-base", "--is-ancestor", args.sut_commit, "origin/main"
-            )
-            is not None,
+            ),
             "binary_sha256": args.binary_sha256,
             "binary_sha256_note": (
                 "host-specific: release builds bake in the builder's cargo/rustup paths. "
