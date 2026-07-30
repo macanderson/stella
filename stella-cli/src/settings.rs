@@ -463,6 +463,12 @@ impl AgentEngineConfig {
         take!(auto_mode);
         take!(effort_auto);
         take!(reasoning_auto);
+        // Was omitted from this list: a higher-precedence scope setting it
+        // had its value discarded, so the LOWER scope silently won the one
+        // knob deciding whether an unattended run may proceed past scope
+        // review. Latent while nothing layered underneath the user's file;
+        // load-bearing now that `provider_engine_baseline` does.
+        take!(headless_scope_bypass);
         if let Some(agents) = &other.agents {
             let target = self.agents.get_or_insert_with(AgentEngineAgents::default);
             for kind in EngineAgentKind::ALL {
@@ -474,6 +480,22 @@ impl AgentEngineConfig {
                 }
             }
         }
+    }
+
+    /// Layer `self` OVER `baseline`, field by field and agent by agent —
+    /// `self` (the user's merged settings) wins every field it sets, and
+    /// `baseline` answers only where the user had no opinion.
+    ///
+    /// This is the same composition rule the settings scope chain already
+    /// uses; the difference is only what sits underneath. It exists so a
+    /// gateway can ship a default posture (see
+    /// [`crate::engine_config::provider_engine_baseline`]) that is a genuine
+    /// *default* — visible in `stella config`, overridable at any scope, and
+    /// never able to displace something the user actually wrote down.
+    pub fn layered_over(&self, baseline: &AgentEngineConfig) -> AgentEngineConfig {
+        let mut merged = baseline.clone();
+        merged.overlay(self);
+        merged
     }
 
     /// The per-agent overrides for `kind`, if any.

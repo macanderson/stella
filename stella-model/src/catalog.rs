@@ -343,6 +343,34 @@ impl Catalog {
                         cache_write_usd_per_mtok: 0.0,
                     },
                 ),
+                // The OpenRouter provider's default model. Unlike `auto`
+                // above, this row names ONE model, so the numbers are
+                // knowable and belong here: the entry is what clamps
+                // `compaction_budget_tokens` to 3/4 of a real window rather
+                // than leaving the engine's 150k default in place against a
+                // 1M-token model, and what tells the effort clamp this model
+                // reasons.
+                //
+                // Pricing is still superseded per call by the gateway's usage
+                // accounting (`with_usage_accounting`) — this is the floor
+                // for the path where the frame carries no cost. Cache writes
+                // bill at the input rate: OpenRouter quotes kimi-k3 with a
+                // discounted cache READ and no separate write line, which is
+                // the usual "a write is an ordinary input token" shape.
+                CatalogEntry::new(
+                    "moonshotai/kimi-k3",
+                    "openrouter",
+                    "moonshotai",
+                    1_048_576,
+                    ToolDialect::OpenaiJson,
+                    Pricing {
+                        input_usd_per_mtok: 3.0,
+                        output_usd_per_mtok: 15.0,
+                        cached_input_usd_per_mtok: 0.3,
+                        cache_write_usd_per_mtok: 3.0,
+                    },
+                )
+                .with_reasoning(Some(true)),
             ],
         }
     }
