@@ -335,6 +335,30 @@ pub fn event_signature(event: &AgentEvent) -> String {
         AgentEvent::PolicyDecision { kind, subject, .. } => {
             format!("policy_decision:{kind:?}:{subject}")
         }
+        // A sub-agent's structural identity is which child ran, under which
+        // permissions, and how it ended. Its cost, step count, absorbed
+        // message count and summary text are all magnitude/content — the
+        // same posture as `step_usage` and `goal_verdict`. `truncated` and
+        // `write_access` stay: both are decisions, not measurements.
+        AgentEvent::SubAgent { phase } => {
+            use stella_protocol::SubAgentPhase;
+            match phase {
+                SubAgentPhase::Started {
+                    agent_id,
+                    write_access,
+                    depth,
+                    ..
+                } => format!("sub_agent:started:{agent_id}:write={write_access}:depth={depth}"),
+                SubAgentPhase::Finished {
+                    agent_id,
+                    status,
+                    truncated,
+                    ..
+                } => {
+                    format!("sub_agent:finished:{agent_id}:{status:?}:truncated={truncated}")
+                }
+            }
+        }
     }
 }
 
@@ -382,6 +406,13 @@ pub fn structural_diff(left: &[AgentEvent], right: &[AgentEvent]) -> Vec<StreamD
     // the only vocabulary either side can reason about. Unknown events are
     // still counted and still validated; they are only excluded from
     // *positional* structural comparison.
+    // `SubAgent` (#922) joins them for the same reason as context receipts:
+    // a golden recorded before the sub-agent primitive existed carries no
+    // lifecycle bracket, and the goal loop's judge — previously an inline
+    // engine turn — now emits one. Keeping it would shift every later
+    // position and report drift about the observability plane rather than
+    // about behaviour. What the child DID is still compared: its forwarded
+    // `tool_start`/`tool_result`/`step_usage` signatures stay in the walk.
     let keep = |e: &&AgentEvent| {
         !matches!(
             e,
@@ -389,6 +420,7 @@ pub fn structural_diff(left: &[AgentEvent], right: &[AgentEvent]) -> Vec<StreamD
                 | AgentEvent::BlockRegistered { .. }
                 | AgentEvent::StepManifest { .. }
                 | AgentEvent::SpeculationDiscarded { .. }
+                | AgentEvent::SubAgent { .. }
                 | AgentEvent::Unknown { .. }
         )
     };

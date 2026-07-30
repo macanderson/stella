@@ -19,7 +19,7 @@
 
 use stella_protocol::{
     AgentEvent, BudgetMode, CiStatus, FileChangeKind, MediaJobState, MediaKind, PrStatus,
-    ScopeProposal, StageKind, TaskItem, TaskStatus, ToolOutput,
+    ScopeProposal, StageKind, SubAgentPhase, SubAgentStatus, TaskItem, TaskStatus, ToolOutput,
 };
 
 use std::collections::VecDeque;
@@ -117,6 +117,22 @@ pub struct AskUserPrompt {
     pub id: String,
     pub question: String,
     pub options: Vec<String>,
+}
+
+/// How a sub-agent's child turn ended, for the finish row of
+/// [`TranscriptEntry::SubAgent`].
+///
+/// `absorbed_messages` is the number worth reading: it is the transcript
+/// growth the parent did NOT take on, and therefore does not re-send on
+/// every later step. Cost sits beside it so the trade is legible.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SubAgentSummary {
+    pub status: SubAgentStatus,
+    pub cost_usd: f64,
+    pub steps: usize,
+    pub absorbed_messages: usize,
+    /// Why it did not complete; `None` when it did.
+    pub reason: Option<String>,
 }
 
 /// One semantic entry in the transcript. Rendering (colour, borders, glyphs)
@@ -245,6 +261,20 @@ pub enum TranscriptEntry {
         met: bool,
         round: usize,
         reasoning: String,
+    },
+    /// A bounded child turn started or finished (`AgentEvent::SubAgent`).
+    /// The child's own narration never reaches this stream by design, so
+    /// this pair of rows is the entire visible record that one ran — which
+    /// is why the finish row carries what it cost AND what it saved.
+    SubAgent {
+        agent_id: String,
+        /// `None` on the start row; `Some` once the child has finished.
+        /// Keeping one variant for both keeps the bracket obviously paired
+        /// in scrollback rather than two rows a reader has to associate.
+        finished: Option<SubAgentSummary>,
+        /// The start row's task preview; empty on the finish row.
+        instruction_preview: String,
+        write_access: bool,
     },
     /// A scope-review gate was presented (the actionable card is driven off
     /// [`SessionModel::pending_scope_review`]; this line is the scrollback
@@ -658,6 +688,48 @@ impl SessionModel {
                     round: *round,
                     reasoning: reasoning.clone(),
                 });
+            }
+            AgentEvent::SubAgent { phase } => {
+                // Both phases are scrollback rows: a child can run for
+                // minutes with only its forwarded tool calls visible, so
+                // without the start row a reader cannot tell whose calls
+                // those are. Spend is deliberately not folded into the HUD
+                // here — the engine re-ticks the parent's own post-settlement
+                // numbers, and folding this too would double-count.
+                let entry = match phase {
+                    SubAgentPhase::Started {
+                        agent_id,
+                        instruction_preview,
+                        write_access,
+                        ..
+                    } => TranscriptEntry::SubAgent {
+                        agent_id: agent_id.clone(),
+                        finished: None,
+                        instruction_preview: instruction_preview.clone(),
+                        write_access: *write_access,
+                    },
+                    SubAgentPhase::Finished {
+                        agent_id,
+                        status,
+                        cost_usd,
+                        steps,
+                        absorbed_messages,
+                        reason,
+                        ..
+                    } => TranscriptEntry::SubAgent {
+                        agent_id: agent_id.clone(),
+                        finished: Some(SubAgentSummary {
+                            status: *status,
+                            cost_usd: *cost_usd,
+                            steps: *steps,
+                            absorbed_messages: *absorbed_messages,
+                            reason: reason.clone(),
+                        }),
+                        instruction_preview: String::new(),
+                        write_access: false,
+                    },
+                };
+                self.transcript.push(entry);
             }
             // `StepUsage` is a metering/billing record consumed by
             // `stella-store`; the HUD's live spend is driven by `BudgetTick`,

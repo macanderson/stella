@@ -14,7 +14,7 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use stella_protocol::{CiStatus, PrStatus};
+use stella_protocol::{CiStatus, PrStatus, SubAgentStatus};
 
 use crate::model::{FileState, SessionModel, TranscriptEntry};
 use crate::render::row::*;
@@ -671,6 +671,62 @@ fn entry_body(
                 out,
             );
         }
+        TranscriptEntry::SubAgent {
+            agent_id,
+            finished,
+            instruction_preview,
+            write_access,
+        } => match finished {
+            None => push_note(
+                "⤷ sub-agent",
+                quiet(),
+                vec![
+                    Span::styled(agent_id.clone(), value()),
+                    Span::styled(
+                        format!("  {}", if *write_access { "write" } else { "read-only" }),
+                        quiet(),
+                    ),
+                    Span::styled(format!("  {instruction_preview}"), quiet()),
+                ],
+                width,
+                out,
+            ),
+            Some(summary) => {
+                let (glyph, color) = match summary.status {
+                    SubAgentStatus::Completed => ("✓", theme::OK),
+                    SubAgentStatus::Incomplete => ("○", theme::WARN),
+                    SubAgentStatus::Refused => ("✗", theme::BAD),
+                };
+                push_note(
+                    &format!("{glyph} sub-agent"),
+                    loud(color),
+                    vec![
+                        Span::styled(agent_id.clone(), value()),
+                        Span::styled(
+                            match &summary.reason {
+                                Some(reason) => format!("  {reason}"),
+                                None => "  done".to_string(),
+                            },
+                            value(),
+                        ),
+                        // The saving is the point of the primitive, so it is
+                        // on the row rather than only in the journal.
+                        Span::styled(
+                            format!(
+                                "  ·  {} step{}  ·  {} msgs absorbed  ·  ${:.4}",
+                                summary.steps,
+                                if summary.steps == 1 { "" } else { "s" },
+                                summary.absorbed_messages,
+                                summary.cost_usd
+                            ),
+                            quiet(),
+                        ),
+                    ],
+                    width,
+                    out,
+                );
+            }
+        },
         TranscriptEntry::ScopeReview {
             summary,
             steps,

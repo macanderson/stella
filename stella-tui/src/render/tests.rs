@@ -3,7 +3,7 @@ use crate::composer::{Composer, SlashCommand};
 // Imported here rather than by the parent: `render.rs` itself no longer names
 // these once the transcript builders moved to `render::entry`, and re-adding
 // them there purely for the test module would be an unused import in the lib.
-use crate::model::TranscriptEntry;
+use crate::model::{SubAgentSummary, TranscriptEntry};
 use proptest::prelude::*;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -11,7 +11,7 @@ use stella_protocol::{
     AgentEvent, BudgetMode, FileChangeKind, MediaJobState, MediaKind, ScopeProposal, StageKind,
     ToolCall, ToolOutput,
 };
-use stella_protocol::{CiStatus, PrStatus};
+use stella_protocol::{CiStatus, PrStatus, SubAgentStatus};
 
 mod thinking;
 
@@ -169,6 +169,27 @@ fn sample_entries() -> Vec<TranscriptEntry> {
             model: "glm-5.2".into(),
             cost_usd: 0.1,
         },
+        // Both phases: the start and finish rows take different render
+        // paths (quiet note vs. status-hued note), so one sample would
+        // leave half the arm unexercised by the rail invariant.
+        TranscriptEntry::SubAgent {
+            agent_id: "search-1".into(),
+            finished: None,
+            instruction_preview: "find the retry policy".into(),
+            write_access: false,
+        },
+        TranscriptEntry::SubAgent {
+            agent_id: "search-1".into(),
+            finished: Some(SubAgentSummary {
+                status: SubAgentStatus::Completed,
+                cost_usd: 0.004,
+                steps: 5,
+                absorbed_messages: 9,
+                reason: None,
+            }),
+            instruction_preview: String::new(),
+            write_access: false,
+        },
     ]
 }
 
@@ -211,6 +232,7 @@ fn every_transcript_entry_renders_on_a_rail() {
             | TranscriptEntry::MediaComplete { .. }
             | TranscriptEntry::JudgeVerdict { .. }
             | TranscriptEntry::GoalVerdict { .. }
+            | TranscriptEntry::SubAgent { .. }
             | TranscriptEntry::ScopeReview { .. }
             | TranscriptEntry::AskUser { .. }
             | TranscriptEntry::Commit { .. }

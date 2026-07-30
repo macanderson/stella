@@ -251,7 +251,7 @@ pub enum TurnOutcome {
 /// byte-for-byte the same as before this seam existed. `Copy` because both
 /// fields are shared references.
 #[derive(Clone, Copy)]
-struct HooksHandle<'a> {
+pub(crate) struct HooksHandle<'a> {
     hooks: &'a Hooks,
     runner: &'a dyn HookRunner,
 }
@@ -265,11 +265,11 @@ pub struct Engine<'a> {
     pub(crate) tools: &'a dyn ToolExecutor,
     pub(crate) sleeper: &'a dyn Sleeper,
     pub(crate) config: EngineConfig,
-    call_role: stella_protocol::ModelCallRole,
+    pub(crate) call_role: stella_protocol::ModelCallRole,
     /// Lifecycle hooks, off by default. Attached via [`Engine::with_hooks`]
     /// so `with_sleeper` keeps its existing signature. When `None`,
     /// no hook is ever consulted and the turn path adds zero work.
-    hooks: Option<HooksHandle<'a>>,
+    pub(crate) hooks: Option<HooksHandle<'a>>,
     /// Token-drift calibration (`crate::estimator::CalibrationMap`), off by
     /// default. Attached via [`Engine::with_calibration`]; the caller owns
     /// the map across turns (and seeds it from persisted telemetry at
@@ -282,13 +282,13 @@ pub struct Engine<'a> {
     /// Attached via [`Engine::with_gate`]; consulted once per step, before
     /// any model call — a paused turn parks at that safe boundary and
     /// spends nothing until resumed. `None` adds zero work.
-    gate: Option<&'a dyn crate::ports::TurnGate>,
+    pub(crate) gate: Option<&'a dyn crate::ports::TurnGate>,
     /// Step-boundary steering ([`crate::ports::TurnSteering`]), off by
     /// default. Attached via [`Engine::with_steering`]; drained once per
     /// step at the same boundary as the pause gate — queued user messages
     /// become the model's next observation, and a latched soft stop ends
     /// the turn keeping every completed step. `None` adds zero work.
-    steering: Option<&'a dyn crate::ports::TurnSteering>,
+    pub(crate) steering: Option<&'a dyn crate::ports::TurnSteering>,
 }
 
 /// Upper bound on tool calls from one step executing concurrently. Tools
