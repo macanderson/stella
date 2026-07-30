@@ -34,6 +34,7 @@ mod cloud_drain;
 mod command_deck;
 mod commands_cmd;
 mod config;
+mod config_wiring;
 mod connect_cmd;
 mod context_cmd;
 mod context_records;
