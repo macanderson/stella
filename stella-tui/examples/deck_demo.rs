@@ -225,6 +225,7 @@ async fn main() -> std::io::Result<()> {
                 | WorkspaceInput::McpRemove { .. }
                 | WorkspaceInput::McpAuth { .. }
                 | WorkspaceInput::McpOauthLogin { .. }
+                | WorkspaceInput::McpInspect { .. }
                 | WorkspaceInput::McpRefresh => {}
                 // The SESSIONS overlay reads the machine-wide registry and the
                 // inbox reads the notification store — both live in the real

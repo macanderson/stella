@@ -264,6 +264,17 @@ pub enum Inbound {
     /// ([`WorkspaceInput::McpSearch`]) — also out-of-band, applied to
     /// `DeckUi::mcp` search results.
     McpSearchResults(McpSearchOutcome),
+    /// One server's assembled inspector detail ([`WorkspaceInput::McpInspect`]).
+    /// Out-of-band view state like the two above. The driver may send this
+    /// **twice** for one request: once immediately from what it already knows,
+    /// and again after an optional registry lookup fills in a description — so
+    /// the inspector opens instantly and is never blocked on the network.
+    ///
+    /// Boxed: the detail carries a dozen optional strings plus the whole tool
+    /// table, and inlining it would make every `Inbound` — including the
+    /// per-token `Event` that flows thousands of times a turn — as large as
+    /// the rarest one.
+    McpDetail(Box<McpServerDetail>),
     /// Open the help overlay. Sent by the driver when the user types `/help`
     /// (so the slash command reaches the same rich, scrollable panel the `?`
     /// key opens) and applied straight to `DeckUi::help_open` by
@@ -737,6 +748,14 @@ pub enum WorkspaceInput {
     },
     /// MCP tab: rebuild and re-push the [`Inbound::McpServers`] snapshot.
     McpRefresh,
+    /// MCP tab: assemble the ctrl+o inspector detail for one configured server
+    /// and answer with [`Inbound::McpDetail`].
+    ///
+    /// `lookup` asks the driver to consult the registry when the server has no
+    /// recorded description, backfilling `mcp.toml` with what it finds. Opt-in
+    /// per request rather than automatic: the registry is a third-party
+    /// service, and merely looking at a tab must not talk to one.
+    McpInspect { name: String, lookup: bool },
     /// MCP tab: start the browser OAuth login for a configured **http**
     /// server. The driver runs the flow in the background and streams
     /// [`Inbound::McpOauthStatus`] updates (including the authorize URL).
@@ -1159,68 +1178,12 @@ pub enum SkillOp {
     },
 }
 
-/// A configured MCP server's full state for the MCP tab. The four state axes
-/// are distinct on purpose: a server can be *configured* (in `mcp.toml`) yet
-/// not *connected* (failed to start, or added after session start), and
-/// *enabled* (session intent) is separate from *connected*.
-#[derive(Clone, Debug, PartialEq)]
-pub struct McpServerInfo {
-    /// The local alias (config key + tool-namespace segment).
-    pub name: String,
-    /// Transport discriminant: `stdio` or `http`.
-    pub kind: String,
-    /// Enabled for this session (not in the disabled set).
-    pub enabled: bool,
-    /// Connected in the live tool set this session (tools are actually
-    /// reachable). A newly-installed server shows `configured` but not
-    /// `connected` until the next session.
-    pub connected: bool,
-    /// Short health label when connected (e.g. `live`, `reconnecting`).
-    pub health: Option<String>,
-    /// How many tools it advertises this session (0 when disabled/unconnected).
-    pub tool_count: usize,
-    /// Tools this server advertised that were **refused** past the per-server
-    /// cap (`stella_mcp::MAX_TOOLS_PER_SERVER`), so the model was never told
-    /// about them. `0` for every well-behaved server.
-    ///
-    /// Distinct from `connected: false` on purpose: the server is up, healthy,
-    /// and its kept tools route normally — rendering this as "unavailable"
-    /// would be a lie. A **floor**, not a total: discovery stops on the page
-    /// where the cap bites, so tools the server would have listed later are
-    /// never counted.
-    pub dropped_tools: usize,
-    /// Configured credential field names (env vars / headers) — presence means
-    /// auth is set; the values are never carried here.
-    pub auth_fields: Vec<String>,
-    /// OAuth state: `None` = not applicable (stdio), `Some(logged_in)` for an
-    /// http server (`o` starts the browser login; tokens never ride here).
-    pub oauth: Option<bool>,
-    /// Total recorded calls to this server's tools (from local telemetry).
-    pub calls: u64,
-}
-
-/// The outcome of an MCP registry search requested from the tab.
-#[derive(Clone, Debug, PartialEq)]
-pub struct McpSearchOutcome {
-    /// The query that produced these results (echoed for display).
-    pub query: String,
-    pub items: Vec<McpSearchItem>,
-    /// Set when the search failed (network/registry error) instead of matching.
-    pub error: Option<String>,
-    /// Whether the registry reported more pages beyond this one.
-    pub has_more: bool,
-}
-
-/// One registry search result row.
-#[derive(Clone, Debug, PartialEq)]
-pub struct McpSearchItem {
-    pub name: String,
-    pub description: String,
-    /// A compact install-kinds hint, e.g. `npm, remote`.
-    pub kinds: String,
-    /// Whether a server of this name is already configured locally.
-    pub installed: bool,
-}
+/// The MCP tab's read models (rows, search results, inspector detail).
+mod mcp;
+pub use mcp::{
+    McpLiveIdentity, McpLookupState, McpSearchItem, McpSearchOutcome, McpServerDetail,
+    McpServerInfo, McpToolRow,
+};
 
 /// A secret string whose `Debug` is redacted, so it can ride the deck's input
 /// channel (and any debug log of it) without leaking. The value is readable

@@ -266,6 +266,7 @@ fn mcp_tab_navigates_toggles_and_enters_search() {
             auth_fields: vec!["Authorization".into()],
             oauth: Some(false),
             calls: 5,
+            ..Default::default()
         },
         McpServerInfo {
             name: "fs".into(),
@@ -278,6 +279,7 @@ fn mcp_tab_navigates_toggles_and_enters_search() {
             auth_fields: vec![],
             oauth: None,
             calls: 0,
+            ..Default::default()
         },
     ];
     // ↓ moves the selection.
@@ -332,6 +334,7 @@ fn mcp_auth_prompt_captures_a_masked_value_as_a_redacted_secret() {
         auth_fields: vec![],
         oauth: Some(false),
         calls: 0,
+        ..Default::default()
     }];
     // `a` enters auth mode.
     handle_deck_key(ch('a'), &model, &mut ui);
@@ -384,6 +387,7 @@ fn a_pasted_secret_lands_in_the_credential_value_never_the_composer() {
         auth_fields: vec![],
         oauth: Some(false),
         calls: 0,
+        ..Default::default()
     }];
     handle_deck_key(ch('a'), &model, &mut ui); // enter auth
     for c in "TOKEN".chars() {
@@ -484,4 +488,112 @@ fn a_bang_command_has_no_lane_to_borrow_before_any_agent_registers() {
     let model = model_with(&[]);
     let ui = ready_ui();
     assert_eq!(focused_id(&model, &ui), None);
+}
+
+/// The ctrl+o inspector: opening it, its modality, and its scoped `r`.
+#[test]
+fn ctrl_o_opens_the_mcp_inspector_for_the_highlighted_server() {
+    use crate::envelope::McpServerInfo;
+    let model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ui.set_tab(DeckTab::Mcp);
+    ui.mcp.servers = vec![
+        McpServerInfo {
+            name: "github".into(),
+            ..Default::default()
+        },
+        McpServerInfo {
+            name: "fs".into(),
+            ..Default::default()
+        },
+    ];
+    ui.mcp.selected = 1;
+
+    // Opening asks for the detail WITHOUT a registry lookup: merely looking at
+    // a tab must not contact a third-party service.
+    let action = handle_deck_key(ctrl('o'), &model, &mut ui);
+    assert!(matches!(
+        action,
+        DeckAction::Send(WorkspaceInput::McpInspect { ref name, lookup: false }) if name == "fs"
+    ));
+    assert_eq!(ui.mcp.inspector.as_ref().unwrap().server, "fs");
+
+    // Modal: a bare `x` must not reach the list and remove the server whose
+    // detail is on screen.
+    let action = handle_deck_key(key(KeyCode::Char('x')), &model, &mut ui);
+    assert!(
+        matches!(action, DeckAction::Handled),
+        "x leaked: {action:?}"
+    );
+
+    // ↓ scrolls the overlay rather than moving the list selection.
+    handle_deck_key(key(KeyCode::Down), &model, &mut ui);
+    assert_eq!(ui.mcp.inspector.as_ref().unwrap().scroll, 1);
+    assert_eq!(
+        ui.mcp.selected, 1,
+        "the list selection moved under the overlay"
+    );
+
+    // Esc closes it, and only it.
+    handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
+    assert!(ui.mcp.inspector.is_none());
+    assert_eq!(ui.tab, DeckTab::Mcp);
+}
+
+#[test]
+fn the_inspector_offers_a_registry_lookup_only_when_it_could_answer_something() {
+    use crate::envelope::{McpServerDetail, McpServerInfo};
+    let model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ui.set_tab(DeckTab::Mcp);
+    ui.mcp.servers = vec![McpServerInfo {
+        name: "mcp".into(),
+        ..Default::default()
+    }];
+    handle_deck_key(ctrl('o'), &model, &mut ui);
+
+    // No detail yet — `r` cannot know whether a lookup would help.
+    assert!(matches!(
+        handle_deck_key(key(KeyCode::Char('r')), &model, &mut ui),
+        DeckAction::Handled
+    ));
+
+    // A server with no description: `r` asks the registry.
+    ui.mcp.apply_detail(McpServerDetail {
+        name: "mcp".into(),
+        ..Default::default()
+    });
+    assert!(matches!(
+        handle_deck_key(key(KeyCode::Char('r')), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::McpInspect { lookup: true, .. })
+    ));
+
+    // One that already has a description: `r` is inert, not a wasted call.
+    ui.mcp.apply_detail(McpServerDetail {
+        name: "mcp".into(),
+        description: Some("Payments.".into()),
+        ..Default::default()
+    });
+    assert!(matches!(
+        handle_deck_key(key(KeyCode::Char('r')), &model, &mut ui),
+        DeckAction::Handled
+    ));
+}
+
+#[test]
+fn ctrl_o_on_the_mcp_tab_does_not_toggle_transcript_expansion() {
+    // Ctrl-O is the transcript expand/collapse chord everywhere else; the MCP
+    // tab claims it, so the global handler must not run first and swallow it.
+    use crate::envelope::McpServerInfo;
+    let model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ui.set_tab(DeckTab::Mcp);
+    ui.mcp.servers = vec![McpServerInfo {
+        name: "mcp".into(),
+        ..Default::default()
+    }];
+    let before = ui.transcript_expand_all;
+    handle_deck_key(ctrl('o'), &model, &mut ui);
+    assert_eq!(ui.transcript_expand_all, before, "the global chord ran");
+    assert!(ui.mcp.inspector.is_some());
 }

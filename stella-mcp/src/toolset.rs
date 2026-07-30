@@ -47,7 +47,7 @@ use stella_core::mcp_usage::{McpUsageLedger, McpUsageRecord, push_usage};
 use stella_core::ports::ToolExecutor;
 use stella_protocol::{ToolOutput, ToolSchema};
 
-use crate::client::{McpClient, ServerHealth};
+use crate::client::{McpClient, McpToolInfo, ServerHealth};
 use crate::config::McpServerConfig;
 use crate::oauth::OAuthManager;
 
@@ -63,6 +63,27 @@ const NS_PREFIX: &str = "mcp__";
 const NS_SEP: &str = "__";
 /// Default per-call (and per-connect) timeout when the caller does not set one.
 pub const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// What a connected server said about itself during the `initialize`
+/// handshake — its own name (which need not match the local alias), version,
+/// display title, and free-prose `instructions`.
+///
+/// Every field is untrusted third-party text: it is rendered to the operator
+/// and never fed to the model.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ServerIdentity {
+    /// The server's self-reported name, e.g. `stripe-mcp`. Distinct from the
+    /// local alias — this is what the *server* calls itself.
+    pub name: Option<String>,
+    pub version: Option<String>,
+    /// Human display name (MCP 2025-06-18+), when advertised.
+    pub title: Option<String>,
+    pub website_url: Option<String>,
+    /// The handshake `instructions` blob, trimmed-empty filtered out.
+    pub instructions: Option<String>,
+    /// The protocol revision this session negotiated with it.
+    pub protocol_version: String,
+}
 
 /// A set of connected MCP servers exposed to the engine as one
 /// `ToolExecutor`, optionally composed over an inner native executor.
@@ -322,6 +343,42 @@ impl McpToolSet {
     /// Servers that were not connected, as `(name, reason)`.
     pub fn failed_servers(&self) -> &[(String, String)] {
         &self.failed
+    }
+
+    /// What `server` said about itself during the handshake, or `None` if it
+    /// is not connected this session.
+    ///
+    /// The live counterpart of the registry's [`crate::config::ServerCard`]:
+    /// the card is what the *publisher* wrote and survives across sessions on
+    /// disk, this is what the *process on the other end of the pipe* claims
+    /// right now. A hand-written `mcp.toml` entry has no card at all, so for
+    /// those servers this is the only identity that exists.
+    pub fn identity(&self, server: &str) -> Option<ServerIdentity> {
+        let client = self.clients.iter().find(|c| c.name() == server)?;
+        let info = client.server_info();
+        Some(ServerIdentity {
+            name: info.map(|i| i.name.clone()).filter(|n| !n.is_empty()),
+            version: info.map(|i| i.version.clone()).filter(|v| !v.is_empty()),
+            title: info.and_then(|i| i.title.clone()),
+            website_url: info.and_then(|i| i.website_url.clone()),
+            instructions: client.instructions().map(str::to_string),
+            protocol_version: client.negotiated_version().to_string(),
+        })
+    }
+
+    /// `server`'s advertised tools, un-namespaced, as discovered at handshake.
+    ///
+    /// Read from the client rather than from [`McpToolSet::schemas`] on
+    /// purpose: `schemas` answers "what can the model call right now", so it
+    /// goes empty the moment a server is disabled for the session. An operator
+    /// inspecting a server they just switched off still needs to see what it
+    /// offers — that is usually *why* they are looking.
+    pub fn advertised_tools(&self, server: &str) -> &[McpToolInfo] {
+        self.clients
+            .iter()
+            .find(|c| c.name() == server)
+            .map(McpClient::tools)
+            .unwrap_or_default()
     }
 
     /// Connected servers whose advertised tool list was **truncated** at

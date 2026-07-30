@@ -21,11 +21,19 @@ stella mcp <list|search|install|remove|login|logout|usage> [args]
 
 ### `stella mcp list`
 
-List the MCP servers configured in `.stella/mcp.toml`.
+List the MCP servers configured in `.stella/mcp.toml`. Each entry shows what it
+is — the publisher's name and description, recorded at install — with its local
+alias underneath. An entry installed by hand (or before descriptions were kept)
+falls back to its endpoint: the URL or the spawn command line.
 
 ```bash
 stella mcp list
 ```
+
+The identity matters because the alias is lossy on purpose. Installing
+`com.stripe/mcp` writes `[servers.mcp]`, since the alias is also the
+tool-namespace segment (`mcp__mcp__create_refund`) — so a list keyed on it
+alone would name nothing.
 
 ### `stella mcp search <query>...`
 
@@ -71,5 +79,5 @@ stella mcp usage
 ```
 
 <Callout type="info">
-Enabling or disabling a server for a session, and entering any credentials it needs, happen in the deck's MCP tab (`/mcp`) — those are session-scoped and not part of the scriptable CLI.
+Enabling or disabling a server for a session, and entering any credentials it needs, happen in the deck's MCP tab (`/mcp`) — those are session-scoped and not part of the scriptable CLI. That tab also has an inspector: **ctrl+o** on a server opens its full detail — description, registry entry, repository, endpoint, what the live server announced at handshake, its credential fields, and every tool it advertises with a call count. If the server has no recorded description, **r** inside the inspector looks it up in the registry once and saves what it finds.
 </Callout>

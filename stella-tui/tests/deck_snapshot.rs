@@ -362,6 +362,7 @@ fn mcp_tab_renders_truncation_distinctly_from_an_unavailable_server() {
             auth_fields: Vec::new(),
             oauth: None,
             calls: 0,
+            ..Default::default()
         }
     }
 
@@ -412,6 +413,7 @@ fn mcp_tab_says_nothing_about_the_cap_when_no_server_truncated() {
         auth_fields: Vec::new(),
         oauth: None,
         calls: 3,
+        ..Default::default()
     }];
 
     let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();
@@ -420,4 +422,192 @@ fn mcp_tab_says_nothing_about_the_cap_when_no_server_truncated() {
 
     assert!(!screen.contains("dropped"), "no cap notice:\n{screen}");
     assert!(!screen.contains("truncated"), "no cap notice:\n{screen}");
+}
+
+/// End-to-end proof of the reported problem and its fix: a real render of the
+/// MCP tab, through `render_deck`, must identify each server.
+///
+/// The bug was that a configured server showed as its config alias and nothing
+/// else — `mcp [http] not connected` — with no way to learn which vendor it
+/// was short of starting its OAuth flow and reading the browser.
+#[test]
+fn mcp_tab_identifies_each_server_rather_than_showing_a_bare_alias() {
+    let model = folded_model();
+    let mut ui = DeckUi::default();
+    ui.splash.skip();
+    ui.tab = DeckTab::Mcp;
+    ui.mcp.servers = vec![
+        // Installed from the registry: the publisher's own words.
+        stella_tui::McpServerInfo {
+            name: "mcp".into(),
+            title: Some("Stripe".into()),
+            description: Some("Payments, refunds, and balance reads.".into()),
+            endpoint: "https://mcp.stripe.com/v1".into(),
+            kind: "http".into(),
+            enabled: true,
+            oauth: Some(false),
+            ..Default::default()
+        },
+        // Hand-written, never in a registry: the endpoint carries the meaning.
+        stella_tui::McpServerInfo {
+            name: "fs".into(),
+            endpoint: "npx -y @modelcontextprotocol/server-filesystem /w".into(),
+            kind: "stdio".into(),
+            enabled: true,
+            connected: true,
+            health: Some("live".into()),
+            tool_count: 4,
+            ..Default::default()
+        },
+    ];
+
+    let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();
+    terminal.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+    let screen = buffer_text(terminal.backend().buffer());
+
+    assert!(
+        screen.contains("Stripe"),
+        "the vendor behind the `mcp` alias is unnamed:\n{screen}"
+    );
+    assert!(
+        screen.contains("Payments, refunds"),
+        "the recorded description is not on screen:\n{screen}"
+    );
+    assert!(
+        screen.contains("mcp"),
+        "the alias is the routing token and must survive:\n{screen}"
+    );
+    assert!(
+        screen.contains("server-filesystem"),
+        "a server with no description falls back to its endpoint:\n{screen}"
+    );
+    assert!(
+        screen.contains("ctrl+o"),
+        "the inspector is not discoverable from the footer:\n{screen}"
+    );
+}
+
+/// The ctrl+o inspector, rendered through `render_deck` over the real list.
+///
+/// Also writes both frames to the target tmpdir — the headless stand-in for a
+/// TTY screenshot, the same convention the whole-deck snapshot uses.
+#[test]
+fn mcp_inspector_renders_over_the_list_and_answers_what_the_row_cannot() {
+    let model = folded_model();
+    let mut ui = DeckUi::default();
+    ui.splash.skip();
+    ui.tab = DeckTab::Mcp;
+    ui.mcp.servers = vec![
+        stella_tui::McpServerInfo {
+            name: "mcp".into(),
+            title: Some("Stripe".into()),
+            description: Some("Payments, refunds, disputes, and balance reads.".into()),
+            endpoint: "https://mcp.stripe.com/v1".into(),
+            kind: "http".into(),
+            enabled: true,
+            connected: true,
+            health: Some("live".into()),
+            tool_count: 21,
+            oauth: Some(true),
+            calls: 14,
+            ..Default::default()
+        },
+        stella_tui::McpServerInfo {
+            name: "fs".into(),
+            endpoint: "npx -y @modelcontextprotocol/server-filesystem /w".into(),
+            kind: "stdio".into(),
+            enabled: true,
+            connected: true,
+            health: Some("live".into()),
+            tool_count: 4,
+            auth_fields: vec!["ROOT".into()],
+            ..Default::default()
+        },
+        stella_tui::McpServerInfo {
+            name: "linear".into(),
+            title: Some("Linear".into()),
+            description: Some("Issues, projects, cycles, and documents.".into()),
+            endpoint: "https://mcp.linear.app/mcp".into(),
+            kind: "http".into(),
+            enabled: false,
+            oauth: Some(false),
+            ..Default::default()
+        },
+    ];
+
+    let mut out = String::new();
+    let mut terminal = Terminal::new(TestBackend::new(150, 20)).unwrap();
+    terminal.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+    let _ = writeln!(out, "\n═══ MCP tab — list ═══\n");
+    let _ = writeln!(out, "{}", buffer_text(terminal.backend().buffer()));
+
+    ui.mcp.inspector = Some(stella_tui::views::mcp::McpInspector {
+        server: "mcp".into(),
+        detail: Some(stella_tui::McpServerDetail {
+            name: "mcp".into(),
+            title: Some("Stripe".into()),
+            description: Some(
+                "Payments, refunds, disputes, and balance reads over the Stripe API.".into(),
+            ),
+            registry_name: Some("com.stripe/mcp".into()),
+            repository: Some("https://github.com/stripe/agent-toolkit".into()),
+            version: Some("0.4.2".into()),
+            kind: "http".into(),
+            endpoint: "https://mcp.stripe.com/v1".into(),
+            oauth: Some(true),
+            enabled: true,
+            connected: true,
+            health: Some("live".into()),
+            calls: 14,
+            live: Some(stella_tui::McpLiveIdentity {
+                name: Some("stripe-mcp".into()),
+                version: Some("2.1.0".into()),
+                protocol_version: "2025-06-18".into(),
+                ..Default::default()
+            }),
+            tools: vec![
+                stella_tui::McpToolRow {
+                    name: "create_refund".into(),
+                    description: "Refund a charge, in full or in part.".into(),
+                    calls: 3,
+                    ..Default::default()
+                },
+                stella_tui::McpToolRow {
+                    name: "list_customers".into(),
+                    description: "Page through customers on the account.".into(),
+                    calls: 11,
+                    safe_to_retry: true,
+                },
+            ],
+            ..Default::default()
+        }),
+        scroll: 0,
+    });
+    let mut terminal = Terminal::new(TestBackend::new(150, 46)).unwrap();
+    terminal.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+    let _ = writeln!(out, "\n═══ MCP tab — ctrl+o inspector ═══\n");
+    let _ = writeln!(out, "{}", buffer_text(terminal.backend().buffer()));
+
+    // The inspector answers the questions the list only gestures at — assert
+    // that here rather than leaving this test a pure artifact writer.
+    for needle in [
+        "com.stripe/mcp",    // which registry entry this alias came from
+        "agent-toolkit",     // whose code is behind it
+        "stripe-mcp v2.1.0", // what the live process announces itself as
+        "2025-06-18",        // the protocol it negotiated
+        "logged in",         // how it authenticates
+        "create_refund",     // what it can actually do
+        "Refund a charge",   // and in the server's own words
+    ] {
+        assert!(
+            out.contains(needle),
+            "the inspector should show {needle:?}:\n{out}"
+        );
+    }
+
+    let artifact = concat!(env!("CARGO_TARGET_TMPDIR"), "/mcp-tab.txt");
+    match std::fs::write(artifact, &out) {
+        Ok(()) => println!("MCP tab frames written to {artifact}"),
+        Err(err) => println!("MCP tab frames not written to {artifact}: {err}"),
+    }
 }
