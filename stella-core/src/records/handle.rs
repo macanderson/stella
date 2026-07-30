@@ -167,6 +167,7 @@ mod tests {
             record,
             set_id: set_id.to_string(),
             source: format!("{set_id}.toml"),
+            trust: super::super::Trust::Project,
             handle: String::new(),
             findings: Vec::new(),
         }
@@ -222,6 +223,7 @@ mod tests {
                 },
                 set_id: "acme.web".to_string(),
                 source: "other.toml".to_string(),
+                trust: super::super::Trust::Project,
                 handle: String::new(),
                 findings: Vec::new(),
             },
