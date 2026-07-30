@@ -61,7 +61,8 @@ impl WitnessToolExecutor {
         // and a repair turn that the artifact could never have witnessed
         // anything. This boundary is the only path witness bytes take to disk,
         // which is what makes a check here complete rather than advisory.
-        if let Err(vacuous) = stella_pipeline::witness::density::screen_witness_source(&path, content)
+        if let Err(vacuous) =
+            stella_pipeline::witness::density::screen_witness_source(&path, content)
         {
             return Self::denied("create_witness_test", vacuous);
         }
@@ -561,7 +562,10 @@ mod tests {
             1
         );
         let content = std::fs::read_to_string(root.path().join("tests/raced.rs")).unwrap();
-        assert!(content == witness_body(1) || content == witness_body(2), "{content}");
+        assert!(
+            content == witness_body(1) || content == witness_body(2),
+            "{content}"
+        );
     }
 
     #[tokio::test]

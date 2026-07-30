@@ -231,10 +231,7 @@ fn markers(lang: Lang) -> &'static [(&'static str, Span)] {
             ("require.", Span::Forward),
             ("assert.", Span::Forward),
         ],
-        Lang::CSharp => &[
-            ("Assert.", Span::Forward),
-            (".Should(", Span::Receiver),
-        ],
+        Lang::CSharp => &[("Assert.", Span::Forward), (".Should(", Span::Receiver)],
     }
 }
 
@@ -249,9 +246,39 @@ fn markers(lang: Lang) -> &'static [(&'static str, Span)] {
 /// real test, so the list stays short and boring.
 fn neutral(lang: Lang) -> &'static [&'static str] {
     const KEYWORDS: &[&str] = &[
-        "let", "mut", "const", "var", "return", "if", "else", "for", "while", "match", "as", "in",
-        "not", "and", "or", "is", "await", "async", "self", "this", "def", "fn", "func", "with",
-        "true", "false", "True", "False", "None", "null", "nil", "undefined", "NULL",
+        "let",
+        "mut",
+        "const",
+        "var",
+        "return",
+        "if",
+        "else",
+        "for",
+        "while",
+        "match",
+        "as",
+        "in",
+        "not",
+        "and",
+        "or",
+        "is",
+        "await",
+        "async",
+        "self",
+        "this",
+        "def",
+        "fn",
+        "func",
+        "with",
+        "true",
+        "false",
+        "True",
+        "False",
+        "None",
+        "null",
+        "nil",
+        "undefined",
+        "NULL",
     ];
     // Concatenated at each call rather than stored: the lists are a handful of
     // entries scanned once per assertion site, and a `static` join would need
@@ -363,25 +390,8 @@ fn neutral(lang: Lang) -> &'static [&'static str] {
             "t",
         ]),
         Lang::Go => joined!(&[
-            "t",
-            "Error",
-            "Errorf",
-            "Fatal",
-            "Fatalf",
-            "Fail",
-            "FailNow",
-            "Helper",
-            "Log",
-            "Logf",
-            "require",
-            "assert",
-            "Equal",
-            "NotEqual",
-            "NoError",
-            "True",
-            "False",
-            "Nil",
-            "NotNil",
+            "t", "Error", "Errorf", "Fatal", "Fatalf", "Fail", "FailNow", "Helper", "Log", "Logf",
+            "require", "assert", "Equal", "NotEqual", "NoError", "True", "False", "Nil", "NotNil",
             "len",
         ]),
         Lang::CSharp => joined!(&[
@@ -1064,7 +1074,11 @@ mod tests {
                 "public void Witness() { Assert.Equal(7, Retry.Delays(3)); }\n",
             ),
         ] {
-            assert_eq!(screen(path, source), Ok(()), "must be accepted: {path}\n{source}");
+            assert_eq!(
+                screen(path, source),
+                Ok(()),
+                "must be accepted: {path}\n{source}"
+            );
         }
     }
 
@@ -1104,13 +1118,12 @@ mod tests {
             Err(VacuousWitness::NoAssertions),
             "a docstring example asserts nothing"
         );
-        assert_eq!(
+        assert!(
             screen(
                 "tests/witness.rs",
                 "#[test]\nfn witness() {\n    assert_eq!(\"expected\", \"expected\");\n}\n"
             )
             .is_err(),
-            true,
             "words inside a string are not identifiers the test named"
         );
     }
