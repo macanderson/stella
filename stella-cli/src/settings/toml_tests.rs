@@ -179,7 +179,11 @@ fn a_future_schema_version_is_refused_by_name() {
 #[test]
 fn a_file_with_no_meta_block_is_version_one_by_definition() {
     let dir = tempfile::tempdir().unwrap();
-    let path = write(dir.path(), "stella.toml", "[ui]\ntheme = \"stella-light\"\n");
+    let path = write(
+        dir.path(),
+        "stella.toml",
+        "[ui]\ntheme = \"stella-light\"\n",
+    );
     let settings = load_toml(&path, ConfigScope::User).unwrap();
     assert_eq!(settings.ui_theme(), Some("stella-light"));
 }
@@ -213,7 +217,10 @@ fn an_inline_api_key_is_refused_at_project_scope_with_both_alternatives_named() 
     );
     let err = load_toml(&path, ConfigScope::Project).unwrap_err();
     assert!(err.contains("api_key"), "{err}");
-    assert!(err.contains("api_key_env"), "names the env alternative: {err}");
+    assert!(
+        err.contains("api_key_env"),
+        "names the env alternative: {err}"
+    );
     assert!(
         err.contains("credentials.toml"),
         "names the file alternative: {err}"
@@ -274,10 +281,15 @@ fn declared_mcp_servers_are_announced_as_not_yet_read() {
         "stella.toml",
         "[mcp.servers.fs]\ntransport = \"stdio\"\ncmd = \"mcp-fs\"\n",
     );
-    let loaded = load_toml_scope(&path, ConfigScope::Project, |p| std::fs::read_to_string(p)).unwrap();
+    let loaded =
+        load_toml_scope(&path, ConfigScope::Project, |p| std::fs::read_to_string(p)).unwrap();
     assert_eq!(loaded.mcp.servers.len(), 1, "still parsed");
     assert_eq!(loaded.warnings.len(), 1, "and announced");
-    assert!(loaded.warnings[0].contains("does not read yet"), "{:?}", loaded.warnings);
+    assert!(
+        loaded.warnings[0].contains("does not read yet"),
+        "{:?}",
+        loaded.warnings
+    );
     assert!(
         loaded.warnings[0].contains(".stella/mcp.toml"),
         "points at where they DO work: {:?}",
@@ -470,4 +482,267 @@ headless_scope_bypass = "on"
 fn parse_accepts_an_entirely_empty_document() {
     let cfg = TomlConfig::parse("", Path::new("stella.toml")).unwrap();
     assert_eq!(cfg, TomlConfig::default());
+}
+
+/// The shipped reference config must actually load, with no unrecognized keys.
+///
+/// This exists because the doc and the code DID diverge: `stella.today.toml`
+/// kept the JSON spellings `enable_recap` (a bare root scalar) and
+/// `agents.allowed_models` after the port moved them to `[run].recap` and
+/// `[models].allowed`. Both parsed fine and configured nothing, and were caught
+/// only by pointing a real binary at the file.
+///
+/// A reference config that documents keys the loader ignores is worse than no
+/// reference at all — it is a wrong answer with the authority of an example.
+#[test]
+fn the_shipped_reference_config_loads_with_no_unrecognized_keys() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("docs/design/config-system/stella.today.toml");
+    assert!(
+        path.exists(),
+        "reference config missing at {}",
+        path.display()
+    );
+
+    let unknown = super::unknown::unknown_toml_keys_in(&path);
+    assert_eq!(
+        unknown,
+        Vec::<String>::new(),
+        "the documented example uses keys stella does not read"
+    );
+
+    // It declares scope = "project", so it must load as one — and refuse to
+    // load as anything else.
+    load_toml(&path, ConfigScope::Project).expect("reference config should load");
+}
+
+// ── Migration ───────────────────────────────────────────────────────────────
+
+const RICH_SETTINGS: &str = r#"{
+  "providers": {
+    "anthropic": {"api_key_env": "ANTHROPIC_API_KEY", "default_model": "claude-fable-5"},
+    "vllm": {"base_url": "http://x/v1", "dialect": "openai-compatible", "name": "Internal"}
+  },
+  "agent_engine_config": {
+    "default_model": "anthropic/claude-fable-5",
+    "pipeline_worker_model": "zai/glm-5.2",
+    "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2"],
+    "auto_mode": "off",
+    "effort_auto": "on",
+    "reasoning_auto": "on",
+    "headless_scope_bypass": "off",
+    "agents": {
+      "judge": {"effort": "high", "reasoning": "on",
+                "params": {"temperature": 0.2, "top_p": 0.9, "max_tokens": 4096}},
+      "triage": {"reasoning": "off"}
+    }
+  },
+  "tools": {"bash": "off", "process": "off"},
+  "enable_recap": "on",
+  "ui": {"theme": "stella-dark"},
+  "mcp": {"registry_url": "https://registry.example"},
+  "context": {"retrieval": {"rrf_k": 60.0, "mmr_lambda": 0.7, "ann_probes": 12}},
+  "hooks": {"PreToolUse": [
+    {"matcher": "bash", "hooks": [{"type": "command", "command": "./audit.sh", "timeoutMs": 5000}]}
+  ]}
+}"#;
+
+/// THE migration contract: what stella reads out of the generated TOML must be
+/// what it read out of the JSON. Everything else about the migration is
+/// presentation.
+#[test]
+fn migrating_a_settings_file_preserves_every_value_it_configured() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = write(dir.path(), "settings.json", RICH_SETTINGS);
+    let toml_path = dir.path().join("stella.toml");
+
+    super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
+
+    let before = Settings::load_scope(&json).unwrap();
+    let after = load_toml(&toml_path, ConfigScope::User).unwrap();
+
+    assert_eq!(before.providers, after.providers, "providers");
+    assert_eq!(
+        before.agent_engine_config, after.agent_engine_config,
+        "engine config"
+    );
+    assert_eq!(before.tools, after.tools, "tools");
+    assert_eq!(before.enable_recap, after.enable_recap, "recap");
+    assert_eq!(before.ui, after.ui, "ui");
+    assert_eq!(before.mcp, after.mcp, "mcp");
+    assert_eq!(before.context, after.context, "context");
+    assert_eq!(before.hooks, after.hooks, "hooks");
+}
+
+#[test]
+fn a_migration_never_deletes_the_json_it_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = write(dir.path(), "settings.json", RICH_SETTINGS);
+    let toml_path = dir.path().join("stella.toml");
+    super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
+    assert!(json.exists(), "the input survives");
+    assert!(toml_path.exists(), "the output was written");
+}
+
+#[test]
+fn a_dry_run_writes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = write(dir.path(), "settings.json", RICH_SETTINGS);
+    let toml_path = dir.path().join("stella.toml");
+    super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, true).unwrap();
+    assert!(!toml_path.exists());
+}
+
+#[test]
+fn an_existing_stella_toml_is_never_overwritten() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = write(dir.path(), "settings.json", RICH_SETTINGS);
+    let toml_path = write(
+        dir.path(),
+        "stella.toml",
+        "# hand-written\n[ui]\ntheme = \"x\"\n",
+    );
+    let outcome =
+        super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
+    assert!(matches!(
+        outcome,
+        super::migrate::Outcome::AlreadyMigrated(_)
+    ));
+    let after = std::fs::read_to_string(&toml_path).unwrap();
+    assert!(after.contains("# hand-written"), "untouched: {after}");
+}
+
+/// A `temperature` of 0.2 is an f32 that the TOML serializer widens to f64,
+/// printing `0.20000000298023224`. Same number, but it reads as corruption in a
+/// file a person edits — and invites a hand "fix" that changes the value.
+#[test]
+fn a_widened_f32_is_written_back_at_f32_precision() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = write(
+        dir.path(),
+        "settings.json",
+        r#"{"agent_engine_config": {"agents": {"judge": {"params": {"temperature": 0.2}}}}}"#,
+    );
+    let toml_path = dir.path().join("stella.toml");
+    super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
+    let rendered = std::fs::read_to_string(&toml_path).unwrap();
+    assert!(rendered.contains("temperature = 0.2"), "{rendered}");
+    assert!(!rendered.contains("0.20000000"), "{rendered}");
+}
+
+/// `rrf_k` is a genuine f64 whose value happens to be f32-exact. Narrowing it
+/// must not drop the decimal point — `60` would parse back as an integer and
+/// serde would reject the type.
+#[test]
+fn a_whole_number_float_keeps_its_decimal_point() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = write(
+        dir.path(),
+        "settings.json",
+        r#"{"context": {"retrieval": {"rrf_k": 60.0}}}"#,
+    );
+    let toml_path = dir.path().join("stella.toml");
+    super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
+    let rendered = std::fs::read_to_string(&toml_path).unwrap();
+    assert!(rendered.contains("rrf_k = 60.0"), "{rendered}");
+    // And it still loads as a float.
+    let after = load_toml(&toml_path, ConfigScope::User).unwrap();
+    assert_eq!(after.context.unwrap().retrieval.rrf_k, 60.0);
+}
+
+/// Nested structs must render as headered tables, not one enormous inline
+/// table — otherwise the generated file looks nothing like the documented
+/// shape and teaches the wrong thing to whoever edits it next.
+#[test]
+fn nested_sections_render_as_tables_and_parents_stay_implicit() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = write(dir.path(), "settings.json", RICH_SETTINGS);
+    let toml_path = dir.path().join("stella.toml");
+    super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
+    let rendered = std::fs::read_to_string(&toml_path).unwrap();
+
+    assert!(rendered.contains("[providers.anthropic]"), "{rendered}");
+    assert!(rendered.contains("[agents.judge.params]"), "{rendered}");
+    assert!(rendered.contains("[[hooks.PreToolUse]]"), "{rendered}");
+    assert!(
+        !rendered.contains("{ "),
+        "no inline tables anywhere:\n{rendered}"
+    );
+    // A table holding only sub-tables emits no header of its own.
+    for empty_parent in ["\n[providers]\n", "\n[context]\n", "\n[hooks]\n"] {
+        assert!(
+            !rendered.contains(empty_parent),
+            "no bare {empty_parent:?} header:\n{rendered}"
+        );
+    }
+}
+
+#[test]
+fn the_generated_file_declares_its_own_scope_and_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = write(dir.path(), "settings.json", RICH_SETTINGS);
+    let toml_path = dir.path().join("stella.toml");
+    super::migrate::migrate_scope(&json, &toml_path, ConfigScope::Project, false).unwrap();
+    let rendered = std::fs::read_to_string(&toml_path).unwrap();
+    assert!(rendered.contains("schema_version = 1"), "{rendered}");
+    assert!(rendered.contains(r#"scope = "project""#), "{rendered}");
+    // And that self-declaration must agree with where it was written.
+    assert!(load_toml(&toml_path, ConfigScope::Project).is_ok());
+    assert!(load_toml(&toml_path, ConfigScope::User).is_err());
+}
+
+/// The generated file must survive the editor that will later modify it.
+#[test]
+fn a_migrated_file_round_trips_through_a_section_save() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = write(dir.path(), "settings.json", RICH_SETTINGS);
+    let toml_path = dir.path().join("stella.toml");
+    super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
+
+    let ui = UiSettings {
+        theme: Some("stella-light".to_string()),
+    };
+    ui.save_to(&toml_path).unwrap();
+
+    let after = load_toml(&toml_path, ConfigScope::User).unwrap();
+    assert_eq!(after.ui_theme(), Some("stella-light"));
+    // Everything else survived the edit…
+    assert_eq!(after.providers.len(), 2);
+    assert_eq!(
+        after.agent_engine_config.unwrap().default_model.as_deref(),
+        Some("anthropic/claude-fable-5")
+    );
+    // …including the generated header comment.
+    let rendered = std::fs::read_to_string(&toml_path).unwrap();
+    assert!(
+        rendered.contains("# stella.toml — generated by"),
+        "{rendered}"
+    );
+}
+
+/// The engine config splits across two sections, so clearing it has to remove
+/// both — a stale `[models]` left behind would keep narrowing the vocabulary
+/// after the user cleared the setting that created it.
+#[test]
+fn saving_an_empty_engine_config_removes_both_of_its_sections() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = write(dir.path(), "settings.json", RICH_SETTINGS);
+    let toml_path = dir.path().join("stella.toml");
+    super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
+    assert!(
+        std::fs::read_to_string(&toml_path)
+            .unwrap()
+            .contains("[models]")
+    );
+
+    AgentEngineConfig::default().save_to(&toml_path).unwrap();
+
+    let rendered = std::fs::read_to_string(&toml_path).unwrap();
+    assert!(!rendered.contains("[models]"), "{rendered}");
+    assert!(!rendered.contains("[agents]"), "{rendered}");
+    assert!(
+        rendered.contains("[providers.anthropic]"),
+        "siblings kept:\n{rendered}"
+    );
 }

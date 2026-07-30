@@ -40,6 +40,7 @@ mod context;
 pub(crate) mod context_providers;
 mod managed;
 mod merge;
+pub(crate) mod migrate;
 mod private;
 #[cfg(test)]
 #[path = "settings/private_state_tests.rs"]
@@ -50,8 +51,8 @@ mod toml_io;
 #[path = "settings/toml_tests.rs"]
 mod toml_tests;
 mod unknown;
-pub use toml_config::{CURRENT_SCHEMA_VERSION, ConfigScope, TomlConfig};
 pub use authority::{AuthorityPolicy, ManagedAuthoritySettings};
+pub use toml_config::ConfigScope;
 pub(crate) use unknown::{
     ENGINE_AGENT_FIELDS, ENGINE_AGENT_NAMES, ENGINE_PARAM_FIELDS, ENGINE_ROOT_FIELDS,
 };
@@ -67,26 +68,33 @@ pub use merge::ToolScopePolicies;
 /// which ones are *required* depends on whether the id names a built-in
 /// (override: any subset is fine) or defines a new provider (`base_url`
 /// must be present). `config.rs` enforces that split.
-#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct ProviderSettings {
     /// Optional restatement of the map key (the issue's examples carry it);
     /// when present it must match the key, so a copy-paste of one entry
     /// under a new key can't silently configure the wrong provider.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     /// Display name (`ProviderConfig::display_name`).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
     /// A literal credential. Sits below env vars and above the interactive
     /// prompt in the chain, mirroring the credentials file. Prefer
     /// `api_key_env` for anything long-lived — settings.json is often
     /// committed, credentials should not be.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
     /// Name of an environment variable to read the credential from.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key_env: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
     /// Wire dialect for config-defined providers. Defaults to
     /// `openai-compatible`; ignored for built-in overrides (a built-in's
     /// dialect is fixed by its adapter).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub dialect: Option<Dialect>,
 }
 
@@ -553,6 +561,14 @@ impl AgentEngineConfig {
     /// forward-compat keys survive a TUI save untouched). Creates the file
     /// (and parent directories) when absent.
     pub fn save_to(&self, path: &Path) -> Result<(), String> {
+        // The FORMAT is a property of the target file, not of the caller, so
+        // every existing call site keeps working unchanged once its path
+        // resolver starts returning a `.toml`.
+        if toml_config::path_is_toml(path) {
+            let sections = toml_config::agent_sections(self)?;
+            let user_private = user_config_path().as_deref() == Some(path);
+            return toml_io::save_sections(path, &sections, user_private);
+        }
         private::reject_symlink(path)?;
         let mut root: serde_json::Value = match std::fs::read_to_string(path) {
             Ok(contents) => serde_json::from_str(&contents)
@@ -588,6 +604,38 @@ pub fn project_settings_path(workspace_root: &Path) -> PathBuf {
     workspace_root.join(".stella").join("settings.json")
 }
 
+/// The user-scope file an EDIT should target: `~/.stella/stella.toml` when it
+/// exists, otherwise `~/.stella/settings.json`.
+///
+/// Separate from [`user_settings_path`] on purpose. That function names the
+/// JSON file specifically and is still what the JSON loader and the
+/// owner-only-write check compare against; this one answers a different
+/// question — "where does a `/theme` save go?" — and its answer changes once a
+/// user migrates. Collapsing the two would silently redirect the JSON reader.
+///
+/// It never invents a TOML file: a user who has not migrated keeps writing
+/// JSON, so the editor cannot half-migrate someone behind their back.
+pub fn user_config_path() -> Option<PathBuf> {
+    if let Some(toml) = toml_config::user_toml_path()
+        && toml.exists()
+    {
+        return Some(toml);
+    }
+    user_settings_path()
+}
+
+/// The project-scope file an EDIT should target — `<workspace>/stella.toml`
+/// when it exists, otherwise `<workspace>/.stella/settings.json`. See
+/// [`user_config_path`] for why this is not the same as
+/// [`project_settings_path`].
+pub fn project_config_path(workspace_root: &Path) -> PathBuf {
+    let toml = toml_config::project_toml_path(workspace_root);
+    if toml.exists() {
+        return toml;
+    }
+    project_settings_path(workspace_root)
+}
+
 /// The `tools` section of settings.json — the one place a tool is switched
 /// off, whether it is a built-in, an MCP server's, or one the customer wrote.
 ///
@@ -612,6 +660,27 @@ pub struct ToolsSettings {
 }
 
 impl ToolsSettings {
+    /// The `tools` table of one `stella.toml`. Same contract as the JSON
+    /// [`ToolsSettings::read_from`]: a missing file is an empty section, and a
+    /// `tools` value that is not a map of `on`/`off` is a named error rather
+    /// than a silent reset.
+    fn read_from_toml(path: &Path) -> Result<Self, String> {
+        let contents = match std::fs::read_to_string(path) {
+            Ok(contents) => contents,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+        };
+        let root: toml::Value = toml::from_str(&contents)
+            .map_err(|e| format!("invalid config file {}: {e}", path.display()))?;
+        match root.get("tools") {
+            None => Ok(Self::default()),
+            Some(value) => value
+                .clone()
+                .try_into()
+                .map_err(|e| format!("invalid config file {}: tools: {e}", path.display())),
+        }
+    }
+
     /// Resolve this section into the policy the runtime enforces.
     pub fn policy(&self) -> stella_tools::policy::ToolPolicy {
         stella_tools::policy::ToolPolicy::from_switches(
@@ -651,6 +720,9 @@ impl ToolsSettings {
     /// silent reset — an editor that quietly discarded switches it could not
     /// parse would be worse than one that refuses to save.
     pub fn read_from(path: &Path) -> Result<Self, String> {
+        if toml_config::path_is_toml(path) {
+            return Self::read_from_toml(path);
+        }
         let contents = match std::fs::read_to_string(path) {
             Ok(contents) => contents,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
@@ -676,6 +748,11 @@ impl ToolsSettings {
     /// is the shipped posture, and the file should read as though the editor
     /// had never been opened.
     pub fn save_to(&self, path: &Path) -> Result<(), String> {
+        if toml_config::path_is_toml(path) {
+            let user_private = user_config_path().as_deref() == Some(path);
+            let value = (!self.entries.is_empty()).then_some(self);
+            return toml_io::save_section(path, "tools", value, user_private);
+        }
         private::reject_symlink(path)?;
         let mut root: serde_json::Value = match std::fs::read_to_string(path) {
             Ok(contents) => serde_json::from_str(&contents)
@@ -722,6 +799,11 @@ impl UiSettings {
     /// `providers`, `hooks`, or any forward-compat key. An empty section
     /// removes the key rather than writing `{}`.
     pub fn save_to(&self, path: &Path) -> Result<(), String> {
+        if toml_config::path_is_toml(path) {
+            let user_private = user_config_path().as_deref() == Some(path);
+            let value = self.theme.is_some().then_some(self);
+            return toml_io::save_section(path, "ui", value, user_private);
+        }
         private::reject_symlink(path)?;
         let mut root: serde_json::Value = match std::fs::read_to_string(path) {
             Ok(contents) => serde_json::from_str(&contents)
@@ -749,12 +831,12 @@ impl UiSettings {
 
 /// The `mcp` section of settings.json. All fields optional so an absent
 /// section behaves exactly as the defaults.
-#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct McpSettings {
     /// Base URL of an MCP Server Registry API (the frozen `GET /v0.1/servers`
     /// contract). Any registry serving that shape works; unset means the
     /// official registry ([`stella_mcp::DEFAULT_REGISTRY_URL`]).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registry_url: Option<String>,
 }
 

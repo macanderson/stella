@@ -3700,9 +3700,9 @@ fn handle_engine_config_input(
         WorkspaceInput::EngineConfigSave { state, scope } => {
             let engine = crate::engine_config::settings_from_state(state);
             let path = match scope {
-                AgentScope::User => crate::settings::user_settings_path(),
+                AgentScope::User => crate::settings::user_config_path(),
                 AgentScope::Project => {
-                    Some(crate::settings::project_settings_path(&cfg.workspace_root))
+                    Some(crate::settings::project_config_path(&cfg.workspace_root))
                 }
             };
             let status = match path {
@@ -3791,9 +3791,9 @@ fn handle_tools_input(
         }
         WorkspaceInput::ToolsSave { switches, scope } => {
             let path = match scope {
-                AgentScope::User => crate::settings::user_settings_path(),
+                AgentScope::User => crate::settings::user_config_path(),
                 AgentScope::Project => {
-                    Some(crate::settings::project_settings_path(&cfg.workspace_root))
+                    Some(crate::settings::project_config_path(&cfg.workspace_root))
                 }
             };
             // The ceiling is re-read from disk rather than taken from the

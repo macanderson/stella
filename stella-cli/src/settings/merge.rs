@@ -51,7 +51,7 @@ fn concat_hooks(base: &mut Option<Hooks>, extra: &Hooks) {
 impl Settings {
     /// Read and parse one scope exactly once. A missing file is represented by
     /// an empty captured snapshot; malformed content remains a named error.
-    fn load_scope(path: &Path) -> Result<Self, String> {
+    pub(super) fn load_scope(path: &Path) -> Result<Self, String> {
         let contents = match std::fs::read_to_string(path) {
             Ok(contents) => contents,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -91,7 +91,8 @@ impl Settings {
         if !toml_path.exists() {
             return Self::load_scope(json_path);
         }
-        let loaded = toml_config::load_toml_scope(toml_path, scope, |p| std::fs::read_to_string(p))?;
+        let loaded =
+            toml_config::load_toml_scope(toml_path, scope, |p| std::fs::read_to_string(p))?;
         notices.extend(loaded.warnings);
         if json_path.exists() {
             notices.push(format!(
@@ -345,7 +346,7 @@ impl Settings {
             (Some(json), None) => Self::load_scope(&json)?,
             (None, _) => Self::default(),
         };
-        let (managed_path, managed) = Self::load_managed_scope_dual(&mut notices)?;
+        let (_managed_path, managed) = Self::load_managed_scope_dual(&mut notices)?;
         let project_json = project_settings_path(workspace_root);
         let project_toml = toml_config::project_toml_path(workspace_root);
         let project = Self::load_scope_dual(

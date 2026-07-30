@@ -220,7 +220,9 @@ fn emit_error_summary(format: OutputFormat, msg: &str) {
 // The argument tree itself lives in `cli.rs`; re-exported at the crate root so
 // the per-command modules keep addressing their own subcommand enum as
 // `crate::AuthCmd`, `crate::McpCmd`, … regardless of which file defines it.
-pub(crate) use cli::{AuthCmd, Cli, Command, ConnectCmd, McpCmd, ModelsCmd, TelemetryCmd};
+pub(crate) use cli::{
+    AuthCmd, Cli, Command, ConnectCmd, McpCmd, MigrateCmd, ModelsCmd, TelemetryCmd,
+};
 
 /// `stella resume --list`: every session in the machine-wide registry,
 /// newest activity first, with the rows resumable from THIS directory
@@ -559,6 +561,19 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // API key required; the stores are opened strictly read-only.
             return storage_cmd::run_observe(*port, *open);
         }
+        Some(Command::Migrate { cmd }) => {
+            // Deliberately BEFORE `Config::load`, for the same reason as
+            // `doctor`: the config being migrated may be the reason stella
+            // cannot start. Requiring a resolvable provider here would make the
+            // fix-it command unreachable exactly when it is needed — a
+            // settings.json naming a model whose provider no longer exists is
+            // one of the likeliest things a user runs this to escape.
+            let MigrateCmd::Config { dry_run } = cmd;
+            let root = std::env::current_dir()
+                .map_err(|e| format!("cannot determine workspace root: {e}"))?;
+            println!("Migrating settings.json -> stella.toml\n");
+            return settings::migrate::run(&root, *dry_run);
+        }
         Some(Command::Doctor { repair }) => {
             // Reads local state only — and with --repair renames files inside
             // .stella/private/. No provider, no API key, and deliberately
@@ -802,6 +817,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         | Command::Observe { .. }
         | Command::Models { .. }
         | Command::Doctor { .. }
+        | Command::Migrate { .. }
         | Command::Completions { .. }
         | Command::Version => {
             unreachable!("handled before provider resolution")

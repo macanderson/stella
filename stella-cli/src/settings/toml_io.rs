@@ -51,15 +51,164 @@ fn load_document(path: &Path) -> Result<DocumentMut, String> {
 /// re-parse so nested tables keep their structure instead of being flattened
 /// into inline tables.
 fn section_item<T: Serialize>(value: &T, key: &str) -> Result<Item, String> {
-    let rendered = toml_edit::ser::to_document(value)
-        .map_err(|e| format!("cannot serialize {key}: {e}"))?;
+    let rendered =
+        toml_edit::ser::to_document(value).map_err(|e| format!("cannot serialize {key}: {e}"))?;
     let mut table = rendered.as_table().clone();
     // A freshly serialized document's root table is "implicit" (it has no
     // header of its own). Assigning it as a named section needs it explicit, or
     // it renders as a headerless table and its keys leak to the document root —
     // exactly the bare-root-key hazard `[run]` exists to avoid.
     table.set_implicit(false);
-    Ok(Item::Table(table))
+    let mut item = Item::Table(table);
+    expand_inline_tables(&mut item);
+    narrow_widened_floats(&mut item);
+    hide_empty_parents(&mut item);
+    Ok(item)
+}
+
+/// Suppress the header of a table that holds nothing but other tables.
+///
+/// Without this the migration emits a bare `[providers]` immediately followed
+/// by `[providers.anthropic]`, and a bare `[context]` above five sub-tables.
+/// They are harmless to the parser and pure noise to the reader — and they
+/// invite exactly the mistake `[run]` exists to prevent, because the next
+/// person to add a key naturally puts it under the empty header where it will
+/// silently belong to the wrong table.
+///
+/// A table with any direct key-value stays explicit, since its keys need a
+/// header to belong to.
+fn hide_empty_parents(item: &mut Item) {
+    match item {
+        Item::Table(table) => {
+            let has_direct_values = table.iter().any(|(_, child)| child.is_value());
+            table.set_implicit(!has_direct_values);
+            for (_, child) in table.iter_mut() {
+                hide_empty_parents(child);
+            }
+        }
+        Item::ArrayOfTables(aot) => {
+            for table in aot.iter_mut() {
+                // An array-of-tables entry always renders its own `[[...]]`
+                // header, so it is never implicit — only its children are.
+                for (_, child) in table.iter_mut() {
+                    hide_empty_parents(child);
+                }
+            }
+        }
+        Item::None | Item::Value(_) => {}
+    }
+}
+
+/// Rewrite serde's inline tables (`judge = { effort = "high" }`) as real
+/// headered tables (`[agents.judge]`).
+///
+/// Both are valid TOML and both round-trip, so this is purely about the file a
+/// person opens. serde's serializer emits every nested struct inline, which
+/// collapses the whole config onto a handful of very long lines — the exact
+/// unreadability the move away from JSON was meant to fix. A generated file
+/// that looks nothing like the documented reference also teaches the wrong
+/// shape to whoever edits it next.
+fn expand_inline_tables(item: &mut Item) {
+    match item {
+        Item::Table(table) => {
+            for (_, child) in table.iter_mut() {
+                expand_inline_tables(child);
+            }
+        }
+        Item::Value(toml_edit::Value::InlineTable(inline)) => {
+            let mut table = std::mem::replace(inline, toml_edit::InlineTable::new()).into_table();
+            table.set_implicit(false);
+            let mut promoted = Item::Table(table);
+            expand_inline_tables(&mut promoted);
+            *item = promoted;
+        }
+        // An array whose every element is a table becomes an array-of-tables
+        // (`[[hooks.PreToolUse]]`). A mixed or scalar array is left alone.
+        Item::Value(toml_edit::Value::Array(array)) => {
+            if array.is_empty()
+                || !array
+                    .iter()
+                    .all(|v| matches!(v, toml_edit::Value::InlineTable(_)))
+            {
+                return;
+            }
+            let mut aot = toml_edit::ArrayOfTables::new();
+            for value in array.iter() {
+                let toml_edit::Value::InlineTable(inline) = value else {
+                    unreachable!("checked above");
+                };
+                let mut child = Item::Value(toml_edit::Value::InlineTable(inline.clone()));
+                expand_inline_tables(&mut child);
+                if let Item::Table(table) = child {
+                    aot.push(table);
+                }
+            }
+            *item = Item::ArrayOfTables(aot);
+        }
+        Item::ArrayOfTables(aot) => {
+            for table in aot.iter_mut() {
+                for (_, child) in table.iter_mut() {
+                    expand_inline_tables(child);
+                }
+            }
+        }
+        Item::None | Item::Value(_) => {}
+    }
+}
+
+/// Re-render a float that is really a widened `f32`.
+///
+/// `temperature: Option<f32>` reaches the TOML serializer as `f64`, so `0.2`
+/// is written `0.20000000298023224`. That is the same number, and it round-trips
+/// — but it appears in a file a person reads and edits, where it looks like
+/// corruption and invites someone to "fix" it by hand.
+///
+/// A value is treated as a widened `f32` only when narrowing and re-widening is
+/// EXACTLY lossless, so a genuine `f64` knob is never silently rounded. The
+/// trailing `.0` is mandatory: without it `60.0` renders as `60`, which TOML
+/// reads back as an integer and serde then rejects as the wrong type.
+fn narrow_widened_floats(item: &mut Item) {
+    match item {
+        Item::Table(table) => {
+            for (_, child) in table.iter_mut() {
+                narrow_widened_floats(child);
+            }
+        }
+        Item::ArrayOfTables(aot) => {
+            for table in aot.iter_mut() {
+                for (_, child) in table.iter_mut() {
+                    narrow_widened_floats(child);
+                }
+            }
+        }
+        Item::Value(toml_edit::Value::Float(f)) => {
+            let wide = *f.value();
+            let narrow = wide as f32;
+            if f64::from(narrow) != wide {
+                return;
+            }
+            // Round-trip through the f32's own shortest representation. The
+            // resulting f64 differs from `wide` in the last bits, which is
+            // exactly the point: the destination field is an f32, so reading it
+            // back yields the identical f32 the user wrote.
+            let Ok(parsed) = narrow.to_string().parse::<f64>() else {
+                return;
+            };
+            let mut reformatted = toml_edit::Formatted::new(parsed);
+            reformatted.fmt();
+            *item = Item::Value(toml_edit::Value::Float(reformatted));
+        }
+        Item::Value(toml_edit::Value::Array(array)) => {
+            for value in array.iter_mut() {
+                let mut child = Item::Value(value.clone());
+                narrow_widened_floats(&mut child);
+                if let Item::Value(v) = child {
+                    *value = v;
+                }
+            }
+        }
+        Item::None | Item::Value(_) => {}
+    }
 }
 
 /// Write `value` as the top-level `key` of the TOML config at `path`,

@@ -143,6 +143,16 @@ pub(crate) struct GlobalArgs {
 }
 
 #[derive(Subcommand)]
+pub(crate) enum MigrateCmd {
+    /// Rewrite settings.json as stella.toml
+    Config {
+        /// Render and report without writing anything
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Subcommand)]
 pub(crate) enum Command {
     /// Send a one-shot prompt (non-interactive)
     Run {
@@ -571,6 +581,16 @@ pub(crate) enum Command {
 
     /// Show current configuration
     Config,
+
+    /// Migrate settings.json to stella.toml (the JSON is kept, never deleted).
+    /// Writes <repo>/stella.toml for the project scope and
+    /// ~/.stella/stella.toml for the user scope, with values serialized from
+    /// what stella actually read — never transcribed. The org-managed scope is
+    /// not migrated: an administrator deploys that file directly.
+    Migrate {
+        #[command(subcommand)]
+        cmd: MigrateCmd,
+    },
 
     /// Check the local state stella owns, and report each verdict
     ///

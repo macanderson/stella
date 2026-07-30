@@ -29,7 +29,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use stella_core::hooks::Hooks;
 use stella_mcp::config::{McpConfig, McpServerEntry};
 
@@ -104,13 +104,19 @@ pub struct RunSection {
 /// and what they cost. This block says only which of them this workspace may
 /// use. Keeping the two apart is what stops a hand-written model list from
 /// rotting the week a model ships.
-#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct ModelsSection {
     /// Was `agent_engine_config.allowed_models`. REPLACES wholesale across
     /// scopes rather than concatenating — it is one vocabulary, and merging
     /// would make it impossible for a project to narrow the user's list.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed: Option<Vec<String>>,
+}
+
+impl ModelsSection {
+    fn is_empty(&self) -> bool {
+        self.allowed.is_none()
+    }
 }
 
 /// `[agents]` — the flattened engine config.
@@ -121,33 +127,35 @@ pub struct ModelsSection {
 /// — the four names are struct fields, not map keys, so a per-agent table can
 /// never collide with a root field. Opening that set (a later phase) means
 /// either restoring the nesting or reserving these names explicitly.
-#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct AgentsSection {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_judge_model: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_worker_model: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_triage_model: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_mode: Option<Toggle>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort_auto: Option<Toggle>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_auto: Option<Toggle>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headless_scope_bypass: Option<Toggle>,
 
-    // The four built-in agents, as tables.
-    #[serde(default)]
+    // The four built-in agents, as tables. Serialized LAST so the flat scalars
+    // above are not stranded after a table header — TOML would then read them
+    // as keys of that table, which is the same hazard `[run]` exists to avoid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<AgentEngineAgent>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worker: Option<AgentEngineAgent>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub judge: Option<AgentEngineAgent>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub triage: Option<AgentEngineAgent>,
 }
 
@@ -215,8 +223,7 @@ impl TomlConfig {
     /// a typo that quietly reverted someone to a built-in endpoint would be far
     /// worse than a loud parse failure.
     pub fn parse(contents: &str, path: &Path) -> Result<Self, String> {
-        toml::from_str(contents)
-            .map_err(|e| format!("invalid config file {}: {e}", path.display()))
+        toml::from_str(contents).map_err(|e| format!("invalid config file {}: {e}", path.display()))
     }
 
     /// Validate `[meta]` against the file's actual location.
@@ -439,7 +446,8 @@ pub fn managed_toml_path() -> PathBuf {
 /// apply — so this is used both by the managed reader (which must pick a format
 /// rather than probe for two files) and by the unrecognized-key pass.
 pub fn path_is_toml(path: &Path) -> bool {
-    path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("toml"))
+    path.extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"))
 }
 
 /// What a scope's TOML file contributed, plus anything worth telling the user.
@@ -447,6 +455,16 @@ pub struct LoadedToml {
     pub settings: Settings,
     /// Servers declared under `[mcp.servers]`. **Parsed but not yet consumed**
     /// — see [`mcp_servers_not_yet_read`].
+    ///
+    /// Carried rather than dropped so Phase 1b has a seam to attach to and so
+    /// the tests can prove the block parses today. `dead_code` is expected and
+    /// accurate until `agent::load_mcp_plan` reads it; silencing it here is
+    /// preferable to deleting the field and reconstructing it later, because
+    /// the parse is what the user-facing warning is claiming works.
+    #[allow(
+        dead_code,
+        reason = "Phase 1b seam; the warning below is its only reader today"
+    )]
     pub mcp: McpConfig,
     /// Advisory lines the caller prints once. Never a reason to fail a load.
     pub warnings: Vec<String>,
@@ -472,6 +490,59 @@ pub fn mcp_servers_not_yet_read(path: &Path, count: usize) -> String {
         path.display(),
         if count == 1 { "" } else { "s" },
     )
+}
+
+/// Split an [`AgentEngineConfig`] back into the two TOML sections it lowers
+/// from — the exact inverse of [`lower_agents`].
+///
+/// The split is why saving the engine config cannot be one `save_section`
+/// call: `allowed_models` belongs to `[models]`, everything else to
+/// `[agents]`. Writing them separately would parse and re-render the file
+/// twice, doubling the window in which a crash leaves a half-written config.
+pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection) {
+    let per_agent = cfg.agents.clone().unwrap_or_default();
+    let agents = AgentsSection {
+        default_model: cfg.default_model.clone(),
+        pipeline_judge_model: cfg.pipeline_judge_model.clone(),
+        pipeline_worker_model: cfg.pipeline_worker_model.clone(),
+        pipeline_triage_model: cfg.pipeline_triage_model.clone(),
+        auto_mode: cfg.auto_mode,
+        effort_auto: cfg.effort_auto,
+        reasoning_auto: cfg.reasoning_auto,
+        headless_scope_bypass: cfg.headless_scope_bypass,
+        default: per_agent.default,
+        worker: per_agent.worker,
+        judge: per_agent.judge,
+        triage: per_agent.triage,
+    };
+    let models = ModelsSection {
+        allowed: cfg.allowed_models.clone(),
+    };
+    (agents, models)
+}
+
+/// The `[agents]` / `[models]` items for a write, with an EMPTY section
+/// rendered as a removal rather than a bare header.
+///
+/// `[models]` with nothing under it is not harmless: on the next read it is an
+/// empty-but-present block, and the very next thing after it in the file — a
+/// bare key, a comment the user meant for something else — reads as its
+/// content. Removing it keeps the file honest.
+pub fn agent_sections(
+    cfg: &AgentEngineConfig,
+) -> Result<Vec<(&'static str, Option<toml_edit::Item>)>, String> {
+    let (agents, models) = raise_agents(cfg);
+    let agents_item = if agents.is_empty() {
+        None
+    } else {
+        Some(super::toml_io::item_for(&agents, "agents")?)
+    };
+    let models_item = if models.is_empty() {
+        None
+    } else {
+        Some(super::toml_io::item_for(&models, "models")?)
+    };
+    Ok(vec![("agents", agents_item), ("models", models_item)])
 }
 
 /// Fold `[agents]` + `[models]` into the one `AgentEngineConfig` the engine
