@@ -60,3 +60,58 @@ pub fn render(pending: &crate::deck_ui::PendingDispatch, area: Rect, buf: &mut B
         .title(" this turn is still running — where does this go? ");
     Paragraph::new(lines).block(block).render(area, buf);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::deck_ui::PendingDispatch;
+
+    fn draw(text: &str, width: u16) -> String {
+        let pending = PendingDispatch {
+            text: text.to_string(),
+            next_lane: "req:2".into(),
+        };
+        let area = Rect::new(0, 0, width, 7);
+        let mut buf = Buffer::empty(area);
+        render(&pending, area, &mut buf);
+        (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The card has to answer "where did my prompt go?" on sight: it shows the
+    /// held text, all three routes with their keys, and the way back out.
+    #[test]
+    fn the_card_shows_the_held_prompt_and_every_route() {
+        let frame = draw("and now add the tests", 70);
+        for needle in [
+            "and now add the tests",
+            "steer this turn",
+            "next turn",
+            "req:2",
+            "put it back in the composer",
+        ] {
+            assert!(frame.contains(needle), "missing {needle:?}:\n{frame}");
+        }
+    }
+
+    /// A long prompt is clipped to one line rather than wrapping, because the
+    /// card's height is fixed — wrapping would push the routes out of frame
+    /// and leave the user looking at their own text with no way to act on it.
+    #[test]
+    fn a_long_prompt_is_clipped_so_the_routes_stay_visible() {
+        let frame = draw(&"x".repeat(400), 70);
+        assert!(frame.contains('…'), "clipped with an ellipsis:\n{frame}");
+        for needle in ["steer this turn", "put it back in the composer"] {
+            assert!(
+                frame.contains(needle),
+                "routes survive a long prompt, missing {needle:?}:\n{frame}"
+            );
+        }
+    }
+}
