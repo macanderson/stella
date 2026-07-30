@@ -1024,7 +1024,14 @@ fn csp_admits_everything_the_embedded_dashboard_actually_uses() {
     // A header value may not carry a newline — it would split the head.
     assert!(!CSP.contains('\r') && !CSP.contains('\n'));
     assert!(INDEX_HTML.contains("<style>") && INDEX_HTML.contains("<script>"));
-    assert!(INDEX_HTML.contains("src=\"/assets/mark.svg\""));
+    // What the page ACTUALLY loads: the mark as a favicon (`href`) and the
+    // wordmark as an `<img src>` — both same-origin, which is what the
+    // `img-src 'self'` directive above has to admit. This asserted
+    // `src="/assets/mark.svg"`, an attribute the page has not carried since
+    // the header lockup became the wordmark, so it failed on a detail of the
+    // markup rather than on the CSP it exists to check.
+    assert!(INDEX_HTML.contains("href=\"/assets/mark.svg\""));
+    assert!(INDEX_HTML.contains("src=\"/assets/wordmark.svg\""));
 }
 
 /// Padding the request line to the 8 KiB head cap used to be served: the
