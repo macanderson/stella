@@ -34,13 +34,34 @@
 //!
 //! # A stream is a subscription, not a fire-and-forget
 //!
-//! `GET /v1/turns/{id}/events` owns the turn for its lifetime: the session is
-//! taken out of the registry (a second subscriber gets `409`), and the stream
-//! ending — for any reason, including the client hanging up — cancels the turn
-//! and reclaims its thread. That is why the stream watches its own read half
-//! while it waits for frames: a turn parked on a reverse request produces
-//! nothing to write, so a disconnect would otherwise go unnoticed until the
-//! reverse-request deadline expired minutes later.
+//! `GET /v1/turns/{id}/events` owns the turn while it is streaming: the session
+//! is taken out of the registry, and a second concurrent subscriber gets `409`.
+//! That is why the stream watches its own read half while it waits for frames —
+//! a turn parked on a reverse request produces nothing to write, so a
+//! disconnect would otherwise go unnoticed until the reverse-request deadline
+//! expired minutes later.
+//!
+//! How the stream *ends* decides what happens to the turn:
+//!
+//! - **The client hung up.** The turn is *parked*, not cancelled: the session
+//!   goes back into the registry and a reconnect can resume it from its
+//!   retained frames. If nobody reconnects within
+//!   [`ServeConfig::resume_grace`], the turn is cancelled and its thread
+//!   reclaimed. Setting that window to zero restores cancel-on-disconnect.
+//! - **Anything else** — the terminal frame, a failed write, stray bytes — is
+//!   final: the session drops, which cancels the turn, and the entry is
+//!   reclaimed at once.
+//!
+//! # Resumable streams
+//!
+//! Every frame carries a monotonic `seq` and is retained in a bounded ring
+//! (`crate::history`). A reconnecting client names its resume point either with
+//! `?after=<seq>` or, for a browser `EventSource`, by the `Last-Event-ID`
+//! header the platform sends automatically from the `id:` line each frame
+//! carries. Frames after that point are replayed in order before the live
+//! stream continues. A resume point that has already fallen out of the ring is
+//! answered with an explicit `replay_truncated` frame rather than a silent jump
+//! — a hole a client cannot detect is worse than an error it can.
 //!
 //! # Cancellation
 //!
@@ -74,7 +95,9 @@ use rand::Rng as _;
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::accept::{self, AcceptAction, AcceptBackoff};
+use crate::history::FrameHistory;
 use crate::http::{BodyOutcome, ReadOutcome, discard_body, read_body, read_head};
+use crate::observe::event::StreamEndReason;
 use crate::observe::event::{
     AcceptKind, RefusalReason, RequestId, Route, ServeEvent, ShutdownReason, TurnRef, millis,
 };
@@ -101,7 +124,36 @@ pub struct ServeConfig {
     /// is inside `observer`, or the endpoint reports zeros while the log looks
     /// healthy — [`ServeConfig::new`] wires both correctly.
     pub metrics: Arc<Metrics>,
+    /// How long a turn survives its subscriber disconnecting before the server
+    /// gives up on a reconnect and cancels it.
+    ///
+    /// This window is what makes retained history worth keeping: without it a
+    /// dropped connection cancels the turn at once and a resuming client would
+    /// find nothing left to resume into — only a replay of a dead turn.
+    ///
+    /// It is genuinely a trade, so it is genuinely configurable. Holding the
+    /// window costs an OS thread and any in-flight model call for a client that
+    /// may never return; `Duration::ZERO` opts out entirely and restores the
+    /// cancel-on-disconnect behavior. What a host *cannot* do is extend it past
+    /// [`MAX_RESUME_GRACE`] — a ceiling a caller could raise without limit is
+    /// not a bound, and this one exists to stop an abandoned turn holding
+    /// resources forever. See [`ServeConfig::resume_grace`].
+    pub resume_grace: Duration,
 }
+
+/// The default [`ServeConfig::resume_grace`]: thirty seconds.
+///
+/// Covers the reconnects that actually happen — a proxy recycling a
+/// connection, a laptop waking, a gateway redeploying — without holding a
+/// thread for a client that has genuinely gone.
+pub const DEFAULT_RESUME_GRACE: Duration = Duration::from_secs(30);
+
+/// Ceiling on [`ServeConfig::resume_grace`]: five minutes.
+///
+/// Same reasoning as [`MAX_LIVE_TURNS`] and the route ceilings: the bound
+/// exists to stop an abandoned turn holding an OS thread and a live model call
+/// indefinitely, so a host that could set it to infinity could remove it.
+pub const MAX_RESUME_GRACE: Duration = Duration::from_secs(300);
 
 impl ServeConfig {
     /// The production wiring: bind, token, and the standard observability stack.
@@ -113,7 +165,21 @@ impl ServeConfig {
             token,
             observer,
             metrics,
+            resume_grace: DEFAULT_RESUME_GRACE,
         }
+    }
+
+    /// Set how long a disconnected turn waits for a reconnect, clamped to
+    /// [`MAX_RESUME_GRACE`].
+    ///
+    /// Clamped rather than rejected: this is an operational dial, and a host
+    /// that asks for an hour wants "as long as possible", which is what it
+    /// gets. Refusing the whole config over it would turn a tuning mistake
+    /// into a failure to boot.
+    #[must_use]
+    pub fn with_resume_grace(mut self, grace: Duration) -> Self {
+        self.resume_grace = grace.min(MAX_RESUME_GRACE);
+        self
     }
 }
 
@@ -150,6 +216,22 @@ pub(crate) struct Entry {
     seq: u64,
     pub(crate) pending: Pending,
     pub(crate) session: Mutex<Option<Session>>,
+    /// This turn's retained frame tail, shared with the [`Session`].
+    ///
+    /// Held by the *entry* rather than only by the session because that is the
+    /// whole point of retention: when a subscriber's connection drops, the
+    /// session goes with it, and the reconnect has to find the history still
+    /// here to replay from. It also lets a client that reconnects after the
+    /// turn already finished collect the tail it missed.
+    pub(crate) history: Arc<FrameHistory>,
+    /// Bumped every time a stream takes the session out.
+    ///
+    /// A disconnect schedules a reaper for this turn; the reaper must not
+    /// cancel a turn that a *later* subscriber has since picked up. Comparing
+    /// the generation it captured against the current one is what tells those
+    /// two situations apart — the session merely being present again is not
+    /// enough, since a reconnect that also dropped would look identical.
+    pub(crate) stream_generation: AtomicU64,
 }
 
 /// Shared server state across connections.
@@ -162,6 +244,9 @@ pub(crate) struct ServerState {
     unauthorized: Mutex<TokenBucket>,
     observer: SharedObserver,
     metrics: Arc<Metrics>,
+    /// See [`ServeConfig::resume_grace`]. `Duration::ZERO` means a disconnect
+    /// cancels the turn at once, with no resume window.
+    resume_grace: Duration,
 }
 
 impl ServerState {
@@ -228,6 +313,8 @@ impl ServerState {
                         slot.insert(Arc::new(Entry {
                             seq: self.counter.fetch_add(1, Ordering::Relaxed),
                             pending: session.pending(),
+                            history: session.history(),
+                            stream_generation: AtomicU64::new(0),
                             session: Mutex::new(Some(session)),
                         }));
                         Ok(id)
@@ -253,6 +340,73 @@ impl ServerState {
                 None
             }
         }
+    }
+
+    /// Hand a disconnected turn back to the registry and schedule its reaper.
+    ///
+    /// Called when a stream ends because the *peer* went away, rather than
+    /// because the turn finished. The session goes back into its entry so a
+    /// reconnect can pick it up, and a task is armed to cancel the turn if
+    /// nobody does within [`RESUME_GRACE`].
+    ///
+    /// `generation` is the value read when this stream took the session. The
+    /// reaper cancels only if it is still current: a later subscriber bumps it,
+    /// so a turn someone has since resumed is never killed by the reaper armed
+    /// for an earlier disconnect. Checking merely that a session is *present*
+    /// would not distinguish "resumed and still streaming" from "resumed and
+    /// dropped again", and would cancel a live turn.
+    pub(crate) fn park_for_resume(
+        self: &Arc<Self>,
+        id: &str,
+        entry: &Arc<Entry>,
+        session: Session,
+        generation: u64,
+    ) {
+        let grace = self.resume_grace;
+        // A zero window is the opt-out: the caller wants the pre-resume
+        // behavior, where a disconnect ends the turn immediately. Doing this
+        // here rather than at the call site keeps "what a disconnect means"
+        // in one place.
+        if grace.is_zero() {
+            drop(session);
+            self.turns().remove(id);
+            return;
+        }
+        {
+            let mut slot = entry.session.lock().unwrap_or_else(|p| p.into_inner());
+            *slot = Some(session);
+        }
+        let state = Arc::clone(self);
+        let entry = Arc::clone(entry);
+        let id = id.to_string();
+        tokio::spawn(async move {
+            tokio::time::sleep(grace).await;
+            if entry.stream_generation.load(Ordering::Acquire) != generation {
+                // Somebody resumed. Their own disconnect armed a fresh reaper.
+                return;
+            }
+            // Take the session out before removing the entry so a reconnect
+            // racing this reap loses cleanly (it finds `None` and 409s) rather
+            // than getting a session about to be cancelled underneath it.
+            let taken = {
+                entry
+                    .session
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .take()
+            };
+            if taken.is_none() {
+                return;
+            }
+            state.turns().remove(&id);
+            state.observer().emit(&ServeEvent::StreamEnded {
+                turn: TurnRef::new(&id),
+                frames_sent: 0,
+                reason: StreamEndReason::ResumeWindowExpired,
+            });
+            // Dropping the session cancels the turn and releases its thread.
+            drop(taken);
+        });
     }
 
     /// How long this 401 should be held before it is answered. `Duration::ZERO`
@@ -472,6 +626,7 @@ pub async fn serve(config: ServeConfig, on_ready: impl FnOnce(SocketAddr)) -> st
         unauthorized: Mutex::new(TokenBucket::new()),
         observer: config.observer,
         metrics: config.metrics,
+        resume_grace: config.resume_grace.min(MAX_RESUME_GRACE),
     });
     state.observer.emit(&ServeEvent::Listening {
         addr: bound.to_string(),
@@ -647,7 +802,13 @@ async fn route(
     };
     record.set_method(&req.method);
 
-    let path = req.path.split('?').next().unwrap_or(&req.path).to_string();
+    // The query string used to be split off and thrown away, which is why
+    // `?after=` was documented as a resume mechanism while being, in fact,
+    // unparsed. It is kept now — `handle_events` reads `after` from it.
+    let (path, query) = match req.path.split_once('?') {
+        Some((path, query)) => (path.to_string(), query.to_string()),
+        None => (req.path.clone(), String::new()),
+    };
     let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     let (route, turn_id) = classify(&segs);
     record.set_route(route);
@@ -708,6 +869,7 @@ async fn route(
                 record,
                 state,
                 turn_id.as_deref().unwrap_or_default(),
+                resume_point(&query, &req),
             )
             .await;
         }
@@ -769,6 +931,39 @@ fn classify<'a>(segs: &[&'a str]) -> (Route, Option<&'a str>) {
         ["v1", "turns", id, "cancel"] => (Route::TurnCancel, Some(id)),
         _ => (Route::Unrouted, None),
     }
+}
+
+/// Read one parameter out of a raw query string.
+///
+/// Deliberately minimal — no percent-decoding, no repeated-key semantics, no
+/// dependency. The only parameter this server reads is `after`, whose value is
+/// a decimal integer: every byte that could need decoding makes it fail to
+/// parse as one, which is the correct outcome anyway. Growing a second
+/// parameter with a richer value type is the moment to reach for a real
+/// parser, not before.
+fn query_param<'q>(query: &'q str, name: &str) -> Option<&'q str> {
+    query.split('&').find_map(|pair| {
+        let (key, value) = pair.split_once('=')?;
+        (key == name).then_some(value)
+    })
+}
+
+/// Where a subscriber wants the stream to resume from, if anywhere.
+///
+/// Two spellings of one number, because two kinds of client name it
+/// differently. `?after=<seq>` is the explicit form, for a client that manages
+/// its own reconnects. `Last-Event-ID` is the SSE standard's form, which a
+/// browser `EventSource` sends **automatically** from the `id:` line each frame
+/// carries — so a web host resumes with no client code at all, which is the
+/// whole reason the `id:` is emitted.
+///
+/// `?after=` wins when both are present: it is the one the caller wrote on
+/// purpose, whereas `Last-Event-ID` is replayed by the platform from whatever
+/// it happened to see last.
+fn resume_point(query: &str, req: &crate::http::Request) -> Option<u64> {
+    query_param(query, "after")
+        .or_else(|| req.header("last-event-id"))
+        .and_then(|value| value.trim().parse::<u64>().ok())
 }
 
 /// The `Allow` header value for a known route.
@@ -879,6 +1074,7 @@ mod tests {
             unauthorized: Mutex::new(TokenBucket::new()),
             observer: capture.clone(),
             metrics: Arc::new(Metrics::new()),
+            resume_grace: DEFAULT_RESUME_GRACE,
         };
         (state, capture)
     }

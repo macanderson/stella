@@ -55,6 +55,7 @@
 mod accept;
 mod error;
 mod frame;
+mod history;
 mod http;
 pub mod observe;
 mod pending;

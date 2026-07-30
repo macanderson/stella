@@ -3,180 +3,22 @@
 //! `provider-result` / `tool-result` POSTs — exactly the protocol Oxagen's
 //! client will speak. Proves the transport on top of the (separately proven)
 //! `!Send` bridge.
+//!
+//! The harness itself lives in `common/mod.rs`; resumable-stream coverage lives
+//! in `resume.rs`.
+
+mod common;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use common::*;
 use serde_json::json;
 use stella_protocol::{CompletionMessage, ToolSchema};
-use stella_serve::observe::{
-    Capture, Fanout, Metrics, MisrouteFault, ReverseKind, ServeEvent, SettledOutcome,
-    SharedObserver,
-};
-use stella_serve::{ServeConfig, serve};
+use stella_serve::observe::{Capture, MisrouteFault, ReverseKind, ServeEvent, SettledOutcome};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
-use tokio::sync::oneshot;
-
-const TOKEN: &str = "test-secret";
-
-fn echo_tool() -> serde_json::Value {
-    serde_json::to_value(ToolSchema {
-        name: "echo".to_string(),
-        description: "echo".to_string(),
-        input_schema: json!({ "type": "object" }),
-        read_only: false,
-    })
-    .unwrap()
-}
-
-/// Start the server on an ephemeral loopback port; returns its address.
-async fn start_server() -> SocketAddr {
-    start_observed_server().await.0
-}
-
-/// Start the server with a [`Capture`] wired in place of the JSONL sink, so a
-/// test can assert on the **typed** events the server emitted rather than
-/// scraping stderr. That indirection is the point: an assertion on
-/// `ServeEvent::ReverseTimedOut { .. }` survives any change to how records are
-/// rendered, and a phrase-matching one does not.
-async fn start_observed_server() -> (SocketAddr, Arc<Capture>) {
-    let capture = Arc::new(Capture::new());
-    let observer = capture.clone();
-    let metrics = Arc::new(Metrics::new());
-    let (tx, rx) = oneshot::channel();
-    let fanout: SharedObserver = Arc::new(Fanout::new(vec![observer, metrics.clone()]));
-    tokio::spawn(async move {
-        let config = ServeConfig {
-            bind: "127.0.0.1:0".parse().unwrap(),
-            token: TOKEN.to_string(),
-            observer: fanout,
-            metrics,
-        };
-        let _ = serve(config, move |addr| {
-            let _ = tx.send(addr);
-        })
-        .await;
-    });
-    let addr = rx.await.expect("server reported its bound address");
-    (addr, capture)
-}
-
-/// POST a JSON body and read the whole response (server sends `Connection:
-/// close`). Returns `(status_line, body)`.
-async fn post_json(
-    addr: SocketAddr,
-    path: &str,
-    token: Option<&str>,
-    body: &str,
-) -> (String, String) {
-    let mut stream = TcpStream::connect(addr).await.unwrap();
-    let auth = token
-        .map(|t| format!("Authorization: Bearer {t}\r\n"))
-        .unwrap_or_default();
-    let request = format!(
-        "POST {path} HTTP/1.1\r\nHost: engine\r\n{auth}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len(),
-    );
-    stream.write_all(request.as_bytes()).await.unwrap();
-    let mut response = String::new();
-    stream.read_to_string(&mut response).await.unwrap();
-    let (head, body) = response.split_once("\r\n\r\n").unwrap_or((&response, ""));
-    let status = head.lines().next().unwrap_or_default().to_string();
-    (status, body.to_string())
-}
-
-/// GET a plain endpoint (used for `/healthz`), returning `(status_line, body)`.
-async fn get_json(addr: SocketAddr, path: &str) -> (String, String) {
-    let mut stream = TcpStream::connect(addr).await.unwrap();
-    let request = format!("GET {path} HTTP/1.1\r\nHost: engine\r\nConnection: close\r\n\r\n");
-    stream.write_all(request.as_bytes()).await.unwrap();
-    let mut response = String::new();
-    stream.read_to_string(&mut response).await.unwrap();
-    let (head, body) = response.split_once("\r\n\r\n").unwrap_or((&response, ""));
-    (
-        head.lines().next().unwrap_or_default().to_string(),
-        body.to_string(),
-    )
-}
-
-/// GET with the bearer token, reading the whole response. Used to probe a
-/// route's status without the side effect a POST would carry.
-async fn get_json_authed(addr: SocketAddr, path: &str, token: &str) -> (String, String) {
-    let mut stream = TcpStream::connect(addr).await.unwrap();
-    let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: engine\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
-    );
-    stream.write_all(request.as_bytes()).await.unwrap();
-    let mut response = String::new();
-    stream.read_to_string(&mut response).await.unwrap();
-    let (head, body) = response.split_once("\r\n\r\n").unwrap_or((&response, ""));
-    (
-        head.lines().next().unwrap_or_default().to_string(),
-        body.to_string(),
-    )
-}
-
-/// Open the SSE stream and consume the HTTP response head, leaving the reader at
-/// the first event.
-async fn open_sse(addr: SocketAddr, path: &str, token: &str) -> BufReader<TcpStream> {
-    let mut stream = TcpStream::connect(addr).await.unwrap();
-    let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: engine\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
-    );
-    stream.write_all(request.as_bytes()).await.unwrap();
-    let mut reader = BufReader::new(stream);
-    loop {
-        let mut line = String::new();
-        let n = reader.read_line(&mut line).await.unwrap();
-        if n == 0 || line == "\r\n" || line == "\n" {
-            break;
-        }
-    }
-    reader
-}
-
-/// Read one SSE `data:` payload; `None` at end of stream.
-async fn next_event(reader: &mut BufReader<TcpStream>) -> Option<serde_json::Value> {
-    let mut data: Option<String> = None;
-    loop {
-        let mut line = String::new();
-        let n = reader.read_line(&mut line).await.ok()?;
-        if n == 0 {
-            return data.map(|d| serde_json::from_str(&d).unwrap());
-        }
-        let trimmed = line.trim_end_matches(['\r', '\n']);
-        if trimmed.is_empty() {
-            if let Some(d) = &data {
-                return Some(serde_json::from_str(d).unwrap());
-            }
-            continue;
-        }
-        if let Some(rest) = trimmed.strip_prefix("data: ") {
-            data = Some(rest.to_string());
-        }
-    }
-}
-
-fn model_result(text: &str) -> serde_json::Value {
-    json!({
-        "text": text,
-        "usage": { "input_tokens": 0, "output_tokens": 0 },
-        "model": "mock",
-        "cost_usd": 0.0,
-    })
-}
-
-fn model_wants_echo() -> serde_json::Value {
-    json!({
-        "text": "",
-        "tool_calls": [{ "call_id": "c1", "name": "echo", "input": { "text": "hi" } }],
-        "usage": { "input_tokens": 0, "output_tokens": 0 },
-        "model": "mock",
-        "cost_usd": 0.0,
-    })
-}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn healthz_needs_no_auth_and_missing_token_is_rejected() {
@@ -701,26 +543,36 @@ async fn dropping_the_event_stream_cancels_the_turn() {
     }
     drop(sse);
 
-    // The turn is torn down: its id leaves the registry. Probed with a second
-    // `/events` GET, which is *non-destructive* — a still-registered turn whose
-    // session has been taken answers 409, a reclaimed one answers 404 — where
-    // polling `cancel` would have removed the entry itself and passed the test
-    // by causing the very thing it claims to observe.
-    let events_path = format!("/v1/turns/{turn_id}/events");
+    // The turn is torn down: its id leaves the registry. Not *immediately* —
+    // a disconnect now parks the turn for `resume_grace` so a reconnect can
+    // pick it up (#971) — but the property this test exists for is unchanged
+    // and is the one that matters: a client that never comes back does not
+    // hold an engine thread forever. The suite's window is short, so the
+    // reclaim lands well inside the deadline below.
+    //
+    // Probed with a deliberately malformed `tool-result` POST rather than a
+    // second `/events` GET. The GET used to be the non-destructive probe —
+    // 409 while registered, 404 once reclaimed — but parking made it
+    // *resumptive*: it now takes the parked session and starts streaming,
+    // which is the very thing being measured. The POST reads the registry
+    // without taking anything: 400 (bad body) while the turn is registered,
+    // 404 once it is gone.
+    let probe_path = format!("/v1/turns/{turn_id}/tool-result");
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        let (status, _) = get_json_authed(addr, &events_path, TOKEN).await;
+        let (status, _) = post_json(addr, &probe_path, Some(TOKEN), "not json").await;
         if status.contains("404") {
             break;
         }
         assert!(
-            status.contains("409"),
-            "the only other legitimate answer is 'already streaming': {status}"
+            status.contains("400"),
+            "the only other legitimate answer is 'that body is not a tool result': {status}"
         );
         assert!(
             Instant::now() < deadline,
-            "a turn whose only subscriber disconnected is still registered — the \
-             engine thread outlives the client that asked for it"
+            "a turn whose only subscriber disconnected is still registered long \
+             after its resume window — the engine thread outlives the client that \
+             asked for it"
         );
         tokio::time::sleep(Duration::from_millis(25)).await;
     }

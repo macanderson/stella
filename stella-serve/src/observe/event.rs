@@ -274,8 +274,14 @@ pub enum SettledOutcome {
 pub enum StreamEndReason {
     /// The terminal `turn_complete` frame was written. The healthy ending.
     TurnComplete,
-    /// The subscriber hung up. The turn is cancelled by the session drop.
+    /// The subscriber hung up. The turn is parked for the resume window rather
+    /// than cancelled outright — see `ServerState::park_for_resume`.
     PeerDisconnected,
+    /// A parked turn's resume window elapsed with no reconnect, so the server
+    /// gave up on it and cancelled. Distinct from [`Self::PeerDisconnected`]
+    /// on purpose: the first says a client *may* come back, this one says the
+    /// work was definitively thrown away, which is the one worth alerting on.
+    ResumeWindowExpired,
     /// A write to the subscriber failed mid-stream.
     WriteFailed,
     /// The peer sent more than the tolerated inbound bytes on a stream that
