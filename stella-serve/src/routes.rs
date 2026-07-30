@@ -15,6 +15,7 @@
 //! than by each handler remembering to report them.
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -22,10 +23,9 @@ use stella_core::{BudgetGuard, EngineConfig};
 use stella_protocol::{BudgetMode, CompletionMessage, ToolSchema};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::frame::{
-    ProviderOutcomeIn, ProviderResultIn, ServerFrame, ToolResultIn, TurnOutcomeWire,
-};
-use crate::http::{Request, discard_body, write_sse_frame};
+use crate::frame::{ProviderOutcomeIn, ProviderResultIn, ToolResultIn};
+use crate::history::{FrameHistory, Replay};
+use crate::http::{Request, discard_body, write_sse_event, write_sse_frame};
 use crate::observe::event::{ServeEvent, StreamEndReason, TurnRef};
 use crate::observe::record::{RequestRecord, Responder};
 use crate::server::ServerState;
@@ -240,26 +240,40 @@ pub(crate) async fn handle_events(
     record: &mut RequestRecord,
     state: &Arc<ServerState>,
     id: &str,
+    after: Option<u64>,
 ) -> std::io::Result<()> {
     let Some(entry) = state.lookup(id) else {
         return res.json("404 Not Found", &error_body("unknown turn")).await;
     };
     // Take the session out in its own scope so the (non-`Send`) mutex guard is
     // dropped before any `.await` — the connection future must stay `Send`.
+    // The generation bump rides the same critical section: it is what a reaper
+    // armed by an earlier disconnect compares against to know this turn has
+    // been resumed and must not be cancelled.
     let taken = {
-        entry
-            .session
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .take()
+        let mut slot = entry.session.lock().unwrap_or_else(|p| p.into_inner());
+        let taken = slot.take();
+        if taken.is_some() {
+            entry.stream_generation.fetch_add(1, Ordering::AcqRel);
+        }
+        taken
     };
+    let generation = entry.stream_generation.load(Ordering::Acquire);
     let Some(mut session) = taken else {
-        return res
-            .json(
-                "409 Conflict",
-                &error_body("events are already being streamed for this turn"),
-            )
-            .await;
+        // No session to stream. A turn that already finished still has its
+        // retained tail, so a client reconnecting a moment too late gets the
+        // frames it missed instead of a bare conflict — which is the whole
+        // point of retaining them.
+        return match after {
+            Some(after) => replay_only(res, record, state, id, &entry.history, after).await,
+            None => {
+                res.json(
+                    "409 Conflict",
+                    &error_body("events are already being streamed for this turn"),
+                )
+                .await
+            }
+        };
     };
 
     // From here the session is out of the registry entry and owned by this
@@ -273,6 +287,25 @@ pub(crate) async fn handle_events(
     let turn = TurnRef::new(id);
     let mut frames_sent = 0_u64;
     let mut bytes_out = 0_u64;
+
+    // Replay before live. A resuming client must see the frames it missed in
+    // stream order before any new one, or its own reconstruction of the turn
+    // interleaves wrongly.
+    if let Some(after) = after
+        && let Some(reason) =
+            write_replay(res, &entry.history, after, &mut frames_sent, &mut bytes_out).await
+    {
+        res.add_bytes(bytes_out);
+        record.set_turn(id);
+        state.observer().emit(&ServeEvent::StreamEnded {
+            turn,
+            frames_sent,
+            reason,
+        });
+        state.park_for_resume(id, &entry, session, generation);
+        return res.stream_mut().shutdown().await;
+    }
+
     let reason = stream_frames(
         res,
         state,
@@ -290,14 +323,116 @@ pub(crate) async fn handle_events(
         reason,
     });
 
-    // Drop the session *before* the socket teardown: `Drop for Session`
-    // cancels the turn, so a stream that ended early (client gone, stray
-    // bytes) releases the engine thread now rather than at the end of scope.
-    drop(session);
-    // The turn is finished streaming; drop it so its thread and registry entry
-    // are reclaimed.
-    state.turns().remove(id);
+    // A peer that vanished may be back: park the session so a reconnect can
+    // resume from its retained tail, and let the grace window — not this
+    // connection — decide when the turn is definitively abandoned. Every other
+    // ending is final, so the session drops here and `Drop for Session`
+    // cancels the turn, releasing its thread now rather than at end of scope.
+    if reason == StreamEndReason::PeerDisconnected {
+        state.park_for_resume(id, &entry, session, generation);
+    } else {
+        drop(session);
+        state.turns().remove(id);
+    }
     res.stream_mut().shutdown().await
+}
+
+/// Serve a reconnect for a turn whose session is gone — finished, or being
+/// streamed by someone else — from its retained tail alone.
+///
+/// The stream ends immediately after the replay: there is no live source to
+/// follow it with. A client whose turn had already completed therefore sees
+/// its `turn_complete` and stops, which is exactly right.
+async fn replay_only(
+    res: &mut Responder<'_>,
+    record: &mut RequestRecord,
+    state: &Arc<ServerState>,
+    id: &str,
+    history: &FrameHistory,
+    after: u64,
+) -> std::io::Result<()> {
+    res.sse_head().await?;
+    let mut frames_sent = 0_u64;
+    let mut bytes_out = 0_u64;
+    let reason = write_replay(res, history, after, &mut frames_sent, &mut bytes_out)
+        .await
+        .unwrap_or(StreamEndReason::TurnComplete);
+    res.add_bytes(bytes_out);
+    record.set_turn(id);
+    state.observer().emit(&ServeEvent::StreamEnded {
+        turn: TurnRef::new(id),
+        frames_sent,
+        reason,
+    });
+    res.stream_mut().shutdown().await
+}
+
+/// Write every retained frame after `after`.
+///
+/// Returns `None` when the replay completed and the caller should continue
+/// with the live stream, or `Some(reason)` when the stream ended during it.
+///
+/// A resume point that has fallen out of the retention window is answered with
+/// an explicit error frame rather than by quietly starting from the oldest
+/// frame still held. A silent jump is undetectable by the client, and the
+/// frames it would skip are the tool requests and completions the host
+/// reconciles its own state against — so a hole there is worse than a failure.
+async fn write_replay(
+    res: &mut Responder<'_>,
+    history: &FrameHistory,
+    after: u64,
+    frames_sent: &mut u64,
+    bytes_out: &mut u64,
+) -> Option<StreamEndReason> {
+    let frames = match history.replay_after(after) {
+        Replay::Frames(frames) => frames,
+        Replay::Truncated { oldest } => {
+            let json = serde_json::to_string(&ReplayTruncated {
+                kind: "replay_truncated",
+                requested_after: after,
+                oldest_retained: oldest,
+            })
+            .unwrap_or_else(|_| {
+                r#"{"type":"replay_truncated","requested_after":0,"oldest_retained":0}"#.to_string()
+            });
+            let (_, mut out) = res.stream_mut().split();
+            return match write_sse_frame(&mut out, &json).await {
+                Ok(written) => {
+                    *frames_sent += 1;
+                    *bytes_out = bytes_out.saturating_add(written);
+                    Some(StreamEndReason::TurnComplete)
+                }
+                Err(_) => Some(StreamEndReason::WriteFailed),
+            };
+        }
+    };
+    let (_, mut out) = res.stream_mut().split();
+    for (seq, json) in frames {
+        match write_sse_event(&mut out, seq, &json).await {
+            Ok(written) => {
+                *frames_sent += 1;
+                *bytes_out = bytes_out.saturating_add(written);
+            }
+            Err(_) => return Some(StreamEndReason::WriteFailed),
+        }
+    }
+    None
+}
+
+/// The frame sent when a client's resume point has already been evicted.
+///
+/// Its own `type`, not a `ServerFrame` variant: this is a statement about the
+/// *transport* — what the server can no longer supply — not something the
+/// engine produced, and folding it into the engine's frame vocabulary would
+/// oblige every non-resuming consumer to handle a case it can never see.
+#[derive(Serialize)]
+struct ReplayTruncated {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    /// The `seq` the client asked to resume after.
+    requested_after: u64,
+    /// The oldest `seq` the server still holds.
+    oldest_retained: u64,
 }
 
 /// The SSE frame loop, split out so `handle_events` can report *why* it ended.
@@ -337,14 +472,12 @@ async fn stream_frames(
                     continue;
                 }
             },
-            frame = session.next_frame() => match frame {
+            frame = session.next_seq_frame() => match frame {
                 Some(frame) => frame,
                 None => return StreamEndReason::SessionEnded,
             },
         };
-        let done = matches!(frame, ServerFrame::TurnComplete { .. });
-        let (json, unencodable) = encode_or_abort(&frame);
-        if let Some(error) = unencodable {
+        if let Some(error) = frame.unencodable {
             // The turn just died of a bug in our own serialization. It used to
             // say nothing at all — the host got a synthesized terminal frame
             // and the server kept no record that it had happened.
@@ -353,51 +486,15 @@ async fn stream_frames(
                 error,
             });
         }
-        match write_sse_frame(&mut out, &json).await {
+        match write_sse_event(&mut out, frame.seq, &frame.json).await {
             Ok(written) => {
                 *frames_sent += 1;
                 *bytes_out = bytes_out.saturating_add(written);
             }
             Err(_) => return StreamEndReason::WriteFailed,
         }
-        if done {
+        if frame.terminal {
             return StreamEndReason::TurnComplete;
-        }
-    }
-}
-
-/// Render one frame as the JSON payload of an SSE `data:` line, reporting
-/// whether the fallback had to be used.
-///
-/// Every [`ServerFrame`] is built from serde-clean types, so the failure arm is
-/// unreachable in practice — but "unreachable" is not "harmless". It used to
-/// emit `{}`, a frame with no `type` at all: a host would skip it silently, and
-/// if the frame it replaced was the terminal `TurnComplete`, the stream would
-/// simply end with the turn's outcome and settled cost never reported. A
-/// synthesized terminal frame keeps the stream's contract — every turn ends with
-/// exactly one `turn_complete` — and names the cause instead of losing it.
-///
-/// The second element is `Some(error)` when the fallback fired, so the caller
-/// can record it. Returning it rather than emitting here keeps this function
-/// pure and directly testable.
-fn encode_or_abort<T: Serialize>(value: &T) -> (String, Option<String>) {
-    match serde_json::to_string(value) {
-        Ok(json) => (json, None),
-        Err(err) => {
-            let reason = format!("the engine produced a frame the server could not encode: {err}");
-            let json = serde_json::to_string(&ServerFrame::TurnComplete {
-                outcome: TurnOutcomeWire::Aborted {
-                    reason: reason.clone(),
-                    cost_usd: 0.0,
-                },
-            })
-            // The fallback's fallback: a literal that is valid on the wire, so
-            // the stream still terminates with a `turn_complete` no matter what.
-            .unwrap_or_else(|_| {
-                r#"{"type":"turn_complete","outcome":{"status":"aborted","reason":"frame encoding failed","cost_usd":0.0}}"#
-                    .to_string()
-            });
-            (json, Some(err.to_string()))
         }
     }
 }
@@ -522,54 +619,6 @@ mod tests {
             Some(MAX_SERVED_STEPS),
             "an unbounded step loop must not be reachable from the wire"
         );
-    }
-
-    /// A value whose `Serialize` always fails, standing in for the frame
-    /// encoding failure that real [`ServerFrame`]s cannot produce. Without it
-    /// the fallback would be untestable — and an untested fallback on the one
-    /// path that carries a turn's outcome is how `{}` sat on the wire.
-    struct Unserializable;
-
-    impl Serialize for Unserializable {
-        fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
-            Err(serde::ser::Error::custom("nope"))
-        }
-    }
-
-    /// A frame that cannot be encoded must still leave the stream terminated:
-    /// the old `{}` fallback was a frame with no `type`, so a host skipped it
-    /// silently and — when the lost frame was the terminal one — never learned
-    /// the turn's outcome or its settled cost.
-    #[test]
-    fn an_unencodable_frame_becomes_a_terminal_aborted_frame_not_an_empty_object() {
-        let (json, unencodable) = encode_or_abort(&Unserializable);
-        let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON on the wire");
-        assert_eq!(value["type"], "turn_complete", "{json}");
-        assert_eq!(value["outcome"]["status"], "aborted", "{json}");
-        assert!(
-            value["outcome"]["reason"]
-                .as_str()
-                .is_some_and(|r| r.contains("nope")),
-            "the cause must survive, not be swallowed: {json}"
-        );
-        assert!(
-            unencodable.is_some_and(|err| err.contains("nope")),
-            "the failure must be reportable, not merely papered over on the wire"
-        );
-    }
-
-    #[test]
-    fn an_ordinary_frame_encodes_unchanged() {
-        let (json, unencodable) = encode_or_abort(&ServerFrame::TurnComplete {
-            outcome: TurnOutcomeWire::Completed {
-                text: "done".to_string(),
-                cost_usd: 0.5,
-            },
-        });
-        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(value["outcome"]["text"], "done");
-        assert_eq!(value["outcome"]["cost_usd"], 0.5);
-        assert!(unencodable.is_none(), "a clean encode reports no failure");
     }
 
     #[test]

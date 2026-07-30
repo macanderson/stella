@@ -13,6 +13,7 @@
 //! the message history across turns) and per-step checkpointing layer on top of
 //! this without changing the transport.
 
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -25,6 +26,7 @@ use tokio::sync::mpsc;
 
 use crate::error::ServeError;
 use crate::frame::{ServerFrame, TurnOutcomeWire};
+use crate::history::{Encoded, FrameHistory, encode_seq_frame};
 use crate::observe::SharedObserver;
 use crate::observe::event::{ServeEvent, SettledOutcome, TurnRef, TurnTally, millis};
 use crate::observe::tally::TallyFold;
@@ -78,6 +80,13 @@ pub struct Session {
     frames: mpsc::UnboundedReceiver<ServerFrame>,
     pending: Pending,
     thread: Option<JoinHandle<()>>,
+    /// This turn's sequenced, bounded frame tail.
+    ///
+    /// Shared with the registry entry (`Arc`) rather than owned, because the
+    /// point of retention is to outlive *this* handle: a subscriber whose
+    /// connection drops takes the session with it, and the reconnect has to
+    /// find the history still there to replay from.
+    history: Arc<FrameHistory>,
 }
 
 impl Session {
@@ -125,6 +134,7 @@ impl Session {
             frames: frame_rx,
             pending,
             thread,
+            history: Arc::new(FrameHistory::new()),
         }
     }
 
@@ -132,6 +142,43 @@ impl Session {
     /// finished and dropped its sender (i.e. after `TurnComplete`).
     pub async fn next_frame(&mut self) -> Option<ServerFrame> {
         self.frames.recv().await
+    }
+
+    /// Await the next frame, sequenced and retained for replay.
+    ///
+    /// This — not [`Session::next_frame`] — is the funnel the server streams
+    /// through, and it is the only place a `seq` is assigned. Numbering here
+    /// rather than at the senders is deliberate: frames reach the channel from
+    /// the `AgentEvent` forwarder *and*, bypassing it, from the two remote
+    /// ports, so production order is not delivery order. A resuming client
+    /// means delivery order.
+    ///
+    /// Encoding happens under the history lock because the `seq` has to be
+    /// inside the bytes that get both written and retained — they cannot be
+    /// produced separately without a window in which the two disagree.
+    pub(crate) async fn next_seq_frame(&mut self) -> Option<Encoded> {
+        let frame = self.frames.recv().await?;
+        let terminal = matches!(frame, ServerFrame::TurnComplete { .. });
+        let mut unencodable = None;
+        let (seq, json) = self.history.record(|seq| {
+            let (json, err) = encode_seq_frame(seq, frame);
+            unencodable = err;
+            json
+        });
+        Some(Encoded {
+            seq,
+            json,
+            terminal,
+            unencodable,
+        })
+    }
+
+    /// A handle to this turn's retained frame tail, cloneable and `Send`.
+    ///
+    /// The registry keeps one so a reconnect can replay even though the
+    /// session itself is owned by the (now-dead) previous stream.
+    pub(crate) fn history(&self) -> Arc<FrameHistory> {
+        Arc::clone(&self.history)
     }
 
     /// A handle to this session's reverse-RPC registry, cloneable and `Send`.

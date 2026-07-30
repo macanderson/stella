@@ -68,6 +68,7 @@ pub mod event_type {
 /// The versioned envelope every lifecycle event rides. Always deserializes: the
 /// event-specific fields live in `payload` as a raw value, so an unrecognized
 /// `event_type` is preserved rather than rejected.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LifecycleEventEnvelope {
     /// Envelope schema version (e.g. `1.0-draft`).
@@ -182,6 +183,7 @@ pub enum LifecycleEvent {
 }
 
 /// Stable-ID payload of `observation_recorded`.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObservationRecorded {
     /// The observation record id.
@@ -191,6 +193,7 @@ pub struct ObservationRecorded {
 }
 
 /// Stable-ID payload of `record_proposal_created`.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordProposalCreated {
     /// The proposal record id.
@@ -200,6 +203,7 @@ pub struct RecordProposalCreated {
 }
 
 /// Stable-ID payload of `promotion_recorded`.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PromotionRecorded {
     /// The promotion event id.
@@ -213,6 +217,7 @@ pub struct PromotionRecorded {
 }
 
 /// Stable-ID payload of `context_use_recorded`.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextUseRecorded {
     /// The context-use record id.
@@ -224,6 +229,7 @@ pub struct ContextUseRecorded {
 }
 
 /// Stable-ID payload of `context_use_feedback_recorded`.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextUseFeedbackRecorded {
     /// The feedback record id.
@@ -233,6 +239,7 @@ pub struct ContextUseFeedbackRecorded {
 }
 
 /// Stable-ID payload of `missing_context_detected`.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MissingContextDetected {
     /// The missing-context observation id.
@@ -242,6 +249,7 @@ pub struct MissingContextDetected {
 }
 
 /// Stable-ID payload of `artifact_contract_selected`.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactContractSelected {
     /// The selected contract record id.
@@ -253,6 +261,7 @@ pub struct ArtifactContractSelected {
 }
 
 /// Stable-ID payload of `contract_validation_completed`.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContractValidationCompleted {
     /// The contract validation record id.
@@ -264,6 +273,7 @@ pub struct ContractValidationCompleted {
 }
 
 /// Stable-ID payload of `outcome_assessed`.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutcomeAssessed {
     /// The outcome-assessment record id.
@@ -272,6 +282,7 @@ pub struct OutcomeAssessed {
 
 /// Stable-ID payload of `compiled_context_frame_built`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct CompiledContextFrameBuilt {
     /// The compiled frame id.
     pub compiled_frame_id: String,

@@ -1,0 +1,23 @@
+[package]
+name = "stella-engine"
+description = "The step-scoped facade over stella-core: run_step drives exactly one committed step, TurnState owns what the step loop mutates, and Checkpoint round-trips that state through serde so a host can pause, cancel and resume between steps."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+stella-protocol = { path = "../stella-protocol" }
+stella-core = { path = "../stella-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+# `sync` only, deliberately: this crate inherits stella-core's I/O-free
+# posture and must never reach for `net`/`fs`/`process` itself.
+tokio = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "test-util"] }
+async-trait = { workspace = true }

@@ -26,7 +26,6 @@ use stella_pipeline::{
     PipelineConfig, PipelinePorts, PipelineStatus, ProviderResolver, RepoStatusPort,
     RepoStructurePort, StdioApprovalGate,
 };
-use stella_protocol::event::BudgetMode;
 use stella_protocol::{AgentEvent, CompletionMessage, ModelRef, Role, ToolOutput};
 use stella_store::{ContextBlockRow, ManifestBlockRow, StepManifestRow, Store, TelemetryRow};
 use stella_tools::ToolRegistry;
@@ -80,14 +79,30 @@ pub(crate) use tools::*;
 
 /// Construct the native tool registry without consulting optional host/user backends when the
 /// trusted benchmark launcher seals filesystem state; ordinary sessions retain auto-detection.
+///
+/// The construction itself lives in [`stella_runtime::tool_registry`]; this
+/// wrapper's only remaining job is to answer the *ambient* half of the
+/// question — whether this process was launched with filesystem state sealed —
+/// which is a CLI concern and, for a server, a per-session one (#971).
 pub(crate) async fn new_tool_registry(
     workspace_root: std::path::PathBuf,
     options: stella_tools::RegistryOptions,
 ) -> ToolRegistry {
+    stella_runtime::tool_registry(workspace_root, options, session_persistence()).await
+}
+
+/// Whether this process may touch durable workspace state, as the
+/// [`stella_runtime::Persistence`] switch the runtime crate takes explicitly.
+///
+/// This is the one place the ambient answer is read. Every runtime call site
+/// below goes through it, so the process global has exactly one reader rather
+/// than the seven it had before the extraction — and `stella-serve`, which has
+/// no such global, simply passes its own per-session decision instead.
+pub(crate) fn session_persistence() -> stella_runtime::Persistence {
     if crate::settings::filesystem_settings_disabled() {
-        ToolRegistry::with_backends_and_options(workspace_root, None, None, options)
+        stella_runtime::Persistence::Disabled
     } else {
-        ToolRegistry::new_detected(workspace_root, options).await
+        stella_runtime::Persistence::Enabled
     }
 }
 
@@ -1857,10 +1872,7 @@ pub fn run_tools_validation(dir: Option<&std::path::Path>) -> Result<(), String>
 /// meters spend (`BudgetMode::Observed`) so the cost summary and
 /// `BudgetTick` events stay meaningful even when nothing is enforced.
 pub(crate) fn build_budget_guard(budget_limit: Option<f64>) -> BudgetGuard {
-    match budget_limit {
-        Some(limit) => BudgetGuard::new(BudgetMode::Enforced, None, Some(limit)),
-        None => BudgetGuard::new(BudgetMode::Observed, None, None),
-    }
+    stella_runtime::budget_guard(budget_limit)
 }
 
 /// Headroom before the next configured cap trips, in USD — the smaller of
@@ -1912,42 +1924,31 @@ pub(crate) fn settle_reflection_budget(report: &mut ReflectionReport, guard: &mu
 pub(crate) fn open_store(workspace_root: &std::path::Path) -> Option<Arc<Store>> {
     // Persisted telemetry can feed calibration and extension-authored rules
     // back into later sessions. Claim-mode trials are isolated and ephemeral:
-    // do not read that state or create `.stella/store.db` in the task.
-    if crate::settings::filesystem_settings_disabled() {
-        return None;
+    // do not read that state or create `.stella/store.db` in the task — which
+    // is what `session_persistence()` answers.
+    //
+    // The open itself is `stella_runtime::open_store`, which *returns* the
+    // degradation notice instead of printing it. Rendering it is this layer's
+    // job precisely because it is the layer that knows stdout may be
+    // machine-readable JSON and the glyph belongs on stderr (#971).
+    let (store, notice) = stella_runtime::open_store(workspace_root, session_persistence());
+    if let Some(notice) = notice {
+        eprintln!("  {} {}", "⚠".yellow(), notice.message);
     }
-    match Store::open(workspace_root) {
-        Ok(store) => Some(Arc::new(store)),
-        Err(e) => {
-            eprintln!(
-                "  {} local store unavailable ({e}) — executions/telemetry will not be persisted \
-                 this session",
-                "⚠".yellow()
-            );
-            None
-        }
-    }
+    store
 }
-
-/// How many recent drift samples to replay into a fresh session's
-/// calibration. With the estimator's EWMA weight (0.3) anything past ~20
-/// samples has negligible influence, and 20 rows is a trivial query.
-const DRIFT_SEED_SAMPLES: usize = 20;
 
 /// Build the session's token-drift calibration, seeded from prior sessions'
 /// telemetry for the resolved provider/model (`Store::drift_samples`) so the
 /// estimator starts already corrected instead of re-learning each session.
 /// Best-effort like all persistence: no store (or a failed query) just means
 /// starting uncalibrated — factor 1.0, the pre-drift behavior.
+///
+/// The seeding, including the sample count, lives in
+/// [`stella_runtime::seed_calibration`]; this wrapper only unwraps the pin out
+/// of a [`Config`], which the runtime crate deliberately does not know about.
 pub(crate) fn seed_calibration(store: &Option<Arc<Store>>, cfg: &Config) -> CalibrationMap {
-    let calibration = CalibrationMap::new();
-    if let Some(store) = store
-        && let Ok(samples) = store.drift_samples(cfg.provider.id, &cfg.model_id, DRIFT_SEED_SAMPLES)
-        && !samples.is_empty()
-    {
-        calibration.seed(&cfg.model_id, &samples);
-    }
-    calibration
+    stella_runtime::seed_calibration(store.as_ref(), cfg.provider.id, &cfg.model_id)
 }
 
 /// Begin an execution record; a failure degrades to "no persistence for this

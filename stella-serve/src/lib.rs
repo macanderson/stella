@@ -55,11 +55,14 @@
 mod accept;
 mod error;
 mod frame;
+mod history;
 mod http;
 pub mod observe;
 mod pending;
 mod remote;
 mod routes;
+#[cfg(feature = "schema")]
+pub mod schema_export;
 mod server;
 mod session;
 
@@ -70,5 +73,5 @@ pub use frame::{
 };
 pub use observe::{Metrics, Observer, ServeEvent, SharedObserver};
 pub use pending::Pending;
-pub use server::{ServeConfig, serve};
+pub use server::{DEFAULT_RESUME_GRACE, MAX_RESUME_GRACE, ServeConfig, serve};
 pub use session::{Session, SessionSpec};

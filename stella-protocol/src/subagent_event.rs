@@ -47,6 +47,7 @@ use serde::{Deserialize, Serialize};
 /// How a sub-agent's turn ended. The parent reasons about this as data — a
 /// failed child is never an error that kills the parent turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum SubAgentStatus {
     /// The child produced a final answer with no further tool calls.
@@ -77,6 +78,7 @@ impl SubAgentStatus {
 /// is refused before its first model call (a refusal still brackets, so a
 /// consumer folding these never sees an unclosed child).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "phase", rename_all = "snake_case")]
 pub enum SubAgentPhase {
     /// A child turn is about to start. Every event between this and the

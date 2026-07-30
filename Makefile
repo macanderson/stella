@@ -98,6 +98,14 @@ doc-citations: ## Assert docs citations resolve and none cite by line number (#6
 invariants: ## Assert the architectural invariants have one home and stable numbering (#630)
 	@./scripts/check-invariants.sh
 
+.PHONY: wire-schema
+wire-schema: ## Assert docs/wire/ still describes the AgentEvent wire format (#971)
+	@./scripts/check-wire-schema.sh
+
+.PHONY: wire-schema-update
+wire-schema-update: ## Regenerate docs/wire/ after an AgentEvent change (commit the diff!)
+	@./scripts/export-agentevent-schema.sh
+
 .PHONY: file-size
 file-size: ## Assert no new .rs file exceeds the 1500-line ratchet (#629)
 	@./scripts/check-file-size.sh
@@ -118,7 +126,7 @@ serve-image: ## Build the stella-serve image and smoke the container (needs Dock
 	@./scripts/smoke-serve-image.sh stella-serve:ci
 
 .PHONY: gate
-gate: no-scratch action-pins doc-citations invariants file-size doc-warnings format-check lint test ## Full CI gate: no-scratch + action-pins + doc-citations + invariants + file-size + rustdoc + fmt-check + clippy + test
+gate: no-scratch action-pins doc-citations invariants file-size wire-schema doc-warnings format-check lint test ## Full CI gate: no-scratch + action-pins + doc-citations + invariants + file-size + wire-schema + rustdoc + fmt-check + clippy + test
 
 .PHONY: check
 check: no-scratch action-pins invariants file-size format-check lint ## Fast pre-push check (scratch + pins + invariants + file-size + fmt + clippy, no tests)

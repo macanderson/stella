@@ -8,11 +8,27 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# OFF by default, and that is the point: `schema` adds the `schemars` derives
+# that let `export-wire-schema` emit docs/wire/agentevent.schema.json and its
+# TypeScript twin. A default `cargo build -p stella-protocol` — i.e. every
+# build of the shipping binary — never compiles schemars, so describing the
+# wire format costs the product nothing.
+schema = ["dep:schemars"]
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
+schemars = { workspace = true, optional = true }
+
+# The wire-contract exporter. `required-features` keeps it out of a default
+# build entirely, so the binary only exists when someone asks for the schema.
+[[bin]]
+name = "export-wire-schema"
+path = "src/bin/export_wire_schema.rs"
+required-features = ["schema"]
 
 [dev-dependencies]
 serde_json.workspace = true

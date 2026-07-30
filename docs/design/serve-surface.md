@@ -6,12 +6,21 @@ Option B, the Rust sidecar. It builds its own binary and nothing in
 `stella-cli` links it, so a change here never reaches a `stella` user.
 **This document describes the target surface, not all of it is built:** the
 code today serves one turn per registered id, with no sessions-over-turns, no
-steering, no pause, no approval gate, no SSE replay via `?after=<seq>`,
-no `Host`-header guard, and no SIGTERM drain. Turn cancellation and a
-reverse-request deadline *have* shipped — see
-[Cancellation and deadlines](#cancellation-and-deadlines). Sections below flag
-the gaps individually; treat `stella-serve/src/` as the state and this doc as the
-destination. **Date:** 2026-07-20. **Owner:** Mac Anderson.
+steering, no pause, no approval gate, no `Host`-header guard, and no SIGTERM
+drain. Turn cancellation, a reverse-request deadline, and — as of #971 phase 2
+— **resumable SSE streams** (`seq`, retained history, `?after=` /
+`Last-Event-ID`) *have* shipped. Sections below flag the gaps individually;
+treat `stella-serve/src/` as the state and this doc as the destination.
+
+**The two crates this document assumed did not exist now do (#971):**
+`stella-runtime` (phase 0 — the construction sequence, extracted from
+`stella-cli` so a server can assemble the same stack without linking a binary)
+and `stella-engine` (phase 1 — `run_step`, a serde `Checkpoint`, and a
+step-boundary `CancelToken`, with `run_turn` re-implemented as a loop over
+`run_step` so there is one code path). `stella-serve` does **not** yet drive
+`run_step`; it still calls `Engine::run_turn`, which is the next increment.
+
+**Date:** 2026-07-20, revised 2026-07-30. **Owner:** Mac Anderson.
 **Companion:** `oxagen-platform/docs/specs/agent-engine-v2/` (ADR-033 + spec) —
 the host side. ADR-033 lives in that repository, not in this one: Stella's own
 `docs/adr/` is a separate 0001-0009 series scoped to Phase 0 adaptive-context,
@@ -34,27 +43,46 @@ family in the diagram below — is a 404.
 | `GET` | `/healthz` | The **only** unauthenticated route. `{"status":"ok"}` |
 | `GET` | `/v1/metrics` | Counters as a flat JSON object of integers. Authenticated like every other route, and **pull-only** — see [serve-observability.md](./serve-observability.md) |
 | `POST` | `/v1/turns` | Body is `TurnRequest`; returns `{"turn_id":"turn-<32 hex>"}` |
-| `GET` | `/v1/turns/{id}/events` | SSE `data: <ServerFrame>`. Exclusive: a second subscriber gets 409 |
+| `GET` | `/v1/turns/{id}/events` | SSE `id: <seq>` + `data: <ServerFrame>`. Resumable via `?after=<seq>` or `Last-Event-ID`. One concurrent subscriber; a second gets 409 |
 | `POST` | `/v1/turns/{id}/provider-result` | Answers a `provider_request` |
 | `POST` | `/v1/turns/{id}/tool-result` | Answers a `tool_request` |
 | `POST` | `/v1/turns/{id}/cancel` | The only teardown. There is no `DELETE` |
 
-Three corrections to prose further down that read as present tense but describe
-the destination, and which a client written from them gets wrong:
+Corrections to prose further down that reads as present tense but describes the
+destination, and which a client written from it gets wrong:
 
 - **The resource is a turn, not a session.** One `POST /v1/turns` drives exactly
   one turn; no conversation state is retained between turns and there is no
-  session id. `/readyz` and `/metrics` do not exist either.
-- **No frame carries a `seq`.** The "Wire protocol" section calls each event's
-  `seq` monotonic; there is no such field on `ServerFrame` or `AgentEvent`, and
-  no event history is retained. A reconnect could not resume even if `?after=`
-  were parsed (it is not — the query string is split off and discarded).
+  session id. `/readyz` does not exist. `/v1/metrics` **does**.
 - **Reverse RPC is keyed by `request_id` on its own frame types**, not by a
   `call_id` on a `tool_start` / `scope_review` / `ask_user` `AgentEvent`. The
   engine emits dedicated `tool_request` / `provider_request` `ServerFrame`
   variants whose ids are per-turn counters (`prov-0`, `tool-0`, …). This is the
   single most dangerous drift in this document for anyone mirroring it in
   another language: it names the wrong field on the wrong frame.
+
+**Resolved as of #971 phase 2** — the previous edition of this table said no
+frame carried a `seq`, no history was retained, and `?after=` was split off and
+discarded. All three are now built:
+
+- Every frame carries a monotonic `seq` (`#[serde(flatten)]`, so it is an extra
+  key on the frame object a client already parses, not a new envelope), emitted
+  additionally as the SSE `id:` line.
+- Frames are retained per turn in a bounded ring (4096). A resume point that has
+  aged out is answered with an explicit `replay_truncated` frame — never a
+  silent jump to the oldest retained frame.
+- A reconnect names its resume point with `?after=<seq>` or, for a browser
+  `EventSource`, the `Last-Event-ID` header the platform sends automatically.
+  `?after=` wins if both are present.
+- A disconnect **parks** the turn for `ServeConfig::resume_grace` (default 30s,
+  clamped to 5 min, `Duration::ZERO` to restore cancel-on-disconnect) rather
+  than cancelling it, so there is a live turn to resume into.
+
+One contract point a client author must not miss: **an outstanding reverse
+request is not re-announced on resume.** Asking for `after=N` asserts you
+received everything through `N`, obligations included. A client that persisted
+its `seq` but not its in-flight `request_id`s must resume from `after=0` and
+replay the retained stream to rediscover what it owes.
 
 Also: the tool surface is selected by the `STELLA_SERVE_TOOLS=remote`
 environment variable, not a `--tools remote` flag — the binary parses no flags
@@ -123,8 +151,8 @@ the engine is structured as a headless library, not a terminal program:
 
 | Gap | Evidence | Fixed by |
 |---|---|---|
-| **Bin-only crate.** `stella-cli` has no `[lib]`; nothing is callable externally. The engine *wiring* (provider build, tool registry, store, MCP, prompt, budget) is duplicated across 5–6 drivers in the bin. | `stella-cli/Cargo.toml` (no `[lib]`); `agent.rs`, `agent/goal.rs`, `command_deck.rs`, `fleet_cmd.rs` each re-assemble the stack. | **`stella-runtime`** — extract the wiring into one reusable builder (Step 0). |
-| **Whole-loop API only.** `Engine::run_turn` owns the entire step loop; there is no step-scoped entry to checkpoint or cancel between committed steps from outside. | `driver.rs:329`; phase functions are already separate. | **`stella-engine`** facade — `run_step(&mut TurnState) -> StepOutcome` (extraction, not redesign). |
+| ~~**Bin-only crate.**~~ **CLOSED (#971 phase 0).** `stella-cli` is still bin-only, but the wiring it duplicated across seven call sites now lives in **`stella-runtime`**, which any surface can link. Its invariant — no `std::env`, no `current_dir()`, every ambient switch an explicit `RuntimeSpec` field — is what makes N sessions with N roots and N trust postures sound in one process, and is enforced executably by `stella-runtime/tests/no_ambient_reads.rs`. | was: `agent.rs`, `agent/goal.rs`, `command_deck.rs`, `fleet_cmd.rs`, `subsession.rs` each re-assembling the stack. | Done. |
+| ~~**Whole-loop API only.**~~ **CLOSED (#971 phase 1).** **`stella-engine`** exposes `run_step(&mut TurnState) -> StepOutcome`, a versioned serde `Checkpoint`, and a `CancelToken` read at the same safe boundary as the pause gate and budget enforcer. `run_turn` is now a loop over `run_step`, so there is one code path — `driver.rs` shrank rather than grew. **Not yet consumed by `stella-serve`.** | was: `run_turn` owning the whole `for step in 0..max_steps` loop. | Done; wiring into serve is the next increment. |
 | **No transport / no server.** The event channel and control ports exist but are only wired to stdin/TUI. No process hosts them over a socket; no graceful shutdown. | Observatory is read-only; `run_turn` future is `!Send`. | **`stella-serve`** — HTTP/SSE + reverse-tool-RPC sidecar, thread-per-session. |
 
 ## The `!Send` constraint drives the server shape
@@ -322,22 +350,34 @@ ADR-033 §7 names).
 
 ## Upstream Stella work items (shared by Option A and B; ADR-033 §6)
 
-1. `stella-runtime` — extract the CLI's engine wiring into one reusable builder
-   (Step 0; unblocks everything).
-2. `stella-engine` facade + `run_step` state-scoped API + serializable
-   `Checkpoint` (external checkpointing).
-3. `stella-serve` sidecar crate — HTTP/SSE + reverse-tool-RPC, thread-per-session,
-   graceful shutdown, bearer auth.
-4. Serde-stable `AgentEvent` → TS codegen (ts-rs/schemars → JSON Schema → zod) so
-   the host consumes typed events; wire `replay.rs::validate_stream` as a CI
-   conformance gate.
-5. Host-emitted bus lifecycle events (`emit_named` helpers) — closes "the bus is
-   only emitted from the tool registry."
-6. A real cancellation token threaded through `run_step` (retire the dead
-   `ProviderError::Cancelled`), plus documented hard-drop semantics.
-7. `complete_observed` overrides for OpenAI/Gemini/Vertex/Bedrock adapters so
+1. ✅ **DONE (#971 phase 0).** `stella-runtime` — the CLI's engine wiring as one
+   reusable builder, taking every ambient switch as an explicit `RuntimeSpec`
+   field.
+2. ✅ **DONE (#971 phase 1).** `stella-engine` facade + `run_step` + a versioned
+   serializable `Checkpoint`. `run_turn` is a loop over `run_step`.
+3. ✅ **DONE.** `stella-serve` sidecar crate — HTTP/SSE + reverse-tool-RPC,
+   thread-per-session, bearer auth. Graceful SIGTERM shutdown is still open.
+4. ✅ **DONE (#971 phase 3).** `AgentEvent` → JSON Schema + TypeScript, behind
+   `stella-protocol`'s optional `schema` feature, into committed artifacts under
+   `docs/wire/`. `scripts/check-wire-schema.sh` fails the gate on drift, and
+   `validate_stream` runs as a conformance check over recorded fixtures and
+   deliberate corruptions.
+   **Correction:** `validate_stream` lives in `stella-pipeline/src/replay.rs`,
+   not `stella-protocol` as earlier editions of this document said.
+5. ⬜ Host-emitted bus lifecycle events (`emit_named` helpers) — closes "the bus
+   is only emitted from the tool registry."
+6. ✅ **DONE (#971 phase 1).** A real `CancelToken` threaded through `run_step`,
+   read at the step boundary, closing any open `tool_use` with synthetic error
+   `tool_result`s so the transcript stays valid; hard-drop semantics documented
+   on the facade.
+   **Correction:** `ProviderError::Cancelled` is **not** dead — `stella-serve`'s
+   `RemoteProvider` produces it on a live path. That crate landed after the
+   sentence claiming otherwise was written. The token deliberately does not
+   produce it: the token stops at a step boundary, whereas `Cancelled` belongs
+   to a call already in flight.
+7. ⬜ `complete_observed` overrides for OpenAI/Gemini/Vertex/Bedrock adapters so
    token streaming is uniform across providers.
-8. Per-session isolation audit of `stella-tools` process-global state
+8. ⬜ Per-session isolation audit of `stella-tools` process-global state
    (file-touch mutex, `STELLA_*` env reads) — server mode must inject these, not
    read the environment.
 
