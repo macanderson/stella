@@ -82,8 +82,14 @@ impl<'a> Pipeline<'a> {
     /// account of a degradation the user should see; the proof step puts the
     /// same fact on the rail, where "warranted, and not obtained" is a row that
     /// stays visible instead of a line that scrolls. A caller that emitted only
-    /// the warning would leave the rail reading `pending` forever, which is the
-    /// one thing it must never do.
+    /// the warning would leave the rail with no statement of its own, falling
+    /// back to "not reported" when the reason was known all along.
+    ///
+    /// Use this, never a bare [`Self::warn`], for any path that declines or
+    /// fails to produce a witness the turn asked for. The rail's backstop will
+    /// keep such a turn honest either way — but "not reported" is what the
+    /// surface says when it has nothing better, and a reason it could have
+    /// named is strictly better.
     pub(super) fn unproven(&self, reason: String) {
         self.warn(format!("continuing without an authored witness: {reason}"));
         self.emit_proof(stella_protocol::ProofStep::WitnessUnavailable { reason });

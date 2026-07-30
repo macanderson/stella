@@ -3,6 +3,7 @@
 {"type":"step_manifest","turn_instance":0,"step":0,"call_seq":2,"role":"triage","provider":"scripted","model":"scripted","blocks":[{"block_id":"blk_cf89e9061ce1662bd7f43f2d","cache_zone":"volatile","token_cost":490,"resident_since_step":0,"message_index":0}],"effective_budget_tokens":0,"calibration_factor":1.0,"estimated_input_tokens":499}
 {"type":"step_usage","step":0,"role":"triage","provider":"scripted","output_text":"lookup","model":"scripted","input_tokens":0,"output_tokens":0,"cached_input_tokens":0,"cache_write_tokens":0,"estimated_input_tokens":0,"cost_usd":0.0001,"duration_ms":0,"retries":0,"tool_calls":0,"complete":true}
 {"type":"budget_tick","spent_usd":0.0001,"limit_usd":null,"mode":"off","session_spent_usd":0.0001,"session_limit_usd":null}
+{"type":"proof","step":{"kind":"assurance","witness":false,"judge":true}}
 {"type":"stage","name":"context_recall"}
 {"type":"stage","name":"execute"}
 {"type":"budget_tick","spent_usd":0.0002,"limit_usd":null,"mode":"off","session_spent_usd":0.0002,"session_limit_usd":null}
