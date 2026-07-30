@@ -12,9 +12,11 @@
 
 use clap::{Parser, Subcommand};
 
+pub(crate) mod help;
+
 use crate::{
-    build_info, commands_cmd, context_cmd, contextgraph, ingest_cmd, inspect, memory_cmd,
-    proposals_cmd, scripts_cmd, stats, storage_cmd, tune_cmd, usage_cmd, OutputFormat,
+    OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, ingest_cmd, inspect,
+    memory_cmd, proposals_cmd, scripts_cmd, stats, storage_cmd, tune_cmd, usage_cmd,
 };
 
 #[derive(Parser)]
@@ -22,7 +24,23 @@ use crate::{
     name = "stella",
     version = build_info::version_static(),
     long_version = build_info::long_version_static(),
-    about = "A fast, BYOK, model-agnostic terminal coding agent"
+    about = "A fast, BYOK, model-agnostic terminal coding agent",
+    // Set explicitly, and not only for the extra paragraph. With `long_about`
+    // absent, clap derive falls back to the doc comment of the *flattened*
+    // `GlobalArgs` — so `stella --help` opened with fifteen lines of clap
+    // implementation notes addressed to this repo's maintainers, before the
+    // usage line. `the_long_help_opens_with_the_product_not_the_source`
+    // fails if that regresses.
+    long_about = "\
+A fast, BYOK, model-agnostic terminal coding agent.
+
+Bring your own key: point --model at any provider (Anthropic, OpenAI, z.ai, \
+OpenRouter, …) or at a local OpenAI-compatible server, and stella runs \
+against it. Sessions, telemetry, and the code graph stay on this machine, \
+under .stella/ in the workspace.
+
+New here: `stella init` indexes the workspace, `stella run \"<prompt>\"` does \
+one task, `stella chat` opens a session."
 )]
 pub(crate) struct Cli {
     #[command(flatten)]
@@ -32,48 +50,64 @@ pub(crate) struct Cli {
     pub(crate) command: Option<Command>,
 }
 
+// The two paragraphs below are `//` and not `///` deliberately. clap derive
+// lifts a flattened `Args` struct's doc comment into the *parent's*
+// `long_about` when the parent sets none, which is exactly how these notes —
+// addressed to maintainers of this file — became the opening screen of
+// `stella --help`. `Cli` now sets `long_about` explicitly, and this keeps the
+// leak closed even if it is ever dropped.
+//
+// Every field here MUST carry `global = true`. clap accepts a plain
+// root-level flag only *before* the subcommand token, so a non-global
+// field in this struct is silently unreachable in the position users
+// naturally type it (`stella fleet … --budget 5` dies with "unexpected
+// argument"). `global = true` registers the flag with every subcommand,
+// making both positions valid. The invariant is machine-enforced by
+// `every_root_flag_is_global` in main_tests.rs — a new field without the
+// attribute fails the suite, not a user's shell.
+//
+// The names here are reserved CLI-wide: a subcommand flag reusing one
+// does not shadow cleanly — clap propagates the global's value slot into
+// every subcommand, and the id collision panics at match time in debug
+// builds and misbinds in release. `no_subcommand_flag_reuses_a_global_name`
+// in main_tests.rs enforces uniqueness (it is why `connect linear` pastes
+// a key via `--paste-key`, not `--api-key`).
 /// Session-wide flags shared by every subcommand — model routing,
 /// credentials, output shape, spend limit, UI toggles.
-///
-/// Every field here MUST carry `global = true`. clap accepts a plain
-/// root-level flag only *before* the subcommand token, so a non-global
-/// field in this struct is silently unreachable in the position users
-/// naturally type it (`stella fleet … --budget 5` dies with "unexpected
-/// argument"). `global = true` registers the flag with every subcommand,
-/// making both positions valid. The invariant is machine-enforced by
-/// `every_root_flag_is_global` in main_tests.rs — a new field without the
-/// attribute fails the suite, not a user's shell.
-///
-/// The names here are reserved CLI-wide: a subcommand flag reusing one
-/// does not shadow cleanly — clap propagates the global's value slot into
-/// every subcommand, and the id collision panics at match time in debug
-/// builds and misbinds in release. `no_subcommand_flag_reuses_a_global_name`
-/// in main_tests.rs enforces uniqueness (it is why `connect linear` pastes
-/// a key via `--paste-key`, not `--api-key`).
 #[derive(clap::Args)]
+// Heading rather than clap's default "Options": these are the flags that hold
+// for the whole session and are accepted on either side of the subcommand
+// token, which is the one thing about them worth saying in a help page.
+#[command(next_help_heading = "Session flags (before or after the command)")]
 pub(crate) struct GlobalArgs {
-    /// Override the worker model for this invocation: provider/model_id
-    /// (e.g. zai/glm-5.2, anthropic/claude-fable-5, openai/gpt-5.5)
+    /// Worker model for this run: provider/model_id
+    ///
+    /// Examples: zai/glm-5.2, anthropic/claude-fable-5, openai/gpt-5.5.
+    /// Scoped to this invocation — the configured default is untouched.
     #[arg(long, global = true, env = "STELLA_MODEL")]
     pub(crate) model: Option<String>,
 
-    /// API key for the selected provider, highest-precedence step of the
-    /// credential chain (CLI flag -> env var -> credentials file ->
-    /// interactive prompt). Prefer an env var or
-    /// ~/.stella/credentials.toml for anything long-lived — a flag
-    /// value is visible in shell history and `ps`.
-    #[arg(long, global = true)]
+    /// API key for the selected provider (prefer `stella auth`)
+    ///
+    /// The highest-precedence step of the credential chain (CLI flag -> env
+    /// var -> credentials file -> interactive prompt). Prefer an env var or
+    /// ~/.stella/credentials.toml for anything long-lived — a flag value is
+    /// visible in shell history and `ps`.
+    // Long help only: `-h` is the screen people hit while working, and it
+    // earns its space by showing what changes a run, not every knob. The
+    // credential flags have `stella auth`, the rest have `--help`.
+    #[arg(long, global = true, hide_short_help = true)]
     pub(crate) api_key: Option<String>,
 
-    /// Base URL override. Required with `--model local/<model>` to point at a
-    /// local OpenAI-compatible server (Ollama, vLLM, LM Studio, llama.cpp
-    /// server — e.g. http://localhost:11434/v1); optional for every other
-    /// provider to route through a proxy.
-    #[arg(long, global = true, env = "STELLA_BASE_URL")]
+    /// Base URL override; required by `--model local/<model>`
+    ///
+    /// Points at a local OpenAI-compatible server (Ollama, vLLM, LM Studio,
+    /// llama.cpp server — e.g. http://localhost:11434/v1). Optional for every
+    /// other provider, where it routes through a proxy.
+    #[arg(long, global = true, env = "STELLA_BASE_URL", hide_short_help = true)]
     pub(crate) base_url: Option<String>,
 
-    /// Output format: text (interactive), json (one final object), or
-    /// stream-json (one line per agent event)
+    /// Output shape: text, json, or stream-json
     #[arg(
         long,
         global = true,
@@ -83,24 +117,28 @@ pub(crate) struct GlobalArgs {
     )]
     pub(crate) output_format: OutputFormat,
 
-    /// Hard USD spend limit for the whole run — a session-scoped cap:
-    /// enforced mode aborts cleanly (never mid-tool) once cumulative spend
-    /// across every turn and goal round exceeds this, not each turn on its
-    /// own. Omit to meter spend for the cost summary without ever blocking
-    /// (observed mode).
+    /// Hard USD spend limit for the whole session
+    ///
+    /// Scoped to the session, not the turn: enforced mode aborts cleanly
+    /// (never mid-tool) once cumulative spend across every turn and goal round
+    /// exceeds this. Omit to meter spend for the cost summary without ever
+    /// blocking (observed mode).
     #[arg(long, global = true, env = "STELLA_BUDGET", value_parser = parse_budget)]
     pub(crate) budget: Option<f64>,
 
-    /// Use the plain line-based REPL for chat instead of the Command Deck
-    /// (the tabbed TUI). The deck also steps aside automatically when stdin
-    /// or stdout is not a terminal. Env: STELLA_PLAIN=1.
-    #[arg(long, global = true)]
+    /// Use the plain line REPL instead of the Command Deck
+    ///
+    /// The deck (the tabbed TUI) also steps aside automatically when stdin or
+    /// stdout is not a terminal. Env: STELLA_PLAIN=1.
+    #[arg(long, global = true, hide_short_help = true)]
     pub(crate) plain: bool,
 
-    /// Freeze all deck animation (the run progress bar's shimmer/pulse and the
-    /// caret blink) to a static frame — for CI and asciinema-style recordings.
-    /// Also forced on by STELLA_NO_ANIM or NO_COLOR.
-    #[arg(long, global = true)]
+    /// Freeze all deck animation to a static frame
+    ///
+    /// Stills the run progress bar's shimmer/pulse and the caret blink, for CI
+    /// and asciinema-style recordings. Also forced on by STELLA_NO_ANIM or
+    /// NO_COLOR.
+    #[arg(long, global = true, hide_short_help = true)]
     pub(crate) no_anim: bool,
 }
 
@@ -134,6 +172,8 @@ pub(crate) enum Command {
         keep_witness: bool,
     },
 
+    /// arena-bench adapter, invoked by the benchmark runner
+    ///
     /// arena-bench adapter: run the task in --task-dir (prompt in TASK.md)
     /// while recording a contextgraph-trace journal the arena runner judges
     /// with the protocol's replay oracles. Speaks the adapter contract
@@ -166,6 +206,8 @@ pub(crate) enum Command {
         test_command: Option<String>,
     },
 
+    /// Work in judged rounds until a judge says the goal is met
+    ///
     /// Work in judged rounds until a judge model confirms the goal is met.
     /// Each working round runs through the staged pipeline (triage, plan,
     /// witness, execute, verify) by default; --no-pipeline falls back to the
@@ -180,15 +222,17 @@ pub(crate) enum Command {
         no_pipeline: bool,
     },
 
-    /// Watch CI for a branch/PR and fix failures until it is fully green
+    /// Watch CI for a branch or PR and fix it until green
     Monitor {
         /// Branch name or PR number (default: main)
         target: Option<String>,
     },
 
-    /// Start an interactive REPL session
+    /// Start an interactive session (the Command Deck)
     Chat,
 
+    /// Reopen a previous session exactly where it stood
+    ///
     /// Reopen a previous session exactly where it stood — transcript,
     /// conversation, pending prompts. Sessions are durable (quit, crash, and
     /// power loss included); the deck's SESSIONS overlay (`←` on an empty
@@ -203,11 +247,15 @@ pub(crate) enum Command {
         list: bool,
     },
 
+    /// Analyze this workspace: domain taxonomy and code graph
+    ///
     /// Analyze this workspace and infer its domain taxonomy
     /// (.stella/domains.toml) — the tagging vocabulary for memories,
     /// reflections, and every code-graph node/edge
     Init,
 
+    /// List every tool available to the agent this session
+    ///
     /// List every tool available to the agent this session — built-ins,
     /// developer custom tools (.stella/tools/), and manifest diagnostics
     Tools {
@@ -221,6 +269,8 @@ pub(crate) enum Command {
         validate: Option<Option<std::path::PathBuf>>,
     },
 
+    /// Fan tasks out to a fleet of worker agents in one tree
+    ///
     /// Fan tasks out to a fleet of worker agents in ONE shared tree —
     /// coordinated by cooperative claims (lock-on-first-write, sub-second,
     /// rivals named), wave-scheduled by dependency, every attempt, commit,
@@ -263,6 +313,8 @@ pub(crate) enum Command {
         no_pipeline: bool,
     },
 
+    /// Query the code graph — definitions, references, imports
+    ///
     /// Query the code graph built by `stella init` — symbol definitions and
     /// references, a file's imports/importers, or its graph neighborhood.
     /// Offline: reads .stella/private/codegraph.db, needs no API key.
@@ -276,6 +328,8 @@ pub(crate) enum Command {
         target: String,
     },
 
+    /// List or run the project's package-manager scripts
+    ///
     /// List or run the project's package-manager scripts — deterministic
     /// static detection (cargo/npm/uv/go/make/just/…) mapped onto canonical
     /// verbs (install/build/check/start/test/lint/format). Offline: manifest
@@ -285,6 +339,8 @@ pub(crate) enum Command {
         cmd: scripts_cmd::ScriptsCmd,
     },
 
+    /// List or convert this workspace's custom slash commands
+    ///
     /// Custom slash commands: list what this workspace offers, or convert
     /// markdown definitions to TOML. Conversion is deliberate and never part
     /// of `init` — `init` SYMLINKS `.claude/commands/`, so a converted copy
@@ -295,6 +351,8 @@ pub(crate) enum Command {
         cmd: commands_cmd::CommandsCmd,
     },
 
+    /// Inspect the storage map — layers, namespaces, relations
+    ///
     /// Inspect the storage map — every storage layer, namespace, relation,
     /// and field, with intent/boundaries from stella.storage.toml. Offline:
     /// reads .stella/private/codegraph.db + the manifest, needs no API key.
@@ -309,6 +367,8 @@ pub(crate) enum Command {
         cmd: Option<ModelsCmd>,
     },
 
+    /// Review what the adaptive-context loop wants to keep
+    ///
     /// Review what the adaptive-context loop wants to make durable, before it
     /// lands: the proposals it induced, the distinct tasks behind each, and
     /// Keep/Edit/Ignore. Every decision is recorded as an immutable event, so
@@ -319,6 +379,8 @@ pub(crate) enum Command {
         cmd: proposals_cmd::ProposalsCmd,
     },
 
+    /// Review, publish, and explain context records
+    ///
     /// Review, publish, and explain context records — the reviewable steering
     /// `stella ingest` extracts from documents you already wrote. `review` shows
     /// what was proposed and what its truth probe found; `keep`/`edit`/`ignore`
@@ -331,6 +393,8 @@ pub(crate) enum Command {
         cmd: context_cmd::ContextCmd,
     },
 
+    /// A/B one policy knob over two loop-bench result files
+    ///
     /// Eval-driven self-tuning of stella's own policy (#831): A/B one knob
     /// (worker reasoning effort) over two loop-bench `--json` result files,
     /// auto-select the winner, and — with `--promote` — write it to settings
@@ -342,6 +406,8 @@ pub(crate) enum Command {
         cmd: tune_cmd::TuneCmd,
     },
 
+    /// Show the exact context a past model call was sent
+    ///
     /// Show the exact context a past model call was sent — the reconstructed
     /// message array, rebuilt from the recorded receipts and verified against
     /// the digests taken at emission. With no arguments, lists executions that
@@ -392,6 +458,8 @@ pub(crate) enum Command {
         only: inspect::RoleFilter,
     },
 
+    /// Cost, tokens, and resolve rate per provider and model
+    ///
     /// Summarize cost, tokens, and resolve rate per provider/model from
     /// local telemetry (.stella/private/store.db) — $/resolved-task receipts.
     /// `stella stats prune` bounds that store's growth
@@ -409,6 +477,8 @@ pub(crate) enum Command {
         cmd: Option<stats::StatsCmd>,
     },
 
+    /// Cross-project telemetry hub (~/.stella/usage.db)
+    ///
     /// Cross-project telemetry hub (~/.stella/usage.db): global report,
     /// cursor-based sync, backfill across every known project
     Usage {
@@ -416,6 +486,8 @@ pub(crate) enum Command {
         cmd: Option<usage_cmd::UsageCmd>,
     },
 
+    /// Cloud account registration (stub)
+    ///
     /// Cloud account registration (stub): org / workspace identity that
     /// scopes replicated telemetry; OAuth login attaches here later
     Cloud {
@@ -423,6 +495,8 @@ pub(crate) enum Command {
         cmd: usage_cmd::CloudCmd,
     },
 
+    /// Inspect or flush the managed enterprise telemetry spool
+    ///
     /// Inspect or explicitly flush the managed enterprise operational spool.
     /// Disabled by default; requires a signed org-managed enrollment.
     Telemetry {
@@ -430,6 +504,8 @@ pub(crate) enum Command {
         cmd: TelemetryCmd,
     },
 
+    /// Open the Observatory, a local telemetry dashboard
+    ///
     /// Open the Observatory — a local web dashboard over this workspace's
     /// telemetry (.stella/private/store.db + fleet.db): spend, tokens, cache
     /// traffic, tool calls, files touched, memory citations, reflections,
@@ -445,17 +521,23 @@ pub(crate) enum Command {
         open: bool,
     },
 
+    /// Turn markdown you already wrote into checkable steering
+    ///
     /// Turn markdown you already wrote — `AGENTS.md`, `CLAUDE.md`, or any file
     /// you name — into steering Stella can check, cite, and retire. With no
     /// arguments, scans the workspace and shows what it found. Reads local
     /// files only; needs no API key.
     Ingest(ingest_cmd::IngestArgs),
 
+    /// What the work cost, and whether anyone called it good
+    ///
     /// What the work cost, and whether anyone said it was good: calls, characters
     /// typed, follow-ups, and the verdict a merged or closed pull request implies.
     /// Reads local state only; needs no API key, and no model judges anything.
     Scoreboard,
 
+    /// Inspect and promote the project's memories
+    ///
     /// Inspect the project's memories through the citation feedback loop —
     /// most-cited first, usefulness scores, truthfulness — and promote an
     /// eligible memory to a project rule (.stella/rules/). Reads local state
@@ -465,6 +547,8 @@ pub(crate) enum Command {
         cmd: memory_cmd::MemoryCmd,
     },
 
+    /// Manage MCP servers: search, install, list, telemetry
+    ///
     /// Manage MCP servers: search a registry, install into .stella/mcp.toml,
     /// list configured servers, and show tool-usage telemetry. Enable/disable
     /// is per-session and lives in the deck's MCP tab (`/mcp`). Reads/writes
@@ -474,6 +558,8 @@ pub(crate) enum Command {
         cmd: McpCmd,
     },
 
+    /// Connect an issue tracker (GitHub or Linear)
+    ///
     /// Connect an issue tracker (GitHub/Linear) via OAuth or a pasted key —
     /// enables the issue tools (search_issues, create_issue, list_labels, …)
     /// and the deck's Issues tab. Credentials land owner-only in
@@ -486,6 +572,8 @@ pub(crate) enum Command {
     /// Show current configuration
     Config,
 
+    /// Check the local state stella owns, and report each verdict
+    ///
     /// Check the local state stella owns and report each named check's
     /// verdict — today the integrity of this workspace's session store
     /// (.stella/private/store.db), verified with SQLite's own
@@ -502,6 +590,8 @@ pub(crate) enum Command {
         repair: bool,
     },
 
+    /// Manage BYOK provider keys in ~/.stella/credentials.toml
+    ///
     /// Manage BYOK provider keys stored in
     /// ~/.stella/credentials.toml (set/remove/list) — keys resolved
     /// via an env var or settings.json still take precedence per the normal

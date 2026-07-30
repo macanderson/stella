@@ -104,7 +104,7 @@ pub(crate) mod test_env {
 
 use std::process::ExitCode;
 
-use clap::{Parser, ValueEnum};
+use clap::{FromArgMatches, ValueEnum};
 use colored::Colorize;
 
 /// How turn output reaches the caller. `stream-json` is a line-per-`AgentEvent`
@@ -263,7 +263,6 @@ fn run_resume_list() -> Result<(), String> {
     Ok(())
 }
 
-
 fn main() -> ExitCode {
     // Restore the default SIGPIPE disposition. Rust masks SIGPIPE at startup, so
     // writing to a closed stdout (`stella tools | head`, `… | grep -q`, a piped
@@ -327,7 +326,13 @@ fn main() -> ExitCode {
         }
     }
 
-    let cli = Cli::parse();
+    // Not `Cli::parse()`: the root help is grouped by `cli::help::command()`,
+    // and clap renders `--help` from whichever `Command` does the parsing. The
+    // derived `Cli` on the other side is byte-for-byte the same value.
+    let cli = match Cli::from_arg_matches(&cli::help::command().get_matches()) {
+        Ok(cli) => cli,
+        Err(err) => err.exit(),
+    };
 
     // A machine-readable run has nobody to answer a masked password prompt,
     // and its caller is blocked reading stdout for an object that would never
@@ -564,7 +569,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // Generated from the live `Command` tree, so a new subcommand or
             // flag is completable the day it lands — a hand-written script
             // would be stale by the next release.
-            let mut command = <Cli as clap::CommandFactory>::command();
+            let mut command = cli::help::command();
             clap_complete::generate(*shell, &mut command, "stella", &mut std::io::stdout());
             return Ok(());
         }
