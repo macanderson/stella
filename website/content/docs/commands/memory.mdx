@@ -1,21 +1,24 @@
 ---
 title: stella memory
-description: Inspect memories through the citation feedback loop, validate them against the code, promote a proven one to a project rule, and forget the ones that turned out wrong.
+description: The full lifecycle of a memory — inspect it through the citation feedback loop, rewrite it, promote a proven one to a project rule, retire it reversibly, forget it when it was wrong, and compact or index the store behind it.
 ---
 
-Inspect the project's memories through the citation feedback loop — most-cited first, with usefulness and truthfulness — promote a proven memory to a project rule, and tombstone the ones that turned out wrong. It reads local state only and needs no API key.
+Inspect the project's memories through the citation feedback loop — most-cited first, with usefulness and truthfulness — promote a proven memory to a project rule, retire the ones that stopped earning their place, and tombstone the ones that turned out wrong. It reads local state only and needs no API key.
 
 For the concepts behind memories, reflections, and the code graph, see [Memory](/docs/context-engine). This page is the command reference.
 
 ## Synopsis
 
 ```bash
-stella memory <list|promote|validate|forget|restore|forgotten> [args]
+stella memory <list|edit|promote|validate> [args]
+stella memory <retire|reaffirm|retired> [args]
+stella memory <forget|restore|forgotten> [args]
+stella memory <compact|index> [flags]
 ```
 
 ## What it does
 
-As the agent works, it cites the memories that informed a turn via the `cite_memory` tool; those citations aggregate into a usefulness/truthfulness score per memory. `stella memory` is the inspection and promotion surface over that loop.
+As the agent works, it cites the memories that informed a turn via the `cite_memory` tool; those citations aggregate into a usefulness/truthfulness score per memory. `stella memory` is the inspection, editing, and lifecycle surface over that loop.
 
 ## Subcommands
 
@@ -29,6 +32,23 @@ stella memory list --format json
 ```
 
 `--format` accepts `table` (default, aligned) or `json`.
+
+### `stella memory edit <id> <text>`
+
+Rewrite a memory in place, as a **new revision of the same memory**.
+
+```bash
+stella memory edit nod_9f2c1a "the store API takes a workspace root, not a db path"
+```
+
+The old text becomes history rather than a competitor: one live record, the same id, and recall stops serving the words you replaced. Before memories had a lineage, changing one meant writing a second memory and leaving the first live — both citable, with nothing to say which was current.
+
+<Callout type="info">
+Each edit strands the previous revision's embedding vector, which nothing points at any more.
+That is exactly the class of row [`stella memory compact`](#stella-memory-compact) reclaims, so a
+workspace where memories are edited often is the one that benefits most from an occasional
+compaction.
+</Callout>
 
 ### `stella memory promote <id>`
 
@@ -76,6 +96,104 @@ than guessed. A confidently wrong edge teaches the graph something false; a
 missing one only costs a little recall precision.
 </Callout>
 
+## Retiring and forgetting
+
+Two different mechanisms, for two different situations, and choosing the wrong one is the most common mistake on this surface:
+
+<CardGrid size="md">
+  <SpecCard title="retire — it stopped earning its place">
+    The memory is not wrong; it simply stopped helping. It is excluded from **automatic**
+    selection but stays explicitly retrievable by id. Reverse with `reaffirm`.
+  </SpecCard>
+  <SpecCard title="forget — it was wrong">
+    The memory should never come back. This writes a **tombstone** that also stops the
+    reflection loop re-learning a paraphrase of it. Reverse with `restore`.
+  </SpecCard>
+</CardGrid>
+
+### Three invariants
+
+These hold across everything in this section. They are load-bearing design constraints, not descriptions of current behavior that might drift:
+
+<CardGrid size="md">
+  <SpecCard title="Retirement is reversible">
+    Every retirement can be undone by `stella memory reaffirm <id>`. The retirement itself
+    stays on the ledger, **outranked by the later decision rather than erased** — so "why did
+    this come back?" remains answerable.
+  </SpecCard>
+  <SpecCard title="Nothing is ever deleted">
+    A retired record is excluded from automatic recall and stays explicitly retrievable by id.
+    Selection health is derived from immutable use and feedback records and rebuilds exactly;
+    nothing here is a stored counter that can drift.
+  </SpecCard>
+  <SpecCard title="The agent cannot talk itself into forgetting">
+    Citation feedback is recorded with the evaluation method `agent_self_report`, and that
+    method is **not pruning-eligible**. It may inform selection health; it may never drive a
+    retirement.
+  </SpecCard>
+</CardGrid>
+
+<Callout type="warn">
+The third invariant is the one most likely to be violated by a well-meaning change. A self-report
+that can retire its own subject is self-reinforcing: a model that *misreads* a memory reports it
+unhelpful, which retires it, which destroys the evidence that the reading was wrong. The loop is
+closed on purpose.
+
+It is enforced in one place — `ContextEvaluationMethod::is_pruning_eligible` reads the method to
+decide whether a verdict may retire a record. Retirement requires a human or a deterministic
+source. If you are wiring a new evidence source, that predicate is the seam to change, and
+widening it to admit self-reports is the change to refuse.
+</Callout>
+
+### `stella memory retire <id> --reason <why>`
+
+Stop selecting a memory automatically — reversibly.
+
+```bash
+stella memory retire nod_9f2c1a --reason "the pipeline it describes was replaced in 0.6"
+```
+
+`--reason` is **required**, and an empty one is rejected: a retirement with no legible cause is not auditable. Because citations cannot retire anything on their own, an explicit human judgement is currently the strongest available evidence tier — the loop shows its work, and a person decides.
+
+Some records refuse retirement outright:
+
+<CardGrid size="sm">
+  <OptionCard name="blocking">
+    A directive whose enforcement is `Blocking`.
+  </OptionCard>
+  <OptionCard name="user-confirmed">
+    A record a **user** confirmed. Checked on the action, not the actor — a system
+    auto-activation is not a confirmation and stays retirable.
+  </OptionCard>
+  <OptionCard name="published">
+    A record that has been published.
+  </OptionCard>
+  <OptionCard name="already retired">
+    Retiring twice is refused rather than written as a second event.
+  </OptionCard>
+</CardGrid>
+
+### `stella memory reaffirm <id>`
+
+Put a retired record back into automatic selection.
+
+```bash
+stella memory reaffirm nod_9f2c1a
+stella memory reaffirm nod_9f2c1a --reason "still the only note on the legacy path"
+```
+
+`--reason` is optional and defaults to a plain "reaffirmed by the user". Reaffirming something that was never retired is **refused** rather than recorded — a no-op event sitting in the log would claim a reversal that never happened.
+
+### `stella memory retired`
+
+List what this workspace stopped selecting, and why.
+
+```bash
+stella memory retired
+```
+
+Each row carries the recorded `reason`, the **evidence** behind the decision (how many assessed uses were not helpful, out of how many, across how many distinct tasks), and the exact `reaffirm` command that restores it. Output is sorted, so two runs print the same thing — the same determinism the underlying fold guarantees.
+
 ### `stella memory forget <id>`
 
 Stop a memory steering the agent — and stop the reflection loop re-learning it.
@@ -116,4 +234,74 @@ stella memory forgotten
 them they are the maintenance pass for a memory store that has drifted — `validate` to
 find memories pointing at code that no longer exists, `forget` to retire the ones that
 turned out to be wrong rather than merely stale.
+</Callout>
+
+## Maintaining the store
+
+These two act on `.stella/private/context.db` — the derived index behind recall — rather than on the memories themselves. Neither is required for correctness; both are performance work.
+
+### `stella memory compact`
+
+Reclaim space by dropping **derived index rows whose owner is already gone**.
+
+```bash
+stella memory compact --dry-run
+stella memory compact
+stella memory compact --stale-fingerprints --vacuum
+```
+
+Two classes qualify: embedding vectors that no memory, node, or episode points at (every `stella memory edit` strands one), and domain tags pointing at rows that no longer exist.
+
+<Callout type="info">
+Memories, episodes, facts, and forget tombstones are **never touched**. Point-in-time queries
+answer identically before and after a compaction — which is what makes this safe to run on a
+schedule.
+</Callout>
+
+<CardGrid size="sm">
+  <OptionCard name="--dry-run">
+    Report what would be reclaimed without deleting anything.
+  </OptionCard>
+  <OptionCard name="--stale-fingerprints">
+    Also drop vectors written under an embedder other than the active one. Recall already
+    ignores them, so this frees space today at the cost of a full re-embed if you ever switch
+    back.
+  </OptionCard>
+  <OptionCard name="--vacuum">
+    `VACUUM` afterwards to hand freed pages back to the filesystem. Also automatic for a large
+    compaction.
+  </OptionCard>
+</CardGrid>
+
+### `stella memory index`
+
+Build the approximate-similarity (IVF) index that recall can use instead of scoring every stored vector on every turn.
+
+```bash
+stella memory index --dry-run
+stella memory index
+stella memory index --drop
+```
+
+<Callout type="warn">
+This is **opt-in twice over**: this command builds the index, and `context.retrieval.ann_enabled`
+in `settings.json` is what lets a recall actually use it. An approximate index considers only a
+subset of the corpus, so it can miss a frame the exact scan would have found — which is why
+neither half is on by default.
+</Callout>
+
+<CardGrid size="sm">
+  <OptionCard name="--dry-run">
+    Report what would be built without writing anything.
+  </OptionCard>
+  <OptionCard name="--drop">
+    Remove the index. Recall reverts to the exact full scan — which is what it does by default
+    anyway.
+  </OptionCard>
+</CardGrid>
+
+<Callout type="info">
+Neither command creates a database as a side effect of being asked a question. A workspace that
+has never indexed anything reports that it has nothing to do, rather than materializing an empty
+`context.db` to say so.
 </Callout>

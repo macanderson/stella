@@ -1,0 +1,122 @@
+---
+title: stella telemetry
+description: Inspect, flush, or explicitly discard the managed Oxagen Enterprise operational spool. Disabled by default; requires a signed org-managed enrollment.
+---
+
+`stella telemetry` is the operator surface on the **managed Oxagen Enterprise operational spool** — the durable, owner-only queue that holds content-free execution rollups awaiting delivery to an org intake.
+
+It is **disabled by default**. Without a signed org-managed enrollment every subcommand prints `enterprise telemetry: disabled (no managed enrollment)` and exits successfully, having performed no network I/O and constructed no HTTP client.
+
+<Callout type="info">
+For the boundary itself — what the managed export may contain, what it structurally cannot, how enrollment is provisioned and verified — see [Enterprise telemetry](/docs/telemetry#oxagen-enterprise-managed-export). This page is the command reference.
+
+Nothing here concerns your **local** telemetry. That lives in `.stella/private/store.db`, never leaves the machine on its own, and is read by [`stella stats`](/docs/commands/stats) and the [Observatory](/docs/commands/observe).
+</Callout>
+
+## Synopsis
+
+```bash
+stella telemetry <status|flush|rollover-discard>
+```
+
+All three need **no model provider and no API key** — managed operational export is independent of your model configuration.
+
+## Subcommands
+
+### `stella telemetry status`
+
+Show enrollment state, what is queued, and every durable loss counter.
+
+```bash
+stella telemetry status
+```
+
+Unenrolled, it reports exactly that. Enrolled, it prints one line covering:
+
+<CardGrid size="md">
+  <OptionCard name="pending">
+    Rows and payload bytes queued for the **active** sink and awaiting delivery.
+  </OptionCard>
+  <OptionCard name="stranded">
+    Rows and bytes belonging to a **superseded** sink fingerprint. They will never be
+    delivered to the new sink — see [rollover](#rollover-is-not-delivery) below.
+  </OptionCard>
+  <OptionCard name="quarantine">
+    Rows quarantined as undecodable, with the diagnostic metadata bytes retained for them.
+  </OptionCard>
+  <OptionCard name="ledger_skipped">
+    Export-ledger rows skipped, broken out by cause: `missing_rollup`, `malformed_nonce`,
+    `malformed_rollup`.
+  </OptionCard>
+  <OptionCard name="physical">
+    On-disk size of the spool database. Reported **separately** from payload bytes because
+    SQLite pages, indexes, WAL/SHM, and quarantine metadata all make the file larger than the
+    payload bound.
+  </OptionCard>
+  <OptionCard name="dropped / corrupt_dropped / rollover_discarded">
+    The three cumulative loss counters — capacity eviction, corruption, and explicit rollover
+    discard. Each is durable and monotonic.
+  </OptionCard>
+</CardGrid>
+
+Invalid or expired managed configuration **fails with a diagnostic** rather than reporting an enrolled state. A seat that has silently stopped exporting is the failure this command exists to make visible.
+
+<Callout type="info">
+The loss counters are the reason `status` is worth reading rather than glancing at. Pending going to zero can mean "everything was delivered" or "everything was evicted" — only `dropped`, `corrupt_dropped`, and `rollover_discarded` distinguish the two.
+</Callout>
+
+### `stella telemetry flush`
+
+Attempt **one bounded delivery batch right now**, then report what moved.
+
+```bash
+stella telemetry flush
+```
+
+Prints the number sent, plus the resulting pending and dropped counts. The batch is bounded on every axis:
+
+<CardGrid size="sm">
+  <OptionCard name="≤ 50 events">
+    The per-batch event ceiling.
+  </OptionCard>
+  <OptionCard name="≤ 256 KiB">
+    The per-request payload ceiling.
+  </OptionCard>
+  <OptionCard name="30-second lease">
+    Rows are leased, not removed. A crashed flush releases them rather than losing them.
+  </OptionCard>
+</CardGrid>
+
+Delivery is **at least once and sink-scoped**: rows are acknowledged only after a successful HTTPS response, and redirects are refused. A credential, transport, or server failure releases the *exact* lease with capped exponential backoff plus jitter — from one second up to five minutes, with jitter capped at 25%.
+
+<Callout type="info">
+Stella already starts a detached best-effort flush after enrollment is verified at process startup. That attempt never delays agent execution and is not waited on at shutdown. Use explicit `flush` when an operator needs a **synchronous** delivery attempt — before host maintenance, or to confirm an intake change took effect.
+</Callout>
+
+### `stella telemetry rollover-discard`
+
+Explicitly and permanently discard rows bound to a **superseded** sink fingerprint.
+
+```bash
+stella telemetry rollover-discard
+```
+
+<Callout type="warn">
+This is the one **destructive** subcommand. It deletes stranded rows outright and increments the durable `rollover_discarded` counter by the number removed. There is no undo, and the rows were never delivered anywhere.
+</Callout>
+
+#### Rollover is not delivery
+
+When the signed sink fingerprint changes, rows queued for the old sink are **not** re-pointed at the new one. Sending an org's rows to a sink it did not sign for would be a silent re-routing of its telemetry, so those rows become *stranded* instead. They stay stranded until either the old enrollment is restored — at which point they deliver normally — or an administrator runs this command.
+
+The discard is deliberately explicit and deliberately counted. Capacity eviction, corruption, and rollover loss each keep their own durable counter precisely so that none of them can be mistaken for successful delivery.
+
+## Exit behavior
+
+Being unenrolled is **not** an error: all three subcommands print the disabled line and exit `0`. That keeps the command safe to call unconditionally from an operator script without branching on whether a given host holds a seat. A *malformed or expired* enrollment, by contrast, is an error — the distinction is between "this host has no seat" and "this host has a seat that no longer works."
+
+## See also
+
+- [Enterprise telemetry boundary](/docs/telemetry#oxagen-enterprise-managed-export) — enrollment, the exported envelope, and what it structurally cannot contain.
+- [`stella stats`](/docs/commands/stats) — your local, non-managed cost and token metering.
+- [`stella cloud`](/docs/commands/cloud) — the separate `drain` pipe, with its own wire contract and endpoint.

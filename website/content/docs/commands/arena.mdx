@@ -1,0 +1,125 @@
+---
+title: stella arena
+description: The arena-bench harness adapter — run one benchmark episode from a task directory while recording the contextgraph-trace journal the arena runner judges with the protocol's replay oracles.
+---
+
+`stella arena` is Stella's side of the [arena-bench](https://github.com/macanderson/arena-bench) adapter contract. It runs **one benchmark episode** and records a [`contextgraph-trace`](https://github.com/macanderson/context-graph-protocol) journal that the arena runner scores with the Context Graph Protocol's replay oracles.
+
+<Callout type="info">
+This command exists for **benchmarking Stella, not for using it**. If you want to do work, reach for [`stella run`](/docs/commands/run), [`stella goal`](/docs/commands/goal), or [`stella chat`](/docs/commands/chat). Nothing here changes how Stella behaves on a real task — the adapter drives the ordinary one-shot path and only adds a journal alongside it.
+</Callout>
+
+## Synopsis
+
+```bash
+stella arena --task-dir <DIR> --journal <FILE> --state-dir <DIR> [--resume]
+             [--no-pipeline] [--test-command <CMD>]
+```
+
+## What it does
+
+arena-bench invokes an agent with `--task-dir`/`--journal`/`--state-dir`/`[--resume]`, **SIGKILLs it mid-episode on purpose**, re-invokes it, and then judges the journal it recorded. Surviving that is the point of the benchmark, so the adapter is built around one rule: the journal must never claim more than actually happened.
+
+<CardGrid size="md">
+  <SpecCard title="Workspace is the task dir">
+    `--task-dir` *is* the workspace for the episode, and the prompt is read from the `TASK.md`
+    inside it.
+  </SpecCard>
+  <SpecCard title="Journal is written first">
+    Each event is appended to the journal **before** it is admitted to the renderer — one
+    flushed line per event.
+  </SpecCard>
+  <SpecCard title="Memory rides the state dir">
+    `--state-dir` persists across episodes, so the memory arm of the benchmark has somewhere
+    durable to live.
+  </SpecCard>
+  <SpecCard title="Resume declares what it recovered">
+    `--resume` truncates a torn tail, recovers the journal, and states exactly what came back
+    before continuing the same session.
+  </SpecCard>
+</CardGrid>
+
+## Flags
+
+<CardGrid size="md">
+  <OptionCard name="--task-dir <DIR>">
+    The episode workspace. The prompt is read from `TASK.md` inside it. Required.
+  </OptionCard>
+  <OptionCard name="--journal <FILE>">
+    The `contextgraph-trace` journal to append. Crash-safe, one flushed line per event.
+    Required.
+  </OptionCard>
+  <OptionCard name="--state-dir <DIR>">
+    Agent state that persists across episodes — the benchmark's memory arm. Required.
+  </OptionCard>
+  <OptionCard name="--resume">
+    Present when arena-bench re-invokes the adapter after a chaos kill. Recovers the journal,
+    declares what was recovered, and continues the same session.
+  </OptionCard>
+  <OptionCard name="--no-pipeline">
+    Use the raw step-loop instead of the staged pipeline. The
+    [pipeline](/docs/inference-pipeline) is the default here exactly as it is for `stella run`.
+  </OptionCard>
+  <OptionCard name="--test-command <CMD>">
+    Test command for the pipeline's deterministic verify ladder, e.g.
+    `--test-command "cargo test -p my-crate"`.
+  </OptionCard>
+</CardGrid>
+
+## Why the journal is written before the event is admitted
+
+An event the journal did not accept must not be admitted to the run. That ordering is not a performance detail — it is what makes the recording truthful under a kill:
+
+- The recorder appends the trace mapping of an event, **then** enqueues the same event to the renderer. This is the same persist-first boundary the durable stream-json sink uses.
+- A SIGKILL at any byte therefore leaves a **truthful prefix**: the journal may be missing the tail, but it never contains work the run had not committed to.
+- On `--resume`, a torn final line is truncated rather than parsed, and the adapter reports what it recovered instead of silently continuing.
+
+The inverse ordering would produce the one failure the benchmark is designed to catch — a journal asserting an effect the agent never got to perform.
+
+## What the journal records
+
+The adapter maps the live agent event stream onto the trace vocabulary:
+
+<CardGrid size="sm">
+  <SpecCard title="prompt_assembled">
+    From the step manifest. Block identities, digests, and token costs are already content-free,
+    so no prompt text crosses into the journal.
+  </SpecCard>
+  <SpecCard title="The tool loop">
+    Tool start and tool result become the paired tool-loop events.
+  </SpecCard>
+  <SpecCard title="Intended-once effects">
+    Mutating file changes and commits become side effects carrying an **intended-once id**.
+  </SpecCard>
+</CardGrid>
+
+That last one carries the weight of the crash test. The id is derived from the path, the kind, and the diff, so the *same* logical edit replayed after a crash-resume **collides** — which is precisely the bug the effect-exactly-once oracle exists to catch — while a genuinely new edit to the same file carries a new diff and therefore a new id.
+
+## Example
+
+```bash
+# One episode, recording the journal arena-bench will judge.
+stella arena \
+  --task-dir ./episodes/0042 \
+  --journal  ./journals/0042.jsonl \
+  --state-dir ./state/memory-arm
+
+# What arena-bench itself runs after the chaos kill.
+stella arena \
+  --task-dir ./episodes/0042 \
+  --journal  ./journals/0042.jsonl \
+  --state-dir ./state/memory-arm \
+  --resume
+```
+
+<Callout type="info">
+Persistent memory works by linking the workspace's `.stella` store into `--state-dir`, which the
+runner preserves between episodes (and wipes for the `amnesic` arm). A fixture that ships its own
+`.stella` wins — the link is only created when the workspace has none.
+</Callout>
+
+## See also
+
+- [Inference pipeline](/docs/inference-pipeline) — the staged path `--no-pipeline` opts out of.
+- [`stella run`](/docs/commands/run) — the ordinary one-shot path this adapter drives underneath.
+- [arena-bench](https://github.com/macanderson/arena-bench) — the harness that invokes this command.
