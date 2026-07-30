@@ -74,6 +74,8 @@ fn grid_shows_tasks_statuses_last_action_and_header_clocks() {
             event: AgentEvent::FileChange {
                 path: "src/auth/session.rs".into(),
                 kind: FileChangeKind::Modified,
+                added: 2,
+                removed: 1,
                 diff: Some("@@\n+a\n+b\n-c\n".into()),
             },
         },

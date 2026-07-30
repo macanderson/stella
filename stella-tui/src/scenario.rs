@@ -290,6 +290,10 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
             AgentEvent::FileChange {
                 path: "apps/app/automations/page.tsx".into(),
                 kind: FileChangeKind::Modified,
+                // Scripted scenario: the counts come from the fixture diff, so
+                // the demo shows the same numbers a real turn would.
+                added: crate::diff::count_diff_lines(PAGE_DIFF).0,
+                removed: crate::diff::count_diff_lines(PAGE_DIFF).1,
                 diff: Some(PAGE_DIFF.into()),
             },
         ),
@@ -339,6 +343,8 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
             AgentEvent::FileChange {
                 path: "apps/api/routes/v1/automations.ts".into(),
                 kind: FileChangeKind::Created,
+                added: crate::diff::count_diff_lines(TRIGGERS_DIFF).0,
+                removed: crate::diff::count_diff_lines(TRIGGERS_DIFF).1,
                 diff: Some(TRIGGERS_DIFF.into()),
             },
         ),

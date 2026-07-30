@@ -35,6 +35,9 @@ async fn best_of_two_adopts_only_the_winner_and_removes_every_workspace() {
                 Ok(vec![AdoptedChange {
                     path: "src/x.rs".into(),
                     kind: FileChangeKind::Modified,
+                    added: 9,
+                    removed: 4,
+                    diff: Some("@@ -1 +1 @@\n-old\n+new\n".into()),
                 }]),
                 log.clone(),
             )),
@@ -71,14 +74,21 @@ async fn best_of_two_adopts_only_the_winner_and_removes_every_workspace() {
         "every workspace is removed after the run: {log:?}"
     );
     // The adopted paths surface as FileChange events (the session's file
-    // tracking never saw the winner's in-snapshot edits).
+    // tracking never saw the winner's in-snapshot edits) — carrying the delta
+    // the adoption measured, not a bare path. Adopted files used to arrive with
+    // no counts and no diff, so the Files tab showed `+0 -0` for all of them.
     assert!(
         events.iter().any(|e| matches!(
             e,
-            AgentEvent::FileChange { path, kind: FileChangeKind::Modified, .. }
-                if path == "src/x.rs"
+            AgentEvent::FileChange {
+                path,
+                kind: FileChangeKind::Modified,
+                added: 9,
+                removed: 4,
+                diff: Some(_),
+            } if path == "src/x.rs"
         )),
-        "winner adoption must emit FileChange for adopted paths"
+        "winner adoption must emit FileChange carrying the adopted delta: {events:?}"
     );
 }
 

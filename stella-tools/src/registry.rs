@@ -120,6 +120,15 @@ pub struct ToolRegistry {
     /// (a new turn's event channel) replaces — unsubscribes — the previous
     /// observer instead of accumulating stale senders.
     policy_bridge: std::sync::Mutex<Option<stella_core::bus::HookSubscription>>,
+    /// Where [`ToolRegistry::record_touch`] announces file changes, when a host
+    /// attached one. This is the SINGLE emission point for
+    /// `AgentEvent::FileChange`: the recorder already holds the pre- and
+    /// post-images and the authoritative line delta, so anything downstream
+    /// that re-derives a file's `+`/`-` from tool inputs is guessing at data
+    /// that was exact right here. Absent (`None`) on a registry whose changes
+    /// must NOT be announced — a Best-of-N or witness candidate, whose edits
+    /// live in a shadow worktree and are discarded unless adopted.
+    events: std::sync::RwLock<Option<stella_core::EventSender>>,
     process_free: bool,
 }
 
@@ -400,6 +409,7 @@ impl ToolRegistry {
             exploration_coverage,
             bus: std::sync::RwLock::new(None),
             policy_bridge: std::sync::Mutex::new(None),
+            events: std::sync::RwLock::new(None),
             process_free,
         }
     }
@@ -450,6 +460,27 @@ impl ToolRegistry {
     /// The attached hook bus, if any (cheap clone — shared inner).
     fn bus(&self) -> Option<HookBus> {
         self.bus.read().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// Announce this registry's file changes on `events`, as
+    /// `AgentEvent::FileChange` emitted by `record_touch` — the same call that
+    /// writes the ledger, so a surface reading the event stream and a surface
+    /// reading the audit log see identical `+`/`-` numbers.
+    ///
+    /// Call once per turn with that turn's channel; a later call replaces the
+    /// previous sender, so a stale channel is dropped rather than accumulated.
+    /// Leave it unattached on a registry whose edits must not be claimed as the
+    /// user's — a candidate workspace's, until adoption.
+    pub fn attach_events(&self, events: stella_core::EventSender) {
+        *self.events.write().unwrap_or_else(|p| p.into_inner()) = Some(events);
+    }
+
+    /// The attached file-change sender, if any (cheap clone — shared inner).
+    fn events(&self) -> Option<stella_core::EventSender> {
+        self.events
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     /// Enable `graph_query` after a background build or mid-session `/init`;
@@ -1345,16 +1376,22 @@ impl ToolRegistry {
             .filter(|s| !s.is_empty())
             .map(String::from)
             .unwrap_or_else(|| default_reason(pending.op).to_string());
-        let (lines_added, lines_removed) = match pending.op {
-            FileOp::Read => (0, 0),
-            FileOp::Create => (
-                input
+        // Counts and rendered diff come out of the SAME pre/post pair, so the
+        // ledger, the telemetry payload and the TUI describe one reality.
+        let pre = pre_content.as_deref().unwrap_or("");
+        let (lines_added, lines_removed, diff) = match pending.op {
+            FileOp::Read => (0, 0, None),
+            FileOp::Create => {
+                let content = input
                     .get("content")
                     .and_then(|v| v.as_str())
-                    .map(count_lines)
-                    .unwrap_or(0),
-                0,
-            ),
+                    .unwrap_or_default();
+                (
+                    count_lines(content),
+                    0,
+                    crate::file_touch::changed_region_diff("", content),
+                )
+            }
             FileOp::Update => {
                 // write_file carries the post content in its input; edit_file
                 // landed it on disk (mutating tools are never parallelized —
@@ -1371,9 +1408,18 @@ impl ToolRegistry {
                         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
                         .unwrap_or_default(),
                 };
-                line_diff(pre_content.as_deref().unwrap_or(""), &post)
+                let (added, removed) = line_diff(pre, &post);
+                (
+                    added,
+                    removed,
+                    crate::file_touch::changed_region_diff(pre, &post),
+                )
             }
-            FileOp::Delete => (0, pre_content.as_deref().map(count_lines).unwrap_or(0)),
+            FileOp::Delete => (
+                0,
+                count_lines(pre),
+                crate::file_touch::changed_region_diff(pre, ""),
+            ),
         };
         let path = pending.path;
         let (revision, record, total_files) = {
@@ -1418,6 +1464,23 @@ impl ToolRegistry {
                     "total_files": total_files,
                 }),
             );
+        }
+        // The one place a `FileChange` is born. A closed channel (the turn
+        // ended) is not an error worth surfacing: the ledger above is the
+        // durable record, and this is its live projection.
+        if let Some(events) = self.events() {
+            let _ = events.send(stella_protocol::AgentEvent::FileChange {
+                path,
+                kind: match pending.op {
+                    FileOp::Read => stella_protocol::FileChangeKind::Read,
+                    FileOp::Create => stella_protocol::FileChangeKind::Created,
+                    FileOp::Update => stella_protocol::FileChangeKind::Modified,
+                    FileOp::Delete => stella_protocol::FileChangeKind::Deleted,
+                },
+                added: lines_added as u32,
+                removed: lines_removed as u32,
+                diff,
+            });
         }
     }
 
@@ -1604,6 +1667,10 @@ mod fence_tests;
 #[cfg(test)]
 #[path = "registry/gate_batch_tests.rs"]
 mod gate_batch_tests;
+
+#[cfg(test)]
+#[path = "registry/file_change_tests.rs"]
+mod file_change_tests;
 
 #[cfg(test)]
 mod tests {

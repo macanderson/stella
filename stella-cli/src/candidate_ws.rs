@@ -84,7 +84,6 @@ use stella_pipeline::ports::{
     AdoptedChange, CandidateWorkspace, CandidateWorkspacePort, DiagnosticRunner, McpPrefetchPort,
     RepoStatusPort, TestRunner, WorkspaceError,
 };
-use stella_protocol::FileChangeKind;
 
 use stella_tools::RegistryOptions;
 use stella_tools::custom::{CustomTool, CustomToolSet};
@@ -93,7 +92,9 @@ use crate::agent::{
     GitDiagnosticRunner, GitRepoStatus, TypedTestRunner, fs_artifact_identity, fs_fingerprint,
 };
 
+mod adopt;
 mod witness_tools;
+use adopt::{attach_diffs, attach_numstat, conflict_paths_from_stderr, parse_name_status};
 use witness_tools::WitnessToolExecutor;
 
 /// The commit identity for snapshot plumbing commits (which exist only
@@ -711,8 +712,31 @@ impl GitCandidateWorkspace {
             self.baseline.as_str(),
             sealed.as_str(),
         ];
+        let mut numstat_args = vec![
+            "diff",
+            "--numstat",
+            "--no-renames",
+            "-z",
+            self.baseline.as_str(),
+            sealed.as_str(),
+        ];
+        // The patch that is APPLIED is `--binary`, streamed to a file so a huge
+        // one never lands in memory. This one is text and in-memory: it exists
+        // only to slice per-file diffs for display, so it is deliberately a
+        // separate, smaller read.
+        let mut text_args = vec![
+            "diff",
+            "--no-renames",
+            self.baseline.as_str(),
+            sealed.as_str(),
+        ];
         if !exclusions.is_empty() {
-            for args in [&mut name_args, &mut patch_args] {
+            for args in [
+                &mut name_args,
+                &mut patch_args,
+                &mut numstat_args,
+                &mut text_args,
+            ] {
                 args.push("--");
                 args.push(".");
                 args.extend(exclusions.iter().map(String::as_str));
@@ -721,9 +745,18 @@ impl GitCandidateWorkspace {
         let names = git(&self.dir, &name_args)
             .await
             .map_err(|e| fail(e, Vec::new()))?;
-        let changes = parse_name_status(&names);
+        let mut changes = parse_name_status(&names);
         if changes.is_empty() {
             return Ok(Vec::new());
+        }
+        // How much each file moved, and what moved in it. Both best-effort: a
+        // failed measurement leaves `0/0` with no diff, which the Files tab
+        // shows as a changed file of unknown extent — never as an unchanged one.
+        if let Ok(numstat) = git(&self.dir, &numstat_args).await {
+            attach_numstat(&mut changes, &numstat);
+        }
+        if let Ok(text) = git(&self.dir, &text_args).await {
+            attach_diffs(&mut changes, &text);
         }
 
         let patch_file = std::env::temp_dir().join(format!(
@@ -809,53 +842,10 @@ impl CandidateWorkspace for GitCandidateWorkspace {
     }
 }
 
-/// Parse `git diff --name-status --no-renames -z` output — `S\0path\0`
-/// records with statuses A/M/D (renames disabled, so no two-path records).
-fn parse_name_status(raw: &str) -> Vec<AdoptedChange> {
-    let mut parts = raw.split('\0').filter(|s| !s.is_empty());
-    let mut out = Vec::new();
-    while let (Some(status), Some(path)) = (parts.next(), parts.next()) {
-        let kind = match status.chars().next() {
-            Some('A') => FileChangeKind::Created,
-            Some('D') => FileChangeKind::Deleted,
-            _ => FileChangeKind::Modified,
-        };
-        out.push(AdoptedChange {
-            path: path.to_string(),
-            kind,
-        });
-    }
-    out
-}
-
-/// The paths named in `git apply`'s stderr (`error: patch failed:
-/// <path>:<line>`, `error: <path>: <why>`), deduped and sorted. Falls back
-/// to every path in the patch when stderr names none — the adoption error
-/// must always name paths.
-fn conflict_paths_from_stderr(stderr: &str, changes: &[AdoptedChange]) -> Vec<String> {
-    let mut paths: Vec<String> = stderr
-        .lines()
-        .filter_map(|line| {
-            let rest = line.strip_prefix("error: ")?;
-            if let Some(failed) = rest.strip_prefix("patch failed: ") {
-                let path = failed.rsplit_once(':').map(|(p, _)| p).unwrap_or(failed);
-                Some(path.to_string())
-            } else {
-                rest.split_once(':').map(|(p, _)| p.to_string())
-            }
-        })
-        .collect();
-    paths.sort();
-    paths.dedup();
-    if paths.is_empty() {
-        paths = changes.iter().map(|c| c.path.clone()).collect();
-    }
-    paths
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use stella_protocol::FileChangeKind;
 
     #[test]
     fn candidate_port_keeps_the_exact_host_operation_journal() {
@@ -1582,46 +1572,5 @@ mod tests {
         }
         assert_no_candidate_worktrees(&root);
         std::fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    fn name_status_parsing_maps_added_modified_deleted() {
-        let raw = "A\0new.txt\0M\0changed.txt\0D\0gone.txt\0";
-        let parsed = parse_name_status(raw);
-        assert_eq!(
-            parsed,
-            vec![
-                AdoptedChange {
-                    path: "new.txt".into(),
-                    kind: FileChangeKind::Created
-                },
-                AdoptedChange {
-                    path: "changed.txt".into(),
-                    kind: FileChangeKind::Modified
-                },
-                AdoptedChange {
-                    path: "gone.txt".into(),
-                    kind: FileChangeKind::Deleted
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn conflict_paths_are_parsed_from_apply_stderr() {
-        let stderr = "error: patch failed: src/a.rs:12\n\
-                      error: src/a.rs: patch does not apply\n\
-                      error: new.txt: already exists in working directory";
-        let paths = conflict_paths_from_stderr(stderr, &[]);
-        assert_eq!(paths, vec!["new.txt".to_string(), "src/a.rs".to_string()]);
-        // Unparseable stderr falls back to naming every path in the patch.
-        let fallback = conflict_paths_from_stderr(
-            "fatal: unrecognized input",
-            &[AdoptedChange {
-                path: "x.rs".into(),
-                kind: FileChangeKind::Modified,
-            }],
-        );
-        assert_eq!(fallback, vec!["x.rs".to_string()]);
     }
 }

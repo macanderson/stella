@@ -27,7 +27,7 @@ use std::collections::VecDeque;
 pub mod file_state;
 #[cfg(test)]
 pub use file_state::DIFF_HISTORY;
-pub use file_state::{FileState, MAX_TRACKED_FILES};
+pub use file_state::{FileState, MAX_TRACKED_FILES, RememberedDiff};
 
 /// How many characters of a tool input / output summary we retain on a
 /// transcript line before eliding — the full payload is never needed on the
@@ -523,7 +523,15 @@ impl SessionModel {
                     reason: reason.clone(),
                 });
             }
-            AgentEvent::FileChange { path, kind, diff } => self.touch_file(path, *kind, diff),
+            // `added`/`removed` are the ledger's business (`deck::FileLedger`);
+            // this read-model only keeps the diff text for the panel.
+            AgentEvent::FileChange {
+                path,
+                kind,
+                added,
+                removed,
+                diff,
+            } => self.touch_file(path, *kind, *added, *removed, diff),
             AgentEvent::ContextRecall {
                 frames,
                 provider_mix: _,
@@ -842,7 +850,14 @@ impl SessionModel {
     /// A read on an already-tracked path only grows its read count — the
     /// mutation kind, diff, and `changes` (the inline-diff freshness tag)
     /// stay exactly as the last mutation left them.
-    fn touch_file(&mut self, path: &str, kind: FileChangeKind, diff: &Option<String>) {
+    fn touch_file(
+        &mut self,
+        path: &str,
+        kind: FileChangeKind,
+        added: u32,
+        removed: u32,
+        diff: &Option<String>,
+    ) {
         self.file_touch_seq += 1;
         let touched_seq = self.file_touch_seq;
         if let Some(existing) = self.files.iter_mut().find(|f| f.path == path) {
@@ -851,7 +866,9 @@ impl SessionModel {
                 existing.kind = kind;
                 existing.latest_diff = diff.clone();
                 existing.changes += 1;
-                existing.remember_diff(diff);
+                existing.added += added;
+                existing.removed += removed;
+                existing.remember_diff(diff, added, removed);
             } else {
                 existing.reads += 1;
             }
@@ -864,13 +881,15 @@ impl SessionModel {
                 path: path.to_string(),
                 kind,
                 latest_diff: diff.clone(),
+                added: if mutation { added } else { 0 },
+                removed: if mutation { removed } else { 0 },
                 recent_diffs: VecDeque::new(),
                 changes: mutation as u32,
                 reads: !mutation as u32,
                 touched_seq,
             };
             if mutation {
-                state.remember_diff(diff);
+                state.remember_diff(diff, added, removed);
             }
             self.files.push(state);
         }
@@ -1240,11 +1259,15 @@ mod tests {
         model.apply(&AgentEvent::FileChange {
             path: "src/a.rs".into(),
             kind: FileChangeKind::Created,
+            added: 1,
+            removed: 0,
             diff: Some("+first".into()),
         });
         model.apply(&AgentEvent::FileChange {
             path: "src/a.rs".into(),
             kind: FileChangeKind::Modified,
+            added: 1,
+            removed: 0,
             diff: Some("+second".into()),
         });
         assert_eq!(model.files.len(), 1);
@@ -1261,6 +1284,8 @@ mod tests {
         model.apply(&AgentEvent::FileChange {
             path: "src/a.rs".into(),
             kind: FileChangeKind::Read,
+            added: 0,
+            removed: 0,
             diff: None,
         });
         assert_eq!(model.files.len(), 1, "reads appear in the files panel");
@@ -1274,11 +1299,15 @@ mod tests {
         model.apply(&AgentEvent::FileChange {
             path: "src/a.rs".into(),
             kind: FileChangeKind::Modified,
+            added: 1,
+            removed: 0,
             diff: Some("+x".into()),
         });
         model.apply(&AgentEvent::FileChange {
             path: "src/a.rs".into(),
             kind: FileChangeKind::Read,
+            added: 0,
+            removed: 0,
             diff: None,
         });
         let f = &model.files[0];
@@ -1298,6 +1327,8 @@ mod tests {
             model.apply(&AgentEvent::FileChange {
                 path: p.into(),
                 kind: FileChangeKind::Modified,
+                added: 0,
+                removed: 0,
                 diff: None,
             });
         }
@@ -1686,6 +1717,8 @@ mod tests {
             AgentEvent::FileChange {
                 path: "src/lib.rs".into(),
                 kind: FileChangeKind::Modified,
+                added: 1,
+                removed: 1,
                 diff: Some("@@\n-a\n+b".into()),
             },
             AgentEvent::Complete {
