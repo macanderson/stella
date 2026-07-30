@@ -612,13 +612,17 @@ fn build_provider_parts(
     // suggestions, which need the on-disk catalog this crate owns.
     crate::model_catalog::validate_model_slug(provider_config, model_id)?;
 
-    stella_model::factory::build_provider(
-        &provider_config.factory_spec(),
+    // The dialect match itself is `stella_runtime::build_provider`, so the
+    // serve sidecar reaches the same factory without linking this binary.
+    // What stays here is the *synced-catalog* escalation above: it needs the
+    // on-disk catalog this crate owns, and a server has none (#971).
+    stella_runtime::build_provider(&provider_config.runtime_parts(
         model_id,
         api_key,
         effective_base_url,
         base_url_override,
-    )
+    ))
+    .map_err(|error| error.to_string())
 }
 
 /// Cross-family grouping key for judge selection. Same-vendor providers must
