@@ -254,7 +254,7 @@ fd|repo|repo convention: fd over find|brew|fd
 jq|repo|lets --agent-settings merge into an existing file instead of replacing it|brew|jq
 cargo-watch|opt|make watch / watch-core / watch-lint (hard-errors without it)|cargo|cargo-watch
 docker|opt|make serve-image + scripts/smoke-serve-image.sh|manual|
-node|opt|make llms-txt and the website/ docs build|brew|node
+node|opt|the website/ docs build|brew|node
 pnpm|opt|website/ uses pnpm exclusively (never npm)|brew|pnpm
 uv|opt|make bench-test (bench/harbor_adapter, bench/terminal_bench_analysis)|brew|uv
 gsed|opt|scripts/release.sh + release.yml use GNU-only sed ranges; BSD sed no-ops them|brew|gnu-sed
