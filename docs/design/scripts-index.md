@@ -30,7 +30,7 @@ the `stella graph` subcommand:
    the canonical `stella-tools/src/catalog.rs` (which `custom::RESERVED_NAMES`
    now aliases).
 3. **CLI** — `stella scripts list` / `stella scripts run <id> [-- args]`,
-   mirroring the `Graph` subcommand (`stella-cli/src/main.rs:238`), offline
+   mirroring the `Graph` subcommand (`stella-cli/src/main.rs:484`), offline
    (short-circuits before provider resolution).
 
 The detection core lives in a new `stella-tools/src/scripts.rs` and

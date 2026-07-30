@@ -1549,6 +1549,19 @@ fn tab_shortcuts(tab: DeckTab) -> &'static [(&'static str, &'static str)] {
             ("←", "SESSIONS overlay — every session on this machine"),
             ("→", "CONTEXT overlay — active skills + MCP servers"),
             ("ctrl-g", "INSPECT — the context sent on any recorded call"),
+            // The overlay had no row for answering a card at all, while the
+            // global `⏎` row below promised the prompt would "run as its own
+            // agent" — so a reviewer typing at a scope card had every reason to
+            // expect the sidecar they got. Both halves are documented now.
+            (
+                "a / t / x",
+                "scope card: approve · trim · abort — type it, then ⏎",
+            ),
+            (
+                "text ⏎",
+                "scope card: what to change — the plan is re-planned from it",
+            ),
+            ("esc", "scope card: abort it (the one key that acts alone)"),
         ],
         DeckTab::Agents => &[
             ("← →", "switch panes — executions / installed"),
@@ -1620,7 +1633,13 @@ const GLOBAL_SHORTCUTS: &[(&str, &str)] = &[
     // `composer::classify_enter`): a bare ⏎ dispatches, a *modified* ⏎ breaks
     // the line. The composer footer advertises the same pair — these rows must
     // not drift from it.
-    ("⏎", "queue the prompt — mid-turn it runs as its own agent"),
+    // The parenthetical is load-bearing: the unqualified promise ("runs as its
+    // own agent") is what a reviewer read while a scope card was waiting, and
+    // the sidecar it describes is exactly what swallowed their answer.
+    (
+        "⏎",
+        "queue the prompt — mid-turn it runs as its own agent (unless a card waits)",
+    ),
     ("⌘⏎ / ⌃⏎ / ⌥⏎", "insert a line break in the prompt"),
     ("!cmd", "run a shell command NOW (skips the queue)"),
     ("/", "slash commands — ↑↓ pick · tab completes · ⏎ runs"),

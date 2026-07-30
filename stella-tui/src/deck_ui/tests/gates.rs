@@ -39,8 +39,6 @@ fn a_typed_note_at_a_scope_card_answers_the_card_instead_of_spawning_a_sidecar()
     let mut ui = ready_ui();
     ingest_inbound(&scope_card(), &mut model, &mut ui);
 
-    // Opens with 'o', not a decision key — see the sharp-edge note in
-    // `handle_focused_gates` about a/t/x claiming the first keystroke.
     type_str("only the ctrl+O dialog", &model, &mut ui);
     let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
 
@@ -154,25 +152,74 @@ fn a_whitespace_only_note_keeps_the_card_up() {
     assert!(!ui.scope_answered.contains("lead"));
 }
 
-/// The rule the decision keys already followed must survive: once text exists,
-/// a/t/x are prompt characters. Only the first keystroke into an empty composer
-/// commits (see the sharp-edge note in `handle_focused_gates`).
+/// No letter answers the card, from any composer state — the rule that lets a
+/// note begin with any word at all. `a`/`t`/`x` are ordinary prompt characters,
+/// and a card that claimed them from a live text field turned a note opening
+/// "also do X" into a silent approve of an eight-step plan.
 #[test]
-fn decision_letters_type_into_a_non_empty_composer() {
+fn no_bare_letter_answers_the_scope_card() {
     let mut model = model_with(&["lead"]);
     let mut ui = ready_ui();
     ingest_inbound(&scope_card(), &mut model, &mut ui);
 
-    type_str("keep", &model, &mut ui);
+    // From an EMPTY composer — the keystroke that used to commit.
     for c in ['a', 't', 'x'] {
         assert_eq!(
             handle_deck_key(ch(c), &model, &mut ui),
             DeckAction::Handled,
-            "{c} must type once a note is being written"
+            "{c} types; it must not answer the card on its own"
         );
     }
-    assert_eq!(ui.composer.buffer(), "keepatx");
+    assert_eq!(ui.composer.buffer(), "atx");
     assert!(!ui.scope_answered.contains("lead"));
+}
+
+/// The case that named the rule: "also do the tests" is a revision, and its
+/// first letter used to approve the plan it was arguing with.
+#[test]
+fn a_note_opening_with_a_decision_letter_is_a_revision_not_an_approval() {
+    let mut model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ingest_inbound(&scope_card(), &mut model, &mut ui);
+
+    type_str("also do the tests", &model, &mut ui);
+    assert_eq!(
+        handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::ToAgent {
+            agent: "lead".into(),
+            input: UserInput::ScopeDecision(ScopeDecision::Revise {
+                note: "also do the tests".into()
+            }),
+        })
+    );
+}
+
+/// `Esc` is the one key that still acts alone — it cannot collide with prose,
+/// and it stops work rather than starting it. It means the same thing with a
+/// half-typed note in the composer: without that, "type a note, change your
+/// mind, press Esc" fell past the card into the turn-stop chain, which for a
+/// pipeline turn is a *hard cancel* — the same gesture ending the turn cleanly
+/// or violently depending on whether the user had started typing.
+#[test]
+fn esc_aborts_the_card_whether_or_not_a_note_is_half_typed() {
+    let abort = DeckAction::Send(WorkspaceInput::ToAgent {
+        agent: "lead".into(),
+        input: UserInput::ScopeDecision(ScopeDecision::Abort),
+    });
+
+    let mut model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ingest_inbound(&scope_card(), &mut model, &mut ui);
+    assert_eq!(handle_deck_key(key(KeyCode::Esc), &model, &mut ui), abort);
+
+    let mut ui = ready_ui();
+    ingest_inbound(&scope_card(), &mut model, &mut ui);
+    type_str("only the dial", &model, &mut ui);
+    assert_eq!(
+        handle_deck_key(key(KeyCode::Esc), &model, &mut ui),
+        abort,
+        "a half-typed note must not turn Esc into a turn cancel"
+    );
 }
 
 /// With no card pending, a submission is still a prompt — the sidecar path is
