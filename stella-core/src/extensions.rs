@@ -18,6 +18,13 @@
 //! `~/.stella/{commands,agents}/`. Files are flat `<slug>.md`; the
 //! frontmatter `name:` overrides the filename stem.
 //!
+//! Commands additionally accept **TOML** (`<slug>.toml`,
+//! [`command_from_toml`]) and **namespaces** — `commands/vercel/deploy.toml`
+//! is `/vercel:deploy`. The two formats carry the same fields and produce the
+//! same [`CommandDef`]: TOML is a spelling, not a feature tier, so a workspace
+//! may hold both and converting one to the other changes nothing about what
+//! the command does.
+//!
 //! # Adoption from other agents' directories (the sync plan)
 //!
 //! Ecosystem tools already maintain `.claude/{commands,skills,agents}` and
@@ -34,15 +41,17 @@
 //!      user-authored or linked by a previous init — is skipped, so the sync
 //!      is idempotent and hand-written definitions always win.
 //!   3. **Never link something the loader can't read.** A directory entry
-//!      without the kind's nested definition file (`<slug>/COMMAND.md`,
-//!      `<slug>/SKILL.md`, `<slug>/AGENT.md`) — e.g. a *namespace* directory
-//!      like `.claude/commands/vercel/` holding `deploy.md` (the
-//!      `/vercel:deploy` convention some agents use) — has nothing the
-//!      loader reads: the CLI's `read_definition_files` deliberately, and
-//!      silently, skips a directory with no nested file. Linking it would
+//!      without the kind's nested definition file (`<slug>/SKILL.md`,
+//!      `<slug>/AGENT.md`) has nothing the loader reads; linking it would
 //!      create a symlink that does nothing, with no diagnostic anywhere.
-//!      Loading namespaced commands as `/ns:name` is a separate feature
-//!      decision, not this rule's concern.
+//!
+//!      **Commands are now the exception.** A directory like
+//!      `.claude/commands/vercel/` holding `deploy.md` is a *namespace*, and
+//!      the CLI's `read_command_files` loads its children as
+//!      `/vercel:deploy`. It used to be unloadable purely because nothing
+//!      read it (issue #104), so the rule and the reality have swapped: such
+//!      a directory is adopted. Skills and agents have no namespace syntax
+//!      and keep the stricter test.
 //!
 //! # No I/O in this module
 //!
@@ -87,18 +96,55 @@ impl ExtensionKind {
 // Definitions + parsing
 
 /// A custom slash command: a prompt template invoked as `/name`.
+///
+/// Authored as markdown-with-frontmatter (`<slug>.md`) or as TOML
+/// (`<slug>.toml`, [`command_from_toml`]). The two formats carry exactly the
+/// same fields and produce the same `CommandDef` — TOML is a spelling, not a
+/// feature tier, so nothing is gained or lost by converting and a workspace
+/// can hold both.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandDef {
-    /// The bare command name, **without** the leading slash (frontmatter
-    /// `name:` or the filename stem). `/`-prefixed on display.
+    /// The bare command name, **without** the leading slash and **without**
+    /// any namespace (frontmatter `name:` or the filename stem).
     pub name: String,
-    /// Menu description — frontmatter `description:`, falling back to the
-    /// body's first line (see `fallback_description`).
+    /// The containing subdirectory, when the definition lives one level down
+    /// (`commands/vercel/deploy.toml` → `Some("vercel")`), making the command
+    /// `/vercel:deploy`. See [`Self::invocation`].
+    pub namespace: Option<String>,
+    /// Menu description — `description:`, falling back to the body's first
+    /// line (see `fallback_description`).
     pub description: String,
-    /// The markdown body: the prompt template ([`expand_command`]).
+    /// What the argument slot expects, shown in the slash menu next to the
+    /// name (`<pr-number>`). Documentation only — nothing validates against
+    /// it, because a command that refuses to run on a shape its author did not
+    /// anticipate is worse than one that passes the text through.
+    pub argument_hint: Option<String>,
+    /// Tools this command's turn may use. `None` places no restriction; see
+    /// [`parse_toolbelt`] for the accepted spellings.
+    pub allowed_tools: Option<Vec<String>>,
+    /// A model pin for this command's turn (`provider/model_id`). `None` runs
+    /// on the session's model.
+    pub model: Option<String>,
+    /// Whether the model may invoke this command itself, as opposed to the
+    /// user typing it. Defaults to `true`; `disable-model-invocation = true`
+    /// turns it off for commands that should only ever be deliberate.
+    pub model_invocable: bool,
+    /// The prompt template ([`expand_command`]) — the markdown body, or the
+    /// TOML `prompt` key.
     pub body: String,
     /// The file this was loaded from.
     pub source_path: String,
+}
+
+impl CommandDef {
+    /// How the user types it, without the leading slash: `deploy`, or
+    /// `vercel:deploy` when namespaced.
+    pub fn invocation(&self) -> String {
+        match &self.namespace {
+            Some(ns) => format!("{ns}:{}", self.name),
+            None => self.name.clone(),
+        }
+    }
 }
 
 /// A custom agent definition: a persona with a system-prompt-shaped body.
@@ -130,6 +176,11 @@ pub enum ExtensionProblem {
     MissingName,
     /// The markdown body is empty — a template/persona with no content.
     EmptyBody,
+    /// A `.toml` definition that is not parseable TOML. Markdown has no
+    /// equivalent: frontmatter parsing is tolerant by design, but a TOML file
+    /// either parses or does not, and guessing at a broken one would load a
+    /// command whose author cannot tell it is broken.
+    Malformed,
 }
 
 /// A malformed definition file, skipped during loading (never fatal).
@@ -151,7 +202,10 @@ fn name_from_path(path: &str, nested_file: &str) -> String {
     if base.eq_ignore_ascii_case(nested_file) {
         return path.rsplit('/').nth(1).unwrap_or("").to_string();
     }
-    base.strip_suffix(".md").unwrap_or(base).to_string()
+    base.strip_suffix(".md")
+        .or_else(|| base.strip_suffix(".toml"))
+        .unwrap_or(base)
+        .to_string()
 }
 
 /// A one-line description from a body when the frontmatter has none: the
@@ -221,13 +275,115 @@ fn definition_from_file(
 /// is optional (many ecosystem command files carry only a body), falling
 /// back to the body's first line.
 pub fn command_from_file(path: &str, raw: &str) -> Result<CommandDef, ExtensionDiagnostic> {
-    let (_fm, name, description, body) = definition_from_file(path, raw, "COMMAND.md")?;
+    let (fm, name, description, body) = definition_from_file(path, raw, "COMMAND.md")?;
+    let get = |key: &str| fm.data.get(key).map(String::as_str);
     Ok(CommandDef {
         name,
+        namespace: None,
         description,
+        argument_hint: trimmed(get("argument-hint").or_else(|| get("argument_hint"))),
+        allowed_tools: parse_toolbelt(get("allowed-tools").or_else(|| get("allowed_tools"))),
+        model: trimmed(get("model")),
+        // Absent means invocable: the field exists to REMOVE a capability, so
+        // an unparseable value must not be read as the removal.
+        model_invocable: !get("disable-model-invocation")
+            .or_else(|| get("disable_model_invocation"))
+            .is_some_and(truthy),
         body,
         source_path: path.to_string(),
     })
+}
+
+/// Parse one TOML command file.
+///
+/// The same fields as the markdown form, spelled as keys, with the body under
+/// `prompt`. Kebab-case matches the frontmatter names contributors already
+/// know from the markdown files (and from the wider ecosystem); the
+/// snake_case spellings are accepted too so nobody loses a command to a
+/// plausible guess.
+///
+/// TOML earns its place on the fields markdown frontmatter is bad at:
+/// `allowed-tools` is a real array rather than a comma-string that four
+/// different quoting styles have to be normalized out of, and `prompt` is a
+/// multi-line string with no delimiter that the body could accidentally
+/// contain.
+pub fn command_from_toml(path: &str, raw: &str) -> Result<CommandDef, ExtensionDiagnostic> {
+    let diag = |problem| ExtensionDiagnostic {
+        path: path.to_string(),
+        problem,
+    };
+    let table: toml::Table = raw.parse().map_err(|_| diag(ExtensionProblem::Malformed))?;
+
+    let str_at = |key: &str, alt: &str| {
+        table
+            .get(key)
+            .or_else(|| table.get(alt))
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+
+    let name = str_at("name", "name").unwrap_or_else(|| name_from_path(path, "COMMAND.toml"));
+    if name.trim().is_empty() {
+        return Err(diag(ExtensionProblem::MissingName));
+    }
+    let body = str_at("prompt", "body").unwrap_or_default();
+    if body.is_empty() {
+        return Err(diag(ExtensionProblem::EmptyBody));
+    }
+
+    // An array is the native shape, but a bare string is accepted so a
+    // hand-converted frontmatter line still loads.
+    let allowed_tools = match table
+        .get("allowed-tools")
+        .or_else(|| table.get("allowed_tools"))
+    {
+        Some(toml::Value::Array(items)) => {
+            let joined = items
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .collect::<Vec<_>>()
+                .join(",");
+            parse_toolbelt(Some(joined.as_str()))
+        }
+        Some(toml::Value::String(s)) => parse_toolbelt(Some(s.as_str())),
+        _ => None,
+    };
+
+    Ok(CommandDef {
+        description: str_at("description", "description")
+            .unwrap_or_else(|| fallback_description(&body)),
+        argument_hint: str_at("argument-hint", "argument_hint"),
+        allowed_tools,
+        model: str_at("model", "model"),
+        model_invocable: !table
+            .get("disable-model-invocation")
+            .or_else(|| table.get("disable_model_invocation"))
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(false),
+        name,
+        namespace: None,
+        body,
+        source_path: path.to_string(),
+    })
+}
+
+/// A frontmatter value that means "yes". Narrow on purpose: this only ever
+/// gates `disable-model-invocation`, where anything unrecognized must leave
+/// the capability in place.
+fn truthy(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "true" | "yes" | "on" | "1"
+    )
+}
+
+fn trimmed(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 /// Parse a frontmatter `tools:` value into the toolbelt grant. `None` means
@@ -286,8 +442,11 @@ pub const ARGUMENTS_PLACEHOLDER: &str = "$ARGUMENTS";
 /// (the ecosystem convention, so plain prompt files still take arguments).
 pub fn expand_command(body: &str, args: &str) -> String {
     let args = args.trim();
-    if body.contains(ARGUMENTS_PLACEHOLDER) {
-        return body.replace(ARGUMENTS_PLACEHOLDER, args);
+    let positional = positional_fields(args);
+    let has_positional = (1..=MAX_POSITIONAL).any(|i| body.contains(&format!("${i}")));
+
+    if body.contains(ARGUMENTS_PLACEHOLDER) || has_positional {
+        return substitute(body, args, &positional);
     }
     if args.is_empty() {
         body.to_string()
@@ -296,17 +455,99 @@ pub fn expand_command(body: &str, args: &str) -> String {
     }
 }
 
+/// Replace every placeholder in `body` in ONE left-to-right pass.
+///
+/// A pass per placeholder — `body.replace("$ARGUMENTS", …)` then a loop over
+/// `$1`..`$9` — rescans text it just substituted, so an argument containing
+/// `$1` gets expanded a second time and a user asking about `$1 today` has
+/// their prompt silently rewritten. Substituted text must never be a
+/// substitution target, and the only way to guarantee that is to emit it and
+/// move on.
+fn substitute(body: &str, args: &str, positional: &[&str]) -> String {
+    let mut out = String::with_capacity(body.len() + args.len());
+    let mut rest = body;
+    while let Some(at) = rest.find('$') {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        if let Some(after) = tail.strip_prefix(ARGUMENTS_PLACEHOLDER) {
+            out.push_str(args);
+            rest = after;
+            continue;
+        }
+        // `$1`..`$9`. A `$` followed by anything else — `$10`, `$0`, `$foo`, a
+        // bare `$` — is literal text the author wrote, and is emitted as-is.
+        let field = tail
+            .as_bytes()
+            .get(1)
+            .filter(|b| b.is_ascii_digit() && **b != b'0')
+            .map(|b| (*b - b'0') as usize);
+        match field {
+            Some(i) => {
+                out.push_str(positional.get(i - 1).copied().unwrap_or(""));
+                rest = &tail[2..];
+            }
+            None => {
+                out.push('$');
+                rest = &tail[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The highest positional field a body may reference (`$1`..`$9`) — the
+/// ecosystem's range, and past it `$10` would be ambiguous with `$1` followed
+/// by a literal `0`.
+const MAX_POSITIONAL: usize = 9;
+
+/// Split argument text into positional fields on whitespace, honoring double
+/// quotes so a single argument can contain spaces (`/deploy "my app" prod`).
+///
+/// Returns borrowed slices of `args`; a quoted field yields the text between
+/// the quotes. Unterminated quotes take the rest of the line rather than
+/// erroring — a command should still run when a user forgets a closing quote.
+fn positional_fields(args: &str) -> Vec<&str> {
+    let mut fields = Vec::new();
+    let bytes = args.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+        if bytes[i] == b'"' {
+            i += 1;
+            let start = i;
+            while i < bytes.len() && bytes[i] != b'"' {
+                i += 1;
+            }
+            fields.push(&args[start..i]);
+            i += 1; // past the closing quote (or harmlessly past the end)
+        } else {
+            let start = i;
+            while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            fields.push(&args[start..i]);
+        }
+    }
+    fields
+}
+
 // Name-merged loading (user-global, then workspace — workspace wins)
 
 /// Merge definitions by `key`, later entries overriding earlier ones while
 /// keeping the first-seen ordering position — the same semantics as
 /// [`crate::skills::load_skills`], so "workspace beats user-global" works by
 /// passing user-scope definitions first.
-pub fn merge_by_name<T>(items: Vec<T>, key: impl Fn(&T) -> &str) -> Vec<T> {
+pub fn merge_by_name<T>(items: Vec<T>, key: impl Fn(&T) -> String) -> Vec<T> {
     let mut order: Vec<String> = Vec::new();
     let mut by_name: std::collections::HashMap<String, T> = std::collections::HashMap::new();
     for item in items {
-        let name = key(&item).to_string();
+        let name = key(&item);
         if !by_name.contains_key(&name) {
             order.push(name.clone());
         }
@@ -495,6 +736,142 @@ mod tests {
         assert!(cmd.body.contains("$ARGUMENTS"));
     }
 
+    /// The witness for the whole format: TOML is a *spelling*, not a feature
+    /// tier. The same command authored either way must produce byte-identical
+    /// fields, or converting a library silently changes what the commands do.
+    #[test]
+    fn the_two_formats_parse_to_the_same_command() {
+        let md = "---\n\
+             name: review-pr\n\
+             description: Review a pull request\n\
+             argument-hint: <pr-number>\n\
+             allowed-tools: read_file, grep\n\
+             model: anthropic/claude-fable-5\n\
+             disable-model-invocation: true\n\
+             ---\n\
+             Review PR $1.";
+        let toml_src = "\
+             name = \"review-pr\"\n\
+             description = \"Review a pull request\"\n\
+             argument-hint = \"<pr-number>\"\n\
+             allowed-tools = [\"read_file\", \"grep\"]\n\
+             model = \"anthropic/claude-fable-5\"\n\
+             disable-model-invocation = true\n\
+             prompt = \"Review PR $1.\"\n";
+
+        let from_md = command_from_file("/ws/.stella/commands/review-pr.md", md).unwrap();
+        let from_toml = command_from_toml("/ws/.stella/commands/review-pr.toml", toml_src).unwrap();
+
+        assert_eq!(from_md.name, from_toml.name);
+        assert_eq!(from_md.description, from_toml.description);
+        assert_eq!(from_md.argument_hint, from_toml.argument_hint);
+        assert_eq!(from_md.allowed_tools, from_toml.allowed_tools);
+        assert_eq!(from_md.model, from_toml.model);
+        assert_eq!(from_md.model_invocable, from_toml.model_invocable);
+        assert_eq!(from_md.body, from_toml.body);
+        assert_eq!(
+            from_md.allowed_tools,
+            Some(vec!["read_file".to_string(), "grep".to_string()])
+        );
+        assert!(!from_md.model_invocable);
+    }
+
+    #[test]
+    fn a_command_without_the_new_fields_keeps_every_capability() {
+        let cmd = command_from_file("/ws/.stella/commands/ship.md", "Ship it.").unwrap();
+        assert_eq!(cmd.argument_hint, None);
+        assert_eq!(cmd.allowed_tools, None, "no key means no restriction");
+        assert_eq!(cmd.model, None);
+        assert!(
+            cmd.model_invocable,
+            "the flag exists to REMOVE a capability; absence must not remove it"
+        );
+    }
+
+    /// An unparseable TOML file is a named diagnostic, never a half-loaded
+    /// command — frontmatter can afford to be tolerant, TOML cannot.
+    #[test]
+    fn malformed_toml_is_reported_rather_than_guessed_at() {
+        let err = command_from_toml("/ws/.stella/commands/broken.toml", "name = \"x\"\nprompt =")
+            .unwrap_err();
+        assert_eq!(err.problem, ExtensionProblem::Malformed);
+        assert_eq!(err.path, "/ws/.stella/commands/broken.toml");
+    }
+
+    #[test]
+    fn a_toml_command_falls_back_to_the_filename_stem_and_first_line() {
+        let cmd =
+            command_from_toml("/ws/.stella/commands/deploy.toml", "prompt = \"Ship it.\"").unwrap();
+        assert_eq!(cmd.name, "deploy");
+        assert_eq!(cmd.description, "Ship it.");
+    }
+
+    #[test]
+    fn a_namespaced_command_is_typed_with_its_prefix() {
+        let mut cmd =
+            command_from_toml("/ws/.stella/commands/vercel/deploy.toml", "prompt = \"Go\"")
+                .unwrap();
+        assert_eq!(cmd.invocation(), "deploy");
+        cmd.namespace = Some("vercel".to_string());
+        assert_eq!(cmd.invocation(), "vercel:deploy");
+        assert_eq!(cmd.name, "deploy", "the bare name keeps no prefix");
+    }
+
+    // ---- expansion ----
+
+    #[test]
+    fn positional_fields_substitute_in_order() {
+        assert_eq!(
+            expand_command("PR $1 in $2", "142 stella"),
+            "PR 142 in stella"
+        );
+    }
+
+    #[test]
+    fn a_quoted_argument_stays_one_field() {
+        assert_eq!(
+            expand_command("deploy $1 to $2", "\"my app\" prod"),
+            "deploy my app to prod"
+        );
+    }
+
+    /// An unsupplied field empties rather than leaving `$3` in the prompt —
+    /// a literal placeholder reaching the model reads as an instruction.
+    #[test]
+    fn an_unsupplied_positional_empties() {
+        assert_eq!(expand_command("[$1][$2][$3]", "one"), "[one][][]");
+    }
+
+    /// `$ARGUMENTS` is substituted before the positionals, so argument text
+    /// that itself contains `$1` is passed through, never re-expanded.
+    #[test]
+    fn argument_text_is_never_expanded_a_second_time() {
+        assert_eq!(
+            expand_command("all: $ARGUMENTS", "cost is $1 today"),
+            "all: cost is $1 today"
+        );
+    }
+
+    /// Only `$1`..`$9` are fields. A `$` in front of anything else is text the
+    /// author wrote — a price, a shell variable, a regex — and passing it
+    /// through unchanged is the difference between a template and a mangler.
+    #[test]
+    fn a_dollar_that_is_not_a_field_is_left_alone() {
+        assert_eq!(
+            expand_command("$10 and $0 and $foo and $ — $1", "one two"),
+            "one0 and $0 and $foo and $ — one",
+            "$10 is $1 followed by a literal 0; the rest are untouched"
+        );
+    }
+
+    #[test]
+    fn a_body_with_no_placeholder_still_takes_arguments() {
+        assert_eq!(
+            expand_command("Review it.", "the PR"),
+            "Review it.\n\nthe PR"
+        );
+    }
+
     #[test]
     fn command_name_falls_back_to_the_filename_stem() {
         let cmd = command_from_file("/ws/.stella/commands/review-pr.md", "Review the PR.").unwrap();
@@ -681,7 +1058,7 @@ mod tests {
     #[test]
     fn merge_by_name_lets_later_entries_override_earlier_ones_in_place() {
         let items = vec![("a", 1), ("b", 2), ("a", 3)];
-        let merged = merge_by_name(items, |i| i.0);
+        let merged = merge_by_name(items, |i| i.0.to_string());
         assert_eq!(merged, vec![("a", 3), ("b", 2)]);
     }
 
