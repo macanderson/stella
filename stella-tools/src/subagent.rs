@@ -34,12 +34,18 @@
 //!
 //! # Spend
 //!
-//! The child's cost is pushed to a [`SubAgentSpendLedger`] the registry
-//! exposes through `ToolExecutor::drain_sub_agent_spend_usd`, which the
-//! engine folds into the parent's budget at the next step boundary. That
-//! ordering is what keeps `--budget` a hard ceiling: a tool cannot charge
-//! the guard directly, because the engine holds it mutably for the whole
-//! turn.
+//! The dispatcher pushes each child's cost to the
+//! [`SubAgentSpendLedger`](stella_core::subagent::SubAgentSpendLedger) the
+//! registry exposes through `ToolExecutor::drain_sub_agent_spend_usd`, which
+//! the engine folds into the parent's budget at the next step boundary. That
+//! ordering is what keeps `--budget` a hard ceiling: a tool cannot charge the
+//! guard directly, because the engine holds it mutably for the whole turn.
+//!
+//! This tool deliberately does **not** charge. It used to, on the line after
+//! `dispatch().await` — which never runs when the parent's turn is hard
+//! cancelled mid-call, leaving a child's real spend in no ledger at all.
+//! Settling belongs to whoever is still running when that happens, which is
+//! the child's own thread.
 //!
 //! # Interruption
 //!
@@ -55,9 +61,7 @@ use std::sync::{Arc, RwLock};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use stella_core::ports::TurnControls;
-use stella_core::subagent::{
-    SubAgentDispatcher, SubAgentOutcome, SubAgentSpec, SubAgentSpendLedger, push_sub_agent_spend,
-};
+use stella_core::subagent::{SubAgentDispatcher, SubAgentOutcome, SubAgentSpec};
 use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 use crate::registry::Tool;
@@ -141,13 +145,12 @@ const CHILD_SYSTEM_PROMPT: &str = "You are a research sub-agent. You have been g
 /// `task` — delegate a bounded research question to a read-only sub-agent.
 pub struct SpawnSubAgent {
     dispatcher: DispatcherSlot,
-    spend: SubAgentSpendLedger,
 }
 
 impl SpawnSubAgent {
     #[must_use]
-    pub fn new(dispatcher: DispatcherSlot, spend: SubAgentSpendLedger) -> Self {
-        Self { dispatcher, spend }
+    pub fn new(dispatcher: DispatcherSlot) -> Self {
+        Self { dispatcher }
     }
 }
 
@@ -237,11 +240,11 @@ impl Tool for SpawnSubAgent {
             ..SubAgentSpec::default()
         };
 
+        // Already settled by the time this resolves — the dispatcher charges
+        // the ledger from the child's own thread, which is the only place
+        // that still runs when a hard cancel means this `await` never
+        // resumes. Charging here too would double-bill.
         let outcome = dispatcher.dispatch(spec).await;
-        // Push before rendering: the money is owed whatever the outcome, and
-        // an early return that skipped this would silently drop it from the
-        // parent's budget.
-        push_sub_agent_spend(&self.spend, outcome.cost_usd());
         render(&outcome)
     }
 }
