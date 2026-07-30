@@ -158,6 +158,37 @@ pub(super) fn event_sender_for_run(
     (EventSender::new(sender), false)
 }
 
+/// The sender the pipeline itself emits on, for a one-shot run.
+///
+/// On `stream-json` the caller emits its own terminal `Complete` once
+/// reflection and accounting have settled, carrying the all-calls total — so
+/// the pipeline's earlier, pre-reflection one is dropped here rather than left
+/// to be "replaced" downstream. It never was replaced anywhere it mattered:
+/// the renderer only ever *displayed* the last `Complete`, but the durable
+/// JSONL sink appends every event it is handed, so both landed in the
+/// benchmark evidence file and a consumer that stopped at the first terminal
+/// event read the pre-reflection cost (#960).
+///
+/// Suppression is exactly as wide as the replacement. The pipeline emits
+/// `Complete` only on an `Ok` outcome, and the one-shot path sends its
+/// replacement for every `Ok` outcome, so a run that had a terminal event
+/// before still has exactly one — never zero.
+///
+/// Every other format keeps the pipeline's `Complete`: it is the only one they
+/// get.
+pub(super) fn pipeline_event_sender(events: &EventSender, format: OutputFormat) -> EventSender {
+    if format != OutputFormat::StreamJson {
+        return events.clone();
+    }
+    let inner = events.clone();
+    EventSender::from_fn(move |event| {
+        if matches!(event, AgentEvent::Complete { .. }) {
+            return Ok(());
+        }
+        inner.send(event)
+    })
+}
+
 fn ordered_durable_event_sender(
     sender: mpsc::UnboundedSender<AgentEvent>,
     path: std::path::PathBuf,
@@ -216,6 +247,66 @@ pub(super) fn is_truthy_env_value(value: &str) -> bool {
         value.trim().to_ascii_lowercase().as_str(),
         "1" | "true" | "yes" | "on"
     )
+}
+
+#[cfg(test)]
+mod pipeline_sender_tests {
+    use super::*;
+
+    fn drain(format: OutputFormat) -> Vec<AgentEvent> {
+        let (raw, mut rx) = mpsc::unbounded_channel();
+        let events = EventSender::new(raw);
+        let pipeline = pipeline_event_sender(&events, format);
+        pipeline
+            .send(AgentEvent::Text { delta: "hi".into() })
+            .unwrap();
+        pipeline
+            .send(AgentEvent::Complete {
+                model: "m".into(),
+                cost_usd: 1.0,
+            })
+            .unwrap();
+        drop(pipeline);
+        drop(events);
+        let mut seen = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            seen.push(event);
+        }
+        seen
+    }
+
+    /// #960's second defect. The one-shot path emits its own terminal
+    /// `Complete` after reflection, carrying the all-calls total. The renderer
+    /// only ever *displayed* the last one — but the durable JSONL sink appends
+    /// every event it is handed, so both landed in the benchmark evidence file
+    /// and a consumer that stopped at the first terminal event read the
+    /// pre-reflection cost. Suppressing it at the sender is what makes "one
+    /// run, one terminal event" true of the durable record too.
+    #[test]
+    fn stream_json_suppresses_the_pipelines_own_terminal_event() {
+        let seen = drain(OutputFormat::StreamJson);
+        assert!(
+            !seen
+                .iter()
+                .any(|e| matches!(e, AgentEvent::Complete { .. })),
+            "the pipeline's Complete must not reach the sink: {seen:?}"
+        );
+        assert_eq!(seen.len(), 1, "everything else passes through: {seen:?}");
+    }
+
+    /// Suppression is exactly as wide as the replacement. Text and JSON get no
+    /// second terminal event, so taking theirs away would leave them none.
+    #[test]
+    fn every_other_format_keeps_the_pipelines_terminal_event() {
+        for format in [OutputFormat::Text, OutputFormat::Json] {
+            let seen = drain(format);
+            assert!(
+                seen.iter()
+                    .any(|e| matches!(e, AgentEvent::Complete { .. })),
+                "{format:?} has only this one terminal event: {seen:?}"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
