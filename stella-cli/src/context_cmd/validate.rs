@@ -55,7 +55,13 @@ pub fn run_list(root: &Path, json: bool) -> Result<(), String> {
     println!();
     for entry in &registry.entries {
         let force = force_of(&registry, entry);
-        let channel = if entry.disposition.forces_volatile() {
+        // The channel is what the record actually reaches, not what its force asked
+        // for. A dropped record is in no channel at all, and labelling it "cached"
+        // because it declared `must` would tell the reader it is in the prompt when
+        // the very next line says why it is not.
+        let channel = if !entry.disposition.is_selected() {
+            "NOT STEERING"
+        } else if entry.disposition.forces_volatile() {
             "volatile (demoted)"
         } else if force == "must" || force == "should" {
             "cached"

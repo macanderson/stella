@@ -843,6 +843,121 @@ mod tests {
         assert!(!allowed.is_error(), "a non-matching command runs normally");
     }
 
+    /// #890's acceptance criterion, through the real tool boundary: a kept,
+    /// human-approved `guard_deny_command` record blocks a matching Bash call.
+    ///
+    /// The unit tests prove the guard *arms*. This proves the arming reaches
+    /// `ToolRegistry::execute` and denies the call with text the model can act on —
+    /// which is the only claim that matters, and the one that would silently stop
+    /// being true if the record path and the markdown path ever diverged.
+    #[tokio::test]
+    async fn an_approved_toml_record_blocks_a_matching_bash_call() {
+        let root = tempfile::tempdir().unwrap();
+        write_rule(
+            &root.path().join(".stella/rules"),
+            "ctx.acme.web.no-force-push.toml",
+            "schema = \"context-record/v0.1\"\nset_id = \"acme.web\"\n\
+             \n[defaults]\norigin = \"user\"\nstatus = \"active\"\n\
+             \n[[record]]\nlineage_id = \"ctx.acme.web.no-force-push\"\n\
+             kind = \"constraint\"\nstatement = \"Never force-push to a shared branch.\"\n\
+             \n[record.steering]\nforce = \"must\"\n\
+             \n[record.enforcement]\nmode = \"hard\"\nguard_tool = \"Bash\"\n\
+             guard_deny_command = \"git push --force*\"\n\
+             \n[record.truth]\nbasis = \"decree\"\nverified_by = \"mac\"\n",
+        );
+
+        let registry = ToolRegistry::with_backends_and_options(
+            root.path().to_path_buf(),
+            None,
+            None,
+            stella_tools::RegistryOptions::default(),
+        );
+        let rules = load_workspace_rules(root.path(), &trusted_project_authority());
+        attach_rule_guards(&registry, &rules);
+
+        let denied = registry
+            .execute(
+                "bash",
+                &serde_json::json!({"command": "git push --force origin main"}),
+            )
+            .await;
+        let ToolOutput::Error { message } = denied else {
+            panic!("an approved TOML guard must block the call: {denied:?}");
+        };
+        assert!(
+            message.contains("no-force-push"),
+            "the block must cite the handle, so the model can name what stopped it: {message}"
+        );
+        assert!(
+            message.contains("Never force-push to a shared branch."),
+            "and carry the statement so it can self-correct: {message}"
+        );
+
+        let allowed = registry
+            .execute("bash", &serde_json::json!({"command": "echo ok"}))
+            .await;
+        assert!(
+            !allowed.is_error(),
+            "a non-matching command must run normally: {allowed:?}"
+        );
+    }
+
+    /// The same record with an untrusted origin must not block, through the same
+    /// wired boundary. An inferred or imported claim may advise; it may never deny.
+    #[tokio::test]
+    async fn an_imported_record_does_not_block_through_the_wired_boundary() {
+        let root = tempfile::tempdir().unwrap();
+        write_rule(
+            &root.path().join(".stella/rules"),
+            "ctx.acme.web.no-force-push.toml",
+            "schema = \"context-record/v0.1\"\nset_id = \"acme.web\"\n\
+             \n[defaults]\norigin = \"imported\"\nstatus = \"active\"\n\
+             \n[[record]]\nlineage_id = \"ctx.acme.web.no-force-push\"\n\
+             kind = \"constraint\"\nstatement = \"Never force-push to a shared branch.\"\n\
+             \n[record.steering]\nforce = \"must\"\n\
+             \n[record.enforcement]\nmode = \"hard\"\nguard_tool = \"Bash\"\n\
+             guard_deny_command = \"git push --force*\"\n\
+             \n[record.truth]\nbasis = \"decree\"\nverified_by = \"mac\"\n",
+        );
+
+        let registry = ToolRegistry::with_backends_and_options(
+            root.path().to_path_buf(),
+            None,
+            None,
+            stella_tools::RegistryOptions::default(),
+        );
+        let rules = load_workspace_rules(root.path(), &trusted_project_authority());
+        attach_rule_guards(&registry, &rules);
+
+        // The command itself fails (this tempdir is not a repository) — what matters
+        // is that the failure is git's and not the guard's. Asserting "no error at
+        // all" would make this test about whether `git push` can run.
+        let allowed = registry
+            .execute(
+                "bash",
+                &serde_json::json!({"command": "git push --force origin main"}),
+            )
+            .await;
+        let message = match &allowed {
+            ToolOutput::Error { message } => message.clone(),
+            _ => String::new(),
+        };
+        assert!(
+            !message.contains("no-force-push"),
+            "an imported record must never start blocking, however it is committed: {message}"
+        );
+        // And the statement still steers — the refusal is about enforcement, not
+        // about whether the claim is policy.
+        assert!(
+            rules
+                .registry()
+                .render(stella_core::records::Channel::Cached, None)
+                .text
+                .contains("Never force-push"),
+            "the record must still reach the prompt"
+        );
+    }
+
     // Phase 0: representative `.stella/rules/*.md` fixtures must parse under the
     // CURRENT `stella_core::rules` parser — the format Phase 2's importer will
     // read back as read-only mirrors. Captures both a promoted guard rule and a

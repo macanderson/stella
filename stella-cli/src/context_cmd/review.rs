@@ -174,13 +174,8 @@ fn print_proposal(found: &FoundProposal, decided: Option<&decision::CandidateSta
     }
     if let Some(state) = decided {
         let note = match state.decision {
-            Decision::Keep | Decision::Edit => {
-                format!(
-                    "already {} by {}",
-                    state.decision.as_str(),
-                    state.actor_or_unknown()
-                )
-            }
+            Decision::Keep => format!("already kept ({})", state.at),
+            Decision::Edit => format!("already edited and published ({})", state.at),
             Decision::Ignore => match state.cooldown_until.as_deref() {
                 Some(until) if stella_core::records::clock::is_before(now, until) => {
                     format!("declined — will not be re-proposed until {until}")
@@ -260,12 +255,20 @@ pub fn run_keep(
     } else {
         Decision::Keep
     };
+    // Recorded repo-relative when the record is inside the tree: the ledger is read
+    // by whoever opens the repository next, and an absolute path names one machine's
+    // directory layout. A personal record's path stays absolute — it genuinely is
+    // outside this tree.
+    let recorded_path = path
+        .strip_prefix(root)
+        .map(|rel| rel.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| path.display().to_string());
     let mut event = DecisionEvent::keep(
         proposal.candidate_id.clone(),
         record.lineage_id.clone(),
         actor(),
         now_rfc3339(),
-        path.display().to_string(),
+        recorded_path,
     );
     event.decision = decision_kind;
     event.approved_blocking = enforce;
@@ -379,17 +382,4 @@ fn verdict_of(found: &FoundProposal) -> Option<&str> {
         .refutation
         .as_ref()
         .map(|refutation| refutation.verdict.as_str())
-}
-
-/// A displayable actor for a folded decision state.
-trait ActorOrUnknown {
-    fn actor_or_unknown(&self) -> String;
-}
-
-impl ActorOrUnknown for decision::CandidateState {
-    fn actor_or_unknown(&self) -> String {
-        // The fold keeps the decision, not the actor — the log has it, and a review
-        // listing does not need to re-read the log to say "already kept".
-        format!("a reviewer at {}", self.at)
-    }
 }

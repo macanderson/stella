@@ -84,7 +84,11 @@ pub fn run_propose(root: &Path, needle: &str, commit: bool) -> Result<(), String
 
     let branch = format!("stella/context/{}", entry.record.handle);
     let title = format!("context: {}", summary(entry));
-    let body = pr_body(entry, &checks);
+    // Repo-relative, because everything below is read by somebody else: an absolute
+    // path names a directory layout on one machine, and in a PR body it is both
+    // noise and a diff reference that does not resolve.
+    let record_path = relative_to(root, &entry.record.source);
+    let body = pr_body(entry, &checks, &record_path);
 
     println!("{}", "Branch".bold());
     println!("  {branch}");
@@ -93,7 +97,7 @@ pub fn run_propose(root: &Path, needle: &str, commit: bool) -> Result<(), String
     println!("{}", "Labels".bold());
     println!("  {}", "context, proposed-policy".dimmed());
     println!("{}", "Diff".bold());
-    println!("  {}  {}", "1 file".dimmed(), entry.record.source);
+    println!("  {}  {}", "1 file".dimmed(), record_path);
     println!();
     println!("{body}");
 
@@ -116,7 +120,7 @@ pub fn run_propose(root: &Path, needle: &str, commit: bool) -> Result<(), String
         );
         return Ok(());
     }
-    commit_locally(root, &branch, &title, &body, &entry.record.source)
+    commit_locally(root, &branch, &title, &body, &record_path)
 }
 
 /// The §8.1 preconditions, each with the answer it produced.
@@ -198,7 +202,12 @@ impl Preconditions {
 
     fn print(&self) {
         println!("{}", "Preconditions".bold());
+        // `✗` is reserved for what actually stops the proposal. Unresolved owners,
+        // missing evidence links, and an unstated confidence are all things §5.2 and
+        // §8.1 permit — marking them with a failure glyph would tell the reader the
+        // run was refused when it was not.
         let mark = |ok: bool| if ok { "✓".green() } else { "✗".red() };
+        let soft = |ok: bool| if ok { "✓".green() } else { "·".dimmed() };
         println!(
             "  {} repository: {}",
             mark(self.repository.is_some()),
@@ -213,14 +222,14 @@ impl Preconditions {
         println!("  {} scope: {}", mark(true), self.scope);
         println!(
             "  {} owners: {}",
-            mark(self.owners.is_some()),
+            soft(self.owners.is_some()),
             self.owners
                 .as_deref()
                 .unwrap_or("unresolved — the proposal stays advisory and unowned (§5.2)")
         );
         println!(
             "  {} evidence: {}",
-            mark(!self.evidence.is_empty()),
+            soft(!self.evidence.is_empty()),
             if self.evidence.is_empty() {
                 "no supporting evidence links on the record".to_string()
             } else {
@@ -229,7 +238,7 @@ impl Preconditions {
         );
         println!(
             "  {} confidence: {}",
-            mark(self.confidence.is_some()),
+            soft(self.confidence.is_some()),
             self.confidence
                 .map(|value| format!("{value}"))
                 .unwrap_or_else(|| "not stated".to_string())
@@ -247,7 +256,7 @@ impl Preconditions {
 }
 
 /// The §8.2 body. Generated from the record, independently of the diff.
-fn pr_body(entry: &Entry, checks: &Preconditions) -> String {
+fn pr_body(entry: &Entry, checks: &Preconditions, record_path: &str) -> String {
     let record = &entry.record.record;
     let enforcement = record
         .enforcement
@@ -302,7 +311,7 @@ fn pr_body(entry: &Entry, checks: &Preconditions) -> String {
         } else {
             "Tier-2 guard: deferred until advisory-mode accuracy is measured."
         },
-        source = entry.record.source,
+        source = record_path,
         lineage = record.lineage_id,
         handle = entry.record.handle,
     )
@@ -434,6 +443,15 @@ fn commit_locally(
         .dimmed()
     );
     Ok(())
+}
+
+/// `path` relative to `root`, or unchanged when it is not under it.
+fn relative_to(root: &Path, path: &str) -> String {
+    let candidate = Path::new(path);
+    candidate
+        .strip_prefix(root)
+        .map(|rel| rel.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| path.to_string())
 }
 
 /// A git command whose output we want, or `None` when it failed.

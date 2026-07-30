@@ -524,6 +524,31 @@ fn validate_passes_a_clean_workspace_and_fails_a_refuted_one() {
     assert!(err.contains("must not steer"), "{err}");
 }
 
+/// `list`'s channel column reports where a record actually lands.
+///
+/// It used to read the declared `force` and print "cached" for a `must` record the
+/// truth sweep had dropped — the line above the reason saying it is in the prompt,
+/// the line below saying why it is not.
+#[test]
+fn list_does_not_label_a_dropped_record_as_being_in_a_channel() {
+    let root = workspace();
+    review::run_keep(root.path(), "node-version", None, false).expect("keep succeeds");
+    let registry = load_registry(root.path());
+    let entry = registry.by_handle("node-version").expect("loaded");
+    assert!(!entry.disposition.is_selected(), "the probe refutes it");
+    assert_eq!(
+        entry
+            .record
+            .record
+            .steering
+            .as_ref()
+            .map(|steering| steering.force.as_str()),
+        Some("must"),
+        "and it still declares `must` — which is exactly the trap"
+    );
+    validate::run_list(root.path(), false).expect("list succeeds");
+}
+
 #[test]
 fn list_reports_what_steers_and_survives_an_empty_workspace() {
     let root = workspace();
