@@ -107,6 +107,16 @@ pub struct ToolRegistry {
     /// [`ToolRegistry::take_spawn_requests`] — exactly the citation-ledger
     /// drain discipline, so no request is dispatched twice.
     spawn_queue: crate::tasks::SpawnQueue,
+    /// The sub-agent dispatcher (#922), filled by the host after
+    /// construction via [`ToolRegistry::attach_sub_agent_dispatcher`] — it
+    /// needs this registry as the child's tool set, so taking it as a
+    /// constructor argument would be a reference cycle.
+    sub_agent_dispatcher: crate::subagent::DispatcherSlot,
+    /// Spend by sub-agents the `task` tool dispatched, drained by the engine
+    /// at each step-boundary budget check. A tool cannot charge the turn's
+    /// guard directly (the engine holds it mutably), so this ledger is how
+    /// `--budget` stays a hard ceiling once turns nest.
+    sub_agent_spend: stella_core::subagent::SubAgentSpendLedger,
     storage_index: std::sync::Mutex<StorageIndex>,
     /// Which workspace paths are covered by a FRESH saved exploration map —
     /// the read-side analogue of `storage_index` (`docs/design/
@@ -272,6 +282,8 @@ impl ToolRegistry {
         let mcp_usage: stella_core::mcp_usage::McpUsageLedger = Arc::default();
         let task_board: crate::tasks::TaskBoardHandle = Arc::default();
         let spawn_queue: crate::tasks::SpawnQueue = Arc::default();
+        let sub_agent_dispatcher: crate::subagent::DispatcherSlot = Arc::default();
+        let sub_agent_spend: stella_core::subagent::SubAgentSpendLedger = Arc::default();
         // One read-state ledger per registry (#331): `read_file` and
         // `read_symbol` (which reads through the same instance) record what
         // the model saw; `edit_file` attributes match failures against it and
@@ -299,6 +311,12 @@ impl ToolRegistry {
             Arc::new(crate::tasks::TaskStart(task_board.clone())),
             Arc::new(crate::tasks::TaskComplete(task_board.clone())),
             Arc::new(crate::tasks::TaskCancel(task_board.clone())),
+            // Registered unconditionally — see `attach_sub_agent_dispatcher`
+            // on why an unattached dispatcher is still the honest shape.
+            Arc::new(crate::subagent::SpawnSubAgent::new(
+                sub_agent_dispatcher.clone(),
+                sub_agent_spend.clone(),
+            )),
             // SVG generation is client-side (the model authors the SVG, the
             // pipeline validates/sanitizes) — no provider key needed, so
             // unlike image/video it is always registered.
@@ -404,6 +422,8 @@ impl ToolRegistry {
             agent_uses: std::sync::Mutex::new(crate::agent_use::AgentUseLedger::default()),
             mcp_usage,
             task_board,
+            sub_agent_dispatcher,
+            sub_agent_spend,
             spawn_queue,
             storage_index: std::sync::Mutex::new(StorageIndex::default()),
             exploration_coverage,
@@ -494,8 +514,28 @@ impl ToolRegistry {
         *self.policy_bridge.lock().unwrap_or_else(|p| p.into_inner()) = None;
     }
 
-    /// The attached file-change sender, if any (cheap clone — shared inner).
-    fn events(&self) -> Option<stella_core::EventSender> {
+    /// Let the `task` tool run sub-agents through `dispatcher` (#922).
+    ///
+    /// Late attachment, not a constructor argument: a dispatcher needs this
+    /// registry as the child's tool set, so the two would otherwise own each
+    /// other. Until it is called the tool reports sub-agents as unavailable —
+    /// a truthful result, not a silently missing capability. Once per
+    /// session; a later call replaces the previous dispatcher.
+    pub fn attach_sub_agent_dispatcher(
+        &self,
+        dispatcher: std::sync::Arc<dyn stella_core::subagent::SubAgentDispatcher>,
+    ) {
+        *self
+            .sub_agent_dispatcher
+            .write()
+            .unwrap_or_else(|p| p.into_inner()) = Some(dispatcher);
+    }
+
+    /// The attached turn event sender, if any (cheap clone — shared inner).
+    /// `pub` so a session-scoped sub-agent dispatcher (#922) can read the
+    /// *current* turn's sender at dispatch time rather than each driver
+    /// having to re-attach a dispatcher of its own.
+    pub fn events(&self) -> Option<stella_core::EventSender> {
         self.events
             .read()
             .unwrap_or_else(|p| p.into_inner())
@@ -1672,6 +1712,13 @@ impl ToolExecutor for ToolRegistry {
 
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
         ToolRegistry::execute(self, name, input).await
+    }
+
+    /// Take what the `task` tool's children cost since the last step
+    /// boundary. Destructive by the port's contract: the engine charges
+    /// whatever this returns, so reporting twice would bill twice.
+    fn drain_sub_agent_spend_usd(&self) -> f64 {
+        stella_core::subagent::drain_sub_agent_spend(&self.sub_agent_spend)
     }
 }
 

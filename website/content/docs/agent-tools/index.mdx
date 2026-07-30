@@ -29,7 +29,7 @@ This page is not maintained by hand. `stella-tools/tests/docs_in_sync.rs` assert
 
 ### Always available
 
-These 46 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
+These 47 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
 
 #### Files
 
@@ -219,6 +219,9 @@ These 46 tools register in every session — no configuration, no prerequisites.
   <ToolCard name="task_assign" access="mutating">
     Delegate a board task to a parallel sub-agent — the briefing is passed verbatim, so write it self-contained.
   </ToolCard>
+  <ToolCard name="task" access="mutating">
+    Delegate a self-contained research question to a read-only sub-agent that investigates and returns only its findings. Its intermediate work never enters the conversation, so the parent never re-sends it on later steps.
+  </ToolCard>
 </CardGrid>
 
 <Callout type="info">
@@ -407,7 +410,7 @@ The default core is exactly eleven tools: `read_file`, `write_file`, `edit_file`
 
 Matched tools are *activated* — advertised for the rest of the session. A hidden tool called by name still executes, so lean mode trims prompt weight without ever gating a capability.
 
-All told: 46 always-on tools, up to 58 native tools with the code graph, media keys, a search key, and an issue backend, plus the six session tools — before any custom script tools or MCP servers merge in.
+All told: 47 always-on tools, up to 59 native tools with the code graph, media keys, a search key, and an issue backend, plus the six session tools — before any custom script tools or MCP servers merge in.
 
 ## Where to go next
 

@@ -75,6 +75,7 @@ mod signals;
 mod skill_manager;
 mod stats;
 mod storage_cmd;
+mod subagent;
 mod subsession;
 mod term_policy;
 mod tool_foundry;

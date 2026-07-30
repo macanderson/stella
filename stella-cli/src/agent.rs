@@ -225,6 +225,8 @@ async fn run_pipeline_one_shot(
     let registry: Arc<ToolRegistry> =
         Arc::new(new_tool_registry(cfg.workspace_root.clone(), registry_options.clone()).await);
     populate_schema_index(&registry, &cfg.workspace_root)?;
+
+    crate::subagent::install_for_session(cfg, &registry)?;
     let active_rules =
         crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority);
     // Auto-build + live-refresh the code graph in the background so the
@@ -686,6 +688,8 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     )
     .await?;
     populate_schema_index(&registry, &cfg.workspace_root)?;
+
+    crate::subagent::install_for_session(cfg, &registry)?;
     let active_rules =
         crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority);
     // Auto-build the code-graph index in the background (a cheap incremental

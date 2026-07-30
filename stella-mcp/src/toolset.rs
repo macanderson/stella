@@ -485,6 +485,17 @@ impl ToolExecutor for McpToolSet {
             },
         }
     }
+
+    /// Forwarded: this is a decorator, and a decorator that let the default
+    /// `0.0` stand would silently drop sub-agent spend out of the parent's
+    /// budget (see the port's contract).
+    fn drain_sub_agent_spend_usd(&self) -> f64 {
+        // MCP servers are remote and spawn no sub-agents; only the native
+        // layer beneath this set can.
+        self.native
+            .as_ref()
+            .map_or(0.0, |native| native.drain_sub_agent_spend_usd())
+    }
 }
 
 /// A Best-of-N candidate's tool surface (issue #248 Phase 1): built by
@@ -530,6 +541,13 @@ impl ToolExecutor for CandidateMcpView {
             };
         }
         self.native.execute(name, input).await
+    }
+
+    /// Forwarded: this is a decorator, and a decorator that let the default
+    /// `0.0` stand would silently drop sub-agent spend out of the parent's
+    /// budget (see the port's contract).
+    fn drain_sub_agent_spend_usd(&self) -> f64 {
+        self.inner.drain_sub_agent_spend_usd()
     }
 }
 
