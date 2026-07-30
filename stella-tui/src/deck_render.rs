@@ -1630,8 +1630,9 @@ fn tab_shortcuts(tab: DeckTab) -> &'static [(&'static str, &'static str)] {
             ("w", "start work on the selected issue"),
         ],
         DeckTab::Settings => &[
-            ("e", "edit the agents config — models, prompts & params"),
-            ("t", "edit the tool switches — turn tools off (all ship on)"),
+            ("← →", "switch panes — agents / tools"),
+            ("e", "edit the pane you are on"),
+            ("t", "jump to the tool switches"),
             (
                 "tab",
                 "in the editor: switch agent — global / default / worker / …",

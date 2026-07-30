@@ -37,6 +37,7 @@ use crate::envelope::{
 };
 use crate::render::scroll_window_start;
 use crate::theme;
+use crate::views::settings::SettingsPane;
 
 /// The legal `effort` values, in cycle order (⏎ walks them, then wraps to
 /// "provider default"). This is the FULL vocabulary — the fallback when
@@ -347,6 +348,10 @@ pub fn focus_panel(ui: &mut DeckUi) -> DeckAction {
     ui.set_tab(DeckTab::Settings);
     // The SETTINGS tab hosts two modal editors; exactly one owns the keyboard.
     ui.tools.focused = false;
+    // …and only one is on screen. Move the tab's secondary nav with the focus
+    // so focusing from anywhere (a command, another pane) can never leave the
+    // keyboard in an editor the user cannot see.
+    ui.settings_pane = SettingsPane::Agents;
     let e = &mut ui.engine;
     e.focused = true;
     e.tab = EngineTab::Global;
