@@ -2,29 +2,50 @@
 
 Prepared 2026-07-23 as the offline preparation for the maintainer-audited public
 Stella row described in [`terminal-bench-2.1-protocol.md`](terminal-bench-2.1-protocol.md).
+Re-frozen 2026-07-30 under [#909](https://github.com/macanderson/stella/issues/909).
 
-**Status: submission-ready pending maintainer sign-off + the paid run.** Every
-*offline, reversible* preparation gate is green. The three *irreversible* steps
-(create the spend-limited key, publish the preregistration, launch paid Harbor
-jobs) are deliberately **not** done here — they are the maintainer's to execute.
-"Official" additionally requires an external Terminal-Bench maintainer trajectory
-review, which is outside this repository's control; this report makes the run
-*submission-ready*, not "already official."
+**Status: NOT submission-ready. The claim path was silently unlaunchable for
+five days, and the audited run's host requirement is still unmet.** Two things
+changed since the 07-23 report, and both had to be found by actually trying to
+run the harness rather than by reading it:
+
+1. **The claim launcher could not launch.** [#659](https://github.com/macanderson/stella/pull/659),
+   an automated dependency update, moved `harbor==0.6.1` to `0.20.0` in
+   `bench/harbor_adapter/pyproject.toml` and touched none of the five other
+   sites that name that version — including `secure_launcher`'s guard, which
+   *refuses to run* unless the installed version matches exactly. Every one of
+   its 57 tests failed on that guard, unnoticed, because nothing had ever run
+   the harness and `bench.yml` is path-filtered to `bench/**`. The pin is
+   restored and `.github/dependabot.yml` now excludes the package.
+2. **A development baseline has been measured and published.** See §8. It is
+   *not* the audited row and does not become one; it exists so Stella has a
+   falsifiable number at all, which is what #909 was opened about.
+
+The audited row still needs the same three irreversible maintainer steps (mint
+the spend-limited key, publish the machine-readable preregistration + intent
+ledger, launch through `secure_launcher.py` on a **dedicated native x86_64 Linux
+host**), plus the external Terminal-Bench maintainer trajectory review that is
+outside this repository's control.
 
 ---
 
 ## 1. Frozen system under test (SUT)
 
+Re-frozen 2026-07-30. The previous freeze (`fa2ec5b`, 0.5.1) is superseded: it
+was 1.7 minor versions behind `main`, so a run against it would have measured
+code nobody ships — the specific objection #909 raises.
+
 | Field | Value |
 |---|---|
-| SUT commit | `fa2ec5bdae6db739628f2c37bad2ffb3ce6fe4ef` |
-| `git describe` | `v0.5.1-5-gfa2ec5b` (release lineage **0.5.1**) |
-| Public? | Yes — ancestor of `origin/main` (verified `git merge-base --is-ancestor`) |
-| Original design anchor | `ec7ee03…` (0.4.49) — **superseded** |
-| Frozen claim binary | `target/x86_64-unknown-linux-gnu/release/stella` |
-| Binary format | ELF 64-bit x86-64, glibc 2.17 floor (`…-gnu.2.17`), stripped, 27,754,176 bytes |
-| **Binary SHA-256** | `9069b990088834af8cf7be17e29aca897cbd5e92b3e153dddaec60fe20b1c047` (reference — *host-specific*, see note) |
-| Build stamp | `STELLA_BUILD_GIT_SHA=fa2ec5bdae6db739628f2c37bad2ffb3ce6fe4ef` |
+| SUT commit | `0eeb8d4d9272e7416d3ebf09286d67adf534c696` |
+| `git describe` | `v0.5.68-68-g0eeb8d4d` (version **0.6.10**) |
+| Public? | Yes — **`origin/main` itself**, unmodified, no local patch of any kind |
+| Previous freezes | `fa2ec5b` (0.5.1), `ec7ee03` (0.4.49) — both **superseded** |
+| Frozen binary | `target/x86_64-unknown-linux-gnu/release/stella` |
+| Binary format | ELF 64-bit x86-64 PIE, glibc 2.17 floor (`…-gnu.2.17`), stripped |
+| **Binary SHA-256** | `cfb2b8ee7518e0c2dfe515d85e905f9ab0a103e55b7e2fc280d42a02793b160f` (reference — *host-specific*, see note) |
+| Build stamp | `STELLA_BUILD_GIT_SHA=0eeb8d4d9272e7416d3ebf09286d67adf534c696` |
+| Verified in container | `stella --version` → `stella 0.6.10-dev.0eeb8d4d…`; the adapter re-verified both the uploaded binary SHA and the embedded source commit on every trial |
 
 > **Reproducibility:** release builds bake in the builder's rustup/cargo source
 > paths (under `/Users/macanderson/…` here), so the byte-exact SHA above is
@@ -178,9 +199,96 @@ Before each paid job the secure launcher fetches `/credits` and refuses launch i
 the nominal allocation would cross the live balance or the remaining `$200`
 authorization.
 
+> ⚠️ **The `$200` figure is stale, and the nominal plan no longer fits inside
+> it.** Measured 2026-07-30: `total_credits` 510.00, `total_usage` 433.26 →
+> **$76.74 actually spendable**. The plan above totals `$86.02`, so the
+> launcher's own `/credits` preflight would refuse the primary. Either top the
+> account up or re-scope the study before step 1.
+
+> ⚠️ **Step 5's gate cannot currently be passed.** It requires "no agent
+> exception … return code 0", and the non-exit defect in §8.2 makes both
+> impossible: the sentinel earns reward `1.0` and still ends as
+> `AgentTimeoutError` with `stella_return_code_state: "unknown"`. Fix that first,
+> or the audited run stops at its own readiness gate.
+
 ---
 
 ## 7. Artifact index
 
 - Frozen binary: `target/x86_64-unknown-linux-gnu/release/stella` — sha256 `9069b990…` (host-specific reference, see §1 note). This preparation build relaxed the `#install` provenance guard from `==origin/main tip` to *ancestor-of-public-ref* so it could target the specific already-public release commit `fa2ec5b` rather than the moving tip. **The maintainer's actual paid claim build must use the stock, unmodified `#install` procedure (the `==@{upstream}` guard) against the final preregistration commit** — which will be the `origin/main` tip at that point, so the stock guard passes unchanged. Do not copy the relaxed guard into the paid run.
 - Reconciled: `bench/terminal-bench-2.1-protocol.md`, `bench/terminal_bench_analysis/README.md`, `bench/harbor_adapter/tests/test_adapter.py`.
+
+---
+
+## 8. What switching the harness on actually found (2026-07-30, #909)
+
+Everything in §§1–7 was established by *reading* the harness. #909's point was
+that nothing had ever *run* it. Running it surfaced three things that no amount
+of offline review had, and the first two are blockers for the audited row.
+
+### 8.1 The claim path had been unlaunchable for five days
+
+[#659](https://github.com/macanderson/stella/pull/659) moved `harbor==0.6.1` to
+`0.20.0` in `bench/harbor_adapter/pyproject.toml` — one line, nothing else. The
+version is not a dependency, it is an audited constant named in six places, one
+of which is `secure_launcher`'s guard that refuses to launch on a mismatch. The
+whole launcher suite failed on that guard: **57 failed / 169 passed**.
+
+Two reasons it stayed invisible: nothing ran the harness, and `bench.yml` is
+path-filtered to `bench/**`, so no PR outside `bench/` could reveal it. Pin
+restored → adapter **226 passed**, analyzer **240 passed**. `dependabot.yml` now
+excludes the package in both bench ecosystems.
+
+The general lesson is worth more than the fix: **an unexercised guard is
+indistinguishable from a broken one.** The version pin, the posture hashes, and
+the readiness fixture are all "verified" in §3 in exactly the same sense this
+pin was.
+
+### 8.2 Stella completes its turn but the process does not exit
+
+The readiness sentinel earns external-verifier reward **`1.0`** — Stella
+diagnoses the `slugify` bug correctly (trailing-dash `strip("-")`), all three
+tests pass, `stella_status: "completed"`, 7 steps, 141 stream events, accounting
+state `complete`, $0.0297.
+
+It is nevertheless recorded as a failure. The agent phase consumed exactly
+300.06s of its 300s budget and ended in `AgentTimeoutError`, with
+`stella_return_code_state: "unknown"` — Harbor waits for process exit, and the
+process never exits after emitting its terminal `complete` event. (That event is
+emitted **twice**, which is likely a related thread of the same defect.)
+
+Consequences, in order of how much they matter:
+
+1. **§6 step 5's gate is unpassable** — it requires no agent exception and return
+   code 0. The audited run cannot legally start.
+2. **Every trial burns its entire wall-clock timeout** regardless of when the
+   work finished, so a 78-task phase costs the sum of its timeouts rather than
+   the sum of its work. It also makes `exception_stats` useless as a health
+   signal: successful trials and genuinely-timed-out ones are indistinguishable.
+3. **The score is unaffected**, which is the only reason the run below is still
+   meaningful. The verifier runs after the agent phase against the files Stella
+   already wrote, so a lingering process costs wall clock, not correctness.
+
+### 8.3 Registry flakiness can silently become "Stella failed"
+
+The first launch attempt lost four trials in its opening minutes to
+`TLS handshake timeout` while Docker Hub served image blobs. The container never
+started, so the agent never ran and spend was **$0.0000** — but with
+`--max-retries 0` each is a permanent reward-`0` row, and under a fixed
+denominator that is arithmetically identical to Stella failing the task.
+
+The attempt was aborted under the preregistration's operational-failure clause.
+No reward was observed on any trial, so there was no outcome to select on, and
+the relaunch is a fresh job name rather than a resume. The fix is to pre-pull all
+89 task images with retries first, making image availability a **precondition**
+of the run instead of a term in the measurement. Any future runner on a
+consumer network should do the same.
+
+### 8.4 The measured baseline
+
+See `bench/evidence/` for the run manifest, per-trial rows, per-task results and
+the two scripts that recompute the number from them. Its preregistration is
+[#950](https://github.com/macanderson/stella/issues/950), filed before any paid
+call. The manifest's `claim_eligibility` block states in full why it is a
+development baseline and not the audited row — start there before quoting the
+number anywhere.
