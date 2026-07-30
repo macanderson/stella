@@ -21,10 +21,22 @@ pub(super) fn deck_slash_commands(
 
 /// Snapshot the installed skills across BOTH scopes into an [`Inbound::Skills`].
 pub(super) fn skills_snapshot(workspace_root: &std::path::Path, status: Option<String>) -> Inbound {
+    skills_snapshot_created(workspace_root, status, None)
+}
+
+/// [`skills_snapshot`] with the just-created skill's name attached — the
+/// completion form a successful [`SkillOp::Create`] answers with, so the
+/// deck's create dialog can open the preview on exactly that row.
+fn skills_snapshot_created(
+    workspace_root: &std::path::Path,
+    status: Option<String>,
+    created: Option<String>,
+) -> Inbound {
     Inbound::Skills(SkillsView {
         rows: crate::skill_manager::enumerate(workspace_root),
         status,
         busy: false,
+        created,
     })
 }
 
@@ -296,6 +308,10 @@ pub(super) fn extract_skill_md(text: &str) -> String {
 /// LLM-assisted creation: search the registry for the request, rank the hits,
 /// have the model assemble ONE `SKILL.md` (reusing the existing provider path),
 /// and write it into `scope` as version 1. Returns a status string.
+/// LLM-assisted skill creation: search the registry for prior art, draft one
+/// `SKILL.md` with a single accounted model call, validate, and install it as
+/// v1. Returns `(status line, created skill name)` — the name is `Some` only
+/// when the skill actually landed on disk.
 async fn create_skill_llm(
     cfg: &Config,
     registry: &SkillRegistry,
@@ -303,7 +319,7 @@ async fn create_skill_llm(
     description: &str,
     workspace_root: &std::path::Path,
     budget_limit: Option<f64>,
-) -> String {
+) -> (String, Option<String>) {
     // 1. Search existing skills for inspiration (best-effort — a registry
     //    failure just means authoring from scratch).
     let argv = SkillRegistry::render(&registry.search_cmd, "{query}", description);
@@ -313,7 +329,7 @@ async fn create_skill_llm(
     //    path the rest of the session uses — never hand-rolled HTTP).
     let provider = match agent::build_provider(cfg) {
         Ok(p) => p,
-        Err(e) => return format!("create failed: {e}"),
+        Err(e) => return (format!("create failed: {e}"), None),
     };
     let req = CompletionRequest {
         messages: vec![
@@ -340,9 +356,12 @@ async fn create_skill_llm(
     {
         Ok(result) => result,
         Err(error) => {
-            return format!(
-                "model call failed: {} (${:.6})",
-                error.message, error.cost_usd
+            return (
+                format!(
+                    "model call failed: {} (${:.6})",
+                    error.message, error.cost_usd
+                ),
+                None,
             );
         }
     };
@@ -350,15 +369,23 @@ async fn create_skill_llm(
     // 3. Validate it parses as a real skill, then write it as v1.
     let name = match stella_core::skills::skill_from_file("SKILL.md", &content) {
         Ok(s) => s.name,
-        Err(_) => return "the model did not return a valid SKILL.md — try again".to_string(),
+        Err(_) => {
+            return (
+                "the model did not return a valid SKILL.md — try again".to_string(),
+                None,
+            );
+        }
     };
     match crate::skill_manager::create(scope, &name, &content, workspace_root) {
-        Ok(n) => format!(
-            "created {n} ({}) — v1 (${:.6})",
-            scope.label(),
-            accounted.cost_usd
+        Ok(n) => (
+            format!(
+                "created {n} ({}) — v1 (${:.6})",
+                scope.label(),
+                accounted.cost_usd
+            ),
+            Some(n),
         ),
-        Err(e) => format!("create failed: {e}"),
+        Err(e) => (format!("create failed: {e}"), None),
     }
 }
 
@@ -450,10 +477,10 @@ pub(super) fn handle_skills_input(
             let description = description.clone();
             let root = root.clone();
             tokio::spawn(async move {
-                let status =
+                let (status, created) =
                     create_skill_llm(&cfg, &registry, scope, &description, &root, budget_limit)
                         .await;
-                let _ = in_tx.send(skills_snapshot(&root, Some(status)));
+                let _ = in_tx.send(skills_snapshot_created(&root, Some(status), created));
             });
         }
     }

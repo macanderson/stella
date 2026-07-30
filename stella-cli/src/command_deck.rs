@@ -1521,7 +1521,9 @@ pub async fn run_deck_session(
                         // the turn settles (see `pending_create`).
                         Some(WorkspaceInput::AgentCreate { description, scope }) => {
                             pending_create = Some((description, scope));
-                            let _ = in_tx.send(agents_list_inbound(
+                            // `creating: true`: the deck's create dialog keeps
+                            // its spinner up through this interim snapshot.
+                            let _ = in_tx.send(agents_list_creating(
                                 &cfg.workspace_root,
                                 Some(
                                     "agent creation queued — it runs when the current turn \
@@ -3740,13 +3742,46 @@ fn handle_tools_input(
 // ── Installed-agents manager (the AGENTS tab's INSTALLED AGENTS pane) ───────
 
 /// Build an [`Inbound::AgentsList`] from the definitions on disk at both
-/// scopes. `status`, when set, replaces the pane's hint line.
+/// scopes. `status`, when set, replaces the pane's hint line. `creating` is
+/// false: every snapshot built here is a settled state (a parked create
+/// announces itself via [`agents_list_creating`] instead), and `created` is
+/// unset (a completed create attaches the name via [`agents_list_created`]).
 fn agents_list_inbound(workspace_root: &std::path::Path, status: Option<String>) -> Inbound {
+    agents_list_created(workspace_root, status, None)
+}
+
+/// [`agents_list_inbound`] with the just-created agent's name attached — the
+/// completion form a successful [`WorkspaceInput::AgentCreate`] answers with,
+/// so the deck's create dialog can open the detail preview on that entry.
+fn agents_list_created(
+    workspace_root: &std::path::Path,
+    status: Option<String>,
+    created: Option<String>,
+) -> Inbound {
     let project = crate::agents_installed::project_agents_dir(workspace_root);
     let user = crate::agents_installed::user_agents_dir();
     Inbound::AgentsList {
         entries: crate::agents_installed::discover(user.as_deref(), &project),
         status,
+        creating: false,
+        created,
+    }
+}
+
+/// An [`Inbound::AgentsList`] snapshot with `creating: true` — sent when an
+/// LLM-assisted agent creation is accepted but still in flight (parked
+/// behind a running turn), so the deck's create dialog keeps its spinner up.
+fn agents_list_creating(workspace_root: &std::path::Path, status: Option<String>) -> Inbound {
+    match agents_list_inbound(workspace_root, status) {
+        Inbound::AgentsList {
+            entries, status, ..
+        } => Inbound::AgentsList {
+            entries,
+            status,
+            creating: true,
+            created: None,
+        },
+        other => other,
     }
 }
 

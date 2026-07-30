@@ -10,7 +10,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::config::Config;
 use crate::memory::{ReflectionReport, SessionMemory, turn_warrants_reflection};
 
-use super::{LEAD, agents_list_inbound};
+use super::LEAD;
 
 pub(super) fn forward_reflection_events(
     in_tx: &UnboundedSender<Inbound>,
@@ -75,20 +75,27 @@ pub(super) async fn handle_agent_create(
     budget_limit: Option<f64>,
     in_tx: &UnboundedSender<Inbound>,
 ) {
-    let status = match create_agent(description, scope, cfg, provider, budget_limit).await {
-        Ok(status) => status,
-        Err(error) => format!("agent creation failed: {error}"),
-    };
-    let _ = in_tx.send(agents_list_inbound(&cfg.workspace_root, Some(status)));
+    let (status, created) =
+        match create_agent(description, scope, cfg, provider, budget_limit).await {
+            Ok((status, name)) => (status, Some(name)),
+            Err(error) => (format!("agent creation failed: {error}"), None),
+        };
+    let _ = in_tx.send(super::agents_list_created(
+        &cfg.workspace_root,
+        Some(status),
+        created,
+    ));
 }
 
+/// Draft + install an agent from a description. Returns
+/// `(status line, created agent name)` on success.
 async fn create_agent(
     description: &str,
     scope: AgentScope,
     cfg: &Config,
     provider: &dyn Provider,
     budget_limit: Option<f64>,
-) -> Result<String, String> {
+) -> Result<(String, String), String> {
     let request = CompletionRequest {
         messages: crate::agents_installed::creation_messages(description),
         max_output_tokens: Some(1200),
@@ -117,11 +124,14 @@ async fn create_agent(
     let agent = crate::agents_installed::parse_generated_agent(&accounted.result.text)?;
     let dir = crate::agents_installed::agents_dir_for(scope, &cfg.workspace_root)?;
     let path = crate::agents_installed::install_new_agent(&dir, &agent)?;
-    Ok(format!(
-        "created {} ({} scope) at {} — v1 pinned (${:.6})",
+    Ok((
+        format!(
+            "created {} ({} scope) at {} — v1 pinned (${:.6})",
+            agent.name,
+            scope.label(),
+            path.display(),
+            accounted.cost_usd,
+        ),
         agent.name,
-        scope.label(),
-        path.display(),
-        accounted.cost_usd,
     ))
 }
