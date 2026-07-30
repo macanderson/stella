@@ -17,6 +17,12 @@
  * Retired and gone: the vermilion "ember" (#FF3D1F), the terminal-green dark
  * theme, and the `--stella-sky*` names those shipped under. No surface uses an
  * orange, rust, or phosphor-green hue; nothing aliases the old names.
+ *
+ * Some tokens below currently have no consumer in global.css — `gold-bright`,
+ * `gold-deep`, `paper-raised`, `danger`, `hairline`. That is intended: this is
+ * the palette, not a usage list. A value that BRAND.md defines belongs here
+ * whether or not the docs site happens to spend it, so that the next surface
+ * to need one finds it rather than inventing a near-miss. Do not prune them.
  */
 
 :root {

@@ -65,7 +65,19 @@
    * mark with the theme. */
   --stella-accent: var(--stella-brand-ink); /* 7.0:1 on paper */
   --stella-mark: var(--stella-gold-ink); /* the logo cursor, 5.5:1 */
-  --stella-seam: var(--stella-paper-hairline);
+  /* Two tiers of rule, and only two. `--color-fd-border` below is decoration:
+   * it separates things that are already separated by spacing and a heading,
+   * so its contrast does not have to clear anything. `--stella-rule` is
+   * structure — the stroke of a diagram box, the edge of a terminal transcript
+   * — where the border IS the only thing saying two regions differ, and WCAG
+   * 1.4.11's 3:1 floor applies.
+   *
+   * BRAND.md defines `hairline-contrast` (3.0:1 on surface) for the dark side
+   * and has no paper counterpart: every light seam it lists tops out at 1.4:1
+   * on white. Until it grows one, the light structural rule borrows
+   * `ink-tertiary` at 4.7:1 — over the floor rather than on it, so a 1px
+   * diagram stroke reads heavier on paper than it does on deep space. */
+  --stella-rule: var(--stella-ink-tertiary); /* 4.7:1 — structural */
   /* The third text tier: for a label whose value beside it is the thing being
    * read. 4.7:1 on paper — AA, with nothing to spare, so it is never used on
    * `snow` (4.4:1 there). */
@@ -103,7 +115,7 @@
 
   --stella-accent: var(--stella-brand-bright); /* 7.4:1 on ground */
   --stella-mark: var(--stella-gold); /* 11.9:1 */
-  --stella-seam: var(--stella-hairline-strong);
+  --stella-rule: var(--stella-hairline-contrast); /* 3.1:1 — structural */
   --stella-faint: var(--stella-text-tertiary); /* 4.8:1 on ground */
 
   /* A `brand-bright` fill with a `void` label reads 7.6:1 — white on `brand`
@@ -120,7 +132,7 @@
   --color-fd-card-foreground: var(--stella-text-primary);
   --color-fd-popover: var(--stella-raised);
   --color-fd-popover-foreground: var(--stella-text-primary);
-  --color-fd-border: var(--stella-hairline);
+  --color-fd-border: var(--stella-hairline-strong); /* 1.4:1 — decorative */
   --color-fd-accent: var(--stella-raised);
   --color-fd-accent-foreground: var(--stella-text-primary);
   --color-fd-primary: var(--stella-brand-bright);
@@ -698,7 +710,7 @@
   font-family: var(--font-mono);
   font-size: var(--stella-type-sm);
   line-height: 1.7;
-  border: 1px solid var(--color-fd-border);
+  border: 1px solid var(--stella-rule);
   border-radius: 0.5rem;
   background: var(--color-fd-card);
   overflow-x: auto;
@@ -709,7 +721,7 @@
   align-items: center;
   gap: 0.6rem;
   padding: 0.5rem 0.9rem;
-  border-bottom: 1px solid var(--color-fd-border);
+  border-bottom: 1px solid var(--stella-rule);
   font-size: var(--stella-type-xs);
   color: var(--stella-faint);
 }
@@ -753,7 +765,7 @@
 }
 .sdg .sdg-box {
   fill: none;
-  stroke: var(--stella-seam);
+  stroke: var(--stella-rule);
   stroke-width: 1;
 }
 .sdg .sdg-box-accent {
@@ -771,7 +783,7 @@
   font-size: 10.5px;
 }
 .sdg .sdg-wire {
-  stroke: var(--stella-seam);
+  stroke: var(--stella-rule);
   stroke-width: 1;
   fill: none;
 }

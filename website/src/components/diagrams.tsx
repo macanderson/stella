@@ -36,7 +36,7 @@ function Defs() {
         <path
           d="M0.5 0.8 L7.2 4 L0.5 7.2"
           fill="none"
-          stroke="var(--stella-seam)"
+          stroke="var(--stella-rule)"
           strokeWidth="1.4"
           strokeLinecap="round"
         />
