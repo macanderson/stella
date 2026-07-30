@@ -25,7 +25,17 @@ classifiers = [
 # internals because that release's public BaseEnvironment API cannot accept
 # stdin bytes. Pin the benchmark runtime rather than silently falling back to
 # an environment-variable credential on a drifting implementation.
-dependencies = ["harbor==0.20.0"]
+#
+# This pin is an AUDITED CONSTANT, not an upgrade candidate: `secure_launcher`
+# refuses to launch unless `harbor.__version__` equals it exactly, and the
+# analyzer, `freeze_tb21_study_seed.py`, the protocol, and the RUNBOOK all name
+# the same value. #659 bumped it to 0.20.0 as an automated dependency update
+# that touched this one line, which silently made the claim path unlaunchable —
+# every `secure_launcher` test failed on the version guard, unnoticed because
+# nothing had run the harness. Moving it requires re-auditing the launcher
+# against the new release and updating every other site in the same change;
+# `.github/dependabot.yml` now ignores the package so a bot cannot do it alone.
+dependencies = ["harbor==0.6.1"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "ruff>=0.6"]
