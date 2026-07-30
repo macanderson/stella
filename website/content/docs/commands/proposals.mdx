@@ -1,0 +1,130 @@
+---
+title: stella proposals
+description: Review what the adaptive-context loop wants to make durable before it lands — the proposals it induced, the evidence behind each, and Keep/Edit/Ignore as immutable events.
+---
+
+`stella proposals` is the review surface for the adaptive-context loop. As you work, the loop reflects on turns and induces proposals: things it believes are worth making durable. This command shows you what is pending, the evidence behind each one, and lets you accept it, reword it, or decline it — **before** it steers anything.
+
+Every decision is recorded as an immutable event, so the review history replays exactly and Ignore is reversible rather than permanent. Offline: reads and appends to `.stella/private/context.db` only, no API key.
+
+## Synopsis
+
+```bash
+stella proposals list [--all] [--limit <n>]
+stella proposals keep <id> [--reason <text>]
+stella proposals edit <id> <body> [--reason <text>]
+stella proposals ignore <id> [--reason <text>]
+stella proposals refresh
+```
+
+## What it does
+
+A learning loop that silently rewrites its own steering is not auditable. The design here is the opposite: the loop may *propose*, but adoption is a decision a person makes on the record. That is why every verb takes a reason and why nothing is ever destroyed — a governance decision with no reason is not auditable, and a decision that cannot be revisited is not a review.
+
+A proposal must recur across **distinct tasks** to be induced at all, not merely many times within one. One task that mentions the same thing twenty times is one piece of evidence, not twenty.
+
+### `stella proposals list`
+
+Show pending proposals with the evidence behind each.
+
+<CardGrid size="md">
+  <OptionCard name="--all">
+    Include proposals that have already been decided on, not just the pending ones.
+  </OptionCard>
+  <OptionCard name="--limit <n>" defaultValue="20">
+    Maximum proposals to show.
+  </OptionCard>
+</CardGrid>
+
+```bash
+stella proposals list
+stella proposals list --all --limit 100
+```
+
+### `stella proposals keep`
+
+Accept a proposal as written. Recorded as an advisory confirmation — it becomes active steering, at advisory enforcement.
+
+<CardGrid size="md">
+  <OptionCard name="<id>" required>
+    The proposal's candidate id, as shown by `list`.
+  </OptionCard>
+  <OptionCard name="--reason <text>" defaultValue="kept from the review surface">
+    Why. Recorded on the event.
+  </OptionCard>
+</CardGrid>
+
+```bash
+stella proposals keep cand-3f21 --reason "matches how we actually release"
+```
+
+### `stella proposals edit`
+
+Accept a proposal with different wording. The replacement text is what becomes durable; the original stays in the ledger.
+
+<CardGrid size="md">
+  <OptionCard name="<id>" required>
+    The proposal's candidate id.
+  </OptionCard>
+  <OptionCard name="<body>" required>
+    The replacement text.
+  </OptionCard>
+  <OptionCard name="--reason <text>" defaultValue="edited from the review surface">
+    Why.
+  </OptionCard>
+</CardGrid>
+
+```bash
+stella proposals edit cand-3f21 "Run \`make gate\` before pushing — not \`cargo test\` alone."
+```
+
+### `stella proposals ignore`
+
+Decline a proposal. It will not be re-proposed while the decision stands — and because the decision is an event rather than a deletion, you can revisit it.
+
+<CardGrid size="md">
+  <OptionCard name="<id>" required>
+    The proposal's candidate id.
+  </OptionCard>
+  <OptionCard name="--reason <text>" defaultValue="declined from the review surface">
+    Why.
+  </OptionCard>
+</CardGrid>
+
+```bash
+stella proposals ignore cand-7ab0 --reason "true last quarter, not now"
+```
+
+### `stella proposals refresh`
+
+Extract observations from the reflection log and induce proposals over them, without waiting for a turn to reflect.
+
+The loop already does this after every reflection. This verb exists so the review surface is usable on its own: *"show me what is pending"* is a useless question if the only way to populate it is to run a turn and hope. Replay-idempotent like the loop's own pass — running it twice changes nothing.
+
+```bash
+stella proposals refresh && stella proposals list
+```
+
+<Callout type="info">
+`context.lifecycle.enabled: false` in [`settings.json`](/docs/configuration/settings) restores every pre-adaptive behavior wholesale, including turning induction off.
+</Callout>
+
+## Not the same as `stella ingest`
+
+<Callout type="warn">
+[`stella ingest`](/docs/commands/ingest) and `stella proposals` are two different review surfaces with two different authority models, and they do not share storage. `stella proposals` reads the adaptive-context ledger in `.stella/private/context.db` — what the loop induced from your *sessions*. Ingest writes TOML proposals to `.stella/proposals/` from *documents*, and those are reviewed by editing the files. A document you ingest will not appear here.
+</Callout>
+
+## Related
+
+<CardGrid size="sm">
+  <SpecCard title="Context Engine" href="/docs/context-engine">
+    How proposals become recall, and what a context frame carries.
+  </SpecCard>
+  <SpecCard title="stella memory" href="/docs/commands/memory">
+    The citation feedback loop, selection health, and reversible retirement.
+  </SpecCard>
+  <SpecCard title="stella ingest" href="/docs/commands/ingest">
+    The document half — markdown into TOML context-record proposals.
+  </SpecCard>
+</CardGrid>

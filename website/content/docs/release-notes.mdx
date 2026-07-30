@@ -13,6 +13,103 @@ itemized here. For what changed in one specific tag, read that tag's
 [GitHub Release](https://github.com/macanderson/stella/releases) — every one
 carries its full commit-level log.
 
+## 0.6.x — since 0.6.0
+
+The patch releases in this line are not itemized (see the note above), but several
+of them added surface worth knowing about. Current release: **0.6.10**.
+
+### The PROOF rail — the verification, beside the work, live
+
+The deck grew a rail that answers one question continuously: *right now, is this run
+proving what it is doing?* It folds live from the turn's proof events — what assurance
+triage decided to buy, whether the warrant judged the diff to need a test, the witness
+that was authored and pinned, and the oracle's baseline-versus-candidate result.
+
+It is a panel rather than transcript rows on purpose. Proof is a small state machine
+whose *current* value matters and whose history does not; rendered as scrolling lines
+the answer is buried under whatever the worker printed since.
+
+The rail carries one invariant: **once a turn has ended, no row may read `pending`**.
+A surface that reports only when things go well is one you cannot trust when they do
+not, and `pending` on a finished turn is silence wearing the costume of progress. That
+is held in the fold rather than by asking eighteen terminal exits to each remember to
+report.
+
+A related fix made the same honesty hold for the file counts beside it: `FileChange`
+now comes from the single recorder that actually measures a touch, so counts ride the
+event instead of being re-derived from diff text.
+
+### `stella ingest` — your markdown becomes reviewable records
+
+[`stella ingest`](/docs/commands/ingest) reads markdown you already wrote and turns it
+into context-record proposals. With no arguments it scans and classifies what the
+workspace contains; name a document and one model call splits it into atomic claims,
+each mapped to a record, run through a **deterministic safety gate**, probed for
+staleness, and written to `.stella/proposals/` as reviewable TOML.
+
+The gate is the point: the model is asked to surface executable content, but nothing
+downstream trusts that it did. Atomicity and quarantine are re-decided by a pure
+function that cannot be talked out of a rule by a cleverly-worded document.
+
+### Custom commands: TOML, parity fields, and namespaces
+
+[Custom commands](/docs/agent-tools/commands) can now be authored as TOML as well as
+markdown-with-frontmatter. The formats carry exactly the same fields, so TOML is a
+spelling rather than a feature tier — but a `prompt` key needs no frontmatter fence,
+and `allowed-tools` becomes a typed array.
+
+Alongside it: the full parity field set (`argument-hint`, `allowed-tools`, `model`,
+`disable-model-invocation`), namespaced commands via a subdirectory
+(`commands/vercel/deploy.toml` → `/vercel:deploy`), and
+[`stella commands`](/docs/commands/commands) to list what a workspace offers or convert
+markdown definitions in place.
+
+### A mid-turn prompt says what it became
+
+Typing while a turn runs is no longer ambiguous. Only a message prefixed `>` steers the
+running turn; a plain prompt becomes its own sub-session — and the deck now **says so**
+instead of leaving you to guess whether your text landed. The previously-reported "turn
+blew up" symptom was UI silence, not a broken turn.
+
+One exception is deliberate: while a gate card is pending, the gate owns the submission,
+so your keystrokes answer the card rather than starting anything.
+
+### Self-tuning, on evidence
+
+[`stella tune`](/docs/commands/tune) A/Bs one policy knob — the worker's reasoning
+effort — over two loop-bench runs, and promotes the winner **only** when it confidently
+wins, with a `--min-samples` floor and a reversible rollback record. Without
+`--promote` it reports and records the receipt but changes nothing.
+
+### `stella scoreboard` — and nothing grading its own homework
+
+[`stella scoreboard`](/docs/commands/scoreboard) reports four numbers per unit of work:
+model calls, characters a person had to type, follow-ups, and the verdict a merged or
+closed pull request implies. The store *does* carry a model self-rating field and the
+scoreboard deliberately ignores it. An open or draft PR is not counted as a verdict at
+all, because work still in flight has not been judged.
+
+### Telemetry, witness, and the terminal
+
+- **Live tool-call projection, crash recovery, and a real streaming telemetry API.**
+- **Witness assertion-density screen** — a witness that asserts nothing is no longer
+  accepted as proof — plus impacted-test selection that provably narrows across crates.
+- **A blind diff probe no longer completes as "nothing changed"**, which is what made
+  the warrant's guard inert on candidates that emitted no file events.
+- **A live thought follows its tail** instead of freezing on its first line; a `create`
+  reports what it made instead of vanishing; the Files tab populates for batched
+  `apply_edits`; and the markdown renderer stopped eating underscores in identifiers.
+- **`stella-serve`** gained `--version`/`--help` and a corrected as-built route table.
+
+### Brand: one identity, written down
+
+`docs/brand/BRAND.md` is now the normative source for Stella's visual identity —
+electric blue and gold on deep space — and the terminal palette, the brand assets, the
+docs site tokens, and the Observatory dashboard all mirror it. Four surfaces had drifted
+to three different identities, and the drift was possible because nothing was normative.
+Retired in the same pass: the vermilion "ember" block cursor, the terminal-green dark
+theme, and the `--stella-sky*` token names they shipped under.
+
 ## 0.6.0
 
 The `0.6.x` line opens with the feature the `0.5.x` series was building toward: **Stella now learns from working in your codebase, and shows its work.** The adaptive context lifecycle is complete and on by default. Alongside it, this release gathers a large security and reliability pass, streaming on every provider that supports it, a rebuilt transcript, and a relicense.
@@ -97,7 +194,7 @@ Stella is relicensed from `MIT OR Apache-2.0` to **`AGPL-3.0-only`**, dual-licen
 6. **`OXAGEN_DEBUG` / `OXAGEN_MEDIA_LIVE` are renamed** to `STELLA_*`. The old names still work **for this release only**.
 7. **Extension deny policies now bite** on `build_project`, `run_tests`, `verify_done` and `send_stdin`, which previously bypassed them.
 8. **Downgrading is refused, not silently misread** — `context.db`, `codegraph.db` and the media journal now decline to open a schema newer than the binary knows.
-9. **The TUI palette is bright sky on true black**, and the default accent is `sky`. `/color cyan` still resolves, as an alias.
+9. **The TUI palette is bright sky on true black**, and the default accent is `sky`. `/color cyan` still resolves, as an alias. *(Superseded later in the `0.6.x` line — the deck's themes are now `stella-dark` and `stella-light`, electric blue on deep space. `/color` still sets the plain REPL's accent from the same list.)*
 
 ```bash
 # Homebrew (macOS / Linux)

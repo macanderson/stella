@@ -386,6 +386,38 @@ deterministic synthesis of the outcome (`completed`, `completed — verified`,
 run's own facts and costs **no model call** — it is the "so what" line that the file list
 alone does not give you.
 
+## The `ui` section
+
+Appearance preferences for the Command Deck. Every field is optional, so an absent
+section behaves exactly as the defaults.
+
+<CardGrid size="md">
+  <OptionCard name="theme" defaultValue="stella-dark">
+    The deck's colour theme slug — `stella-dark` (electric blue on deep space, the
+    default) or `stella-light` (the same blue darkened onto paper). The short forms
+    `dark` and `light` also resolve. An unrecognised value falls back to the default
+    rather than failing the file.
+  </OptionCard>
+</CardGrid>
+
+```json title="<workspace>/.stella/settings.json"
+{
+  "ui": { "theme": "stella-light" }
+}
+```
+
+<Callout type="info">
+This is the **deck's** theme, and it is a different setting from `/color`, which sets a
+session accent in the plain line-based REPL (`--plain`) from a fixed list — `sky`,
+`cyan`, `azure`, `violet`, `magenta`, `mint`. The two surfaces have separate colour
+models; setting one does not change the other.
+</Callout>
+
+Writing this section is a read-modify-write that preserves every other key
+byte-for-byte at the value level, so changing a theme from the deck's SETTINGS tab never
+drops `providers`, `hooks`, or a forward-compatible key it does not recognise. Clearing
+the theme removes the `ui` key rather than leaving an empty `{}` behind.
+
 ## The `context` block
 
 The `context` block configures the **adaptive-context lifecycle**: mining observations

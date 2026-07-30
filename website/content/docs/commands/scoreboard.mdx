@@ -1,0 +1,81 @@
+---
+title: stella scoreboard
+description: What the work cost, and whether anyone said it was good — calls, characters typed, follow-ups, and the verdict a merged or closed pull request implies. No model judges anything.
+---
+
+`stella scoreboard` reports four numbers per unit of work: how many times intelligence was invoked, how much a person had to type, how many times they came back, and what they thought of the result. Three are counted from rows the store already writes. The fourth is read from a pull request somebody merged or closed.
+
+Reads local state only — no API key, and **no model judges anything here**, which is the point.
+
+## Synopsis
+
+```bash
+stella scoreboard
+```
+
+## What it does
+
+Agent quality metrics have an obvious failure mode: ask the model how it did. Stella's store does carry a self-rating field (`execution_reflection.self_rating`) and the scoreboard **deliberately does not use it** — that is the model grading its own homework. Every number here is either counted from events that happened or read from a judgement a human made.
+
+<CardGrid size="md">
+  <SpecCard title="Model calls">
+    How many times intelligence was invoked for this unit of work. Counted from the execution
+    rows.
+  </SpecCard>
+  <SpecCard title="Characters typed">
+    How much a person had to write to get the result — prompt characters, summed. The cost of
+    the work that was not automated.
+  </SpecCard>
+  <SpecCard title="Follow-ups">
+    How many times a person came back. Every execution begins with something a person typed,
+    so N executions are N human inputs — which makes follow-ups `N - 1`.
+  </SpecCard>
+  <SpecCard title="Verdict">
+    What a person actually thought, read from the pull request they merged or closed.
+  </SpecCard>
+</CardGrid>
+
+## Verdicts come from pull requests, not opinions
+
+A pull request status maps to a verdict, with one deliberate gap:
+
+<CardGrid size="md">
+  <OptionCard name="merged">
+    Someone accepted the work.
+  </OptionCard>
+  <OptionCard name="closed">
+    Someone rejected it.
+  </OptionCard>
+  <OptionCard name="draft / open">
+    **Not a verdict.** Work still in flight has not been judged.
+  </OptionCard>
+</CardGrid>
+
+Counting an open PR as anything would be inventing an opinion nobody expressed — which is the exact failure this surface exists to avoid.
+
+```bash
+# What did the work cost, and did anyone say it was good?
+stella scoreboard
+```
+
+<Callout type="info">
+The arithmetic lives in `stella-core` and is unit-tested there, so the CLI reads rows and renders rather than re-deriving numbers. A rollup is rebuilt from the underlying event sequence, which is why the totals cannot drift away from the events that produced them.
+</Callout>
+
+<Callout type="warn">
+`interrupted` is never reported today: nothing in the store distinguishes a human cancellation from a provider error, so the scoreboard declines to guess rather than mislabeling one as the other.
+</Callout>
+
+## Related
+
+<CardGrid size="sm">
+  <SpecCard title="stella stats" href="/docs/commands/stats">
+    Cost, tokens, and resolve rate per provider and model — the spend view of the same store.
+  </SpecCard>
+  <SpecCard title="stella usage" href="/docs/commands/usage">
+    The same numbers across every project on this machine.
+  </SpecCard>
+  <SpecCard title="The Observatory" href="/docs/telemetry/dashboard">
+    The browser dashboard over this workspace's telemetry, loopback-only.
+  </SpecCard>
+</CardGrid>

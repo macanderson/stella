@@ -1,0 +1,105 @@
+---
+title: stella tune
+description: Eval-driven self-tuning of Stella's own policy — A/B one knob over two loop-bench runs, promote the winner only when it confidently wins, and roll it back on the record.
+---
+
+`stella tune` is how Stella's own policy gets tuned by evidence instead of taste. It A/B tests one knob over two [loop-bench](https://github.com/macanderson/stella/tree/main/bench/loop-bench) runs, scores each arm from the per-trial rewards, and promotes the candidate **only** when it confidently beats the baseline — with a reversible rollback record either way.
+
+The first knob is the worker's reasoning effort. Offline: reads two result files and the local ledger, writes settings only on `--promote`. No provider, no API key.
+
+## Synopsis
+
+```bash
+stella tune effort --baseline <file> --candidate <file> \
+    [--baseline-effort <effort>] [--candidate-effort <effort>] \
+    [--promote] [--scope <project|user>] [--min-samples <n>]
+stella tune rollback
+stella tune status
+```
+
+## What it does
+
+Most "tuning" of an agent is somebody changing a default because a run felt better. That is unfalsifiable. The flow here is deliberately boring: run a fixed held-out task list twice, once per arm, and let the numbers decide.
+
+```bash
+# 1. Run the held-out task list at each effort, capturing --json
+loop-bench --json > base.json      # worker effort: medium
+loop-bench --json > cand.json      # worker effort: high
+
+# 2. Score the arms — reports only, changes nothing
+stella tune effort --baseline base.json --candidate cand.json
+
+# 3. Apply the winner, with a rollback record
+stella tune effort --baseline base.json --candidate cand.json --promote
+```
+
+### `stella tune effort`
+
+A/B the worker reasoning-effort knob over two loop-bench `--json` result files and select the winner.
+
+<CardGrid size="md">
+  <OptionCard name="--baseline <file>" required>
+    loop-bench `--json` output for the baseline arm.
+  </OptionCard>
+  <OptionCard name="--candidate <file>" required>
+    loop-bench `--json` output for the candidate arm.
+  </OptionCard>
+  <OptionCard name="--baseline-effort <effort>" defaultValue="medium">
+    The worker effort the baseline arm ran at.
+  </OptionCard>
+  <OptionCard name="--candidate-effort <effort>" defaultValue="high">
+    The worker effort the candidate arm ran at.
+  </OptionCard>
+  <OptionCard name="--promote" defaultValue="off">
+    Apply the winner to settings. Omitted, the command reports and records the A/B receipt but
+    changes nothing.
+  </OptionCard>
+  <OptionCard name="--scope <project|user>" defaultValue="project">
+    Which settings scope to write on `--promote`.
+  </OptionCard>
+  <OptionCard name="--min-samples <n>" defaultValue="5">
+    Minimum trials required in **every** arm before any promotion is allowed.
+  </OptionCard>
+</CardGrid>
+
+<Callout type="info">
+`--min-samples` is a floor on promotion, not on reporting. A two-trial A/B still prints its comparison — it just cannot move your settings on the strength of it.
+</Callout>
+
+### `stella tune rollback`
+
+Revert the last effort promotion, restoring the prior worker effort. Every promotion writes the record that makes this possible, so a tuning decision is never one-way.
+
+```bash
+stella tune rollback
+```
+
+### `stella tune status`
+
+Show the self-tuning ledger — the experiments that have run, and the promotion currently in effect.
+
+```bash
+stella tune status
+```
+
+## Why promotion is conservative
+
+A/B testing an agent is noisy: the same task list at the same settings does not return the same reward twice. Promoting on a bare mean would ratchet the configuration around on noise, and every such move is invisible to you afterward. So promotion requires the candidate to *confidently* win, `--min-samples` sets a hard floor under both arms, and the write is recorded with a rollback — the three things that make an automatic policy change safe to leave switched on.
+
+<Callout type="warn">
+`--promote` writes to your `settings.json` at the chosen scope. Run without it first and read the comparison; the reported receipt is recorded either way, so nothing is lost by looking.
+</Callout>
+
+## Related
+
+<CardGrid size="sm">
+  <SpecCard title="settings.json" href="/docs/configuration/settings">
+    Every key `--promote` can write, and how project and user scope resolve.
+  </SpecCard>
+  <SpecCard title="Agent engine config" href="/docs/configuration/agent-engine-config">
+    The reasoning-effort knob and the rest of the engine surface.
+  </SpecCard>
+  <SpecCard title="Determinism over intelligence" href="/docs/principles/determinism">
+    Why a deterministic oracle is preferred to a model's opinion wherever one exists.
+  </SpecCard>
+</CardGrid>
