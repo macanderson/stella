@@ -26,6 +26,8 @@ record of *changes*, curated by the person who made them.
 
 ## [Unreleased]
 
+## [0.6.22] — 2026-07-30
+
 ### Changed
 
 - **The SETTINGS tab navigates like the AGENTS tab.** It used to draw both
