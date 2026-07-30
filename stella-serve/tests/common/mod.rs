@@ -10,16 +10,20 @@
 //! `mod common;` compiles this file into each test binary separately, and
 //! anything private would be unreachable from the tests that need it.
 
+// Each test binary compiles this whole module, so any helper only *one* of them
+// uses is genuinely dead code in the other — `http.rs` never resumes a stream,
+// `resume.rs` never drives a tool call. That is inherent to `mod common;`, not a
+// sign of an unused helper, so it is allowed here rather than worked around by
+// splitting the harness along the same seam twice.
+#![allow(dead_code)]
+
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::json;
 use stella_protocol::{CompletionMessage, ToolSchema};
-use stella_serve::observe::{
-    Capture, Fanout, Metrics, MisrouteFault, ReverseKind, ServeEvent, SettledOutcome,
-    SharedObserver,
-};
+use stella_serve::observe::{Capture, Fanout, Metrics, SharedObserver};
 use stella_serve::{ServeConfig, serve};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;

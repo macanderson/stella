@@ -15,9 +15,9 @@ use std::time::{Duration, Instant};
 
 use common::*;
 use serde_json::json;
-use stella_protocol::{CompletionMessage, ToolSchema};
+use stella_protocol::CompletionMessage;
 use stella_serve::observe::{Capture, MisrouteFault, ReverseKind, ServeEvent, SettledOutcome};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

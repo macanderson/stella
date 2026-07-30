@@ -14,8 +14,6 @@ use std::time::{Duration, Instant};
 
 use common::*;
 use serde_json::json;
-use tokio::io::BufReader;
-use tokio::net::TcpStream;
 
 /// Without a per-frame sequence number, "resume after X" cannot be expressed at
 /// all, so this is the foundation the rest of the resume behavior stands on. It
