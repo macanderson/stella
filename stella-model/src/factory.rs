@@ -45,7 +45,10 @@ use crate::credential::ApiKey;
 /// The wire dialect a provider speaks — which adapter is constructed for it.
 /// Serialized form is the settings.json `dialect` field (kebab-case, e.g.
 /// `"openai-compatible"`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+// `Serialize` so a settings document can be written back out (the JSON→TOML
+// migration re-emits every provider entry it read). The kebab-case rename
+// applies in both directions, so a round-trip is byte-stable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Dialect {
     /// OpenAI Chat Completions shape ([`crate::zai::ZaiProvider`],

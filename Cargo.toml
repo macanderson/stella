@@ -23,7 +23,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.6.19"
+version = "0.6.21"
 edition = "2024"
 rust-version = "1.90"
 license = "AGPL-3.0-only"
@@ -54,6 +54,14 @@ libc = "0.2"
 rand = "0.10"
 proptest = "1"
 toml = "1.1"
+# Format-preserving TOML editing. `toml` alone can only re-render a parsed
+# document, which discards every comment in it — and a config file whose
+# comments do not survive a `/theme` save has lost the one advantage it moved
+# to TOML for. `toml_edit` keeps comments, key order, and whitespace across a
+# read-modify-write, so a settings editor can change one key and leave the rest
+# of the user's file byte-identical. MIT OR Apache-2.0, same license pair and
+# same maintainer as `toml` itself. See stella-cli/src/settings/toml_io.rs.
+toml_edit = { version = "0.24", features = ["serde"] }
 # Vetted dotenv parser (quotes, escapes, multi-line values, `export` prefixes),
 # used as a non-mutating iterator so the CLI keeps control of precedence and
 # never overrides the live shell. See stella-cli/src/env_files.rs.

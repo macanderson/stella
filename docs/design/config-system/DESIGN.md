@@ -1,12 +1,35 @@
 # Design: `stella.toml` — one config file, and the five features it unlocks
 
-**Status:** Nothing built. This is a proposal. ·
+**Status:** Phase 0 and Phase 1 implemented. Phases 2–6 unbuilt. ·
 **Date:** 2026-07-30
 
-**Built today:** none of it. Stella reads `settings.json` (JSON, three
-scopes) plus `.stella/mcp.toml`, `.stella/domains.toml`,
+**Built:** `toml_edit` comment-preserving writes
+(`stella-cli/src/settings/toml_io.rs`, §3.1); the `stella.toml` document and
+its lowering into `Settings` (`settings/toml_config.rs`); three-scope
+discovery with the project file at the **repo root** (§3.2, decided); the
+dual read with TOML winning whole and the shadowed JSON announced (§6.1);
+`[meta]` with `schema_version` and location-checked `scope`; the TOML
+unrecognized-key vocabulary (`settings/unknown.rs`, §3.3); `api_key` refused
+at project scope (§6.2); `[run].recap` replacing the bare root scalar (§6.3);
+`[agents.<n>]` flattened with `[models].allowed` split out (§6.4); and
+`stella migrate config [--dry-run]` (`settings/migrate.rs`), which runs
+*before* provider resolution so a config too broken to start is still
+migratable. Writes go through the same path, so `/theme`, the tool-switch
+editor, and the engine editor all edit TOML in place once a `stella.toml`
+exists.
+
+**Not built:** the `[mcp.servers]` fold — the block parses and is announced as
+inert rather than silently dropped, because consuming it crosses
+`agent::load_mcp_plan`'s code-execution trust gate and belongs in its own
+change (Phase 1b). Also unbuilt: everything in Phases 2–6 (pipeline stages,
+per-agent tool scope, open agent set, `[models]` pin/track_latest, provider
+fallback, integrations).
+
+**Still read as before:** `.stella/mcp.toml`, `.stella/domains.toml`,
 `.stella/tools/*.toml`, `~/.stella/credentials.toml`,
-`~/.stella/integrations.json`, and project `.env` files.
+`~/.stella/integrations.json`, and project `.env` files. See
+[`docs/filesystem-layout.md`](../../filesystem-layout.md) for the full
+on-disk map.
 
 **Companion files:** [`stella.today.toml`](./stella.today.toml) renders every
 knob Stella reads *today* in the proposed shape (a pure transliteration).
@@ -14,10 +37,9 @@ knob Stella reads *today* in the proposed shape (a pure transliteration).
 features below are built. [`agent_system.toml`](./agent_system.toml) is the
 original sketch this responds to.
 
-**Not yet decided:** whether the project-scope file lives at the repo root
-(`./stella.toml`) or stays under `.stella/`. §3.2 recommends the root and
-says why; it is the one call in here that is genuinely reversible-with-pain,
-so it should be made deliberately rather than inherited from this doc.
+**Decided:** the project-scope file lives at the **repo root**
+(`./stella.toml`), not under `.stella/`. §3.2 has the reasoning; §6.2 has the
+consequence that follows from it.
 
 ---
 

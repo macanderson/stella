@@ -7,7 +7,8 @@ use stella_tools::policy::ToolPolicy;
 use super::authority::{
     apply_tool_ceiling, managed_tool_ceiling, restore_project_prompts, restore_project_tools,
 };
-use super::managed::managed_settings_path;
+use super::managed::{self, managed_settings_path};
+use super::toml_config;
 use super::*;
 
 /// What each settings scope says about tools, kept APART instead of merged.
@@ -50,7 +51,7 @@ fn concat_hooks(base: &mut Option<Hooks>, extra: &Hooks) {
 impl Settings {
     /// Read and parse one scope exactly once. A missing file is represented by
     /// an empty captured snapshot; malformed content remains a named error.
-    fn load_scope(path: &Path) -> Result<Self, String> {
+    pub(super) fn load_scope(path: &Path) -> Result<Self, String> {
         let contents = match std::fs::read_to_string(path) {
             Ok(contents) => contents,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -72,6 +73,80 @@ impl Settings {
             }
         }
         Ok(scope)
+    }
+
+    /// Load one scope, preferring `stella.toml` over `settings.json`.
+    ///
+    /// The two are NEVER merged. A half-migrated config that silently composed
+    /// both files would make "which file configures this?" unanswerable from
+    /// either one — the failure mode is a user editing the JSON, seeing no
+    /// effect, and having nothing to look at. So TOML wins whole, and the
+    /// shadowed JSON is announced.
+    fn load_scope_dual(
+        toml_path: &Path,
+        json_path: &Path,
+        scope: ConfigScope,
+        notices: &mut Vec<String>,
+    ) -> Result<Self, String> {
+        if !toml_path.exists() {
+            return Self::load_scope(json_path);
+        }
+        let loaded =
+            toml_config::load_toml_scope(toml_path, scope, |p| std::fs::read_to_string(p))?;
+        notices.extend(loaded.warnings);
+        if json_path.exists() {
+            notices.push(format!(
+                "  ! {} and {} both exist — reading the TOML and IGNORING the JSON. \
+                 Delete the JSON once you have confirmed the migration.",
+                toml_path.display(),
+                json_path.display(),
+            ));
+        }
+        Ok(loaded.settings)
+    }
+
+    /// The managed tier's dual read.
+    ///
+    /// Differs from the other two scopes in one way that matters: when
+    /// `STELLA_MANAGED_SETTINGS` names a file explicitly, that is THE managed
+    /// file and its extension picks the reader. Probing for a sibling would let
+    /// a second, unnamed file quietly supply the authority ceiling.
+    ///
+    /// Both formats go through the hardened `O_NOFOLLOW` + ownership + mode
+    /// check. That check is what makes the ceiling trustworthy, so the TOML
+    /// path reuses it rather than reimplementing a plain read.
+    fn load_managed_scope_dual(notices: &mut Vec<String>) -> Result<(PathBuf, Self), String> {
+        if std::env::var_os("STELLA_MANAGED_SETTINGS").is_some() {
+            let path = managed_settings_path();
+            if toml_config::path_is_toml(&path) {
+                let loaded = toml_config::load_toml_scope(&path, ConfigScope::Managed, |p| {
+                    managed::read_managed_settings(p)
+                })?;
+                notices.extend(loaded.warnings);
+                return Ok((path, loaded.settings));
+            }
+            let settings = Self::load_managed_scope(&path)?;
+            return Ok((path, settings));
+        }
+
+        let toml_path = toml_config::managed_toml_path();
+        let json_path = managed_settings_path();
+        if toml_path.exists() {
+            let loaded = toml_config::load_toml_scope(&toml_path, ConfigScope::Managed, |p| {
+                managed::read_managed_settings(p)
+            })?;
+            notices.extend(loaded.warnings);
+            if json_path.exists() {
+                notices.push(format!(
+                    "  ! {} and {} both exist — reading the TOML and IGNORING the JSON.",
+                    toml_path.display(),
+                    json_path.display(),
+                ));
+            }
+            return Ok((toml_path, loaded.settings));
+        }
+        let settings = Self::load_managed_scope(&json_path)?;
+        Ok((json_path, settings))
     }
 
     /// Overlay one already-parsed scope without touching the filesystem.
@@ -262,14 +337,32 @@ impl Settings {
             return Ok(Self::default());
         }
 
-        let user = match user_settings_path() {
-            Some(path) => Self::load_scope(&path)?,
-            None => Self::default(),
+        let mut notices: Vec<String> = Vec::new();
+
+        let user = match (user_settings_path(), toml_config::user_toml_path()) {
+            (Some(json), Some(toml)) => {
+                Self::load_scope_dual(&toml, &json, ConfigScope::User, &mut notices)?
+            }
+            (Some(json), None) => Self::load_scope(&json)?,
+            (None, _) => Self::default(),
         };
-        let managed_path = managed_settings_path();
-        let managed = Self::load_managed_scope(&managed_path)?;
-        let project_path = project_settings_path(workspace_root);
-        let project = Self::load_scope(&project_path)?;
+        let (_managed_path, managed) = Self::load_managed_scope_dual(&mut notices)?;
+        let project_json = project_settings_path(workspace_root);
+        let project_toml = toml_config::project_toml_path(workspace_root);
+        let project = Self::load_scope_dual(
+            &project_toml,
+            &project_json,
+            ConfigScope::Project,
+            &mut notices,
+        )?;
+        // The path named in every trust/credential message below. A TOML config
+        // must be named as itself, or the warning tells the user to edit a file
+        // that is not the one configuring them.
+        let project_path = if project_toml.exists() {
+            project_toml
+        } else {
+            project_json
+        };
         let trust = project_trust();
         let merged = Self::merge_captured_scopes(&user, &managed, &project, trust);
 
@@ -294,12 +387,32 @@ impl Settings {
         // excluded: it is administrator-owned, its reader is a hardened
         // O_NOFOLLOW path, and an operator cannot act on a warning printed on
         // somebody else's machine.
+        // Format-level notices (a shadowed JSON file, an inert [mcp.servers]).
+        // Latched with everything else below so the several loads one launch
+        // performs cannot turn one finding into four.
         if announce {
-            for path in [Some(&project_path), user_settings_path().as_ref()]
+            for notice in &notices {
+                eprintln!("{notice}");
+            }
+        }
+
+        if announce {
+            let user_path = if toml_config::user_toml_path().is_some_and(|p| p.exists()) {
+                toml_config::user_toml_path()
+            } else {
+                user_settings_path()
+            };
+            for path in [Some(&project_path), user_path.as_ref()]
                 .into_iter()
                 .flatten()
             {
-                let unknown = super::unknown::unknown_keys_in(path);
+                // Which vocabulary applies is a property of the FORMAT, not the
+                // scope — `agents` is a valid root in TOML and a typo in JSON.
+                let unknown = if toml_config::path_is_toml(path) {
+                    super::unknown::unknown_toml_keys_in(path)
+                } else {
+                    super::unknown::unknown_keys_in(path)
+                };
                 if !unknown.is_empty() {
                     eprintln!(
                         "  ! {}: unrecognized key{} ignored ({}) — check the spelling; \

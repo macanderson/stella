@@ -40,6 +40,9 @@ record of *changes*, curated by the person who made them.
   the keyboard back. `t` still jumps straight to the tool switches from either
   pane. Because a focused editor owns the keyboard, ←/→ can only move the nav
   from browse state — never out from under an open edit.
+## [0.6.21] — 2026-07-30
+
+## [0.6.20] — 2026-07-30
 
 ## [0.6.19] — 2026-07-30
 

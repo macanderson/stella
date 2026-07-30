@@ -1,0 +1,60 @@
+---
+title: stella migrate
+description: Rewrite settings.json as stella.toml — values serialized from what stella actually read, never transcribed, and the JSON kept until you delete it yourself.
+---
+
+`stella migrate config` converts your existing `settings.json` into `stella.toml`: the same configuration, in a format that can hold its own documentation. It writes `<repo>/stella.toml` for the project scope and `~/.stella/stella.toml` for the user scope.
+
+It reads local files only — no provider, no API key, no network.
+
+## Synopsis
+
+```bash
+stella migrate config                # write the TOML for every scope that has JSON
+stella migrate config --dry-run      # report what it would write, change nothing
+```
+
+## It never deletes your settings.json
+
+The original stays exactly where it was. Review the TOML, confirm it says what you meant, then remove the JSON yourself.
+
+Until you do, stella reads the **TOML** and prints a line naming both files, so a half-finished migration is never silent. The two are never merged: one file configures a scope, and which one is always answerable.
+
+## Why the values are safe
+
+Every value is serialized from the settings stella actually parsed, not re-typed from the JSON. Nothing in the output can disagree with what stella read.
+
+The generated file is also re-parsed and re-validated *before* it is written. A migration that emitted a file stella could not read would otherwise surface on your next launch — with your working config already shadowed by the broken one.
+
+## It works on a config that is too broken to start
+
+`migrate` runs **before** provider resolution, for the same reason `stella doctor` does. A `settings.json` naming a model whose provider no longer exists is one of the likeliest reasons to reach for this command, and requiring a working provider would make the fix-it tool unreachable exactly when it is needed.
+
+## What moves where
+
+Most keys keep their names. Four change, and each has a reason:
+
+| settings.json | stella.toml | Why |
+| --- | --- | --- |
+| `enable_recap` | `[run].recap` | A bare key at the document root attaches to whatever `[table]` precedes it — move one line and it silently belongs to that table. Every scalar gets a table home. |
+| `agent_engine_config` | `[agents]` | Shorter, and the JSON name described the struct rather than the thing. |
+| `agent_engine_config.agents.<name>` | `[agents.<name>]` | One nesting level removed. Safe because the agent set is closed — `default`, `worker`, `judge`, `triage`. |
+| `agent_engine_config.allowed_models` | `[models].allowed` | It is a statement about models, not about any one agent. |
+
+`[mcp].registry_url` carries over. **`[mcp.servers]` does not work yet** — MCP servers still load from `.stella/mcp.toml`. If you move them, stella says so at startup rather than failing to start them silently.
+
+## Where each scope's file lives
+
+| Scope | File |
+| --- | --- |
+| project | `<repo>/stella.toml` — commit it; it is reviewed like source |
+| user | `~/.stella/stella.toml` |
+| managed | deployed by an administrator; **not** migrated by this command |
+
+The project file sits at the repository root, not under `.stella/`, because it is a committed file that belongs in a PR diff. One consequence follows from that: a literal `api_key` is refused at project scope. Use `api_key_env` to name an environment variable, or `stella auth set <provider>` to store the key in `~/.stella/credentials.toml`, which is owner-only and never committed.
+
+## After migrating
+
+Your comments survive every future write. `/theme`, the tool-switch editor, and the engine editor all edit `stella.toml` in place, changing only the key they own and leaving the rest of the file — including everything you wrote in it — byte-identical.
+
+See [the annotated reference config](https://github.com/macanderson/stella/blob/main/docs/design/config-system/stella.today.toml) for every key with its meaning, and [the filesystem map](https://github.com/macanderson/stella/blob/main/docs/filesystem-layout.md) for where stella keeps everything else.

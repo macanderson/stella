@@ -23,7 +23,9 @@ use std::time::Duration;
 
 use serde_json::json;
 use stella_protocol::{CompletionMessage, ToolSchema};
-use stella_serve::observe::{Capture, Fanout, Metrics, SharedObserver};
+use stella_serve::observe::{
+    Capture, Fanout, Metrics, ServeEvent, SharedObserver, StreamEndReason,
+};
 use stella_serve::{ServeConfig, serve};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
@@ -205,6 +207,44 @@ pub fn model_wants_echo() -> serde_json::Value {
 }
 
 // ── resumable streams (#971 phase 2) ──────────────────────────────────────
+
+/// Block until the server has noticed the subscriber went away and parked the
+/// turn, returning the reason it recorded.
+///
+/// Dropping a socket tells the *client* the stream is over; the server learns
+/// it whenever its own read or write next touches the dead connection. Until it
+/// does, the session is still checked out by the previous connection, and a
+/// reconnect is answered from the retained tail alone — a replay with no live
+/// source behind it, which is correct for a genuinely concurrent second
+/// subscriber and useless to a resuming one. Waiting for the server's own
+/// `StreamEnded` removes that race from every resume test: the emit is ordered
+/// after the turn is parked (see `routes::handle_events`), so observing it is a
+/// guarantee the session is back in its entry, not a hint that it soon will be.
+///
+/// The reason is asserted, not merely returned: a disconnect that ended the
+/// turn instead of parking it is exactly the regression these tests exist to
+/// catch, and it would otherwise surface as a puzzling timeout here.
+pub async fn await_parked_after_disconnect(capture: &Capture) -> StreamEndReason {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(ServeEvent::StreamEnded { reason, .. }) =
+            capture.find(|e| matches!(e, ServeEvent::StreamEnded { .. }))
+        {
+            assert!(
+                reason.leaves_the_turn_resumable(),
+                "a subscriber hanging up must leave the turn resumable, but the \
+                 server ended it with {reason:?} — the turn is gone and no \
+                 reconnect can recover it"
+            );
+            return reason;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the server never recorded the subscriber going away"
+        );
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+}
 
 /// Read one SSE event as `(id, payload)`, so a test can assert on the `id:`
 /// line a browser `EventSource` would use to resume.
