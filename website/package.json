@@ -13,9 +13,7 @@
     "build": "NODE_ENV=production next build",
     "start": "next start --port 3400",
     "postinstall": "fumadocs-mdx",
-    "typecheck": "tsc --noEmit",
-    "docs:llms": "node scripts/build-llms-txt.mjs",
-    "docs:llms:check": "node scripts/build-llms-txt.mjs --check"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "fumadocs-core": "16.9.3",
