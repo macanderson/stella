@@ -26,10 +26,56 @@
 //! tautological and is deliberately not counted as evidence — see
 //! [`stella_store::Reconstruction`]. The banner reports both facts rather than
 //! flattening them into one word.
+//!
+//! ## `--diff`: what changed, rather than what was sent
+//!
+//! Printing the whole context answers "what did the model see", which is the
+//! question the receipts plane was built for. It is the wrong tool for "what
+//! did *this* call see that the last one didn't" — a system prompt is hundreds
+//! of stable lines, and finding the paragraph that moved by reading two of them
+//! side by side is not a thing a person can do reliably.
+//!
+//! `--diff` renders the same reconstruction as a unified diff instead, against
+//! one of three baselines:
+//!
+//! - `prev` (the default) — whatever ran immediately before, **in the same
+//!   role**. Same-role matters: a step that ran the worker and a judge holds
+//!   two unrelated prompts, and diffing across them produces noise, not a
+//!   delta.
+//! - `first` — the first call of that role in the session: the first ever turn.
+//! - `prompt` — the bytes the user actually submitted, before the context
+//!   engine touched them.
+//!
+//! ### A turn is an execution
+//!
+//! `prev` searches the whole session, not just the execution named on the
+//! command line, because a *turn* — one prompt the user submitted — is one
+//! execution row, while `turn_instance` counts sub-turns inside it and is zero
+//! for nearly every real call. Stopping at the execution boundary would answer
+//! the wrong question in the most important case: a system prompt is
+//! byte-stable across the steps of one execution *by design* (the prompt-cache
+//! invariant), so the only place it can drift is across turns. A diff that
+//! refused to look there would print "no change" for exactly the comparison
+//! worth making. The `---` header names the execution whenever the baseline
+//! came from an earlier one, so the crossing is never silent.
+//!
+//! ### Why the prompt is a baseline at all
+//!
+//! The `prompt` baseline is not a fallback so much as the honest answer for the
+//! very first call of a session, which has no predecessor: everything the
+//! reconstruction contains beyond what was typed is, by definition, what Stella
+//! added. That mutation is what the user never sees — they know only the words
+//! they submitted — and it is invisible in every other view, since the
+//! transcript shows the sum and never the delta.
 
+mod diff;
+
+use colored::Colorize;
 use serde::Serialize;
 use stella_protocol::{CompletionMessage, MessageRole, ToolOutput};
 use stella_store::{Reconstruction, RecordedCall, Store};
+
+use diff::{Diff, Op};
 
 /// How much of a message body the text format prints before eliding. The whole
 /// point of this command is seeing the real bytes, so the cap is generous and
@@ -47,20 +93,94 @@ pub(crate) enum InspectFormat {
     Json,
 }
 
-/// `stella inspect [id] [--turn T] [--step N] [--call-seq S]`.
-pub(crate) fn run_inspect(
-    execution_id: Option<i64>,
-    turn: u32,
-    step: Option<u64>,
-    call_seq: u64,
-    format: InspectFormat,
-    full: bool,
-) -> Result<(), String> {
+/// Which earlier state `--diff` compares this call against. See the module
+/// docs for why `Prev` is same-role and why `Prompt` is the right answer for a
+/// role's first call rather than an error.
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum DiffBase {
+    /// The call that immediately preceded this one — the previous step of this
+    /// turn, or the last call of the previous turn when this is a turn's first
+    /// call. Falls back to `prompt` when nothing preceded it at all.
+    Prev,
+    /// The first call of this role in the whole session — the first ever turn.
+    First,
+    /// This turn's prompt exactly as submitted, before any context was added.
+    Prompt,
+}
+
+/// Which messages the compared document keeps. The complaint `--diff` answers
+/// is specifically about *system prompts*, and a step-to-step comparison of the
+/// whole context is dominated by the tool round-trips each step appends — so
+/// narrowing to one role is the difference between a readable delta and a wall.
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum RoleFilter {
+    All,
+    System,
+    User,
+    Assistant,
+    Tool,
+}
+
+impl RoleFilter {
+    fn keeps(self, role: MessageRole) -> bool {
+        match self {
+            RoleFilter::All => true,
+            RoleFilter::System => role == MessageRole::System,
+            RoleFilter::User => role == MessageRole::User,
+            RoleFilter::Assistant => role == MessageRole::Assistant,
+            RoleFilter::Tool => role == MessageRole::Tool,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            RoleFilter::All => "all messages",
+            RoleFilter::System => "system messages",
+            RoleFilter::User => "user messages",
+            RoleFilter::Assistant => "assistant messages",
+            RoleFilter::Tool => "tool messages",
+        }
+    }
+}
+
+/// Everything `stella inspect` was invoked with. A struct rather than nine
+/// positional parameters: the flags are all optional refinements of one
+/// question, and threading them individually through three call layers is how
+/// argument order gets silently transposed.
+pub(crate) struct InspectArgs {
+    pub(crate) execution_id: Option<i64>,
+    pub(crate) turn: u32,
+    pub(crate) step: Option<u64>,
+    pub(crate) call_seq: u64,
+    pub(crate) format: InspectFormat,
+    pub(crate) full: bool,
+    pub(crate) diff: Option<DiffBase>,
+    pub(crate) context: usize,
+    pub(crate) only: RoleFilter,
+}
+
+/// `stella inspect [id] [--turn T] [--step N] [--call-seq S] [--diff [BASE]]`.
+pub(crate) fn run_inspect(args: &InspectArgs) -> Result<(), String> {
     let store = open_readonly_store()?;
-    match (execution_id, step) {
-        (None, _) => list_executions(&store, format),
-        (Some(id), None) => list_calls(&store, id, format),
-        (Some(id), Some(step)) => show_call(&store, id, turn, step, call_seq, format, full),
+    match (args.execution_id, args.step) {
+        (None, _) => list_executions(&store, args.format),
+        (Some(id), None) if args.diff.is_some() => Err(format!(
+            "--diff compares one call against an earlier one, so it needs to know which: \
+             add --step <STEP> (`stella inspect {id}` lists them)"
+        )),
+        (Some(id), None) => list_calls(&store, id, args.format),
+        (Some(id), Some(step)) => match args.diff {
+            Some(base) => show_diff(&store, id, step, base, args),
+            None => show_call(
+                &store,
+                id,
+                args.turn,
+                step,
+                args.call_seq,
+                args.format,
+                args.full,
+            ),
+        },
     }
 }
 
@@ -234,6 +354,323 @@ fn print_reconstruction(
                 body.len() - cut
             );
         }
+    }
+    // The whole context answers "what was sent"; it is a poor way to find what
+    // *moved*. Say so here rather than in the help text nobody re-reads.
+    println!(
+        "\nstella inspect {execution_id} --step {step} --diff \
+         to see only what changed since the previous call of this role."
+    );
+}
+
+/// The earlier state a diff is taken against, already resolved to bytes plus
+/// the label the `---` header prints.
+struct Baseline {
+    label: String,
+    /// The `kind` the JSON format reports — `prev`, `first`, or `prompt`. The
+    /// requested base and the resolved one can differ (`prev` on a role's first
+    /// call resolves to `prompt`), and a script must be able to see which it
+    /// actually got.
+    kind: &'static str,
+    document: String,
+}
+
+fn show_diff(
+    store: &Store,
+    execution_id: i64,
+    step: u64,
+    base: DiffBase,
+    args: &InspectArgs,
+) -> Result<(), String> {
+    let turn = args.turn;
+    let call_seq = args.call_seq;
+    let recon = store
+        .reconstruct_call(execution_id, turn, step, call_seq)
+        .map_err(|e| format!("cannot reconstruct: {e}"))?;
+    if recon.messages.is_empty() && recon.unresolved.is_empty() {
+        return Err(format!(
+            "no receipt for execution {execution_id} turn {turn} step {step} call-seq {call_seq} \
+             — `stella inspect {execution_id}` lists what was recorded"
+        ));
+    }
+    let calls = store
+        .recorded_calls(execution_id)
+        .map_err(|e| format!("cannot read receipts: {e}"))?;
+    let role = calls
+        .iter()
+        .find(|c| c.turn_instance == turn && c.step == step && c.call_seq == call_seq)
+        .map(|c| c.call_role.clone())
+        .unwrap_or_else(|| "worker".to_string());
+    let target = CallRef {
+        execution_id,
+        turn,
+        step,
+        call_seq,
+        role: role.clone(),
+    };
+
+    let baseline = resolve_baseline(store, &target, base, args)?;
+    let document = render_document(&recon, args.only);
+    let computed = diff::unified_diff(&baseline.document, &document, args.context);
+
+    let target_label = target.label(execution_id);
+    match args.format {
+        InspectFormat::Json => print_json(&diff_json(&computed, &baseline, &target_label, args)),
+        InspectFormat::Text => {
+            print_diff(&computed, &baseline, &target_label, args);
+            Ok(())
+        }
+    }
+}
+
+/// One recorded call, addressed across executions. `RecordedCall` deliberately
+/// carries no execution id — it is always read for a known one — but a baseline
+/// can live in an earlier *turn*, which is an earlier execution, so the id has
+/// to travel with the coordinates here.
+struct CallRef {
+    execution_id: i64,
+    turn: u32,
+    step: u64,
+    call_seq: u64,
+    role: String,
+}
+
+impl CallRef {
+    /// How this call is named in a `---`/`+++` header. The execution id is
+    /// printed only when it differs from the call being inspected, so a
+    /// same-turn comparison stays terse and a cross-turn one is unmistakable.
+    fn label(&self, relative_to: i64) -> String {
+        let prefix = if self.execution_id == relative_to {
+            String::new()
+        } else {
+            format!("execution {} · ", self.execution_id)
+        };
+        format!(
+            "{prefix}turn {} · step {} · seq {} ({})",
+            self.turn, self.step, self.call_seq, self.role
+        )
+    }
+}
+
+/// Pick the earlier call — or the submitted prompt — this call is measured
+/// against, and render it to the same document shape as the target.
+///
+/// The search runs over the whole *session*, oldest execution first, keeping
+/// only calls of the same role. Same-role matters because a step that ran the
+/// worker and a judge holds two unrelated prompts; whole-session matters
+/// because a system prompt is byte-stable inside one execution by design, so
+/// the only place it can drift is across turns — and stopping at the execution
+/// boundary would report "no change" for the exact comparison the user came to
+/// make.
+fn resolve_baseline(
+    store: &Store,
+    target: &CallRef,
+    base: DiffBase,
+    args: &InspectArgs,
+) -> Result<Baseline, String> {
+    if matches!(base, DiffBase::Prompt) {
+        return prompt_baseline(store, target.execution_id);
+    }
+
+    // Every turn of this conversation, oldest first. An execution with no
+    // session (a one-shot `stella run`) is its own session.
+    let mut turns = store
+        .session_executions(target.execution_id)
+        .map_err(|e| format!("cannot read the session: {e}"))?;
+    if turns.is_empty() {
+        turns.push(target.execution_id);
+    }
+
+    let mut earlier: Vec<CallRef> = Vec::new();
+    for turn_execution in turns {
+        // Later turns cannot be a baseline for an earlier one; ids are
+        // allocated in submission order.
+        if turn_execution > target.execution_id {
+            break;
+        }
+        let calls = store
+            .recorded_calls(turn_execution)
+            .map_err(|e| format!("cannot read receipts: {e}"))?;
+        for call in calls {
+            let candidate = CallRef {
+                execution_id: turn_execution,
+                turn: call.turn_instance,
+                step: call.step,
+                call_seq: call.call_seq,
+                role: call.call_role,
+            };
+            if candidate.execution_id == target.execution_id
+                && (candidate.turn, candidate.step, candidate.call_seq)
+                    >= (target.turn, target.step, target.call_seq)
+            {
+                break;
+            }
+            if candidate.role == target.role {
+                earlier.push(candidate);
+            }
+        }
+    }
+
+    let picked = match base {
+        DiffBase::First => earlier.into_iter().next(),
+        _ => earlier.pop(),
+    };
+    // Nothing of this role ran before: the only prior state that ever existed
+    // is what the user typed, so that is the honest baseline rather than an
+    // error or an empty diff.
+    let Some(previous) = picked else {
+        return prompt_baseline(store, target.execution_id);
+    };
+
+    let recon = store
+        .reconstruct_call(
+            previous.execution_id,
+            previous.turn,
+            previous.step,
+            previous.call_seq,
+        )
+        .map_err(|e| format!("cannot reconstruct the baseline call: {e}"))?;
+    Ok(Baseline {
+        label: previous.label(target.execution_id),
+        kind: if matches!(base, DiffBase::First) {
+            "first"
+        } else {
+            "prev"
+        },
+        document: render_document(&recon, args.only),
+    })
+}
+
+fn prompt_baseline(store: &Store, execution_id: i64) -> Result<Baseline, String> {
+    let prompt = store
+        .execution_prompt(execution_id)
+        .map_err(|e| format!("cannot read the submitted prompt: {e}"))?
+        .ok_or_else(|| format!("execution {execution_id} is not in the local store"))?;
+    Ok(Baseline {
+        label: "prompt as submitted".to_string(),
+        kind: "prompt",
+        document: prompt,
+    })
+}
+
+/// Flatten a reconstruction into the line-oriented document the diff compares.
+///
+/// Messages are headed by role alone, never by index: a message inserted in the
+/// middle would renumber every header after it, and a diff that reports forty
+/// changed lines because one number shifted is worse than no diff at all.
+fn render_document(recon: &Reconstruction, only: RoleFilter) -> String {
+    let mut out = String::new();
+    for message in recon.messages.iter().filter(|m| only.keeps(m.role)) {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&format!("── {} ──\n", role_tag(message.role)));
+        out.push_str(&message_body(message));
+        out.push('\n');
+    }
+    out
+}
+
+fn print_diff(computed: &Diff, baseline: &Baseline, target_label: &str, args: &InspectArgs) {
+    println!("--- {}", baseline.label.bold());
+    println!("+++ {}", target_label.bold());
+    if !computed.changed() {
+        println!(
+            "no change: the {} are byte-identical to {}",
+            args.only.label(),
+            baseline.label
+        );
+        return;
+    }
+    println!(
+        "{} added, {} removed  ({}{})",
+        format!("+{}", computed.added).green(),
+        format!("-{}", computed.removed).red(),
+        args.only.label(),
+        if computed.minimal {
+            String::new()
+        } else {
+            ", coarse: input too large for an exact diff".to_string()
+        }
+    );
+    for hunk in &computed.hunks {
+        println!("{}", hunk.header().cyan());
+        for line in &hunk.lines {
+            let rendered = format!("{}{}", line.op.sigil(), line.text);
+            match line.op {
+                Op::Add => println!("{}", rendered.green()),
+                Op::Remove => println!("{}", rendered.red()),
+                Op::Equal => println!("{rendered}"),
+            }
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct DiffLineJson {
+    op: &'static str,
+    text: String,
+}
+
+#[derive(Serialize)]
+struct HunkJson {
+    old_start: usize,
+    old_count: usize,
+    new_start: usize,
+    new_count: usize,
+    lines: Vec<DiffLineJson>,
+}
+
+#[derive(Serialize)]
+struct DiffJson {
+    /// Which baseline was actually used — `prev` can resolve to `prompt`.
+    base: &'static str,
+    base_label: String,
+    target_label: String,
+    scope: &'static str,
+    changed: bool,
+    added: usize,
+    removed: usize,
+    /// `false` when the input exceeded the exact-diff bound and every line was
+    /// reported as replaced. Surfaced so a script never reads a coarse script
+    /// as a precise measurement.
+    minimal: bool,
+    hunks: Vec<HunkJson>,
+}
+
+fn diff_json(
+    computed: &Diff,
+    baseline: &Baseline,
+    target_label: &str,
+    args: &InspectArgs,
+) -> DiffJson {
+    DiffJson {
+        base: baseline.kind,
+        base_label: baseline.label.clone(),
+        target_label: target_label.to_string(),
+        scope: args.only.label(),
+        changed: computed.changed(),
+        added: computed.added,
+        removed: computed.removed,
+        minimal: computed.minimal,
+        hunks: computed
+            .hunks
+            .iter()
+            .map(|h| HunkJson {
+                old_start: h.old_start,
+                old_count: h.old_count,
+                new_start: h.new_start,
+                new_count: h.new_count,
+                lines: h
+                    .lines
+                    .iter()
+                    .map(|l| DiffLineJson {
+                        op: l.op.tag(),
+                        text: l.text.clone(),
+                    })
+                    .collect(),
+            })
+            .collect(),
     }
 }
 

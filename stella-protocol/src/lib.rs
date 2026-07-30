@@ -52,8 +52,8 @@ pub mod event;
 pub mod provider;
 pub mod receipt;
 pub mod role;
-pub mod tokens;
 pub mod subagent_event;
+pub mod tokens;
 pub mod tool;
 
 pub use attachment::{
@@ -76,8 +76,8 @@ pub use event::{
 };
 pub use provider::{Provider, ToolCallObserver};
 pub use role::{ModelRef, Role};
+pub use subagent_event::{SubAgentPhase, SubAgentStatus};
 pub use tokens::{
     BYTES_PER_TOKEN, estimate_token_cost, estimate_tokens, estimate_tokens_for_bytes,
 };
-pub use subagent_event::{SubAgentPhase, SubAgentStatus};
 pub use tool::{ToolCall, ToolOutput, ToolResult, ToolSchema};
