@@ -230,6 +230,9 @@ struct ScriptedRunner {
     /// What a failing run prints. Configurable so a test can plant a
     /// distinctive token and assert on where it does — and does not — travel.
     failure_tail: String,
+    /// Exit code the `GitDiff` probe reports. Non-zero models a tree the diff
+    /// machinery could not read at all, which is not the same as a clean one.
+    diff_exit_code: i32,
 }
 impl ScriptedRunner {
     fn new(test_results: Vec<bool>, diff: &str) -> Self {
@@ -238,7 +241,15 @@ impl ScriptedRunner {
             diff: diff.to_string(),
             untracked: Vec::new(),
             failure_tail: "test failed".to_string(),
+            diff_exit_code: 0,
         }
+    }
+    /// A diff probe that FAILS: no stdout and a non-zero exit, the shape a
+    /// candidate whose worktree registration vanished actually produces.
+    fn with_blind_diff(mut self) -> Self {
+        self.diff = String::new();
+        self.diff_exit_code = 128;
+        self
     }
     fn with_failure_tail(mut self, tail: &str) -> Self {
         self.failure_tail = tail.to_string();
@@ -270,7 +281,7 @@ impl DiagnosticRunner for ScriptedRunner {
         }
         if matches!(invocation, DiagnosticInvocation::GitDiff) {
             return CmdOutcome {
-                exit_code: 0,
+                exit_code: self.diff_exit_code,
                 stdout_tail: self.diff.clone(),
                 stderr_tail: String::new(),
             };
