@@ -54,8 +54,8 @@ use stella_core::retry::{RetryPolicy, Sleeper};
 use stella_core::router::FallbackInfo;
 use stella_core::{BudgetGuard, Engine, EngineConfig, EventSender, Router, TurnOutcome};
 use stella_protocol::{
-    AgentEvent, CompletionMessage, ContextUsage, JudgeEvidence, MessageRole, ModelCallRole,
-    ModelRef, ProofStep, ProofTree, Provider, Role, StageKind,
+    AgentEvent, CompletionMessage, JudgeEvidence, MessageRole, ModelCallRole, ModelRef, Provider,
+    Role, StageKind,
 };
 
 use crate::candidate::{
@@ -644,15 +644,15 @@ impl<'a> Pipeline<'a> {
                 .await
                 .unwrap_or_default()
         };
-        let (assessment, recalled) =
+        let (assessment, mut recalled) =
             tokio::join!(self.triage(goal, budget, &mut total_cost), recall_future);
         // Bounded at the source (#616), so every consumer — the user message,
         // the planner prompt, the witness prompt — inherits one budget, and
         // the ContextRecall event reports the frames the turn actually pays
         // for. A mis-tuned recall port must not silently inflate every
         // subsequent turn (N candidates × every revision) past the window.
-        let frames = bound_recalled_frames(recalled.frames);
-        self.emit_context_recall(&frames, recalled.usage.clone());
+        let frames = bound_recalled_frames(std::mem::take(&mut recalled.frames));
+        self.emit_context_recall(&frames, &recalled);
         let assessment = match assessment {
             Ok(assessment) => assessment,
             Err(abort) => {
@@ -2377,12 +2377,18 @@ impl<'a> Pipeline<'a> {
     /// [`Recall::telemetry_event`] — Phase 2 (#713) moved it there because the
     /// pipeline was the only surface that emitted it, and four other recall
     /// paths now need the same event built the same way.
-    fn emit_context_recall(&self, frames: &[RecalledFrame], usage: Option<ContextUsage>) {
-        let recall = Recall {
+    ///
+    /// `frames` is separate because the caller bounds them first (#616) and
+    /// the event must report what the turn actually pays for. Everything else
+    /// rides off the original rather than being rebuilt from parts:
+    /// reconstructing a `Recall` field by field here is exactly how
+    /// `latency_ms` (#875) would have been dropped the moment it was added.
+    fn emit_context_recall(&self, frames: &[RecalledFrame], recall: &Recall) {
+        let bounded = Recall {
             frames: frames.to_vec(),
-            usage,
+            ..recall.clone()
         };
-        if let Some(event) = recall.telemetry_event() {
+        if let Some(event) = bounded.telemetry_event() {
             self.emit(event);
         }
     }

@@ -1450,6 +1450,8 @@ mod tests {
             }],
             tokens: 100,
             usage: None,
+            latency_ms: 0,
+            used_ann_index: None,
         });
         match model.transcript.last() {
             Some(TranscriptEntry::ContextRecall { labels, .. }) => {
