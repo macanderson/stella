@@ -37,14 +37,39 @@ fn trusted_engine_config_shape_is_strict(value: &serde_json::Value) -> bool {
             .is_some_and(|object| object.keys().all(|key| allowed.contains(&key.as_str())))
     }
 
-    // The ONE vocabulary, shared with the settings.json unknown-key warning
-    // (`settings::unknown`). A second hand-maintained copy here would drift the
-    // moment a knob is added — and because this gate fails CLOSED, a drifted
-    // copy is a refused benchmark run rather than a missing warning.
-    use crate::settings::{
-        ENGINE_AGENT_FIELDS as AGENT_FIELDS, ENGINE_AGENT_NAMES as AGENT_NAMES,
-        ENGINE_PARAM_FIELDS as PARAM_FIELDS, ENGINE_ROOT_FIELDS as ROOT_FIELDS,
-    };
+    const ROOT_FIELDS: &[&str] = &[
+        "default_model",
+        "pipeline_judge_model",
+        "pipeline_worker_model",
+        "pipeline_triage_model",
+        "allowed_models",
+        "auto_mode",
+        "effort_auto",
+        "reasoning_auto",
+        "headless_scope_bypass",
+        "agents",
+    ];
+    const AGENT_NAMES: &[&str] = &["default", "worker", "judge", "triage"];
+    const AGENT_FIELDS: &[&str] = &[
+        "model",
+        "provider",
+        "prompt",
+        "effort",
+        "reasoning",
+        "params",
+    ];
+    const PARAM_FIELDS: &[&str] = &[
+        "temperature",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "max_tokens",
+        "seed",
+        "verbosity",
+        "service_tier",
+    ];
 
     if !object_has_only(value, ROOT_FIELDS) {
         return false;
@@ -91,43 +116,6 @@ fn trusted_engine_config_override() -> Result<Option<crate::settings::AgentEngin
     serde_json::from_value(value)
         .map(Some)
         .map_err(|_| invalid_trusted_engine_config())
-}
-
-/// Whether the credential chain's last step — the masked interactive prompt —
-/// may fire in this process.
-///
-/// `stella_model::credential::ApiKey::resolve` states the contract plainly:
-/// "headless/non-interactive callers (CI, `--output-format stream-json`)
-/// should pass `false` and get a clean `NotFound` instead of hanging on a read
-/// from a stdin that isn't there." Nothing honoured it. Every `--model
-/// provider/slug` path passed `true` unconditionally, so
-/// `stella --model anthropic/… --output-format json run '…'` launched from an
-/// attached terminal with no key stopped dead on a password prompt while the
-/// caller waited on a JSON object that could never arrive — the machine
-/// interface deadlocked on a human one.
-///
-/// A process-wide latch rather than a threaded parameter because the two
-/// non-`main` entry points into `Config::load` (`agent::run_init`,
-/// `ingest_cmd::extract_all`) have no view of the requested output format and
-/// have no business growing one; this mirrors [`JSON_SUMMARY_EMITTED`] and
-/// `signals::INTERRUPTED`, the other two facts about the invocation that
-/// `main` establishes once.
-///
-/// [`JSON_SUMMARY_EMITTED`]: crate::note_json_summary_emitted
-static INTERACTIVE_CREDENTIALS: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(true);
-
-/// Forbid the interactive credential prompt for the rest of this process.
-/// Called by `main` once the requested output format is known.
-pub(crate) fn forbid_interactive_credentials() {
-    INTERACTIVE_CREDENTIALS.store(false, std::sync::atomic::Ordering::SeqCst);
-}
-
-/// Whether `interactive` may still be honoured. `ApiKey::resolve` applies its
-/// own `stdin().is_terminal()` guard on top of this; this is the *policy*
-/// half, which a tty check cannot answer.
-fn interactive_allowed() -> bool {
-    INTERACTIVE_CREDENTIALS.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 /// One provider's config: id, env var name, display name, default model.
@@ -984,9 +972,6 @@ impl Config {
         workspace_root: &std::path::Path,
         interactive: bool,
     ) -> Result<Self, String> {
-        // The caller's request to prompt is honoured only if the invocation
-        // itself can host a prompt — see `INTERACTIVE_CREDENTIALS`.
-        let interactive = interactive && interactive_allowed();
         let (key, source) = resolve_provider_key(
             provider,
             api_key_override,

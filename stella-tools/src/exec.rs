@@ -9,25 +9,11 @@
 //! child so the [`crate::sandbox`] wrapper can replace the program (see
 //! `crate::bash`).
 
-use std::collections::VecDeque;
 use std::time::Duration;
 
 use tokio::process::Command;
 
 pub(crate) const MAX_OUTPUT_BYTES: usize = 30_000;
-
-/// Per-stream in-memory ceiling for a captured subprocess.
-///
-/// `Child::wait_with_output` buffers whatever the child writes, so every
-/// payload cap in this crate (`truncate_middle`, `bash`'s own middle cut,
-/// `diagnostics`' parse) only ever applied AFTER the whole stream was
-/// already resident. `yes`, `cat /dev/urandom | base64`, or a build stuck in
-/// a warning loop therefore grew Stella's RSS without bound until the OOM
-/// killer or the timeout arrived — whichever came first, and the OOM killer
-/// usually won. 8 MiB per stream sits far above any real build or test log,
-/// so nothing observable changes, while turning an unbounded allocation into
-/// a bounded one.
-pub(crate) const MAX_CAPTURE_BYTES: usize = 8 * 1024 * 1024;
 
 /// Ceiling on any model-supplied `timeout_secs`. The timeout is the hang
 /// backstop for commands the model itself launches — accepting an arbitrary
@@ -135,10 +121,8 @@ pub(crate) async fn run_argv(
 /// the full output into a bounded structure of their own (`diagnostics`
 /// consuming a `--message-format=json` stream: truncating the raw stream
 /// would sever JSON lines and silently drop the very records the parse
-/// exists to keep). "Untruncated" means the model-facing [`truncate_middle`]
-/// cut is not applied; the runner's own [`MAX_CAPTURE_BYTES`] memory ceiling
-/// still holds, and a stream that reaches it carries a loud marker line the
-/// line-oriented parsers skip like any other non-record line.
+/// exists to keep). Peak memory is unchanged — `wait_with_output` buffers
+/// everything before truncation would apply anyway.
 pub(crate) async fn run_argv_untruncated(
     program: &str,
     args: &[String],
@@ -180,151 +164,13 @@ pub(crate) enum Captured {
 /// tree.
 pub(crate) async fn run_captured(mut cmd: Command, timeout_secs: u64) -> Captured {
     cmd.kill_on_drop(true);
-    // Set here, not left to the caller: [`wait_with_capped_output`] can only
-    // bound a stream it owns a pipe for, and an inherited stdout would send
-    // a search's results to the user's terminal instead.
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
-    // `Command::output` closed stdin for us; spawning by hand does not, and
-    // an inherited stdin is the TUI's terminal — a `grep` handed no path
-    // would silently eat the user's keystrokes.
-    cmd.stdin(std::process::Stdio::null());
-    let Ok(child) = cmd.spawn() else {
-        return Captured::Unavailable;
-    };
-    // Capped, not `output()`: `rg --max-count` is PER FILE, so a recursive
-    // walk of a large tree emits an unbounded number of lines and the tool's
-    // own caps only ran once the whole thing was already in memory.
-    match tokio::time::timeout(
-        Duration::from_secs(timeout_secs),
-        wait_with_capped_output(child, MAX_CAPTURE_BYTES),
-    )
-    .await
-    {
+    match tokio::time::timeout(Duration::from_secs(timeout_secs), cmd.output()).await {
         Ok(Ok(output)) => Captured::Done(output),
         Ok(Err(_)) => Captured::Unavailable,
-        // Dropping the wait future closes the child handle, and
+        // Dropping the `output()` future closes the child handle, and
         // `kill_on_drop` reaps the process.
         Err(_) => Captured::TimedOut,
     }
-}
-
-/// Head-plus-tail byte accumulator for one child stream: keeps the first and
-/// last `cap / 2` bytes and counts what fell out of the middle.
-///
-/// Head AND tail because a failing command's information sits at both ends —
-/// the first error and the final summary — which is the same reason
-/// [`truncate_middle`] exists. This is that policy moved to *ingest* time, so
-/// the bytes in between are never held at all.
-struct CappedStream {
-    head: Vec<u8>,
-    tail: VecDeque<u8>,
-    dropped: u64,
-    cap: usize,
-    half: usize,
-}
-
-impl CappedStream {
-    fn new(cap: usize) -> Self {
-        Self {
-            head: Vec::new(),
-            tail: VecDeque::new(),
-            dropped: 0,
-            cap,
-            half: cap.max(2) / 2,
-        }
-    }
-
-    fn push(&mut self, mut chunk: &[u8]) {
-        if self.head.len() < self.half {
-            let take = (self.half - self.head.len()).min(chunk.len());
-            self.head.extend_from_slice(&chunk[..take]);
-            chunk = &chunk[take..];
-        }
-        if chunk.is_empty() {
-            return;
-        }
-        self.tail.extend(chunk.iter().copied());
-        if self.tail.len() > self.half {
-            let excess = self.tail.len() - self.half;
-            self.tail.drain(..excess);
-            self.dropped += excess as u64;
-        }
-    }
-
-    /// Head, a loud marker when anything was dropped, then tail. The marker
-    /// is bytes rather than a post-hoc annotation because the caller decodes
-    /// this as the process's output and must not be able to mistake a capped
-    /// stream for a complete one.
-    fn into_bytes(mut self) -> Vec<u8> {
-        if self.dropped == 0 {
-            self.head.extend(self.tail);
-            return self.head;
-        }
-        let cap = if self.cap >= 1024 * 1024 {
-            format!("{} MiB", self.cap / (1024 * 1024))
-        } else {
-            format!("{}-byte", self.cap)
-        };
-        let marker = format!(
-            "\n[… {} bytes dropped: output exceeded the {cap} in-memory capture cap …]\n",
-            self.dropped,
-        );
-        self.head.extend_from_slice(marker.as_bytes());
-        self.head.extend(self.tail);
-        self.head
-    }
-}
-
-/// Drain `reader` to EOF holding at most `cap` bytes (see [`CappedStream`]).
-async fn read_capped<R>(mut reader: R, cap: usize) -> std::io::Result<Vec<u8>>
-where
-    R: tokio::io::AsyncRead + Unpin,
-{
-    use tokio::io::AsyncReadExt as _;
-    let mut acc = CappedStream::new(cap);
-    let mut buf = vec![0u8; 16 * 1024];
-    loop {
-        let n = reader.read(&mut buf).await?;
-        if n == 0 {
-            break;
-        }
-        acc.push(&buf[..n]);
-    }
-    Ok(acc.into_bytes())
-}
-
-/// [`tokio::process::Child::wait_with_output`] with a per-stream memory
-/// ceiling — see [`MAX_CAPTURE_BYTES`] for why the unbounded version is not
-/// safe on a path where the model chooses the command.
-///
-/// Both pipes and the exit wait are polled concurrently, exactly as
-/// `wait_with_output` does, so a child that fills one pipe while the other is
-/// idle cannot deadlock.
-pub(crate) async fn wait_with_capped_output(
-    mut child: tokio::process::Child,
-    cap: usize,
-) -> std::io::Result<std::process::Output> {
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let out = async {
-        match stdout {
-            Some(reader) => read_capped(reader, cap).await,
-            None => Ok(Vec::new()),
-        }
-    };
-    let err = async {
-        match stderr {
-            Some(reader) => read_capped(reader, cap).await,
-            None => Ok(Vec::new()),
-        }
-    };
-    let (status, stdout, stderr) = tokio::try_join!(child.wait(), out, err)?;
-    Ok(std::process::Output {
-        status,
-        stdout,
-        stderr,
-    })
 }
 
 /// SIGKILLs `pid`'s process group on drop unless disarmed — the
@@ -474,15 +320,10 @@ async fn drive_split(
     #[cfg(unix)]
     let mut guard = GroupKillGuard::arm(pid);
 
-    // Capped rather than `wait_with_output`: the child's command text comes
-    // from the model on several of these paths, so the buffer it fills must
-    // be bounded before the timeout, not after it (see [`MAX_CAPTURE_BYTES`]).
-    let output = match tokio::time::timeout(
-        Duration::from_secs(timeout_secs),
-        wait_with_capped_output(child, MAX_CAPTURE_BYTES),
-    )
-    .await
-    {
+    let output =
+        match tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output())
+            .await
+        {
             Ok(Ok(output)) => {
                 #[cfg(unix)]
                 guard.disarm();
@@ -757,80 +598,6 @@ mod tests {
         assert_eq!(shell_quote("main"), "'main'");
         assert_eq!(shell_quote("a'b"), r"'a'\''b'");
         assert_eq!(shell_quote("; rm -rf /"), "'; rm -rf /'");
-    }
-
-    /// The ingest-time half of the output policy: head and tail survive, the
-    /// middle is dropped, and the drop is loud. Without it, `truncate_middle`
-    /// only ran once the whole stream was already in memory.
-    #[test]
-    fn capped_stream_keeps_head_and_tail_and_names_the_drop() {
-        let mut stream = CappedStream::new(100);
-        stream.push(&[b'a'; 50]);
-        stream.push(&[b'm'; 500]);
-        stream.push(&[b'z'; 50]);
-        let out = stream.into_bytes();
-        let text = String::from_utf8(out.clone()).expect("ascii");
-        assert!(text.starts_with(&"a".repeat(50)), "head survives: {text}");
-        assert!(text.ends_with(&"z".repeat(50)), "tail survives: {text}");
-        assert!(text.contains("bytes dropped"), "the drop is loud: {text}");
-        assert!(out.len() < 300, "bounded (got {} bytes)", out.len());
-    }
-
-    /// A stream under the cap must come back byte-identical — the ceiling is
-    /// invisible for every real command.
-    #[test]
-    fn capped_stream_is_a_no_op_below_the_cap() {
-        let mut stream = CappedStream::new(MAX_CAPTURE_BYTES);
-        stream.push(b"hello ");
-        stream.push(b"world");
-        assert_eq!(stream.into_bytes(), b"hello world");
-    }
-
-    /// The witness for the unbounded-child hazard: a 4 MB stream must not
-    /// cost 4 MB of Stella's memory. `wait_with_output` had no such bound —
-    /// `yes` or `cat /dev/urandom | base64` reached the OOM killer before the
-    /// timeout, and the truncation that was supposed to protect the model ran
-    /// only after the whole payload had already been allocated.
-    #[tokio::test]
-    async fn capped_capture_bounds_a_runaway_child() {
-        let mut cmd = Command::new("bash");
-        cmd.arg("-c").arg("yes stella | head -c 4000000");
-        cmd.stdin(std::process::Stdio::null());
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
-        let child = cmd.spawn().expect("spawn");
-        let output = wait_with_capped_output(child, 64 * 1024)
-            .await
-            .expect("capped wait");
-        assert!(
-            output.stdout.len() < 64 * 1024 + 256,
-            "held {} bytes for a 4 MB stream",
-            output.stdout.len()
-        );
-        assert!(
-            String::from_utf8_lossy(&output.stdout).contains("bytes dropped"),
-            "the capped stream must say so"
-        );
-        assert!(output.status.success());
-    }
-
-    /// The end-to-end shape: a runaway command through the shared runner
-    /// still answers, with its exit code intact and a bounded payload.
-    #[tokio::test]
-    async fn run_survives_a_runaway_command() {
-        let (code, out) = run(
-            "yes stella | head -c 20000000; exit 7",
-            std::path::Path::new("/tmp"),
-            120,
-        )
-        .await
-        .expect("runner");
-        assert_eq!(code, 7);
-        assert!(
-            out.len() < MAX_OUTPUT_BYTES + 4096,
-            "the model-facing cut still applies (got {} bytes)",
-            out.len()
-        );
     }
 
     #[test]

@@ -51,16 +51,6 @@ const MAX_LINE_BYTES: usize = 1_000;
 /// which the honest answer is "narrow the range", not "here is everything".
 const MAX_RENDER_BYTES: usize = 400 * 1024;
 
-/// Ceiling on the file this tool will load at all.
-///
-/// Every cap above bounds what reaches the MODEL; none of them bounds what
-/// reaches Stella's heap, because the render only happens after the whole
-/// file has been read, UTF-8-validated and sha256'd. `offset`/`limit` do not
-/// help — a one-line read of a 4 GB database dump paid for all 4 GB. Above
-/// this ceiling the honest answer is a named refusal that points at the tools
-/// which stream, not a multi-gigabyte allocation followed by a 400 KB answer.
-const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
-
 /// Per-file record of what the model last saw: how many times the file was
 /// read, and the sha256 of the file's full content the last time the model
 /// saw it (via a read, or via its own successful edit/write).
@@ -202,50 +192,7 @@ impl Tool for ReadFile {
             }
         };
 
-        // Classify BEFORE loading: a directory and an oversized blob both used
-        // to come back as a raw `io::Error` string ("Is a directory (os error
-        // 21)"), which tells the model what the syscall thought but not what
-        // to do instead — and the blob was already resident by then.
-        if let Ok(meta) = tokio::fs::metadata(&full_path).await {
-            if meta.is_dir() {
-                return ToolOutput::Error {
-                    message: format!(
-                        "`{path}` is a directory, not a file — list it with \
-                         glob({{\"pattern\": \"*\", \"path\": \"{path}\"}})"
-                    ),
-                };
-            }
-            if meta.len() > MAX_FILE_BYTES {
-                return ToolOutput::Error {
-                    message: format!(
-                        "`{path}` is {} MB, past read_file's {} MB ceiling — the whole file is \
-                         loaded to render any range, so offset/limit would not help. Search it \
-                         with grep, or page it with bash (`sed -n '1,200p' {path}`).",
-                        meta.len() / (1024 * 1024),
-                        MAX_FILE_BYTES / (1024 * 1024)
-                    ),
-                };
-            }
-        }
-
-        // Bytes then decode, rather than `read_to_string`: the same single
-        // UTF-8 validation, but the failure can name the file as binary
-        // instead of surfacing "stream did not contain valid UTF-8", which
-        // reads to a model as a transient IO problem worth retrying.
-        let decoded = match tokio::fs::read(&full_path).await {
-            Ok(bytes) => String::from_utf8(bytes).map_err(|e| {
-                let at = e.utf8_error().valid_up_to();
-                let len = e.as_bytes().len();
-                format!(
-                    "`{path}` is not UTF-8 text — it is binary ({len} bytes; first invalid byte \
-                     at offset {at}). read_file returns text only; inspect it with bash \
-                     (`file {path}`, `xxd -l 256 {path}`)."
-                )
-            }),
-            Err(e) => Err(format!("failed to read `{path}`: {e}")),
-        };
-
-        match decoded {
+        match tokio::fs::read_to_string(&full_path).await {
             Ok(content) => {
                 // Count every successful read — including a past-end offset,
                 // which still read the file — so the tally matches the
@@ -331,7 +278,9 @@ impl Tool for ReadFile {
                 numbered.push(')');
                 ToolOutput::Ok { content: numbered }
             }
-            Err(message) => ToolOutput::Error { message },
+            Err(e) => ToolOutput::Error {
+                message: format!("failed to read `{path}`: {e}"),
+            },
         }
     }
 }
@@ -554,73 +503,6 @@ mod tests {
             content.ends_with("(2/2 lines shown · read 1× this session)"),
             "{content}"
         );
-    }
-
-    /// A binary file used to come back as "stream did not contain valid
-    /// UTF-8", which reads to a model as a transient IO fault worth retrying.
-    /// It must be named as binary and point somewhere useful.
-    #[tokio::test]
-    async fn a_binary_file_is_named_as_binary_not_as_an_io_fault() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("blob.bin"), [0x00u8, 0xff, 0xfe, 0x41]).unwrap();
-        let out = ReadFile::default()
-            .execute(&serde_json::json!({"path": "blob.bin"}), dir.path())
-            .await;
-        match out {
-            ToolOutput::Error { message } => {
-                assert!(message.contains("binary"), "{message}");
-                assert!(message.contains("not UTF-8"), "{message}");
-            }
-            ToolOutput::Ok { content } => panic!("expected error, got: {content}"),
-        }
-    }
-
-    /// A directory used to surface the raw `Is a directory (os error 21)`,
-    /// which says what the syscall thought and not what to do instead.
-    #[tokio::test]
-    async fn a_directory_is_refused_with_the_tool_that_does_answer() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join("src")).unwrap();
-        let out = ReadFile::default()
-            .execute(&serde_json::json!({"path": "src"}), dir.path())
-            .await;
-        match out {
-            ToolOutput::Error { message } => {
-                assert!(message.contains("is a directory"), "{message}");
-                assert!(message.contains("glob("), "names the tool: {message}");
-            }
-            ToolOutput::Ok { content } => panic!("expected error, got: {content}"),
-        }
-    }
-
-    /// The heap half of the caps: `offset`/`limit` bound what the MODEL sees,
-    /// never what Stella loads, so a one-line read of a multi-gigabyte dump
-    /// paid for the whole file. Above the ceiling the refusal is named and
-    /// points at the tools that stream.
-    #[tokio::test]
-    async fn an_oversized_file_is_refused_before_it_is_loaded() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("dump.sql");
-        let file = std::fs::File::create(&path).unwrap();
-        // Sparse: the ceiling is decided from metadata, so no bytes are spent.
-        file.set_len(MAX_FILE_BYTES + 1).unwrap();
-        drop(file);
-
-        let out = ReadFile::default()
-            .execute(
-                &serde_json::json!({"path": "dump.sql", "offset": 1, "limit": 1}),
-                dir.path(),
-            )
-            .await;
-        match out {
-            ToolOutput::Error { message } => {
-                assert!(message.contains("ceiling"), "{message}");
-                assert!(message.contains("grep"), "points somewhere: {message}");
-            }
-            ToolOutput::Ok { content } => {
-                panic!("an oversized file must be refused, got: {content}")
-            }
-        }
     }
 
     #[tokio::test]

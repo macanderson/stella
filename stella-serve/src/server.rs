@@ -47,16 +47,13 @@ use rand::Rng as _;
 use serde::{Deserialize, Serialize};
 use stella_core::{BudgetGuard, EngineConfig};
 use stella_protocol::{BudgetMode, CompletionMessage, ToolSchema};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::accept::{self, AcceptAction, AcceptBackoff};
-use crate::frame::{
-    ProviderOutcomeIn, ProviderResultIn, ServerFrame, ToolResultIn, TurnOutcomeWire,
-};
+use crate::frame::{ProviderOutcomeIn, ProviderResultIn, ServerFrame, ToolResultIn};
 use crate::http::{
-    BodyOutcome, ReadOutcome, Request, discard_body, read_body, read_head, write_json,
-    write_json_with_headers, write_sse_frame, write_sse_head,
+    ReadOutcome, read_request, write_json, write_json_with_headers, write_sse_frame, write_sse_head,
 };
 use crate::pending::Pending;
 use crate::session::{Session, SessionSpec};
@@ -484,19 +481,8 @@ pub async fn serve(config: ServeConfig, on_ready: impl FnOnce(SocketAddr)) -> st
     }
 }
 
-/// Serve one connection: read the head, authenticate, then — and only then —
-/// read the body and route.
-///
-/// The two-phase read is the whole point of the ordering here. Buffering the
-/// body first meant an *unauthenticated* peer could make the server hold up to
-/// `MAX_BODY_BYTES` for it, once per connection, and connections are
-/// deliberately uncapped (see [`serve`]'s operational limits) — so the 401 was
-/// answered only after paying for the request that earned it. Now a refused
-/// request costs one 8 KiB drain buffer. The body is still taken off the socket
-/// before the response is written: closing with unread bytes in flight makes the
-/// kernel RST, and a peer that gets an RST mid-send never reads its 401.
 async fn handle_conn(mut stream: TcpStream, state: Arc<ServerState>) -> std::io::Result<()> {
-    let mut req = match read_head(&mut stream).await? {
+    let req = match read_request(&mut stream).await? {
         ReadOutcome::Request(req) => req,
         // A peer that never sent anything is owed nothing.
         ReadOutcome::Hangup => return Ok(()),
@@ -516,16 +502,6 @@ async fn handle_conn(mut stream: TcpStream, state: Arc<ServerState>) -> std::io:
             )
             .await;
         }
-        ReadOutcome::UnsupportedTransferEncoding => {
-            return write_json(
-                &mut stream,
-                "501 Not Implemented",
-                &error_body(
-                    "chunked transfer-encoding is not supported; send a Content-Length body",
-                ),
-            )
-            .await;
-        }
         ReadOutcome::Timeout => {
             return write_json(
                 &mut stream,
@@ -535,11 +511,10 @@ async fn handle_conn(mut stream: TcpStream, state: Arc<ServerState>) -> std::io:
             .await;
         }
     };
-    let path = req.path.split('?').next().unwrap_or(&req.path).to_string();
+    let path = req.path.split('?').next().unwrap_or(&req.path);
     let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
     if req.method == "GET" && segs.as_slice() == ["healthz"] {
-        discard_body(&mut stream, &mut req).await;
         return write_json(&mut stream, "200 OK", br#"{"status":"ok"}"#).await;
     }
     // Compared in constant time: `==` on a `&str` stops at the first differing
@@ -551,7 +526,6 @@ async fn handle_conn(mut stream: TcpStream, state: Arc<ServerState>) -> std::io:
         None => false,
     };
     if !authorized {
-        discard_body(&mut stream, &mut req).await;
         // Rate-limited by holding the response, never by changing it: the
         // body and status a guesser sees are identical whether or not the
         // bucket was empty, so the throttle leaks nothing about its own state.
@@ -569,79 +543,18 @@ async fn handle_conn(mut stream: TcpStream, state: Arc<ServerState>) -> std::io:
         .await;
     }
 
-    // Routes that carry no body are matched before the body is read, so a GET
-    // with a stray `Content-Length` is drained rather than parsed.
     match (req.method.as_str(), segs.as_slice()) {
-        ("GET", ["v1", "turns", id, "events"]) => {
-            let id = (*id).to_string();
-            discard_body(&mut stream, &mut req).await;
-            return handle_events(&mut stream, &state, &id).await;
-        }
-        ("POST", ["v1", "turns", id, "cancel"]) => {
-            let id = (*id).to_string();
-            discard_body(&mut stream, &mut req).await;
-            return handle_cancel(&mut stream, &state, &id).await;
-        }
-        // The body-bearing routes fall through to the read below.
-        ("POST", ["v1", "turns"] | ["v1", "turns", _, "tool-result" | "provider-result"]) => {}
-        // A known resource reached with the wrong method is a 405 naming what
-        // it does accept, not a 404 claiming the route does not exist — the
-        // difference between "you typed the path wrong" and "you used the
-        // wrong verb" is the whole diagnostic value of the status code.
-        (_, ["healthz"]) => return method_not_allowed(&mut stream, &mut req, "GET").await,
-        (_, ["v1", "turns"]) => return method_not_allowed(&mut stream, &mut req, "POST").await,
-        (_, ["v1", "turns", _, "events"]) => {
-            return method_not_allowed(&mut stream, &mut req, "GET").await;
-        }
-        (_, ["v1", "turns", _, "tool-result" | "provider-result" | "cancel"]) => {
-            return method_not_allowed(&mut stream, &mut req, "POST").await;
-        }
-        _ => {
-            discard_body(&mut stream, &mut req).await;
-            return write_json(&mut stream, "404 Not Found", br#"{"error":"not found"}"#).await;
-        }
-    }
-
-    if let BodyOutcome::Timeout = read_body(&mut stream, &mut req).await? {
-        return write_json(
-            &mut stream,
-            "408 Request Timeout",
-            &error_body("request was not completed in time"),
-        )
-        .await;
-    }
-
-    match segs.as_slice() {
-        ["v1", "turns"] => handle_create(&mut stream, &state, &req.body).await,
-        ["v1", "turns", id, "tool-result"] => {
+        ("POST", ["v1", "turns"]) => handle_create(&mut stream, &state, &req.body).await,
+        ("GET", ["v1", "turns", id, "events"]) => handle_events(&mut stream, &state, id).await,
+        ("POST", ["v1", "turns", id, "tool-result"]) => {
             handle_tool_result(&mut stream, &state, id, &req.body).await
         }
-        ["v1", "turns", id, "provider-result"] => {
+        ("POST", ["v1", "turns", id, "provider-result"]) => {
             handle_provider_result(&mut stream, &state, id, &req.body).await
         }
-        // Unreachable: the match above admits exactly the three body-bearing
-        // routes. Answering rather than panicking keeps a future edit that
-        // widens that match from taking down a request thread.
+        ("POST", ["v1", "turns", id, "cancel"]) => handle_cancel(&mut stream, &state, id).await,
         _ => write_json(&mut stream, "404 Not Found", br#"{"error":"not found"}"#).await,
     }
-}
-
-/// `405` naming the methods this path accepts, per RFC 9110 §15.5.6 (the
-/// `Allow` header is mandatory on a 405 — a status that says "wrong verb"
-/// without saying which verb is right is half an answer).
-async fn method_not_allowed(
-    stream: &mut TcpStream,
-    req: &mut Request,
-    allow: &str,
-) -> std::io::Result<()> {
-    discard_body(stream, req).await;
-    write_json_with_headers(
-        stream,
-        "405 Method Not Allowed",
-        &[("Allow", allow)],
-        &error_body(&format!("method not allowed; this path accepts {allow}")),
-    )
-    .await
 }
 
 async fn handle_create(
@@ -769,90 +682,20 @@ async fn handle_events(
         state.turns().remove(id);
         return Err(err);
     }
-    {
-        // Split so the frame loop can watch the *read* half while it waits.
-        // Without that, a host that vanishes mid-turn is only noticed at the
-        // next write — and the engine may be parked on a reverse request for
-        // the whole `reverse_request_timeout` (up to an hour) before it
-        // produces one. The turn would keep an OS thread and a registry slot
-        // for a client that is provably gone, and the host would be billed for
-        // whatever the engine went on to ask for. Watching for EOF turns that
-        // into a cancellation within one poll.
-        let (mut peer, mut out) = stream.split();
-        let mut scratch = [0_u8; 1024];
-        // A GET on a `Connection: close` stream has nothing left to send, so
-        // inbound bytes are a protocol violation. Tolerate a little (a client
-        // library that pipelines a probe) but never spin discarding an
-        // unbounded stream of them.
-        let mut stray = 0_usize;
-        const MAX_STRAY_BYTES: usize = 8 * 1024;
-        loop {
-            let frame = tokio::select! {
-                read = peer.read(&mut scratch) => match read {
-                    // EOF or a reset: the subscriber is gone. Stop streaming;
-                    // dropping `session` below cancels the turn.
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        stray += n;
-                        if stray > MAX_STRAY_BYTES {
-                            break;
-                        }
-                        continue;
-                    }
-                },
-                frame = session.next_frame() => match frame {
-                    Some(frame) => frame,
-                    None => break,
-                },
-            };
-            let done = matches!(frame, ServerFrame::TurnComplete { .. });
-            if write_sse_frame(&mut out, &sse_json(&frame)).await.is_err() {
-                break;
-            }
-            if done {
-                break;
-            }
+    while let Some(frame) = session.next_frame().await {
+        let done = matches!(frame, ServerFrame::TurnComplete { .. });
+        let json = serde_json::to_string(&frame).unwrap_or_else(|_| "{}".to_string());
+        if write_sse_frame(stream, &json).await.is_err() {
+            break;
+        }
+        if done {
+            break;
         }
     }
-    // Drop the session *before* the socket teardown: `Drop for Session`
-    // cancels the turn, so a stream that ended early (client gone, stray
-    // bytes) releases the engine thread now rather than at the end of scope.
-    drop(session);
     // The turn is finished streaming; drop it so its thread and registry entry
     // are reclaimed.
     state.turns().remove(id);
     stream.shutdown().await
-}
-
-/// Render one frame as the JSON payload of an SSE `data:` line.
-///
-/// Every [`ServerFrame`] is built from serde-clean types, so the failure arm is
-/// unreachable in practice — but "unreachable" is not "harmless". It used to
-/// emit `{}`, a frame with no `type` at all: a host would skip it silently, and
-/// if the frame it replaced was the terminal `TurnComplete`, the stream would
-/// simply end with the turn's outcome and settled cost never reported. A
-/// synthesized terminal frame keeps the stream's contract — every turn ends with
-/// exactly one `turn_complete` — and names the cause instead of losing it.
-fn sse_json(frame: &ServerFrame) -> String {
-    encode_or_abort(frame)
-}
-
-fn encode_or_abort<T: Serialize>(value: &T) -> String {
-    match serde_json::to_string(value) {
-        Ok(json) => json,
-        Err(err) => serde_json::to_string(&ServerFrame::TurnComplete {
-            outcome: TurnOutcomeWire::Aborted {
-                reason: format!("the engine produced a frame the server could not encode: {err}"),
-                cost_usd: 0.0,
-            },
-        })
-        // The fallback's fallback: a literal that is valid on the wire, so the
-        // stream still terminates with a `turn_complete` no matter what.
-        .unwrap_or_else(|_| {
-            r#"{"type":"turn_complete","outcome":{"status":"aborted","reason":"frame encoding failed","cost_usd":0.0}}"#
-                .to_string()
-        }),
-    }
 }
 
 async fn handle_tool_result(
@@ -1154,49 +997,6 @@ mod tests {
                 .is_none(),
             "no live turn may be reclaimed, so the cap must refuse"
         );
-    }
-
-    /// A value whose `Serialize` always fails, standing in for the frame
-    /// encoding failure that real [`ServerFrame`]s cannot produce. Without it
-    /// the fallback would be untestable — and an untested fallback on the one
-    /// path that carries a turn's outcome is how `{}` sat on the wire.
-    struct Unserializable;
-
-    impl Serialize for Unserializable {
-        fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
-            Err(serde::ser::Error::custom("nope"))
-        }
-    }
-
-    /// A frame that cannot be encoded must still leave the stream terminated:
-    /// the old `{}` fallback was a frame with no `type`, so a host skipped it
-    /// silently and — when the lost frame was the terminal one — never learned
-    /// the turn's outcome or its settled cost.
-    #[test]
-    fn an_unencodable_frame_becomes_a_terminal_aborted_frame_not_an_empty_object() {
-        let json = encode_or_abort(&Unserializable);
-        let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON on the wire");
-        assert_eq!(value["type"], "turn_complete", "{json}");
-        assert_eq!(value["outcome"]["status"], "aborted", "{json}");
-        assert!(
-            value["outcome"]["reason"]
-                .as_str()
-                .is_some_and(|r| r.contains("nope")),
-            "the cause must survive, not be swallowed: {json}"
-        );
-    }
-
-    #[test]
-    fn an_ordinary_frame_encodes_unchanged() {
-        let json = sse_json(&ServerFrame::TurnComplete {
-            outcome: TurnOutcomeWire::Completed {
-                text: "done".to_string(),
-                cost_usd: 0.5,
-            },
-        });
-        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(value["outcome"]["text"], "done");
-        assert_eq!(value["outcome"]["cost_usd"], 0.5);
     }
 
     #[test]

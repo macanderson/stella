@@ -299,17 +299,7 @@ impl Tool for Bash {
         let mut guard = crate::exec::GroupKillGuard::arm(pid);
 
         let timeout = Duration::from_secs(timeout_secs);
-        // Capped capture, not `wait_with_output`: the command text is the
-        // model's, and the middle-out cut below only ever ran once the whole
-        // stream was already resident — so `yes` or `cat /dev/urandom | base64`
-        // grew Stella's RSS until the OOM killer beat the timeout to it. See
-        // `crate::exec::MAX_CAPTURE_BYTES`.
-        let output = match tokio::time::timeout(
-            timeout,
-            crate::exec::wait_with_capped_output(child, crate::exec::MAX_CAPTURE_BYTES),
-        )
-        .await
-        {
+        let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
             Ok(Ok(output)) => {
                 #[cfg(unix)]
                 guard.disarm();

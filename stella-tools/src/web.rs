@@ -1019,7 +1019,7 @@ impl Tool for WebDownload {
             return ToolOutput::Error { message };
         }
         // The same durable replacement `write_file`/`edit_file` use, for the
-        // same reason ([`crate::durable_write`]): a download lands on the same
+        // same reason ([`crate::atomic_write`]): a download lands on the same
         // workspace paths they do, and `tokio::fs::write` opens with
         // `O_TRUNC` — a re-download that fails mid-write would leave the
         // existing artifact truncated with the replacement nowhere on disk.

@@ -36,46 +36,6 @@ const DRIFT_ECHO_MAX_LINE_BYTES: usize = 1_000;
 /// add up, so the render stops here and says so.
 const DRIFT_ECHO_MAX_BYTES: usize = 60_000;
 
-/// Reconcile an LF-newline needle against CRLF file bytes.
-///
-/// `read_file` renders a file through `str::lines()`, which STRIPS the `\r`
-/// of every `\r\n`. A model that copies two or more lines out of that render
-/// into `old_string` therefore hands back a needle whose newlines are bare
-/// `\n` — bytes that occur nowhere in a CRLF file. Every multi-line edit of a
-/// CRLF file was consequently impossible, and the tool blamed the model
-/// ("check for exact whitespace/newline differences") for a round trip it had
-/// broken itself.
-///
-/// When the literal needle misses and the file is CRLF, retry with the
-/// needle's `\n` promoted to `\r\n`. The replacement is promoted with it, so
-/// the edit keeps the file's own convention instead of splicing LF islands
-/// into a CRLF file — which is what a naive "normalize everything to LF" fix
-/// would do, and it would show up as a whole-file diff in the user's next
-/// `git status`.
-///
-/// `None` whenever the literal needle already matches, the file is not CRLF,
-/// the needle is single-line, the needle already carries `\r`, or the
-/// promoted needle still does not occur — so every previously-working call is
-/// byte-identical.
-pub(crate) fn crlf_promoted(content: &str, old: &str, new: &str) -> Option<(String, String)> {
-    if !old.contains('\n') || old.contains('\r') || !content.contains("\r\n") {
-        return None;
-    }
-    if content.contains(old) {
-        return None;
-    }
-    let promoted_old = old.replace('\n', "\r\n");
-    if !content.contains(&promoted_old) {
-        return None;
-    }
-    let promoted_new = if new.contains('\r') {
-        new.to_string()
-    } else {
-        new.replace('\n', "\r\n")
-    };
-    Some((promoted_old, promoted_new))
-}
-
 #[derive(Default)]
 pub struct EditFile {
     ledger: Arc<ReadLedger>,
@@ -217,14 +177,6 @@ impl Tool for EditFile {
                     message: format!("failed to read `{path}`: {e}"),
                 };
             }
-        };
-
-        // A needle copied out of `read_file`'s render carries LF newlines even
-        // when the file on disk is CRLF — see [`crlf_promoted`].
-        let promoted = crlf_promoted(&content, old_string, new_string);
-        let (old_string, new_string) = match &promoted {
-            Some((old, new)) => (old.as_str(), new.as_str()),
-            None => (old_string, new_string),
         };
 
         let count = content.matches(old_string).count();
@@ -538,68 +490,6 @@ mod tests {
             }
             ToolOutput::Ok { content } => panic!("expected error, got: {content}"),
         }
-    }
-
-    /// The CRLF round trip. `read_file` renders a Windows-line-ending file
-    /// through `str::lines()`, which strips the `\r`; a multi-line
-    /// `old_string` copied out of that render matched nothing on disk, so
-    /// EVERY multi-line edit of a CRLF file was impossible — and the tool
-    /// blamed the model's whitespace for it. The edit must land, and the file
-    /// must still be CRLF afterwards (an LF island would show up as a
-    /// whole-file diff in the user's next `git status`).
-    #[tokio::test]
-    async fn a_multi_line_edit_of_a_crlf_file_lands_and_keeps_crlf() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("win.rs"), "fn a() {\r\n    old();\r\n}\r\n").unwrap();
-        let ledger = Arc::new(ReadLedger::default());
-        let read = ReadFile::with_ledger(ledger.clone());
-        let edit = EditFile::with_ledger(ledger.clone());
-
-        let seen = read
-            .execute(&serde_json::json!({"path": "win.rs"}), dir.path())
-            .await;
-        let ToolOutput::Ok { content } = seen else {
-            panic!("expected ok, got: {seen:?}");
-        };
-        assert!(
-            !content.contains('\r'),
-            "the render the model copies from has no CR: {content:?}"
-        );
-
-        // Exactly what a model copies back out of that render.
-        let out = edit
-            .execute(
-                &serde_json::json!({
-                    "path": "win.rs",
-                    "old_string": "fn a() {\n    old();",
-                    "new_string": "fn a() {\n    new();",
-                }),
-                dir.path(),
-            )
-            .await;
-        assert!(!out.is_error(), "{out:?}");
-        assert_eq!(
-            std::fs::read_to_string(dir.path().join("win.rs")).unwrap(),
-            "fn a() {\r\n    new();\r\n}\r\n",
-            "the file keeps its CRLF convention"
-        );
-    }
-
-    #[test]
-    fn crlf_promotion_fires_only_where_it_is_needed() {
-        // An LF file needs nothing.
-        assert_eq!(crlf_promoted("a\nb\n", "a\nb", "x"), None);
-        // A single-line needle matches inside a CRLF line already.
-        assert_eq!(crlf_promoted("a\r\nb\r\n", "b", "x"), None);
-        // A needle that already carries CR is the model's own bytes — leave it.
-        assert_eq!(crlf_promoted("a\r\nb\r\n", "a\r\nb", "x"), None);
-        // A needle that is simply absent stays absent (a real not-found).
-        assert_eq!(crlf_promoted("a\r\nb\r\n", "zz\nqq", "x"), None);
-        // The one case that fires — and the replacement is promoted with it.
-        assert_eq!(
-            crlf_promoted("a\r\nb\r\n", "a\nb", "p\nq"),
-            Some(("a\r\nb".to_string(), "p\r\nq".to_string()))
-        );
     }
 
     /// The line cap alone never saw this file: 4 MB on ONE line is one line,

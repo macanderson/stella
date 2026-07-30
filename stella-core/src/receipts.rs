@@ -778,10 +778,9 @@ pub struct ReceiptLedger {
 }
 
 impl ReceiptLedger {
-    /// A ledger for the engine's own step loop — the worker call,
-    /// [`RECEIPT_SEQ_WORKER`].
+    /// A ledger for the engine's own step loop — the worker call, `call_seq` 0.
     pub fn new(turn_instance: u32) -> Self {
-        ReceiptLedger::with_call_seq(turn_instance, RECEIPT_SEQ_WORKER)
+        ReceiptLedger::with_call_seq(turn_instance, 0)
     }
 
     /// A ledger for one auxiliary call riding an engine step (the overflow
