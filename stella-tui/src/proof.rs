@@ -111,6 +111,11 @@ pub struct ProofState {
     pub witness: Option<WitnessStanding>,
     pub flip: Flip,
     pub verdict: Option<VerdictStanding>,
+    /// Set when the ladder abstained because every evidence channel was blind.
+    /// Holds the stated reason, and outranks the verdict on the rail: a turn
+    /// nothing could observe must not read `✓ passed` just because nothing
+    /// failed it either.
+    pub unverifiable: Option<String>,
     /// Whether the turn has ended. Flips `pending` rows to *not reported* —
     /// see the module docs; this is the half of the invariant that does not
     /// depend on any pipeline path cooperating.
@@ -126,6 +131,7 @@ impl ProofState {
             && self.warrant.is_none()
             && self.witness.is_none()
             && self.verdict.is_none()
+            && self.unverifiable.is_none()
             && self.flip == Flip::default()
     }
 
@@ -169,6 +175,9 @@ impl ProofState {
                 self.witness = Some(WitnessStanding::Unavailable {
                     reason: reason.clone(),
                 });
+            }
+            ProofStep::VerificationUnavailable { reason } => {
+                self.unverifiable = Some(reason.clone());
             }
             ProofStep::Oracle {
                 command,
@@ -337,6 +346,16 @@ impl ProofState {
     }
 
     fn verdict_row(&self) -> ProofRow {
+        // Checked before the verdict, because the pipeline emits BOTH: an
+        // abstention still closes the turn with a `JudgeVerdict` (the event
+        // that carries the evidence), and that verdict is `passed: true` —
+        // a run is not failed by the absence of a way to check it. Read off
+        // `verdict` alone the rail would say `✓ passed`, which is the exact
+        // conflation of "nothing objected" with "something was proven" that
+        // this rung exists to break.
+        if let Some(reason) = &self.unverifiable {
+            return ProofRow::new("verdict", format!("unverifiable · {reason}"), Tone::Warn);
+        }
         match &self.verdict {
             // A turn can end without a verdict — cancelled, aborted on budget,
             // a lookup that verified nothing. The rail says which of "no

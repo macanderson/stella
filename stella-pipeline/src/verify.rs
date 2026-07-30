@@ -22,7 +22,16 @@
 //! - **submit fast** (judge skipped) when flip + touched-tests-green + diff
 //!   within budget all hold;
 //! - **revise** on a clear failure (touched tests red);
+//! - **abstain** (`Unverifiable`) when every channel was blind — no flip, no
+//!   test result, an unreadable working tree, and no recorded file touch;
 //! - **escalate to the model judge** only on genuinely inconclusive evidence.
+//!
+//! The abstain rung is what keeps the ladder honest about its own reach. Before
+//! it, a turn nothing could observe fell through to the judge, which was handed
+//! an empty record and answered `FAIL … the file likely does not exist` about a
+//! file that was on disk (#973). "I cannot see the tree" and "the file is not
+//! there" are opposite claims; a ladder that emits the second when it means the
+//! first is worse than one that says nothing.
 //!
 //! Linters and typecheckers are deliberately **excluded** from the flip
 //! oracle (L-E11): only a real test command's fail→pass counts. The pipeline
@@ -160,7 +169,7 @@ pub fn normalize_command(command: &str) -> String {
     command.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The three ways the evidence ladder can resolve a turn *before* spending a
+/// The four ways the evidence ladder can resolve a turn *before* spending a
 /// model-judge call (L-E11).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LadderDecision {
@@ -171,9 +180,13 @@ pub enum LadderDecision {
     /// Clear failure (touched tests are red): feed the evidence back into a
     /// revision turn. No judge call — the failure is already deterministic.
     Revise,
+    /// **Every** evidence channel was unavailable — see
+    /// [`LadderInputs::evidence_is_blind`]. The ladder abstains: no judge call,
+    /// and the run is scored as unverified rather than passed or failed.
+    Unverifiable,
     /// Inconclusive: no flip evidence, or diff over budget, or tests couldn't
-    /// be run. Escalate to the model judge (a different model than the
-    /// worker).
+    /// be run — but at least one channel could still see something. Escalate to
+    /// the model judge (a different model than the worker).
     ModelJudge,
 }
 
@@ -191,31 +204,73 @@ pub struct LadderInputs {
     /// The diff-size budget; a diff at or under this is "small enough" to
     /// trust deterministic evidence without a judge.
     pub diff_budget: u32,
+    /// Whether the diff probe could **read the working tree at all**. `false`
+    /// is "I could not look", which is a different claim from `diff_lines == 0`
+    /// ("I looked and saw nothing") — conflating the two is what let a blind
+    /// probe be reported as a confident absence (#973). A Terminal-Bench task
+    /// directory is not a git repository, so `git diff` there can only ever
+    /// answer `false`.
+    pub diff_available: bool,
+    /// Mutating file touches the recorder observed this turn, from the registry
+    /// that emitted the `FileChange` events (`FileTouchPort`). Non-zero is
+    /// positive proof the tree changed even when nothing can render *how*.
+    pub file_change_events: u32,
 }
 
-/// The evidence ladder (L-E11). Decides submit/revise/escalate from
+impl LadderInputs {
+    /// Whether every channel the ladder has was unable to observe anything:
+    /// no flip, no test result, a diff probe that could not read the tree, and
+    /// no recorded file touch.
+    ///
+    /// This is *not* "the turn changed nothing" — it is "nothing here can tell
+    /// you either way", and the distinction is the whole value of the ladder.
+    /// A verifier that reports absence of evidence as evidence of absence is
+    /// worse than one that abstains, because a downstream reader cannot tell
+    /// the two apart: on Terminal-Bench all four went dark at once and the
+    /// judge asserted a file "likely does not exist" while it sat in the
+    /// container.
+    ///
+    /// Note the asymmetry: a *red* test or a non-zero touch count is real
+    /// evidence, so neither can be blind. Only the total absence qualifies.
+    pub fn evidence_is_blind(&self) -> bool {
+        !self.flip_achieved
+            && self.touched_tests_passed.is_none()
+            && !self.diff_available
+            && self.file_change_events == 0
+    }
+}
+
+/// The evidence ladder (L-E11). Decides submit/revise/abstain/escalate from
 /// deterministic evidence alone. Ordering of the checks matters:
 ///
 /// 1. **Touched tests red → `Revise`.** A red test is a clear, deterministic
 ///    failure; never spend a judge call to "confirm" it.
-/// 2. **Flip + green + within budget → `SubmitFast`.** The full deterministic
+/// 2. **Every channel blind → `Unverifiable`.** Nothing could observe this
+///    turn, so nothing may be claimed about it — in particular not a failure.
+/// 3. **Flip + green + within budget → `SubmitFast`.** The full deterministic
 ///    pass: judge skipped.
-/// 3. **Otherwise → `ModelJudge`.** Genuinely inconclusive: no flip, or the
+/// 4. **Otherwise → `ModelJudge`.** Genuinely inconclusive: no flip, or the
 ///    diff is over budget (large change deserves a second opinion even with
-///    green tests), or tests couldn't be run.
+///    green tests), or tests couldn't be run — but something could still see.
 pub fn ladder_decision(inputs: &LadderInputs) -> LadderDecision {
     // 1. A red touched-test is a deterministic failure — revise, no judge.
     if inputs.touched_tests_passed == Some(false) {
         return LadderDecision::Revise;
     }
-    // 2. Full deterministic pass — submit fast, judge skipped.
+    // 2. Nothing could observe the turn. Buying a judge call here spends money
+    //    to ask a model to guess from an empty record, and the answer it
+    //    produced in the wild was a confident FAIL naming a file that existed.
+    if inputs.evidence_is_blind() {
+        return LadderDecision::Unverifiable;
+    }
+    // 3. Full deterministic pass — submit fast, judge skipped.
     if inputs.flip_achieved
         && inputs.touched_tests_passed == Some(true)
         && inputs.diff_lines <= inputs.diff_budget
     {
         return LadderDecision::SubmitFast;
     }
-    // 3. Inconclusive — escalate to the model judge.
+    // 4. Inconclusive — escalate to the model judge.
     LadderDecision::ModelJudge
 }
 
@@ -234,6 +289,29 @@ pub fn deterministic_pass_evidence(tracked_cmd: Option<&str>, diff_lines: u32) -
     JudgeEvidence {
         summary,
         deterministic: true,
+        evidence_refs: Vec::new(),
+    }
+}
+
+/// Build the `JudgeEvidence` for a [`LadderDecision::Unverifiable`] turn: the
+/// ladder abstained because every channel was blind.
+///
+/// `deterministic: false` — this is the *absence* of a deterministic result,
+/// and marking it `true` would let an unobserved turn wear the ladder's
+/// strongest badge. The summary names each dark channel rather than
+/// summarizing, because the only actionable content here is *why* nothing
+/// could be seen: on Terminal-Bench the answer is "the task directory is not a
+/// git repository", which no amount of re-running will change.
+pub fn unverifiable_evidence(inputs: &LadderInputs) -> JudgeEvidence {
+    JudgeEvidence {
+        summary: format!(
+            "UNVERIFIABLE — no evidence channel could observe this turn, so nothing is claimed \
+             about it (this is NOT a finding that the work is absent or wrong): flip oracle not \
+             armed (no test command); touched tests not run; the diff probe could not read the \
+             working tree; file-change events recorded = {}. Verify the result on its own merits.",
+            inputs.file_change_events
+        ),
+        deterministic: false,
         evidence_refs: Vec::new(),
     }
 }
@@ -322,10 +400,24 @@ pub fn model_verdict_evidence(verdict: &JudgeVerdict) -> JudgeEvidence {
 /// for a leading `PASS`/`FAIL` token plus a one-line reason. The judge sees
 /// the goal, the diff, and the deterministic evidence gathered so far — never
 /// the worker's full transcript (judge ≠ worker, L-E11).
+///
+/// The blindness clause is load-bearing, not politeness. Handed a diff section
+/// reading "the probe could not read the working tree", a judge returned
+/// `FAIL … the file likely does not exist` about a file that was on disk — it
+/// read a statement about the *instrument* as a statement about the *world*.
+/// The ladder now abstains outright when every channel is dark
+/// ([`LadderDecision::Unverifiable`]), so a judge is only asked when something
+/// could see; this tells it which parts of what it is shown are observations
+/// and which are gaps.
 pub fn judge_prompt(goal: &str, diff: &str, evidence_summary: &str) -> String {
     format!(
         "You are an independent code reviewer judging whether a change accomplishes its goal. \
          Answer with `PASS` or `FAIL` on the first line, then one line of reasoning.\n\n\
+         Evidence channels can be unavailable, and the evidence below says so when they are. \
+         A probe that could not read the working tree reports nothing about the working tree: \
+         it is not a finding that a file is missing, that the tree is unchanged, or that the \
+         work was not done. Judge only what the evidence positively shows, and base a FAIL on \
+         a defect you can point to — never on evidence you could not see.\n\n\
          ## Goal\n{goal}\n\n\
          ## Deterministic evidence gathered\n{evidence_summary}\n\n\
          ## Diff\n{diff}\n\n\
@@ -460,6 +552,8 @@ mod tests {
             touched_tests_passed: Some(false),
             diff_lines: 3,
             diff_budget: 100,
+            diff_available: true,
+            file_change_events: 0,
         });
         assert_eq!(decision, LadderDecision::Revise);
     }
@@ -471,9 +565,112 @@ mod tests {
             touched_tests_passed: Some(true),
             diff_lines: 40,
             diff_budget: 100,
+            diff_available: true,
+            file_change_events: 0,
         });
         assert_eq!(decision, LadderDecision::SubmitFast);
     }
+
+    /// The Terminal-Bench trial from #973, reconstructed as ladder inputs:
+    /// the task directory is not a git repository so `git diff` cannot read it,
+    /// there is no test command so the oracle never armed and no tests ran, and
+    /// (before the fix) the recorder's touches never reached the pipeline. All
+    /// four channels dark at once.
+    #[test]
+    fn every_channel_blind_abstains_instead_of_asking_a_judge_to_guess() {
+        let inputs = LadderInputs {
+            flip_achieved: false,
+            touched_tests_passed: None,
+            diff_lines: 0,
+            diff_budget: 100,
+            diff_available: false,
+            file_change_events: 0,
+        };
+        assert!(inputs.evidence_is_blind());
+        assert_eq!(
+            ladder_decision(&inputs),
+            LadderDecision::Unverifiable,
+            "an unobservable turn must abstain, never buy a judge call to guess"
+        );
+        let evidence = unverifiable_evidence(&inputs);
+        assert!(evidence.summary.contains("UNVERIFIABLE"));
+        assert!(
+            !evidence.deterministic,
+            "an absent result must never wear the deterministic badge"
+        );
+    }
+
+    /// The single signal that rescues the blind case, and the one the bug
+    /// suppressed: the recorder saw the tree change even though nothing could
+    /// render *how*. That is real evidence, so the ladder must escalate rather
+    /// than abstain — and the judge is told a positive fact instead of a zero.
+    #[test]
+    fn a_recorded_file_touch_is_evidence_even_with_no_readable_diff() {
+        let inputs = LadderInputs {
+            flip_achieved: false,
+            touched_tests_passed: None,
+            diff_lines: 0,
+            diff_budget: 100,
+            diff_available: false,
+            file_change_events: 6,
+        };
+        assert!(
+            !inputs.evidence_is_blind(),
+            "six observed mutations are not an absence of evidence"
+        );
+        assert_eq!(ladder_decision(&inputs), LadderDecision::ModelJudge);
+    }
+
+    /// A red test is a real observation, so a turn carrying one is never blind
+    /// however dark everything else is — and `Revise` still wins, because a
+    /// deterministic failure must not be softened into an abstention.
+    #[test]
+    fn a_red_test_outranks_blindness() {
+        let inputs = LadderInputs {
+            flip_achieved: false,
+            touched_tests_passed: Some(false),
+            diff_lines: 0,
+            diff_budget: 100,
+            diff_available: false,
+            file_change_events: 0,
+        };
+        assert!(!inputs.evidence_is_blind());
+        assert_eq!(ladder_decision(&inputs), LadderDecision::Revise);
+    }
+
+    /// The distinction the whole rung exists for: "I looked and saw nothing"
+    /// (an available probe reporting a zero-line diff) is inconclusive and
+    /// worth a judge; "I could not look" is not.
+    #[test]
+    fn a_readable_empty_diff_is_not_blindness() {
+        let inputs = LadderInputs {
+            flip_achieved: false,
+            touched_tests_passed: None,
+            diff_lines: 0,
+            diff_budget: 100,
+            diff_available: true,
+            file_change_events: 0,
+        };
+        assert!(!inputs.evidence_is_blind());
+        assert_eq!(ladder_decision(&inputs), LadderDecision::ModelJudge);
+    }
+
+    /// The judge is only ever asked when something could see — but when it is
+    /// asked, it must be told that a dark channel is a gap, not a finding. The
+    /// wild failure was a judge reading "the probe could not read the working
+    /// tree" as "the file does not exist".
+    #[test]
+    fn the_judge_prompt_forbids_reading_a_blind_probe_as_an_absence() {
+        let p = judge_prompt("fix the bug", DIFF_PROBE_BLIND_SAMPLE, "file_change_events=6");
+        assert!(
+            p.contains("could not read the working tree"),
+            "the prompt must name the failure mode it is guarding against"
+        );
+        assert!(p.contains("never on evidence you could not see"));
+    }
+
+    const DIFF_PROBE_BLIND_SAMPLE: &str =
+        "[the diff probe failed; the working tree could not be read.]";
 
     #[test]
     fn flip_and_green_but_over_diff_budget_escalates_to_judge() {
@@ -482,6 +679,8 @@ mod tests {
             touched_tests_passed: Some(true),
             diff_lines: 500,
             diff_budget: 100,
+            diff_available: true,
+            file_change_events: 0,
         });
         assert_eq!(
             decision,
@@ -498,6 +697,8 @@ mod tests {
             touched_tests_passed: Some(true),
             diff_lines: 5,
             diff_budget: 100,
+            diff_available: true,
+            file_change_events: 0,
         });
         assert_eq!(decision, LadderDecision::ModelJudge);
     }
@@ -509,6 +710,8 @@ mod tests {
             touched_tests_passed: None,
             diff_lines: 5,
             diff_budget: 100,
+            diff_available: true,
+            file_change_events: 0,
         });
         assert_eq!(decision, LadderDecision::ModelJudge);
     }
@@ -555,6 +758,8 @@ mod tests {
             touched_tests_passed: Some(true),
             diff_lines: 0,
             diff_budget: 100,
+            diff_available: true,
+            file_change_events: 0,
         });
         assert!(green.passed);
 
@@ -564,6 +769,8 @@ mod tests {
                 touched_tests_passed: tests,
                 diff_lines: 0,
                 diff_budget: 100,
+                diff_available: true,
+                file_change_events: 0,
             });
             assert!(!v.passed, "unconfirmed tests must fall back to FAIL");
         }

@@ -95,6 +95,21 @@ impl<'a> Pipeline<'a> {
         self.emit_proof(stella_protocol::ProofStep::WitnessUnavailable { reason });
     }
 
+    /// Record that verification could not be *performed*: every evidence
+    /// channel was blind, so the ladder abstained (#973).
+    ///
+    /// Both channels, for the same reason [`Self::unproven`] uses both. The
+    /// warning is the prose account; the proof step is what keeps the rail's
+    /// verdict row from reading `✓ passed` on a turn nothing observed — the
+    /// abstention still emits a `JudgeVerdict`, and its `passed: true` means
+    /// only "nothing failed this", never "something proved it".
+    pub(super) fn unverifiable(&self, reason: &str) {
+        self.warn(format!("verification could not be performed: {reason}"));
+        self.emit_proof(stella_protocol::ProofStep::VerificationUnavailable {
+            reason: reason.to_string(),
+        });
+    }
+
     pub(super) fn engine_config_for(&self, surface: CandidateSurface<'_>) -> EngineConfig {
         let mut config = self.config.engine.clone();
         if let Some(cwd) = surface.cwd {

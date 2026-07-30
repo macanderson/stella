@@ -1140,6 +1140,17 @@ pub enum ProofStep {
     /// author that got stuck, a failed graft). The work stands; it is simply
     /// unproven, and saying so is the point.
     WitnessUnavailable { reason: String },
+    /// **Every** evidence channel was blind, so the ladder abstained rather
+    /// than judging: no flip oracle, no test result, a working tree the diff
+    /// probe could not read, and no recorded file change.
+    ///
+    /// Distinct from a failing verdict, and the distinction is the point. The
+    /// turn this exists for ended with a judge asserting a file "likely does
+    /// not exist" while the file sat in the container — a claim about the
+    /// *instruments* delivered as a claim about the *work* (#973). Without a
+    /// step of its own, an abstention reaches the rail as `✓ passed · model
+    /// judge`, which is the same silent outcome in the other direction.
+    VerificationUnavailable { reason: String },
     /// The flip oracle observed one run of the tracked command against one
     /// tree. A fail in `Baseline` followed by a pass in `Candidate` is the
     /// flip; anything else is not.

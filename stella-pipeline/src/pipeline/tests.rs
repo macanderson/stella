@@ -24,8 +24,8 @@ use tokio::sync::mpsc;
 
 use crate::ports::{
     AdoptedChange, ArtifactIdentity, ArtifactKind, CmdOutcome, ContextRecallPort,
-    DiagnosticInvocation, DiagnosticRunner, NoContextRecall, NoRepoStatus, NoRepoStructure, Recall,
-    TestInvocation, TestRunner,
+    DiagnosticInvocation, DiagnosticRunner, NoContextRecall, NoFileTouches, NoRepoStatus,
+    NoRepoStructure, Recall, TestInvocation, TestRunner,
 };
 use stella_protocol::{ContextProviderUsage, ContextUsage};
 
@@ -64,6 +64,41 @@ impl FakeRepoStatus {
 impl RepoStatusPort for FakeRepoStatus {
     async fn untracked_fingerprints(&self) -> HashMap<String, String> {
         self.files.clone()
+    }
+}
+
+/// A [`FileTouchPort`] serving a scripted SEQUENCE of readings — one per
+/// `mutations_recorded` call, holding the last once exhausted.
+///
+/// A sequence rather than a constant because the real counter is monotonic and
+/// the pipeline reads it twice: once for the candidate's baseline, before any
+/// work, and again when it folds each observation. A fixture that returned the
+/// same number to both would report a delta of zero and silently reproduce the
+/// bug under test.
+struct SeqTouches {
+    readings: std::sync::Mutex<VecDeque<u64>>,
+    last: std::sync::atomic::AtomicU64,
+}
+
+impl SeqTouches {
+    fn new(readings: Vec<u64>) -> Self {
+        Self {
+            readings: std::sync::Mutex::new(readings.into()),
+            last: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+}
+
+impl crate::ports::FileTouchPort for SeqTouches {
+    fn mutations_recorded(&self) -> u64 {
+        match self.readings.lock().unwrap().pop_front() {
+            Some(next) => {
+                self.last
+                    .store(next, std::sync::atomic::Ordering::Relaxed);
+                next
+            }
+            None => self.last.load(std::sync::atomic::Ordering::Relaxed),
+        }
     }
 }
 
@@ -249,6 +284,10 @@ struct ScriptedRunner {
     /// Exit code the `GitDiff` probe reports. Non-zero models a tree the diff
     /// machinery could not read at all, which is not the same as a clean one.
     diff_exit_code: i32,
+    /// What the `GitDiff` probe prints on stderr. Carries git's own "not a git
+    /// repository" wording, which the pipeline reads to tell a permanently
+    /// inapplicable probe from a transiently failed one.
+    diff_stderr: String,
 }
 impl ScriptedRunner {
     fn new(test_results: Vec<bool>, diff: &str) -> Self {
@@ -258,6 +297,7 @@ impl ScriptedRunner {
             untracked: Vec::new(),
             failure_tail: "test failed".to_string(),
             diff_exit_code: 0,
+            diff_stderr: String::new(),
         }
     }
     /// A diff probe that FAILS: no stdout and a non-zero exit, the shape a
@@ -265,6 +305,14 @@ impl ScriptedRunner {
     fn with_blind_diff(mut self) -> Self {
         self.diff = String::new();
         self.diff_exit_code = 128;
+        self
+    }
+    /// A workspace that is not a git repository at all — every Terminal-Bench
+    /// task image, and the reason `GitDiff` can never answer there.
+    fn with_not_a_repository(mut self) -> Self {
+        self = self.with_blind_diff();
+        self.diff_stderr =
+            "fatal: not a git repository (or any of the parent directories): .git".to_string();
         self
     }
     fn with_failure_tail(mut self, tail: &str) -> Self {
@@ -299,7 +347,7 @@ impl DiagnosticRunner for ScriptedRunner {
             return CmdOutcome {
                 exit_code: self.diff_exit_code,
                 stdout_tail: self.diff.clone(),
-                stderr_tail: String::new(),
+                stderr_tail: self.diff_stderr.clone(),
             };
         }
         CmdOutcome {
@@ -666,6 +714,7 @@ async fn single_task_with_a_flip_submits_fast_and_skips_the_judge() {
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
+            touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
             approvals: &approvals,
@@ -758,6 +807,7 @@ async fn a_wedged_context_recall_degrades_instead_of_hanging_the_turn() {
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
+            touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
             approvals: &approvals,
@@ -824,6 +874,7 @@ async fn a_queued_steer_is_injected_into_the_execute_turn() {
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
+            touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
             approvals: &approvals,
@@ -894,6 +945,7 @@ async fn misclassified_lookup_that_touches_files_still_gets_verified() {
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
+            touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
             approvals: &approvals,
@@ -954,6 +1006,7 @@ async fn clean_lookup_skips_plan_verify_and_judge() {
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
+            touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
             approvals: &approvals,
@@ -1019,6 +1072,7 @@ async fn a_greeting_takes_the_conversational_path_and_skips_all_work() {
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
+            touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
             approvals: &approvals,
@@ -1115,6 +1169,7 @@ async fn paid_headless_scope_review_error_retains_settled_cost() {
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
+            touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
             approvals: &approvals,
@@ -1183,6 +1238,7 @@ async fn user_abort_at_scope_review_is_a_clean_abort() {
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
+            touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
             approvals: &approvals,
@@ -1246,6 +1302,7 @@ async fn gather_diff_counts_real_new_file_lines_and_excludes_pre_existing() {
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
+            touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
             approvals: &approvals,
@@ -1268,30 +1325,41 @@ async fn gather_diff_counts_real_new_file_lines_and_excludes_pre_existing() {
         workspace: None,
     };
     // No baseline → the file is this turn's; its real 5000 lines count.
-    let (lines, text) = pipeline.gather_diff(surface, &HashMap::new()).await;
-    assert_eq!(lines, 5000, "a new file counts its real added lines, not 1");
-    assert!(text.contains("src/huge.rs"), "diff text names the new file");
+    let probe = pipeline.gather_diff(surface, &HashMap::new()).await;
+    assert_eq!(
+        probe.lines, 5000,
+        "a new file counts its real added lines, not 1"
+    );
+    assert!(
+        probe.text.contains("src/huge.rs"),
+        "diff text names the new file"
+    );
+    assert!(probe.available, "a readable tree reports itself readable");
 
     // Present before at the SAME fingerprint → untouched dirty state, not
     // attributed to the turn.
     let unchanged: HashMap<String, String> =
         std::iter::once(("src/huge.rs".to_string(), "v2".to_string())).collect();
-    let (lines2, _) = pipeline.gather_diff(surface, &unchanged).await;
+    let probe2 = pipeline.gather_diff(surface, &unchanged).await;
     assert_eq!(
-        lines2, 0,
+        probe2.lines, 0,
         "a pre-existing untracked file is not this turn's change"
+    );
+    assert!(
+        probe2.available,
+        "an empty result from a readable tree is still an OBSERVATION — the          distinction the ladder's abstain rung turns on"
     );
 
     // Present before but at a DIFFERENT fingerprint → the turn edited an
     // already-untracked file; it must be visible (the P1 regression).
     let modified: HashMap<String, String> =
         std::iter::once(("src/huge.rs".to_string(), "v1".to_string())).collect();
-    let (lines3, text3) = pipeline.gather_diff(surface, &modified).await;
+    let probe3 = pipeline.gather_diff(surface, &modified).await;
     assert_eq!(
-        lines3, 5000,
+        probe3.lines, 5000,
         "an edit to an already-untracked file is counted"
     );
-    assert!(text3.contains("src/huge.rs"));
+    assert!(probe3.text.contains("src/huge.rs"));
 }
 
 #[test]
@@ -1624,6 +1692,7 @@ async fn second_consecutive_red_verification_gets_judge_guidance() {
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
+            touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
             approvals: &approvals,
@@ -1731,6 +1800,7 @@ async fn a_setup_failure_degrades_to_a_bare_execution_instead_of_aborting() {
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
+            touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
             approvals: &approvals,
@@ -1799,6 +1869,7 @@ async fn run_unisolated_with_router(
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
+            touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
             approvals: &approvals,
@@ -1848,6 +1919,7 @@ async fn run_isolated_with_router(
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
+            touches: &NoFileTouches,
             diagnostics: &diagnostics,
             tests: &diagnostics,
             approvals: &approvals,
@@ -2059,6 +2131,7 @@ async fn the_context_recall_event_carries_the_cgp_usage_report() {
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
+            touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
             approvals: &approvals,

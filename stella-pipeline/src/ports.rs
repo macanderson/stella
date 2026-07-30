@@ -261,6 +261,43 @@ pub trait RepoStatusPort: Send + Sync {
     }
 }
 
+/// The recorder's own tally of mutating file touches — the count behind the
+/// `AgentEvent::FileChange`s a turn emits, read from the object that emitted
+/// them.
+///
+/// The pipeline used to count those events off the sender it hands the engine.
+/// It never saw one: `ToolRegistry::record_touch` sends to the channel the
+/// *host* attached, and the engine's sender is a different wire. So a turn that
+/// created and edited a file, and put six `file_change` events on the stream,
+/// told its judge `file_change_events=0` — which the judge reported as "the
+/// file likely does not exist" while the file sat in the container (#973).
+///
+/// Reading a counter on the recorder is immune to which channel the events
+/// took, and to there being no channel at all — a candidate registry is
+/// deliberately unattached, and its changes still count here. Implementations
+/// wire it from the same registry they call `attach_events` on, so the count
+/// and the stream have one source by construction.
+///
+/// Monotonic since construction: the pipeline takes a delta across the window
+/// it cares about. Hosts with no registry supply [`NoFileTouches`].
+pub trait FileTouchPort: Send + Sync {
+    /// Mutating touches recorded so far. Reads are excluded — they are
+    /// observability, not change, exactly as `FileChangeKind::is_mutation`
+    /// decides for the event.
+    fn mutations_recorded(&self) -> u64;
+}
+
+/// A [`FileTouchPort`] that never observes anything, for hosts with no file
+/// recorder. Reports a constant `0`, so every delta is `0` — "no touches seen
+/// here", which leaves the ladder's other channels to speak.
+pub struct NoFileTouches;
+
+impl FileTouchPort for NoFileTouches {
+    fn mutations_recorded(&self) -> u64 {
+        0
+    }
+}
+
 /// Filesystem object kind captured without following symlinks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactKind {
@@ -678,6 +715,10 @@ pub struct PipelinePorts<'a> {
     /// Untracked-file snapshots for the zero-diff guard (`git diff` can't see
     /// untracked files; this makes new/modified untracked files visible).
     pub repo_status: &'a dyn RepoStatusPort,
+    /// The file recorder's own mutation tally, for the evidence the judge is
+    /// shown. Wire it from the registry the host attaches its event stream to;
+    /// hosts with no recorder pass [`NoFileTouches`].
+    pub touches: &'a dyn FileTouchPort,
     /// Runs closed, typed diagnostic invocations.
     pub diagnostics: &'a dyn DiagnosticRunner,
     /// Runs validated test invocations directly, without a shell.

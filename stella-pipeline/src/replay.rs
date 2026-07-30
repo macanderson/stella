@@ -247,6 +247,9 @@ pub fn event_signature(event: &AgentEvent) -> String {
                 ProofStep::Warrant { required, .. } => format!("proof:warrant:{required}"),
                 ProofStep::WitnessAuthored { .. } => "proof:witness_authored".to_string(),
                 ProofStep::WitnessUnavailable { .. } => "proof:witness_unavailable".to_string(),
+                ProofStep::VerificationUnavailable { .. } => {
+                    "proof:verification_unavailable".to_string()
+                }
                 ProofStep::Oracle { passed, tree, .. } => {
                     format!("proof:oracle:{tree:?}:{passed}")
                 }
