@@ -65,7 +65,6 @@ pub(super) fn agents_list_creating(
     }
 }
 
-
 pub(super) fn forward_reflection_events(
     in_tx: &UnboundedSender<Inbound>,
     report: ReflectionReport,
