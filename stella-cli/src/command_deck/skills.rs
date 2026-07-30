@@ -305,9 +305,6 @@ pub(super) fn extract_skill_md(text: &str) -> String {
     text.trim().to_string()
 }
 
-/// LLM-assisted creation: search the registry for the request, rank the hits,
-/// have the model assemble ONE `SKILL.md` (reusing the existing provider path),
-/// and write it into `scope` as version 1. Returns a status string.
 /// LLM-assisted skill creation: search the registry for prior art, draft one
 /// `SKILL.md` with a single accounted model call, validate, and install it as
 /// v1. Returns `(status line, created skill name)` — the name is `Some` only

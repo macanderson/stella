@@ -13,6 +13,8 @@ use stella_protocol::{
 };
 use stella_protocol::{CiStatus, PrStatus};
 
+mod thinking;
+
 /// Flatten a `TestBackend` buffer to one `String` per row (styling
 /// stripped — content is what we assert on, never raw ANSI, per L-T6).
 fn buffer_rows(buf: &Buffer) -> Vec<String> {
@@ -218,7 +220,7 @@ fn every_transcript_entry_renders_on_a_rail() {
             | TranscriptEntry::Complete { .. } => {}
         }
         let mut lines = Vec::new();
-        entry_lines(entry, &[], false, false, 0, &mut lines);
+        entry_lines(entry, &[], false, false, false, 0, &mut lines);
         let first = lines
             .first()
             .unwrap_or_else(|| panic!("{entry:?} renders no lines"));
@@ -382,84 +384,6 @@ fn diff_viewer_shows_the_selected_files_diff() {
     assert!(
         text.contains("+1 addition") && text.contains("-1 removal"),
         "counts in the footer rule:\n{text}"
-    );
-}
-
-#[test]
-fn thinking_is_collapsed_by_default_and_expands_with_the_toggle() {
-    let mut model = SessionModel::new();
-    model.apply(&AgentEvent::Reasoning {
-        delta: "alpha\nbeta\ngamma".into(),
-    });
-    let mut ui = UiState::default();
-    let collapsed = draw(&model, &mut ui, 100, 24);
-    // A system note is its own rail: the `⏵ thinking` label already opens
-    // with a glyph in column 0, so it indexes the margin without a second
-    // marker (and without the old right-aligned `[…]: ` tag column).
-    assert!(
-        collapsed.contains("⏵ thinking  3 lines"),
-        "collapsed header:\n{collapsed}"
-    );
-    // Collapsed = header + 3 preview lines (all 3 fit within preview count),
-    // then the spacer every block-closing entry ends on.
-    let c_lines = transcript_lines(&model, false, 0);
-    assert_eq!(c_lines.len(), 5, "header + 3 preview lines + block spacer");
-    // Preview shows the reasoning content.
-    let c_text: String = c_lines
-        .iter()
-        .flat_map(|l| l.spans.iter())
-        .map(|s| s.content.as_ref())
-        .collect();
-    assert!(
-        c_text.contains("alpha"),
-        "collapsed shows first line:\n{c_text}"
-    );
-
-    ui.thinking_expanded = true;
-    let expanded = draw(&model, &mut ui, 100, 24);
-    assert!(
-        expanded.contains("alpha") && expanded.contains("gamma"),
-        "expanded shows the full reasoning:\n{expanded}"
-    );
-    // Expanded = header + 3 content lines + the same block spacer.
-    assert_eq!(transcript_lines(&model, true, 0).len(), 5);
-}
-
-#[test]
-fn collapsed_thinking_shows_preview_lines_not_the_full_wall() {
-    let mut model = SessionModel::new();
-    let long = format!("{}THE-TAIL", "reasoning noise ".repeat(20));
-    model.apply(&AgentEvent::Reasoning { delta: long });
-    let lines = transcript_lines(&model, false, 0);
-    // 1 line of text → header + 1 preview, then the block spacer.
-    assert_eq!(lines.len(), 3);
-    // The preview should be visible.
-    let text: String = lines
-        .iter()
-        .flat_map(|l| l.spans.iter())
-        .map(|s| s.content.as_ref())
-        .collect();
-    assert!(text.contains("reasoning"), "preview shows content:\n{text}");
-}
-
-#[test]
-fn collapsed_thinking_preview_updates_as_deltas_stream() {
-    let mut model = SessionModel::new();
-    model.apply(&AgentEvent::Reasoning {
-        delta: "planning the refactor".into(),
-    });
-    let before = transcript_lines(&model, false, 0);
-    model.apply(&AgentEvent::Reasoning {
-        delta: " now checking tests".into(),
-    });
-    let after = transcript_lines(&model, false, 0);
-    // Both produce header + 1 preview + the block spacer.
-    assert_eq!(before.len(), 3);
-    assert_eq!(after.len(), 3, "still header + 1 preview line");
-    // The preview line (index 1) visibly changes with each delta.
-    assert_ne!(
-        before[1], after[1],
-        "the preview visibly changes with each delta"
     );
 }
 
@@ -992,6 +916,7 @@ fn expanded_detail_rows_align_at_the_content_column() {
         &[],
         false,
         true,
+        false,
         120,
         &mut result_rows,
     );
@@ -1026,6 +951,7 @@ fn expanded_detail_rows_align_at_the_content_column() {
         &[],
         false,
         true,
+        false,
         120,
         &mut start_rows,
     );
@@ -1096,7 +1022,7 @@ fn flat_text(lines: &[Line<'_>]) -> String {
 fn collapsed_tool_result_shows_a_capped_syntax_highlighted_inline_diff() {
     let (entry, files) = mutation_entry_and_files();
     let mut out = Vec::new();
-    entry_lines(&entry, &files, false, false, 120, &mut out);
+    entry_lines(&entry, &files, false, false, false, 120, &mut out);
     let text = flat_text(&out);
 
     // No path rule and no counts footer inline, unlike the standalone diff
@@ -1153,7 +1079,7 @@ fn collapsed_tool_result_shows_a_capped_syntax_highlighted_inline_diff() {
 fn expanded_tool_result_shows_the_full_inline_diff() {
     let (entry, files) = mutation_entry_and_files();
     let mut out = Vec::new();
-    entry_lines(&entry, &files, false, true, 120, &mut out);
+    entry_lines(&entry, &files, false, true, false, 120, &mut out);
     let text = flat_text(&out);
     assert!(
         text.contains(&format!("+let x{FIXTURE_ADDS} = {FIXTURE_ADDS};")),
@@ -1188,7 +1114,7 @@ fn a_stale_or_unresolvable_diff_ref_renders_no_inline_diff() {
         .map(|seq| (seq, format!("@@ -0,0 +1,1 @@\n+later_edit_{seq}\n")))
         .collect();
     let mut out = Vec::new();
-    entry_lines(&entry, &files, false, false, 120, &mut out);
+    entry_lines(&entry, &files, false, false, false, 120, &mut out);
     let text = flat_text(&out);
     assert!(
         !text.contains("+let x1 = 1;"),
@@ -1205,7 +1131,7 @@ fn a_stale_or_unresolvable_diff_ref_renders_no_inline_diff() {
 
     // A ref whose path is no longer tracked resolves to nothing at all.
     let mut out = Vec::new();
-    entry_lines(&entry, &[], false, false, 120, &mut out);
+    entry_lines(&entry, &[], false, false, false, 120, &mut out);
     assert!(
         !flat_text(&out).contains("+let x1 = 1;"),
         "unknown path renders no diff"
@@ -1218,6 +1144,7 @@ fn eviction_marker_renders_as_a_one_line_system_note() {
     entry_lines(
         &TranscriptEntry::Evicted { count: 1234 },
         &[],
+        false,
         false,
         false,
         80,
@@ -1243,7 +1170,7 @@ fn eviction_marker_renders_as_a_one_line_system_note() {
 fn no_transcript_row_carries_a_raw_ansi_colour() {
     for entry in sample_entries() {
         let mut lines = Vec::new();
-        entry_lines(&entry, &[], true, true, 80, &mut lines);
+        entry_lines(&entry, &[], true, true, false, 80, &mut lines);
         for line in &lines {
             for span in &line.spans {
                 for (slot, colour) in [("fg", span.style.fg), ("bg", span.style.bg)] {
@@ -1273,6 +1200,7 @@ fn user_prompt_entry_is_one_violet_color_end_to_end() {
     entry_lines(
         &TranscriptEntry::User("fix the `parser` bug\nand **ship** it".to_string()),
         &[],
+        false,
         false,
         false,
         80,
@@ -1324,7 +1252,7 @@ fn user_prompt_entry_is_one_violet_color_end_to_end() {
 fn transcript_prefix_colors_stay_in_the_brand_family() {
     let prefix_fg = |entry: &TranscriptEntry| -> Option<Color> {
         let mut out = Vec::new();
-        entry_lines(entry, &[], false, false, 80, &mut out);
+        entry_lines(entry, &[], false, false, false, 80, &mut out);
         out[0].spans[0].style.fg
     };
     assert_eq!(
