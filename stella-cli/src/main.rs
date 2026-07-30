@@ -34,6 +34,7 @@ mod command_deck;
 mod commands_cmd;
 mod config;
 mod connect_cmd;
+mod context_cmd;
 mod contextgraph;
 mod credential_handoff;
 mod credential_status;
@@ -531,6 +532,17 @@ enum Command {
     Proposals {
         #[command(subcommand)]
         cmd: proposals_cmd::ProposalsCmd,
+    },
+
+    /// Work with context records (`.stella/rules`, ingested proposals).
+    ///
+    /// `stella context validate` re-runs each record's truth probe against the
+    /// tree and reports which claims have gone stale — the on-demand form of the
+    /// staleness sweep (#888). Offline: reads TOML files and the working tree,
+    /// runs no gated probe, needs no API key.
+    Context {
+        #[command(subcommand)]
+        cmd: context_cmd::ContextCmd,
     },
 
     /// Eval-driven self-tuning of stella's own policy (#831): A/B one knob
@@ -1176,6 +1188,11 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         Some(Command::Proposals { cmd }) => {
             return proposals_cmd::run_proposals(cmd);
         }
+        // Reads context-record TOML + the working tree, runs only ungated
+        // probes. No store, no model, no API key.
+        Some(Command::Context { cmd }) => {
+            return context_cmd::run(cmd);
+        }
         // #831 first slice. Reads loop-bench result files + the local ledger;
         // writes settings only on `--promote`. No provider, no API key.
         Some(Command::Tune { cmd }) => {
@@ -1526,6 +1543,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         | Command::Memory { .. }
         | Command::Scoreboard
         | Command::Ingest(_)
+        | Command::Context { .. }
         | Command::Mcp { .. }
         | Command::Connect { .. }
         | Command::Auth { .. }
