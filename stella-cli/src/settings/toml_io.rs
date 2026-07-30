@@ -18,7 +18,7 @@
 //!
 //! So every write goes through `toml_edit`, which models the document as a
 //! syntax tree rather than a value tree: replacing one key leaves every byte
-//! that is not that key exactly where it was. [`tests`] pins this — the
+//! that is not that key exactly where it was. The tests below pin this — the
 //! round-trip test is the whole contract, and it is why this module was built
 //! before any key was ported.
 
