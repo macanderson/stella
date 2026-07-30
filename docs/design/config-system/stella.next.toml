@@ -226,6 +226,17 @@ prompt_file = ".stella/prompts/security-reviewer.md"
 # acknowledged in its own comment that the pipeline one wins. Two flags for
 # one question desynchronize; this design keeps only the pipeline's.
 
+# NOTE — the six stages below are the READABLE subset, not the vocabulary.
+# `StageKind` (stella-protocol/src/event.rs) has eleven variants: Triage,
+# ContextRecall, Plan, ScopeReview, Witness, Execute, Verify, Judge, Reflect,
+# ContextWrite, Complete. The real block is built against the enum.
+#
+# Three are deliberately NOT configurable here, because each already has an
+# owner and a second switch is how these blocks rot — see DESIGN.md §4.5:
+#   ScopeReview  -> owned by agents.headless_scope_bypass
+#   Complete     -> terminal, not a stage
+#   ContextRecall / ContextWrite / Reflect -> owned by [context]
+
 [pipeline]
 mode = "sequential"   # sequential | triage_route | single_agent
 

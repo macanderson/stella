@@ -263,6 +263,31 @@ one question desynchronize. Keep the pipeline's; `[agents.*]` has no
 `execute` takes `on_disable = "fail"` — there is no turn without it. That is
 a config-validation error at load, not a runtime surprise.
 
+**The stage vocabulary is not the six obvious ones.** `StageKind`
+(`stella-protocol/src/event.rs`) has eleven variants: `Triage`,
+`ContextRecall`, `Plan`, `ScopeReview`, `Witness`, `Execute`, `Verify`,
+`Judge`, `Reflect`, `ContextWrite`, `Complete`. `stella.next.toml` shows six
+for readability; the real block must be built against the enum, not against
+a hand-listed subset, or the two drift the first time a stage is added.
+
+Three of the eleven need a decision rather than a default:
+
+- **`ScopeReview` must not be configurable here.** `headless_scope_bypass`
+  already answers "may an unattended run proceed past scope review". Adding
+  `[pipeline.stages.scope_review].enabled` would be exactly the two-flags-one-
+  question bug this section rejects — and on the highest-consequence flag in
+  the file. Leave it out; `headless_scope_bypass` owns it.
+- **`Complete` is terminal**, not a stage anyone turns off. Reject it at load
+  the way `execute` is rejected.
+- **`ContextRecall` / `ContextWrite` / `Reflect` already have owners** in the
+  `[context]` block (`lifecycle.enabled`, `learning.mode`). Exposing them
+  again under `[pipeline.stages]` creates a third overlapping authority.
+  Either they stay out, or `[context]` delegates to them — not both.
+
+This is the same failure mode as the sketch's double `enabled`, one level up:
+the risk in a stage-configuration block is not that a stage is missing, it is
+that a stage acquires a *second* switch.
+
 ---
 
 ## 5. Phase 3 — tools and integrations
