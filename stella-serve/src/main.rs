@@ -10,6 +10,11 @@
 //! STELLA_SERVE_TOKEN       bearer token every request must present
 //! STELLA_SERVE_TOOLS       must be `remote` (the default) — all tool execution is
 //!                          remoted to the host; a local tool surface is never served
+//! STELLA_SERVE_LOG         off | error | warn | info (default) | debug — verbosity of
+//!                          the JSON-per-line records on stderr. An unrecognised value
+//!                          falls back to `info`: a typo in a log knob must not take a
+//!                          service down. Counters are unaffected by this and are read
+//!                          from `GET /v1/metrics`.
 //! ```
 //!
 //! One of `STELLA_SERVE_TOKEN_FILE` / `STELLA_SERVE_TOKEN` is required. The
@@ -64,12 +69,16 @@ ENVIRONMENT:
     STELLA_SERVE_TOKEN       bearer token every request must present
     STELLA_SERVE_TOOLS       must be `remote` (the default) — every tool and
                              model call is remoted to the host
+    STELLA_SERVE_LOG         off | error | warn | info (default) | debug —
+                             verbosity of the JSON-per-line records on stderr.
+                             An unrecognised value falls back to `info`.
 
 One of STELLA_SERVE_TOKEN_FILE / STELLA_SERVE_TOKEN is required.
 
-The server exposes GET /healthz unauthenticated, and POST /v1/turns,
-GET /v1/turns/{id}/events, POST /v1/turns/{id}/{provider-result,tool-result,cancel}
-behind the bearer token. See docs/design/serve-surface.md.
+The server exposes GET /healthz unauthenticated, and GET /v1/metrics,
+POST /v1/turns, GET /v1/turns/{id}/events,
+POST /v1/turns/{id}/{provider-result,tool-result,cancel} behind the bearer
+token. See docs/design/serve-surface.md and docs/design/serve-observability.md.
 ";
 
 /// `stella-serve <version>` — the line `--version` prints.
@@ -359,6 +368,7 @@ mod tests {
             "STELLA_SERVE_TOKEN_FILE",
             "STELLA_SERVE_TOKEN",
             "STELLA_SERVE_TOOLS",
+            stella_serve::observe::LOG_LEVEL_ENV,
         ] {
             assert!(USAGE.contains(var), "`--help` omits {var}");
         }

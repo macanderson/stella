@@ -55,11 +55,48 @@ host  ──POST /v1/turns──►  stella-serve  ──►  Session (dedicated
 | [`src/remote.rs`](src/remote.rs) | The two remoted port impls, plus `TokioSleeper` for the engine's retry backoff. |
 | [`src/pending.rs`](src/pending.rs) | `Pending`, the `request_id` → one-shot registry shared across the two runtimes. Open it when a resolve POST returns 409. |
 | [`src/frame.rs`](src/frame.rs) | The wire vocabulary: `ServerFrame`, `TurnOutcomeWire`, `ToolResultIn`, `ProviderResultIn`, `ProviderErrorWire`. Every wire-shape change starts here. |
-| [`src/server.rs`](src/server.rs) | `serve` — accept loop, bearer auth, the five `/v1/turns` routes (including `cancel`), the turn registry, and a rustdoc list of the operational limits the deployment must supply. |
+| [`src/server.rs`](src/server.rs) | `serve` — accept loop, bearer auth, the connection fold (one record per connection), route classification, the turn registry, and a rustdoc list of the operational limits the deployment must supply. |
+| [`src/routes.rs`](src/routes.rs) | The endpoint handlers and the wire types they parse — the five `/v1/turns` routes (including `cancel`), `/healthz`, `/v1/metrics`, and the host-supplied ceilings (`max_steps`, `reverse_request_timeout_ms`). |
+| [`src/observe/`](src/observe/) | Observability: `ServeEvent` (18 typed boundary events), the `Observer` port and its sinks, the request fold, the counters behind `/v1/metrics`, and the per-turn tally folded from the engine's own `AgentEvent` stream. Start at [`mod.rs`](src/observe/mod.rs); the design is [`docs/design/serve-observability.md`](../docs/design/serve-observability.md). |
 | [`src/accept.rs`](src/accept.rs) | The written `accept()` classification policy — transient vs fatal, the backoff, and the give-up streak. Byte-identical to [`stella-observatory/src/accept.rs`](../stella-observatory/src/accept.rs) (the observatory takes no `stella-*` dependency, so there is no shared crate to hold it); a drift-guard test in both crates fails if the two copies differ. Change one, change the other. |
 | [`src/http.rs`](src/http.rs) | A hand-rolled HTTP/1.1 + SSE layer following [`stella-observatory`](../stella-observatory)'s no-framework idiom, extended with request bodies, bearer auth, and long-lived responses. |
 | [`src/error.rs`](src/error.rs) | `ServeError` — the named failures at the boundary. |
-| [`src/main.rs`](src/main.rs) | The binary: env config (`STELLA_SERVE_BIND` / `_TOKEN_FILE` / `_TOKEN` / `_TOOLS`; the file supply wins, and a token under 32 chars warns rather than refusing to start) and the `healthcheck` subcommand. |
+| [`src/main.rs`](src/main.rs) | The binary: env config (`STELLA_SERVE_BIND` / `_TOKEN_FILE` / `_TOKEN` / `_TOOLS` / `_LOG`; the file supply wins, and a token under 32 chars warns rather than refusing to start) and the `healthcheck` subcommand. |
+
+### Reading the output
+
+The server writes one JSON object per line to **stderr**, and exposes the same
+information as counters at `GET /v1/metrics` (authenticated, same bearer token,
+pull-only — nothing is ever sent anywhere).
+
+```
+STELLA_SERVE_LOG = off | error | warn | info (default) | debug
+```
+
+An unrecognised value falls back to `info` rather than failing startup: a typo
+in a log knob must not take a service down. Rotation, retention and shipping are
+the supervisor's job (systemd, Docker, the host's runner) — this process only
+writes lines.
+
+Records never carry prompt text, tool payloads, model output, filesystem paths,
+raw request paths, the bearer token, or a whole turn id (a turn id is a *second
+factor*: acting on a turn needs the token **and** the id, so records carry only
+its first 8 hex characters — enough to correlate, useless for forging). That is
+enforced by a sentinel sweep in the test suite, not by convention.
+
+The four things that used to be indistinguishable from silence, and what to grep
+for now:
+
+| Situation | Record |
+|---|---|
+| a turn wedged on a reverse request nobody will answer | `"event":"reverse_timed_out"` — carries `waited_ms` and the kind |
+| a host answering with the wrong `request_id` | `"event":"reverse_misrouted"` — `fault` separates a stale id from a wrong-kind answer |
+| a 429 storm | `"event":"turn_refused"` with `reason":"at_capacity"`, plus `turns_live` |
+| a bearer-token brute force | `"event":"unauthorized"` — a non-zero `held_ms` is the throttle engaging, which is a sustained guess rather than a misconfigured client |
+
+To tell *wedged* from merely *slow*: a turn whose `turn_settled` tally shows no
+advancing `stages` while a reverse request's `waited_ms` climbs is wedged; one
+whose stages keep advancing is just long.
 
 ## Key concepts
 
