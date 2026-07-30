@@ -398,3 +398,33 @@ fn recent_tool_calls_filters_by_name_and_returns_newest_first() {
             .is_empty()
     );
 }
+
+/// The durability level is a contract, not a preference: each level must map
+/// to the exact pragma pair its documented failure model depends on. A
+/// `paranoid` store that quietly omitted `fullfsync` would claim to survive
+/// power loss while not doing the one thing that makes that true.
+#[test]
+fn every_durability_level_sets_the_pragmas_its_guarantee_rests_on() {
+    use crate::migrations::Durability;
+
+    // Empty and unrecognized both land on Full — a typo in an environment
+    // variable must never silently downgrade a durability guarantee.
+    for level in ["", "  ", "sloppy", "FULL", "full", " Full "] {
+        assert_eq!(
+            Durability::parse(level),
+            Durability::Full,
+            "{level:?} must resolve to Full"
+        );
+    }
+    assert_eq!(Durability::parse("normal"), Durability::Normal);
+    assert_eq!(Durability::parse("PARANOID"), Durability::Paranoid);
+
+    // And the store actually applies the default. 2 is FULL, 1 is NORMAL;
+    // the difference is whether a kernel panic loses committed telemetry.
+    let store = Store::in_memory().expect("store");
+    let synchronous: i64 = store
+        .lock()
+        .query_row("PRAGMA synchronous", [], |r| r.get(0))
+        .expect("synchronous");
+    assert_eq!(synchronous, 2, "the default is FULL (2), not NORMAL (1)");
+}

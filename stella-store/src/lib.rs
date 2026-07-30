@@ -665,9 +665,12 @@ impl Store {
         // busy_timeout matches the sibling stores (context.db, codegraph.db):
         // without it a second same-workspace session gets an immediate
         // SQLITE_BUSY and its best-effort telemetry writes vanish silently.
-        // synchronous=NORMAL is the standard WAL pairing — durability to the
-        // last checkpoint rather than one fsync per event insert on the hot
-        // render path (matching stella-graph's store).
+        // Durability is chosen by STELLA_STORE_DURABILITY and defaults to
+        // synchronous=FULL — see `migrations::Durability` for the measured
+        // cost of each level and exactly which failure each one survives.
+        // The short version: FULL closes the kernel-panic window for 15
+        // microseconds an event, and surviving actual power loss needs
+        // `paranoid`, which costs 180x and is therefore opt-in.
         //
         // This batch is also the first statement to touch page 1, so it is
         // where an unreadable file announces itself — mapped here, before the
