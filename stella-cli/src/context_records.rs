@@ -39,7 +39,7 @@ use serde::{Deserialize, Serialize};
 
 use stella_core::ingest::record::{ProbeKind, Verdict};
 use stella_core::records::{
-    self, DecisionEvent, Facts, LoadedRecord, Registry, decision, load_context_file,
+    self, DecisionEvent, Facts, LoadedRecord, Registry, Trust, decision, load_context_file,
 };
 use stella_core::rules::{LoadRulesOptions, RuleFile, RuleSource, rule_search_dirs};
 
@@ -165,7 +165,7 @@ pub(crate) fn append_decision(root: &Path, event: &DecisionEvent) -> Result<(), 
 /// [`RuleSource`] reads every directory it is handed, so the filtering has to
 /// happen here, on the slice. Passing one flag for both axes reads plausibly and
 /// silently loads an untrusted repository's rules into the prompt.
-pub(crate) fn rule_files(root: &Path, include_user: bool, include_project: bool) -> Vec<RuleFile> {
+pub(crate) fn rule_files(root: &Path, include_user: bool, include_project: bool) -> TieredFiles {
     let user_rules_dir = if include_user {
         crate::settings::user_home_dir()
             .map(|home| home.join(".stella").join("rules").display().to_string())
@@ -178,12 +178,40 @@ pub(crate) fn rule_files(root: &Path, include_user: bool, include_project: bool)
         user_rules_dir,
     });
     // `rule_search_dirs` puts the user directory first, then the two project ones.
-    let visible = if include_project {
-        dirs.as_slice()
-    } else {
-        dirs.get(..1).unwrap_or(&dirs)
-    };
-    crate::rules::FsRuleSource.read_rule_files(visible)
+    let (user, project) = dirs.split_at(1);
+    TieredFiles {
+        user: crate::rules::FsRuleSource.read_rule_files(user),
+        project: if include_project {
+            crate::rules::FsRuleSource.read_rule_files(project)
+        } else {
+            Vec::new()
+        },
+    }
+}
+
+/// This workspace's rule files, kept in their trust tiers.
+///
+/// The split is preserved all the way to [`records::registry::load`] rather than
+/// flattened here, because the merge needs it: a project record may add enforcement
+/// and may never remove a user record's. Flattening at the boundary and re-deriving
+/// the tier from path prefixes downstream would put a security decision on string
+/// matching.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct TieredFiles {
+    /// `~/.stella/rules` — the user's own.
+    pub user: Vec<RuleFile>,
+    /// `<repo>/.claude/rules` and `<repo>/.stella/rules`, in precedence order.
+    pub project: Vec<RuleFile>,
+}
+
+impl TieredFiles {
+    /// Every file, tier forgotten — for the passes that only ask what is on disk,
+    /// like running due probes.
+    pub(crate) fn all(&self) -> Vec<RuleFile> {
+        let mut all = self.user.clone();
+        all.extend(self.project.iter().cloned());
+        all
+    }
 }
 
 /// The registry a **session** loads: the authority policy decides whether an
@@ -223,7 +251,7 @@ fn load_registry_with(root: &Path, include_project: bool) -> Registry {
     let files = rule_files(root, true, include_project);
     let now = now_rfc3339();
     let mut cache = SweepCache::read(root);
-    let ran = run_due_probes(root, &files, &mut cache, &now);
+    let ran = run_due_probes(root, &files.all(), &mut cache, &now);
     if ran > 0 {
         cache.write(root);
     }
@@ -231,7 +259,7 @@ fn load_registry_with(root: &Path, include_project: bool) -> Registry {
 }
 
 /// Build the registry from already-collected files and an already-swept cache.
-fn registry_from(root: &Path, files: &[RuleFile], cache: &SweepCache, now: &str) -> Registry {
+fn registry_from(root: &Path, files: &TieredFiles, cache: &SweepCache, now: &str) -> Registry {
     let states = decision::fold(&read_decisions(root));
     let mut verdicts = BTreeMap::new();
     let mut last_checked = BTreeMap::new();
@@ -241,15 +269,21 @@ fn registry_from(root: &Path, files: &[RuleFile], cache: &SweepCache, now: &str)
         }
         last_checked.insert(lineage.clone(), entry.checked_at.clone());
     }
-    let approved_blocking: BTreeSet<String> = states
+    let approved_blocking: BTreeSet<(Trust, String)> = states
         .values()
         .filter(|state| state.approved_blocking && state.decision.publishes())
         .filter_map(|state| state.published_to.clone())
-        .filter_map(|path| lineage_from_published_path(&path))
+        .filter_map(|path| {
+            Some((
+                trust_of_published_path(&path),
+                lineage_from_published_path(&path)?,
+            ))
+        })
         .collect();
 
     records::registry::load(
-        files,
+        &files.user,
+        &files.project,
         &Facts {
             verdicts,
             last_checked,
@@ -267,6 +301,28 @@ fn registry_from(root: &Path, files: &[RuleFile], cache: &SweepCache, now: &str)
 fn lineage_from_published_path(path: &str) -> Option<String> {
     let base = path.rsplit('/').next()?;
     Some(base.strip_suffix(".toml")?.to_string())
+}
+
+/// Which tier an approval was granted at, read from where the record was published.
+///
+/// An approval is a statement about one record, and a lineage does not identify one
+/// record — it is author-supplied, so a repository can name the same lineage the
+/// user's own record uses. Without this, approving your own `~/.stella/rules` guard
+/// would hand the same approval to any repository record that guessed the name.
+///
+/// Compared against the real home directory rather than by looking for
+/// `.stella/rules` in the path, which **both** tiers end with.
+fn trust_of_published_path(path: &str) -> Trust {
+    let Some(user_rules) = crate::settings::user_home_dir() else {
+        // No home directory to compare against: nothing can be established as the
+        // user's, so nothing is.
+        return Trust::Project;
+    };
+    if Path::new(path).starts_with(user_rules.join(".stella").join("rules")) {
+        Trust::User
+    } else {
+        Trust::Project
+    }
 }
 
 /// Run every probe that is due, writing results into `cache`. Returns how many ran.
@@ -357,7 +413,7 @@ pub(crate) fn probe_everything(root: &Path, files: &[RuleFile], now: &str) -> Sw
 /// sweep's older verdicts.
 pub(crate) fn registry_with_cache(
     root: &Path,
-    files: &[RuleFile],
+    files: &TieredFiles,
     cache: &SweepCache,
     now: &str,
 ) -> Registry {

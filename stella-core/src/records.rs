@@ -49,14 +49,18 @@ pub mod handle;
 pub mod registry;
 pub mod render;
 pub mod sweep;
+pub mod trust;
 pub mod validate;
 
-pub use bridge::{BlockingRefusal, GuardDecision, guard_for, rule_from_record};
+pub use bridge::{
+    BlockingRefusal, GuardDecision, declared_hard_guard, guard_for, rule_from_record,
+};
 pub use decision::{Decision, DecisionEvent, should_repropose};
 pub use handle::assign_handles;
 pub use registry::{Entry, Facts, Registry};
 pub use render::{Channel, RenderInput, RenderedChannel, render_channel};
 pub use sweep::{Disposition, ExpiryAction, SweepInput, disposition, honored_probe, probe_is_due};
+pub use trust::Trust;
 pub use validate::{Conflict, check_record, detect_conflicts, is_suspended, validate_records};
 
 /// One record as the engine sees it: the typed record, where it came from, the
@@ -71,6 +75,11 @@ pub struct LoadedRecord {
     /// The file (or opaque source label) this record was read from. Carried into
     /// provenance so `stella context explain` can name the authority.
     pub source: String,
+    /// Which authority published it — stamped from the directory the file was read
+    /// out of, never from anything the record says about itself. [`load_context_file`]
+    /// leaves this at [`Trust::Project`]; [`registry::load`] stamps the user tier,
+    /// which is the one place that knows the difference.
+    pub trust: Trust,
     /// The `^handle` the model cites this record by. Empty until
     /// [`assign_handles`] has seen the whole loaded set — a handle is only
     /// unambiguous relative to its neighbours.
@@ -297,6 +306,9 @@ fn resolve(mut record: Record, defaults: &Defaults, set_id: &str, source: &str) 
         record,
         set_id: set_id.to_string(),
         source: source.to_string(),
+        // The lower tier, until a caller that actually knows the directory says
+        // otherwise. See [`Trust`] on why the default is the restrictive one.
+        trust: Trust::default(),
         handle: String::new(),
         findings,
     }

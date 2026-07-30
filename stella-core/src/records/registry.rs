@@ -29,6 +29,24 @@
 //! follow exactly", so they project to `must` and ride the cached channel. That
 //! also gives them a `^handle`, which means legacy rules become citable — the
 //! attribution loop closes for them too, at no cost to the author.
+//!
+//! # Why the merge takes two lists
+//!
+//! `lineage_id` is the identity precedence acts on, and it is *author-supplied*.
+//! Over one flat list in directory order that is a hole: the project directories
+//! come last, so a repository could name its record `ctx.<something the user
+//! publishes>` and, under last-wins, replace the user's record wholesale — taking
+//! its armed guard with it. A cloned checkout could switch off a protection the
+//! person at the keyboard had set up for themselves.
+//!
+//! The markdown path never had that hole: `merge_rule_trust_tiers` in `stella-cli`
+//! keeps a user-global hard guard **monotonic** — a project rule with the same id
+//! can never remove it, and a project rule carrying a *different* guard is kept
+//! alongside so both constraints stay armed. [`load`] takes the two tiers as two
+//! arguments so the compiler asks which is which, and the tier fold applies that
+//! same invariant to records. What a project record may still do is exactly what it
+//! could always do: override a user record that established no enforcement, and add
+//! enforcement of its own.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -39,8 +57,13 @@ use super::super::ingest::record::{
 use super::super::rules::{Rule, RuleFile, rule_from_file_checked};
 use super::{
     Channel, Conflict, Disposition, GuardDecision, LoadedRecord, RecordFinding, RenderInput,
-    RenderedChannel, SweepInput, assign_handles, load_context_file, render_channel,
+    RenderedChannel, SweepInput, Trust, assign_handles, declared_hard_guard, load_context_file,
+    render_channel,
 };
+
+/// One parsed entry: the record, and the legacy `.md` rule it was projected from
+/// when it was projected from one.
+type Parsed = (LoadedRecord, Option<Rule>);
 
 /// What the registry could not load, and why. Reported rather than swallowed: a
 /// policy file that silently stopped loading is indistinguishable from a policy
@@ -144,43 +167,42 @@ pub struct Facts<'a> {
     pub verdicts: BTreeMap<String, Verdict>,
     /// When each lineage's probe last ran, keyed by `lineage_id`.
     pub last_checked: BTreeMap<String, String>,
-    /// Lineages a human explicitly approved for blocking.
-    pub approved_blocking: BTreeSet<String>,
+    /// Lineages a human explicitly approved for blocking, **qualified by the tier
+    /// the approval was granted at**.
+    ///
+    /// Keyed by tier and not by lineage alone because a lineage is author-supplied:
+    /// an approval the user granted their own `~/.stella/rules` record would
+    /// otherwise transfer, silently and automatically, to any repository record that
+    /// happened to name the same lineage.
+    pub approved_blocking: BTreeSet<(Trust, String)>,
     /// Now, RFC-3339.
     pub now: &'a str,
 }
 
-/// Resolve `files` — `.md` rules and `.toml` records, already in directory
-/// precedence order — into one registry.
-pub fn load(files: &[RuleFile], facts: &Facts<'_>) -> Registry {
+impl Facts<'_> {
+    /// Whether a human approved blocking for this record — at this record's own tier.
+    fn approves(&self, trust: Trust, lineage: &str) -> bool {
+        self.approved_blocking
+            .contains(&(trust, lineage.to_string()))
+    }
+}
+
+/// Resolve this session's rule files — `.md` rules and `.toml` records — into one
+/// registry.
+///
+/// The two tiers are separate arguments, not one list in directory order, because
+/// the merge treats them differently: see the module docs on why a repository record
+/// must not be able to displace a user record's enforcement. Within each argument,
+/// files are in directory-precedence order and later still wins.
+pub fn load(user_files: &[RuleFile], project_files: &[RuleFile], facts: &Facts<'_>) -> Registry {
     let mut diagnostics = Vec::new();
 
-    // Pass 1: parse every file into records, in directory-precedence order. Each
-    // carries the legacy markdown rule it came from, when it came from one.
-    let mut parsed: Vec<(LoadedRecord, Option<Rule>)> = Vec::new();
-    for file in files {
-        if file.path.ends_with(".toml") {
-            match load_context_file(&file.path, &file.contents) {
-                Ok(records) => parsed.extend(records.into_iter().map(|record| (record, None))),
-                Err(err) => diagnostics.push(Diagnostic {
-                    source: err.source,
-                    detail: err.detail,
-                }),
-            }
-            continue;
-        }
-        match rule_from_file_checked(&file.path, &file.contents) {
-            Ok(rule) => parsed.push((record_from_markdown(&rule), Some(rule))),
-            // A file with no statement is not a rule and never was; saying so for
-            // every README in a rules directory would be noise. The nesting and
-            // missing-id refusals are real defects and get reported.
-            Err(super::super::rules::RuleFileError::EmptyStatement) => {}
-            Err(err) => diagnostics.push(Diagnostic {
-                source: file.path.clone(),
-                detail: err.to_string(),
-            }),
-        }
-    }
+    // Pass 1: parse each tier into records, in directory-precedence order. Each
+    // carries the legacy markdown rule it came from, when it came from one, and the
+    // tier it was read out of — which is the one fact the file cannot claim about
+    // itself.
+    let user = parse_tier(user_files, Trust::User, &mut diagnostics);
+    let project = parse_tier(project_files, Trust::Project, &mut diagnostics);
 
     // Pass 2: merge by `lineage_id`, BEFORE handles are assigned.
     //
@@ -190,7 +212,7 @@ pub fn load(files: &[RuleFile], facts: &Facts<'_>) -> Registry {
     // distinct handles and both would steer, with the older one silently outliving
     // the override that was supposed to replace it. `lineage_id` is the identity that
     // survives revisions, so it is the identity precedence acts on.
-    let merged = merge_by_lineage(parsed);
+    let merged = merge_tiers(merge_by_lineage(user), merge_by_lineage(project));
 
     // Handles are only unambiguous across the surviving set, and conflicts compare
     // records against each other, so both happen once, globally. The per-record
@@ -252,14 +274,46 @@ pub fn load(files: &[RuleFile], facts: &Facts<'_>) -> Registry {
     }
 }
 
-/// Merge by `lineage_id`: a later entry replaces an earlier one with the same
-/// lineage, keeping the earlier one's position. The same semantics the markdown
-/// loader has always had (JS `Map.set` on an existing key), now over both formats.
-fn merge_by_lineage(
-    parsed: Vec<(LoadedRecord, Option<Rule>)>,
-) -> Vec<(LoadedRecord, Option<Rule>)> {
+/// Parse one trust tier's files, stamping every record with the tier it was read
+/// out of.
+fn parse_tier(files: &[RuleFile], trust: Trust, diagnostics: &mut Vec<Diagnostic>) -> Vec<Parsed> {
+    let mut parsed: Vec<Parsed> = Vec::new();
+    for file in files {
+        if file.path.ends_with(".toml") {
+            match load_context_file(&file.path, &file.contents) {
+                Ok(records) => parsed.extend(records.into_iter().map(|mut record| {
+                    record.trust = trust;
+                    (record, None)
+                })),
+                Err(err) => diagnostics.push(Diagnostic {
+                    source: err.source,
+                    detail: err.detail,
+                }),
+            }
+            continue;
+        }
+        match rule_from_file_checked(&file.path, &file.contents) {
+            Ok(rule) => parsed.push((record_from_markdown(&rule, trust), Some(rule))),
+            // A file with no statement is not a rule and never was; saying so for
+            // every README in a rules directory would be noise. The nesting and
+            // missing-id refusals are real defects and get reported.
+            Err(super::super::rules::RuleFileError::EmptyStatement) => {}
+            Err(err) => diagnostics.push(Diagnostic {
+                source: file.path.clone(),
+                detail: err.to_string(),
+            }),
+        }
+    }
+    parsed
+}
+
+/// Merge by `lineage_id` **within one tier**: a later entry replaces an earlier one
+/// with the same lineage, keeping the earlier one's position. The same semantics the
+/// markdown loader has always had (JS `Map.set` on an existing key), now over both
+/// formats.
+fn merge_by_lineage(parsed: Vec<Parsed>) -> Vec<Parsed> {
     let mut order: Vec<String> = Vec::new();
-    let mut by_lineage: BTreeMap<String, (LoadedRecord, Option<Rule>)> = BTreeMap::new();
+    let mut by_lineage: BTreeMap<String, Parsed> = BTreeMap::new();
     for entry in parsed {
         let lineage = entry.0.record.lineage_id.clone();
         if !by_lineage.contains_key(&lineage) {
@@ -271,6 +325,50 @@ fn merge_by_lineage(
         .into_iter()
         .filter_map(|lineage| by_lineage.remove(&lineage))
         .collect()
+}
+
+/// Fold the project tier into the user tier, monotonically.
+///
+/// The invariant, matching `merge_rule_trust_tiers` on the markdown side: **a
+/// project record may add enforcement and may never remove it.** Concretely, for a
+/// project record whose lineage a user record already holds:
+///
+/// | The user record | The project record | Result |
+/// | --- | --- | --- |
+/// | establishes no guard | anything | overrides, as it always has |
+/// | establishes a guard | establishes a *different* one | both kept — two constraints, neither weakened |
+/// | establishes a guard | the same one, or none | dropped — it could only weaken or duplicate |
+///
+/// The last row is the hole this closes. A `mode = "none"` record naming a user
+/// lineage used to win the merge outright and take the user's armed guard with it.
+///
+/// "Establishes a guard" is [`declared_hard_guard`] — deliberately independent of
+/// whether the guard is *approved*, so adding a ledger entry can never change which
+/// record survives the merge.
+fn merge_tiers(mut user: Vec<Parsed>, project: Vec<Parsed>) -> Vec<Parsed> {
+    for entry in project {
+        let Some(index) = user
+            .iter()
+            .position(|(loaded, _)| loaded.record.lineage_id == entry.0.record.lineage_id)
+        else {
+            user.push(entry);
+            continue;
+        };
+        let established = declared_hard_guard(&user[index].0.record);
+        let Some(established) = established else {
+            user[index] = entry;
+            continue;
+        };
+        // Keeping both is what makes this *monotonic* rather than merely
+        // protective: the project's own constraint still applies, under its own
+        // handle, subject to its own approval. Dropping it would let a user record
+        // silently switch off a repository's guard, which is the same bug pointing
+        // the other way.
+        if declared_hard_guard(&entry.0.record).is_some_and(|guard| guard != established) {
+            user.push(entry);
+        }
+    }
+    user
 }
 
 /// Why this record must not steer, when something says it must not.
@@ -328,8 +426,8 @@ fn resolve_guard(
             refusal: None,
         };
     }
-    let approved = facts.approved_blocking.contains(&record.record.lineage_id);
-    let decision = super::guard_for(&record.record, approved);
+    let approved = facts.approves(record.trust, &record.record.lineage_id);
+    let decision = super::guard_for(&record.record, record.trust, approved);
     if let Some(refusal) = decision.refusal.as_ref() {
         diagnostics.push(Diagnostic {
             source: record.source.clone(),
@@ -361,7 +459,7 @@ fn projected_rule(entry: &Entry) -> Rule {
 /// The force is `must`: markdown rules have always been rendered under "binding —
 /// follow exactly", and quietly weakening them on the way to the new renderer would
 /// change what the model is told without anyone editing a rule.
-fn record_from_markdown(rule: &Rule) -> LoadedRecord {
+fn record_from_markdown(rule: &Rule, trust: Trust) -> LoadedRecord {
     let record = Record {
         lineage_id: format!("ctx.{}", rule.id),
         record_id: None,
@@ -398,6 +496,7 @@ fn record_from_markdown(rule: &Rule) -> LoadedRecord {
         record,
         set_id: "markdown".to_string(),
         source: rule.source.clone(),
+        trust,
         handle: String::new(),
         findings: Vec::new(),
     }

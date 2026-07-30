@@ -90,6 +90,7 @@ pub(super) fn loaded_from(mut record: Record) -> LoadedRecord {
         record,
         set_id: "acme.web".to_string(),
         source: ".stella/rules/acme.web.toml".to_string(),
+        trust: super::Trust::Project,
         handle: String::new(),
         findings: Vec::new(),
     }

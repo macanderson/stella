@@ -95,7 +95,7 @@ pub fn run_list(root: &Path, json: bool) -> Result<(), String> {
 pub fn run_validate(root: &Path, json: bool) -> Result<(), String> {
     let files = rule_files(root, true, true);
     let now = now_rfc3339();
-    let cache = probe_everything(root, &files, &now);
+    let cache = probe_everything(root, &files.all(), &now);
     let registry = registry_with_cache(root, &files, &cache, &now);
 
     if json {

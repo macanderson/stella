@@ -180,7 +180,7 @@ fn probe_everything_ignores_the_cadence_and_does_not_move_the_scheduled_clock() 
 
     std::fs::write(root.path().join(".nvmrc"), "22\n").unwrap();
     let files = rule_files(root.path(), false, true);
-    let fresh = probe_everything(root.path(), &files, "2026-07-20T00:00:00Z");
+    let fresh = probe_everything(root.path(), &files.all(), "2026-07-20T00:00:00Z");
     assert_eq!(
         fresh.checked["ctx.acme.web.node-version"].verdict, "refuted",
         "validate must tell the truth about now, not about the last scheduled sweep"
