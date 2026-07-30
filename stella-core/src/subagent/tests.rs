@@ -848,6 +848,77 @@ async fn a_child_polls_the_parents_pause_gate() {
     );
 }
 
+/// [`TurnControls`] is the owned form a session-scoped host holds, so a
+/// sub-agent dispatcher can give a child the seams of the turn that asked for
+/// it. This pins the two properties that make it safe to call blindly at
+/// dispatch time.
+#[tokio::test]
+async fn owned_turn_controls_stop_a_child_without_clobbering_an_attached_gate() {
+    let parent_provider = ScriptedProvider::new(vec![]);
+    let child_provider = ScriptedProvider::new(vec![Ok(text_result("hi", 0.01))]);
+    let tools = MixedTools::default();
+
+    // A gate attached the per-turn way, and controls carrying only steering:
+    // the driver's gate must survive, because a host that reads controls
+    // holding one seam would otherwise silently unpause the child.
+    let gate = CountingGate(AtomicUsize::new(0));
+    let steering = Arc::new(SpySteering {
+        drained: AtomicUsize::new(0),
+        stop: true,
+    });
+    let controls = TurnControls::none().with_steering(steering.clone());
+    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep)
+        .with_gate(&gate)
+        .with_turn_controls(&controls);
+    let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    let outcome = parent
+        .run_sub_agent(
+            SubAgentHost::new(&child_provider),
+            &SubAgentSpec::read_only("controlled", "work"),
+            &mut budget,
+            &tx,
+        )
+        .await;
+
+    assert!(
+        matches!(&outcome, SubAgentOutcome::Incomplete { reason, .. }
+            if reason.contains(crate::driver::SOFT_STOP_REASON)),
+        "the published stop must reach the child, got {outcome:?}"
+    );
+    assert_eq!(
+        gate.0.load(Ordering::SeqCst),
+        1,
+        "the separately-attached gate must still be polled — controls fill \
+         absent seams, they do not replace the set"
+    );
+    assert_eq!(
+        steering.drained.load(Ordering::SeqCst),
+        0,
+        "still `ChildSteering` underneath: the stop crosses, the parent's \
+         queued messages never do"
+    );
+}
+
+#[test]
+fn empty_turn_controls_leave_an_engine_exactly_as_it_was() {
+    let provider = ScriptedProvider::new(vec![]);
+    let tools = MixedTools::default();
+    let gate = CountingGate(AtomicUsize::new(0));
+    let nothing = TurnControls::none();
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &NoSleep)
+        .with_gate(&gate)
+        .with_turn_controls(&nothing);
+
+    assert!(
+        engine.gate.is_some(),
+        "a driver that publishes nothing must not cost a turn its own gate"
+    );
+    assert!(engine.steering.is_none());
+    assert!(TurnControls::none().is_empty());
+}
+
 #[test]
 fn attribution_restores_what_it_displaced_including_on_an_unwind() {
     let bus = HookBus::new("session-1");

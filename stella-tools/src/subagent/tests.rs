@@ -275,3 +275,70 @@ fn the_schema_is_not_read_only_which_is_what_makes_nesting_structural() {
         "the description must scope the tool, not just advertise it"
     );
 }
+
+// ---- turn controls ----------------------------------------------------
+
+/// A steering tap whose stop flag latches, exactly like the deck's.
+struct LatchingStop(std::sync::atomic::AtomicBool);
+
+impl stella_core::ports::TurnSteering for LatchingStop {
+    fn drain_steering(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn soft_stop_requested(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+/// The reason this is a guard and not a setter.
+///
+/// A soft stop LATCHES — that is the port's contract, so it survives until
+/// the tap does. A tap left published past its turn would therefore stop
+/// every child of the next turn at its first boundary, and the user would
+/// see delegation that silently stopped working after one Esc. Coming down
+/// on drop is also what covers the cancel and panic paths, where no detach
+/// call would ever run.
+#[test]
+fn a_latched_stop_cannot_outlive_the_turn_that_published_it() {
+    let slot: TurnControlsSlot = Arc::default();
+    let stopped = Arc::new(LatchingStop(std::sync::atomic::AtomicBool::new(true)));
+
+    {
+        let _guard =
+            TurnControlsGuard::attach(&slot, TurnControls::none().with_steering(stopped.clone()));
+        let published = slot.read().unwrap().clone();
+        assert!(
+            published
+                .steering
+                .expect("published for the turn")
+                .soft_stop_requested(),
+            "a child dispatched during this turn must see the stop"
+        );
+    }
+
+    assert!(
+        slot.read().unwrap().is_empty(),
+        "and must not see it once the turn is over"
+    );
+}
+
+#[test]
+fn attaching_replaces_rather_than_stacking() {
+    let slot: TurnControlsSlot = Arc::default();
+    let running = Arc::new(LatchingStop(std::sync::atomic::AtomicBool::new(false)));
+
+    let first = TurnControlsGuard::attach(&slot, TurnControls::none().with_steering(running));
+    let second = TurnControlsGuard::attach(&slot, TurnControls::none());
+    assert!(
+        slot.read().unwrap().is_empty(),
+        "the second turn's (absent) controls win — turns do not nest on one \
+         registry"
+    );
+
+    // Dropping in either order leaves the slot empty rather than resurrecting
+    // the first turn's seams.
+    drop(first);
+    assert!(slot.read().unwrap().is_empty());
+    drop(second);
+    assert!(slot.read().unwrap().is_empty());
+}

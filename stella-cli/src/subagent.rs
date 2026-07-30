@@ -19,7 +19,7 @@
 //! [`SubAgentOutcome::Refused`]
 //! rather than a panic on a torn-down session.
 //!
-//! # Session-scoped object, turn-scoped events
+//! # Session-scoped object, turn-scoped wiring
 //!
 //! One dispatcher serves the whole session, but a child's metering must land
 //! in the stream of the turn that asked for it — and every driver path in
@@ -28,6 +28,9 @@
 //! on every turn (five call sites, each easy to forget), this reads the
 //! registry's *current* sender at dispatch time. A child that somehow runs
 //! between turns emits into a sink instead of failing.
+//!
+//! The turn's boundary controls ride the same shape and are read in the same
+//! breath — see below.
 //!
 //! # Budget: a pool, and why it is not the ceiling
 //!
@@ -65,17 +68,44 @@
 //! instead of unwinding the parent's turn. The cost is one thread per live
 //! `task` call, bounded by the engine's own tool-call concurrency cap.
 //!
-//! # Known gap: the pause gate and the soft stop do not reach these children
+//! # Pause and stop reach these children too
 //!
-//! `TurnGate`/`TurnSteering` are turn-scoped values built inside each driver
-//! (`command_deck`, `subsession`, `fleet_cmd`), and this dispatcher is
-//! session-scoped, so a child dispatched from a tool call does not currently
-//! poll them — a paused session keeps spending inside one. The exposure is
-//! bounded by the child's own step cap and budget carve rather than
-//! unbounded, but it is a real gap and the direct analogue of the
-//! `goal.rs::assess` defect #922 named. Closing it means Arc-ing those two
-//! seams at each driver and attaching them here; that is deliberately not
-//! folded into this change.
+//! `TurnGate`/`TurnSteering` are turn-scoped: each driver builds them on the
+//! stack of the turn it is about to run, and `Engine` takes both as `&'a dyn`.
+//! A session-scoped dispatcher cannot name that lifetime, which is why the
+//! first cut of this module could not carry them at all — a paused session
+//! kept spending inside a tool-dispatched child, the direct analogue of the
+//! `goal.rs::assess` defect #922 named.
+//!
+//! So each driver now publishes its seams in owned form
+//! (`stella_core::ports::TurnControls`) into the registry slot this reads at
+//! dispatch time — the same "session-scoped object, turn-scoped wiring"
+//! treatment the event sender already gets, for the same reason and at the
+//! same call site. The controls come back down when the driver's guard drops,
+//! including on an unwind, so a latched soft stop cannot leak into the next
+//! turn's children.
+//!
+//! What a child actually inherits is asymmetric, and deliberately so:
+//!
+//! - **The pause gate, as-is.** A paused session parks its children at their
+//!   own step boundaries. Note that a parked child holds the parent's
+//!   `task` tool call open, which is exactly right — pause means pause — and
+//!   that both release together on resume.
+//! - **The soft stop, but not the steering messages.** The child engine is
+//!   built through `run_sub_agent`, which wraps whatever steering the parent
+//!   has in `stella_core::subagent::ChildSteering`: the stop flag is latched
+//!   and non-destructive so forwarding it is free, while `drain_steering` is
+//!   destructive by contract and a child that inherited it would eat a
+//!   message the user addressed to the parent.
+//!
+//! A driver that publishes nothing is not a failure state — a child then runs
+//! bounded by its step cap and its carve, exactly as before.
+//!
+//! One thing this does *not* buy: a hard cancel still cannot reach a child.
+//! The parent's turn future dropping takes the oneshot receiver with it while
+//! the child's thread runs on to its own cap. The soft stop is the
+//! interruption that arrives; that is a reason to prefer it, and it is why
+//! the deck's Esc now ends delegated work instead of orphaning it.
 
 use std::sync::{Arc, Mutex, Weak};
 
@@ -194,6 +224,11 @@ impl SubAgentDispatcher for SessionSubAgents {
         let events = tools
             .events()
             .unwrap_or_else(|| EventSender::from_fn(|_| Ok(())));
+        // Read now, for the same reason and from the same slot discipline as
+        // the sender above: these are the seams of the turn that asked for
+        // this child, not of the session. Empty between turns, which runs the
+        // child uninterruptible rather than refusing it.
+        let controls = tools.turn_controls();
 
         // Snapshot, release, run, fold back. `BudgetGuard` is `Copy`, so the
         // child carves against the pool's real headroom without the lock
@@ -221,7 +256,12 @@ impl SubAgentDispatcher for SessionSubAgents {
                     }
                 };
                 let mut view = pool_view;
-                let engine = Engine::with_sleeper(&*provider, &*tools, config, &TokioSleeper);
+                // Set on the parent engine, not the child's: `run_sub_agent`
+                // propagates the gate as-is and narrows the steering to
+                // `ChildSteering`, so this is what makes a child pausable and
+                // stoppable without letting it steal the parent's messages.
+                let engine = Engine::with_sleeper(&*provider, &*tools, config, &TokioSleeper)
+                    .with_turn_controls(&controls);
                 let outcome = runtime.block_on(engine.run_sub_agent_with_sender(
                     SubAgentHost::new(&*provider),
                     &spec,
