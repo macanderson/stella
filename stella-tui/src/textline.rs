@@ -918,6 +918,8 @@ mod tests {
                 provider_mix: vec![],
                 tokens: 1,
                 usage: None,
+                latency_ms: 0,
+                used_ann_index: None,
             },
             AgentEvent::ContextWrite {
                 provider: "p".into(),
@@ -1036,6 +1038,8 @@ mod tests {
             }],
             tokens: 120,
             usage: None,
+            latency_ms: 0,
+            used_ann_index: None,
         })
         .expect("recall is an annotation");
         assert_eq!(

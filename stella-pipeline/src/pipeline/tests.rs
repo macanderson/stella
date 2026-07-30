@@ -1991,6 +1991,8 @@ impl ContextRecallPort for MeteredRecall {
                     },
                 ],
             }),
+            latency_ms: 7,
+            used_ann_index: Some(false),
         }
     }
 }

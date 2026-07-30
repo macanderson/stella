@@ -341,6 +341,7 @@ impl Observatory {
         out["steps"] = Value::Array(steps);
         out["tools"] = Value::Array(tools);
         out["files"] = Value::Array(files);
+        out["recall"] = Value::Array(recall_timings(&conn, id)?);
         out["reflection"] = if reflection == json!({}) {
             Value::Null
         } else {
@@ -876,6 +877,51 @@ impl Observatory {
         )?;
         Ok(Value::Array(rows))
     }
+}
+
+/// One execution's context-recall timings, read out of its event stream
+/// (#875).
+///
+/// Recall sits on the **first-token path of every turn**, so a slow one
+/// delays everything after it — and it was invisible in the dashboard, the
+/// receipt and the log alike. A cold store, a large corpus, or a wedged
+/// embedding call looked exactly like a fast recall right until it became a
+/// timeout, at which point the operator still could not tell recall was the
+/// bottleneck.
+///
+/// Read from `events` rather than from a projection of its own, and only on
+/// the per-execution detail route. The filter is `execution_id`-first, which
+/// the `UNIQUE (execution_id, seq)` index serves directly, so this touches
+/// one turn's events rather than scanning the table. The same query without
+/// that filter — a global recall-latency trend — would scan every event in
+/// history, which is not something the polled routes can afford; earning
+/// that view means a projection, not a wider `WHERE`.
+///
+/// `latency_ms` absent (a stream recorded before the field existed) reads as
+/// `null`, not `0`: "not measured" and "instant" are different facts and the
+/// dashboard must not draw one as the other.
+fn recall_timings(conn: &Connection, execution_id: i64) -> Result<Vec<Value>, DbError> {
+    collect_rows_for(
+        conn,
+        execution_id,
+        "SELECT ts,
+                json_extract(payload, '$.latency_ms'),
+                json_extract(payload, '$.used_ann_index'),
+                json_extract(payload, '$.tokens'),
+                json_array_length(json_extract(payload, '$.frames'))
+         FROM events
+         WHERE execution_id = ?1 AND event_type = 'context_recall'
+         ORDER BY seq ASC",
+        |r| {
+            Ok(json!({
+                "ts": r.get::<_, String>(0)?,
+                "latency_ms": r.get::<_, Option<i64>>(1)?,
+                "used_ann_index": r.get::<_, Option<i64>>(2)?.map(|v| v != 0),
+                "tokens": r.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                "frames": r.get::<_, Option<i64>>(4)?.unwrap_or(0),
+            }))
+        },
+    )
 }
 
 /// The promoted-rules query, shared by [`Observatory::rules`] and

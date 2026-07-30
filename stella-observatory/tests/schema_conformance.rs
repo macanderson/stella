@@ -396,3 +396,99 @@ fn a_crashed_execution_recovers_its_calls_through_the_api() {
         "every call is back, replayed from the log: {after}"
     );
 }
+
+/// Context-recall latency reaches the execution detail (#875).
+///
+/// Recall is on the first-token path of every turn, so a slow one delays
+/// everything after it — and it was invisible in the dashboard, the receipt
+/// and the log alike. This drives the real event through the real store and
+/// reads it back through the real route.
+#[test]
+fn recall_latency_reaches_the_execution_detail() {
+    use stella_protocol::{AgentEvent, ContextFrameRef, ProviderShare};
+
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let store = Store::open(dir.path()).expect("store");
+    let id = store
+        .begin_execution("run", "slow recall", "anthropic", "opus")
+        .expect("begin");
+    store
+        .record_event(
+            id,
+            0,
+            &AgentEvent::ContextRecall {
+                frames: vec![ContextFrameRef {
+                    id: Some("nod_1".into()),
+                    citation_label: "auth module".into(),
+                    provider: "workspace-memory".into(),
+                    source: "stella-context".into(),
+                    kind: "memory".into(),
+                    uri: None,
+                    method: None,
+                    token_cost: 90,
+                    block_id: None,
+                    content_digest: None,
+                }],
+                provider_mix: vec![ProviderShare {
+                    provider: "workspace-memory".into(),
+                    frames: 1,
+                }],
+                tokens: 90,
+                usage: None,
+                latency_ms: 1_450,
+                used_ann_index: Some(false),
+            },
+        )
+        .expect("recall event");
+
+    let detail: serde_json::Value =
+        serde_json::from_slice(&respond(dir.path(), &format!("/api/execution?id={id}")).body)
+            .expect("json");
+
+    assert_eq!(
+        detail["recall"][0]["latency_ms"], 1_450,
+        "the operator can see recall was the slow part: {detail}"
+    );
+    assert_eq!(
+        detail["recall"][0]["used_ann_index"], false,
+        "and that the accelerator did not fire, which is a different problem"
+    );
+    assert_eq!(detail["recall"][0]["frames"], 1);
+    assert_eq!(detail["recall"][0]["tokens"], 90);
+}
+
+/// A stream recorded before the field existed must read as "not measured",
+/// never as "instant" — `0 ms` would be a claim the data does not support.
+#[test]
+fn a_recall_without_a_measurement_reads_as_null_not_zero() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let store = Store::open(dir.path()).expect("store");
+    let id = store
+        .begin_execution("run", "legacy stream", "anthropic", "opus")
+        .expect("begin");
+    // Written straight to the table: this is a payload shaped the way a
+    // pre-#875 binary wrote it, which no current constructor can produce.
+    {
+        let raw =
+            rusqlite::Connection::open(dir.path().join(".stella/private/store.db")).expect("open");
+        raw.execute(
+            "INSERT INTO events (execution_id, seq, event_type, payload) \
+             VALUES (?1, 0, 'context_recall', ?2)",
+            rusqlite::params![
+                id,
+                r#"{"type":"context_recall","frames":[],"provider_mix":[],"tokens":0}"#
+            ],
+        )
+        .expect("legacy event");
+    }
+
+    let detail: serde_json::Value =
+        serde_json::from_slice(&respond(dir.path(), &format!("/api/execution?id={id}")).body)
+            .expect("json");
+
+    assert!(
+        detail["recall"][0]["latency_ms"].is_null(),
+        "unmeasured must not render as 0 ms: {detail}"
+    );
+    assert!(detail["recall"][0]["used_ann_index"].is_null());
+}
