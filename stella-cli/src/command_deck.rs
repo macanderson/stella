@@ -1335,7 +1335,11 @@ pub async fn run_deck_session(
         // Shared with the live input arms below: `>` steers, Esc soft-stops.
         // Per-turn by construction — a stop latched here can't leak into
         // the next turn.
-        let steering = subsession::SteeringTap::default();
+        //
+        // `Arc` because the turn runner also publishes a clone to the
+        // registry, so sub-agents this turn dispatches stop when it does
+        // (`crate::subagent`). The engine still takes it by reference.
+        let steering: Arc<subsession::SteeringTap> = Arc::default();
         let end = {
             // Both arms return `Result<(), String>`, so one pinned future
             // drives either path through the same select loop.
@@ -4179,7 +4183,7 @@ async fn run_lead_turn(
     sup_tx: &UnboundedSender<SupervisorMsg>,
     claim_holder: &str,
     activated: &crate::discovery::ActivatedTools,
-    steering: &subsession::SteeringTap,
+    steering: &Arc<subsession::SteeringTap>,
     // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller
     // because recall runs before this channel exists.
     recall_event: Option<AgentEvent>,
@@ -4211,6 +4215,12 @@ async fn run_lead_turn(
     );
     // This turn's file changes ride this turn's channel.
     registry.attach_events(stella_core::EventSender::new(tx.clone()));
+    // ...and this turn's soft stop reaches the sub-agents it dispatches. The
+    // lead turn has no pause gate (Pause is a worker-lane verb), so steering
+    // is all there is to publish; the guard takes it down on return.
+    let _controls = registry.attach_turn_controls(
+        stella_core::ports::TurnControls::none().with_steering(steering.clone()),
+    );
 
     // Same structural drop-order rule as `agent::run_turn`: every tx clone
     // lives in this scope so dropping `tx` after it closes the channel.
@@ -4244,7 +4254,7 @@ async fn run_lead_turn(
             &TokioSleeper,
         )
         .with_calibration(calibration)
-        .with_steering(steering);
+        .with_steering(steering.as_ref());
         if let Some(hooks) = &cfg.hooks {
             engine = engine.with_hooks(hooks, &hook_runner);
         }
@@ -4327,7 +4337,7 @@ async fn run_lead_pipeline_turn(
     sup_tx: &UnboundedSender<SupervisorMsg>,
     claim_holder: &str,
     activated: &crate::discovery::ActivatedTools,
-    steering: &subsession::SteeringTap,
+    steering: &Arc<subsession::SteeringTap>,
     mcp: Option<Arc<stella_mcp::McpToolSet>>,
 ) -> Result<(), String> {
     budget.begin_turn();
@@ -4352,6 +4362,12 @@ async fn run_lead_pipeline_turn(
     // Candidate registries are deliberately left unattached — a candidate's
     // edits live in a shadow worktree and are only the user's once adopted.
     registry.attach_events(stella_core::EventSender::new(tx.clone()));
+    // As in `run_lead_turn`: Esc reaches this turn's sub-agents. The same tap
+    // goes to the pipeline's execute engine below, so one stop lands on the
+    // stage, its tool calls, and their children alike.
+    let _controls = registry.attach_turn_controls(
+        stella_core::ports::TurnControls::none().with_steering(steering.clone()),
+    );
 
     let result = {
         let customs =
@@ -4423,7 +4439,7 @@ async fn run_lead_pipeline_turn(
                 .map(|p| p as &dyn McpPrefetchPort),
             // The deck's per-turn tap: `>` steers the execute engine mid-turn
             // (the same tap the step-loop lead turn uses).
-            steering: Some(steering),
+            steering: Some(steering.as_ref()),
         };
         let config = PipelineConfig {
             engine: agent::pipeline_engine_config_for(cfg, &wiring.worker_model),
