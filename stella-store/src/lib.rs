@@ -802,7 +802,8 @@ impl Store {
     ///
     /// Before v18 the projection was instead built once, at turn end, which
     /// meant a live turn reported zero tool calls and an interrupted one
-    /// reported zero forever. See [`crate::tool_calls`] for the full account.
+    /// reported zero forever. See [`Store::materialize_tool_calls`], which is
+    /// now the repair path rather than the only writer, for the full account.
     pub fn record_event(&self, execution_id: i64, seq: u64, event: &AgentEvent) -> Result<()> {
         let seq = sqlite_i64("event sequence", seq)?;
         let payload = serde_json::to_string(event).map_err(|e| StoreError(e.to_string()))?;

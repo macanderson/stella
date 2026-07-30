@@ -117,13 +117,24 @@ pub struct ToolCallRow {
     /// stream the producer normalizes from carries no reason, so the column
     /// waits for a producer that captures one.
     pub reason: String,
-    /// Kept in lockstep with `state` (`ok == state.is_ok()`); `state` is the
-    /// richer field and the one new code should read.
-    pub ok: bool,
     pub state: ToolCallState,
     pub error: String,
     pub bytes_out: i64,
     pub duration_ms: i64,
+}
+
+impl ToolCallRow {
+    /// Whether the call succeeded — the `ok` column, **derived** rather than
+    /// stored beside `state`.
+    ///
+    /// The table keeps both (`ok` for every pre-v18 reader, `state` for the
+    /// lifecycle), but two struct fields that must agree are a disagreement
+    /// waiting to be introduced by the next person who sets one of them. In
+    /// memory there is one field and one answer.
+    #[must_use]
+    pub fn ok(&self) -> bool {
+        self.state.is_ok()
+    }
 }
 
 /// The error stored on a call whose turn ended before it returned.
@@ -336,7 +347,7 @@ impl Store {
                     row.args_json,
                     row.args_digest,
                     row.reason,
-                    row.ok as i64,
+                    row.ok() as i64,
                     row.state.as_str(),
                     row.error,
                     row.bytes_out,
@@ -444,7 +455,6 @@ impl Store {
                 args_json: args_json.clone(),
                 args_digest: digest,
                 reason: String::new(),
-                ok: state.is_ok(),
                 state,
                 error,
                 bytes_out,
@@ -550,7 +560,7 @@ impl Store {
         let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT call_id, name, surface, args_json, args_digest, reason, \
-                    ok, state, error, bytes_out, duration_ms \
+                    state, error, bytes_out, duration_ms \
              FROM tool_calls WHERE name = ?1 \
              ORDER BY execution_id DESC, seq DESC LIMIT ?2",
         )?;
@@ -562,11 +572,10 @@ impl Store {
                 args_json: r.get(3)?,
                 args_digest: r.get(4)?,
                 reason: r.get(5)?,
-                ok: r.get::<_, i64>(6)? != 0,
-                state: ToolCallState::parse(&r.get::<_, String>(7)?),
-                error: r.get(8)?,
-                bytes_out: r.get(9)?,
-                duration_ms: r.get(10)?,
+                state: ToolCallState::parse(&r.get::<_, String>(6)?),
+                error: r.get(7)?,
+                bytes_out: r.get(8)?,
+                duration_ms: r.get(9)?,
             })
         })?;
         let mut out = Vec::new();

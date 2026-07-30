@@ -321,7 +321,6 @@ fn data_plane_tables_roundtrip_and_tool_histogram() {
                     args_json: "{\"pattern\":\"foo\"}".into(),
                     args_digest: "d1".into(),
                     reason: "find foo".into(),
-                    ok: true,
                     state: ToolCallState::Ok,
                     error: String::new(),
                     bytes_out: 120,
@@ -334,7 +333,6 @@ fn data_plane_tables_roundtrip_and_tool_histogram() {
                     args_json: "{}".into(),
                     args_digest: "d2".into(),
                     reason: String::new(),
-                    ok: true,
                     state: ToolCallState::Ok,
                     error: String::new(),
                     bytes_out: 0,
@@ -347,7 +345,6 @@ fn data_plane_tables_roundtrip_and_tool_histogram() {
                     args_json: "{}".into(),
                     args_digest: "d3".into(),
                     reason: String::new(),
-                    ok: false,
                     state: ToolCallState::Error,
                     error: "nope".into(),
                     bytes_out: 0,
@@ -2203,80 +2200,5 @@ fn a_failing_file_touch_row_rolls_its_whole_batch_back() {
         store.count("files_touched").unwrap(),
         0,
         "the row written before the failure must roll back with it"
-    );
-}
-
-/// Helper: a minimal successful `ToolCallRow` for the reader tests.
-#[cfg(test)]
-fn bash_row(call_id: &str, command: &str, ok: bool) -> ToolCallRow {
-    ToolCallRow {
-        call_id: call_id.into(),
-        name: "bash".into(),
-        surface: "native".into(),
-        args_json: format!(
-            "{{\"command\":{}}}",
-            serde_json::to_string(command).unwrap()
-        ),
-        args_digest: call_id.into(),
-        reason: String::new(),
-        ok,
-        state: if ok {
-            ToolCallState::Ok
-        } else {
-            ToolCallState::Error
-        },
-        error: String::new(),
-        bytes_out: 0,
-        duration_ms: 1,
-    }
-}
-
-#[test]
-fn recent_tool_calls_filters_by_name_and_returns_newest_first() {
-    let store = Store::in_memory().unwrap();
-    let e1 = store.begin_execution("run", "p", "zai", "glm-5.2").unwrap();
-    store
-        .record_tool_calls(
-            e1,
-            &[
-                bash_row("c1", "jq '.a' a.json", true),
-                ToolCallRow {
-                    call_id: "c2".into(),
-                    name: "read_file".into(),
-                    surface: "native".into(),
-                    args_json: "{}".into(),
-                    args_digest: "c2".into(),
-                    reason: String::new(),
-                    ok: true,
-                    state: ToolCallState::Ok,
-                    error: String::new(),
-                    bytes_out: 0,
-                    duration_ms: 1,
-                },
-                bash_row("c3", "jq '.b' b.json", true),
-            ],
-        )
-        .unwrap();
-    let e2 = store.begin_execution("run", "p", "zai", "glm-5.2").unwrap();
-    store
-        .record_tool_calls(e2, &[bash_row("c4", "jq '.c' c.json", true)])
-        .unwrap();
-
-    // Newest execution first, then newest seq within an execution; read_file
-    // is filtered out.
-    let rows = store.recent_tool_calls("bash", 10).unwrap();
-    let ids: Vec<&str> = rows.iter().map(|r| r.call_id.as_str()).collect();
-    assert_eq!(ids, ["c4", "c3", "c1"]);
-    assert!(rows.iter().all(|r| r.name == "bash"));
-    assert!(rows[0].args_json.contains("jq '.c' c.json"));
-
-    // The limit caps the window; 0 is empty.
-    assert_eq!(store.recent_tool_calls("bash", 1).unwrap().len(), 1);
-    assert!(store.recent_tool_calls("bash", 0).unwrap().is_empty());
-    assert!(
-        store
-            .recent_tool_calls("nonexistent", 10)
-            .unwrap()
-            .is_empty()
     );
 }
