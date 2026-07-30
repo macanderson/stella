@@ -312,7 +312,7 @@ mod tests {
             include_str!("anthropic/tests.rs"),
             include_str!("bedrock.rs"),
             include_str!("openai.rs"),
-            include_str!("gemini.rs"),
+            include_str!("gemini/tests.rs"),
             include_str!("vertex.rs"),
             include_str!("zai/tests.rs"),
             include_str!("zai/tests/openrouter_effort_tests.rs"),

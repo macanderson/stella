@@ -739,7 +739,7 @@ fn an_out_of_range_rating_is_dropped_not_clamped() {
 async fn reflect_and_record_stores_the_models_self_review_against_its_execution() {
     use async_trait::async_trait;
     use stella_protocol::{
-        CompletionRequest, CompletionResult, CompletionUsage, Provider, ProviderError,
+        CompletionRequestRef, CompletionResult, CompletionUsage, Provider, ProviderError,
     };
 
     struct StubProvider;
@@ -748,9 +748,9 @@ async fn reflect_and_record_stores_the_models_self_review_against_its_execution(
         fn id(&self) -> &str {
             "stub"
         }
-        async fn complete(
+        async fn complete_ref(
             &self,
-            _req: CompletionRequest,
+            _req: CompletionRequestRef<'_>,
         ) -> Result<CompletionResult, ProviderError> {
             Ok(CompletionResult {
                 text: r#"{"lessons": [{"lesson": "prefer withTenantDb over raw db()",
@@ -840,7 +840,7 @@ fn reflection_execution_ids(workspace_root: &std::path::Path) -> Vec<Option<i64>
 async fn without_an_execution_id_the_self_review_is_dropped_not_misattributed() {
     use async_trait::async_trait;
     use stella_protocol::{
-        CompletionRequest, CompletionResult, CompletionUsage, Provider, ProviderError,
+        CompletionRequestRef, CompletionResult, CompletionUsage, Provider, ProviderError,
     };
 
     struct StubProvider;
@@ -849,9 +849,9 @@ async fn without_an_execution_id_the_self_review_is_dropped_not_misattributed() 
         fn id(&self) -> &str {
             "stub"
         }
-        async fn complete(
+        async fn complete_ref(
             &self,
-            _req: CompletionRequest,
+            _req: CompletionRequestRef<'_>,
         ) -> Result<CompletionResult, ProviderError> {
             Ok(CompletionResult {
                 text: r#"{"lessons": [{"lesson": "money is integer minor units",
@@ -951,7 +951,8 @@ fn reflection_gate_fires_on_tool_use_and_skips_tool_free_turns() {
 async fn reflect_and_record_writes_lessons_to_log_and_store() {
     use async_trait::async_trait;
     use stella_protocol::{
-        AgentEvent, CompletionRequest, CompletionResult, CompletionUsage, Provider, ProviderError,
+        AgentEvent, CompletionRequestRef, CompletionResult, CompletionUsage, Provider,
+        ProviderError,
     };
 
     struct StubProvider;
@@ -960,9 +961,9 @@ async fn reflect_and_record_writes_lessons_to_log_and_store() {
         fn id(&self) -> &str {
             "stub"
         }
-        async fn complete(
+        async fn complete_ref(
             &self,
-            _req: CompletionRequest,
+            _req: CompletionRequestRef<'_>,
         ) -> Result<CompletionResult, ProviderError> {
             Ok(CompletionResult {
                 text: r#"[{"lesson": "prefer withTenantDb over raw db()", "domains": []}]"#.into(),
@@ -1039,7 +1040,8 @@ async fn reflect_and_record_writes_lessons_to_log_and_store() {
 async fn reflection_preserves_settled_cost_when_budget_rejects_model_output() {
     use async_trait::async_trait;
     use stella_protocol::{
-        AgentEvent, CompletionRequest, CompletionResult, CompletionUsage, Provider, ProviderError,
+        AgentEvent, CompletionRequestRef, CompletionResult, CompletionUsage, Provider,
+        ProviderError,
     };
 
     struct PaidReflection;
@@ -1049,9 +1051,9 @@ async fn reflection_preserves_settled_cost_when_budget_rejects_model_output() {
             "paid-reflection"
         }
 
-        async fn complete(
+        async fn complete_ref(
             &self,
-            _request: CompletionRequest,
+            _request: CompletionRequestRef<'_>,
         ) -> Result<CompletionResult, ProviderError> {
             Ok(CompletionResult {
                 text: r#"[{"lesson":"must not apply","domains":[]}]"#.into(),

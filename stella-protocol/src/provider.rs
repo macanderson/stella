@@ -5,14 +5,14 @@
 
 use async_trait::async_trait;
 
-use crate::completion::{CompletionRequest, CompletionResult};
+use crate::completion::{CompletionRequest, CompletionRequestRef, CompletionResult};
 use crate::error::ProviderError;
 use crate::tool::ToolCall;
 
 /// Observes tool calls as their blocks finish streaming, while the rest of
 /// the completion is still in flight. This is the seam speculative tool
 /// execution hangs on: `stella-core` hands an observer to
-/// [`Provider::complete_observed`] and begins executing *read-only* calls
+/// [`Provider::complete_observed_ref`] and begins executing *read-only* calls
 /// the moment they are announced, instead of waiting for the full response.
 ///
 /// Strictly advisory: the definitive tool-call list is the returned
@@ -65,6 +65,21 @@ pub trait ToolCallObserver: Send + Sync {
 /// One model provider adapter. `stella-core` drives every call through
 /// `&dyn Provider` — no adapter-specific code ever lives outside
 /// `stella-model`.
+///
+/// # Which method to implement (#921)
+///
+/// The port's currency is [`CompletionRequestRef`], a borrowed view: adapters
+/// implement [`Provider::complete_ref`] (and, if they have mid-stream
+/// visibility, [`Provider::complete_observed_ref`]) and serialize straight off
+/// the caller's slices. That is what keeps the engine's hot path free of a
+/// per-attempt deep copy of the whole transcript — see [`CompletionRequestRef`]
+/// for why the retry loop made an owning request so expensive.
+///
+/// [`Provider::complete`] and [`Provider::complete_observed`] are provided
+/// shims for the many callers that genuinely *own* their request — a one-shot
+/// reflection, ingest, or judge call that built its messages and will never
+/// reuse them. They are not override points; overriding one would leave the
+/// borrowed path pointing at a different implementation.
 #[async_trait]
 pub trait Provider: Send + Sync {
     /// Stable id for this provider instance, e.g. `"zai"` or `"anthropic"`.
@@ -73,19 +88,45 @@ pub trait Provider: Send + Sync {
     /// Run one completion end-to-end (streams internally, aggregates the
     /// result). Returns a typed, retry-classified error on failure — never
     /// panics on a malformed/erroring HTTP response.
-    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResult, ProviderError>;
+    ///
+    /// This is the method adapters implement. The request is borrowed for the
+    /// duration of the call and must be serialized, not stored; an adapter that
+    /// needs it to outlive the call takes the copy explicitly with
+    /// [`CompletionRequestRef::into_owned`].
+    async fn complete_ref(
+        &self,
+        req: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError>;
 
-    /// [`Provider::complete`], additionally announcing each tool call to
+    /// [`Provider::complete_ref`], additionally announcing each tool call to
     /// `observer` as its block finishes streaming (see [`ToolCallObserver`]).
-    /// The default ignores the observer and delegates to `complete`, so an
+    /// The default ignores the observer and delegates to `complete_ref`, so an
     /// adapter without mid-stream visibility keeps exactly its old behavior
     /// — the engine simply gets no speculation from it.
+    async fn complete_observed_ref(
+        &self,
+        req: CompletionRequestRef<'_>,
+        observer: &dyn ToolCallObserver,
+    ) -> Result<CompletionResult, ProviderError> {
+        let _ = observer;
+        self.complete_ref(req).await
+    }
+
+    /// [`Provider::complete_ref`] for a caller that already owns its request.
+    /// Borrows and delegates — no copy is taken, so an owning caller pays
+    /// nothing for the convenience.
+    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+        self.complete_ref(req.as_borrowed()).await
+    }
+
+    /// [`Provider::complete_observed_ref`] for a caller that already owns its
+    /// request.
     async fn complete_observed(
         &self,
         req: CompletionRequest,
         observer: &dyn ToolCallObserver,
     ) -> Result<CompletionResult, ProviderError> {
-        let _ = observer;
-        self.complete(req).await
+        self.complete_observed_ref(req.as_borrowed(), observer)
+            .await
     }
 }

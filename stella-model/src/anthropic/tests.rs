@@ -1,5 +1,5 @@
 use super::*;
-use stella_protocol::MessageRole;
+use stella_protocol::{CompletionRequest, MessageRole};
 use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 

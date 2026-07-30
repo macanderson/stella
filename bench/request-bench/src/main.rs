@@ -44,8 +44,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use stella_protocol::{
-    CompletionMessage, CompletionRequest, MessageRole, ReasoningEffort, ToolCall, ToolOutput,
-    ToolResult, ToolSchema,
+    CompletionMessage, CompletionRequest, CompletionRequestRef, MessageRole, ReasoningEffort,
+    ToolCall, ToolOutput, ToolResult, ToolSchema,
 };
 
 /// Cumulative bytes handed out by [`Counting`] since the last reset.
@@ -225,6 +225,22 @@ fn owned_clone(messages: &[CompletionMessage], tools: &[ToolSchema]) -> Completi
     }
 }
 
+/// The post-#921 driver arm: a `Copy` view over the caller's slices.
+fn borrowed<'a>(
+    messages: &'a [CompletionMessage],
+    tools: &'a [ToolSchema],
+) -> CompletionRequestRef<'a> {
+    CompletionRequestRef {
+        messages,
+        max_output_tokens: Some(32_000),
+        temperature: None,
+        effort: Some(ReasoningEffort::High),
+        reasoning: Some(true),
+        params: None,
+        tools,
+    }
+}
+
 fn main() {
     let messages = transcript();
     let tools = tool_schemas();
@@ -232,7 +248,10 @@ fn main() {
         .iter()
         .map(|m| {
             m.content.len()
-                + m.tool_calls.iter().map(|c| c.input.to_string().len()).sum::<usize>()
+                + m.tool_calls
+                    .iter()
+                    .map(|c| c.input.to_string().len())
+                    .sum::<usize>()
                 + m.tool_results
                     .iter()
                     .map(|r| match &r.output {
@@ -258,20 +277,56 @@ fn main() {
         black_box(owned_clone(&messages, &tools));
     }
 
-    let started = Instant::now();
-    let (bytes, allocs) = measure(|| {
+    let owned_started = Instant::now();
+    let (owned_bytes, owned_allocs) = measure(|| {
         for _ in 0..STEPS {
             black_box(owned_clone(black_box(&messages), black_box(&tools)));
         }
     });
-    let elapsed = started.elapsed();
+    let owned_elapsed = owned_started.elapsed();
+
+    let borrowed_started = Instant::now();
+    let (borrowed_bytes, borrowed_allocs) = measure(|| {
+        for _ in 0..STEPS {
+            black_box(borrowed(black_box(&messages), black_box(&tools)));
+        }
+    });
+    let borrowed_elapsed = borrowed_started.elapsed();
 
     println!("  arm            per step (bytes)   per step (allocs)   per turn (MiB)   wall/turn");
+    for (label, bytes, allocs, elapsed) in [
+        ("owned-clone", owned_bytes, owned_allocs, owned_elapsed),
+        (
+            "borrowed",
+            borrowed_bytes,
+            borrowed_allocs,
+            borrowed_elapsed,
+        ),
+    ] {
+        println!(
+            "  {label:<13}  {:>16}   {:>17}   {:>14.1}   {:>9.1?}",
+            bytes / STEPS,
+            allocs / STEPS,
+            bytes as f64 / (1024.0 * 1024.0),
+            elapsed,
+        );
+    }
+
+    // The acceptance criterion, asserted rather than eyeballed: a single-attempt
+    // model call performs no deep copy of the transcript or the tool schemas.
+    assert_eq!(
+        borrowed_bytes, 0,
+        "the borrowed arm allocated {borrowed_bytes} bytes — it is supposed to \
+         be a `Copy` of slices and scalars"
+    );
+    // Reported as a difference, not a ratio: the borrowed arm allocates
+    // nothing, and "∞x better" is not a number anyone can act on.
     println!(
-        "  owned-clone    {:>16}   {:>17}   {:>14.1}   {:>9.1?}",
-        bytes / STEPS,
-        allocs / STEPS,
-        bytes as f64 / (1024.0 * 1024.0),
-        elapsed,
+        "\n  → {} allocations and {:.1} MiB of churn per turn removed; \
+         {:?} of build time becomes {:?}.",
+        owned_allocs - borrowed_allocs,
+        (owned_bytes - borrowed_bytes) as f64 / (1024.0 * 1024.0),
+        owned_elapsed,
+        borrowed_elapsed,
     );
 }
