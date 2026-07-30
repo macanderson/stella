@@ -92,10 +92,13 @@ stella stats
    change that fixed the problem: fail on `HEAD`, pass on the diff,
    tamper-excluded. "The suite is green" is not a proof.
 4. **BYOK + zero telemetry egress by default.** Your keys call your provider
-   directly, and Community/default telemetry remains in local SQLite. The sole
-   managed exception is explicit Oxagen Enterprise enrollment: a signed policy,
-   process-free execution, a closed content-free rollup, and one exact
-   allowlisted HTTPS sink.
+   directly, and Community/default telemetry remains in local SQLite. Two
+   explicit configurations, and only these two, send telemetry anywhere:
+   [Oxagen Enterprise enrollment](/docs/telemetry#oxagen-enterprise-managed-export)
+   — a signed policy, process-free execution, a closed content-free rollup, and
+   one exact allowlisted HTTPS sink — and a
+   [`drain` block](/docs/commands/cloud) in `~/.stella/cloud.json` that
+   `stella cloud sync` posts to. Neither exists until you write it.
 5. **Prompt-cache-native memory.** Durable knowledge loads once into a
    byte-stable prefix and rides the cache at ~0.1× — see
    ["invalidation doesn't happen"](/docs/context-engine#invalidation-doesnt-happen--and-why-that-matters).
@@ -117,8 +120,9 @@ witness verification onto an engine that can't replay deterministically.
 - **Cost:** the cache discipline and the evidence ladder mean you pay for
   intelligence only where intelligence is the only tool that works.
 - **Sovereignty:** local-first state, BYOK credentials, a copyleft license that
-  keeps the source open, and zero telemetry egress by default. Enterprise
-  operational export
-  is explicit, bounded, content-free, and governed by org-managed enrollment.
+  keeps the source open, and zero telemetry egress by default. Both egress paths
+  — Enterprise operational export and the `cloud.json` drain — are explicit,
+  bounded, and off until configured; the Enterprise one is additionally
+  content-free and governed by org-managed enrollment.
 
 Continue: [Why single-thread beats the swarm →](/docs/principles/determinism)

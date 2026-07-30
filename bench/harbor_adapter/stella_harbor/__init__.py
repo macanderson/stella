@@ -315,6 +315,18 @@ def _benchmark_engine_posture(model: str) -> tuple[dict[str, Any], str, str]:
     explicit per role so ordinary auto-mode defaults cannot drift across Stella
     versions. The normalized JSON is the exact value delivered through the
     trusted launcher override consumed by the CLI.
+
+    Known consequence, stated here because it is a property of this posture and
+    not of the runs it produces: **every Terminal-Bench number is measured with
+    the authored witness off.** Stella will not let the worker write its own
+    verifying test, so it requires a witness author resolving to a different
+    model than the worker; one model for every role means that author never
+    exists, and the run reports ``WitnessUnavailable`` and proceeds unproven
+    (#973). That is a deliberate trade — a single inherited model is what makes
+    the posture one hash, and the hash is what the pre-registration pins — but a
+    reader comparing these numbers to a run with a role split is not comparing
+    like with like. Splitting the roles is a measurement decision that changes
+    ``digest``, and therefore the registered SUT; it is not a bug fix.
     """
     selected_model = model.strip()
     if not selected_model or "/" not in selected_model:

@@ -1018,6 +1018,9 @@ fn proof_trace(step: &stella_protocol::ProofStep) -> String {
         ),
         ProofStep::WitnessAuthored { path, .. } => format!("witness authored: {path}"),
         ProofStep::WitnessUnavailable { reason } => format!("witness unavailable: {reason}"),
+        ProofStep::VerificationUnavailable { reason } => {
+            format!("verification unavailable: {reason}")
+        }
         ProofStep::Oracle { passed, tree, .. } => format!(
             "oracle: {} on {}",
             if *passed { "pass" } else { "fail" },

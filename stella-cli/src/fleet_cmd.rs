@@ -790,6 +790,7 @@ async fn run_task(
                 recall: &recall,
                 repo: &ws_ports.repo_structure,
                 repo_status: &ws_ports.repo_status,
+                touches: &crate::agent::RegistryTouches(&registry),
                 diagnostics: &ws_ports.diagnostic_runner,
                 tests: &ws_ports.test_runner,
                 approvals: &agent::HEADLESS_APPROVAL_GATE,

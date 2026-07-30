@@ -129,6 +129,25 @@ pub struct ToolRegistry {
     /// must NOT be announced — a Best-of-N or witness candidate, whose edits
     /// live in a shadow worktree and are discarded unless adopted.
     events: std::sync::RwLock<Option<stella_core::EventSender>>,
+    /// How many **mutating** touches [`ToolRegistry::record_touch`] has
+    /// recorded, ever, on this registry. Bumped inside the same locked section
+    /// that writes the ledger and immediately before the `FileChange` is sent,
+    /// so it counts exactly the mutating events the stream carries — read it
+    /// with [`ToolRegistry::mutations_recorded`].
+    ///
+    /// It exists because the event and the count travelled different wires. A
+    /// host attaches its session channel with [`ToolRegistry::attach_events`],
+    /// and `record_touch` sends there directly; a verifier that wraps the
+    /// *engine's* sender to tally `FileChange`s therefore sees none of them and
+    /// concludes nothing was touched (#973 — the judge was told
+    /// `file_change_events=0` with six in the stream). A counter on the
+    /// recorder is readable no matter which channel the events went down, and
+    /// unlike the ledger's length it never falls back when a file is touched
+    /// twice: this is a count of *touches*, one per emitted event.
+    ///
+    /// Monotonic and never reset, so readers take a delta across the window
+    /// they care about rather than trusting an absolute value.
+    mutations: std::sync::atomic::AtomicU64,
     process_free: bool,
 }
 
@@ -410,6 +429,7 @@ impl ToolRegistry {
             bus: std::sync::RwLock::new(None),
             policy_bridge: std::sync::Mutex::new(None),
             events: std::sync::RwLock::new(None),
+            mutations: std::sync::atomic::AtomicU64::new(0),
             process_free,
         }
     }
@@ -1487,20 +1507,43 @@ impl ToolRegistry {
         // The one place a `FileChange` is born. A closed channel (the turn
         // ended) is not an error worth surfacing: the ledger above is the
         // durable record, and this is its live projection.
+        let kind = match pending.op {
+            FileOp::Read => stella_protocol::FileChangeKind::Read,
+            FileOp::Create => stella_protocol::FileChangeKind::Created,
+            FileOp::Update => stella_protocol::FileChangeKind::Modified,
+            FileOp::Delete => stella_protocol::FileChangeKind::Deleted,
+        };
+        // Counted off the event's OWN `kind`, and unconditionally — the tally
+        // must not depend on whether a channel happened to be attached, or a
+        // candidate registry (deliberately unattached) would report having
+        // touched nothing. Reads are excluded here exactly as every consumer
+        // excludes them, so the two agree by construction rather than by two
+        // copies of the same `match`.
+        if kind.is_mutation() {
+            self.mutations
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         if let Some(events) = self.events() {
             let _ = events.send(stella_protocol::AgentEvent::FileChange {
                 path,
-                kind: match pending.op {
-                    FileOp::Read => stella_protocol::FileChangeKind::Read,
-                    FileOp::Create => stella_protocol::FileChangeKind::Created,
-                    FileOp::Update => stella_protocol::FileChangeKind::Modified,
-                    FileOp::Delete => stella_protocol::FileChangeKind::Deleted,
-                },
+                kind,
                 added: lines_added as u32,
                 removed: lines_removed as u32,
                 diff,
             });
         }
+    }
+
+    /// How many **mutating** file touches this registry has recorded since it
+    /// was constructed — the count behind every `AgentEvent::FileChange` whose
+    /// `kind` is a mutation, taken at the point the event is born.
+    ///
+    /// Monotonic: callers take a delta across the window they care about (a
+    /// turn, a candidate) rather than reading it as an absolute. Unlike
+    /// [`Self::files_touched`], re-touching one file counts twice — this
+    /// answers "how many changes happened", not "how many files".
+    pub fn mutations_recorded(&self) -> u64 {
+        self.mutations.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Snapshot of every file touched this session, insertion-ordered,

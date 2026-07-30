@@ -41,9 +41,11 @@ Stella is built on a few non-negotiable principles:
 
 - **Zero telemetry egress by default.** Community/default telemetry — executions,
   tokens, cost, the files-touched ledger, and content — stays in local SQLite. Your
-  selected model provider remains the normal BYOK network path. Only an explicitly
-  enrolled Oxagen Enterprise managed seat can export the documented minimal,
-  content-free operational rollup to its exact allowlisted HTTPS sink.
+  selected model provider remains the normal BYOK network path. Sending telemetry
+  anywhere takes one of [two explicit configurations](/docs/telemetry): an enrolled
+  Oxagen Enterprise managed seat, which can export only the documented minimal,
+  content-free operational rollup to its exact allowlisted HTTPS sink; or a `drain`
+  block you write into `~/.stella/cloud.json` and push with `stella cloud sync`.
 - **Bring your own key.** Your credentials, your provider relationship, your
   bill. No middleman markup, no metered proxy, no lock-in.
 - **Model and vendor agnostic.** Anthropic, OpenAI, Google (Gemini and
