@@ -1244,12 +1244,12 @@ mod tests {
         use std::sync::atomic::Ordering;
         // remap_theme is pure — exercise it directly rather than mutating the
         // process-global active theme (which other tests read).
-        assert_eq!(remap_theme(ACCENT, LIGHT_REMAP), palette::EMBER);
+        assert_eq!(remap_theme(ACCENT, LIGHT_REMAP), palette::BRAND_INK);
         assert_eq!(remap_theme(GROUND, LIGHT_REMAP), palette::PAPER);
         assert_eq!(remap_theme(TEXT_PRIMARY, LIGHT_REMAP), palette::INK);
         assert_eq!(remap_theme(OK, LIGHT_REMAP), palette::SUCCESS_INK);
         // An unmapped colour (an interpolated gradient cell) passes through.
-        let mid = lerp_rgb(palette::EMBER_DEEP, palette::EMBER, 0.5);
+        let mid = lerp_rgb(palette::BRAND_INK_DEEP, palette::BRAND_INK, 0.5);
         assert_eq!(remap_theme(mid, LIGHT_REMAP), mid);
         // Every LIGHT_REMAP key is a distinct value (aliases share one entry).
         for (i, (from, _)) in LIGHT_REMAP.iter().enumerate() {
