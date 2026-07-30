@@ -134,8 +134,8 @@ mod providers;
 
 // Re-exported at the old paths: the table moved for the line ratchet, not
 // for callers, and `crate::config::PROVIDERS` stays the one way to reach it.
-pub use providers::{Dialect, LOCAL_PROVIDER, PROVIDERS, ProviderConfig};
 pub(crate) use providers::{COMMON_KEY_ENV_VARS, no_api_key_error};
+pub use providers::{Dialect, LOCAL_PROVIDER, PROVIDERS, ProviderConfig};
 
 /// Intern a string as a `&'static str`. `ProviderConfig` is `&'static str`
 /// throughout (it is almost always one of the static [`PROVIDERS`] rows), so

@@ -2163,7 +2163,9 @@ async fn service_mcp_action(
                     )));
                 }
                 Err(e) => {
-                    let _ = in_tx.send(chrome_note(format!("mcp: could not remove `{name}`: {e}\n")));
+                    let _ = in_tx.send(chrome_note(format!(
+                        "mcp: could not remove `{name}`: {e}\n"
+                    )));
                 }
             }
             send_mcp_snapshot(cfg, mcp, disabled, in_tx).await;

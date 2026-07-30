@@ -54,8 +54,8 @@ use stella_core::retry::{RetryPolicy, Sleeper};
 use stella_core::router::FallbackInfo;
 use stella_core::{BudgetGuard, Engine, EngineConfig, EventSender, Router, TurnOutcome};
 use stella_protocol::{
-    AgentEvent, CompletionMessage, JudgeEvidence, MessageRole, ModelCallRole, ModelRef, Provider,
-    ProofStep, ProofTree, Role, StageKind,
+    AgentEvent, CompletionMessage, JudgeEvidence, MessageRole, ModelCallRole, ModelRef, ProofStep,
+    ProofTree, Provider, Role, StageKind,
 };
 
 use crate::candidate::{

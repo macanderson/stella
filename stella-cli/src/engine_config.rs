@@ -743,7 +743,10 @@ mod tests {
 
     #[test]
     fn no_other_provider_carries_a_baseline() {
-        for provider in crate::config::PROVIDERS.iter().filter(|p| p.id != "openrouter") {
+        for provider in crate::config::PROVIDERS
+            .iter()
+            .filter(|p| p.id != "openrouter")
+        {
             assert!(
                 provider_engine_baseline(provider.id).is_none(),
                 "{} unexpectedly has a default posture",
@@ -799,7 +802,10 @@ mod tests {
         assert!(levels.contains(&"max"), "got {levels:?}");
         // The direct OpenAI shapes still stop at high — only the gateway
         // normalizes the top tiers.
-        assert_eq!(effort_levels_for_spec("openai", "gpt-5.5"), ["low", "medium", "high"]);
+        assert_eq!(
+            effort_levels_for_spec("openai", "gpt-5.5"),
+            ["low", "medium", "high"]
+        );
     }
 
     #[test]

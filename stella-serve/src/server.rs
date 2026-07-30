@@ -593,7 +593,15 @@ async fn handle_conn(mut stream: TcpStream, state: Arc<ServerState>) -> std::io:
         (_, ["v1", "turns", _, "events"]) => {
             return method_not_allowed(&mut stream, &mut req, "GET").await;
         }
-        (_, ["v1", "turns", _, "tool-result" | "provider-result" | "cancel"]) => {
+        (
+            _,
+            [
+                "v1",
+                "turns",
+                _,
+                "tool-result" | "provider-result" | "cancel",
+            ],
+        ) => {
             return method_not_allowed(&mut stream, &mut req, "POST").await;
         }
         _ => {

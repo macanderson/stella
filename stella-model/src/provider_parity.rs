@@ -300,7 +300,14 @@ mod tests {
     /// The adapter source files every witness (cache or reasoning) must live
     /// in. `include_str!` embeds them at compile time so a renamed/deleted
     /// witness fails the build's tests, not production.
-    fn adapter_sources() -> [&'static str; 6] {
+    /// Every file a witness test can live in. The `zai/tests/` submodules are
+    /// listed individually because this guard reads SOURCE TEXT, not the
+    /// module tree: a witness that stays a real, passing test but moves into a
+    /// split-out module would vanish from this list and fail the guard, which
+    /// is a false alarm rather than the rotted proof it exists to catch. The
+    /// parent `tests.rs` is over the file-size ratchet, so those splits keep
+    /// happening — the list has to follow them.
+    fn adapter_sources() -> [&'static str; 9] {
         [
             include_str!("anthropic/tests.rs"),
             include_str!("bedrock.rs"),
@@ -308,6 +315,9 @@ mod tests {
             include_str!("gemini.rs"),
             include_str!("vertex.rs"),
             include_str!("zai/tests.rs"),
+            include_str!("zai/tests/openrouter_effort_tests.rs"),
+            include_str!("zai/tests/openrouter_stream_tests.rs"),
+            include_str!("zai/tests/stream_frame_tests.rs"),
         ]
     }
 
