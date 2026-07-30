@@ -1071,16 +1071,16 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // Reads (and, for convert, writes) definition files only.
             return commands_cmd::run_commands(cmd);
         }
-        // Phase 3 (#714). Reads and appends to the local lifecycle ledger
-        // only — no provider, no API key.
+        // Reads context-record TOML and the tree, and appends to the local
+        // lifecycle ledger on the review actions (Phase 3, #714). `propose
+        // --commit` writes a local branch and commit. No store, model, or
+        // API key on any path.
         Some(Command::Context { cmd }) => {
             return context_cmd::run_context(cmd);
         }
         Some(Command::Proposals { cmd }) => {
             return proposals_cmd::run_proposals(cmd);
         }
-        // Reads context-record TOML + the tree; no store, model, or API key.
-        Some(Command::Context { cmd }) => return context_cmd::run(cmd),
         // #831 first slice. Reads loop-bench result files + the local ledger;
         // writes settings only on `--promote`. No provider, no API key.
         Some(Command::Tune { cmd }) => {
@@ -1433,7 +1433,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         | Command::Memory { .. }
         | Command::Scoreboard
         | Command::Ingest(_)
-        | Command::Context { .. }
         | Command::Mcp { .. }
         | Command::Connect { .. }
         | Command::Auth { .. }
