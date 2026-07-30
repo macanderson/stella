@@ -567,7 +567,9 @@ fn migrate_v17_to_v18(tx: &rusqlite::Transaction<'_>) -> Result<()> {
          CREATE INDEX IF NOT EXISTS tool_calls_by_state
            ON tool_calls(state, execution_id, seq);
          CREATE UNIQUE INDEX IF NOT EXISTS tool_calls_by_call_id
-           ON tool_calls(execution_id, call_id) WHERE call_id != '';",
+           ON tool_calls(execution_id, call_id) WHERE call_id != '';
+         CREATE INDEX IF NOT EXISTS executions_unfinished
+           ON executions(id) WHERE finished_at IS NULL;",
     )?;
     Ok(())
 }

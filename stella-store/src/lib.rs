@@ -603,18 +603,45 @@ pub struct Store {
 }
 
 impl Store {
-    /// Open (creating if needed) at `.stella/private/store.db`
-    /// and apply the schema.
+    /// Open (creating if needed) at `.stella/private/store.db`, apply the
+    /// schema, and repair the observable plane of anything that never closed
+    /// out.
+    ///
+    /// The repair is here, rather than at one considerate call site, because
+    /// this is the only place that can promise it. A machine dies in the
+    /// middle of a turn; the next thing that happens is *something* opens
+    /// this store — `stella observe`, the deck, `stella stats` — and whatever
+    /// that something is, the dashboard it feeds must show the calls the dead
+    /// turn actually made rather than zero. Making one entry point
+    /// responsible would leave every other one serving a hole.
+    ///
+    /// It is safe to run against a workspace another process is actively
+    /// writing. The sweep only re-folds `tool_calls` from the `events` log,
+    /// which is idempotent and writes exactly what the live projection
+    /// already wrote; it never stamps an outcome, so a *live* turn in another
+    /// process is not declared dead (see
+    /// [`Store::reconcile_interrupted_executions`]). And it costs nothing in
+    /// the overwhelmingly common case: the `executions_unfinished` partial
+    /// index holds only unclosed rows, so "is anything unclosed?" is an empty
+    /// index probe and no write happens at all.
+    ///
+    /// Failure is swallowed on purpose. Recovery of *observability* must
+    /// never be the reason a workspace cannot be opened — the store is
+    /// already usable at this point, and a session refusing to start because
+    /// it could not repair a dashboard number would be the tail wagging the
+    /// dog.
     pub fn open(workspace_root: &Path) -> Result<Self> {
         let (dir, created) = ensure_workspace_state_dir(workspace_root)?;
         harden_workspace_dir(&dir, created)?;
         let db_path = workspace_private_sqlite_path(workspace_root, "store.db")?;
         let conn = open_private_sqlite(&db_path)?;
-        Self::init(
+        let store = Self::init(
             conn,
             Some(workspace_root.to_path_buf()),
             Some(db_path.as_path()),
-        )
+        )?;
+        let _ = store.reconcile_interrupted_executions();
+        Ok(store)
     }
 
     /// In-memory store — tests and ephemeral runs.

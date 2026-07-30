@@ -54,6 +54,14 @@ pub(crate) const TABLES: [&str; 19] = [
 /// by-session index is that reader's access path (filter on session_id,
 /// scan in id order). `IF NOT EXISTS` on both so the batch also tolerates a
 /// partial file that already grew them.
+///
+/// `executions_unfinished` is **partial** (`WHERE finished_at IS NULL`), and
+/// that is the whole point: the crash-recovery sweep at
+/// [`Store::open`](crate::Store::open) asks "is anything unclosed?" on every
+/// single open, and the honest answer is almost always no. A partial index
+/// holds only the open rows — usually zero, at most a handful — so the
+/// question costs an empty index probe instead of a scan over every
+/// execution the workspace has ever run.
 pub(crate) const EXECUTIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS executions (
        id INTEGER PRIMARY KEY AUTOINCREMENT,
        kind TEXT NOT NULL,
@@ -70,7 +78,9 @@ pub(crate) const EXECUTIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS executions (
          CHECK(usage_status IN ('pending', 'complete', 'incomplete'))
      );
      CREATE INDEX IF NOT EXISTS executions_by_session
-       ON executions(session_id, id);";
+       ON executions(session_id, id);
+     CREATE INDEX IF NOT EXISTS executions_unfinished
+       ON executions(id) WHERE finished_at IS NULL;";
 
 /// Tables whose shape has not changed since v0. `IF NOT EXISTS` keeps one
 /// batch usable both for fresh files and for filling gaps in partial legacy
