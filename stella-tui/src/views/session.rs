@@ -970,6 +970,8 @@ mod tests {
         model.apply(&AgentEvent::FileChange {
             path: "src/x.rs".into(),
             kind: FileChangeKind::Modified,
+            added: 1,
+            removed: 0,
             diff: Some("@@ -1,1 +1,1 @@\n+first_diff_line".into()),
         });
         model.apply(&AgentEvent::ToolResult {
@@ -1010,6 +1012,8 @@ mod tests {
         model.apply(&AgentEvent::FileChange {
             path: "src/x.rs".into(),
             kind: FileChangeKind::Modified,
+            added: 1,
+            removed: 0,
             diff: Some("@@ -1,1 +1,1 @@\n+second_diff_line".into()),
         });
         assert_eq!(model.transcript.len(), len_before, "no transcript append");
@@ -1047,6 +1051,8 @@ mod tests {
             model.apply(&AgentEvent::FileChange {
                 path: "src/x.rs".into(),
                 kind: FileChangeKind::Modified,
+                added: 0,
+                removed: 0,
                 diff: Some(format!("@@ -1,1 +1,1 @@\n+evicting_edit_{i}")),
             });
         }

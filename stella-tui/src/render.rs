@@ -122,7 +122,8 @@ pub fn render(model: &SessionModel, ui: &mut UiState, frame: &mut Frame) {
         let d_lines = diff_text
             .map(|d| diff::body_lines(d, file.map(|f| f.path.as_str())))
             .unwrap_or_default();
-        let (added, removed) = diff_text.map(diff::count_diff_lines).unwrap_or((0, 0));
+        // The file's measured delta, not a recount of the rendered hunk.
+        let (added, removed) = file.map(|f| (f.added, f.removed)).unwrap_or((0, 0));
         let d_total = d_lines.len();
         let d_inner_h = inner_height(right_area);
         let d_window = ui.diff_scroll.window(d_total, d_inner_h);
@@ -754,6 +755,19 @@ fn resolve_inline_diff<'a>(dref: &InlineDiffRef, files: &'a [FileState]) -> Opti
         .iter()
         .find(|f| f.path == dref.path)
         .and_then(|f| f.diff_at(dref.seq))
+}
+
+/// That inline diff's measured `(added, removed)`, from the emitter — the
+/// companion to [`resolve_inline_diff`], so a transcript row states the size of
+/// the change rather than the size of its rendering.
+pub(crate) fn resolve_inline_delta(
+    dref: &InlineDiffRef,
+    files: &[FileState],
+) -> Option<(u32, u32)> {
+    files
+        .iter()
+        .find(|f| f.path == dref.path)
+        .and_then(|f| f.delta_at(dref.seq))
 }
 
 fn file_line(file: &FileState, selected: bool) -> Line<'static> {

@@ -1557,14 +1557,20 @@ impl<'a> Pipeline<'a> {
                 };
                 match ws.adopt(withhold).await {
                     Ok(adopted) => {
-                        // Surface the adopted paths on the event stream: the
+                        // Surface the adopted changes on the event stream: the
                         // winner's edits happened inside the snapshot, so no
-                        // FileChange was emitted for the real tree yet.
+                        // FileChange was emitted for the real tree yet. The
+                        // adoption measured them (git's numstat + patch), so
+                        // these rows carry a real delta — they used to arrive
+                        // with `diff: None` and no counts, which the Files tab
+                        // rendered as `+0 -0` for every adopted file.
                         for change in adopted {
                             self.emit(AgentEvent::FileChange {
                                 path: change.path,
                                 kind: change.kind,
-                                diff: None,
+                                added: change.added,
+                                removed: change.removed,
+                                diff: change.diff,
                             });
                         }
                         ws.remove().await;

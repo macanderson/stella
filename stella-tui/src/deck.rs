@@ -598,8 +598,15 @@ impl WorkspaceModel {
         }
 
         // Cross-agent read-models.
-        if let AgentEvent::FileChange { path, kind, diff } = event {
-            self.ledger.record(agent, path, *kind, diff);
+        if let AgentEvent::FileChange {
+            path,
+            kind,
+            added,
+            removed,
+            ..
+        } = event
+        {
+            self.ledger.record(agent, path, *kind, *added, *removed);
         }
         if let AgentEvent::Pr {
             url,
@@ -663,9 +670,15 @@ pub struct FileRecord {
     pub reads: u32,
 }
 
-/// Every file touched this session, with CRUD op and line +/- parsed from the
-/// unified-diff strings on `FileChange` events (there is no structured
-/// +/- in the event — it is derived from the diff text, deterministically).
+/// Every file touched this session, with CRUD op and the line +/- **carried
+/// on** each `FileChange` event.
+///
+/// These counts are no longer re-derived here. They used to be parsed back out
+/// of the event's diff text, which made the panel's numbers a count of whatever
+/// the emitter had synthesized — for a bulk edit or a worker lane, nothing at
+/// all, rendering as `+0 -0` over real work. The emitter
+/// (`ToolRegistry::record_touch`) computes the delta from the actual pre- and
+/// post-images and sends it; this fold just accumulates.
 #[derive(Clone, Debug, Default)]
 pub struct FileLedger {
     pub records: Vec<FileRecord>,
@@ -682,8 +695,7 @@ pub struct FileLedger {
 const MAX_LEDGER_RECORDS: usize = 4096;
 
 impl FileLedger {
-    fn record(&mut self, agent: &str, path: &str, kind: FileChangeKind, diff: &Option<String>) {
-        let (added, removed) = diff.as_deref().map(count_diff_lines).unwrap_or((0, 0));
+    fn record(&mut self, agent: &str, path: &str, kind: FileChangeKind, added: u32, removed: u32) {
         if let Some(rec) = self
             .records
             .iter_mut()
@@ -1023,13 +1035,16 @@ fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
                 format!("{} in {duration_ms}ms", if ok { "ok" } else { "err" }),
             )
         }
-        AgentEvent::FileChange { path, kind, diff } => {
-            let (a, r) = diff.as_deref().map(count_diff_lines).unwrap_or((0, 0));
-            (
-                TraceKind::File,
-                format!("{kind:?} {path} +{a}/-{r}").to_lowercase(),
-            )
-        }
+        AgentEvent::FileChange {
+            path,
+            kind,
+            added,
+            removed,
+            ..
+        } => (
+            TraceKind::File,
+            format!("{kind:?} {path} +{added}/-{removed}").to_lowercase(),
+        ),
         AgentEvent::BudgetTick { spent_usd, .. } => (TraceKind::Budget, format!("${spent_usd:.4}")),
         AgentEvent::StepUsage {
             model, cost_usd, ..

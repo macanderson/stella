@@ -556,6 +556,12 @@ async fn run_worker(
     // apply to it identically — a sub-agent must not be a way to reach a tool
     // the lead was denied.
     let permitted = agent::PolicyToolSet::new(&claims, agent::session_tool_policy(cfg));
+    // A worker's edits are real edits to the shared tree, so its lane announces
+    // them on its own channel: point the registry's recorder at this turn's
+    // sender. Without it the whole lane was invisible in the Files tab — every
+    // `deck-sub` execution wrote files and emitted not one `FileChange`, so the
+    // ledger described a session in which the delegated work never happened.
+    registry.attach_events(stella_core::EventSender::new(tx.clone()));
     let raced = {
         let gate = WatchGate(pause_rx);
         let engine = Engine::with_sleeper(

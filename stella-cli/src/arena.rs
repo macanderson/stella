@@ -387,7 +387,9 @@ impl ArenaRecorder {
                     );
                 }
             }
-            AgentEvent::FileChange { path, kind, diff } if kind.is_mutation() => {
+            AgentEvent::FileChange {
+                path, kind, diff, ..
+            } if kind.is_mutation() => {
                 let effect_id = file_effect_id(path, *kind, diff.as_deref());
                 inner.record_effect(effect_id, "file_write", None);
             }
@@ -613,6 +615,8 @@ mod tests {
         recorder.observe(&AgentEvent::FileChange {
             path: "src/main.rs".into(),
             kind: stella_protocol::FileChangeKind::Modified,
+            added: 1,
+            removed: 0,
             diff: Some("+hello".into()),
         });
         recorder.observe(&AgentEvent::ToolResult {
@@ -664,6 +668,8 @@ mod tests {
             recorder.observe(&AgentEvent::FileChange {
                 path: "src/main.rs".into(),
                 kind: stella_protocol::FileChangeKind::Modified,
+                added: 1,
+                removed: 0,
                 diff: Some("+hello".into()),
             });
         }
@@ -686,6 +692,8 @@ mod tests {
             recorder.observe(&AgentEvent::FileChange {
                 path: "src/main.rs".into(),
                 kind: stella_protocol::FileChangeKind::Modified,
+                added: 1,
+                removed: 0,
                 diff: Some("+hello world".into()),
             });
             recorder.observe(&AgentEvent::ToolResult {

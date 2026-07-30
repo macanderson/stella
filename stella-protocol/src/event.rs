@@ -552,16 +552,33 @@ pub enum AgentEvent {
         to: String,
         reason: String,
     },
-    /// A file was read/created/modified/deleted by the agent, carrying the
-    /// diff so the TUI's files-touched panel renders per-edit diffs without a
-    /// second data path (L-T5: in TS, the `onFileEdit` callback had to be
-    /// patched into two pipeline switches — here there is one emission
-    /// point by construction). Reads carry no diff; consumers that only care
-    /// about mutations (the pipeline's zero-diff guard, inline transcript
-    /// diffs) filter on the kind.
+    /// A file was read/created/modified/deleted by the agent, carrying both
+    /// the authoritative line delta and a diff for display.
+    ///
+    /// The single emission point is `ToolRegistry::record_touch` — the same
+    /// place that writes the session's file-touch ledger and its telemetry
+    /// payload — so the TUI, the audit log and the exported JSON can no longer
+    /// disagree about what a turn changed. (This doc once claimed one emission
+    /// point "by construction" while the deck in fact synthesized its own
+    /// events from tool inputs, in a wrapper that knew only four tool names and
+    /// sat on one of three tool stacks. Files edited in bulk, or by a worker
+    /// lane, were reported as `+0 -0`.)
+    ///
+    /// `added`/`removed` are the counts the recorder derived from the real pre-
+    /// and post-images (`file_touch::line_diff`). Consumers **must** use them
+    /// rather than counting `+`/`-` lines in `diff`: the diff is a bounded,
+    /// deliberately coarse rendering of the changed region, and re-deriving
+    /// from it is what made the two disagree. Reads carry `0/0` and no diff;
+    /// consumers that only care about mutations filter on `kind`.
     FileChange {
         path: String,
         kind: FileChangeKind,
+        /// `serde(default)` so journals written before the counts existed
+        /// parse — those replay as `0/0`, which is what they recorded.
+        #[serde(default)]
+        added: u32,
+        #[serde(default)]
+        removed: u32,
         diff: Option<String>,
     },
     /// Context recall completed: which frames reached the prompt, from which
@@ -1385,19 +1402,53 @@ mod tests {
     }
 
     #[test]
-    fn file_change_carries_the_diff_on_the_single_event_path() {
+    fn file_change_carries_the_delta_and_the_diff_on_the_single_event_path() {
         let event = AgentEvent::FileChange {
             path: "src/lib.rs".into(),
             kind: FileChangeKind::Modified,
+            added: 12,
+            removed: 3,
             diff: Some("@@ -1 +1 @@\n-old\n+new".into()),
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"file_change\""), "{json}");
         let back: AgentEvent = serde_json::from_str(&json).unwrap();
         match back {
-            AgentEvent::FileChange { kind, diff, .. } => {
+            AgentEvent::FileChange {
+                kind,
+                added,
+                removed,
+                diff,
+                ..
+            } => {
                 assert_eq!(kind, FileChangeKind::Modified);
+                assert_eq!(
+                    (added, removed),
+                    (12, 3),
+                    "the recorder's counts survive the wire — consumers must \
+                     not have to recount the diff text"
+                );
                 assert!(diff.is_some());
+            }
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    /// Journals written before the counts existed must still replay. They
+    /// recorded no delta, so they come back as `0/0` — the honest answer for a
+    /// stream that never measured one.
+    #[test]
+    fn a_file_change_without_counts_still_parses() {
+        let old = r#"{"type":"file_change","path":"a.rs","kind":"modified","diff":null}"#;
+        match serde_json::from_str::<AgentEvent>(old).unwrap() {
+            AgentEvent::FileChange {
+                path,
+                added,
+                removed,
+                ..
+            } => {
+                assert_eq!(path, "a.rs");
+                assert_eq!((added, removed), (0, 0));
             }
             other => panic!("unexpected variant: {other:?}"),
         }
