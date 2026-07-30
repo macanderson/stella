@@ -23,8 +23,16 @@ pub struct FileState {
     pub path: String,
     pub kind: FileChangeKind,
     pub latest_diff: Option<String>,
+    /// Cumulative lines added / removed across this path's mutations, summed
+    /// from the counts the emitter measured (`ToolRegistry::record_touch`).
+    /// Never re-derived from `latest_diff`: the diff is a bounded rendering of
+    /// the changed region, so counting it is a different — and smaller —
+    /// number than the delta actually applied.
+    pub added: u32,
+    pub removed: u32,
     /// The last [`DIFF_HISTORY`] diffs for this path, each tagged with the
-    /// `changes` value it was recorded at, newest last.
+    /// `changes` value it was recorded at and the delta it carried, newest
+    /// last.
     ///
     /// Keeping only `latest_diff` made the transcript *erase* its own history:
     /// the second edit to a file bumped `changes` past the seq the first
@@ -34,7 +42,7 @@ pub struct FileState {
     /// diff and one with. The bytes still live on the single event-borne path
     /// (L-T5) — this is the same store, given a shallow memory instead of a
     /// depth of one.
-    pub recent_diffs: VecDeque<(u32, String)>,
+    pub recent_diffs: VecDeque<RememberedDiff>,
     /// How many mutating `FileChange` events have touched this path.
     pub changes: u32,
     /// How many times this path has been read.
@@ -43,6 +51,17 @@ pub struct FileState {
     /// (read or mutation) — the recency key [`MAX_TRACKED_FILES`] eviction
     /// orders by. Purely event-derived, so replay determinism (L-T1) holds.
     pub touched_seq: u64,
+}
+
+/// One remembered mutation: its diff text, the `changes` seq it happened at
+/// (so an older tool result still resolves the change *it* made), and the
+/// delta the emitter measured for it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RememberedDiff {
+    pub seq: u32,
+    pub text: String,
+    pub added: u32,
+    pub removed: u32,
 }
 
 /// How many distinct paths the model tracks before evicting the
@@ -83,9 +102,14 @@ impl FileState {
     /// Record a mutation's diff against the `changes` value it produced.
     /// Called only for mutations, and only after `changes` has been bumped, so
     /// the tag matches the seq a tool result folds at the same moment.
-    pub(crate) fn remember_diff(&mut self, diff: &Option<String>) {
+    pub(crate) fn remember_diff(&mut self, diff: &Option<String>, added: u32, removed: u32) {
         let Some(text) = diff else { return };
-        self.recent_diffs.push_back((self.changes, text.clone()));
+        self.recent_diffs.push_back(RememberedDiff {
+            seq: self.changes,
+            text: text.clone(),
+            added,
+            removed,
+        });
         while self.recent_diffs.len() > DIFF_HISTORY {
             self.recent_diffs.pop_front();
         }
@@ -94,10 +118,19 @@ impl FileState {
     /// The diff this path produced at mutation `seq`, if still remembered.
     #[must_use]
     pub fn diff_at(&self, seq: u32) -> Option<&str> {
-        self.recent_diffs
-            .iter()
-            .find(|(s, _)| *s == seq)
-            .map(|(_, d)| d.as_str())
+        self.remembered_at(seq).map(|d| d.text.as_str())
+    }
+
+    /// That mutation's measured `(added, removed)` — the numbers a transcript
+    /// row shows beside its inline diff, taken from the emitter rather than
+    /// counted back out of the rendered text.
+    #[must_use]
+    pub fn delta_at(&self, seq: u32) -> Option<(u32, u32)> {
+        self.remembered_at(seq).map(|d| (d.added, d.removed))
+    }
+
+    fn remembered_at(&self, seq: u32) -> Option<&RememberedDiff> {
+        self.recent_diffs.iter().find(|d| d.seq == seq)
     }
 }
 
@@ -117,6 +150,8 @@ mod tests {
         let change = |path: String| AgentEvent::FileChange {
             path,
             kind: FileChangeKind::Modified,
+            added: 1,
+            removed: 0,
             diff: Some("@@\n+x".into()),
         };
         for i in 0..MAX_TRACKED_FILES {

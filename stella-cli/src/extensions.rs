@@ -25,7 +25,7 @@ use std::path::{Component, Path, PathBuf};
 
 use stella_core::extensions::{
     AgentDef, CommandDef, ExtensionKind, SyncEntry, SyncSource, agent_from_file, command_from_file,
-    expand_command, merge_by_name, plan_extension_sync,
+    command_from_toml, expand_command, merge_by_name, plan_extension_sync,
 };
 use stella_core::skills::Skill;
 use stella_tui::SlashCommand;
@@ -73,20 +73,41 @@ fn definition_name_for(path: &Path, kind: ExtensionKind) -> String {
         .unwrap_or(fallback)
 }
 
-/// Whether the loader can read a definition out of this entry: a flat file
-/// always can (`read_definition_files` matches any `.md` extension); a
-/// directory only can when it holds the kind's nested definition file. This
-/// mirrors, exactly, the condition under which `read_definition_files`
-/// silently skips a directory — no nested file present at all, so nothing
-/// loads and nothing is diagnosed. A namespace directory such as
-/// `.claude/commands/vercel/` holding only `deploy.md` (no `COMMAND.md`) is
-/// not loadable by this measure.
+/// Whether the loader can read a definition out of this entry.
+///
+/// A flat file always can. A directory can when it holds the kind's nested
+/// definition file — or, for **commands only**, when it is a namespace
+/// directory of `.md`/`.toml` children (`.claude/commands/vercel/deploy.md`
+/// → `/vercel:deploy`), which `read_command_files` loads.
+///
+/// This must mirror, exactly, what the loaders actually read: an entry called
+/// loadable here but skipped there becomes a dead symlink with no diagnostic
+/// anywhere, and an entry called unloadable here is reported to the user as
+/// something stella cannot use. Issue #104 was the first mismatch; the
+/// commands arm is the second, in the opposite direction.
 fn is_loadable_entry(path: &Path, kind: ExtensionKind) -> bool {
-    if path.is_dir() {
-        path.join(nested_file(kind)).symlink_metadata().is_ok()
-    } else {
-        true
+    if !path.is_dir() {
+        return true;
     }
+    if path.join(nested_file(kind)).symlink_metadata().is_ok() {
+        return true;
+    }
+    // Commands only: a directory of `.md`/`.toml` files with no `COMMAND.md`
+    // is a NAMESPACE (`.claude/commands/vercel/deploy.md` → `/vercel:deploy`),
+    // and `read_command_files` now loads it. It used to be unloadable by
+    // definition — nothing read it, so linking it created a dead symlink —
+    // which is why the whole `/ns:name` convention was invisible. Skills and
+    // agents have no namespace syntax, so they keep the stricter rule.
+    kind == ExtensionKind::Commands
+        && std::fs::read_dir(path)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|e| {
+                e.file_name().to_str().is_some_and(|n| {
+                    !n.starts_with('.') && (n.ends_with(".md") || n.ends_with(".toml"))
+                })
+            })
 }
 
 /// Scan one source directory for one kind (`<source_root>/<kind>`), with
@@ -385,6 +406,7 @@ fn describe_diagnostic(diag: &stella_core::extensions::ExtensionDiagnostic) -> S
     let why = match diag.problem {
         stella_core::extensions::ExtensionProblem::MissingName => "no usable name",
         stella_core::extensions::ExtensionProblem::EmptyBody => "empty body",
+        stella_core::extensions::ExtensionProblem::Malformed => "not valid TOML",
     };
     format!("{}: {why}", diag.path)
 }
@@ -405,14 +427,137 @@ fn load_dirs(workspace_root: &Path, kind: ExtensionKind, include_workspace: bool
 fn load_commands_from(dirs: &[PathBuf], problems: &mut Vec<String>) -> Vec<CommandDef> {
     let mut parsed = Vec::new();
     for dir in dirs {
-        for (path, raw) in read_definition_files(dir, "COMMAND.md", problems) {
-            match command_from_file(&path, &raw) {
-                Ok(cmd) => parsed.push(cmd),
+        for found in read_command_files(dir, problems) {
+            let result = if found.is_toml {
+                command_from_toml(&found.path, &found.raw)
+            } else {
+                command_from_file(&found.path, &found.raw)
+            };
+            match result {
+                Ok(mut cmd) => {
+                    cmd.namespace = found.namespace;
+                    parsed.push(cmd);
+                }
                 Err(diag) => problems.push(describe_diagnostic(&diag)),
             }
         }
     }
-    merge_by_name(parsed, |c: &CommandDef| c.name.as_str())
+    // Merged on the INVOCATION, not the bare name: `/vercel:deploy` and
+    // `/fly:deploy` are two commands, and collapsing them would silently drop
+    // whichever loaded second.
+    merge_by_name(parsed, |c: &CommandDef| c.invocation())
+}
+
+/// One command definition file found on disk, with the namespace its location
+/// implies.
+struct FoundCommand {
+    path: String,
+    raw: String,
+    is_toml: bool,
+    namespace: Option<String>,
+}
+
+/// Scan one commands directory: flat `<slug>.{md,toml}`, the nested
+/// `<slug>/COMMAND.{md,toml}` layout, and — new — namespace directories whose
+/// children become `/<dir>:<slug>`.
+///
+/// The two directory shapes are told apart by what is inside, not by naming: a
+/// directory holding `COMMAND.md`/`COMMAND.toml` IS one command; anything else
+/// is a namespace and its `.md`/`.toml` children are its commands. That rule
+/// is what lets `.claude/commands/vercel/deploy.md` finally load — before this,
+/// `is_loadable_entry` classified such a directory as unloadable and the sync
+/// skipped it, so the whole `/ns:name` convention was invisible to stella.
+///
+/// One level only. Nesting deeper has no invocation syntax to reach it, and
+/// silently loading a command nobody can type is worse than not loading it.
+fn read_command_files(dir: &Path, problems: &mut Vec<String>) -> Vec<FoundCommand> {
+    let mut found = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return found;
+    };
+    let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+    paths.sort();
+    for path in paths {
+        if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_none_or(|n| n.starts_with('.'))
+        {
+            continue;
+        }
+        if let Some(kind) = definition_extension(&path) {
+            push_command_file(&path, kind, None, &mut found, problems);
+            continue;
+        }
+        if !path.is_dir() {
+            continue;
+        }
+        // The nested single-command layout wins when its file is present.
+        if let Some((nested, kind)) = ["COMMAND.md", "COMMAND.toml"]
+            .iter()
+            .map(|f| path.join(f))
+            .find_map(|p| definition_extension(&p).map(|k| (p, k)))
+            .filter(|(p, _)| p.symlink_metadata().is_ok())
+        {
+            push_command_file(&nested, kind, None, &mut found, problems);
+            continue;
+        }
+        let Some(namespace) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let Ok(children) = std::fs::read_dir(&path) else {
+            continue;
+        };
+        let mut child_paths: Vec<PathBuf> = children.flatten().map(|e| e.path()).collect();
+        child_paths.sort();
+        for child in child_paths {
+            if child
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_none_or(|n| n.starts_with('.'))
+            {
+                continue;
+            }
+            if let Some(kind) = definition_extension(&child) {
+                push_command_file(
+                    &child,
+                    kind,
+                    Some(namespace.to_string()),
+                    &mut found,
+                    problems,
+                );
+            }
+        }
+    }
+    found
+}
+
+/// `Some(true)` for a `.toml` definition, `Some(false)` for `.md`, `None` for
+/// anything else.
+fn definition_extension(path: &Path) -> Option<bool> {
+    match path.extension()?.to_str()? {
+        "toml" => Some(true),
+        "md" => Some(false),
+        _ => None,
+    }
+}
+
+fn push_command_file(
+    path: &Path,
+    is_toml: bool,
+    namespace: Option<String>,
+    out: &mut Vec<FoundCommand>,
+    problems: &mut Vec<String>,
+) {
+    match std::fs::read_to_string(path) {
+        Ok(raw) => out.push(FoundCommand {
+            path: path.display().to_string(),
+            raw,
+            is_toml,
+            namespace,
+        }),
+        Err(e) => problems.push(format!("{}: {e}", path.display())),
+    }
 }
 
 fn load_agents_from(dirs: &[PathBuf], problems: &mut Vec<String>) -> Vec<AgentDef> {
@@ -425,7 +570,7 @@ fn load_agents_from(dirs: &[PathBuf], problems: &mut Vec<String>) -> Vec<AgentDe
             }
         }
     }
-    merge_by_name(parsed, |a: &AgentDef| a.name.as_str())
+    merge_by_name(parsed, |a: &AgentDef| a.name.clone())
 }
 
 /// Everything custom a chat surface offers: commands (⚡ `/name`, prompt
@@ -515,10 +660,17 @@ impl CustomExtensions {
     pub fn slash_entries(&self, reserved: &[SlashCommand]) -> Vec<SlashCommand> {
         let mut taken: HashSet<String> = reserved.iter().map(|c| c.name.clone()).collect();
         let mut rows = Vec::new();
-        let commands = self
-            .commands
-            .iter()
-            .map(|c| (format!("/{}", c.name), c.description.clone()));
+        // Namespaced commands list under the name they are TYPED with — a row
+        // reading `/deploy` that only answers to `/vercel:deploy` teaches the
+        // wrong thing. The `argument-hint` rides in the description so the menu
+        // shows the shape the command expects.
+        let commands = self.commands.iter().map(|c| {
+            let description = match &c.argument_hint {
+                Some(hint) => format!("{hint} — {}", c.description),
+                None => c.description.clone(),
+            };
+            (format!("/{}", c.invocation()), description)
+        });
         let skills = self
             .skills
             .iter()
@@ -540,7 +692,9 @@ impl CustomExtensions {
     /// matching [`Self::slash_entries`].
     pub fn lookup(&self, head: &str) -> Option<Invocation<'_>> {
         let name = head.strip_prefix('/')?;
-        if let Some(cmd) = self.commands.iter().find(|c| c.name == name) {
+        // Matched on the invocation, so `/vercel:deploy` resolves and a bare
+        // `/deploy` reaches only a command that really is unnamespaced.
+        if let Some(cmd) = self.commands.iter().find(|c| c.invocation() == name) {
             return Some(Invocation::Command(cmd));
         }
         if let Some(skill) = self.skills.iter().find(|s| s.name == name) {
@@ -708,12 +862,13 @@ mod tests {
         );
     }
 
+    /// The witness for namespaced commands. This is the shape issue #104
+    /// documented as *unloadable* — `.claude/commands/vercel/deploy.md` with
+    /// no `vercel.md` and no `vercel/COMMAND.md`. It was unloadable because
+    /// nothing read it; now `read_command_files` does, so the sync links it
+    /// and it invokes as `/vercel:deploy`.
     #[test]
-    fn sync_skips_a_namespace_directory_with_no_nested_definition_file() {
-        // The exact shape from issue #104: another agent's namespaced
-        // command directory `.claude/commands/vercel/deploy.md`
-        // (`/vercel:deploy` in that agent) has neither a flat `vercel.md`
-        // nor a `vercel/COMMAND.md` — nothing stella's loader can read.
+    fn a_namespace_directory_is_adopted_and_loads_as_ns_colon_name() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         write(
@@ -727,28 +882,100 @@ mod tests {
             &[root.join(".claude"), root.join(".agents")],
         );
         assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
-        assert_eq!(
-            outcome.linked,
-            vec![(ExtensionKind::Commands, "build.md".to_string())],
-            "the namespace directory is never linked"
+        assert!(
+            outcome
+                .linked
+                .contains(&(ExtensionKind::Commands, "vercel".to_string())),
+            "the namespace directory is adopted now: {:?}",
+            outcome.linked
         );
-        // `NotLoadable` is reported through `unloadable`, not folded into
-        // the benign `skipped` count (nothing here was "already present").
-        assert_eq!(outcome.skipped, 0);
-        assert_eq!(outcome.unloadable.len(), 1, "{:?}", outcome.unloadable);
-        assert!(outcome.unloadable[0].contains("vercel"));
-        assert!(outcome.unloadable[0].contains("not loadable"));
-        assert!(!root.join(".stella/commands/vercel").exists());
+        assert!(
+            outcome.unloadable.is_empty(),
+            "nothing is unloadable any more: {:?}",
+            outcome.unloadable
+        );
+        assert!(root.join(".stella/commands/vercel").exists());
+
+        let mut problems = Vec::new();
+        let commands = load_commands_from(&[root.join(".stella/commands")], &mut problems);
+        assert!(problems.is_empty(), "{problems:?}");
+        let deploy = commands
+            .iter()
+            .find(|c| c.invocation() == "vercel:deploy")
+            .unwrap_or_else(|| {
+                panic!(
+                    "no /vercel:deploy in {:?}",
+                    commands.iter().map(|c| c.invocation()).collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(deploy.name, "deploy", "the bare name keeps no prefix");
+        assert_eq!(deploy.namespace.as_deref(), Some("vercel"));
+    }
+
+    /// Two namespaces may hold the same bare name — merging on the bare name
+    /// would silently drop whichever loaded second.
+    #[test]
+    fn the_same_command_name_in_two_namespaces_is_two_commands() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("commands");
+        write(&dir.join("vercel/deploy.md"), "Ship to vercel.");
+        write(&dir.join("fly/deploy.toml"), "prompt = \"Ship to fly.\"");
+
+        let mut problems = Vec::new();
+        let commands = load_commands_from(&[dir], &mut problems);
+        assert!(problems.is_empty(), "{problems:?}");
+        let mut names: Vec<String> = commands.iter().map(|c| c.invocation()).collect();
+        names.sort();
+        assert_eq!(names, vec!["fly:deploy", "vercel:deploy"]);
+    }
+
+    /// A directory holding `COMMAND.md` is still ONE command, not a namespace
+    /// — the two directory shapes are told apart by content, not by naming.
+    #[test]
+    fn a_nested_command_directory_is_not_read_as_a_namespace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("commands");
+        write(&dir.join("deploy/COMMAND.md"), "Ship it.");
+        write(&dir.join("deploy/notes.md"), "Not a command.");
+
+        let mut problems = Vec::new();
+        let commands = load_commands_from(&[dir], &mut problems);
+        let names: Vec<String> = commands.iter().map(|c| c.invocation()).collect();
+        assert_eq!(names, vec!["deploy"], "{problems:?}");
+    }
+
+    #[test]
+    fn a_toml_command_loads_alongside_markdown() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("commands");
+        write(&dir.join("build.md"), "Build it.");
+        write(
+            &dir.join("review.toml"),
+            "description = \"Review a PR\"\nargument-hint = \"<pr>\"\nprompt = \"Review $1.\"\n",
+        );
+
+        let mut problems = Vec::new();
+        let commands = load_commands_from(&[dir], &mut problems);
+        assert!(problems.is_empty(), "{problems:?}");
+        let review = commands.iter().find(|c| c.name == "review").unwrap();
+        assert_eq!(review.argument_hint.as_deref(), Some("<pr>"));
+        assert_eq!(expand_command(&review.body, "142"), "Review 142.");
+        assert!(commands.iter().any(|c| c.name == "build"));
     }
 
     #[test]
     fn sync_reports_an_unloadable_namespace_directory_even_when_nothing_else_is_found() {
-        // A workspace whose ONLY entry under `.claude/commands/` is a
-        // namespace directory: `outcome.summary()` is `None` since nothing
-        // linked, so this must not go silent (issue #104's actual bug).
+        // A workspace whose ONLY entry is a directory the loader cannot read:
+        // `outcome.summary()` is `None` since nothing linked, so this must not
+        // go silent (issue #104's actual bug).
+        //
+        // Uses SKILLS, not commands: a commands namespace directory is
+        // loadable now (`/vercel:deploy`), while skills and agents have no
+        // namespace syntax and keep the stricter rule. The guard being
+        // protected here is the reporting path, not the kind.
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        write(&root.join(".claude/commands/vercel/deploy.md"), "Deploy.");
+        write(&root.join(".claude/skills/vercel/deploy.md"), "Deploy.");
 
         let outcome = sync_into(
             &root.join(".stella"),
@@ -953,14 +1180,31 @@ mod tests {
         assert!(problems.iter().any(|p| p.contains("dangling.md")));
     }
 
+    /// A command carrying none of the optional parity fields — the shape a
+    /// plain prompt file loads as, and what these menu/collision tests are
+    /// actually about.
+    fn bare_command(name: &str, description: &str, body: &str, source: &str) -> CommandDef {
+        CommandDef {
+            name: name.to_string(),
+            namespace: None,
+            description: description.to_string(),
+            argument_hint: None,
+            allowed_tools: None,
+            model: None,
+            model_invocable: true,
+            body: body.to_string(),
+            source_path: source.to_string(),
+        }
+    }
+
     fn custom_fixture() -> CustomExtensions {
         CustomExtensions {
-            commands: vec![CommandDef {
-                name: "fix-bug".to_string(),
-                description: "fix the named bug".to_string(),
-                body: "Fix $ARGUMENTS end to end.".to_string(),
-                source_path: "x/fix-bug.md".to_string(),
-            }],
+            commands: vec![bare_command(
+                "fix-bug",
+                "fix the named bug",
+                "Fix $ARGUMENTS end to end.",
+                "x/fix-bug.md",
+            )],
             skills: vec![Skill {
                 name: "sql-style".to_string(),
                 description: "format sql".to_string(),
@@ -983,12 +1227,10 @@ mod tests {
     #[test]
     fn slash_entries_are_custom_rows_that_never_shadow_builtins() {
         let mut custom = custom_fixture();
-        custom.commands.push(CommandDef {
-            name: "help".to_string(), // collides with the builtin /help
-            description: "shadowed".to_string(),
-            body: "body".to_string(),
-            source_path: "x/help.md".to_string(),
-        });
+        // collides with the builtin /help
+        custom
+            .commands
+            .push(bare_command("help", "shadowed", "body", "x/help.md"));
         let reserved = vec![SlashCommand::new("/help", "show commands")];
         let rows = custom.slash_entries(&reserved);
         let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
@@ -1027,12 +1269,9 @@ mod tests {
     #[test]
     fn expand_never_runs_a_custom_definition_under_a_reserved_name() {
         let mut custom = custom_fixture();
-        custom.commands.push(CommandDef {
-            name: "help".to_string(),
-            description: "shadowed".to_string(),
-            body: "hijacked".to_string(),
-            source_path: "x/help.md".to_string(),
-        });
+        custom
+            .commands
+            .push(bare_command("help", "shadowed", "hijacked", "x/help.md"));
         // Hidden from the menu AND unreachable at invocation time — the
         // argument-carrying form included, which bypasses whole-input
         // builtin matching in both surfaces.

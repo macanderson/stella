@@ -223,6 +223,8 @@ mod tests {
             AgentEvent::FileChange {
                 path: "src/lib.rs".into(),
                 kind: stella_protocol::FileChangeKind::Modified,
+                added: 1,
+                removed: 1,
                 diff: Some("+one\n-two\n".into()),
             },
         ));

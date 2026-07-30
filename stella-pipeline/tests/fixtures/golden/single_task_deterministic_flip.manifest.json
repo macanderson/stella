@@ -5,5 +5,5 @@
     "kind": "rust_stack",
     "recorded_by": "stella-pipeline::pipeline::tests::golden::single_task_deterministic_flip"
   },
-  "event_count": 15
+  "event_count": 21
 }

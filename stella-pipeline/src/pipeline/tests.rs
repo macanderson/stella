@@ -172,12 +172,21 @@ impl RepoStatusPort for SeqRepoStatus {
 /// one ordered queue (the resolver hands the same provider to every role).
 struct ScriptedProvider {
     script: TokioMutex<VecDeque<CompletionResult>>,
+    /// Every prompt this provider was asked to complete, in order — so a test
+    /// can assert what actually reached the model, not just what came back.
+    seen: std::sync::Mutex<Vec<String>>,
 }
 impl ScriptedProvider {
     fn new(results: Vec<CompletionResult>) -> Self {
         Self {
             script: TokioMutex::new(results.into_iter().collect()),
+            seen: std::sync::Mutex::new(Vec::new()),
         }
+    }
+
+    /// The message text of each request, one joined string per call.
+    fn prompts(&self) -> Vec<String> {
+        self.seen.lock().unwrap().clone()
     }
 }
 #[async_trait]
@@ -185,7 +194,14 @@ impl Provider for ScriptedProvider {
     fn id(&self) -> &str {
         "scripted"
     }
-    async fn complete(&self, _req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+        self.seen.lock().unwrap().push(
+            req.messages
+                .iter()
+                .map(|m| m.content.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
         let mut q = self.script.lock().await;
         q.pop_front()
             .ok_or_else(|| ProviderError::Terminal("scripted provider exhausted".into()))
@@ -1464,14 +1480,31 @@ async fn single_model_config_degrades_to_unauthored_witness_instead_of_aborting(
         !stages(&events).contains(&StageKind::Witness),
         "witness authoring is skipped, not attempted without an author"
     );
+    // Announced on BOTH channels, which is the contract: the warning carries
+    // the transcript's prose account, and the proof step carries the rail's.
+    // Reporting on only one is the failure mode this pairing exists to stop —
+    // a warning scrolls away, and a rail with nothing to show falls back to
+    // "not reported" when the reason was known all along.
     let warned = events.iter().any(|event| {
         matches!(
             event,
             AgentEvent::Error { message, retryable: true }
-                if message.contains("no witness author independent of the worker")
+                if message.contains("no author independent of the worker")
         )
     });
-    assert!(warned, "the degradation is announced once: {events:?}");
+    assert!(warned, "the degradation is announced: {events:?}");
+    let on_the_rail = events.iter().any(|event| {
+        matches!(
+            event,
+            AgentEvent::Proof {
+                step: stella_protocol::ProofStep::WitnessUnavailable { reason }
+            } if reason.contains("no author independent of the worker")
+        )
+    });
+    assert!(
+        on_the_rail,
+        "the rail must state the reason, not fall back to `not reported`: {events:?}"
+    );
 }
 
 /// A witness whose test passes on the pre-execution code proves nothing: one

@@ -125,10 +125,15 @@ async fn main() -> std::io::Result<()> {
                             },
                         });
                         // Any non-ScopeReview stage clears the pending gate;
-                        // an abort ends the run instead.
+                        // an abort ends the run instead. A revision sends the
+                        // demo back to PLAN, which is what the real pipeline
+                        // does with the note.
                         let next = match decision {
                             ScopeDecision::Approve | ScopeDecision::Trim => AgentEvent::Stage {
                                 name: StageKind::Execute,
+                            },
+                            ScopeDecision::Revise { .. } => AgentEvent::Stage {
+                                name: StageKind::Plan,
                             },
                             ScopeDecision::Abort => AgentEvent::Complete {
                                 model: "glm-5.2".into(),
@@ -338,6 +343,8 @@ async fn mini_run(tx: &mpsc::UnboundedSender<Inbound>, id: &str) {
         ev(AgentEvent::FileChange {
             path: "src/lib.rs".into(),
             kind: FileChangeKind::Modified,
+            added: 2,
+            removed: 1,
             diff: Some("@@ -1 +1,2 @@\n-old\n+new\n+line\n".into()),
         }),
         ev(AgentEvent::StepUsage {

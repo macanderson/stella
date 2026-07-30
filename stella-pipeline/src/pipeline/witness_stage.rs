@@ -75,6 +75,26 @@ pub(super) struct WitnessAuthoring<'c> {
 }
 
 impl<'a> Pipeline<'a> {
+    /// Record that a warranted witness could not be produced: the work stands
+    /// and is **unproven**.
+    ///
+    /// Both channels, deliberately. The warning keeps the transcript's prose
+    /// account of a degradation the user should see; the proof step puts the
+    /// same fact on the rail, where "warranted, and not obtained" is a row that
+    /// stays visible instead of a line that scrolls. A caller that emitted only
+    /// the warning would leave the rail with no statement of its own, falling
+    /// back to "not reported" when the reason was known all along.
+    ///
+    /// Use this, never a bare [`Self::warn`], for any path that declines or
+    /// fails to produce a witness the turn asked for. The rail's backstop will
+    /// keep such a turn honest either way — but "not reported" is what the
+    /// surface says when it has nothing better, and a reason it could have
+    /// named is strictly better.
+    pub(super) fn unproven(&self, reason: String) {
+        self.warn(format!("continuing without an authored witness: {reason}"));
+        self.emit_proof(stella_protocol::ProofStep::WitnessUnavailable { reason });
+    }
+
     pub(super) fn engine_config_for(&self, surface: CandidateSurface<'_>) -> EngineConfig {
         let mut config = self.config.engine.clone();
         if let Some(cwd) = surface.cwd {
@@ -256,10 +276,16 @@ impl<'a> Pipeline<'a> {
         let identity = candidate.repo_status.artifact_identity(path).await;
         validate_witness_identity(path, &fingerprints[path], identity.as_ref())
             .map_err(|error| WitnessAbort::rejected(error.to_string()))?;
-        let files = HashMap::from([(
-            path.clone(),
-            identity.expect("validated witness identity is present"),
-        )]);
+        let identity = identity.expect("validated witness identity is present");
+        // Announced only here, past every integrity check: the rail's "witness
+        // authored" row must mean the artifact was accepted AND pinned, never
+        // that a model produced a file.
+        self.emit_proof(stella_protocol::ProofStep::WitnessAuthored {
+            path: path.clone(),
+            command: command.clone(),
+            fingerprint: identity.fingerprint.clone(),
+        });
+        let files = HashMap::from([(path.clone(), identity)]);
         Ok(Some(Witness {
             command,
             invocation,
@@ -310,7 +336,7 @@ impl<'a> Pipeline<'a> {
         let baseline = match authoring.port.create().await {
             Ok(baseline) => baseline,
             Err(e) => {
-                self.warn(format!("witness authoring skipped: {e}"));
+                self.unproven(format!("no pristine baseline to author against: {e}"));
                 return Ok(None);
             }
         };
@@ -333,10 +359,7 @@ impl<'a> Pipeline<'a> {
             Ok(Some(witness)) => witness,
             Ok(None) => return Ok(None),
             Err(abort) if abort.degradable => {
-                self.warn(format!(
-                    "continuing without an authored witness: {}",
-                    abort.reason
-                ));
+                self.unproven(abort.reason.clone());
                 return Ok(None);
             }
             Err(abort) => return Err(abort.reason),

@@ -552,16 +552,33 @@ pub enum AgentEvent {
         to: String,
         reason: String,
     },
-    /// A file was read/created/modified/deleted by the agent, carrying the
-    /// diff so the TUI's files-touched panel renders per-edit diffs without a
-    /// second data path (L-T5: in TS, the `onFileEdit` callback had to be
-    /// patched into two pipeline switches — here there is one emission
-    /// point by construction). Reads carry no diff; consumers that only care
-    /// about mutations (the pipeline's zero-diff guard, inline transcript
-    /// diffs) filter on the kind.
+    /// A file was read/created/modified/deleted by the agent, carrying both
+    /// the authoritative line delta and a diff for display.
+    ///
+    /// The single emission point is `ToolRegistry::record_touch` — the same
+    /// place that writes the session's file-touch ledger and its telemetry
+    /// payload — so the TUI, the audit log and the exported JSON can no longer
+    /// disagree about what a turn changed. (This doc once claimed one emission
+    /// point "by construction" while the deck in fact synthesized its own
+    /// events from tool inputs, in a wrapper that knew only four tool names and
+    /// sat on one of three tool stacks. Files edited in bulk, or by a worker
+    /// lane, were reported as `+0 -0`.)
+    ///
+    /// `added`/`removed` are the counts the recorder derived from the real pre-
+    /// and post-images (`file_touch::line_diff`). Consumers **must** use them
+    /// rather than counting `+`/`-` lines in `diff`: the diff is a bounded,
+    /// deliberately coarse rendering of the changed region, and re-deriving
+    /// from it is what made the two disagree. Reads carry `0/0` and no diff;
+    /// consumers that only care about mutations filter on `kind`.
     FileChange {
         path: String,
         kind: FileChangeKind,
+        /// `serde(default)` so journals written before the counts existed
+        /// parse — those replay as `0/0`, which is what they recorded.
+        #[serde(default)]
+        added: u32,
+        #[serde(default)]
+        removed: u32,
         diff: Option<String>,
     },
     /// Context recall completed: which frames reached the prompt, from which
@@ -701,6 +718,19 @@ pub enum AgentEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         compiled_frame: Option<CompiledContextFrameBuilt>,
     },
+    /// One observable step of the proof this turn is building for itself.
+    ///
+    /// The pipeline already decided all of this — it read the diff, bought or
+    /// declined a witness, watched a command fail and then pass — and until
+    /// now kept every step to itself. A run that proves its work looked
+    /// identical to one that did not, because the only proof artifact on the
+    /// stream was the verdict at the end. These are the intermediate
+    /// observations, emitted as they are made, so a renderer can show the
+    /// proof accumulating **beside** the work instead of announcing it after.
+    ///
+    /// Strictly observability: no consumer decides anything from these, and
+    /// the verdict remains the authority on whether the work is verified.
+    Proof { step: ProofStep },
     /// A verification verdict — from the deterministic ladder (flip oracle,
     /// touched-tests-green) or the model judge (L-E11: deterministic-first;
     /// model judges handle only inconclusive evidence).
@@ -881,6 +911,7 @@ agent_event_tags! {
     ContextWrite => "context_write",
     BlockRegistered => "block_registered",
     StepManifest => "step_manifest",
+    Proof => "proof",
     JudgeVerdict => "judge_verdict",
     ScopeReview => "scope_review",
     AskUser => "ask_user",
@@ -1043,6 +1074,80 @@ pub struct JudgeEvidence {
     /// take it on faith.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence_refs: Vec<String>,
+}
+
+/// Which code state a [`ProofStep::Oracle`] observation was made against.
+///
+/// The distinction is the whole content of a flip: the same command failing in
+/// `Baseline` and passing in `Candidate` is proof, while either result twice
+/// against one tree is a tree observed twice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProofTree {
+    /// The pre-execution tree — the code as it was before this turn touched it.
+    Baseline,
+    /// The executed tree — the code as this turn left it.
+    Candidate,
+}
+
+/// One step of the proof a turn builds for its own work, in the order the
+/// pipeline makes the observation. Carried by [`AgentEvent::Proof`].
+///
+/// Additive to the wire contract in both directions: an older reader sees the
+/// whole event as [`AgentEvent::Unknown`], and a reader that knows `Proof` but
+/// not a future step tags it `Unknown` at the step level rather than guessing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ProofStep {
+    /// What assurance this turn is going to buy, stated by triage **before**
+    /// any of it happens.
+    ///
+    /// Emitted first, and the reason the rail can be honest at all. Every
+    /// other step reports something that *did* happen, so a turn where the
+    /// answer is "we decided not to" produced no steps and left the surface
+    /// with nothing to say — which is exactly the case that dominates in
+    /// practice. A declared plan turns that silence into a statement: the
+    /// witness row reads "waived by triage" from the first second of the
+    /// turn instead of implying a test is still coming.
+    Assurance {
+        /// Whether an independently authored witness test was called for.
+        witness: bool,
+        /// Whether a model judge was called for on inconclusive evidence.
+        judge: bool,
+    },
+    /// The warrant read the diff and answered "does this change need a test".
+    /// Emitted once per candidate, before any witness is bought — a change
+    /// with nothing to prove is a *stated* outcome here, never silence.
+    Warrant {
+        required: bool,
+        /// The stated reason when no test is warranted; `None` when one is.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+        /// Size of the change the answer was read from.
+        diff_lines: u32,
+    },
+    /// An independent model authored the failing witness, and its bytes are
+    /// pinned: any later change to `path` fails the candidate closed.
+    WitnessAuthored {
+        path: String,
+        /// The command that arms the flip oracle.
+        command: String,
+        /// The accepted artifact's fingerprint — what tamper exclusion compares
+        /// against for the rest of the run.
+        fingerprint: String,
+    },
+    /// A warranted witness could not be *produced* (no independent author, an
+    /// author that got stuck, a failed graft). The work stands; it is simply
+    /// unproven, and saying so is the point.
+    WitnessUnavailable { reason: String },
+    /// The flip oracle observed one run of the tracked command against one
+    /// tree. A fail in `Baseline` followed by a pass in `Candidate` is the
+    /// flip; anything else is not.
+    Oracle {
+        command: String,
+        passed: bool,
+        tree: ProofTree,
+    },
 }
 
 /// What a `ScopeReview` gate presents for approval before a large plan
@@ -1409,19 +1514,53 @@ mod tests {
     }
 
     #[test]
-    fn file_change_carries_the_diff_on_the_single_event_path() {
+    fn file_change_carries_the_delta_and_the_diff_on_the_single_event_path() {
         let event = AgentEvent::FileChange {
             path: "src/lib.rs".into(),
             kind: FileChangeKind::Modified,
+            added: 12,
+            removed: 3,
             diff: Some("@@ -1 +1 @@\n-old\n+new".into()),
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"file_change\""), "{json}");
         let back: AgentEvent = serde_json::from_str(&json).unwrap();
         match back {
-            AgentEvent::FileChange { kind, diff, .. } => {
+            AgentEvent::FileChange {
+                kind,
+                added,
+                removed,
+                diff,
+                ..
+            } => {
                 assert_eq!(kind, FileChangeKind::Modified);
+                assert_eq!(
+                    (added, removed),
+                    (12, 3),
+                    "the recorder's counts survive the wire — consumers must \
+                     not have to recount the diff text"
+                );
                 assert!(diff.is_some());
+            }
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    /// Journals written before the counts existed must still replay. They
+    /// recorded no delta, so they come back as `0/0` — the honest answer for a
+    /// stream that never measured one.
+    #[test]
+    fn a_file_change_without_counts_still_parses() {
+        let old = r#"{"type":"file_change","path":"a.rs","kind":"modified","diff":null}"#;
+        match serde_json::from_str::<AgentEvent>(old).unwrap() {
+            AgentEvent::FileChange {
+                path,
+                added,
+                removed,
+                ..
+            } => {
+                assert_eq!(path, "a.rs");
+                assert_eq!((added, removed), (0, 0));
             }
             other => panic!("unexpected variant: {other:?}"),
         }

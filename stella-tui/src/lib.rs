@@ -58,6 +58,7 @@ pub mod invaders;
 pub mod markdown;
 pub mod palette;
 pub mod progress;
+pub mod proof;
 pub mod resource;
 pub mod scenario;
 pub mod splash;

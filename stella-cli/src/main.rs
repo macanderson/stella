@@ -31,6 +31,7 @@ mod candidate_ws;
 mod claims;
 mod cloud_drain;
 mod command_deck;
+mod commands_cmd;
 mod config;
 mod connect_cmd;
 mod contextgraph;
@@ -495,6 +496,16 @@ enum Command {
     Scripts {
         #[command(subcommand)]
         cmd: scripts_cmd::ScriptsCmd,
+    },
+
+    /// Custom slash commands: list what this workspace offers, or convert
+    /// markdown definitions to TOML. Conversion is deliberate and never part
+    /// of `init` — `init` SYMLINKS `.claude/commands/`, so a converted copy
+    /// trades the live link for a typed `allowed-tools` and a delimiter-free
+    /// `prompt`. Offline: reads and writes local files, needs no API key.
+    Commands {
+        #[command(subcommand)]
+        cmd: commands_cmd::CommandsCmd,
     },
 
     /// Inspect the storage map — every storage layer, namespace, relation,
@@ -1054,6 +1065,10 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // Reads the local index + manifest only — zero API keys.
             return storage_cmd::run_storage(cmd);
         }
+        Some(Command::Commands { cmd }) => {
+            // Reads (and, for convert, writes) definition files only.
+            return commands_cmd::run_commands(cmd);
+        }
         // Phase 3 (#714). Reads and appends to the local lifecycle ledger
         // only — no provider, no API key.
         Some(Command::Proposals { cmd }) => {
@@ -1102,8 +1117,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             return enterprise_telemetry::run_command(*cmd);
         }
         Some(Command::Ingest(args)) => {
-            // Reads local markdown only — no store, no model, no API key.
-            return ingest_cmd::run(args);
+            // Scanning (no paths) reads local markdown only; extracting from
+            // named files resolves a provider and makes a model call, so the
+            // global model / key / base-url overrides are threaded through.
+            return ingest_cmd::run(
+                args,
+                cli.globals.model.as_deref(),
+                cli.globals.api_key.as_deref(),
+                cli.globals.base_url.as_deref(),
+            );
         }
         Some(Command::Scoreboard) => {
             // Reads .stella/private/store.db only.
@@ -1381,6 +1403,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         | Command::Graph { .. }
         | Command::Scripts { .. }
         | Command::Storage { .. }
+        | Command::Commands { .. }
         | Command::Inspect { .. }
         // Phase 3 (#714)
         | Command::Proposals { .. }

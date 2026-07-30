@@ -341,6 +341,8 @@ fn step_usage_accumulates_tokens_and_file_change_fills_ledger() {
         AgentEvent::FileChange {
             path: "src/a.rs".into(),
             kind: FileChangeKind::Modified,
+            added: 2,
+            removed: 1,
             diff: Some("+one\n+two\n-gone\n".into()),
         },
     ));
@@ -364,6 +366,8 @@ fn ledger_counts_reads_without_regressing_the_mutation_badge() {
             AgentEvent::FileChange {
                 path: path.into(),
                 kind: FileChangeKind::Read,
+                added: 0,
+                removed: 0,
                 diff: None,
             },
         )
@@ -382,6 +386,8 @@ fn ledger_counts_reads_without_regressing_the_mutation_badge() {
         AgentEvent::FileChange {
             path: "src/a.rs".into(),
             kind: FileChangeKind::Modified,
+            added: 1,
+            removed: 0,
             diff: Some("+one\n".into()),
         },
     ));

@@ -328,6 +328,12 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         (task_rows.len() as u16 + 2).min(10)
     };
 
+    // The PROOF rail sits UNDER the transcript, not above it: it is a claim
+    // about the work, so it reads after the work. Fixed height while it is up
+    // (0 = collapsed on turns that never reach verification), so the transcript
+    // does not reflow as the proof accumulates.
+    let proof_h = crate::views::proof::band_height(&sm.proof);
+
     let bands = Layout::vertical([
         Constraint::Length(1),       // identity header
         Constraint::Length(3),       // HUD
@@ -335,6 +341,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         Constraint::Length(ask_h),   // pending ask-user (0 = collapsed)
         Constraint::Length(tasks_h), // task-board checklist (0 = collapsed)
         Constraint::Min(1),          // transcript
+        Constraint::Length(proof_h), // proof rail (0 = collapsed)
     ])
     .split(area);
 
@@ -477,6 +484,9 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         bands[5],
         buf,
     );
+    if proof_h > 0 {
+        crate::views::proof::render(&sm.proof, bands[6], buf);
+    }
 }
 
 /// Light every occurrence of `query` inside the rows on screen.
@@ -970,6 +980,8 @@ mod tests {
         model.apply(&AgentEvent::FileChange {
             path: "src/x.rs".into(),
             kind: FileChangeKind::Modified,
+            added: 1,
+            removed: 0,
             diff: Some("@@ -1,1 +1,1 @@\n+first_diff_line".into()),
         });
         model.apply(&AgentEvent::ToolResult {
@@ -1010,6 +1022,8 @@ mod tests {
         model.apply(&AgentEvent::FileChange {
             path: "src/x.rs".into(),
             kind: FileChangeKind::Modified,
+            added: 1,
+            removed: 0,
             diff: Some("@@ -1,1 +1,1 @@\n+second_diff_line".into()),
         });
         assert_eq!(model.transcript.len(), len_before, "no transcript append");
@@ -1047,6 +1061,8 @@ mod tests {
             model.apply(&AgentEvent::FileChange {
                 path: "src/x.rs".into(),
                 kind: FileChangeKind::Modified,
+                added: 0,
+                removed: 0,
                 diff: Some(format!("@@ -1,1 +1,1 @@\n+evicting_edit_{i}")),
             });
         }

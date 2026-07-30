@@ -598,8 +598,15 @@ impl WorkspaceModel {
         }
 
         // Cross-agent read-models.
-        if let AgentEvent::FileChange { path, kind, diff } = event {
-            self.ledger.record(agent, path, *kind, diff);
+        if let AgentEvent::FileChange {
+            path,
+            kind,
+            added,
+            removed,
+            ..
+        } = event
+        {
+            self.ledger.record(agent, path, *kind, *added, *removed);
         }
         if let AgentEvent::Pr {
             url,
@@ -663,9 +670,15 @@ pub struct FileRecord {
     pub reads: u32,
 }
 
-/// Every file touched this session, with CRUD op and line +/- parsed from the
-/// unified-diff strings on `FileChange` events (there is no structured
-/// +/- in the event — it is derived from the diff text, deterministically).
+/// Every file touched this session, with CRUD op and the line +/- **carried
+/// on** each `FileChange` event.
+///
+/// These counts are no longer re-derived here. They used to be parsed back out
+/// of the event's diff text, which made the panel's numbers a count of whatever
+/// the emitter had synthesized — for a bulk edit or a worker lane, nothing at
+/// all, rendering as `+0 -0` over real work. The emitter
+/// (`ToolRegistry::record_touch`) computes the delta from the actual pre- and
+/// post-images and sends it; this fold just accumulates.
 #[derive(Clone, Debug, Default)]
 pub struct FileLedger {
     pub records: Vec<FileRecord>,
@@ -682,8 +695,7 @@ pub struct FileLedger {
 const MAX_LEDGER_RECORDS: usize = 4096;
 
 impl FileLedger {
-    fn record(&mut self, agent: &str, path: &str, kind: FileChangeKind, diff: &Option<String>) {
-        let (added, removed) = diff.as_deref().map(count_diff_lines).unwrap_or((0, 0));
+    fn record(&mut self, agent: &str, path: &str, kind: FileChangeKind, added: u32, removed: u32) {
         if let Some(rec) = self
             .records
             .iter_mut()
@@ -929,6 +941,11 @@ fn event_intensity(ev: &AgentEvent) -> u8 {
         AgentEvent::Commit { .. } | AgentEvent::Pr { .. } => 230,
         AgentEvent::BudgetTick { .. } | AgentEvent::StepUsage { .. } => 60,
         AgentEvent::Error { .. } => 255,
+        // A proof step is a decision the run reached, not work it did. It is
+        // real activity on the rail and none on the sparkline — pitched with
+        // the stage boundaries it interleaves with, so a well-proven turn does
+        // not read as busier than an unproven one doing the same edits.
+        AgentEvent::Proof { .. } => 170,
         // Explicit rather than falling through the wildcard: an undecodable
         // event is real activity, so it should register on the sparkline, but
         // this build cannot know whether it was hot (an edit) or cool (a
@@ -965,6 +982,39 @@ fn status_from_event(ev: &AgentEvent) -> Option<AgentStatus> {
 }
 
 /// A trace kind + short human summary for one event.
+/// One trace line for a proof step — the same facts the rail folds, in the
+/// order they were observed, for the reader who wants the history the rail
+/// deliberately discards.
+fn proof_trace(step: &stella_protocol::ProofStep) -> String {
+    use stella_protocol::{ProofStep, ProofTree};
+    match step {
+        ProofStep::Assurance { witness, judge } => format!(
+            "assurance: witness {}, judge {}",
+            if *witness { "on" } else { "waived" },
+            if *judge { "on" } else { "waived" }
+        ),
+        ProofStep::Warrant {
+            required: true,
+            diff_lines,
+            ..
+        } => format!("warrant: required ({diff_lines} lines)"),
+        ProofStep::Warrant { reason, .. } => format!(
+            "warrant: {}",
+            reason.as_deref().unwrap_or("no test warranted")
+        ),
+        ProofStep::WitnessAuthored { path, .. } => format!("witness authored: {path}"),
+        ProofStep::WitnessUnavailable { reason } => format!("witness unavailable: {reason}"),
+        ProofStep::Oracle { passed, tree, .. } => format!(
+            "oracle: {} on {}",
+            if *passed { "pass" } else { "fail" },
+            match tree {
+                ProofTree::Baseline => "base",
+                ProofTree::Candidate => "new",
+            }
+        ),
+    }
+}
+
 fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
     use stella_protocol::ToolOutput;
     match ev {
@@ -1023,13 +1073,16 @@ fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
                 format!("{} in {duration_ms}ms", if ok { "ok" } else { "err" }),
             )
         }
-        AgentEvent::FileChange { path, kind, diff } => {
-            let (a, r) = diff.as_deref().map(count_diff_lines).unwrap_or((0, 0));
-            (
-                TraceKind::File,
-                format!("{kind:?} {path} +{a}/-{r}").to_lowercase(),
-            )
-        }
+        AgentEvent::FileChange {
+            path,
+            kind,
+            added,
+            removed,
+            ..
+        } => (
+            TraceKind::File,
+            format!("{kind:?} {path} +{added}/-{removed}").to_lowercase(),
+        ),
         AgentEvent::BudgetTick { spent_usd, .. } => (TraceKind::Budget, format!("${spent_usd:.4}")),
         AgentEvent::StepUsage {
             model, cost_usd, ..
@@ -1052,6 +1105,10 @@ fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
             TraceKind::Context,
             format!("manifest step {step}: {} blocks", blocks.len()),
         ),
+        // Traced under Verdict, the kind that already means "what this run
+        // established": the steps and the verdict are one story, and the trace
+        // log is where a reader reconstructs how the rail got where it is.
+        AgentEvent::Proof { step } => (TraceKind::Verdict, proof_trace(step)),
         AgentEvent::JudgeVerdict { passed, .. } => (
             TraceKind::Verdict,
             if *passed {

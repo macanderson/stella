@@ -68,7 +68,10 @@ use crate::ports::{
     Recall, RecalledFrame, RepoStatusPort, RepoStructurePort, ScopeDecision, TestInvocation,
     TestRunner, WorkspaceError,
 };
-use crate::scope::{ScopeEstimate, apply_trim, build_proposal, needs_scope_review};
+use crate::scope::{
+    MAX_SCOPE_REVISIONS, PlannedScope, ScopeEstimate, ScopeVerdict, apply_trim, build_proposal,
+    needs_scope_review,
+};
 use crate::triage::{
     TaskAssessment, TaskClass, parse_triage_response, resolve_conversational, resolve_task_class,
     resolve_witness, triage_prompt,
@@ -90,6 +93,7 @@ use crate::witness::{
 mod disclosure;
 mod raw_usage;
 mod run_error;
+mod scope_stage;
 mod stage_budget;
 mod witness_stage;
 use raw_usage::{RawCall, RawCallError};
@@ -679,36 +683,21 @@ impl<'a> Pipeline<'a> {
                 .await;
         }
 
-        // --- 3. Plan (skipped for simple/single-task). ---------------------
+        // --- 3+4. Plan, then scope review — one phase, because a reviewer who
+        // asks for a different scope sends us back to the planner. -----------
         let plan: Option<Vec<PlanStep>> = if task_class.plans() {
-            let repo_structure = self.repo.structure_summary().await;
             match self
-                .plan_stage(goal, &frames, &repo_structure, budget, &mut total_cost)
+                .plan_with_review(goal, &frames, budget, &mut total_cost)
                 .await
             {
-                Ok(plan) => Some(plan),
-                Err(abort) => {
-                    return Ok(self.aborted_before_execute(task_class, total_cost, &abort.reason));
+                Ok(PlannedScope::Steps(steps)) => Some(steps),
+                Ok(PlannedScope::Ended { reason }) => {
+                    return Ok(self.aborted_before_execute(task_class, total_cost, &reason));
                 }
+                Err(cause) => return Err(PipelineRunError::new(cause, total_cost)),
             }
         } else {
             None
-        };
-        // --- 4. Scope review (only for planned work above thresholds). -----
-        let plan = match plan {
-            Some(steps) => match self.scope_review(goal, steps).await {
-                Ok(Some(steps)) => Some(steps),
-                Ok(None) => {
-                    // User aborted (or trimmed to nothing) at the gate.
-                    return Ok(self.aborted_before_execute(
-                        task_class,
-                        total_cost,
-                        "aborted at scope review",
-                    ));
-                }
-                Err(cause) => return Err(PipelineRunError::new(cause, total_cost)),
-            },
-            None => None,
         };
 
         // --- 5. Witness + execute + verify (single-shot or best-of-N). ------
@@ -962,7 +951,7 @@ impl<'a> Pipeline<'a> {
         // assurance down. It fires on one shape (a bare deletion of a named
         // artifact) where an authored witness has nothing to fail against and
         // the author can only invent something vacuous.
-        Ok(match assessment {
+        let resolved = match assessment {
             Some(assessment) => {
                 let class = resolve_task_class(Some(assessment.class), goal);
                 TaskAssessment {
@@ -980,7 +969,25 @@ impl<'a> Pipeline<'a> {
                     ..TaskAssessment::from_class(class)
                 }
             }
-        })
+        };
+        // The turn's assurance PLAN, published the moment it is decided and
+        // before any later stage can fail, abort, or decline to run.
+        //
+        // Every other proof step reports something that happened, so the most
+        // common outcome by far — triage deciding this change does not warrant
+        // a test — used to produce no steps at all and leave the surface with
+        // nothing to say about the thing it exists to say. A declared plan
+        // makes "we chose not to" a statement rather than an absence.
+        //
+        // Not emitted for a conversational turn: there is no work, so there is
+        // no assurance question, and answering an unasked one is noise.
+        if !resolved.conversational {
+            self.emit_proof(ProofStep::Assurance {
+                witness: resolved.wants_witness(),
+                judge: resolved.wants_judge(),
+            });
+        }
+        Ok(resolved)
     }
 
     // Conversational fast path
@@ -1090,11 +1097,14 @@ impl<'a> Pipeline<'a> {
 
     // Stage: plan
 
+    /// `revision` is the reviewer's note from a rejected scope card, or `None`
+    /// for a turn's first plan.
     async fn plan_stage(
         &self,
         goal: &str,
         recall: &[RecalledFrame],
         repo_structure: &str,
+        revision: Option<&str>,
         budget: &mut BudgetGuard,
         total: &mut f64,
     ) -> Result<Vec<PlanStep>, PipelineBudgetAbort> {
@@ -1111,7 +1121,7 @@ impl<'a> Pipeline<'a> {
             self.emit_fallback(fb);
         }
 
-        let prompt = build_planner_prompt(goal, recall, repo_structure);
+        let prompt = build_planner_prompt(goal, recall, repo_structure, revision);
         // Plan rides the worker's settings (same router tier, same tuning).
         let worker_overrides = RoleCallOverrides::default();
         let result = match self
@@ -1166,74 +1176,6 @@ impl<'a> Pipeline<'a> {
         // Degrade to a single-step plan rather than failing — a planner that
         // won't produce a parseable plan must still let the work proceed.
         Ok(fallback_plan())
-    }
-
-    // Stage: scope review
-
-    /// Returns `Ok(Some(plan))` to proceed (possibly trimmed), `Ok(None)` if
-    /// the user aborted/emptied the plan, or `Err` if headless without bypass.
-    async fn scope_review(
-        &self,
-        goal: &str,
-        plan: Vec<PlanStep>,
-    ) -> Result<Option<Vec<PlanStep>>, PipelineError> {
-        // Coarse blast-radius estimate: one file per step is a deliberately
-        // rough proxy until the planner emits per-step file hints (a
-        // documented follow-up). Cost estimate is left to the caller/planner.
-        let estimate = ScopeEstimate {
-            estimated_files: plan.len() as u32,
-            estimated_cost_usd: None,
-        };
-        if !needs_scope_review(&plan, &estimate, &self.config.scope_thresholds) {
-            return Ok(Some(plan));
-        }
-
-        if self.config.headless && self.config.headless_bypass_scope_review {
-            // Bypass means proceed, not "ask a gate that always says no".
-            // The headless approval port is `AlwaysAbortGate`, so running the
-            // review anyway would empty the plan and end the turn having done
-            // nothing — the same zero-work outcome as the error below, just
-            // spelled differently.
-            return Ok(Some(plan));
-        }
-        if self.config.headless {
-            // Say why the run is ending. This error leaves through the
-            // `Result`, not the event stream, so without this the stream just
-            // stops mid-plan: a consumer reading only events sees a run that
-            // vanished with no terminal event and no explanation.
-            self.emit(AgentEvent::Error {
-                message: format!(
-                    "this plan needs scope review ({} steps, ~{} files) and a headless \
-                     run has nobody to ask; set `headless_scope_bypass: on` where the \
-                     working tree is disposable, or raise the scope thresholds",
-                    plan.len(),
-                    estimate.estimated_files
-                ),
-                retryable: false,
-            });
-            return Err(PipelineError::ScopeReviewRequiredHeadless);
-        }
-
-        self.emit(AgentEvent::Stage {
-            name: StageKind::ScopeReview,
-        });
-        let proposal = build_proposal(goal, &plan, &estimate);
-        self.emit(AgentEvent::ScopeReview {
-            proposal: proposal.clone(),
-        });
-
-        match self.approvals.review(&proposal).await {
-            ScopeDecision::Approve => Ok(Some(plan)),
-            ScopeDecision::Trim { keep_steps } => {
-                let trimmed = apply_trim(&plan, &keep_steps);
-                if trimmed.is_empty() {
-                    Ok(None)
-                } else {
-                    Ok(Some(trimmed))
-                }
-            }
-            ScopeDecision::Abort => Ok(None),
-        }
     }
 
     // Stage: execute + verify — candidate generation and selection
@@ -1557,14 +1499,20 @@ impl<'a> Pipeline<'a> {
                 };
                 match ws.adopt(withhold).await {
                     Ok(adopted) => {
-                        // Surface the adopted paths on the event stream: the
+                        // Surface the adopted changes on the event stream: the
                         // winner's edits happened inside the snapshot, so no
-                        // FileChange was emitted for the real tree yet.
+                        // FileChange was emitted for the real tree yet. The
+                        // adoption measured them (git's numstat + patch), so
+                        // these rows carry a real delta — they used to arrive
+                        // with `diff: None` and no counts, which the Files tab
+                        // rendered as `+0 -0` for every adopted file.
                         for change in adopted {
                             self.emit(AgentEvent::FileChange {
                                 path: change.path,
                                 kind: change.kind,
-                                diff: None,
+                                added: change.added,
+                                removed: change.removed,
+                                diff: change.diff,
                             });
                         }
                         ws.remove().await;
@@ -1621,6 +1569,11 @@ impl<'a> Pipeline<'a> {
         {
             let pre = surface.tests.run_test(cmd.invocation).await;
             oracle.observe(cmd.command, pre.passed());
+            self.emit_proof(ProofStep::Oracle {
+                command: cmd.command.to_string(),
+                passed: pre.passed(),
+                tree: ProofTree::Baseline,
+            });
         }
 
         // Snapshot untracked files (with content fingerprints) BEFORE
@@ -1665,6 +1618,21 @@ impl<'a> Pipeline<'a> {
             // A clean lookup: nothing to verify.
             return state.into_unverified();
         }
+
+        // The warrant's answer, published from the one place that always runs
+        // for a verifying candidate. `witness_on_demand` and
+        // `warranted_completion` each re-ask it (the call is pure and cheap),
+        // but neither is reached on every path — authoring is skipped whenever
+        // there is no independent author, and the completion shortcut returns
+        // early when a test IS required. Emitting from either would make the
+        // rail's first row appear only on some runs, which is the failure this
+        // whole surface exists to end.
+        let warrant = warrant(&state.diff_text, state.file_changes);
+        self.emit_proof(ProofStep::Warrant {
+            required: warrant.is_required(),
+            reason: warrant.reason().map(|r| r.sentence().to_string()),
+            diff_lines: state.diff_lines,
+        });
 
         // Buy the witness now, or not at all. Everything above this line has
         // already happened, so the diff is evidence rather than a prediction —
@@ -2037,6 +2005,11 @@ impl<'a> Pipeline<'a> {
                 let post = surface.tests.run_test(cmd.invocation).await;
                 let passed = post.passed();
                 oracle.observe(cmd.command, passed);
+                self.emit_proof(ProofStep::Oracle {
+                    command: cmd.command.to_string(),
+                    passed,
+                    tree: ProofTree::Candidate,
+                });
                 (Some(passed), post.stderr_tail)
             }
             None => (None, String::new()),
@@ -2434,18 +2407,22 @@ impl<'a> Pipeline<'a> {
         };
         match self.resolve_provider(Role::Judge) {
             Ok(judge) if judge.model_ref != worker.model_ref => true,
+            // Both arms report through `unproven`, not a bare `warn`. A
+            // witness triage asked for and the wiring cannot supply is
+            // precisely `WitnessUnavailable` — routing it to the warning
+            // channel alone left the rail's witness row with no statement, so
+            // it fell through to the backstop's "not reported" when the real
+            // answer was known all along and worth naming.
             Ok(_) => {
-                self.warn(format!(
-                    "no witness author independent of the worker (judge and worker both \
-                     resolved to `{}`); continuing without an authored witness",
+                self.unproven(format!(
+                    "no author independent of the worker (judge and worker both resolved to `{}`)",
                     worker.model_ref
                 ));
                 false
             }
             Err(_) => {
-                self.warn(
-                    "no witness author independent of the worker (the judge role is \
-                     unresolvable); continuing without an authored witness"
+                self.unproven(
+                    "no author independent of the worker (the judge role is unresolvable)"
                         .to_string(),
                 );
                 false
@@ -2484,6 +2461,14 @@ impl<'a> Pipeline<'a> {
 
     fn emit(&self, event: AgentEvent) {
         let _ = self.events.send(event);
+    }
+
+    /// Publish one step of the proof this turn is building for itself. Pure
+    /// observability — nothing downstream reads these back, and dropping them
+    /// changes no decision — but a run that proves its work used to be
+    /// indistinguishable on the stream from one that did not.
+    fn emit_proof(&self, step: ProofStep) {
+        self.emit(AgentEvent::Proof { step });
     }
 }
 
