@@ -650,6 +650,260 @@ fn parse_lessons_reads_an_array_out_of_narrated_output() {
     assert_eq!(lessons[0].domains, vec!["cli"]);
 }
 
+/// The self-review rides in the same response as the lessons, so the one
+/// reflection call that already runs now fills `execution_reflection`'s
+/// model-authored half — the columns the Observatory's AVG SELF-RATING,
+/// DELIVERED and "what to improve" panels read, and which no producer in the
+/// tree had ever written.
+#[test]
+fn reflection_response_yields_both_lessons_and_a_self_review() {
+    let allowed = vec!["cli".to_string()];
+    let response = "{\"lessons\": [{\"lesson\": \"register handlers in registry.py\", \
+         \"kind\": \"domain\", \"domains\": [\"cli\"]}], \
+         \"self_review\": {\"delivered\": true, \"rating\": 7, \
+         \"went_well\": \"found the seam fast\", \
+         \"to_improve\": \"should have run the gate by exit code\", \
+         \"critique\": \"correct, but slow to verify\"}}";
+    let lessons = lessons_with(response, &allowed);
+    assert_eq!(lessons.len(), 1, "the lessons array is still read");
+    assert_eq!(lessons[0].lesson, "register handlers in registry.py");
+
+    let review = crate::memory::reflection::parse_self_review(response)
+        .expect("the self_review object is read");
+    assert_eq!(review.delivered, Some(true));
+    assert_eq!(review.self_rating, Some(7));
+    assert_eq!(
+        review.what_to_improve,
+        "should have run the gate by exit code"
+    );
+}
+
+/// A model that answers with a bare lesson array — the format this prompt asked
+/// for until the self-review was added, and what any model that ignores the new
+/// envelope will still produce — must keep mining lessons exactly as before.
+/// Lesson mining is the one stage of this loop that already worked; adding the
+/// self-review must not put it at risk.
+#[test]
+fn a_bare_lesson_array_still_mines_lessons_and_simply_has_no_self_review() {
+    let allowed = vec!["cli".to_string()];
+    let bare = "[{\"lesson\": \"money is integer minor units\", \
+         \"kind\": \"domain\", \"domains\": [\"cli\"]}]";
+    assert_eq!(lessons_with(bare, &allowed).len(), 1);
+    assert!(
+        crate::memory::reflection::parse_self_review(bare).is_none(),
+        "no self_review offered is None, not an invented row"
+    );
+}
+
+/// Narration around the JSON breaks a naive slice in both directions, and the
+/// self-review scanner has to tolerate it for the same reason the lesson
+/// scanner does.
+#[test]
+fn a_self_review_is_read_out_of_narrated_output() {
+    let narrated = "Let me reflect. The rubric said {rating: 0-10}.\n\n```json\n\
+         {\"lessons\": [], \"self_review\": {\"rating\": 3, \
+         \"to_improve\": \"read the whole file first\"}}\n```\nDone!";
+    let review =
+        crate::memory::reflection::parse_self_review(narrated).expect("found past the prose");
+    assert_eq!(review.self_rating, Some(3));
+    assert_eq!(review.what_to_improve, "read the whole file first");
+    assert_eq!(review.delivered, None, "a field not offered stays absent");
+}
+
+/// A rating on some other scale is dropped rather than clamped. Clamping 95 to
+/// 10 would put a fabricated perfect score under a label that promises the
+/// model's own number; `None` reads as "declined to grade", which is true.
+#[test]
+fn an_out_of_range_rating_is_dropped_not_clamped() {
+    let of = |rating: &str| {
+        crate::memory::reflection::parse_self_review(&format!(
+            "{{\"self_review\": {{\"rating\": {rating}}}}}"
+        ))
+        .expect("object parses")
+        .self_rating
+    };
+    assert_eq!(of("95"), None);
+    assert_eq!(of("-1"), None);
+    assert_eq!(of("10"), Some(10));
+    assert_eq!(of("0"), Some(0));
+}
+
+/// End-to-end proof that the self-review reaches the table the Observatory
+/// reads. The dashboard's AVG SELF-RATING / DELIVERED / "what to improve"
+/// panels select from `execution_reflection`, and before this every row in a
+/// real workspace had NULL in all five model-authored columns because no
+/// producer existed — the writer hardcoded `self_rating: None` and nothing else
+/// ever wrote them. This drives the actual loop against a stub provider and
+/// asserts the row.
+#[tokio::test]
+async fn reflect_and_record_stores_the_models_self_review_against_its_execution() {
+    use async_trait::async_trait;
+    use stella_protocol::{
+        CompletionRequest, CompletionResult, CompletionUsage, Provider, ProviderError,
+    };
+
+    struct StubProvider;
+    #[async_trait]
+    impl Provider for StubProvider {
+        fn id(&self) -> &str {
+            "stub"
+        }
+        async fn complete(
+            &self,
+            _req: CompletionRequest,
+        ) -> Result<CompletionResult, ProviderError> {
+            Ok(CompletionResult {
+                text: r#"{"lessons": [{"lesson": "prefer withTenantDb over raw db()",
+                     "kind": "domain", "domains": []}],
+                     "self_review": {"delivered": true, "rating": 6,
+                     "went_well": "found the leak", "to_improve": "should have run the suite",
+                     "critique": "correct fix, thin verification"}}"#
+                    .into(),
+                tool_calls: vec![],
+                usage: CompletionUsage {
+                    reported: true,
+                    input_tokens: 1,
+                    ..CompletionUsage::default()
+                },
+                model: "stub".into(),
+                cost_usd: 0.0,
+                finish_reason: None,
+            })
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".stella")).unwrap();
+    let store = stella_store::Store::open(dir.path()).expect("open store in temp workspace");
+    let execution_id = store
+        .begin_execution("deck-pipeline", "fix the tenancy leak", "stub", "stub")
+        .unwrap();
+    let mut memory =
+        SessionMemory::open(dir.path(), false).expect("open session memory in temp workspace");
+    memory.set_execution_id(execution_id);
+
+    let transcript = vec![
+        msg(MessageRole::User, "fix the tenancy leak"),
+        msg(MessageRole::Assistant, "swapped db() for withTenantDb"),
+    ];
+    let report = memory
+        .reflect_and_record(&StubProvider, "stub", &transcript, true, true, None)
+        .await;
+    assert_eq!(report.recorded, 1, "lesson mining still works");
+
+    let review = store
+        .self_review(execution_id)
+        .unwrap()
+        .expect("a reflection row exists for this execution");
+    assert_eq!(
+        review.self_rating,
+        Some(6),
+        "AVG SELF-RATING now has something to average"
+    );
+    assert_eq!(
+        review.delivered,
+        Some(true),
+        "DELIVERED now has something to count"
+    );
+    assert_eq!(review.what_to_improve, "should have run the suite");
+    assert_eq!(review.what_went_well, "found the leak");
+
+    // The lesson is traceable to the turn that taught it, too — the same
+    // missing execution id that starved the self-review left every mined
+    // reflection row unattributed.
+    assert_eq!(
+        reflection_execution_ids(dir.path()),
+        vec![Some(execution_id)],
+        "the mined lesson names its execution"
+    );
+}
+
+/// Every `reflections.execution_id` in a workspace store, in row order. Read
+/// with a fresh connection because the attribution is what is under test and
+/// `Store` exposes no targeted reader for it.
+fn reflection_execution_ids(workspace_root: &std::path::Path) -> Vec<Option<i64>> {
+    let conn = rusqlite::Connection::open(workspace_root.join(".stella/private/store.db")).unwrap();
+    let mut stmt = conn
+        .prepare("SELECT execution_id FROM reflections ORDER BY id")
+        .unwrap();
+    stmt.query_map([], |r| r.get::<_, Option<i64>>(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect()
+}
+
+/// A path that never adopted `set_execution_id` must degrade exactly as before
+/// — lessons still mine, the self-review is dropped rather than written against
+/// a guessed row. Attributing one turn's grade to another execution would be
+/// worse than not recording it.
+#[tokio::test]
+async fn without_an_execution_id_the_self_review_is_dropped_not_misattributed() {
+    use async_trait::async_trait;
+    use stella_protocol::{
+        CompletionRequest, CompletionResult, CompletionUsage, Provider, ProviderError,
+    };
+
+    struct StubProvider;
+    #[async_trait]
+    impl Provider for StubProvider {
+        fn id(&self) -> &str {
+            "stub"
+        }
+        async fn complete(
+            &self,
+            _req: CompletionRequest,
+        ) -> Result<CompletionResult, ProviderError> {
+            Ok(CompletionResult {
+                text: r#"{"lessons": [{"lesson": "money is integer minor units",
+                     "kind": "domain", "domains": []}],
+                     "self_review": {"rating": 9}}"#
+                    .into(),
+                tool_calls: vec![],
+                usage: CompletionUsage {
+                    reported: true,
+                    input_tokens: 1,
+                    ..CompletionUsage::default()
+                },
+                model: "stub".into(),
+                cost_usd: 0.0,
+                finish_reason: None,
+            })
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".stella")).unwrap();
+    let store = stella_store::Store::open(dir.path()).unwrap();
+    let orphan = store
+        .begin_execution("deck-pipeline", "unrelated turn", "stub", "stub")
+        .unwrap();
+    let mut memory = SessionMemory::open(dir.path(), false).unwrap();
+    // Deliberately no `set_execution_id`.
+
+    let report = memory
+        .reflect_and_record(
+            &StubProvider,
+            "stub",
+            &[msg(MessageRole::User, "convert the totals")],
+            true,
+            true,
+            None,
+        )
+        .await;
+    assert_eq!(report.recorded, 1, "lessons are unaffected");
+
+    assert_eq!(
+        store.self_review(orphan).unwrap(),
+        None,
+        "no rating was pinned to an unrelated execution"
+    );
+    assert_eq!(
+        reflection_execution_ids(dir.path()),
+        vec![None],
+        "and the lesson is filed unattributed, as it was before"
+    );
+}
+
 fn lessons_of(text: &str) -> Vec<crate::memory::ReflectionLesson> {
     lessons_with(text, &[])
 }

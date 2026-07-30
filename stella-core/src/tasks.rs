@@ -105,18 +105,6 @@ impl TaskBoard {
         Ok(item)
     }
 
-    /// Claim a task for a lane without forcing it in progress (the lead
-    /// marking itself as owner on create).
-    pub fn set_owner(
-        &mut self,
-        id: &str,
-        owner: impl Into<String>,
-    ) -> Result<&TaskItem, TaskBoardError> {
-        let item = Self::find(&mut self.items, id)?;
-        item.owner = Some(owner.into());
-        Ok(item)
-    }
-
     fn find<'a>(items: &'a mut [TaskItem], id: &str) -> Result<&'a mut TaskItem, TaskBoardError> {
         let item = items
             .iter_mut()

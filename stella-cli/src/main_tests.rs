@@ -7,10 +7,72 @@
 
 use clap::{CommandFactory, Parser};
 
-use super::{
-    AuthCmd, BUILD_VERSION_IDENTITY, Cli, Command, ConnectCmd, OutputFormat, TelemetryCmd,
-    error_summary_json, version_static, version_string,
+use super::build_info::{
+    BUILD_VERSION_IDENTITY, long_version_static, version_static, version_string,
 };
+use super::term_policy::{animation_disabled, dumb_terminal};
+use super::{AuthCmd, Cli, Command, ConnectCmd, OutputFormat, TelemetryCmd, error_summary_json};
+
+/// `-V` stays one greppable line; `--version` answers the two questions a bug
+/// report otherwise costs a round trip. Both must agree about the version
+/// itself — they read the same `build.rs` literal, and this pins that.
+#[test]
+fn the_long_version_extends_the_short_one_without_contradicting_it() {
+    let long = long_version_static();
+    assert!(
+        long.starts_with(version_string()),
+        "the long version must lead with the exact short version: {long}"
+    );
+    assert!(long.contains("target:"), "{long}");
+    assert!(long.contains("profile:"), "{long}");
+    // The claim launcher attests the NUL-delimited identity bytes; the long
+    // string is a separate literal and must not carry NULs into them.
+    assert!(!long.contains('\0'), "{long}");
+}
+
+/// Completions are generated from the live `Command` tree, so a new
+/// subcommand is completable the day it lands. This proves the tree is
+/// actually generatable (clap panics on an inconsistent one) and that the
+/// output names the binary rather than the crate.
+#[test]
+fn completions_generate_for_every_supported_shell() {
+    for shell in [
+        clap_complete::Shell::Bash,
+        clap_complete::Shell::Zsh,
+        clap_complete::Shell::Fish,
+        clap_complete::Shell::PowerShell,
+        clap_complete::Shell::Elvish,
+    ] {
+        let mut command = Cli::command();
+        let mut out: Vec<u8> = Vec::new();
+        clap_complete::generate(shell, &mut command, "stella", &mut out);
+        let script = String::from_utf8(out).expect("completion scripts are UTF-8");
+        assert!(!script.is_empty(), "{shell} produced nothing");
+        assert!(
+            script.contains("stella"),
+            "{shell} script must name the `stella` binary, not the crate"
+        );
+        // A representative leaf from the real tree — proof the generator saw
+        // the subcommands and not just the root.
+        assert!(
+            script.contains("scoreboard"),
+            "{shell} script is missing subcommands"
+        );
+    }
+}
+
+#[test]
+fn completions_parse_for_each_shell_name() {
+    for name in ["bash", "zsh", "fish", "powershell", "elvish"] {
+        let cli = Cli::try_parse_from(["stella", "completions", name])
+            .unwrap_or_else(|e| panic!("`stella completions {name}` must parse: {e}"));
+        assert!(matches!(cli.command, Some(Command::Completions { .. })));
+    }
+    assert!(
+        Cli::try_parse_from(["stella", "completions", "tcsh"]).is_err(),
+        "an unsupported shell must be a usage error, not a silent empty script"
+    );
+}
 
 /// The build script owns version stamping so both CLI surfaces consume the
 /// exact same compile-time literal. In particular, main must not reconstruct
@@ -103,6 +165,76 @@ fn observatory_preflight_reports_unsafe_legacy_store() {
         "{error}"
     );
     assert!(dot.join("store.db").exists());
+}
+
+/// `colored` honours `NO_COLOR`, `CLICOLOR*`, and a non-tty stream, but not
+/// `TERM` — so a dumb terminal (Emacs `M-x shell`, a serial console, an
+/// editor's build pane, `TERM=dumb` in CI) rendered every escape sequence
+/// literally. Every other Unix tool that colours output treats `dumb` as
+/// "this terminal cannot".
+#[test]
+fn a_dumb_terminal_disables_colour_unless_the_user_forces_it() {
+    use std::ffi::OsStr;
+    let term = |s: &str| Some(OsStr::new(s)).map(|o| o.to_owned());
+
+    assert!(dumb_terminal(term("dumb").as_deref(), None));
+    // Force is the documented "I know what my terminal is" escape hatch and
+    // must outrank the heuristic, in both spellings of "off".
+    assert!(!dumb_terminal(
+        term("dumb").as_deref(),
+        term("1").as_deref()
+    ));
+    assert!(dumb_terminal(term("dumb").as_deref(), term("0").as_deref()));
+    assert!(dumb_terminal(term("dumb").as_deref(), term("").as_deref()));
+
+    // Real terminals, and an unset TERM, are left entirely alone — the tty
+    // and NO_COLOR checks `colored` already performs stay the authority.
+    assert!(!dumb_terminal(term("xterm-256color").as_deref(), None));
+    assert!(!dumb_terminal(term("dumb-but-not-really").as_deref(), None));
+    assert!(!dumb_terminal(None, None));
+}
+
+/// `--no-anim`'s help promises "Also forced on by STELLA_NO_ANIM or NO_COLOR",
+/// and for the Command Deck — the surface that actually shimmers, and the one
+/// an asciinema recording or CI log captures — nothing folded either signal
+/// in. The flag's own documentation was the bug report.
+#[test]
+fn the_env_signals_no_anim_advertises_actually_force_it() {
+    let _env = crate::test_env::lock();
+    let restore = |name: &str, prior: Option<std::ffi::OsString>| unsafe {
+        match prior {
+            Some(v) => std::env::set_var(name, v),
+            None => std::env::remove_var(name),
+        }
+    };
+    let prior_anim = std::env::var_os("STELLA_NO_ANIM");
+    let prior_color = std::env::var_os("NO_COLOR");
+    // SAFETY: serialized behind the binary-wide env lock, and both names are
+    // restored below whatever the assertions do.
+    unsafe {
+        std::env::remove_var("STELLA_NO_ANIM");
+        std::env::remove_var("NO_COLOR");
+    }
+
+    assert!(!animation_disabled(false), "clean env animates");
+    assert!(animation_disabled(true), "the flag alone suffices");
+
+    unsafe { std::env::set_var("STELLA_NO_ANIM", "1") };
+    assert!(animation_disabled(false));
+    // House convention for boolean env vars in this CLI (`STELLA_PLAIN`,
+    // `STELLA_NO_ENV_FILE`): an explicit `0` means off.
+    unsafe { std::env::set_var("STELLA_NO_ANIM", "0") };
+    assert!(!animation_disabled(false));
+    unsafe { std::env::remove_var("STELLA_NO_ANIM") };
+
+    unsafe { std::env::set_var("NO_COLOR", "1") };
+    assert!(animation_disabled(false));
+    // NO_COLOR's published rule: present *and non-empty*.
+    unsafe { std::env::set_var("NO_COLOR", "") };
+    assert!(!animation_disabled(false));
+
+    restore("STELLA_NO_ANIM", prior_anim);
+    restore("NO_COLOR", prior_color);
 }
 
 /// clap's own consistency audit (conflicting ids, broken defaults,

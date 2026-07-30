@@ -230,6 +230,16 @@ pub struct SessionMemory {
     /// this is off the learning loop runs exactly the lexical path that ships
     /// today and writes nothing to the lifecycle ledger.
     lifecycle_enabled: bool,
+    /// The `executions` row this session's next reflection belongs to, set by
+    /// the turn that opened it.
+    ///
+    /// The post-turn self-review is stored 1:1 with an execution, so without
+    /// this the loop has nothing to key the write on — which is why
+    /// `execution_reflection.self_rating` was NULL on every row ever written,
+    /// and the Observatory's self-improve panels had no data to show. `None`
+    /// degrades exactly as before: lessons still mine, the self-review is
+    /// dropped rather than written against a guessed row.
+    execution_id: Option<i64>,
 }
 
 impl SessionMemory {
@@ -261,6 +271,21 @@ impl SessionMemory {
     #[cfg(test)]
     pub(crate) fn task_id_for_test(&self) -> &str {
         &self.task_id
+    }
+
+    /// Tell memory which execution this turn's reflection belongs to, so the
+    /// model's self-review can be stored against it.
+    ///
+    /// Called by every path that begins an execution and later reflects. Not
+    /// test-gated, unlike `set_task_id` above: the whole point is the shipped
+    /// paths calling it, and a path that forgets to silently loses that turn's
+    /// self-rating rather than failing loudly, so the callers are the feature.
+    ///
+    /// (`set_task_id` is deliberately named in prose rather than linked. It is
+    /// `#[cfg(test)]`, so it does not exist in a doc build at all, and an
+    /// intra-doc link to it fails `-D warnings` rather than resolving.)
+    pub fn set_execution_id(&mut self, execution_id: i64) {
+        self.execution_id = Some(execution_id);
     }
 
     /// Open memory with workspace skill injection governed by the session's
@@ -322,6 +347,7 @@ impl SessionMemory {
                     // Phase 3 (#714)
                     lifecycle_enabled: tuning::session_lifecycle_enabled(workspace_root),
                     task_id: default_task_id(),
+                    execution_id: None,
                 })
             }
             Err(e) => {

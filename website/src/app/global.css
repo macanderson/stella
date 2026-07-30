@@ -1,24 +1,22 @@
 /**
- * Stella CLI docs — styles.
+ * Stella docs — the semantic layer.
  *
- * Brand system: "bright sky on black — a signal light in the dark." This site
+ * Brand system: electric blue and gold on deep space (docs/brand/BRAND.md is
+ * the normative source). This site
  * used to be deliberately hueless ("paper & ink, no accent colour"), which was
  * the right call while the repo carried three rival palettes and a neutral site
  * refused to arbitrate. That is settled now: there is one normative palette,
  * and this file consumes it.
  *
- * Values live in ./tokens.css, which mirrors stella-tui/src/palette.rs. Do not
- * add a hex literal here — add a token in both places. This
- * file is the *semantic* layer: it decides which token is foreground in which
- * mode, exactly as stella-tui's theme.rs sits over its generated palette.rs.
+ * Three rules the rest of the file obeys:
  *
- * The sky accent is asymmetric between the modes, and that is deliberate
- * rather than an oversight. It is 1.67:1 on white — well under what body text
- * needs — so on the light ground it is never text: it appears only as a FILL
- * under an ink label (11.87:1), and light-mode accent text is ink. On the black
- * ground it is 12.60:1 and carries brand, active/running, and progress.
- * `--stella-sky-ink` (9.45:1 on paper) is the only brand *text* tone light mode
- * may use.
+ * The brand accent is asymmetric between the modes, and that is deliberate
+ * rather than an oversight. Electric blue on white is far under what body text
+ * needs, so on the light ground it is never text: it appears only as a FILL
+ * under an ink label, and light-mode accent text is ink. On the dark ground
+ * `brand-bright` is 7.4:1 and carries brand, active/running, and progress.
+ * `--stella-brand-ink` (7.0:1 on paper) is the only brand *text* tone light
+ * mode may use.
  *
  * The accent is also reserved: brand, active, progress. Not a general-purpose
  * highlight — if everything is blue, nothing is.
@@ -38,19 +36,46 @@
 /* Let Tailwind see Fumadocs' compiled utility classes. */
 @source "../../node_modules/fumadocs-ui/dist/**/*.js";
 
-/* ───────────────────────────────────────────────────────────────────────────
- * Brand tokens + Fumadocs token overrides
- * ─────────────────────────────────────────────────────────────────────────── */
+/* Geist is the brand face (BRAND.md § Type): Geist Sans for product UI and
+ * prose, Geist Mono for annotation, code, and the terminal. Both are loaded by
+ * src/app/layout.tsx and exposed as the two variables below. */
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* One type scale for the whole site. Ratio ~1.25, rounded to whole pixels so
+   * nothing lands on a half-pixel baseline. */
+  --stella-type-2xs: 0.6875rem; /* 11px — meta, badges */
+  --stella-type-xs: 0.75rem; /* 12px — captions */
+  --stella-type-sm: 0.875rem; /* 14px — secondary UI, card body */
+  --stella-type-base: 1rem; /* 16px — prose */
+  --stella-type-md: 1.125rem; /* 18px — lead */
+  --stella-type-lg: 1.25rem; /* 20px — h3 */
+  --stella-type-xl: 1.5rem; /* 24px — h2 */
+  --stella-type-2xl: 2rem; /* 32px — h1 / page title */
+  --stella-type-3xl: 2.75rem; /* 44px — hero, one place only */
+
+  /* Vertical rhythm. Every block margin below is a multiple of the unit. */
+  --stella-rhythm: 0.5rem;
+
+  /* Prose measure. ~72 characters is where a line stops needing a finger to
+   * track it back to the left edge. */
+  --stella-measure: 72ch;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Semantic colour — light (paper)
+ * ═════════════════════════════════════════════════════════════════════════ */
 
 :root {
   /* Mode-aware "accent" that COMPONENTS reference (icons, diagram strokes,
    * prompt, brand headline word, marks). RULE 1: on paper this is ink, never
-   * the accent — sky is 1.67:1 on white. The `.dark` block lifts it to the
-   * brand sky, where it is 12.60:1. One token flips every mark with the
-   * theme. */
-  --stella-accent: var(--stella-ink);
-  --stella-accent-fill: var(--stella-ink); /* solid fill (CTA) — inverted label */
-  --stella-accent-muted: var(--stella-muted); /* quieter mark tone, 6.13:1 */
+   * the accent — electric blue does not clear AA as text on white. The `.dark`
+   * block lifts it to `brand-bright`, where it is 7.4:1. One token flips every
+   * mark with the theme. */
+  --stella-accent: var(--stella-ink-primary);
+  --stella-accent-fill: var(--stella-ink-primary); /* solid fill (CTA) — inverted label */
+  --stella-accent-muted: var(--stella-ink-secondary); /* quieter mark tone, 6.7:1 */
 
   /* Legacy alias. Only --stella-azure is still consumed (diagrams.tsx); it is
    * repointed at the mode-aware accent so diagrams keep inverting with the
@@ -61,86 +86,289 @@
   --stella-azure: var(--stella-accent);
 
   /* CTA (inverted primary) surfaces — an ink button on paper. */
-  --stella-cta-bg: var(--stella-ink);
+  --stella-cta-bg: var(--stella-ink-primary);
   --stella-cta-fg: var(--stella-paper);
-  --stella-cta-bg-hover: #383838;
+  --stella-cta-bg-hover: var(--stella-brand-ink-deep);
 
-  /* Light mode — paper ground, ink type. Accent text is ink; the sky accent
+  /* Light mode — paper ground, ink type. Accent text is ink; the brand accent
    * appears here only as a fill with an ink label on it. */
   --color-fd-background: var(--stella-paper);
-  --color-fd-foreground: var(--stella-ink);
+  --color-fd-foreground: var(--stella-ink-primary);
   --color-fd-muted: #fafafa;
-  --color-fd-muted-foreground: var(--stella-muted); /* 6.13:1 on paper */
+  --color-fd-muted-foreground: var(--stella-ink-secondary); /* 6.7:1 on paper */
   --color-fd-card: var(--stella-paper);
-  --color-fd-card-foreground: var(--stella-ink);
+  --color-fd-card-foreground: var(--stella-ink-primary);
   --color-fd-popover: var(--stella-paper);
-  --color-fd-popover-foreground: var(--stella-ink);
+  --color-fd-popover-foreground: var(--stella-ink-primary);
   --color-fd-border: #eaeaea; /* neutral hairline */
   --color-fd-accent: var(--stella-snow); /* hover/selected surface */
-  --color-fd-accent-foreground: var(--stella-ink);
-  --color-fd-primary: var(--stella-ink); /* links/active = ink, 19.80:1 on paper */
+  --color-fd-accent-foreground: var(--stella-ink-primary);
+  --color-fd-primary: var(--stella-ink-primary); /* links/active = ink, 19.2:1 on paper */
   --color-fd-primary-foreground: var(--stella-paper); /* text on an ink fill */
   --color-fd-secondary: var(--stella-snow);
-  --color-fd-secondary-foreground: var(--stella-ink);
-  --color-fd-ring: var(--stella-ink); /* focus ring — 19.80:1 on paper */
+  --color-fd-secondary-foreground: var(--stella-ink-primary);
+  --color-fd-ring: var(--stella-ink-primary); /* focus ring — 19.2:1 on paper */
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Semantic colour — dark (deep space)
+ * ═════════════════════════════════════════════════════════════════════════ */
+
 .dark {
-  /* Dark mode — true black ground, bright sky accent. This is where the brand
-   * hue lives: sky is 12.60:1 on the ground and carries brand, active, and
-   * progress. Links stay text-primary (19.40:1) rather than sky, because a page
-   * of sky links would make the accent a general-purpose highlight. */
-  --stella-accent: var(--stella-sky);
-  --stella-accent-fill: var(--stella-sky);
+  /* Dark mode — deep-space ground, electric-blue accent. This is where the
+   * brand hue lives: `brand-bright` is 7.4:1 on the ground and carries brand,
+   * active, and progress. Links stay text-primary (18.1:1) rather than brand,
+   * because a page of blue links would make the accent a general-purpose
+   * highlight. */
+  --stella-accent: var(--stella-brand-bright);
+  --stella-accent-fill: var(--stella-brand-bright);
   --stella-accent-muted: var(--stella-text-secondary); /* 8.50:1 on ground */
 
   /* The CTA is the one place the accent fills on the dark side too — an ink
-   * label on a sky fill reads 11.87:1 in both modes. */
-  --stella-cta-bg: var(--stella-sky);
-  --stella-cta-fg: var(--stella-ink);
-  --stella-cta-bg-hover: var(--stella-sky-deep);
+   * label on a brand fill, so the button reads the same way in both modes. */
+  --stella-cta-bg: var(--stella-brand-bright);
+  --stella-cta-fg: var(--stella-ink-primary);
+  --stella-cta-bg-hover: var(--stella-brand-deep);
 
   --color-fd-background: var(--stella-ground);
-  --color-fd-foreground: var(--stella-text-primary);
+  --color-fd-foreground: var(--stella-text-primary); /* 18.1:1 */
   --color-fd-muted: var(--stella-surface);
-  --color-fd-muted-foreground: var(--stella-text-secondary); /* 8.50:1 */
+  --color-fd-muted-foreground: var(--stella-text-secondary); /* 6.7:1 */
   --color-fd-card: var(--stella-surface);
   --color-fd-card-foreground: var(--stella-text-primary);
-  --color-fd-popover: var(--stella-surface);
+  --color-fd-popover: var(--stella-raised);
   --color-fd-popover-foreground: var(--stella-text-primary);
-  --color-fd-border: var(--stella-hairline); /* decorative only — never the sole cue */
-  --color-fd-accent: var(--stella-raised); /* hover/selected — lifted above card */
+  --color-fd-border: var(--stella-hairline-strong); /* 1.4:1 — decorative */
+  --color-fd-accent: var(--stella-raised);
   --color-fd-accent-foreground: var(--stella-text-primary);
-  --color-fd-primary: var(--stella-text-primary); /* links/active, 19.40:1 */
-  --color-fd-primary-foreground: var(--stella-ground); /* text on a light fill */
+  --color-fd-primary: var(--stella-brand-bright);
+  --color-fd-primary-foreground: var(--stella-void);
   --color-fd-secondary: var(--stella-raised);
   --color-fd-secondary-foreground: var(--stella-text-primary);
-  --color-fd-ring: var(--stella-sky); /* focus ring — sky, 12.60:1 */
+  --color-fd-ring: var(--stella-brand-bright); /* focus ring — brand-bright, 7.4:1 on ground */
 }
 
-/* ───────────────────────────────────────────────────────────────────────────
- * Docs cards — the mobile-first replacement for reference tables.
- * Namespaced `sc-*` (stella card); see src/components/cards.tsx.
+/* Skip link — first thing in the tab order on every page, invisible until it
+ * has focus. */
+.skip-link {
+  position: fixed;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 100;
+  padding: 0.5rem 0.9rem;
+  border-radius: 0.375rem;
+  background: var(--stella-cta-bg);
+  color: var(--stella-cta-fg);
+  font-size: var(--stella-type-sm);
+  font-weight: 500;
+  transform: translateY(-200%);
+}
+.skip-link:focus-visible {
+  transform: translateY(0);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Typography — one scale, one rhythm, one measure
  *
- * A wide reference table is a desktop-only artifact: on a phone it either
- * overflows the viewport or crushes every column to two words, and the header
- * row scrolls out of sight exactly when you need it. A card carries its own
- * labels, so it reads identically at 380px and 1400px.
+ * Fumadocs' `.prose` ships an 800-weight h1 and four different heading weights.
+ * Everything below normalises that: a single 600 weight, sizes from the scale,
+ * margins that are multiples of the rhythm unit, and a hard measure on running
+ * text so a paragraph never runs past ~72 characters.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+.prose {
+  font-size: var(--stella-type-base);
+  line-height: 1.7;
+}
+
+.prose :is(h1, h2, h3, h4, h5, h6) {
+  font-weight: 600;
+  letter-spacing: -0.011em;
+  text-wrap: balance;
+  color: var(--color-fd-foreground);
+}
+
+.prose h1 {
+  font-size: var(--stella-type-2xl);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  margin-bottom: calc(var(--stella-rhythm) * 2);
+}
+
+.prose h2 {
+  font-size: var(--stella-type-xl);
+  line-height: 1.3;
+  margin-top: calc(var(--stella-rhythm) * 7);
+  margin-bottom: calc(var(--stella-rhythm) * 2);
+}
+
+.prose h3 {
+  font-size: var(--stella-type-lg);
+  line-height: 1.4;
+  margin-top: calc(var(--stella-rhythm) * 5);
+  margin-bottom: calc(var(--stella-rhythm) * 1.5);
+}
+
+.prose h4 {
+  font-size: var(--stella-type-base);
+  line-height: 1.5;
+  margin-top: calc(var(--stella-rhythm) * 4);
+  margin-bottom: var(--stella-rhythm);
+}
+
+.prose :is(p, ul, ol, blockquote, dl) {
+  margin-top: calc(var(--stella-rhythm) * 2.5);
+  margin-bottom: calc(var(--stella-rhythm) * 2.5);
+}
+
+/* The measure applies to running text only. Code blocks, tables, cards, and
+ * diagrams keep the full column, because they are read as blocks rather than
+ * scanned line by line. */
+.prose > :is(p, ul, ol, blockquote, dl) {
+  max-width: var(--stella-measure);
+}
+
+.prose :is(strong, b) {
+  font-weight: 600;
+}
+
+/* Links read as links: blue plus an underline. Colour is never the only cue. */
+.prose a {
+  color: var(--color-fd-primary);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  text-decoration-color: color-mix(in oklab, var(--color-fd-primary) 40%, transparent);
+}
+.prose a:hover {
+  text-decoration-color: currentColor;
+}
+/* Anchors that wrap a whole card or heading are not running text. */
+.prose a:has(> .sc-card),
+.prose :is(h1, h2, h3, h4, h5, h6) a {
+  text-decoration: none;
+  color: inherit;
+}
+
+.prose blockquote {
+  font-style: normal;
+  font-weight: 400;
+  color: var(--color-fd-muted-foreground);
+  border-inline-start-width: 2px;
+  border-inline-start-color: var(--color-fd-border);
+}
+.prose blockquote p:first-of-type::before,
+.prose blockquote p:last-of-type::after {
+  content: none;
+}
+
+.prose hr {
+  margin-top: calc(var(--stella-rhythm) * 8);
+  margin-bottom: calc(var(--stella-rhythm) * 8);
+  border-color: var(--color-fd-border);
+}
+
+/* A table is rows of data, not a card. Horizontal rules only — the panel,
+ * radius, and vertical grid Fumadocs draws around it are all decoration. */
+.prose table {
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  font-size: var(--stella-type-sm);
+  border-collapse: collapse;
+}
+.prose :is(th, td) {
+  border-inline-start: 0;
+  border-bottom: 1px solid var(--color-fd-border);
+  padding: 0.55rem 0.9rem 0.55rem 0;
+  background: transparent;
+}
+.prose th {
+  font-weight: 600;
+  font-size: var(--stella-type-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-fd-muted-foreground);
+}
+.prose tbody tr:last-child :is(th, td) {
+  border-bottom: 0;
+}
+
+/* The page title/description block Fumadocs renders above the body. */
+#nd-page h1:first-of-type {
+  font-size: var(--stella-type-2xl);
+  letter-spacing: -0.02em;
+}
+
+/* Constrain the docs column. Fumadocs' 900px is ~110 characters of prose; this
+ * lands the text column at the measure while leaving code and tables room. */
+#nd-page:not([data-full="true"]) {
+  max-width: 50rem;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Page chrome — recede
  *
- * The grid is `auto-fill` over a min column width rather than a breakpoint
- * ladder, so the column count falls out of the available width — including
- * inside the narrower `/docs` content column — with no media queries to keep
- * in sync.
- * ─────────────────────────────────────────────────────────────────────────── */
+ * The sidebar and header exist to be ignored until wanted. No fills, no
+ * borders on items, no bold. The active page is the only thing in the tree
+ * that takes colour, and it takes the interaction blue because clicking it is
+ * what you were about to do.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+#nd-sidebar {
+  font-size: var(--stella-type-sm);
+}
+
+#nd-sidebar a,
+#nd-sidebar button {
+  font-weight: 400;
+  border-radius: 0.375rem;
+}
+
+#nd-sidebar a[data-active="true"] {
+  color: var(--color-fd-primary);
+  font-weight: 500;
+  background: transparent;
+}
+
+#nd-sidebar [data-radix-scroll-area-viewport] {
+  scrollbar-width: thin;
+}
+
+/* The table of contents is reference furniture: quiet until the section it
+ * points at is the one you are reading. */
+#nd-toc {
+  font-size: var(--stella-type-sm);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Docs cards — a rule and a heading
+ *
+ * Namespaced `sc-*` (stella card); see src/components/cards.tsx. These replace
+ * wide reference tables, which are a fine desktop artifact and a bad phone one:
+ * on a narrow screen a five-column table either overflows or crushes every
+ * column to two words, and the header row scrolls away exactly when it is
+ * needed. A card carries its own labels, so it reads the same at 380px and
+ * 1400px.
+ *
+ * What a card is NOT: a panel. There is no fill, no radius, no glow, and no
+ * border box. The top rule separates it from its neighbour and the heading
+ * names it; that is the whole visual system. Grouping is also carried by the
+ * markup (<dl>/<dt>/<dd>, a heading per card), so the rule is decorative and
+ * never the sole cue.
+ * ═════════════════════════════════════════════════════════════════════════ */
 
 .sc-grid {
   display: grid;
-  gap: 0.75rem;
-  margin: 1.5rem 0;
+  gap: 0;
+  margin: calc(var(--stella-rhythm) * 4) 0;
+  border-top: 1px solid var(--color-fd-border);
 }
 
-/* Below the min width the track collapses to one stacked column — the phone
- * case — because `minmax()`'s floor would otherwise force a sideways scroll. */
+/* auto-fill over a min column width rather than a breakpoint ladder, so the
+ * column count falls out of the available width — including inside the
+ * narrower /docs column — with no media queries to keep in sync. Below the
+ * minimum the track collapses to one stacked column: the phone case. */
 .sc-grid-sm {
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
 }
@@ -154,54 +382,51 @@
 .sc-card {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  padding: 0.9rem 1rem;
-  border: 1px solid var(--color-fd-border);
-  border-radius: 0.75rem;
-  background: var(--color-fd-card);
-  /* Cards sit in a prose column; MDX would otherwise inherit paragraph rhythm. */
-  font-size: 0.875rem;
-  line-height: 1.55;
-  /* Every card is a query container so the @container fallbacks below respond
-   * to the card's own width (its grid track), not the viewport. */
+  gap: calc(var(--stella-rhythm) * 0.75);
+  padding: calc(var(--stella-rhythm) * 2) calc(var(--stella-rhythm) * 2)
+    calc(var(--stella-rhythm) * 2.5) 0;
+  border-bottom: 1px solid var(--color-fd-border);
+  font-size: var(--stella-type-sm);
+  line-height: 1.6;
+  /* Every card is a query container so the fallbacks below respond to the
+   * card's own width (its grid track), not the viewport. */
   container-type: inline-size;
 }
 
 .sc-card-link {
   text-decoration: none;
   color: inherit;
-  transition:
-    border-color 0.15s ease,
-    background-color 0.15s ease,
-    transform 0.15s ease;
+  transition: background-color 0.12s ease;
+  padding-inline-start: calc(var(--stella-rhythm) * 1.5);
+  margin-inline-start: calc(var(--stella-rhythm) * -1.5);
 }
 .sc-card-link:hover {
-  border-color: color-mix(in oklch, var(--color-fd-foreground) 28%, transparent);
   background: var(--color-fd-accent);
 }
 /* Keyboard parity with hover — the whole card is one tab stop. */
 .sc-card-link:focus-visible {
   outline: 2px solid var(--color-fd-ring);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 
 .sc-card-logo {
   display: flex;
   align-items: center;
-  min-height: 2rem;
-  margin-bottom: 0.15rem;
+  min-height: 1.75rem;
   color: var(--color-fd-foreground);
 }
 
 .sc-card-head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: calc(var(--stella-rhythm) * 1.5);
 }
 
 .sc-card-title {
   font-weight: 600;
+  font-size: var(--stella-type-base);
+  letter-spacing: -0.011em;
   color: var(--color-fd-foreground);
   /* Long provider names wrap rather than pushing the badge off the card. */
   min-width: 0;
@@ -211,6 +436,7 @@
   color: var(--color-fd-muted-foreground);
   /* MDX wraps card children in <p>; strip the block margins it brings. */
   margin: 0;
+  max-width: 56ch;
 }
 .sc-card-body > :first-child {
   margin-top: 0;
@@ -219,24 +445,22 @@
   margin-bottom: 0;
 }
 
-/* ── label/value list ──────────────────────────────────────────────────────
- * Two columns on anything wide enough for the labels to stay on one line,
- * stacked below that. This is the part a table gets wrong on a phone: here the
- * label rides *with* its value instead of living in a scrolled-away header. */
+/* ── label/value list ─────────────────────────────────────────────────────
+ * Two columns wherever the labels stay on one line, stacked below that. This
+ * is the part a table gets wrong on a phone: here the label rides *with* its
+ * value instead of living in a header row that has scrolled away. */
 
 .sc-meta {
   display: grid;
-  gap: 0.3rem 0.75rem;
-  margin: 0.15rem 0 0;
-  padding-top: 0.6rem;
-  border-top: 1px solid var(--color-fd-border);
-  font-size: 0.8125rem;
+  gap: 0.3rem calc(var(--stella-rhythm) * 1.5);
+  margin: calc(var(--stella-rhythm) * 0.5) 0 0;
+  font-size: var(--stella-type-xs);
 }
 
 .sc-meta-row {
   display: grid;
   grid-template-columns: minmax(5.5rem, auto) 1fr;
-  gap: 0.15rem 0.75rem;
+  gap: 0.1rem calc(var(--stella-rhythm) * 1.5);
   align-items: baseline;
 }
 
@@ -247,80 +471,70 @@
 }
 
 .sc-meta-label {
-  color: var(--color-fd-muted-foreground);
-  font-weight: 500;
+  color: var(--stella-faint);
 }
 
 .sc-meta-value {
   margin: 0;
   color: var(--color-fd-foreground);
-  /* Identifiers (env vars, model ids) are long and unbreakable at spaces —
-   * let them break anywhere rather than widening the whole grid track. */
+  font-family: var(--font-mono);
+  /* Identifiers (env vars, model ids) are long and unbreakable at spaces — let
+   * them break anywhere rather than widening the whole grid track. */
   overflow-wrap: anywhere;
+}
+.sc-meta-value[data-prose="true"] {
+  font-family: inherit;
 }
 
 .sc-mono {
-  font-family:
-    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
-    monospace;
-  font-size: 0.9em;
+  font-family: var(--font-mono);
 }
 
 /* ── badges ───────────────────────────────────────────────────────────────
- * Neutral by default. `mutating`/`caution` spend the same functional amber the
- * callouts use, because "this can change your files" is a warning rather than
- * decoration — the one exception the neutral brand already makes. */
+ * Text, not chips: uppercase micro-type with no pill, no fill, no border.
+ * `mutating`/`caution` spend the functional amber the callouts use, because
+ * "this can change your files" is a warning rather than a label — and the word
+ * itself always spells it out, so hue is never the only cue. */
 
 .sc-badge {
   flex: none;
-  padding: 0.1rem 0.45rem;
-  border: 1px solid var(--color-fd-border);
-  border-radius: 9999px;
-  background: var(--color-fd-muted);
-  color: var(--color-fd-muted-foreground);
-  font-size: 0.6875rem;
+  font-size: var(--stella-type-2xs);
   font-weight: 500;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   white-space: nowrap;
+  color: var(--color-fd-muted-foreground);
 }
 
 .sc-badge[data-tone="mutating"],
 .sc-badge[data-tone="caution"] {
-  border-color: color-mix(in oklch, var(--stella-warning-ink) 35%, transparent);
-  color: var(--stella-warning-ink);
-  background: color-mix(in oklch, var(--stella-warning-ink) 8%, transparent);
+  color: var(--stella-warning-ink); /* 4.9:1 on paper */
 }
 
 .dark .sc-badge[data-tone="mutating"],
 .dark .sc-badge[data-tone="caution"] {
-  border-color: color-mix(in oklch, var(--stella-warning) 35%, transparent);
-  color: var(--stella-warning);
-  background: color-mix(in oklch, var(--stella-warning) 10%, transparent);
+  color: var(--stella-warning); /* 10.3:1 on ground */
 }
 
 /* ── tool cards ───────────────────────────────────────────────────────────
  * The left rule repeats the badge as shape rather than text, so the
- * read-only/mutating partition survives a squint. Color is never the sole
- * cue — the badge always spells it out. */
+ * read-only/mutating partition survives a squint. The badge always spells it
+ * out, so colour is never the sole cue. */
 
 .sc-tool {
-  border-left-width: 3px;
-}
-.sc-tool[data-access="read"] {
-  border-left-color: var(--color-fd-border);
+  border-inline-start: 2px solid transparent;
+  padding-inline-start: calc(var(--stella-rhythm) * 1.5);
 }
 .sc-tool[data-access="mutating"] {
-  border-left-color: color-mix(in oklch, var(--stella-warning-ink) 55%, transparent);
+  border-inline-start-color: var(--stella-warning-ink);
 }
 .dark .sc-tool[data-access="mutating"] {
-  border-left-color: color-mix(in oklch, var(--stella-warning) 55%, transparent);
+  border-inline-start-color: var(--stella-warning);
 }
 
 .sc-tool-name {
-  font-family:
-    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
-    monospace;
-  font-size: 0.8125rem;
+  font-family: var(--font-mono);
+  font-size: var(--stella-type-sm);
   font-weight: 600;
   color: var(--color-fd-foreground);
   overflow-wrap: anywhere;
@@ -332,15 +546,13 @@
 
 .sc-tool-when {
   margin: 0;
-  padding-top: 0.55rem;
-  border-top: 1px solid var(--color-fd-border);
   color: var(--color-fd-muted-foreground);
-  font-size: 0.8125rem;
+  font-size: var(--stella-type-xs);
 }
 
 .sc-tool-when-label {
-  font-weight: 600;
   color: var(--color-fd-foreground);
+  font-weight: 500;
 }
 
 /* Not every table should become a card: a genuine numeric matrix (the pricing
@@ -348,94 +560,51 @@
  * Fumadocs already wraps every MDX table in an `overflow-auto` div, so the page
  * body never scrolls sideways on its own — nothing to add here. */
 
-/* ───────────────────────────────────────────────────────────────────────────
- * Landing page (the (home) route only). Pure-CSS, namespaced `lp-*`.
- * ─────────────────────────────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Landing page — namespaced `lp-*`, so nothing leaks into /docs.
+ * ═════════════════════════════════════════════════════════════════════════ */
 
-/* Faint terminal grid behind the hero, masked to fade out. Whisper-quiet and
- * neutral — a texture, not a color. */
-.lp-hero-grid {
-  background-image:
-    linear-gradient(
-      to right,
-      color-mix(in oklch, var(--color-fd-foreground) 5%, transparent) 1px,
-      transparent 1px
-    ),
-    linear-gradient(
-      to bottom,
-      color-mix(in oklch, var(--color-fd-foreground) 5%, transparent) 1px,
-      transparent 1px
-    );
-  background-size: 44px 44px;
-  mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);
+.lp-section {
+  border-top: 1px solid var(--color-fd-border);
 }
 
-/* Soft neutral vignette at the top of the hero — depth, not a spotlight. */
-.lp-hero-glow {
-  background: radial-gradient(
-    ellipse 60% 50% at 50% -10%,
-    color-mix(in oklch, var(--color-fd-foreground) 6%, transparent),
-    transparent 70%
-  );
+/* The one place gold appears outside the mark: a section marker. It carries no
+ * status, only identity — see BRAND.md § Gold. */
+.lp-eyebrow {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--stella-type-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-fd-muted-foreground);
 }
-
-/* The brand name set in running text. Space Grotesk Medium is the face the
-   wordmark itself is drawn from, so the name matches the logo rather than
-   approximating it with a generic mono. `-face` sets only the typeface and
-   inherits colour; `-text` adds the full-contrast accent for the headline. */
-.lp-brand-face {
-  font-family: var(--font-brand), ui-sans-serif, system-ui, sans-serif;
-  font-weight: 500;
-  letter-spacing: -0.02em;
-}
-
-.lp-brand-text {
-  font-family: var(--font-brand), ui-sans-serif, system-ui, sans-serif;
-  font-weight: 500;
-  letter-spacing: -0.02em;
-  color: var(--stella-accent);
-}
-
-/* Primary CTA — Vercel's inverted primary: ink fill + paper label in light,
- * snow fill + ink label in dark. Unmistakably the primary action, no hue. */
-.lp-cta {
-  background: var(--stella-cta-bg);
-  color: var(--stella-cta-fg);
-}
-.lp-cta:hover {
-  background: var(--stella-cta-bg-hover);
-}
-
-/* The blinking caret in the terminal cards, in the mode-aware foreground. */
-.lp-caret {
+.lp-eyebrow::before {
+  content: "";
   display: inline-block;
-  width: 0.55ch;
-  height: 1.05em;
-  translate: 0 0.16em;
-  background: var(--stella-accent);
-  animation: lp-blink 1.05s steps(1) infinite;
+  width: 0.55em;
+  height: 0.9em;
+  margin-inline-end: 0.6em;
+  translate: 0 0.1em;
+  background: var(--stella-mark);
 }
 
-@keyframes lp-blink {
-  0%,
-  50% {
-    opacity: 1;
-  }
-  50.01%,
-  100% {
-    opacity: 0;
-  }
+.lp-h1 {
+  font-size: var(--stella-type-2xl);
+  line-height: 1.1;
+  letter-spacing: -0.028em;
+  font-weight: 600;
+  text-wrap: balance;
 }
-
-@media (prefers-reduced-motion: reduce) {
-  .lp-caret {
-    animation: none;
+@media (min-width: 640px) {
+  .lp-h1 {
+    font-size: var(--stella-type-3xl);
   }
 }
 
-/* The mark carries the brand hue (rule 4): sky on the black ground, ink on
- * paper. It rides --stella-accent rather than the foreground so it inverts with
- * the theme — sky is 1.67:1 on white and can never be the light-mode mark. */
+/* The mark carries the brand hue (rule 4): electric blue on the deep-space
+ * ground, ink on paper. It rides --stella-accent rather than the foreground so
+ * it inverts with the theme — the blue does not clear AA on white and can never
+ * be the light-mode mark. */
 .lp-mark {
   color: var(--stella-accent);
 }
@@ -460,158 +629,126 @@
   --deck-warn: var(--stella-warning-ink); /* needs input — 5.49:1 on paper */
   --deck-bad: var(--stella-danger-ink); /* failed — 5.88:1 on paper */
   --deck-run: var(--stella-accent); /* running — ink on paper; RULE 1 */
-  --deck-queued: var(--stella-muted); /* queued — 6.13:1 on paper */
+  --deck-queued: var(--stella-ink-secondary); /* queued — 6.7:1 on paper */
 }
 
-.dark {
-  /* The exact tokens the real TUI paints — see stella-tui/src/palette.rs. */
-  --deck-ok: var(--stella-success); /* 10.09:1 on ground */
-  --deck-warn: var(--stella-warning); /* 7.44:1 on ground */
-  --deck-bad: var(--stella-danger); /* 6.52:1 on ground */
-  --deck-queued: var(--stella-text-tertiary);
+/* The brand name set in running text — the wordmark's own face, so the name
+ * matches the logo instead of approximating it. */
+.lp-brand-face {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
-.deck-mono {
-  font-family:
-    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
-    monospace;
-  font-variant-ligatures: none;
+/* Primary action. */
+.lp-cta {
+  background: var(--stella-cta-bg);
+  color: var(--stella-cta-fg);
+}
+.lp-cta:hover {
+  background: var(--stella-cta-bg-hover);
 }
 
-/* Window chrome — same "traffic lights" language as the hero terminal card, so
- * the deck reads as another window of the same tool. */
-.deck-window {
-  box-shadow:
-    0 1px 0 0 color-mix(in oklch, var(--color-fd-foreground) 4%, transparent),
-    0 18px 50px -28px color-mix(in oklch, var(--color-fd-foreground) 28%, transparent);
-}
-
-/* Scenario tabs (fleet / goal). Selected = inverted primary, matching the CTA. */
-.deck-tab {
-  color: var(--color-fd-muted-foreground);
-  border: 1px solid transparent;
-  transition:
-    color 0.15s ease,
-    background-color 0.15s ease,
-    border-color 0.15s ease;
-}
-.deck-tab:hover {
+/* The mark's glyph takes the page foreground and its cursor block takes the
+ * identity gold — BRAND.md § Logo, where `ink` and `cur` are two different
+ * rows. A fully gold mark would be a monochrome variant, which the table does
+ * not define. The gold itself lives in `--stella-mark` (tokens per ground:
+ * `gold-ink` 5.5:1 on paper, `gold` 11.9:1 on deep space). */
+.lp-mark {
   color: var(--color-fd-foreground);
-  background: var(--color-fd-accent);
-}
-.deck-tab[data-active="true"] {
-  color: var(--color-fd-foreground);
-  background: var(--color-fd-accent);
-  border-color: var(--color-fd-border);
 }
 
-.deck-prompt {
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Terminal transcript — a static record of a real run.
+ *
+ * This used to be a looping, self-typing, four-scenario animated demo. It is
+ * now a transcript, because a reader who wants to know what a run looks like
+ * wants to *read* it, and an element that rewrites itself every fourteen
+ * seconds cannot be read. Same information, no motion, and it renders on the
+ * server with no client JavaScript.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+.term {
+  font-family: var(--font-mono);
+  font-size: var(--stella-type-sm);
+  line-height: 1.7;
+  border: 1px solid var(--stella-rule);
+  border-radius: 0.5rem;
+  background: var(--color-fd-card);
+  overflow-x: auto;
+}
+
+.term-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.9rem;
+  border-bottom: 1px solid var(--stella-rule);
+  font-size: var(--stella-type-xs);
+  color: var(--stella-faint);
+}
+
+.term-body {
+  margin: 0;
+  padding: 0.9rem;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.term-prompt {
   color: var(--stella-accent);
 }
-
-/* A worker row entering the roster — a soft rise + fade, never a bounce. */
-.deck-row {
-  animation: deck-row-in 0.4s ease-out both;
-}
-@keyframes deck-row-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* Status dot. Base is a hollow ring (queued); modifiers fill it per outcome. */
-.deck-dot {
-  width: 0.62rem;
-  height: 0.62rem;
-  border-radius: 9999px;
-  border: 1.5px solid var(--deck-queued);
-  background: transparent;
-  flex: none;
-}
-.deck-dot[data-status="running"] {
-  border-color: var(--deck-run);
-  background: var(--deck-run);
-  animation: deck-pulse 1.5s ease-in-out infinite;
-}
-.deck-dot[data-status="done"] {
-  border-color: var(--deck-ok);
-  background: var(--deck-ok);
-}
-.deck-dot[data-status="needs-input"] {
-  border-color: var(--deck-warn);
-  background: var(--deck-warn);
-  animation: deck-pulse 1.5s ease-in-out infinite;
-}
-.deck-dot[data-status="failed"] {
-  border-color: var(--deck-bad);
-  background: var(--deck-bad);
-}
-
-@keyframes deck-pulse {
-  0%,
-  100% {
-    opacity: 1;
-    box-shadow: 0 0 0 0 color-mix(in oklch, var(--deck-run) 45%, transparent);
-  }
-  50% {
-    opacity: 0.7;
-    box-shadow: 0 0 0 3px transparent;
-  }
-}
-
-/* Status label text picks up the outcome color. */
-.deck-status[data-status="running"] {
-  color: var(--color-fd-foreground);
-}
-.deck-status[data-status="queued"] {
-  color: var(--deck-queued);
-}
-.deck-status[data-status="done"] {
-  color: var(--deck-ok);
-}
-.deck-status[data-status="needs-input"] {
-  color: var(--deck-warn);
-}
-.deck-status[data-status="failed"] {
-  color: var(--deck-bad);
-}
-
-/* Stage chip — the pipeline stage a running worker is in. */
-.deck-stage {
+.term-dim {
   color: var(--color-fd-muted-foreground);
-  border: 1px solid var(--color-fd-border);
-  background: var(--color-fd-background);
+}
+.term-ok {
+  color: var(--stella-success-ink); /* 5.8:1 on paper */
+}
+.dark .term-ok {
+  color: var(--stella-success); /* 11.4:1 on ground */
 }
 
-/* Budget meter — fills smoothly as metered spend accrues. */
-.deck-meter {
-  background: var(--color-fd-border);
-  border-radius: 9999px;
-  overflow: hidden;
-}
-.deck-meter-fill {
-  background: var(--stella-accent);
-  border-radius: 9999px;
-  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.deck-meter-fill[data-over="true"] {
-  background: var(--deck-warn);
-}
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Diagrams — shared stylesheet for src/components/diagrams.tsx.
+ *
+ * Boxes and wires, one stroke weight, no animation, no fills except the single
+ * accent node each diagram is actually about. Lives here rather than in a
+ * <style> tag per diagram so a page with four diagrams emits one stylesheet.
+ * ═════════════════════════════════════════════════════════════════════════ */
 
-@media (prefers-reduced-motion: reduce) {
-  .deck-row {
-    animation: none;
-  }
-  .deck-dot[data-status="running"],
-  .deck-dot[data-status="needs-input"] {
-    animation: none;
-  }
-  .deck-meter-fill {
-    transition: none;
-  }
+.sdg {
+  width: 100%;
+  height: auto;
+  display: block;
+  margin: calc(var(--stella-rhythm) * 4) 0;
+}
+.sdg text {
+  font-family: var(--font-sans);
+}
+.sdg .sdg-box {
+  fill: none;
+  stroke: var(--stella-rule);
+  stroke-width: 1;
+}
+.sdg .sdg-box-accent {
+  fill: none;
+  stroke: var(--stella-accent);
+  stroke-width: 1.25;
+}
+.sdg .sdg-label {
+  fill: var(--color-fd-foreground);
+  font-size: 13px;
+  font-weight: 500;
+}
+.sdg .sdg-sub {
+  fill: var(--color-fd-muted-foreground);
+  font-size: 10.5px;
+}
+.sdg .sdg-wire {
+  stroke: var(--stella-rule);
+  stroke-width: 1;
+  fill: none;
+}
+.sdg .sdg-dot {
+  fill: var(--stella-accent);
 }

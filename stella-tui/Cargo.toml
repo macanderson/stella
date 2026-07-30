@@ -19,9 +19,7 @@ tokio.workspace = true
 ratatui.workspace = true
 unicode-width.workspace = true
 crossterm.workspace = true
-tachyonfx.workspace = true
 sysinfo.workspace = true
-tui-big-text.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]

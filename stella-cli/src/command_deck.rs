@@ -1254,6 +1254,14 @@ pub async fn run_deck_session(
         );
         if let Some((_, id)) = &execution {
             last_execution_id = Some(*id);
+            // Tell memory which execution it is reflecting on, before the turn
+            // runs. The post-turn self-review is stored 1:1 with an execution,
+            // so a loop that cannot name the row writes nothing — which is why
+            // `self_rating` was NULL on every reflection row this deck ever
+            // recorded, and the Observatory's self-improve panels sat empty.
+            if let Some(m) = &mut memory {
+                m.set_execution_id(*id);
+            }
         }
         let files_before = registry.files_touched().len();
         let started_unix = crate::memory::unix_now_secs();
@@ -1651,7 +1659,7 @@ pub async fn run_deck_session(
                         }
                         // Scope review IS engine-driven now: the pipeline's
                         // `DeckApprovalGate` parks on this channel, so the
-                        // card's a/t/x keypress becomes its `ScopeDecision`.
+                        // reviewer's answer becomes its `ScopeDecision`.
                         Some(WorkspaceInput::ToAgent {
                             input: UserInput::ScopeDecision(decision), ..
                         }) => {
@@ -4270,7 +4278,7 @@ async fn run_lead_turn(
 /// Deck-mode seams, all named:
 /// - **Scope review is interactive** ([`DeckApprovalGate`]). A plan over the
 ///   thresholds raises the deck's approval card and the turn parks until the
-///   user answers (a/t/x) — the deck runs `headless: false` because it *can*
+///   user answers at the card — the deck runs `headless: false` because it *can*
 ///   ask. It fails closed only if the deck itself goes away mid-gate.
 /// - **The session's system prompt stays.** It was assembled once at deck
 ///   startup (byte-stable for the cache prefix, L-E8); toggling `/pipeline`

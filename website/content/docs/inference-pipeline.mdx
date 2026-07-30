@@ -83,13 +83,19 @@ threshold passes without a gate. Headless runs must opt in to bypass this gate
 explicitly — `agent_engine_config.headless_scope_bypass: "on"` — and there is
 no silent auto-approve: without it, a plan over the thresholds ends the run.
 
-**Answering the card.** `a` approves, `t` trims to the largest prefix that
-would not have tripped review, `x` aborts. You can also just **type what you
-want changed and press ⏎** — the plan goes back to the planner carrying your
-note, and the new plan is reviewed the same way. A bare `ok`/`yes` typed at the
-card approves it; a bare `no` aborts. Revision is bounded at two re-plans per
-turn, since each one is a fresh planner call — after that the keys are the way
-through.
+**Answering the card.** Everything you type goes to the card, and `⏎` sends it:
+`a` approves, `t` trims to the largest prefix that would not have tripped
+review, `x` aborts — and so do the words themselves (`ok`, `yes`, `no`,
+`trim`). Anything longer than one of those is read as **what you want changed**:
+the plan goes back to the planner carrying your note, and the new plan is
+reviewed the same way. Revision is bounded at two re-plans per turn, since each
+one is a fresh planner call.
+
+No bare keystroke commits the plan. The composer is live the whole time the card
+is up, so a letter that answered on its own was competing with the text you were
+typing — a note beginning "also do X" would have approved the plan it was
+arguing with. `Esc` is the one exception, because it cannot be mistaken for
+prose and it stops work rather than starting it.
 
 ### 4. Witness
 

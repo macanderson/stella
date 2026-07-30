@@ -406,13 +406,21 @@ fn scope_card_renders_the_decision_legend_when_unanswered() {
     let text = draw(&model, &mut ui, 100, 30);
     assert!(text.contains("refactor auth"), "card summary:\n{text}");
     assert!(text.contains("pprove"), "shows approve legend:\n{text}");
-    // The typed path is now the only way to ask for a *different* scope, so the
-    // card has to name it. An affordance nobody is told about is one the next
+    // The typed path is the only way to ask for a *different* scope, so the card
+    // has to name it. An affordance nobody is told about is one the next
     // reviewer discovers by having their words routed somewhere unexpected.
     assert!(
-        text.contains("re-plan"),
+        text.contains("what to change"),
         "offers the typed revision path:\n{text}"
     );
+    // And the legend must say that answers are *sent*, not fired: nothing here
+    // commits on a bare keystroke, and a legend implying otherwise is what made
+    // a note opening "also…" approve the plan.
+    assert!(
+        text.contains("type "),
+        "frames the answers as typed:\n{text}"
+    );
+    assert!(text.contains('⏎'), "names the submit key:\n{text}");
     // Once answered, the legend flips to the awaiting message.
     ui.scope_answered = true;
     let text2 = draw(&model, &mut ui, 100, 30);

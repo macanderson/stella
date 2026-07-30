@@ -7,7 +7,7 @@
 //!
 //! It differs from [`crate::shell::run`] in one structural way: a fixed
 //! **animation/resource tick** (~30 fps) is a third `select!` arm. A live
-//! dashboard — CPU gauges, elapsed timers, sparklines, tachyonfx transitions —
+//! dashboard — CPU gauges, elapsed timers, sparklines, the run progress bar —
 //! must repaint on a clock, not only when the agent streams. That tick is also
 //! where the clock advances and the resource monitor samples, so all
 //! time-based UI shares one heartbeat.
@@ -321,6 +321,34 @@ impl CappedOutput {
     }
 }
 
+/// Most envelopes [`drain_inbound`] folds into one frame. High enough that an
+/// ordinary streaming burst never spills into a second draw, low enough that a
+/// pathological producer cannot starve the key reader for a whole frame.
+const INBOUND_COALESCE_CAP: usize = 512;
+
+/// Fold every envelope already queued on `rx`, up to [`INBOUND_COALESCE_CAP`],
+/// without awaiting. Returns `false` when the stream closed mid-drain (the
+/// caller's cue to end the session), `true` otherwise.
+///
+/// This is what keeps the deck's frame rate independent of the engine's event
+/// rate: the folds are O(1)-ish each, the draw is the expensive part, and one
+/// draw can present any number of folded events.
+fn drain_inbound(
+    rx: &mut UnboundedReceiver<Inbound>,
+    model: &mut WorkspaceModel,
+    ui: &mut DeckUi,
+) -> bool {
+    use tokio::sync::mpsc::error::TryRecvError;
+    for _ in 0..INBOUND_COALESCE_CAP {
+        match rx.try_recv() {
+            Ok(ev) => ingest_inbound(&ev, model, ui),
+            Err(TryRecvError::Empty) => return true,
+            Err(TryRecvError::Disconnected) => return false,
+        }
+    }
+    true
+}
+
 /// Run the command deck to completion. [`Inbound`] envelopes stream in over
 /// `inbound`; the user's [`WorkspaceInput`]s stream out over `submissions`.
 /// Returns when the inbound stream closes or the user quits, having always
@@ -360,8 +388,8 @@ pub async fn run_deck(
     ui.slash_commands = opts.slash_commands.clone();
     ui.color_mode = color_mode;
     ui.no_anim = no_anim;
-    // A no-anim session collapses the launch cinematic to one brief static
-    // wordmark frame (and `ingest_inbound` drops any later replay cues).
+    // A no-anim session lights the launch mark immediately, with no reveal
+    // step (and `ingest_inbound` drops any later replay cues).
     ui.splash.set_reduced(no_anim);
     // Enter semantics follow the terminal's actual capability (see
     // `crate::term::TerminalGuard::kitty` and `crate::composer::classify_enter`).
@@ -433,7 +461,21 @@ pub async fn run_deck(
         tokio::select! {
             maybe_inbound = inbound.recv() => {
                 match maybe_inbound {
-                    Some(ev) => ingest_inbound(&ev, &mut model, &mut ui),
+                    Some(ev) => {
+                        ingest_inbound(&ev, &mut model, &mut ui);
+                        // Coalesce the burst behind it. A streaming turn emits
+                        // one `TextDelta` per token, and the loop draws once
+                        // per iteration — so without this a fast stream cost
+                        // one full-frame repaint *per token*, which is both
+                        // the deck's worst frame rate and its worst input
+                        // latency (a keystroke waits behind every one of those
+                        // draws). Folding is cheap; drawing is not. The tick
+                        // arm already guarantees the ~30fps floor, so nothing
+                        // goes unseen for longer than a frame.
+                        if !drain_inbound(&mut inbound, &mut model, &mut ui) {
+                            break 'run;
+                        }
+                    }
                     // The engine closed the stream — session over.
                     None => break 'run,
                 }
@@ -536,7 +578,12 @@ pub async fn run_deck(
             maybe_local = local_rx.recv(), if local_open => {
                 // Shell-command lane (see `spawn_shell_command`).
                 match maybe_local {
-                    Some(ev) => ingest_inbound(&ev, &mut model, &mut ui),
+                    Some(ev) => {
+                        ingest_inbound(&ev, &mut model, &mut ui);
+                        // Coalesced like the engine lane above — a chatty `!`
+                        // command must not cost one repaint per event either.
+                        let _ = drain_inbound(&mut local_rx, &mut model, &mut ui);
+                    }
                     // Unreachable while `local_tx` is held above; stop
                     // selecting on it rather than spinning if it ever isn't.
                     None => local_open = false,
@@ -599,6 +646,48 @@ mod tests {
         assert_eq!(
             String::from_utf8_lossy(&output.stdout),
             "unset|unset|unset|visible"
+        );
+    }
+
+    /// The draw loop draws once per iteration, so a burst that arrives faster
+    /// than a frame must be folded in one pass. Without this the deck repainted
+    /// once per streamed token — its worst frame rate and its worst input
+    /// latency at exactly the moment a user is watching it work.
+    #[test]
+    fn a_burst_of_envelopes_folds_in_one_pass() {
+        use stella_protocol::AgentEvent;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        for n in 0..200 {
+            tx.send(Inbound::Event {
+                agent: "lead".into(),
+                event: AgentEvent::TextDelta {
+                    text: format!("{n} "),
+                },
+            })
+            .unwrap();
+        }
+        let mut model = WorkspaceModel::new();
+        model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "t", 0)));
+        let mut ui = DeckUi::default();
+
+        assert!(drain_inbound(&mut rx, &mut model, &mut ui));
+        let streamed = &model.agents[0].model.streaming_text;
+        assert!(
+            streamed.starts_with("0 1 ") && streamed.ends_with("199 "),
+            "every queued delta folded in the one pass: {streamed:?}"
+        );
+        assert!(rx.try_recv().is_err(), "the queue is drained");
+    }
+
+    #[test]
+    fn a_drain_reports_a_closed_stream_instead_of_swallowing_it() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Inbound>();
+        drop(tx);
+        let mut model = WorkspaceModel::new();
+        let mut ui = DeckUi::default();
+        assert!(
+            !drain_inbound(&mut rx, &mut model, &mut ui),
+            "a hangup mid-drain must end the session, not spin the loop"
         );
     }
 
