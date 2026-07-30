@@ -1,0 +1,215 @@
+---
+title: Fix a failing CI run
+description: A branch is red. Walk it to green with stella monitor — what it does each round, what happens when a fix doesn't hold, and why "green" here means a run somebody else can see.
+---
+
+You pushed a branch and CI went red. You want it green, you would rather not
+read four thousand lines of log to find out why, and you want the fix to be a
+real fix rather than a test deletion.
+
+This is the task [`stella monitor`](/docs/commands/monitor) exists for.
+
+## The whole thing, first
+
+```bash
+# From the repository, with `gh` authenticated.
+stella --budget 5.00 monitor feature/payments-refactor
+```
+
+That is the guide. The rest of this page is what that command is doing, how to
+tell whether it worked, and what to do when it doesn't.
+
+<Callout type="warn">
+The `target` argument defaults to **`main`**. `monitor` commits and pushes its
+fixes to the branch it is watching, so a bare `stella monitor` pushes commits
+directly to `main`. Name your branch or PR explicitly — `feature/…`, or `"#128"`
+for a pull request.
+</Callout>
+
+## Before you start
+
+<CardGrid size="md">
+  <OptionCard name="gh, installed and authenticated">
+    `monitor` reads CI state through the `ci_status` tool, which shells out to
+    GitHub's `gh` CLI. `gh auth status` should be clean. Without it, the run fails at
+    the first status check rather than silently doing nothing.
+  </OptionCard>
+  <OptionCard name="A branch you are willing to have pushed to">
+    Fixes are committed and pushed between checks — that is how the next CI run gets
+    triggered at all. There is no dry-run mode; the feedback loop *is* the remote.
+  </OptionCard>
+  <OptionCard name="A budget, realistically">
+    Reading failure logs is input-token-heavy. `--budget` is a
+    [global flag](/docs/commands#global-flags), so it goes before the subcommand.
+  </OptionCard>
+</CardGrid>
+
+## What each round actually does
+
+`monitor` is not a bespoke CI robot. It is [goal mode](/docs/agent-modes#outcome-driven-goal-mode)
+with one fixed objective compiled in:
+
+> Drive CI for `<target>` to fully green. Watch the latest runs, read the failure
+> logs, fix each root cause in the code, commit and push the fix, then re-check.
+> The goal is met only when the latest CI run has completed with every check
+> successful.
+
+Which means it inherits goal mode's machinery wholesale, and that machinery is
+the interesting part:
+
+1. **Watch.** `ci_status` with `wait: true` blocks until the latest run for the
+   target finishes, then returns its conclusion and the failing jobs' logs.
+2. **Diagnose and fix.** A working round runs the full
+   [staged pipeline](/docs/inference-pipeline) — triage, plan, witness, execute,
+   verify. It is not a raw step loop: `monitor` always runs pipelined, and unlike
+   `stella goal` it exposes no `--no-pipeline` escape hatch.
+3. **Commit and push.** The remote is the only thing that can produce the next
+   round's evidence.
+4. **Judge.** A separate judge model — by preference from a
+   [different family](/docs/inference-pipeline#per-role-model-routing) than the
+   worker — assesses whether the objective is met. It can call `ci_status`
+   itself, so it is checking the run rather than reading the worker's account of
+   the run.
+5. **Repeat**, up to a hard cap of **8** judged rounds.
+
+## "Fixed" means something specific here
+
+This is where `monitor` differs from a script that retries until the exit code
+is zero, and it is worth being precise about, because it is the whole reason to
+use it.
+
+**Inside each round**, verification runs the deterministic
+[evidence ladder](/docs/inference-pipeline#6-verify--the-deterministic-ladder)
+before any model is asked for an opinion. The load-bearing rung is the **flip
+oracle**: the relevant test must have *failed before* the change and *passed
+after* it. A suite that was already green proves nothing about the fix, so it
+cannot be used to claim one. That structurally excludes the failure mode you
+actually fear — a change that makes the red go away without making the bug go
+away.
+
+The same discipline is available to the agent directly as the **`verify_done`**
+tool, which replays a new test against the previous code in a shadow worktree at
+`git HEAD`. The test must fail there and pass on the change to earn a
+**WITNESS CONFIRMED**.
+
+**Across rounds**, the outer goal judge only ends the loop when the *latest CI
+run for the target has completed with every check successful*. Not "the tests I
+ran locally passed". Not "I believe this is fixed". A run on the remote, green,
+that you can open in a browser.
+
+<Callout type="info">
+Pipelined goal rounds mean **double verification**: the pipeline's own judge
+checks each round's work, and the outer goal judge checks the objective. A fix
+that passes locally but doesn't turn CI green gets caught by the second one.
+</Callout>
+
+## When the fix doesn't hold
+
+The interesting cases are the ones where it doesn't just work.
+
+### The next run is red for a different reason
+
+This is the normal case and needs nothing from you. The round ends "not met",
+the new failure logs come back through `ci_status`, and the next round works on
+the new root cause. That is what the round loop is for.
+
+### The same failure comes back
+
+A revision that has already deterministically failed triggers **distress
+guidance**: Stella spends one judge call producing a course-correction note that
+rides along with the next revision prompt, rather than letting the worker keep
+digging in the same direction. You will see the same-failure case resolve or
+change shape rather than repeat identically.
+
+### It hits the round cap
+
+At 8 judged rounds `monitor` **stops and reports the goal as not met**, even
+with CI still red. It is not a daemon and it will not sit on your branch
+overnight. Re-run it to continue — the branch state carries over, so a second
+invocation resumes from the work the first one landed.
+
+That cap exists because the failure it protects against is expensive: an agent
+looping on an infrastructure problem it cannot fix from the code. If two
+`monitor` invocations in a row end at the cap, the constraint is usually not in
+the diff — read on.
+
+### It cannot be fixed from the code
+
+Some red CI is not a code problem: an expired token, a billing cap, a runner
+that no longer exists, a required check whose workflow file never starts. Stella
+will keep proposing code changes because code changes are what it can make. The
+tell is a `ci_status` conclusion that never reaches the test step at all — a job
+that fails in setup, or a run whose conclusion is `startup_failure`.
+
+Read the raw job yourself at that point:
+
+```bash
+gh run list --branch feature/payments-refactor --limit 5
+gh run view <run-id> --log-failed
+```
+
+### The budget aborts it
+
+`--budget` is a hard cap, checked **between** steps and stages — never
+mid-tool-call, so you are never left with a half-applied edit. An aborted run
+leaves its already-pushed commits in place; nothing is rolled back. Raise the
+cap and re-run, or see [Work within a budget](/docs/guides/budget).
+
+## Confirming it, afterwards
+
+`monitor` renders human-readable text and does **not** honor
+`--output-format` — it is an interactive mode. So the confirmation is the same
+one anybody else on your team would use:
+
+```bash
+gh pr checks 128
+```
+
+Then read what it cost you:
+
+```bash
+stella stats --format table
+```
+
+<Callout type="info">
+Want a machine-readable verdict instead? Drive the objective through
+[`stella run`](/docs/commands/run) with `--output-format json` and your own test
+command, and gate on `verdict.deterministic` — the
+[scripting guide](/docs/scripting) has the full pattern for CI-side automation.
+</Callout>
+
+## Running it *from* CI instead of *at* CI
+
+`monitor` watches a remote pipeline from your machine. The other arrangement —
+Stella running headlessly *inside* a CI job — is a different setup with
+different requirements (a non-TTY surface, JSON output, an explicit scope-review
+bypass):
+
+```bash
+stella --output-format json --budget 2.00 \
+  run --test-command "cargo test --workspace" "fix the failing tests" \
+  | jq -e '.status == "completed" and .verdict.deterministic == true'
+```
+
+Headless runs must opt in to bypassing the
+[scope-review gate](/docs/inference-pipeline#3-scope-review) explicitly with
+`agent_engine_config.headless_scope_bypass: "on"` — without it, a plan over the
+thresholds ends the run rather than silently auto-approving itself. See
+[Scripting](/docs/scripting).
+
+## Next
+
+<CardGrid size="sm">
+  <SpecCard title="stella monitor" href="/docs/commands/monitor">
+    The reference: synopsis, flags, exit behavior.
+  </SpecCard>
+  <SpecCard title="Goal mode" href="/docs/agent-modes#outcome-driven-goal-mode">
+    The round loop `monitor` is built on, and how the judge is chosen.
+  </SpecCard>
+  <SpecCard title="Work within a budget" href="/docs/guides/budget">
+    Where the abort lands, and how to make the money go further.
+  </SpecCard>
+  <SpecCard title="stella fleet" href="/docs/commands/fleet">
+    Several red branches at once — `--watch` reconciles each one's CI and PR status.
+  </SpecCard>
+</CardGrid>

@@ -99,15 +99,31 @@ This matters because the input is prose of unknown provenance. A README that say
 
 ## Reviewing what it produced
 
-Ingest writes **files**, and you review them as files — read `.stella/proposals/<source-slug>.toml` and edit or delete entries before anything is adopted.
+[`stella context`](/docs/commands/context) is the other half. Ingest extracts; context
+decides.
+
+```bash
+stella context review        # what was proposed, with each claim's probe verdict
+stella context keep a1b2c3   # publish one as a record the engine loads
+stella context ignore d4e5f6 --reason "we moved off this in Q2"
+stella context list          # what actually steers this workspace now
+```
+
+The proposals are plain TOML at `.stella/proposals/<source-slug>.toml`, so editing or
+deleting entries by hand still works — but `stella context` is the surface that shows
+you the probe verdicts, records a decline as reusable negative evidence with a
+cooldown, and writes the published record into `.stella/rules/` for you.
 
 <Callout type="warn">
-`stella ingest` and [`stella proposals`](/docs/commands/proposals) are two different review surfaces with two different authority models, and they do not share storage. Ingest writes TOML proposals to `.stella/proposals/`. `stella proposals` reviews the *adaptive-context* ledger in `.stella/private/context.db` — what the reflection loop induced from your sessions. A document you ingest will not appear in `stella proposals list`.
+`stella context` and [`stella proposals`](/docs/commands/proposals) are two different review surfaces with two different authority models, and they do not share storage. Ingest writes TOML proposals to `.stella/proposals/`, reviewed by `stella context`. `stella proposals` reviews the *adaptive-context* ledger in `.stella/private/context.db` — what the reflection loop induced from your sessions. A document you ingest will not appear in `stella proposals list`.
 </Callout>
 
 ## Related
 
 <CardGrid size="sm">
+  <SpecCard title="stella context" href="/docs/commands/context">
+    The review surface for what ingest extracted — keep, edit, ignore, validate, explain.
+  </SpecCard>
   <SpecCard title="stella proposals" href="/docs/commands/proposals">
     The review surface for the adaptive-context ledger — a separate substrate from ingest's
     TOML files.
