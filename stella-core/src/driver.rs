@@ -74,8 +74,9 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use stella_protocol::{
-    AgentEvent, CompletionMessage, CompletionRequest, FinishReason, MessageRole, Provider,
-    ProviderError, ReasoningEffort, StageKind, ToolCall, ToolOutput, ToolResult,
+    AgentEvent, CompletionMessage, CompletionRequest, CompletionRequestRef, FinishReason,
+    MessageRole, Provider, ProviderError, ReasoningEffort, StageKind, ToolCall, ToolOutput,
+    ToolResult,
 };
 
 use crate::budget::{BudgetAxis, BudgetGuard, BudgetOutcome};
@@ -1127,6 +1128,20 @@ impl<'a> Engine<'a> {
             .collect();
         let estimated_input_tokens = estimate_conversation_tokens(messages);
         let req_config = &self.config;
+        // Built ONCE, outside the attempt closure below, and borrowed from
+        // there. `CompletionRequestRef` is `Copy` (slices + scalars), so each
+        // attempt takes its own view for free instead of deep-copying the whole
+        // transcript and every tool schema — the per-attempt cost the `FnMut`
+        // bound used to force on an owning request (#921).
+        let req = CompletionRequestRef {
+            messages,
+            max_output_tokens: req_config.max_output_tokens,
+            temperature: req_config.temperature,
+            effort: req_config.effort,
+            reasoning: req_config.reasoning,
+            params: req_config.params,
+            tools: &tools_schema,
+        };
         let speculation_read_only = read_only_tools.clone();
         let speculation_hook_gated = hook_gated;
         // The gate forwards answer fragments as `TextDelta` previews. Deliberately NOT rolled back
@@ -1148,18 +1163,6 @@ impl<'a> Engine<'a> {
         // but each completed entry emits a `SpeculationDiscarded` event on
         // the way out (#370) — and the retry builds a fresh channel and pool.
         let attempt: RetryAttemptFn = Box::new(move || {
-            let req = CompletionRequest {
-                // From the borrowed transcript: `CompletionRequest` owns its
-                // messages and this closure is `FnMut`, so one copy per attempt
-                // is unavoidable — the snapshot made every step pay two.
-                messages: messages.to_vec(),
-                max_output_tokens: req_config.max_output_tokens,
-                temperature: req_config.temperature,
-                effort: req_config.effort,
-                reasoning: req_config.reasoning,
-                params: req_config.params,
-                tools: tools_schema.clone(),
-            };
             let read_only = speculation_read_only.clone();
             let gated = speculation_hook_gated.clone();
             let delta_tx = delta_events.clone();
@@ -1169,7 +1172,7 @@ impl<'a> Engine<'a> {
                 let mut pump: SpeculationFuture<'_> = Box::pin(self.pump_speculations(rx, pump_tx));
                 let mut complete = Box::pin(async move {
                     let gate = SpeculationGate::new(read_only, gated, tx, delta_tx);
-                    self.provider.complete_observed(req, &gate).await
+                    self.provider.complete_observed_ref(req, &gate).await
                     // `gate` (and its sender) drop here → the pump's
                     // stream ends once in-flight executions drain.
                 });

@@ -26,6 +26,21 @@ record of *changes*, curated by the person who made them.
 
 ## [Unreleased]
 
+## [0.6.15] — 2026-07-30
+
+### Fixed
+
+- `stella run` exits when the turn ends. It used to print its terminal event
+  and then hang until something killed it, which broke every non-interactive
+  use of the primary surface — CI steps, wrapper scripts, and any harness that
+  waits on process exit. The turn itself was always fine; the run's event
+  channel was held open by sender clones the tool registry never released, so
+  the renderer it was waiting on could not finish.
+- A `stella run --output-format stream-json` emits exactly one `complete`
+  event. The pipeline's own pre-reflection terminal event and the final
+  all-calls total both reached the durable JSONL sink, so a consumer that
+  stopped at the first terminal event read the wrong cost.
+
 ## [0.6.12] — 2026-07-30
 
 ## [0.6.10] — 2026-07-30

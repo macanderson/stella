@@ -5,10 +5,15 @@
 //! `!Send` bridge.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
 use stella_protocol::{CompletionMessage, ToolSchema};
+use stella_serve::observe::{
+    Capture, Fanout, Metrics, MisrouteFault, ReverseKind, ServeEvent, SettledOutcome,
+    SharedObserver,
+};
 use stella_serve::{ServeConfig, serve};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
@@ -28,18 +33,34 @@ fn echo_tool() -> serde_json::Value {
 
 /// Start the server on an ephemeral loopback port; returns its address.
 async fn start_server() -> SocketAddr {
+    start_observed_server().await.0
+}
+
+/// Start the server with a [`Capture`] wired in place of the JSONL sink, so a
+/// test can assert on the **typed** events the server emitted rather than
+/// scraping stderr. That indirection is the point: an assertion on
+/// `ServeEvent::ReverseTimedOut { .. }` survives any change to how records are
+/// rendered, and a phrase-matching one does not.
+async fn start_observed_server() -> (SocketAddr, Arc<Capture>) {
+    let capture = Arc::new(Capture::new());
+    let observer = capture.clone();
+    let metrics = Arc::new(Metrics::new());
     let (tx, rx) = oneshot::channel();
+    let fanout: SharedObserver = Arc::new(Fanout::new(vec![observer, metrics.clone()]));
     tokio::spawn(async move {
         let config = ServeConfig {
             bind: "127.0.0.1:0".parse().unwrap(),
             token: TOKEN.to_string(),
+            observer: fanout,
+            metrics,
         };
         let _ = serve(config, move |addr| {
             let _ = tx.send(addr);
         })
         .await;
     });
-    rx.await.expect("server reported its bound address")
+    let addr = rx.await.expect("server reported its bound address");
+    (addr, capture)
 }
 
 /// POST a JSON body and read the whole response (server sends `Connection:
@@ -734,4 +755,587 @@ async fn turn_ids_are_not_guessable_from_another_turns_id() {
     }
     assert_ne!(ids[0], ids[1]);
     assert_ne!(ids[1], ids[2]);
+}
+
+// ---------------------------------------------------------------------------
+// Observability (#930)
+//
+// The acceptance bar is behavioural: "a wedged turn, a misrouted `request_id`,
+// and a token brute-force are each identifiable from the server's output alone,
+// without attaching a debugger." So these drive the real server over a real
+// socket and assert on the **typed** events it emitted, never on scraped text —
+// an assertion on `ServeEvent::ReverseTimedOut { .. }` survives any change to
+// how a record is rendered, and a phrase-matching one does not.
+// ---------------------------------------------------------------------------
+
+/// Poll until `capture` holds at least `want` events matching `predicate`.
+///
+/// A record is emitted as the connection future returns, which is just after
+/// the client observes EOF — so asserting immediately races the server by
+/// microseconds. Polling closes that window without making the test sleep for a
+/// fixed guess.
+async fn await_events(
+    capture: &Arc<Capture>,
+    predicate: impl Fn(&ServeEvent) -> bool + Copy,
+    want: usize,
+    label: &str,
+) -> Vec<ServeEvent> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let found: Vec<ServeEvent> = capture.events().into_iter().filter(predicate).collect();
+        if found.len() >= want {
+            return found;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {want} `{label}` event(s); saw {}",
+            found.len()
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// #930, situation 1: a turn wedged on a reverse request that will never be
+/// answered. Before this, it and a healthy turn produced identical output —
+/// none. The wedge signal was a silent `HashMap::remove` inside
+/// `Pending::abandon`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_wedged_turn_is_identifiable_from_the_servers_output_alone() {
+    let (addr, capture) = start_observed_server().await;
+
+    let create = json!({
+        "provider_id": "mock",
+        "messages": [serde_json::to_value(CompletionMessage::user("hi")).unwrap()],
+        "reverse_request_timeout_ms": 50,
+    })
+    .to_string();
+    let (status, body) = post_json(addr, "/v1/turns", Some(TOKEN), &create).await;
+    assert!(status.contains("200"), "create: {status} {body}");
+    let turn_id = serde_json::from_str::<serde_json::Value>(&body).unwrap()["turn_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Stream the turn but never answer its provider request.
+    let mut sse = open_sse(addr, &format!("/v1/turns/{turn_id}/events"), TOKEN).await;
+    while next_event(&mut sse).await.is_some() {}
+
+    let timed_out = await_events(
+        &capture,
+        |e| matches!(e, ServeEvent::ReverseTimedOut { .. }),
+        1,
+        "reverse_timed_out",
+    )
+    .await;
+    match &timed_out[0] {
+        ServeEvent::ReverseTimedOut {
+            kind,
+            waited_ms,
+            turn,
+            ..
+        } => {
+            assert_eq!(*kind, ReverseKind::Provider);
+            assert!(*waited_ms >= 50, "the wait must be reported: {waited_ms}ms");
+            assert!(
+                turn_id.contains(&turn.to_string()),
+                "the record must correlate to the turn it wedged"
+            );
+        }
+        other => panic!("expected a timeout record, got {other:?}"),
+    }
+
+    // Wedged, not merely slow: the turn settled without its stages advancing
+    // past the first model call. That distinction is the whole reason the
+    // tally is folded from the engine's own event stream.
+    let settled = await_events(
+        &capture,
+        |e| matches!(e, ServeEvent::TurnSettled { .. }),
+        1,
+        "turn_settled",
+    )
+    .await;
+    match &settled[0] {
+        ServeEvent::TurnSettled { outcome, tally, .. } => {
+            assert_eq!(*outcome, SettledOutcome::Aborted);
+            assert_eq!(
+                tally.model_calls, 0,
+                "no model call ever committed — that is what wedged means"
+            );
+        }
+        other => panic!("expected a settle record, got {other:?}"),
+    }
+}
+
+/// #930, situation 2: a host answering with the wrong `request_id`. The `409`
+/// it receives is unchanged; what changes is that the server says so, and
+/// distinguishes "no such request" from "right request, wrong kind".
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_misrouted_request_id_is_recorded_with_its_fault() {
+    let (addr, capture) = start_observed_server().await;
+
+    let create = json!({
+        "provider_id": "mock",
+        "tools": [echo_tool()],
+        "messages": [serde_json::to_value(CompletionMessage::user("hi")).unwrap()],
+        "reverse_request_timeout_ms": 3000,
+    })
+    .to_string();
+    let (status, body) = post_json(addr, "/v1/turns", Some(TOKEN), &create).await;
+    assert!(status.contains("200"), "create: {status} {body}");
+    let turn_id = serde_json::from_str::<serde_json::Value>(&body).unwrap()["turn_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let mut sse = open_sse(addr, &format!("/v1/turns/{turn_id}/events"), TOKEN).await;
+    while let Some(event) = next_event(&mut sse).await {
+        if event["type"].as_str() == Some("provider_request") {
+            let real_id = event["request_id"].as_str().unwrap().to_string();
+
+            // (a) An id nobody is waiting on.
+            let fabricated = json!({
+                "request_id": "prov-999",
+                "status": "ok",
+                "result": model_result("done"),
+            })
+            .to_string();
+            let (status, _) = post_json(
+                addr,
+                &format!("/v1/turns/{turn_id}/provider-result"),
+                Some(TOKEN),
+                &fabricated,
+            )
+            .await;
+            assert!(status.contains("409"), "a stale id is a 409: {status}");
+
+            // (b) A real id, answered with the wrong kind of result.
+            let miskinded = json!({
+                "request_id": real_id,
+                "output": { "ok": { "content": "x" } },
+            })
+            .to_string();
+            let (status, _) = post_json(
+                addr,
+                &format!("/v1/turns/{turn_id}/tool-result"),
+                Some(TOKEN),
+                &miskinded,
+            )
+            .await;
+            assert!(
+                status.contains("409"),
+                "a mis-kinded answer is a 409: {status}"
+            );
+
+            // Now answer properly so the turn unwinds instead of running out
+            // its deadline.
+            let good = json!({
+                "request_id": real_id,
+                "status": "ok",
+                "result": model_result("done"),
+            })
+            .to_string();
+            let _ = post_json(
+                addr,
+                &format!("/v1/turns/{turn_id}/provider-result"),
+                Some(TOKEN),
+                &good,
+            )
+            .await;
+        }
+    }
+
+    let misroutes = await_events(
+        &capture,
+        |e| matches!(e, ServeEvent::ReverseMisrouted { .. }),
+        2,
+        "reverse_misrouted",
+    )
+    .await;
+    let faults: Vec<MisrouteFault> = misroutes
+        .iter()
+        .filter_map(|e| match e {
+            ServeEvent::ReverseMisrouted { fault, .. } => Some(*fault),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        faults.contains(&MisrouteFault::UnknownRequest),
+        "a fabricated id must be named as unknown: {faults:?}"
+    );
+    assert!(
+        faults.contains(&MisrouteFault::KindMismatch),
+        "a right-id/wrong-kind answer must be named as a mismatch: {faults:?}"
+    );
+}
+
+/// #930, situation 4: someone brute-forcing the bearer token.
+///
+/// Also asserts the throttle stays invisible to the guesser: every response is
+/// byte-identical whether or not the bucket was empty, so the only place the
+/// asymmetry shows is the server's own record.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_token_brute_force_is_visible_inside_and_invisible_outside() {
+    let (addr, capture) = start_observed_server().await;
+
+    // The burst allowance is 8; go past it so the throttle engages.
+    const ATTEMPTS: usize = 11;
+    let mut responses = Vec::new();
+    for attempt in 0..ATTEMPTS {
+        let guess = format!("wrong-token-{attempt}");
+        responses.push(get_json_authed(addr, "/v1/turns", &guess).await);
+    }
+
+    for (status, body) in &responses {
+        assert!(status.contains("401"), "every guess is a 401: {status}");
+        assert_eq!(
+            body, &responses[0].1,
+            "the body must not vary with the throttle's state — that would \
+             tell a guesser they had been noticed"
+        );
+    }
+
+    let unauthorized = await_events(
+        &capture,
+        |e| matches!(e, ServeEvent::Unauthorized { .. }),
+        ATTEMPTS,
+        "unauthorized",
+    )
+    .await;
+    let held: Vec<u64> = unauthorized
+        .iter()
+        .filter_map(|e| match e {
+            ServeEvent::Unauthorized { held_ms, .. } => Some(*held_ms),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(held.len(), ATTEMPTS);
+    assert!(
+        held.iter().any(|ms| *ms > 0),
+        "a sustained guess must be distinguishable from a misconfigured \
+         client — some attempts have to show as held: {held:?}"
+    );
+    assert!(
+        held.iter().take(4).all(|ms| *ms == 0),
+        "the burst must stay free, so a restarting host is not punished: {held:?}"
+    );
+}
+
+/// The counters are behind the same token as everything else, and they agree
+/// with what the log saw — because `Metrics` folds the *same* event stream
+/// rather than being incremented at its own call sites.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn metrics_are_authenticated_and_agree_with_the_records() {
+    let (addr, capture) = start_observed_server().await;
+
+    let (status, _) = get_json(addr, "/v1/metrics").await;
+    assert!(
+        status.contains("401"),
+        "metrics describe the host's traffic; an open endpoint is free \
+         reconnaissance: {status}"
+    );
+
+    // Two turns, so the counters have something to disagree about.
+    for _ in 0..2 {
+        let create = json!({
+            "provider_id": "mock",
+            "messages": [serde_json::to_value(CompletionMessage::user("hi")).unwrap()],
+            "reverse_request_timeout_ms": 30,
+        })
+        .to_string();
+        let (status, _) = post_json(addr, "/v1/turns", Some(TOKEN), &create).await;
+        assert!(status.contains("200"));
+    }
+
+    let created = await_events(
+        &capture,
+        |e| matches!(e, ServeEvent::TurnCreated { .. }),
+        2,
+        "turn_created",
+    )
+    .await;
+
+    let (status, body) = get_json_authed(addr, "/v1/metrics", TOKEN).await;
+    assert!(status.contains("200"), "metrics: {status} {body}");
+    let snapshot: serde_json::Value = serde_json::from_str(&body).expect("metrics is JSON");
+    assert_eq!(
+        snapshot["turns_created_total"].as_u64(),
+        Some(created.len() as u64),
+        "a counter must never disagree with the log: {body}"
+    );
+    assert!(
+        snapshot["requests_total"].as_u64().unwrap_or(0) >= 3,
+        "the metrics request itself and the creates are counted: {body}"
+    );
+    for (key, value) in snapshot.as_object().expect("a flat object") {
+        assert!(
+            value.is_number(),
+            "`{key}` is not a number — only counts may leave this endpoint"
+        );
+    }
+}
+
+/// Every response carries `X-Request-Id`, and a host-supplied one is honoured
+/// so a caller can correlate across the boundary — unless it is unsafe, in
+/// which case it is replaced rather than echoed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_request_id_is_echoed_and_a_hostile_one_is_replaced() {
+    let addr = start_server().await;
+
+    let head = raw_request(
+        addr,
+        "GET /healthz HTTP/1.1\r\nHost: engine\r\nX-Request-Id: abc-123\r\nConnection: close\r\n\r\n",
+    )
+    .await;
+    assert!(
+        head.contains("X-Request-Id: abc-123"),
+        "a usable id must be echoed for correlation: {head}"
+    );
+
+    let head = raw_request(
+        addr,
+        "GET /healthz HTTP/1.1\r\nHost: engine\r\nX-Request-Id: has space and \"quotes\"\r\nConnection: close\r\n\r\n",
+    )
+    .await;
+    assert!(
+        !head.contains("has space"),
+        "an unsafe id must be replaced, not echoed: {head}"
+    );
+    assert!(
+        head.contains("X-Request-Id: "),
+        "and a generated one takes its place: {head}"
+    );
+}
+
+/// Write raw bytes, half-close, and read the whole response.
+async fn raw_request(addr: SocketAddr, request: &str) -> String {
+    raw_bytes(addr, request.as_bytes()).await
+}
+
+/// The byte-level version, for input that is not valid UTF-8 or not a request
+/// at all.
+async fn raw_bytes(addr: SocketAddr, request: &[u8]) -> String {
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+    let _ = stream.write_all(request).await;
+    // Half-close so the server sees EOF rather than waiting out its 30-second
+    // read deadline on input that will never be completed.
+    let _ = stream.shutdown().await;
+    let mut buf = Vec::new();
+    let _ = stream.read_to_end(&mut buf).await;
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+/// **The** property: for *any* bytes a peer can put on a connection —
+/// malformed, truncated, oversized, unauthenticated, well-formed, or nothing at
+/// all — the server emits exactly one terminal record.
+///
+/// Hand-listed cases are how the original gap was missed: the bug is always a
+/// path nobody enumerated. Distributing an `emit()` across `route`'s sixteen
+/// exits would pass every example test anyone thought to write and still fail
+/// here the first time a refactor added a seventeenth.
+#[test]
+fn exactly_one_record_per_connection_for_any_input() {
+    use proptest::prelude::*;
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .expect("test runtime");
+    let (addr, capture) = runtime.block_on(start_observed_server());
+
+    let count = |capture: &Arc<Capture>| {
+        capture.count(|e| matches!(e, ServeEvent::RequestCompleted { .. }))
+    };
+
+    let config = ProptestConfig {
+        cases: 64,
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    };
+    proptest!(config, |(raw in proptest::collection::vec(any::<u8>(), 0..320))| {
+        let before = count(&capture);
+        runtime.block_on(async {
+            raw_bytes(addr, &raw).await;
+            // The record lands as the connection future returns, just after the
+            // client sees EOF. Wait for it rather than guessing a sleep.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while count(&capture) == before && Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+            // Then give a duplicate a chance to appear, so "exactly one" is a
+            // real claim and not just "at least one".
+            tokio::time::sleep(Duration::from_millis(15)).await;
+        });
+        let after = count(&capture);
+        prop_assert_eq!(
+            after - before,
+            1,
+            "input of {} byte(s) produced {} records, not exactly 1",
+            raw.len(),
+            after - before
+        );
+    });
+}
+
+/// No record carries content, and the sweep is not vacuous.
+///
+/// The shape `stella-store::content_free` uses for egress, applied here to a
+/// surface that does not egress but is routinely shipped: operators collect
+/// stderr. A turn is poisoned at every point host data enters — the prompt, the
+/// tool's advertised name, the model's output text, the tool result — and every
+/// emitted record is swept for those markers.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn no_content_reaches_a_record() {
+    const PROMPT_SENTINEL: &str = "STELLA-SENTINEL-CONTENT.prompt";
+    const OUTPUT_SENTINEL: &str = "STELLA-SENTINEL-CONTENT.model-output";
+    const TOOL_RESULT_SENTINEL: &str = "STELLA-SENTINEL-CONTENT.tool-result";
+    const PATH_SENTINEL: &str = "/stella-sentinel-path/must-never-egress";
+
+    let (addr, capture) = start_observed_server().await;
+
+    let create = json!({
+        "provider_id": "mock",
+        "tools": [echo_tool()],
+        "messages": [
+            serde_json::to_value(CompletionMessage::user(
+                format!("{PROMPT_SENTINEL} at {PATH_SENTINEL}")
+            )).unwrap()
+        ],
+        "reverse_request_timeout_ms": 3000,
+    })
+    .to_string();
+    let (status, body) = post_json(addr, "/v1/turns", Some(TOKEN), &create).await;
+    assert!(status.contains("200"), "create: {status} {body}");
+    let turn_id = serde_json::from_str::<serde_json::Value>(&body).unwrap()["turn_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let mut sse = open_sse(addr, &format!("/v1/turns/{turn_id}/events"), TOKEN).await;
+    let mut provider_calls = 0;
+    while let Some(event) = next_event(&mut sse).await {
+        match event["type"].as_str().unwrap_or_default() {
+            "provider_request" => {
+                provider_calls += 1;
+                let request_id = event["request_id"].as_str().unwrap();
+                let result = if provider_calls == 1 {
+                    model_wants_echo()
+                } else {
+                    model_result(OUTPUT_SENTINEL)
+                };
+                let body = json!({
+                    "request_id": request_id,
+                    "status": "ok",
+                    "result": result,
+                })
+                .to_string();
+                let _ = post_json(
+                    addr,
+                    &format!("/v1/turns/{turn_id}/provider-result"),
+                    Some(TOKEN),
+                    &body,
+                )
+                .await;
+            }
+            "tool_request" => {
+                let request_id = event["request_id"].as_str().unwrap();
+                let body = json!({
+                    "request_id": request_id,
+                    "output": { "ok": { "content": TOOL_RESULT_SENTINEL } },
+                })
+                .to_string();
+                let _ = post_json(
+                    addr,
+                    &format!("/v1/turns/{turn_id}/tool-result"),
+                    Some(TOKEN),
+                    &body,
+                )
+                .await;
+            }
+            _ => {}
+        }
+    }
+
+    let events = await_events(
+        &capture,
+        |e| matches!(e, ServeEvent::TurnSettled { .. }),
+        1,
+        "turn_settled",
+    )
+    .await;
+    assert!(!events.is_empty());
+
+    // --- the vacuity guard -------------------------------------------------
+    //
+    // Without this, an encoder — or a test — passes every sentinel check by
+    // recording nothing at all. `content_free.rs` learned this the same way.
+    let all = capture.events();
+    assert!(
+        all.len() >= 4,
+        "the sweep is vacuous: only {} record(s) were emitted",
+        all.len()
+    );
+    for (label, seen) in [
+        (
+            "request_completed",
+            all.iter()
+                .any(|e| matches!(e, ServeEvent::RequestCompleted { .. })),
+        ),
+        (
+            "turn_created",
+            all.iter()
+                .any(|e| matches!(e, ServeEvent::TurnCreated { .. })),
+        ),
+        (
+            "reverse_dispatched",
+            all.iter()
+                .any(|e| matches!(e, ServeEvent::ReverseDispatched { .. })),
+        ),
+        (
+            "reverse_answered",
+            all.iter()
+                .any(|e| matches!(e, ServeEvent::ReverseAnswered { .. })),
+        ),
+        (
+            "turn_settled",
+            all.iter()
+                .any(|e| matches!(e, ServeEvent::TurnSettled { .. })),
+        ),
+    ] {
+        assert!(seen, "no `{label}` record — the sweep would pass vacuously");
+    }
+
+    // --- the sweep ---------------------------------------------------------
+    let rendered = serde_json::to_string(&all).expect("records serialize");
+    for sentinel in [
+        PROMPT_SENTINEL,
+        OUTPUT_SENTINEL,
+        TOOL_RESULT_SENTINEL,
+        PATH_SENTINEL,
+        "STELLA-SENTINEL-CONTENT",
+    ] {
+        assert!(
+            !rendered.contains(sentinel),
+            "`{sentinel}` reached a record. That is a privacy incident, not a \
+             test failure: records go to stderr, and operators ship stderr."
+        );
+    }
+    // Check the *hex suffix*, not the `turn-` prefixed id: a record holds the
+    // bare hex, so asserting on the prefixed form would let a full-length
+    // `TurnRef` through — which is exactly what it did the first time.
+    let hex = turn_id.strip_prefix("turn-").expect("ids keep the prefix");
+    assert!(
+        !rendered.contains(hex),
+        "the whole turn id reached a record — it is a second factor (token AND \
+         id), and only a truncated `TurnRef` may be written"
+    );
+    assert!(
+        rendered.contains(&hex[..8]),
+        "records must still correlate to the turn: no handle at all is the \
+         opposite failure"
+    );
+    assert!(
+        !rendered.contains(TOKEN),
+        "the bearer token reached a record"
+    );
 }

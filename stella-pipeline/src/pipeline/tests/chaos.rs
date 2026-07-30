@@ -53,7 +53,10 @@ impl Provider for ChaosProvider {
     fn id(&self) -> &str {
         "chaos"
     }
-    async fn complete(&self, _req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+    async fn complete_ref(
+        &self,
+        _req: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
         self.script
             .lock()
             .await

@@ -38,7 +38,10 @@ impl Provider for ErrorProvider {
         "paid-error"
     }
 
-    async fn complete(&self, _req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+    async fn complete_ref(
+        &self,
+        _req: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
         Err(ProviderError::Terminal("upstream failed".into()))
     }
 }
@@ -51,7 +54,10 @@ impl Provider for SlowProvider {
         "paid-timeout"
     }
 
-    async fn complete(&self, _req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+    async fn complete_ref(
+        &self,
+        _req: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
         tokio::time::sleep(Duration::from_secs(60)).await;
         Ok(text_result("lookup"))
     }

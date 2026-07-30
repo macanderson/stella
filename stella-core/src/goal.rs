@@ -414,7 +414,7 @@ mod tests {
     use serde_json::Value;
     use stella_protocol::event::BudgetMode;
     use stella_protocol::{
-        CompletionRequest, CompletionResult, CompletionUsage, ModelCallRole, ProviderError,
+        CompletionRequestRef, CompletionResult, CompletionUsage, ModelCallRole, ProviderError,
         ToolOutput, ToolSchema,
     };
     use tokio::sync::mpsc;
@@ -452,9 +452,9 @@ mod tests {
             "scripted"
         }
 
-        async fn complete(
+        async fn complete_ref(
             &self,
-            _request: CompletionRequest,
+            _request: CompletionRequestRef<'_>,
         ) -> Result<CompletionResult, ProviderError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let mut script = self.script.lock().unwrap();

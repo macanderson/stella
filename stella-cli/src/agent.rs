@@ -69,8 +69,8 @@ use outcome::{
 pub(crate) use outcome::{pipeline_execution_closeout, settled_cost_since};
 use output::*;
 pub(crate) use persistence::{
-    persist_event, persist_event_detailed, record_execution_end, spawn_renderer,
-    warn_store_write_failed,
+    close_event_stream, persist_event, persist_event_detailed, record_execution_end,
+    spawn_renderer, warn_store_write_failed,
 };
 pub(crate) use prompt::*;
 // `tool_policy` is a top-level module (`main.rs`); the re-export keeps every
@@ -420,7 +420,7 @@ async fn run_pipeline_one_shot(
             steering: None,
         };
 
-        let pipeline = Pipeline::new(ports, tx.clone(), pipeline_config);
+        let pipeline = Pipeline::new(ports, pipeline_event_sender(&tx, format), pipeline_config);
         pipeline.run(prompt, &mut messages, &mut budget).await
     };
 
@@ -510,16 +510,17 @@ async fn run_pipeline_one_shot(
     if format == OutputFormat::StreamJson
         && let Ok(outcome) = &result
     {
-        // Replace the pipeline's earlier terminal frame with the true
-        // all-calls total. The renderer retains only the latest Complete and
-        // releases it after every queued reflection/accounting event.
+        // The run's one terminal frame, carrying the true all-calls total.
+        // The pipeline's own pre-reflection `Complete` was suppressed at the
+        // sender (`pipeline_event_sender`), so this is the only one to reach
+        // stdout *or* the durable sink; the renderer holds it back until every
+        // queued reflection/accounting event has gone out.
         let _ = tx.send(AgentEvent::Complete {
             model: wiring.worker_model.to_string(),
             cost_usd: outcome.total_cost_usd + reflection_report.cost_usd,
         });
     }
-    drop(tx);
-    let rendered = renderer.await.unwrap_or_default();
+    let rendered = close_event_stream(&registry, tx, renderer).await;
     let persistence_complete = rendered.persistence_complete;
     let collected = rendered.events;
 
@@ -2159,12 +2160,11 @@ async fn run_turn(
         }
         engine.run_turn_with_sender(messages, budget, &tx).await
     };
-    // Dropping the last sender closes the channel, ending the renderer's
-    // `recv()` loop; awaiting it ensures every already-queued event has
-    // actually printed before this function returns (no events lost to a
-    // detached task racing process exit).
-    drop(tx);
-    let rendered = renderer.await.unwrap_or_default();
+    // Releasing every sender — the registry's clones included — closes the
+    // channel, ending the renderer's `recv()` loop; awaiting it ensures every
+    // already-queued event has actually printed before this function returns
+    // (no events lost to a detached task racing process exit).
+    let rendered = close_event_stream(registry, tx, renderer).await;
     let persistence_complete = rendered.persistence_complete;
     let collected = rendered.events;
 

@@ -281,16 +281,16 @@ impl Provider for HangingProvider {
         "hanging"
     }
 
-    async fn complete(
+    async fn complete_ref(
         &self,
-        _req: CompletionRequest,
+        _req: CompletionRequestRef<'_>,
     ) -> Result<CompletionResultAlias, ProviderError> {
         unreachable!("the engine must drive complete_observed, never bare complete")
     }
 
-    async fn complete_observed(
+    async fn complete_observed_ref(
         &self,
-        _req: CompletionRequest,
+        _req: CompletionRequestRef<'_>,
         _observer: &dyn stella_protocol::ToolCallObserver,
     ) -> Result<CompletionResultAlias, ProviderError> {
         self.started.notify_one();
@@ -1071,15 +1071,15 @@ impl Provider for MultiAnnounceProvider {
     fn id(&self) -> &str {
         "multi-announce"
     }
-    async fn complete(
+    async fn complete_ref(
         &self,
-        _req: CompletionRequest,
+        _req: CompletionRequestRef<'_>,
     ) -> Result<CompletionResultAlias, ProviderError> {
         unreachable!("the engine must drive complete_observed, never bare complete")
     }
-    async fn complete_observed(
+    async fn complete_observed_ref(
         &self,
-        _req: CompletionRequest,
+        _req: CompletionRequestRef<'_>,
         observer: &dyn stella_protocol::ToolCallObserver,
     ) -> Result<CompletionResultAlias, ProviderError> {
         if self.step.fetch_add(1, Ordering::SeqCst) > 0 {
@@ -1210,9 +1210,9 @@ impl Provider for PrefixRecordingProvider {
     fn id(&self) -> &str {
         "prefix-recording"
     }
-    async fn complete(
+    async fn complete_ref(
         &self,
-        req: CompletionRequest,
+        req: CompletionRequestRef<'_>,
     ) -> Result<CompletionResultAlias, ProviderError> {
         // The summarizer's own request has its own (different) system prompt and
         // is not part of the worker prefix under test; it carries no tools.
