@@ -26,3 +26,9 @@ tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time",
 # `test-util` gives the paused clock, which is what makes the 30s read deadline
 # assertable in microseconds instead of thirty real seconds of CI time.
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros", "net", "io-util", "test-util"] }
+# Already in `[workspace.dependencies]` and already built for other crates, so
+# this adds no crate to the graph. Needed for the one property that matters
+# here: every connection produces exactly one record. The original bug this
+# guards against is always a path nobody enumerated, so hand-listed cases are
+# precisely how it would be missed.
+proptest.workspace = true

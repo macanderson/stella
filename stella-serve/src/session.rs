@@ -14,7 +14,7 @@
 //! this without changing the transport.
 
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use stella_core::{BudgetGuard, Engine, EngineConfig};
 use stella_protocol::{
@@ -25,6 +25,9 @@ use tokio::sync::mpsc;
 
 use crate::error::ServeError;
 use crate::frame::{ServerFrame, TurnOutcomeWire};
+use crate::observe::SharedObserver;
+use crate::observe::event::{ServeEvent, SettledOutcome, TurnRef, TurnTally, millis};
+use crate::observe::tally::TallyFold;
 use crate::pending::Pending;
 use crate::remote::{
     DEFAULT_REVERSE_REQUEST_TIMEOUT, RemoteProvider, RemoteToolExecutor, TokioSleeper,
@@ -51,6 +54,15 @@ pub struct SessionSpec {
     /// reverse request from parking an OS thread forever. Defaults to
     /// [`SessionSpec::DEFAULT_REVERSE_REQUEST_TIMEOUT`].
     pub reverse_request_timeout: Duration,
+    /// This turn's truncated id, carried into every record the session emits.
+    ///
+    /// Supplied by the caller rather than derived here because only the turn
+    /// registry can mint an id, and it does so under the lock that admits the
+    /// turn — see `ServerState::register_turn`.
+    pub turn: TurnRef,
+    /// Where this session's boundary events go. `observe::null_observer()` for
+    /// callers using [`Session`] as a library type without a sink.
+    pub observer: SharedObserver,
 }
 
 impl SessionSpec {
@@ -77,12 +89,14 @@ impl Session {
     /// drives one code path either way.
     pub fn start(spec: SessionSpec) -> Session {
         let (frame_tx, frame_rx) = mpsc::unbounded_channel::<ServerFrame>();
-        let pending = Pending::default();
+        let pending = Pending::new(spec.observer.clone(), spec.turn.clone());
         // Fallible spawn on purpose: a host that opens more turns than the OS
         // will grant threads must see a cleanly aborted turn on the wire, not
         // the panic bare `std::thread::spawn` raises when creation fails.
         // Naming the thread also makes a wedged session legible in a dump.
         let abort_tx = frame_tx.clone();
+        let abort_observer = spec.observer.clone();
+        let abort_turn = spec.turn.clone();
         let thread_pending = pending.clone();
         let builder = std::thread::Builder::new().name("stella-serve-session".to_string());
         let spawned = builder.spawn(move || run_session(spec, frame_tx, thread_pending));
@@ -94,6 +108,15 @@ impl Session {
                         reason: ServeError::SessionThreadFailed(err.to_string()).to_string(),
                         cost_usd: 0.0,
                     },
+                });
+                // A turn that never got a thread still settled, and still has
+                // to say so: reporting only the turns that started is exactly
+                // the shape of silence this crate is being fixed for.
+                abort_observer.emit(&ServeEvent::TurnSettled {
+                    turn: abort_turn,
+                    outcome: SettledOutcome::Aborted,
+                    duration_ms: 0,
+                    tally: TurnTally::default(),
                 });
                 None
             }
@@ -161,6 +184,15 @@ impl Session {
     pub fn is_finished(&self) -> bool {
         self.thread.as_ref().is_none_or(JoinHandle::is_finished)
     }
+
+    /// How many frames are buffered for a stream that has not opened.
+    ///
+    /// Read when the registry evicts a finished-but-unstreamed turn, so the
+    /// record can say how much the host threw away by never subscribing.
+    #[must_use]
+    pub fn buffered_frames(&self) -> usize {
+        self.frames.len()
+    }
 }
 
 impl Drop for Session {
@@ -182,6 +214,9 @@ impl Drop for Session {
 /// The body of the session thread: build a current-thread runtime, construct the
 /// remoted ports, and drive one turn to its outcome.
 fn run_session(spec: SessionSpec, frame_tx: mpsc::UnboundedSender<ServerFrame>, pending: Pending) {
+    let observer = spec.observer.clone();
+    let turn = spec.turn.clone();
+    let started = Instant::now();
     let runtime = match Builder::new_current_thread().enable_time().build() {
         Ok(runtime) => runtime,
         Err(err) => {
@@ -190,6 +225,12 @@ fn run_session(spec: SessionSpec, frame_tx: mpsc::UnboundedSender<ServerFrame>, 
                     reason: ServeError::RuntimeBuild(err.to_string()).to_string(),
                     cost_usd: 0.0,
                 },
+            });
+            observer.emit(&ServeEvent::TurnSettled {
+                turn,
+                outcome: SettledOutcome::Aborted,
+                duration_ms: millis(started.elapsed()),
+                tally: TurnTally::default(),
             });
             return;
         }
@@ -215,14 +256,24 @@ fn run_session(spec: SessionSpec, frame_tx: mpsc::UnboundedSender<ServerFrame>, 
         // reverse-RPC request frames bypass this and go straight to `frame_tx`
         // from the ports, so a starved forwarder never stalls the turn — it only
         // affects UI-event latency.
+        //
+        // This is also where the engine's stream is *tapped* for the turn's
+        // tally. It has to be here, on the producing side: tapping in the SSE
+        // loop would miss every turn nobody streams, and those are precisely the
+        // abandoned ones worth observing. The fold only increments integers —
+        // `AgentEvent::TextDelta` fires per token, so anything costlier here
+        // would make this server slower than the model it waits on.
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<AgentEvent>();
         let forward_tx = frame_tx.clone();
         let forwarder = tokio::spawn(async move {
+            let mut fold = TallyFold::default();
             while let Some(event) = event_rx.recv().await {
+                fold.observe(&event);
                 if forward_tx.send(ServerFrame::Event { event }).is_err() {
                     break;
                 }
             }
+            fold.finish()
         });
 
         let mut messages = spec.messages;
@@ -232,13 +283,25 @@ fn run_session(spec: SessionSpec, frame_tx: mpsc::UnboundedSender<ServerFrame>, 
         // Close the event channel so the forwarder drains and exits before the
         // terminal frame — a well-behaved host thus sees every event first.
         drop(event_tx);
-        let _ = forwarder.await;
+        // A forwarder that panicked still leaves a turn that must be reported;
+        // an empty tally is the honest answer for a fold that did not survive.
+        let tally = forwarder.await.unwrap_or_default();
 
-        let _ = frame_tx.send(ServerFrame::TurnComplete {
-            outcome: outcome.into(),
+        let wire: TurnOutcomeWire = outcome.into();
+        let settled = match &wire {
+            TurnOutcomeWire::Completed { .. } => SettledOutcome::Completed,
+            TurnOutcomeWire::Aborted { .. } => SettledOutcome::Aborted,
+        };
+        let _ = frame_tx.send(ServerFrame::TurnComplete { outcome: wire });
+        observer.emit(&ServeEvent::TurnSettled {
+            turn,
+            outcome: settled,
+            duration_ms: millis(started.elapsed()),
+            tally,
         });
         // A clean turn leaves nothing parked; belt-and-suspenders for an aborted
-        // one, so no reverse-RPC one-shot outlives the session.
+        // one, so no reverse-RPC one-shot outlives the session. Anything still
+        // registered here is work being thrown away, and `clear` reports it.
         pending.clear();
     });
 }

@@ -161,7 +161,11 @@ async fn run() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let config = ServeConfig { bind: addr, token };
+    // `serve` emits a `listening` record through the observer; this line stays
+    // on stdout because it is the process's readiness contract — the container
+    // healthcheck and the dev scripts parse it, and a record on stderr at a
+    // configurable level is not something a supervisor can depend on.
+    let config = ServeConfig::new(addr, token);
     match serve(config, |bound| {
         println!("stella-serve listening on {bound}")
     })
