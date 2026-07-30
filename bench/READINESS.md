@@ -226,7 +226,7 @@ Everything in §§1–7 was established by *reading* the harness. #909's point w
 that nothing had ever *run* it. Running it surfaced three things that no amount
 of offline review had, and the first two are blockers for the audited row.
 
-### 8.1 The claim path had been unlaunchable for five days
+### 8.1 The claim path had been unlaunchable for five days — and CI said so
 
 [#659](https://github.com/macanderson/stella/pull/659) moved `harbor==0.6.1` to
 `0.20.0` in `bench/harbor_adapter/pyproject.toml` — one line, nothing else. The
@@ -234,15 +234,33 @@ version is not a dependency, it is an audited constant named in six places, one
 of which is `secure_launcher`'s guard that refuses to launch on a mismatch. The
 whole launcher suite failed on that guard: **57 failed / 169 passed**.
 
-Two reasons it stayed invisible: nothing ran the harness, and `bench.yml` is
-path-filtered to `bench/**`, so no PR outside `bench/` could reveal it. Pin
-restored → adapter **226 passed**, analyzer **240 passed**. `dependabot.yml` now
-excludes the package in both bench ecosystems.
+**The gate fired. The PR merged anyway.** `bench.yml` ran on #659 and reported
+`harbor_adapter + analyzer pytest` → **FAILURE**; it was merged 12 minutes later.
+Nothing malfunctioned. `main`'s protection requires exactly two contexts —
 
-The general lesson is worth more than the fix: **an unexercised guard is
-indistinguishable from a broken one.** The version pin, the posture hashes, and
-the readiness fixture are all "verified" in §3 in exactly the same sense this
-pin was.
+```
+"fmt + clippy + test"
+"cargo deny + cargo audit"
+```
+
+— and the bench suite is not one of them, so a red bench check does not block a
+merge. It is decoration.
+
+Pin restored → adapter **226 passed**, analyzer **240 passed**.
+`dependabot.yml` now excludes the package in both bench ecosystems.
+
+**Recommended, and owner-only:** add `harbor_adapter + analyzer pytest` to
+`main`'s required contexts. Until then this recurs by construction — the next
+bot bump will also go red and also merge. (Not done here: changing branch
+protection is a repository-settings decision, not a code change.)
+
+Two lessons, and the second is the expensive one:
+
+* **An unexercised guard is indistinguishable from a broken one.** The version
+  pin, the posture hashes, and the readiness fixture are all "verified" in §3 in
+  exactly the sense this pin was — by reading, never by running.
+* **An advisory gate is indistinguishable from no gate.** The failing check was
+  visible on the PR for anyone who looked. Nobody had to look, so nobody did.
 
 ### 8.2 Stella completes its turn but the process does not exit
 
