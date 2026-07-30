@@ -1,0 +1,368 @@
+# =============================================================================
+# agent_system.toml
+# Example config for a multi-agent system with:
+#   - per-agent configs (triage / worker / judge)
+#   - a pipeline object controlling which agents are active
+#   - multiple API providers, including providers that serve the same model
+#   - "track latest" model aliasing (e.g. auto-upgrades opus-4.5 -> opus-5)
+#   - local OpenAI-compatible model servers (Ollama, vLLM, LM Studio, etc.)
+#   - a toggleable registry of 30 tools
+# =============================================================================
+
+[meta]
+schema_version = 1
+config_name    = "default"
+
+# -----------------------------------------------------------------------------
+# PROVIDERS
+# Each provider is a place that can serve one or more models. Two providers
+# can serve the *same logical model* (e.g. Claude via Anthropic direct vs.
+# via Bedrock) -- that mapping is resolved down in [models.*.served_by].
+# -----------------------------------------------------------------------------
+
+[[providers]]
+id            = "anthropic"
+kind          = "anthropic"                      # native Anthropic API
+base_url      = "https://api.anthropic.com"
+api_key_env   = "ANTHROPIC_API_KEY"               # name of env var holding the key
+enabled       = true
+# Anthropic publishes rolling aliases (e.g. "claude-opus-4-5-latest") that we
+# can use directly instead of resolving a version ourselves.
+supports_latest_alias = true
+
+[[providers]]
+id            = "anthropic_bedrock"
+kind          = "bedrock"
+region        = "us-east-1"
+auth          = "aws_default_credentials"         # uses standard AWS credential chain
+enabled       = false
+supports_latest_alias = false                     # Bedrock model IDs are pinned; no "-latest" tag
+
+[[providers]]
+id            = "anthropic_vertex"
+kind          = "vertex"
+project_id    = "my-gcp-project"
+region        = "us-central1"
+auth          = "gcloud_default_credentials"
+enabled       = false
+supports_latest_alias = false
+
+[[providers]]
+id            = "openai"
+kind          = "openai"
+base_url      = "https://api.openai.com/v1"
+api_key_env   = "OPENAI_API_KEY"
+enabled       = true
+supports_latest_alias = true                      # OpenAI also ships rolling aliases like "gpt-4o"
+
+[[providers]]
+id            = "azure_openai"
+kind          = "azure_openai"
+base_url      = "https://my-resource.openai.azure.com"
+api_key_env   = "AZURE_OPENAI_API_KEY"
+api_version   = "2024-10-21"
+enabled       = false
+supports_latest_alias = false                     # Azure deployments are pinned to a named deployment
+
+# --- Local / self-hosted models, exposed via an OpenAI-compatible endpoint ---
+
+[[providers]]
+id            = "local_ollama"
+kind          = "openai_compatible"
+base_url      = "http://localhost:11434/v1"
+api_key_env   = ""                                # most local servers ignore the key; leave blank
+enabled       = true
+supports_latest_alias = false
+
+[[providers]]
+id            = "local_vllm"
+kind          = "openai_compatible"
+base_url      = "http://localhost:8000/v1"
+api_key_env   = "LOCAL_VLLM_API_KEY"
+enabled       = false
+supports_latest_alias = false
+
+
+# -----------------------------------------------------------------------------
+# MODELS
+# A "model" here is a logical name agents reference (e.g. "claude-opus").
+# It can be served by multiple providers, each with its own provider-specific
+# model ID string (Anthropic, Bedrock and Vertex all name the same model
+# differently). `track_latest = true` means: don't pin a version, always
+# resolve to whatever the provider currently considers newest in that family
+# at call time (or on a periodic refresh) -- this is the mechanism that lets
+# a "claude-opus" agent silently move from opus-4.5 to opus-5 without a config
+# change. `pinned_version` is the fallback used when track_latest = false, or
+# when a provider doesn't support latest-resolution and needs an explicit ID.
+# -----------------------------------------------------------------------------
+
+[models.claude-opus]
+family         = "opus"
+track_latest   = true
+latest_alias   = "claude-opus-4-5-latest"          # used when provider.supports_latest_alias = true
+pinned_version = "claude-opus-4-5-20250929"        # used as fallback / for pinned providers
+
+  [models.claude-opus.served_by.anthropic]
+  model_id = "claude-opus-4-5-latest"              # provider resolves "-latest" itself
+
+  [models.claude-opus.served_by.anthropic_bedrock]
+  model_id = "anthropic.claude-opus-4-5-20250929-v1:0"  # must be re-pinned manually when a new opus ships
+
+  [models.claude-opus.served_by.anthropic_vertex]
+  model_id = "claude-opus-4-5@20250929"
+
+[models.claude-sonnet]
+family         = "sonnet"
+track_latest   = true
+latest_alias   = "claude-sonnet-4-5-latest"
+pinned_version = "claude-sonnet-4-5-20250929"
+
+  [models.claude-sonnet.served_by.anthropic]
+  model_id = "claude-sonnet-4-5-latest"
+
+  [models.claude-sonnet.served_by.anthropic_bedrock]
+  model_id = "anthropic.claude-sonnet-4-5-20250929-v1:0"
+
+[models.claude-haiku]
+family         = "haiku"
+track_latest   = false                             # triage wants a stable, cheap, predictable model
+pinned_version = "claude-haiku-4-5-20251001"
+
+  [models.claude-haiku.served_by.anthropic]
+  model_id = "claude-haiku-4-5-20251001"
+
+[models.gpt-4o]
+family         = "gpt-4o"
+track_latest   = true
+latest_alias   = "gpt-4o"                          # OpenAI's bare name floats to newest snapshot
+pinned_version = "gpt-4o-2024-11-20"
+
+  [models.gpt-4o.served_by.openai]
+  model_id = "gpt-4o"
+
+  [models.gpt-4o.served_by.azure_openai]
+  model_id = "my-gpt4o-deployment"                 # Azure deployment name, not the raw model name
+
+[models.local-llama3]
+family         = "llama3"
+track_latest   = false
+pinned_version = "llama3.1:70b"
+
+  [models.local-llama3.served_by.local_ollama]
+  model_id = "llama3.1:70b"
+
+  [models.local-llama3.served_by.local_vllm]
+  model_id = "meta-llama/Meta-Llama-3.1-70B-Instruct"
+
+
+# -----------------------------------------------------------------------------
+# AGENTS
+# Each agent picks a logical model and a provider preference order (first
+# enabled provider in the list that serves that model wins; falls through on
+# error/rate-limit). `tools` is a list of tool ids from [tools.*] the agent is
+# permitted to call -- it's still gated by that tool's own `enabled` flag.
+# -----------------------------------------------------------------------------
+
+[agents.triage]
+enabled             = true
+model               = "claude-haiku"
+provider_preference = ["anthropic"]
+temperature         = 0.0
+max_tokens          = 1024
+system_prompt_file  = "prompts/triage.md"
+tools               = ["web_search", "memory_read"]
+
+[agents.worker]
+enabled             = true
+model               = "claude-sonnet"
+provider_preference = ["anthropic", "anthropic_bedrock", "local_vllm"]
+temperature         = 0.2
+max_tokens          = 8192
+system_prompt_file  = "prompts/worker.md"
+tools               = [
+  "web_search", "web_fetch", "code_execution", "file_read", "file_write",
+  "file_edit", "shell_exec", "python_repl", "sql_query", "calculator",
+  "pdf_extract", "spreadsheet_edit", "memory_read", "memory_write",
+  "browser_automation",
+]
+
+[agents.judge]
+enabled             = true
+model               = "claude-opus"
+provider_preference = ["anthropic", "anthropic_vertex"]
+temperature         = 0.0
+max_tokens          = 4096
+system_prompt_file  = "prompts/judge.md"
+tools               = ["calculator", "memory_read"]
+
+
+# -----------------------------------------------------------------------------
+# PIPELINE
+# Controls which agents actually run and in what order/mode. Disabling an
+# agent here short-circuits it even if the [agents.*] block above is enabled
+# -- e.g. flip judge.enabled = false for a cheap two-stage pipeline without
+# touching the agent's own config.
+# -----------------------------------------------------------------------------
+
+[pipeline]
+mode = "sequential"                # "sequential" | "triage_route" | "single_agent"
+
+  [pipeline.stages.triage]
+  enabled       = true
+  on_disable    = "skip"           # "skip" = go straight to next enabled stage
+  routes_to     = ["worker", "judge"]  # triage_route mode: where it can send a request
+
+  [pipeline.stages.worker]
+  enabled       = true
+  on_disable    = "skip"
+
+  [pipeline.stages.judge]
+  enabled       = true
+  on_disable    = "skip"           # if disabled, worker output is returned unreviewed
+  max_revisions = 2                # judge can bounce work back to worker up to N times
+
+
+# -----------------------------------------------------------------------------
+# INTEGRATIONS
+# "Providers" above are LLM backends; "integrations" are the external
+# services *tools* call out to (Jira, GitHub, Linear, Slack, email, a search
+# API, ...). Same shape and same rule as providers: config holds connection
+# details plus the NAME of an env var (`*_env` suffix), never the secret
+# itself. The actual secret lives only in the process environment (a
+# git-ignored .env file locally, a real env var / secrets manager in
+# deployment) -- so this file is safe to commit.
+#
+# A config loader should fail fast at startup if an integration is enabled
+# but the env var named in its `*_env` field isn't actually set.
+# -----------------------------------------------------------------------------
+
+[[integrations]]
+id             = "jira_prod"
+kind           = "jira"
+base_url       = "https://oxagen.atlassian.net"
+project_key    = "OPS"
+user_email_env = "JIRA_USER_EMAIL"        # Jira Cloud uses basic auth: email + API token
+api_key_env    = "JIRA_API_TOKEN"
+enabled        = true
+
+[[integrations]]
+id           = "github_main"
+kind         = "github"
+owner        = "oxagen"
+repo         = "backend"
+api_key_env  = "GITHUB_TOKEN"
+enabled      = true
+
+[[integrations]]
+id           = "linear_ops"
+kind         = "linear"
+team_id      = "OXA"
+api_key_env  = "LINEAR_API_KEY"
+enabled      = false
+
+[[integrations]]
+id              = "slack_workspace"
+kind            = "slack"
+default_channel = "#ops-alerts"
+api_key_env     = "SLACK_BOT_TOKEN"
+enabled         = false
+
+[[integrations]]
+id            = "sendgrid"
+kind          = "smtp"
+from_address  = "ops@oxagen.sh"
+api_key_env   = "SENDGRID_API_KEY"
+enabled       = false
+
+[[integrations]]
+id           = "brave_search"
+kind         = "search_api"
+api_key_env  = "BRAVE_SEARCH_API_KEY"
+enabled      = true
+
+
+# -----------------------------------------------------------------------------
+# TOOLS
+# Full registry of 30 tools, each independently toggleable. An agent can only
+# use a tool if it's both (a) enabled here and (b) listed in its own `tools`.
+#
+# A plain tool is a one-liner: `[tools.<name>] category = "..." enabled = ...`
+#
+# A tool that needs credentials points at an `integration` id above instead
+# of embedding a key -- e.g. web_search -> brave_search. Nothing secret is
+# ever written directly under [tools.*].
+#
+# A tool that can act through *multiple* interchangeable backends (this is
+# the "create_follow_up_task -> Jira | GitHub Issue | Linear" case) lists
+# every eligible integration in `backends`, names a `default_backend`, and
+# gets its own `[tools.<name>.config]` sub-table for behavior that isn't a
+# credential -- e.g. whether the calling agent is allowed to pick the backend
+# per call, or whether a human must confirm before it fires. The same
+# `[tools.<name>.config]` pattern works for any tool that needs extra,
+# non-secret settings (e.g. slack_post.config.allow_dm).
+# -----------------------------------------------------------------------------
+
+# NOTE ON SYNTAX: TOML doesn't allow a table header and its key/values to
+# share a line, so the one-line-per-tool style below needs an explicit
+# `[tools]` header first, then each entry as `name = { ... }` (an inline
+# table) *without* repeating the `tools.` prefix -- we're already inside
+# that table. Tools that need their own nested sub-table (create_follow_up_
+# task, slack_post) switch to the full `[tools.name]` header form further
+# down instead, one field per line.
+
+[tools]
+web_search        = { category = "research",   enabled = true,  integration = "brave_search" }
+web_fetch          = { category = "research",   enabled = true }
+browser_automation = { category = "research",   enabled = false }
+translation        = { category = "research",   enabled = true }
+summarization       = { category = "research",  enabled = true }
+
+code_execution     = { category = "code",       enabled = true }
+python_repl        = { category = "code",       enabled = true }
+shell_exec         = { category = "code",       enabled = false }
+sql_query          = { category = "code",       enabled = true }
+github_read_repo   = { category = "code",       enabled = true,  integration = "github_main" }
+github_create_pr   = { category = "code",       enabled = false, integration = "github_main" }
+
+file_read          = { category = "filesystem", enabled = true }
+file_write         = { category = "filesystem", enabled = true }
+file_edit          = { category = "filesystem", enabled = true }
+pdf_extract        = { category = "filesystem", enabled = true }
+spreadsheet_edit   = { category = "filesystem", enabled = true }
+image_generation   = { category = "filesystem", enabled = false }
+image_analysis     = { category = "filesystem", enabled = true }
+
+calculator         = { category = "utility",    enabled = true }
+calendar_read      = { category = "utility",    enabled = true }
+calendar_write     = { category = "utility",    enabled = false }
+vector_search      = { category = "utility",    enabled = true }
+
+memory_read        = { category = "memory",     enabled = true }
+memory_write       = { category = "memory",     enabled = true }
+
+email_send         = { category = "comms",      enabled = false, integration = "sendgrid" }
+email_read         = { category = "comms",      enabled = true }
+slack_read         = { category = "comms",      enabled = true }
+jira_search        = { category = "tracking",   enabled = true,  integration = "jira_prod" }
+
+# --- Tools with their own nested config sub-table use bracket headers -----
+# (these become sub-tables of [tools], declared here now that [tools] exists)
+
+[tools.create_follow_up_task]
+category        = "tracking"
+enabled         = true
+backends        = ["jira_prod", "github_main", "linear_ops"]  # integrations this tool may target
+default_backend = "jira_prod"  # used when not specified
+
+  [tools.create_follow_up_task.config]
+  agent_may_choose_backend = true  # let the calling agent pick a backend via a tool-call arg
+  require_confirmation     = true  # judge/human must confirm before the ticket is actually filed
+  default_labels           = ["from-agent"]
+
+[tools.slack_post]
+category    = "comms"
+enabled     = false
+integration = "slack_workspace"
+
+  [tools.slack_post.config]
+  allow_dm = false  # restrict to channels, no direct messages
