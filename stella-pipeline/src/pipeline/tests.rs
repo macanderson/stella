@@ -1464,14 +1464,31 @@ async fn single_model_config_degrades_to_unauthored_witness_instead_of_aborting(
         !stages(&events).contains(&StageKind::Witness),
         "witness authoring is skipped, not attempted without an author"
     );
+    // Announced on BOTH channels, which is the contract: the warning carries
+    // the transcript's prose account, and the proof step carries the rail's.
+    // Reporting on only one is the failure mode this pairing exists to stop —
+    // a warning scrolls away, and a rail with nothing to show falls back to
+    // "not reported" when the reason was known all along.
     let warned = events.iter().any(|event| {
         matches!(
             event,
             AgentEvent::Error { message, retryable: true }
-                if message.contains("no witness author independent of the worker")
+                if message.contains("no author independent of the worker")
         )
     });
-    assert!(warned, "the degradation is announced once: {events:?}");
+    assert!(warned, "the degradation is announced: {events:?}");
+    let on_the_rail = events.iter().any(|event| {
+        matches!(
+            event,
+            AgentEvent::Proof {
+                step: stella_protocol::ProofStep::WitnessUnavailable { reason }
+            } if reason.contains("no author independent of the worker")
+        )
+    });
+    assert!(
+        on_the_rail,
+        "the rail must state the reason, not fall back to `not reported`: {events:?}"
+    );
 }
 
 /// A witness whose test passes on the pre-execution code proves nothing: one

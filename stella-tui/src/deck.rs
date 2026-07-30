@@ -976,6 +976,11 @@ fn status_from_event(ev: &AgentEvent) -> Option<AgentStatus> {
 fn proof_trace(step: &stella_protocol::ProofStep) -> String {
     use stella_protocol::{ProofStep, ProofTree};
     match step {
+        ProofStep::Assurance { witness, judge } => format!(
+            "assurance: witness {}, judge {}",
+            if *witness { "on" } else { "waived" },
+            if *judge { "on" } else { "waived" }
+        ),
         ProofStep::Warrant {
             required: true,
             diff_lines,

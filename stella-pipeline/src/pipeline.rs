@@ -962,7 +962,7 @@ impl<'a> Pipeline<'a> {
         // assurance down. It fires on one shape (a bare deletion of a named
         // artifact) where an authored witness has nothing to fail against and
         // the author can only invent something vacuous.
-        Ok(match assessment {
+        let resolved = match assessment {
             Some(assessment) => {
                 let class = resolve_task_class(Some(assessment.class), goal);
                 TaskAssessment {
@@ -980,7 +980,25 @@ impl<'a> Pipeline<'a> {
                     ..TaskAssessment::from_class(class)
                 }
             }
-        })
+        };
+        // The turn's assurance PLAN, published the moment it is decided and
+        // before any later stage can fail, abort, or decline to run.
+        //
+        // Every other proof step reports something that happened, so the most
+        // common outcome by far — triage deciding this change does not warrant
+        // a test — used to produce no steps at all and leave the surface with
+        // nothing to say about the thing it exists to say. A declared plan
+        // makes "we chose not to" a statement rather than an absence.
+        //
+        // Not emitted for a conversational turn: there is no work, so there is
+        // no assurance question, and answering an unasked one is noise.
+        if !resolved.conversational {
+            self.emit_proof(ProofStep::Assurance {
+                witness: resolved.wants_witness(),
+                judge: resolved.wants_judge(),
+            });
+        }
+        Ok(resolved)
     }
 
     // Conversational fast path
@@ -2453,18 +2471,22 @@ impl<'a> Pipeline<'a> {
         };
         match self.resolve_provider(Role::Judge) {
             Ok(judge) if judge.model_ref != worker.model_ref => true,
+            // Both arms report through `unproven`, not a bare `warn`. A
+            // witness triage asked for and the wiring cannot supply is
+            // precisely `WitnessUnavailable` — routing it to the warning
+            // channel alone left the rail's witness row with no statement, so
+            // it fell through to the backstop's "not reported" when the real
+            // answer was known all along and worth naming.
             Ok(_) => {
-                self.warn(format!(
-                    "no witness author independent of the worker (judge and worker both \
-                     resolved to `{}`); continuing without an authored witness",
+                self.unproven(format!(
+                    "no author independent of the worker (judge and worker both resolved to `{}`)",
                     worker.model_ref
                 ));
                 false
             }
             Err(_) => {
-                self.warn(
-                    "no witness author independent of the worker (the judge role is \
-                     unresolvable); continuing without an authored witness"
+                self.unproven(
+                    "no author independent of the worker (the judge role is unresolvable)"
                         .to_string(),
                 );
                 false
