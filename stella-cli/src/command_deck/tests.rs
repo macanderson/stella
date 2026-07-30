@@ -364,6 +364,126 @@ async fn tap_emits_a_diffless_read_event_for_successful_reads_only() {
     assert!(recv_file_change(&mut rx).is_none(), "no event on error");
 }
 
+#[tokio::test]
+async fn tap_emits_one_file_change_per_distinct_path_in_an_apply_edits_batch() {
+    // The system prompt steers toward apply_edits for multi-file edits, so it
+    // must populate the Files tab like edit_file does — one FileChange per
+    // distinct path, each carrying its composed old→new pseudo-diff.
+    let dir = tempfile::tempdir().unwrap();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let inner = FakeInner { error: false };
+    let tap = FileChangeTap {
+        inner: &inner,
+        events: tx,
+        root: dir.path().to_path_buf(),
+    };
+    let input = serde_json::json!({
+        "edits": [
+            { "path": "a.rs", "old_string": "fn a() {}", "new_string": "fn a() { /* edit */ }" },
+            { "path": "b.rs", "old_string": "x", "new_string": "y" }
+        ]
+    });
+    tap.execute("apply_edits", &input).await;
+
+    let first = recv_file_change(&mut rx).expect("first file change");
+    let second = recv_file_change(&mut rx).expect("second file change");
+    assert!(
+        recv_file_change(&mut rx).is_none(),
+        "exactly two events for a two-file batch"
+    );
+
+    let (paths, kinds, diffs): (Vec<_>, Vec<_>, Vec<_>) = match (first, second) {
+        (
+            AgentEvent::FileChange {
+                path: p1,
+                kind: k1,
+                diff: d1,
+            },
+            AgentEvent::FileChange {
+                path: p2,
+                kind: k2,
+                diff: d2,
+            },
+        ) => (vec![p1, p2], vec![k1, k2], vec![d1, d2]),
+        other => panic!("expected two FileChange events, got {other:?}"),
+    };
+    assert_eq!(paths, vec!["a.rs", "b.rs"]);
+    assert!(kinds.iter().all(|k| *k == FileChangeKind::Modified));
+    assert!(
+        diffs.iter().all(|d| d.is_some()),
+        "every edit carries a diff"
+    );
+    let da = diffs[0].as_deref().unwrap();
+    assert!(
+        da.contains("-fn a() {}"),
+        "diff {da:?} shows the removed line"
+    );
+    assert!(
+        da.contains("+fn a() { /* edit */ }"),
+        "diff {da:?} shows the added line"
+    );
+}
+
+#[tokio::test]
+async fn tap_composes_multiple_edits_to_one_file_into_one_diff() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let inner = FakeInner { error: false };
+    let tap = FileChangeTap {
+        inner: &inner,
+        events: tx,
+        root: dir.path().to_path_buf(),
+    };
+    let input = serde_json::json!({
+        "edits": [
+            { "path": "lib.rs", "old_string": "old1", "new_string": "new1" },
+            { "path": "lib.rs", "old_string": "old2", "new_string": "new2" }
+        ]
+    });
+    tap.execute("apply_edits", &input).await;
+
+    let only = recv_file_change(&mut rx).expect("one composed file change");
+    assert!(
+        recv_file_change(&mut rx).is_none(),
+        "one event for one path"
+    );
+    match only {
+        AgentEvent::FileChange { path, kind, diff } => {
+            assert_eq!(path, "lib.rs");
+            assert_eq!(kind, FileChangeKind::Modified);
+            let diff = diff.expect("composed diff");
+            assert!(diff.contains("-old1") && diff.contains("-old2"));
+            assert!(diff.contains("+new1") && diff.contains("+new2"));
+        }
+        other => panic!("expected FileChange, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn tap_emits_nothing_for_a_dry_run_apply_edits() {
+    // dry_run validates but writes nothing, so the Files tab must not gain
+    // entries for a call that left the tree untouched.
+    let dir = tempfile::tempdir().unwrap();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let inner = FakeInner { error: false };
+    let tap = FileChangeTap {
+        inner: &inner,
+        events: tx,
+        root: dir.path().to_path_buf(),
+    };
+    let input = serde_json::json!({
+        "dry_run": true,
+        "edits": [
+            { "path": "a.rs", "old_string": "x", "new_string": "y" }
+        ]
+    });
+    tap.execute("apply_edits", &input).await;
+    assert!(
+        recv_file_change(&mut rx).is_none(),
+        "a dry_run batch writes nothing — no FileChange"
+    );
+}
+
 #[test]
 fn mcp_outcome_report_lists_connected_servers_by_name() {
     let report = crate::mcp_cmd::mcp_outcome_report(&["files", "search"], &[], &[]);

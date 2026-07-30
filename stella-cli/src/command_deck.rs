@@ -4518,13 +4518,9 @@ impl ToolExecutor for FileChangeTap<'_> {
     }
 
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
-        let path = input
-            .get("path")
-            .and_then(Value::as_str)
-            .map(str::to_string);
         // Pre-state, captured before the mutation: existence decides
         // Created-vs-Modified for write_file; content is delete_file's diff.
-        let pre = match (name, &path) {
+        let pre = match (name, input.get("path").and_then(Value::as_str)) {
             ("write_file", Some(p)) => Some((self.root.join(p).exists(), None)),
             ("delete_file", Some(p)) => {
                 Some((true, std::fs::read_to_string(self.root.join(p)).ok()))
@@ -4537,9 +4533,11 @@ impl ToolExecutor for FileChangeTap<'_> {
             return output;
         }
 
-        if let Some(path) = path
-            && let Some((kind, diff)) = file_change_of(name, input, pre)
-        {
+        // Most tools yield one change; `apply_edits` yields one per distinct
+        // path in the batch (so every file a transactional call touched lands
+        // in the Files tab). A `dry_run` apply_edits yields none — nothing was
+        // written.
+        for (path, kind, diff) in file_change_of(name, input, pre) {
             let _ = self
                 .events
                 .send(AgentEvent::FileChange { path, kind, diff });
@@ -4587,38 +4585,109 @@ impl ToolExecutor for TaskTap<'_> {
     }
 }
 
-/// The `(kind, pseudo-diff)` for one successful file-touching tool call, or
-/// `None` for tools that don't touch files. `pre` is
-/// `(existed_before, old_content)` as captured by the tap.
+/// The `(path, kind, pseudo-diff)` tuples for one successful file-touching
+/// tool call — an empty vec for tools that don't touch files. `pre` is
+/// `(existed_before, old_content)` as captured by the tap. Most tools yield
+/// exactly one tuple; `apply_edits` yields one per distinct path in the batch
+/// (edits composed in first-touch order), so the Files tab lists every file a
+/// single transactional call touched. A `dry_run` apply_edits yields nothing.
 fn file_change_of(
     name: &str,
     input: &Value,
     pre: Option<(bool, Option<String>)>,
-) -> Option<(FileChangeKind, Option<String>)> {
+) -> Vec<(String, FileChangeKind, Option<String>)> {
     let text = |key: &str| input.get(key).and_then(Value::as_str);
     match name {
-        "read_file" => Some((FileChangeKind::Read, None)),
+        "read_file" => text("path")
+            .map(|p| vec![(p.to_string(), FileChangeKind::Read, None)])
+            .unwrap_or_default(),
         "write_file" => {
+            let path = match text("path") {
+                Some(p) => p,
+                None => return Vec::new(),
+            };
             let existed = pre.map(|(existed, _)| existed).unwrap_or(false);
             let kind = if existed {
                 FileChangeKind::Modified
             } else {
                 FileChangeKind::Created
             };
-            Some((kind, text("content").map(|c| pseudo_diff("", c))))
+            vec![(
+                path.to_string(),
+                kind,
+                text("content").map(|c| pseudo_diff("", c)),
+            )]
         }
         "edit_file" => {
+            let path = match text("path") {
+                Some(p) => p,
+                None => return Vec::new(),
+            };
             let diff = match (text("old_string"), text("new_string")) {
                 (Some(old), Some(new)) => Some(pseudo_diff(old, new)),
                 _ => None,
             };
-            Some((FileChangeKind::Modified, diff))
+            vec![(path.to_string(), FileChangeKind::Modified, diff)]
         }
         "delete_file" => {
+            let path = match text("path") {
+                Some(p) => p,
+                None => return Vec::new(),
+            };
             let old = pre.and_then(|(_, content)| content);
-            Some((FileChangeKind::Deleted, old.map(|c| pseudo_diff(&c, ""))))
+            vec![(
+                path.to_string(),
+                FileChangeKind::Deleted,
+                old.map(|c| pseudo_diff(&c, "")),
+            )]
         }
-        _ => None,
+        "apply_edits" => {
+            // dry_run validates but writes nothing — emit no FileChange.
+            if input
+                .get("dry_run")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                return Vec::new();
+            }
+            let Some(edits) = input.get("edits").and_then(|v| v.as_array()) else {
+                return Vec::new();
+            };
+            // One entry per distinct path; edits to the same file compose in
+            // first-touch order, matching how edit_file renders old→new.
+            let mut per_path: Vec<(String, String, String)> = Vec::new();
+            for edit in edits {
+                let Some(path) = edit.get("path").and_then(Value::as_str) else {
+                    continue;
+                };
+                let old = edit.get("old_string").and_then(Value::as_str).unwrap_or("");
+                let new = edit.get("new_string").and_then(Value::as_str).unwrap_or("");
+                match per_path.iter_mut().find(|(p, _, _)| p == path) {
+                    Some(slot) => {
+                        if !slot.1.is_empty() {
+                            slot.1.push('\n');
+                        }
+                        if !slot.2.is_empty() {
+                            slot.2.push('\n');
+                        }
+                        slot.1.push_str(old);
+                        slot.2.push_str(new);
+                    }
+                    None => per_path.push((path.to_string(), old.to_string(), new.to_string())),
+                }
+            }
+            per_path
+                .into_iter()
+                .map(|(path, old, new)| {
+                    (
+                        path,
+                        FileChangeKind::Modified,
+                        Some(pseudo_diff(&old, &new)),
+                    )
+                })
+                .collect()
+        }
+        _ => Vec::new(),
     }
 }
 

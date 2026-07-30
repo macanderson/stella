@@ -1221,7 +1221,7 @@ fn tool_display_name(name: &str) -> String {
     match name {
         "read_file" => "Read".into(),
         "write_file" => "Write".into(),
-        "edit_file" => "Edit".into(),
+        "edit_file" | "apply_edits" => "Edit".into(),
         "bash" => "Bash".into(),
         "grep" => "Grep".into(),
         "glob" => "Glob".into(),
