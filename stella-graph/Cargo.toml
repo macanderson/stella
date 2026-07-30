@@ -9,7 +9,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-contextgraph-types = { git = "https://github.com/macanderson/context-graph-protocol", rev = "eeba49cef9a7604bd910d4faa871702869144ed0" }
+contextgraph-types = { git = "https://github.com/macanderson/context-graph-protocol", rev = "c5fb2fec5820494ab6921dc088c03d7f43301fa7" }
 # For the workspace's single durable-write + schema-version contract
 # (`stella_store::durable`, #617) — one implementation of temp + fsync +
 # rename, not one per crate.

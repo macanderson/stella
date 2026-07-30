@@ -19,6 +19,7 @@
 2286 stella-cli/src/agent.rs
 1576 stella-cli/src/candidate_ws.rs
 4578 stella-cli/src/command_deck.rs
+1518 stella-cli/src/config.rs
 2095 stella-core/src/bus.rs
 2138 stella-core/src/driver.rs
 2820 stella-core/src/driver/tests.rs

@@ -1,6 +1,6 @@
 # Directive schema
 
-<!-- NORMATIVE-HOME: macanderson/context-graph-protocol @ eeba49c (contextgraph/1.0-draft) -->
+<!-- NORMATIVE-HOME: macanderson/context-graph-protocol @ c5fb2fe (contextgraph/1.0-draft) -->
 
 > **Superseded — do not implement from the six-type table below.** Those six types
 > (`memory, fact, rule, preference, constraint, procedure`) predate the
