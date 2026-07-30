@@ -38,6 +38,7 @@
 use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use colored::Colorize;
@@ -848,8 +849,16 @@ async fn run_task(
         } else {
             // The pause line gates the raw step-loop at the engine's step
             // boundary (never mid-tool), and the stop line races the turn.
+            // `Arc` so the gate can be published to the registry as well as
+            // borrowed by the engine — a paused worker must not keep spending
+            // inside a sub-agent it dispatched. As in `subsession`, a fleet
+            // worker installs no dispatcher yet, so this is the standing
+            // wiring rather than a live path.
+            let gate: Arc<WatchGate> = Arc::new(WatchGate(pause));
+            let _controls = registry.attach_turn_controls(
+                stella_core::ports::TurnControls::none().with_gate(gate.clone()),
+            );
             let raced = {
-                let gate = WatchGate(pause);
                 let hook_runner = ShellHookRunner;
                 let mut engine = Engine::with_sleeper(
                     &*provider,
@@ -857,7 +866,7 @@ async fn run_task(
                     agent::engine_config_for(&cfg),
                     &TokioSleeper,
                 )
-                .with_gate(&gate);
+                .with_gate(gate.as_ref());
                 if let Some(hooks) = &cfg.hooks {
                     engine = engine.with_hooks(hooks, &hook_runner);
                 }

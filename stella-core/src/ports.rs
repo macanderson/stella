@@ -157,3 +157,75 @@ pub trait TurnSteering: Send + Sync {
     /// (a stop request must not evaporate between steps).
     fn soft_stop_requested(&self) -> bool;
 }
+
+/// [`TurnGate`] and [`TurnSteering`] in owned form, so something that
+/// outlives a turn can hold them.
+///
+/// [`Engine`](crate::Engine) takes both by `&'a dyn` — right for a driver,
+/// which builds them on the stack of the turn it is about to run. It is
+/// wrong for anything *session*-scoped: a sub-agent dispatcher lives across
+/// every turn of the session and cannot name a single turn's lifetime, so it
+/// needs `Arc`s it can clone onto a child's thread instead.
+///
+/// Both fields are `Option` because no driver has both. The deck's lead turn
+/// steers but does not pause (pause is a worker-lane verb); a worker lane
+/// pauses but does not steer. A driver publishes what it has.
+///
+/// # Empty is a real state, not an error
+///
+/// A holder that was never given controls, or whose turn has ended, sees
+/// [`TurnControls::default`] — and a child run under it behaves exactly as
+/// children did before controls existed: bounded by its step cap and its
+/// budget carve, just not interruptible. Degrading to the old behavior beats
+/// refusing to run.
+#[derive(Clone, Default)]
+pub struct TurnControls {
+    /// The turn's pause gate, when its driver has one.
+    pub gate: Option<std::sync::Arc<dyn TurnGate>>,
+    /// The turn's steering tap, when its driver has one.
+    pub steering: Option<std::sync::Arc<dyn TurnSteering>>,
+}
+
+impl TurnControls {
+    /// No controls — what a holder reads between turns.
+    #[must_use]
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// Publish `gate` as the turn's pause gate.
+    #[must_use]
+    pub fn with_gate(mut self, gate: std::sync::Arc<dyn TurnGate>) -> Self {
+        self.gate = Some(gate);
+        self
+    }
+
+    /// Publish `steering` as the turn's steering tap.
+    ///
+    /// What a *child* gets from this is deliberately narrower than what the
+    /// parent has: see [`crate::subagent::ChildSteering`], which forwards the
+    /// soft stop and never the queued messages.
+    #[must_use]
+    pub fn with_steering(mut self, steering: std::sync::Arc<dyn TurnSteering>) -> Self {
+        self.steering = Some(steering);
+        self
+    }
+
+    /// Whether both seams are absent.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.gate.is_none() && self.steering.is_none()
+    }
+}
+
+impl std::fmt::Debug for TurnControls {
+    /// Neither port is `Debug` (they are implemented over channels and locks
+    /// that have no useful rendering), so this reports which seams are
+    /// present — which is the only thing a log or a failing assertion wants.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TurnControls")
+            .field("gate", &self.gate.is_some())
+            .field("steering", &self.steering.is_some())
+            .finish()
+    }
+}
