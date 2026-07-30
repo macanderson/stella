@@ -8,15 +8,29 @@ full execution record land in SQLite on your disk.
 
 <TelemetryFlowDiagram />
 
-**Community/default mode has zero telemetry egress.** It constructs no enterprise
-spool or HTTP client. The model provider you selected remains Stella's normal BYOK
-network path; the local Observatory remains loopback-only.
+**Telemetry leaves your machine only if you configure it to.** A default install
+constructs no telemetry spool and no telemetry HTTP client. The model provider you
+selected remains Stella's normal BYOK network path; the local Observatory remains
+loopback-only.
 
-The sole telemetry-egress exception is **explicit Oxagen Enterprise managed
-enrollment**. It is not a user preference and cannot come from a project file: a valid
-signed document in the org-managed settings scope must authorize one minimal
-operational event class, one exact HTTPS sink, and process-free execution. Invalid,
-missing, expired, or unsupported enrollment leaves export inactive.
+Exactly two things count as configuring telemetry egress. Both are explicit local
+configuration, both are inert until you write them, and neither can be turned on by a
+file a repository ships:
+
+1. **Oxagen Enterprise managed enrollment.** Not a user preference and not readable from
+   a project file: a valid signed document in the org-managed settings scope must
+   authorize one minimal operational event class, one exact HTTPS sink, and process-free
+   execution. Invalid, missing, expired, or unsupported enrollment leaves export
+   inactive. [Details below](#oxagen-enterprise-managed-export).
+2. **A `drain` block in `~/.stella/cloud.json`.** [`stella cloud sync`](/docs/commands/cloud)
+   POSTs staged telemetry rows to the org intake named there. This is a *separate pipe*
+   from the Enterprise export — its own wire contract, its own encoder, its own endpoint
+   — and it fires only when the file carries **both** an `org_id` (written by `stella
+   cloud register`) and a `drain` block. With either absent, `stella cloud sync` performs
+   no network I/O, and nothing else in Stella invokes it.
+
+That list is complete: those two transports are the only code paths in the tree that send
+telemetry anywhere.
 
 ## Local metering
 
