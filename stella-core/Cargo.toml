@@ -13,6 +13,7 @@ stella-protocol = { path = "../stella-protocol" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_json_canonicalizer = { workspace = true }
+toml = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 async-trait = { workspace = true }
