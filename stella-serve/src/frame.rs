@@ -25,9 +25,10 @@ use stella_protocol::{AgentEvent, CompletionRequest, CompletionResult, ProviderE
 /// Not `Clone`: every frame is produced once and moved onto the channel, so no
 /// consumer ever needs a second copy. The variants own their payloads outright
 /// rather than borrowing — the port adapters in `remote.rs` pay whatever copy
-/// that costs once, at construction (`CompletionRequest` arrives by value and is
-/// moved; a tool's `input` arrives as `&Value` and is cloned there) — which is
-/// what lets a frame cross from the session thread to the server runtime.
+/// that costs once, at construction (a completion request arrives borrowed and
+/// is materialized with `CompletionRequestRef::into_owned`; a tool's `input`
+/// arrives as `&Value` and is cloned there) — which is what lets a frame cross
+/// from the session thread to the server runtime.
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerFrame {

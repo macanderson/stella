@@ -219,6 +219,107 @@ impl BudgetGuard {
     pub fn mode(&self) -> BudgetMode {
         self.mode
     }
+
+    /// Remaining headroom before the *tightest* configured limit trips, or
+    /// `None` when no axis bounds this guard at all.
+    ///
+    /// Both axes are consulted because a caller under its session limit but
+    /// already over its turn limit has no headroom either — taking only the
+    /// session axis is how a "hard ceiling" quietly becomes a soft one.
+    /// Never negative: an already-breached guard reports `Some(0.0)`.
+    #[must_use]
+    pub fn headroom_usd(&self) -> Option<f64> {
+        let turn = self
+            .turn_limit_usd
+            .map(|limit| (limit - self.turn_spent_usd).max(0.0));
+        let session = self
+            .session_limit_usd
+            .map(|limit| (limit - self.session_spent_usd).max(0.0));
+        match (turn, session) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (only, None) | (None, only) => only,
+        }
+    }
+
+    /// Carve a child allowance out of this guard's remaining headroom — the
+    /// budget half of a sub-agent spawn (`crate::subagent`).
+    ///
+    /// The returned guard is independent: the child spends against it and
+    /// aborts its own turn when it trips, without ever mutating the parent.
+    /// The parent learns the cost exactly once, at the end, via
+    /// [`settle_child`](Self::settle_child).
+    ///
+    /// # The ceiling is a minimum, not the request
+    ///
+    /// `min(requested, headroom)`. A child can therefore never spend the
+    /// parent past a configured cap even if the caller asks for more than is
+    /// left, which is what keeps `--budget` a *hard* ceiling once nested
+    /// turns exist. A caller who asks for `None` still inherits the parent's
+    /// headroom as its ceiling — "unbounded child" is not expressible while
+    /// the parent is bounded, deliberately.
+    ///
+    /// # Mode is inherited, never escalated
+    ///
+    /// `Observed` means the operator asked for warnings, not hard stops; a
+    /// child that hard-stopped under an observed session would violate that
+    /// stated posture, and `Off` means no gating anywhere. So a requested cap
+    /// under `Off`/`Observed` meters and warns but does not abort — the same
+    /// contract the parent turn runs under, one level down. Only `Enforced`
+    /// makes the carve a wall.
+    ///
+    /// # Turn axis vs session axis
+    ///
+    /// The ceiling lands on the child's SESSION axis, not its turn axis: a
+    /// child's whole life is one turn, and nothing calls
+    /// [`begin_turn`](Self::begin_turn) on it, so a session-axis limit is the
+    /// one that cannot be reset out from under the guarantee.
+    #[must_use]
+    pub fn carve(&self, requested_usd: Option<f64>) -> BudgetGuard {
+        let ceiling = match (requested_usd, self.headroom_usd()) {
+            (Some(requested), Some(headroom)) => Some(requested.min(headroom)),
+            (Some(only), None) | (None, Some(only)) => Some(only),
+            (None, None) => None,
+        };
+        BudgetGuard {
+            mode: self.mode,
+            turn_limit_usd: None,
+            session_limit_usd: ceiling.map(|c| c.max(0.0)),
+            turn_spent_usd: 0.0,
+            session_spent_usd: 0.0,
+        }
+    }
+
+    /// Whether a carve has room to do any work at all.
+    ///
+    /// A carve of exactly zero is what a parent that has already breached an
+    /// enforced cap produces. Spawning against it would pay for one model
+    /// call (budget is checked BETWEEN steps — the first call always lands)
+    /// and then abort, so the caller refuses the spawn instead and the child
+    /// costs nothing. Under a non-enforcing mode a zero carve is not a wall,
+    /// so it stays viable.
+    #[must_use]
+    pub fn is_viable_carve(&self) -> bool {
+        if self.mode != BudgetMode::Enforced {
+            return true;
+        }
+        self.session_limit_usd.is_none_or(|limit| limit > 0.0)
+    }
+
+    /// Fold a finished child's total spend back into this guard, on both
+    /// axes, and report the parent's resulting outcome.
+    ///
+    /// This is what keeps a nested turn from being a hole in the accounting:
+    /// the child metered every call into its own carve, and this is the one
+    /// place that money becomes the parent's. Call it exactly once per
+    /// child, on every path including a failed one — a child that aborted
+    /// still spent what it spent.
+    ///
+    /// The returned outcome is the PARENT's, evaluated after the fold, so a
+    /// caller whose child pushed it over a cap sees `AbortTurn` at its own
+    /// next step boundary rather than one call later.
+    pub fn settle_child(&mut self, child: &BudgetGuard) -> BudgetOutcome {
+        self.record_spend(child.session_spent_usd())
+    }
 }
 
 #[cfg(test)]
@@ -477,6 +578,180 @@ mod tests {
             outcome,
             BudgetOutcome::Continue,
             "spend == limit must not abort"
+        );
+    }
+
+    // ---- carve / settle (sub-agent budgets, #922) --------------------
+
+    #[test]
+    fn headroom_takes_the_tightest_axis_and_never_goes_negative() {
+        // Session has plenty left; the turn axis is what actually binds.
+        let mut guard = BudgetGuard::new(BudgetMode::Enforced, Some(1.0), Some(10.0));
+        guard.record_spend(0.75);
+        assert!((guard.headroom_usd().unwrap() - 0.25).abs() < 1e-9);
+
+        // Breached: headroom clamps at zero rather than reporting a debt,
+        // so `carve` can never mint a negative ceiling.
+        guard.record_spend(5.0);
+        assert_eq!(guard.headroom_usd(), Some(0.0));
+
+        // No limits configured anywhere: genuinely unbounded.
+        assert_eq!(
+            BudgetGuard::new(BudgetMode::Enforced, None, None).headroom_usd(),
+            None
+        );
+    }
+
+    #[test]
+    fn a_carve_can_never_exceed_the_parents_remaining_headroom() {
+        // THE hard-ceiling property: whatever a caller asks for, the child's
+        // ceiling is bounded by what the parent has left. Swept across
+        // requests both under and wildly over the parent's remaining room.
+        let mut parent = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.0));
+        parent.record_spend(0.9);
+        let headroom = parent.headroom_usd().expect("session limit is set");
+
+        for requested in [None, Some(0.01), Some(0.05), Some(0.1), Some(50.0)] {
+            let child = parent.carve(requested);
+            let ceiling = child
+                .session_limit_usd()
+                .expect("a bounded parent always bounds its child");
+            assert!(
+                ceiling <= headroom + 1e-9,
+                "carve for {requested:?} was {ceiling}, above the parent's {headroom} headroom"
+            );
+            if let Some(requested) = requested {
+                assert!(
+                    ceiling <= requested + 1e-9,
+                    "carve must also honor the smaller request"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_unbounded_parent_passes_the_request_through_and_stays_unbounded_when_none() {
+        let parent = BudgetGuard::new(BudgetMode::Enforced, None, None);
+        assert_eq!(parent.carve(Some(0.25)).session_limit_usd(), Some(0.25));
+        assert_eq!(parent.carve(None).session_limit_usd(), None);
+    }
+
+    #[test]
+    fn a_carve_lands_on_the_session_axis_so_begin_turn_cannot_reset_it() {
+        // The child's ceiling must survive anything that resets a turn
+        // counter, or the guarantee evaporates the moment someone calls
+        // `begin_turn` on a child guard.
+        let parent = BudgetGuard::new(BudgetMode::Enforced, Some(2.0), None);
+        let mut child = parent.carve(Some(0.5));
+        assert_eq!(child.turn_limit_usd(), None);
+        assert_eq!(child.session_limit_usd(), Some(0.5));
+
+        child.record_spend(0.6);
+        child.begin_turn();
+        assert!(
+            matches!(
+                child.evaluate(),
+                BudgetOutcome::AbortTurn {
+                    axis: BudgetAxis::Session,
+                    ..
+                }
+            ),
+            "begin_turn must not clear a carve breach"
+        );
+    }
+
+    #[test]
+    fn carve_inherits_mode_and_never_escalates_gating() {
+        // Observed/Off asked for no hard stops. A child that aborts under
+        // them would be a stricter contract than the operator chose.
+        for mode in [BudgetMode::Off, BudgetMode::Observed] {
+            let parent = BudgetGuard::new(mode, None, Some(10.0));
+            let mut child = parent.carve(Some(0.01));
+            assert_eq!(child.mode(), mode);
+            let outcome = child.record_spend(5.0);
+            assert!(
+                !matches!(outcome, BudgetOutcome::AbortTurn { .. }),
+                "{mode:?} must not produce a hard stop, got {outcome:?}"
+            );
+        }
+        // Enforced is the one mode where the carve is a wall.
+        let parent = BudgetGuard::new(BudgetMode::Enforced, None, Some(10.0));
+        let mut child = parent.carve(Some(0.01));
+        assert!(matches!(
+            child.record_spend(5.0),
+            BudgetOutcome::AbortTurn { .. }
+        ));
+    }
+
+    #[test]
+    fn settling_a_child_moves_its_whole_spend_onto_the_parent_exactly_once() {
+        // The accounting property: after settlement the parent's totals equal
+        // what it would have shown had it spent the child's money itself.
+        let mut parent = BudgetGuard::new(BudgetMode::Enforced, Some(1.0), Some(10.0));
+        parent.record_spend(0.10);
+
+        let mut child = parent.carve(Some(0.30));
+        child.record_spend(0.07);
+        child.record_spend(0.05);
+
+        // Nothing has moved yet — the child spends against its own carve.
+        assert!((parent.spent_usd() - 0.10).abs() < 1e-9);
+
+        parent.settle_child(&child);
+        assert!((parent.spent_usd() - 0.22).abs() < 1e-9, "turn axis");
+        assert!(
+            (parent.session_spent_usd() - 0.22).abs() < 1e-9,
+            "session axis"
+        );
+    }
+
+    #[test]
+    fn settlement_reports_the_parents_own_breach_not_the_childs() {
+        // A child that stays inside its carve can still push the parent over.
+        // The parent must learn that at settlement, not one paid call later.
+        let mut parent = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.0));
+        parent.record_spend(0.95);
+        let mut child = parent.carve(Some(0.30)); // clamped to 0.05 headroom
+        child.record_spend(0.05);
+        assert_eq!(
+            child.evaluate(),
+            BudgetOutcome::Continue,
+            "child is exactly at its ceiling, which is not a breach"
+        );
+
+        // 0.95 + 0.05 == 1.0, still not a breach. One more cent tips it.
+        assert_eq!(parent.settle_child(&child), BudgetOutcome::Continue);
+        let mut child2 = parent.carve(Some(0.30));
+        child2.record_spend(0.01);
+        assert!(matches!(
+            parent.settle_child(&child2),
+            BudgetOutcome::AbortTurn {
+                axis: BudgetAxis::Session,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn a_zero_carve_is_only_unviable_when_the_mode_would_enforce_it() {
+        let mut broke = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.0));
+        broke.record_spend(1.5);
+        assert!(
+            !broke.carve(Some(0.25)).is_viable_carve(),
+            "an enforced parent with no headroom must refuse the spawn"
+        );
+
+        // Same arithmetic under observed: nothing would gate, so the child
+        // is free to run and simply warns.
+        let mut observed = BudgetGuard::new(BudgetMode::Observed, None, Some(1.0));
+        observed.record_spend(1.5);
+        assert!(observed.carve(Some(0.25)).is_viable_carve());
+
+        // Unbounded is always viable.
+        assert!(
+            BudgetGuard::new(BudgetMode::Enforced, None, None)
+                .carve(None)
+                .is_viable_carve()
         );
     }
 }

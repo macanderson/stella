@@ -48,7 +48,9 @@ pub struct AccountedCall<'a> {
     /// exists to name the model that actually served the call. The successful
     /// path always reports `result.model` instead, so this is only a hint.
     pub model_hint: String,
-    /// The completion request, cloned once per attempt by the retry loop.
+    /// The completion request. Owned, because these callers build one for a
+    /// single dispatch and have no transcript to borrow from; borrowed per
+    /// attempt, so a retry costs nothing beyond the retry itself (#921).
     pub request: CompletionRequest,
     /// Retry + backoff envelope (`crate::retry`).
     pub retry_policy: RetryPolicy,
@@ -122,7 +124,11 @@ pub async fn run_accounted_call(
         &call.retry_policy,
         sleeper,
         || {
-            let call_fut = call.provider.complete(call.request.clone());
+            // Borrowed, not cloned: this closure is `FnMut` for the same reason
+            // the driver's is, and used to pay a full deep copy of the request
+            // on every attempt — including the overflow summarizer's, whose
+            // input is a rendered span of the transcript (#921).
+            let call_fut = call.provider.complete_ref(call.request.as_borrowed());
             let in_flight = &attempt_in_flight;
             async move {
                 in_flight.store(true, Ordering::SeqCst);
@@ -276,7 +282,7 @@ mod tests {
     use std::sync::Mutex;
 
     use async_trait::async_trait;
-    use stella_protocol::{BudgetMode, CompletionMessage, CompletionUsage};
+    use stella_protocol::{BudgetMode, CompletionMessage, CompletionRequestRef, CompletionUsage};
 
     use super::*;
 
@@ -297,9 +303,9 @@ mod tests {
             "scripted"
         }
 
-        async fn complete(
+        async fn complete_ref(
             &self,
-            _request: CompletionRequest,
+            _request: CompletionRequestRef<'_>,
         ) -> Result<CompletionResult, ProviderError> {
             let mut attempts = self.attempts.lock().expect("attempt lock");
             *attempts += 1;
@@ -394,9 +400,9 @@ mod tests {
             "scripted"
         }
 
-        async fn complete(
+        async fn complete_ref(
             &self,
-            _request: CompletionRequest,
+            _request: CompletionRequestRef<'_>,
         ) -> Result<CompletionResult, ProviderError> {
             Ok(CompletionResult {
                 text: "summary".into(),
@@ -554,9 +560,9 @@ mod tests {
             "scripted"
         }
 
-        async fn complete(
+        async fn complete_ref(
             &self,
-            _request: CompletionRequest,
+            _request: CompletionRequestRef<'_>,
         ) -> Result<CompletionResult, ProviderError> {
             Err(ProviderError::Transport("private failed body".into()))
         }

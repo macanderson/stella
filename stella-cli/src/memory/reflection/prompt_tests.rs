@@ -20,8 +20,8 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use stella_protocol::{
-    CompletionMessage, CompletionRequest, CompletionResult, CompletionUsage, MessageRole, Provider,
-    ProviderError,
+    CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage, MessageRole,
+    Provider, ProviderError,
 };
 
 /// Records the prompt it is asked to complete, then answers with a well-formed
@@ -37,7 +37,10 @@ impl Provider for CapturingProvider {
     fn id(&self) -> &str {
         "capturing"
     }
-    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+    async fn complete_ref(
+        &self,
+        req: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
         if let Some(user) = req
             .messages
             .iter()

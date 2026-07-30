@@ -1,7 +1,12 @@
 # Observability for `stella-serve` — a typed event at every boundary
 
-**Status:** Design, nothing built. Corrects audit dimension 30 (Observability,
-62/100) and closes [#930](https://github.com/macanderson/stella/issues/930).
+**Status:** **Built** — `stella-serve/src/observe/`, all four slices of §11 in
+one change. Corrects audit dimension 30 (Observability, 62/100) and closes
+[#930](https://github.com/macanderson/stella/issues/930). Two things below were
+changed *by* building them, and are marked **[amended]** where they appear:
+the per-frame debug record in §7 was dropped (it would have put model output in
+a log), and the handlers moved to a new `routes.rs` (§11). Everything else
+shipped as designed.
 **Date:** 2026-07-30. **Owner:** Mac Anderson.
 **Companion:** [`serve-surface.md`](./serve-surface.md) — the route table and
 turn lifecycle this document instruments. Read that first; everything here
@@ -294,10 +299,21 @@ Four properties this buys, in the order the memory on this pattern prescribes:
    `ConnectionFailed` alongside it. The `let _ = handle_conn(..)` at
    `server.rs:500` stops discarding anything because there is nothing left to
    discard.
-3. **Delete the escape hatch.** `ServeEvent::RequestCompleted` gets no public
-   constructor other than `RequestRecord::close`. `-D dead-code` then proves
-   there is no second path.
-4. **Prove it with a property, not examples.** §10.
+3. **Delete the escape hatch.** `RequestRecord::close` consumes `self` and is
+   the only place in the crate that constructs
+   `ServeEvent::RequestCompleted`. **[amended]** The original wording claimed
+   `-D dead-code` would *prove* there is no second path; it does not — a public
+   enum variant is constructible anywhere, and sealing it would mean a private
+   witness field that `Deserialize` then has to fabricate, which buys less than
+   it costs. What `-D dead-code` did do is real and worth keeping: it found two
+   helpers nothing reached (`RequestRecord::route`, `request_id_for`) and
+   refused to compile until they were deleted, so the module has no
+   almost-used second path lying around for a future edit to reach for. The
+   *single-record* guarantee rests on rule 4, which is where it belongs.
+4. **Prove it with a property, not examples.** §10 — and the property earned
+   its keep: injecting the classic bug (skip the emit when nothing was written,
+   i.e. forget the hangup path) fails it with `input of 0 byte(s) produced 0
+   records, not exactly 1`.
 
 ### `X-Request-Id`
 
@@ -378,8 +394,15 @@ pub struct TurnTally {
 }
 ```
 
-Per-frame records exist only at `STELLA_SERVE_LOG=debug`, which is off by
-default and documented as a development setting.
+**[amended — not built, and deliberately so.]** This section originally also
+planned individual `AgentEvent` records behind `STELLA_SERVE_LOG=debug`.
+Building it showed that to be a mistake: `AgentEvent::Text`, `TextDelta` and
+`Reasoning` carry model output verbatim, so those records would put
+prompt-adjacent content in a log file — and would make §8's no-content property
+*conditional on a verbosity flag*, which is the "safe unless you turn the knob"
+shape of invariant that fails in production. The tally supersedes it: aggregates
+answer the diagnostic questions (is this turn progressing? how many retries?)
+with no payload reaching a record, so the property holds unconditionally.
 
 That tally is also what distinguishes *wedged* from *slow* — the fourth
 situation #930 lists — because a turn whose `steps` has not advanced while its
@@ -424,6 +447,16 @@ encoder could pass every sentinel check vacuously"), the harness carries a
 **vacuity guard**: assert the capture is non-empty and that at least one record
 of each expected variant was produced. A test that observes nothing passes every
 redaction check for the wrong reason.
+
+**[amended] A sweep can also be non-vacuous and still blind.** The first version
+of this harness had a working vacuity guard and still failed to catch a planted
+leak: it asserted `!rendered.contains(&turn_id)` where `turn_id` is the
+`turn-`-prefixed form, while a record holds the *bare hex* — so a `TurnRef` that
+had been broken to emit all 32 characters sailed through. The assertion now
+compares the hex suffix, and separately asserts the first 8 characters *are*
+present, so "leaked the whole id" and "recorded no handle at all" are both
+failures. The general lesson: a sentinel sweep tests the sentinel you wrote, not
+the property you meant, unless you plant the leak and watch it fail.
 
 ---
 
@@ -505,14 +538,24 @@ alone closes most of #930.
 | **1** | `ServeEvent`, `Observer`, `JsonlSink`, `Capture`, the `Responder` fold, `X-Request-Id`, `STELLA_SERVE_LOG`. Scenarios 2–3 + exactly-one property | `observe/{mod,event,sink,record}.rs` | `server.rs` (fold + `Responder` threading), `http.rs` (signatures) |
 | **2** | Reverse-RPC events and the registry events — `ReverseDispatched`/`Answered`/`TimedOut`/`Misrouted`/`Abandoned`, `TurnCreated`/`Refused`/`Reclaimed`. Scenarios 1 + 4 | — | `pending.rs`, `remote.rs`, `server.rs` |
 | **3** | `Metrics` + `GET /v1/metrics`. Route table in `serve-surface.md` updated | `observe/metrics.rs` | `server.rs`, `docs/design/serve-surface.md` |
-| **4** | The frame tap, `TurnTally`, `TurnSettled`, `debug`-level per-frame records. The sentinel harness | `observe/tally.rs` | `session.rs`, `frame.rs` |
+| **4** | The frame tap, `TurnTally`, `TurnSettled`. The sentinel harness | `observe/tally.rs` | `session.rs` |
 
-**File-size note (constraint 5).** `server.rs` has ~240 lines of headroom and
-PRs 1–3 all touch it. Extracting `route()` into `observe/record.rs` is roughly
-size-neutral for `server.rs`; the metrics handler in PR 3 must live in
-`observe/metrics.rs` and be *called* from the route match, not written inline.
-If the ratchet still trips, the fix is to split the route match out of
-`server.rs` — not `make file-size-update`.
+**[amended] What actually shipped.** All four slices landed as one change, and
+the file-size prediction below was wrong in a useful direction.
+
+**File-size note (constraint 5).** `server.rs` had ~240 lines of headroom and
+PRs 1–3 all touch it. The prediction was that extracting `route()` would be
+roughly size-neutral and the ratchet might still trip.
+
+What happened instead: the fold is small, but *threading a `Responder` through
+every handler* is not, so the handlers moved to a new `routes.rs` — the
+endpoints and their wire types on one side, the transport (listener, fold, turn
+registry, throttle) on the other. That cut follows the concern rather than the
+line count, and it took `server.rs` from 1,257 lines to **1,072** while adding
+the fold, the route classifier and the metrics route. Both files now sit
+comfortably under the ratchet with room for the next change. The guidance holds
+and is worth restating: when the ratchet threatens, split along a seam that
+already exists — never `make file-size-update`.
 
 ---
 

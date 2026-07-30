@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use stella_protocol::{
-    CompletionMessage, CompletionRequest, CompletionResult, CompletionUsage, FinishReason,
+    CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage, FinishReason,
     MessageRole, ProviderError, ToolCall,
 };
 
@@ -659,13 +659,16 @@ impl Provider for AnthropicProvider {
         "anthropic"
     }
 
-    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+    async fn complete_ref(
+        &self,
+        req: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
         self.complete_inner(req, None).await
     }
 
-    async fn complete_observed(
+    async fn complete_observed_ref(
         &self,
-        req: CompletionRequest,
+        req: CompletionRequestRef<'_>,
         observer: &dyn ToolCallObserver,
     ) -> Result<CompletionResult, ProviderError> {
         self.complete_inner(req, Some(observer)).await
@@ -673,16 +676,16 @@ impl Provider for AnthropicProvider {
 }
 
 impl AnthropicProvider {
-    /// The one request/stream/aggregate body behind both `complete` and
-    /// `complete_observed` — the observer is threaded down to the stream
+    /// The one request/stream/aggregate body behind both `complete_ref` and
+    /// `complete_observed_ref` — the observer is threaded down to the stream
     /// aggregator, which announces each tool call at its
     /// `content_block_stop`.
     async fn complete_inner(
         &self,
-        req: CompletionRequest,
+        req: CompletionRequestRef<'_>,
         observer: Option<&dyn ToolCallObserver>,
     ) -> Result<CompletionResult, ProviderError> {
-        let (system, mut messages) = to_anthropic_messages(&req.messages);
+        let (system, mut messages) = to_anthropic_messages(req.messages);
         stamp_tail_cache_breakpoint(&mut messages);
         let reasoning_on = req.reasoning == Some(true);
         let params = req.params.unwrap_or_default();

@@ -32,6 +32,7 @@ family in the diagram below — is a 404.
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/healthz` | The **only** unauthenticated route. `{"status":"ok"}` |
+| `GET` | `/v1/metrics` | Counters as a flat JSON object of integers. Authenticated like every other route, and **pull-only** — see [serve-observability.md](./serve-observability.md) |
 | `POST` | `/v1/turns` | Body is `TurnRequest`; returns `{"turn_id":"turn-<32 hex>"}` |
 | `GET` | `/v1/turns/{id}/events` | SSE `data: <ServerFrame>`. Exclusive: a second subscriber gets 409 |
 | `POST` | `/v1/turns/{id}/provider-result` | Answers a `provider_request` |

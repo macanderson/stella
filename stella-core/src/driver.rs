@@ -74,8 +74,9 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use stella_protocol::{
-    AgentEvent, CompletionMessage, CompletionRequest, FinishReason, MessageRole, Provider,
-    ProviderError, ReasoningEffort, StageKind, ToolCall, ToolOutput, ToolResult,
+    AgentEvent, CompletionMessage, CompletionRequest, CompletionRequestRef, FinishReason,
+    MessageRole, Provider, ProviderError, ReasoningEffort, StageKind, ToolCall, ToolOutput,
+    ToolResult,
 };
 
 use crate::budget::{BudgetAxis, BudgetGuard, BudgetOutcome};
@@ -250,7 +251,7 @@ pub enum TurnOutcome {
 /// byte-for-byte the same as before this seam existed. `Copy` because both
 /// fields are shared references.
 #[derive(Clone, Copy)]
-struct HooksHandle<'a> {
+pub(crate) struct HooksHandle<'a> {
     hooks: &'a Hooks,
     runner: &'a dyn HookRunner,
 }
@@ -264,11 +265,11 @@ pub struct Engine<'a> {
     pub(crate) tools: &'a dyn ToolExecutor,
     pub(crate) sleeper: &'a dyn Sleeper,
     pub(crate) config: EngineConfig,
-    call_role: stella_protocol::ModelCallRole,
+    pub(crate) call_role: stella_protocol::ModelCallRole,
     /// Lifecycle hooks, off by default. Attached via [`Engine::with_hooks`]
     /// so `with_sleeper` keeps its existing signature. When `None`,
     /// no hook is ever consulted and the turn path adds zero work.
-    hooks: Option<HooksHandle<'a>>,
+    pub(crate) hooks: Option<HooksHandle<'a>>,
     /// Token-drift calibration (`crate::estimator::CalibrationMap`), off by
     /// default. Attached via [`Engine::with_calibration`]; the caller owns
     /// the map across turns (and seeds it from persisted telemetry at
@@ -281,13 +282,13 @@ pub struct Engine<'a> {
     /// Attached via [`Engine::with_gate`]; consulted once per step, before
     /// any model call — a paused turn parks at that safe boundary and
     /// spends nothing until resumed. `None` adds zero work.
-    gate: Option<&'a dyn crate::ports::TurnGate>,
+    pub(crate) gate: Option<&'a dyn crate::ports::TurnGate>,
     /// Step-boundary steering ([`crate::ports::TurnSteering`]), off by
     /// default. Attached via [`Engine::with_steering`]; drained once per
     /// step at the same boundary as the pause gate — queued user messages
     /// become the model's next observation, and a latched soft stop ends
     /// the turn keeping every completed step. `None` adds zero work.
-    steering: Option<&'a dyn crate::ports::TurnSteering>,
+    pub(crate) steering: Option<&'a dyn crate::ports::TurnSteering>,
 }
 
 /// Upper bound on tool calls from one step executing concurrently. Tools
@@ -1127,6 +1128,20 @@ impl<'a> Engine<'a> {
             .collect();
         let estimated_input_tokens = estimate_conversation_tokens(messages);
         let req_config = &self.config;
+        // Built ONCE, outside the attempt closure below, and borrowed from
+        // there. `CompletionRequestRef` is `Copy` (slices + scalars), so each
+        // attempt takes its own view for free instead of deep-copying the whole
+        // transcript and every tool schema — the per-attempt cost the `FnMut`
+        // bound used to force on an owning request (#921).
+        let req = CompletionRequestRef {
+            messages,
+            max_output_tokens: req_config.max_output_tokens,
+            temperature: req_config.temperature,
+            effort: req_config.effort,
+            reasoning: req_config.reasoning,
+            params: req_config.params,
+            tools: &tools_schema,
+        };
         let speculation_read_only = read_only_tools.clone();
         let speculation_hook_gated = hook_gated;
         // The gate forwards answer fragments as `TextDelta` previews. Deliberately NOT rolled back
@@ -1148,18 +1163,6 @@ impl<'a> Engine<'a> {
         // but each completed entry emits a `SpeculationDiscarded` event on
         // the way out (#370) — and the retry builds a fresh channel and pool.
         let attempt: RetryAttemptFn = Box::new(move || {
-            let req = CompletionRequest {
-                // From the borrowed transcript: `CompletionRequest` owns its
-                // messages and this closure is `FnMut`, so one copy per attempt
-                // is unavoidable — the snapshot made every step pay two.
-                messages: messages.to_vec(),
-                max_output_tokens: req_config.max_output_tokens,
-                temperature: req_config.temperature,
-                effort: req_config.effort,
-                reasoning: req_config.reasoning,
-                params: req_config.params,
-                tools: tools_schema.clone(),
-            };
             let read_only = speculation_read_only.clone();
             let gated = speculation_hook_gated.clone();
             let delta_tx = delta_events.clone();
@@ -1169,7 +1172,7 @@ impl<'a> Engine<'a> {
                 let mut pump: SpeculationFuture<'_> = Box::pin(self.pump_speculations(rx, pump_tx));
                 let mut complete = Box::pin(async move {
                     let gate = SpeculationGate::new(read_only, gated, tx, delta_tx);
-                    self.provider.complete_observed(req, &gate).await
+                    self.provider.complete_observed_ref(req, &gate).await
                     // `gate` (and its sender) drop here → the pump's
                     // stream ends once in-flight executions drain.
                 });

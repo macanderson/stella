@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use stella_core::context_record::RecordProposalStatus;
 use stella_core::ingest::{ContextFile, ProbeKind, Verdict};
-use stella_protocol::{CompletionResult, CompletionUsage, ProviderError};
+use stella_protocol::{CompletionRequestRef, CompletionResult, CompletionUsage, ProviderError};
 
 use super::*;
 
@@ -220,9 +220,9 @@ impl Provider for CannedProvider {
         "canned"
     }
 
-    async fn complete(
+    async fn complete_ref(
         &self,
-        _request: CompletionRequest,
+        _request: CompletionRequestRef<'_>,
     ) -> Result<CompletionResult, ProviderError> {
         Ok(CompletionResult {
             text: self.reply.clone(),

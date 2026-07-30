@@ -8,6 +8,28 @@ pub(crate) struct RendererOutcome {
     pub(crate) persistence_complete: bool,
 }
 
+/// End the turn's event stream and drain the renderer.
+///
+/// The order matters and is the whole point. `drop(tx)` on its own never
+/// closed the channel: `attach_events` and `bridge_policy_plane` handed the
+/// registry `EventSender` clones, and the registry outlives the turn — so
+/// `recv()` stayed pending forever and a completed `stella run` printed its
+/// terminal event and then hung until it was killed (#960). Every sender has
+/// to go, the registry's included, before the renderer can finish.
+///
+/// Awaiting it here (rather than detaching and returning) keeps the guarantee
+/// the await was there for: every queued event has actually been rendered and
+/// persisted before the caller moves on to its close-out.
+pub(crate) async fn close_event_stream(
+    registry: &ToolRegistry,
+    tx: stella_core::EventSender,
+    renderer: tokio::task::JoinHandle<RendererOutcome>,
+) -> RendererOutcome {
+    registry.detach_event_stream();
+    drop(tx);
+    renderer.await.unwrap_or_default()
+}
+
 /// `durable_pre_persisted` is set when [`super::output::event_sender_for_run`]
 /// already appended every event to Harbor's durable JSONL sink before admitting
 /// it here. The line then only needs publishing to stdout — re-appending would

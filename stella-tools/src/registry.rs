@@ -475,6 +475,25 @@ impl ToolRegistry {
         *self.events.write().unwrap_or_else(|p| p.into_inner()) = Some(events);
     }
 
+    /// Release this turn's event channel: the counterpart every turn owes
+    /// [`Self::attach_events`] and [`Self::bridge_policy_plane`].
+    ///
+    /// Both hand the registry an `EventSender`, which is an `Arc<dyn Fn>` over
+    /// the renderer's channel — so while the registry holds one, that channel
+    /// has a live sender. A one-shot run's registry outlives its turn (the
+    /// audit close-out still reads its ledger), so the caller dropping its own
+    /// sender never closed the channel: the renderer's `recv()` loop stayed
+    /// pending and a *completed* `stella run` hung until something killed it
+    /// (#960). Detaching here is what actually ends the stream.
+    ///
+    /// Idempotent, and safe on a registry that never attached either one.
+    pub fn detach_event_stream(&self) {
+        *self.events.write().unwrap_or_else(|p| p.into_inner()) = None;
+        // Dropping the subscription unsubscribes it, releasing the sender the
+        // bridge closure captured.
+        *self.policy_bridge.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    }
+
     /// The attached file-change sender, if any (cheap clone — shared inner).
     fn events(&self) -> Option<stella_core::EventSender> {
         self.events

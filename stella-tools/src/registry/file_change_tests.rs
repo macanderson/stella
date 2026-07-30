@@ -249,3 +249,42 @@ async fn an_unattached_registry_records_but_announces_nothing() {
     );
     let _ = dir;
 }
+
+/// The counterpart every turn owes `attach_events` — and the whole of #960.
+///
+/// A one-shot run drops its own sender and then awaits the renderer, which
+/// ends when `recv()` returns `None`. But the registry outlives the turn (its
+/// ledger is still read for the audit close-out) and it holds an
+/// `EventSender` — an `Arc<dyn Fn>` over that very channel. So `recv()` never
+/// returned, the renderer task never finished, and a `stella run` that had
+/// already printed its terminal event hung until something killed it.
+#[tokio::test]
+async fn detaching_the_event_stream_closes_the_channel() {
+    let (_dir, reg, mut rx) = announcing_fixture();
+
+    // The caller's own sender is already gone — the fixture moved it in — and
+    // the channel is *still* open. This is the deadlock, reproduced: anyone
+    // waiting for close here waits forever.
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv())
+            .await
+            .is_err(),
+        "while attached, the registry's clone holds the channel open"
+    );
+
+    reg.detach_event_stream();
+
+    assert!(
+        rx.recv().await.is_none(),
+        "detaching must release the registry's sender and close the channel"
+    );
+}
+
+/// Idempotent, and safe on a registry that never attached either sender — a
+/// candidate workspace's, or a second call on a turn that already ended.
+#[test]
+fn detaching_an_unattached_event_stream_is_a_no_op() {
+    let (_dir, reg) = telemetry_fixture();
+    reg.detach_event_stream();
+    reg.detach_event_stream();
+}
