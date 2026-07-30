@@ -26,6 +26,8 @@ record of *changes*, curated by the person who made them.
 
 ## [Unreleased]
 
+## [0.6.17] — 2026-07-30
+
 ### Fixed
 
 - **Receipts count tokens one way, and old runs are corrected to match.** A
