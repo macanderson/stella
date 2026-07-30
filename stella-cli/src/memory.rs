@@ -218,6 +218,12 @@ pub struct SessionMemory {
     /// which is strictly closer than per-turn. `set_task_id` lets a caller
     /// that genuinely knows the boundary supply it.
     task_id: String,
+    /// The execution this turn is writing under, when the caller knows it —
+    /// what lets a mined lesson and a self-review be traced back to the turn
+    /// that produced them. `None` on any path that has not adopted
+    /// [`SessionMemory::set_execution_id`], which files id-less rows exactly
+    /// as every row was filed before.
+    execution_id: Option<i64>,
     /// A/B recall control (Proposal 4): when true, recall is suppressed
     /// entirely on this turn so the outcome can be compared against recalled
     /// turns. Set by `maybe_suppress_recall()` from the turn counter below.
