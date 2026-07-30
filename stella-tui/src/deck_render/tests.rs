@@ -312,6 +312,42 @@ fn composer_footer_reports_a_held_queue() {
     assert!(buffer_text(&buf).contains("2 held"), "held status shown");
 }
 
+/// `>` is how a user redirects a turn that is going the wrong way, and it was
+/// advertised nowhere — the footer offered only "queue (never blocks)", which
+/// describes what happens to a prompt typed mid-turn without saying that the
+/// alternative exists. It appears while the focused agent is running.
+#[test]
+fn the_footer_advertises_the_steer_marker_while_a_turn_runs() {
+    let model = running_model_with_queue();
+    let ui = DeckUi::default();
+    let layout = crate::composer::layout(&ui.composer, 40);
+    let area = Rect::new(0, 0, 100, 1);
+    let mut buf = Buffer::empty(area);
+    render_composer_footer(&model, &ui, &layout, area, &mut buf);
+    let text = buffer_text(&buf);
+    assert!(text.contains("steer this turn"), "steer affordance:\n{text}");
+}
+
+/// …and only then. At an idle agent a leading `>` is not a steer marker, it
+/// is the first character of the next prompt, so advertising it there would
+/// be a lie that costs the row width the counter needs.
+#[test]
+fn the_footer_hides_the_steer_marker_when_nothing_is_running() {
+    let mut model = WorkspaceModel::new();
+    model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
+    model.apply_inbound(&Inbound::Status {
+        agent: "lead".into(),
+        status: crate::AgentStatus::WaitingInput,
+    });
+    let ui = DeckUi::default();
+    let layout = crate::composer::layout(&ui.composer, 40);
+    let area = Rect::new(0, 0, 100, 1);
+    let mut buf = Buffer::empty(area);
+    render_composer_footer(&model, &ui, &layout, area, &mut buf);
+    let text = buffer_text(&buf);
+    assert!(!text.contains("steer"), "no steer affordance at rest:\n{text}");
+}
+
 #[test]
 fn statline_shows_labeled_cells_and_the_ethos_chip() {
     // A wide terminal fits every cell plus the (chrome) ethos chip. 160
