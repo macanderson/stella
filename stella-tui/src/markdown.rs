@@ -440,7 +440,11 @@ fn find_str(chars: &[char], start: usize, needle: &str) -> Option<usize> {
     if needle_chars.is_empty() || start >= chars.len() {
         return None;
     }
-    let end_bound = chars.len().saturating_sub(needle_chars.len());
+    // `checked_sub`, not `saturating_sub`: a needle longer than the haystack
+    // saturates to an `end_bound` of 0, and the window slice below then runs
+    // off the end. Today's two call sites can't reach it (both pass a `start`
+    // that already implies room), but a helper must not depend on that.
+    let end_bound = chars.len().checked_sub(needle_chars.len())?;
     for i in start..=end_bound {
         if chars[i..i + needle_chars.len()] == needle_chars[..] {
             return Some(i);
@@ -547,6 +551,19 @@ mod tests {
         let lines = render("hello world");
         assert_eq!(lines.len(), 1);
         assert_eq!(collect_spans_text(&lines[0]), "hello world");
+    }
+
+    /// A needle longer than the haystack must answer "not found", not index
+    /// past the end. The two production call sites happen to keep it in
+    /// range; the helper must hold on its own terms.
+    #[test]
+    fn find_str_is_total_when_the_needle_outruns_the_haystack() {
+        let chars: Vec<char> = "a".chars().collect();
+        assert_eq!(find_str(&chars, 0, "**"), None);
+        assert_eq!(find_str(&chars, 0, "a"), Some(0));
+        assert_eq!(find_str(&[], 0, "a"), None);
+        assert_eq!(find_str(&chars, 0, ""), None);
+        assert_eq!(find_str(&chars, 5, "a"), None, "start past the end");
     }
 
     #[test]

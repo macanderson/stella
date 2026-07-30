@@ -19,7 +19,7 @@
      it. Do not prune it to the tokens currently referenced. */
   --void:#05070C; --ground:#080A0F; --surface:#0B0F17; --raised:#101623;
   --hairline:#182031; --hairline-strong:#232D42;
-  --brand:#2E7BFF; --brand-bright:#5AA0FF; --brand-deep:#1550C8;
+  --brand:#2E7BFF; --brand-bright:#5AA0FF; --brand-deep:#1A5FE0;
   --gold:#F5C145; --gold-bright:#FFD873; --gold-deep:#C99420;
   --text:#F2F5FA; --text-2:#8E97A8; --text-3:#737D92;
   --ok:#4ADE80; --warn:#EAB308; --bad:#FF5C7A;
@@ -210,8 +210,9 @@ tr.click:hover td,tr.drill:hover td,tr.click:focus-visible td,tr.drill:focus-vis
       padding:0 7px;margin:2px 3px 2px 0}
 
 /* ── Charts ───────────────────────────────────────────────────────────── */
+/* 10 is viewBox units, not CSS px: charts scale with their card, so this is
+   the only size on the page that is deliberately outside the type scale. */
 svg text{font:10px var(--mono);fill:var(--text-3)}
-svg text.axis{fill:var(--text-3)}
 .legend{display:flex;gap:var(--sp2);font:var(--fs-micro)/1.4 var(--mono);color:var(--text-2);
         margin:0 0 var(--sp1);flex-wrap:wrap}
 .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:-1px}
@@ -768,10 +769,10 @@ function yAxis(padL, padT, innerH, right, max, fmt, unit) {
         stroke="${f === 0 ? "var(--hairline-strong)" : "var(--hairline)"}"/>
       <text x="${padL - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end">${fmt(max * f)}</text>`;
   }).join("");
-  return rows + `<text class="axis" x="0" y="${(padT - 2).toFixed(1)}" text-anchor="start">${unit}</text>`;
+  return rows + `<text x="0" y="${(padT - 2).toFixed(1)}" text-anchor="start">${unit}</text>`;
 }
 const xAxis = (W, H, label) =>
-  `<text class="axis" x="${W}" y="${H - 1}" text-anchor="end">${label}</text>`;
+  `<text x="${W}" y="${H - 1}" text-anchor="end">${label}</text>`;
 
 /* ── timeline chart (grouped thin bars, input+output per run) ─────────── */
 function renderTimeline() {
@@ -1427,7 +1428,7 @@ function renderRatingsChart(ratings) {
     `<line x1="${padL}" y1="${y(v).toFixed(1)}" x2="${W - padR}" y2="${y(v).toFixed(1)}"
        stroke="${v === 0 ? "var(--hairline-strong)" : "var(--hairline)"}"/>
      <text x="${padL - 6}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end">${v}</text>`).join("") +
-    `<text class="axis" x="0" y="${padT - 2}" text-anchor="start">rating</text>`;
+    `<text x="0" y="${padT - 2}" text-anchor="start">rating</text>`;
   const line = pts.length > 1
     ? `<polyline fill="none" stroke="var(--c2)" stroke-width="1.75" stroke-linejoin="round"
         points="${pts.map((r, i) => `${x(i).toFixed(1)},${y(r.self_rating).toFixed(1)}`).join(" ")}"/>`

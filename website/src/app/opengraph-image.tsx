@@ -57,7 +57,10 @@ export default function OpengraphImage() {
               color: "#8e97a8", // text-secondary
             }}
           >
-            <span style={{ color: "#f5c145" }}>{"▊"}</span>
+            {/* The cursor block is drawn, not set: Satori falls back to its
+             * bundled face, which has no U+258A, and a missing glyph renders
+             * as tofu in the first 40px of the card. */}
+            <div style={{ width: "18px", height: "30px", background: "#f5c145" }} />
             <span>a terminal coding agent</span>
           </div>
         </div>

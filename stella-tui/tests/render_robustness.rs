@@ -58,7 +58,10 @@ fn tiny_terminals_with_overlays_never_panic() {
                     4 => ui.inbox_open = true,
                     5 => ui.context_open = true,
                     6 => ui.inspect_open = true,
-                    _ => { ui.search.open = true; ui.search.query = "a".into(); }
+                    _ => {
+                        ui.search.open = true;
+                        ui.search.query = "a".into();
+                    }
                 }
                 let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
                 let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -108,12 +111,32 @@ fn nasty_unicode_transcript_never_panics_at_any_width() {
         let mut model = WorkspaceModel::new();
         model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "t", 0)));
         for ev in [
-            AgentEvent::Text { delta: text.clone() },
-            AgentEvent::Reasoning { delta: text.clone() },
-            AgentEvent::ToolStart { call: ToolCall { call_id: "c".into(), name: text.clone(), input: serde_json::json!({"path": text}) } },
-            AgentEvent::ToolResult { call_id: "c".into(), output: ToolOutput::Error { message: text.clone() }, duration_ms: 5, speculated: false },
+            AgentEvent::Text {
+                delta: text.clone(),
+            },
+            AgentEvent::Reasoning {
+                delta: text.clone(),
+            },
+            AgentEvent::ToolStart {
+                call: ToolCall {
+                    call_id: "c".into(),
+                    name: text.clone(),
+                    input: serde_json::json!({"path": text}),
+                },
+            },
+            AgentEvent::ToolResult {
+                call_id: "c".into(),
+                output: ToolOutput::Error {
+                    message: text.clone(),
+                },
+                duration_ms: 5,
+                speculated: false,
+            },
         ] {
-            model.apply_inbound(&Inbound::Event { agent: "lead".into(), event: ev });
+            model.apply_inbound(&Inbound::Event {
+                agent: "lead".into(),
+                event: ev,
+            });
         }
         for w in [1u16, 2, 3, 4, 6, 10, 20, 41, 80] {
             for h in [3u16, 9, 24] {

@@ -18,7 +18,13 @@ import { PROVIDER_CATALOG } from "@/components/provider-cards";
  * docs. Everything else is one click away and better written there.
  */
 
-const INSTALL = "curl -fsSL https://stella.oxagen.sh/install.sh | sh";
+/**
+ * Copied from content/docs/getting-started/installation.mdx. If that page's
+ * command changes, this one has to change with it — a landing page that
+ * installs a different thing than the docs say is worse than no landing page.
+ */
+const INSTALL =
+  "curl -fsSL https://raw.githubusercontent.com/macanderson/stella/main/install.sh | sh";
 
 /** The four entry points, in the order a new reader needs them. */
 const DOORS = [

@@ -1019,15 +1019,50 @@ fn provider_cards_match_the_registry() {
             provider.id, provider.env_var_aliases
         );
 
-        assert_eq!(
-            card.href,
-            format!("/docs/api-providers/{}", provider.id),
-            "the docs card for `{}` links to `{}`, which is not that \
-             provider's page",
+        // The link must reach that provider's documentation. Deliberately NOT
+        // pinned to one URL shape: the docs moved from ten per-provider pages
+        // (`/docs/api-providers/zai`) to one consolidated page with anchors
+        // (`/docs/api-providers#zai`), and re-encoding the site's heading slugs
+        // here would make every editorial retitle a failing test in the binary
+        // — asserting on the website's structure rather than on the fact this
+        // file is the authority for. What still cannot drift is what actually
+        // breaks a reader: a card pointing outside the API-providers docs, or
+        // at the bare index with no anchor to land on.
+        assert!(
+            card.href.starts_with("/docs/api-providers"),
+            "the docs card for `{}` links to `{}`, which is not in the \
+             API-providers docs",
+            provider.id,
+            card.href
+        );
+        let lands_somewhere = card.href.len() > "/docs/api-providers".len()
+            && !card.href.ends_with('#')
+            && !card.href.ends_with('/');
+        assert!(
+            lands_somewhere,
+            "the docs card for `{}` links to `{}` — the bare index, with \
+             nothing identifying this provider",
             provider.id,
             card.href
         );
     }
+
+    // …and two providers must never share a destination, which is how a
+    // copy-pasted card silently sends readers to the wrong provider's setup.
+    let mut hrefs: Vec<&str> = PROVIDERS
+        .iter()
+        .filter_map(|p| cards.iter().find(|c| c.id == p.id))
+        .map(|c| c.href.as_str())
+        .collect();
+    let total = hrefs.len();
+    hrefs.sort_unstable();
+    hrefs.dedup();
+    assert_eq!(
+        hrefs.len(),
+        total,
+        "two provider cards link to the same page — one of them sends readers \
+         to another provider's setup instructions"
+    );
 
     // The reverse direction: a card for a provider that no longer exists sends
     // readers to a page for something they cannot select. `local` is the one

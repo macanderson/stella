@@ -431,7 +431,12 @@ mod tests {
 
     #[test]
     fn render_does_not_panic_at_any_size_or_time() {
-        let marks = [0, 90, REVEAL.as_millis() as u64 + 5, unheld_total_ms() + 200];
+        let marks = [
+            0,
+            90,
+            REVEAL.as_millis() as u64 + 5,
+            unheld_total_ms() + 200,
+        ];
         for &(w, h) in &[(80_u16, 24_u16), (44, 14), (30, 5), (0, 0), (1, 1), (28, 2)] {
             for &ms in &marks {
                 let _ = draw_with(&state_at(ms), Some("glm-4.6"), w, h);
