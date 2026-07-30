@@ -46,6 +46,7 @@ pub mod bridge;
 pub mod clock;
 pub mod decision;
 pub mod handle;
+pub mod registry;
 pub mod render;
 pub mod sweep;
 pub mod validate;
@@ -53,9 +54,10 @@ pub mod validate;
 pub use bridge::{BlockingRefusal, GuardDecision, guard_for, rule_from_record};
 pub use decision::{Decision, DecisionEvent, should_repropose};
 pub use handle::assign_handles;
+pub use registry::{Entry, Facts, Registry};
 pub use render::{Channel, RenderInput, RenderedChannel, render_channel};
 pub use sweep::{Disposition, ExpiryAction, SweepInput, disposition, honored_probe, probe_is_due};
-pub use validate::{Conflict, is_suspended, validate_records};
+pub use validate::{Conflict, check_record, detect_conflicts, is_suspended, validate_records};
 
 /// One record as the engine sees it: the typed record, where it came from, the
 /// name it can be cited by, and everything wrong with it.

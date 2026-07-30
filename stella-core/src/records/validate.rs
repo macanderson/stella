@@ -66,10 +66,28 @@ pub struct Conflict {
 /// Call after [`super::assign_handles`] — conflict detail names records by handle.
 pub fn validate_records(records: &mut [LoadedRecord]) -> Vec<Conflict> {
     for loaded in records.iter_mut() {
-        let mut findings = check_one(&loaded.record);
-        loaded.findings.append(&mut findings);
+        check_record(loaded);
     }
-    let conflicts = detect_conflicts(records);
+    detect_conflicts(records)
+}
+
+/// The per-record half of [`validate_records`] — the checks that need no
+/// neighbours.
+///
+/// Separate from the conflict pass because the two apply to different populations:
+/// a legacy `.md` rule projected onto a record must NOT be judged against the
+/// record surface's schema (its body is prose, often several paragraphs, and the
+/// "a statement is one sentence" check would refuse rules that have shipped for
+/// months) — but it must still take part in conflict detection, because a markdown
+/// guard and a TOML record really can contradict each other.
+pub fn check_record(loaded: &mut LoadedRecord) {
+    let mut findings = check_one(&loaded.record);
+    loaded.findings.append(&mut findings);
+}
+
+/// The cross-record half: every equal-precedence conflict, attached to both sides.
+pub fn detect_conflicts(records: &mut [LoadedRecord]) -> Vec<Conflict> {
+    let conflicts = find_conflicts(records);
     for conflict in &conflicts {
         for loaded in records.iter_mut() {
             if loaded.handle == conflict.left {
@@ -229,7 +247,7 @@ fn atomicity(record: &Record) -> Vec<RecordFinding> {
 }
 
 /// Every equal-precedence overlap with differing enforcement.
-fn detect_conflicts(records: &[LoadedRecord]) -> Vec<Conflict> {
+fn find_conflicts(records: &[LoadedRecord]) -> Vec<Conflict> {
     let mut conflicts = Vec::new();
     for (i, left) in records.iter().enumerate() {
         for right in records.iter().skip(i + 1) {

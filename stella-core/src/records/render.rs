@@ -62,6 +62,15 @@ pub struct RenderInput<'a> {
     pub record: &'a LoadedRecord,
     /// The sweep's verdict on whether — and how — it may steer.
     pub disposition: &'a Disposition,
+    /// Whether a Tier-2 guard is **actually armed** for this record.
+    ///
+    /// Decided by the caller, not re-derived here. Two reasons: the blocking gate
+    /// needs facts this crate has no access to (a human approval, a suspending
+    /// conflict), and legacy markdown rules reach the renderer with a guard that
+    /// predates the gate entirely — recomputing would disarm them in the marker
+    /// while they stayed armed at the tool boundary, so the prompt would understate
+    /// what actually happens.
+    pub enforced: bool,
 }
 
 /// A rendered channel: the bytes, and the ledger facts about them.
@@ -161,7 +170,7 @@ fn render_cached(inputs: &[&RenderInput<'_>], budget_chars: Option<usize>) -> Re
         let mut section = format!("\n\n{heading}");
         let mut wrote_any = false;
         for input in group {
-            let line = format!("\n{}", bullet(input.record));
+            let line = format!("\n{}", bullet(input));
             if over_budget(&out.text, &section, &line, budget_chars) {
                 out.dropped.push(input.record.handle.clone());
                 continue;
@@ -192,7 +201,7 @@ fn render_volatile(inputs: &[&RenderInput<'_>], budget_chars: Option<usize>) -> 
     };
     let header_len = out.text.len();
     for input in inputs {
-        let line = format!("\n{}", bullet(input.record));
+        let line = format!("\n{}", bullet(input));
         if over_budget(&out.text, "", &line, budget_chars) {
             out.dropped.push(input.record.handle.clone());
             continue;
@@ -213,13 +222,10 @@ fn render_volatile(inputs: &[&RenderInput<'_>], budget_chars: Option<usize>) -> 
 /// whose blocking was refused ([`super::BlockingRefusal`]) does not get it: telling
 /// the model a call will be blocked when it will not is the same lie the blank-guard
 /// bug used to tell.
-fn bullet(record: &LoadedRecord) -> String {
-    let statement = record.record.statement.trim();
-    let enforced = super::bridge::guard_for(&record.record, true)
-        .guard
-        .is_some();
-    let suffix = if enforced { " [enforced]" } else { "" };
-    format!("- {statement} ^{}{suffix}", record.handle)
+fn bullet(input: &RenderInput<'_>) -> String {
+    let statement = input.record.record.statement.trim();
+    let suffix = if input.enforced { " [enforced]" } else { "" };
+    format!("- {statement} ^{}{suffix}", input.record.handle)
 }
 
 /// Whether appending `line` would exceed the channel budget.
@@ -236,6 +242,18 @@ mod tests {
         RenderInput {
             record,
             disposition,
+            enforced: false,
+        }
+    }
+
+    fn enforced_input<'a>(
+        record: &'a LoadedRecord,
+        disposition: &'a Disposition,
+    ) -> RenderInput<'a> {
+        RenderInput {
+            record,
+            disposition,
+            enforced: true,
         }
     }
 
@@ -487,36 +505,26 @@ mod tests {
 
     #[test]
     fn only_an_armed_guard_earns_the_enforced_marker() {
-        let mut armed = at(Force::Must, "ctx.a.b.no-force-push", "Never force-push.");
-        armed.record.origin = Some(super::super::super::context_record::kind::Origin::User);
-        armed.record.enforcement = Some(super::super::tests::hard_guard(
-            Some("Bash"),
-            None,
-            Some("git push --force*"),
-        ));
-        let out = render_channel(
-            &[input(&armed, &Disposition::Select)],
-            Channel::Cached,
-            None,
-        );
+        let record = at(Force::Must, "ctx.a.b.no-force-push", "Never force-push.");
+        let select = Disposition::Select;
+
+        let armed = render_channel(&[enforced_input(&record, &select)], Channel::Cached, None);
         assert!(
-            out.text.contains("^no-force-push [enforced]"),
+            armed.text.contains("^no-force-push [enforced]"),
             "{}",
-            out.text
+            armed.text
         );
 
-        // Same record, refused blocking: the marker must not appear.
-        let mut refused = armed.clone();
-        refused.record.origin = Some(super::super::super::context_record::kind::Origin::Imported);
-        let out = render_channel(
-            &[input(&refused, &Disposition::Select)],
-            Channel::Cached,
-            None,
+        let advisory = render_channel(&[input(&record, &select)], Channel::Cached, None);
+        assert!(
+            !advisory.text.contains("[enforced]"),
+            "promising a block that will not happen is the blank-guard bug again: {}",
+            advisory.text
         );
         assert!(
-            !out.text.contains("[enforced]"),
-            "promising a block that will not happen is the blank-guard bug again: {}",
-            out.text
+            advisory.text.contains("^no-force-push"),
+            "{}",
+            advisory.text
         );
     }
 }

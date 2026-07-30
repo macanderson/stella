@@ -416,6 +416,7 @@ pattern = "20"
         .map(|(record, disposition)| render::RenderInput {
             record,
             disposition,
+            enforced: false,
         })
         .collect();
 
