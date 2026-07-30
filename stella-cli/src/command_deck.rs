@@ -115,7 +115,7 @@ pub(crate) use forwarder::spawn_forwarder;
 use scope_gate::DeckApprovalGate;
 
 /// The lead agent's id — the one conversation this driver runs.
-const LEAD: &str = "lead";
+pub(crate) const LEAD: &str = "lead";
 
 /// Ids for the cards [`DeckAskUserIo`] mints (`deck-ask-N`). Process-unique
 /// like `interactive::NEXT_ASK_ID`, and deliberately a different namespace:
