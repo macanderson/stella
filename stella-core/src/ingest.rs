@@ -26,6 +26,16 @@
 //! is a deterministic function of its inputs. That keeps the policy — which is
 //! the part worth arguing about — unit-testable without a fixture tree.
 
+pub mod gate;
+pub mod record;
+
+pub use gate::{GateOutcome, gate_proposal};
+pub use record::{
+    AppliesTo, ContextFile, Defaults, Enforcement, EnforcementMode, Force, Link, LinkRelation,
+    Probe, ProbeKind, Proposal, Provenance, Quarantine, Record, RecordKind, Refutation, SCHEMA_TAG,
+    SharingScope, Steering, Truth, TruthBasis, Validation, Verdict,
+};
+
 #[cfg(test)]
 mod tests;
 

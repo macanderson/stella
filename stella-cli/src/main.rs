@@ -1117,8 +1117,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             return enterprise_telemetry::run_command(*cmd);
         }
         Some(Command::Ingest(args)) => {
-            // Reads local markdown only — no store, no model, no API key.
-            return ingest_cmd::run(args);
+            // Scanning (no paths) reads local markdown only; extracting from
+            // named files resolves a provider and makes a model call, so the
+            // global model / key / base-url overrides are threaded through.
+            return ingest_cmd::run(
+                args,
+                cli.globals.model.as_deref(),
+                cli.globals.api_key.as_deref(),
+                cli.globals.base_url.as_deref(),
+            );
         }
         Some(Command::Scoreboard) => {
             // Reads .stella/private/store.db only.
