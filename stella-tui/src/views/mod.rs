@@ -3,9 +3,10 @@
 //! — a deterministic draw of the (model, ui) into a sub-area, recording any
 //! viewport metrics it needs for scroll clamping back onto `ui.metrics`.
 //! (`engine` and `tools` are the exceptions: they are the two config editors
-//! the SETTINGS tab ([`settings`]) hosts side by side, not tab renderers of
-//! their own — each exposes `render_panel(ui, area, buf)` plus its own key
-//! handler, modal while that panel is focused. `installed` is a third: it
+//! the SETTINGS tab ([`settings`]) hosts as the two panes of its ←/→ nav, not
+//! tab renderers of their own — each exposes `render_panel(ui, area, buf)`
+//! plus its own key handler, modal while that panel is focused. `installed`
+//! is a third: it
 //! is the AGENTS tab's INSTALLED AGENTS pane, dispatched from
 //! [`agents::render`] rather than from the deck's tab match, and its
 //! `render(ui, area, buf)` drops the unused `model` parameter rather than

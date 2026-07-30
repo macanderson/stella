@@ -14,7 +14,8 @@ use ratatui::backend::TestBackend;
 
 use stella_tui::scenario::{demo_graph, demo_inbound};
 use stella_tui::{
-    DeckTab, DeckUi, ToolDenial, ToolPolicyState, ToolRow, ToolScope, WorkspaceModel, render_deck,
+    DeckTab, DeckUi, SettingsPane, ToolDenial, ToolPolicyState, ToolRow, ToolScope, WorkspaceModel,
+    render_deck,
 };
 
 fn folded_model() -> WorkspaceModel {
@@ -142,7 +143,7 @@ fn settings_tab_hosts_the_agents_config_editor() {
     );
 }
 
-/// The SETTINGS tab's second section: the tool-switch editor, listing what
+/// The SETTINGS tab's second pane: the tool-switch editor, listing what
 /// this session actually has — including a connected MCP server's tool and a
 /// tool the customer registered themselves, neither of which any compiled-in
 /// table knows about.
@@ -152,6 +153,9 @@ fn settings_tab_lists_the_sessions_tools_grouped_with_mcp_and_custom_sections() 
     let mut ui = DeckUi::default();
     ui.splash.skip();
     ui.tab = DeckTab::Settings;
+    // The tab shows one pane at a time behind its ←/→ nav — walk to TOOLS,
+    // which is what a user pressing → from the default AGENTS pane sees.
+    ui.settings_pane = SettingsPane::Tools;
     ui.tools.state = Some(ToolPolicyState {
         tools: [
             ("read_file", "file"),
@@ -189,7 +193,7 @@ fn settings_tab_lists_the_sessions_tools_grouped_with_mcp_and_custom_sections() 
 
     assert!(
         text.contains("tools ·"),
-        "the tool panel renders beside the agents editor:\n{text}"
+        "the tool panel fills the tab on the TOOLS pane:\n{text}"
     );
     for section in ["FILE", "PROCESS", "MCP", "CUSTOM"] {
         assert!(
@@ -209,9 +213,15 @@ fn settings_tab_lists_the_sessions_tools_grouped_with_mcp_and_custom_sections() 
         text.contains("org-locked") && text.contains("locked"),
         "an org-denied row renders locked rather than as a working switch:\n{text}"
     );
+    // `e` edits the pane you are on, so that is the hint the visible panel
+    // teaches — the pane-specific `t` survives only as an accelerator.
     assert!(
-        text.contains("t edit tool switches"),
+        text.contains("e edit tool switches"),
         "the unfocused focus hint renders:\n{text}"
+    );
+    assert!(
+        text.contains("AGENTS") && text.contains("TOOLS"),
+        "the ←/→ pane nav sits above the panel:\n{text}"
     );
 }
 

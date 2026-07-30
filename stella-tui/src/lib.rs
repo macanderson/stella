@@ -105,3 +105,4 @@ pub use fleet_dashboard::{
 pub use graph::{GraphEdge, GraphNode, GraphSnapshot};
 pub use resource::ResourceMonitor;
 pub use splash::SplashState;
+pub use views::settings::SettingsPane;

@@ -26,6 +26,20 @@ record of *changes*, curated by the person who made them.
 
 ## [Unreleased]
 
+### Changed
+
+- **The SETTINGS tab navigates like the AGENTS tab.** It used to draw both
+  config editors side by side, splitting the terminal in half: on any ordinary
+  width the agents editor truncated its values (`allowed_models` ended in an
+  ellipsis after two entries) and the tools editor truncated the reason a tool
+  was switched off — and the tab read as two things at once. The two editors
+  are now the two panes of a secondary nav, **AGENTS | TOOLS**, walked with
+  **←/→** exactly like EXECUTIONS | INSTALLED AGENTS. One pane is on screen at
+  a time and it fills the tab. **`e` edits whichever pane you are on**; the
+  editor it opens is unchanged, down to the last key, and its Esc still hands
+  the keyboard back. `t` still jumps straight to the tool switches from either
+  pane. Because a focused editor owns the keyboard, ←/→ can only move the nav
+  from browse state — never out from under an open edit.
 ## [0.6.21] — 2026-07-30
 
 ## [0.6.20] — 2026-07-30
