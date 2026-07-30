@@ -73,9 +73,8 @@ pub fn run_explain(root: &Path, needle: &str) -> Result<(), String> {
             println!("  {}  {}", "Scope".bold(), parts.join(" · "));
         }
         None => println!(
-            "  {}  {}",
-            "Scope".bold(),
-            "unscoped — it applies to every task in this workspace".to_string()
+            "  {}  unscoped — it applies to every task in this workspace",
+            "Scope".bold()
         ),
     }
 
