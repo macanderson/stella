@@ -160,6 +160,7 @@ pub mod integrity;
 pub mod journal;
 pub mod notify;
 pub mod prune;
+pub mod reflection;
 pub mod scoreboard;
 pub mod sessions;
 pub mod usage;
@@ -1149,31 +1150,36 @@ impl Store {
         Ok(fold_mcp_usage_stats(&calls))
     }
 
-    /// Record (or replace) the agent's self-review for one turn, 1:1 with its
-    /// execution.
-    pub fn record_execution_reflection(
-        &self,
-        execution_id: i64,
-        r: &ExecutionReflectionRow,
-    ) -> Result<()> {
-        self.lock().execute(
-            "INSERT OR REPLACE INTO execution_reflection \
-             (execution_id, prompt, delivered, self_rating, what_went_well, \
-              what_to_improve, critique, produced_output, wrote_files, truncated) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                execution_id,
-                r.prompt,
-                r.delivered.map(|b| b as i64),
-                r.self_rating,
-                r.what_went_well,
-                r.what_to_improve,
-                r.critique,
-                r.produced_output as i64,
-                r.wrote_files as i64,
-                r.truncated as i64,
-            ],
-        )?;
+    /// Record the normalized per-call `tool_calls` log for an execution
+    /// (materialized from the `events` stream). `seq` is the call's index in
+    /// the drained batch; UNIQUE (execution_id, seq) guards double-writes.
+    /// One transaction — see [`Self::record_files_touched`].
+    pub fn record_tool_calls(&self, execution_id: i64, calls: &[ToolCallRow]) -> Result<()> {
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        for (seq, row) in calls.iter().enumerate() {
+            tx.execute(
+                "INSERT OR REPLACE INTO tool_calls \
+                 (execution_id, seq, call_id, name, surface, args_json, args_digest, \
+                  reason, ok, error, bytes_out, duration_ms) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    execution_id,
+                    seq as i64,
+                    row.call_id,
+                    row.name,
+                    row.surface,
+                    row.args_json,
+                    row.args_digest,
+                    row.reason,
+                    row.ok as i64,
+                    row.error,
+                    row.bytes_out,
+                    row.duration_ms,
+                ],
+            )?;
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -1188,63 +1194,148 @@ impl Store {
         Ok(conn.last_insert_rowid())
     }
 
-    /// Derive and record the objective half of this turn's
-    /// `execution_reflection` — prompt, plus `produced_output` / `wrote_files`
-    /// / `truncated` computed from the event and file-touch logs. The model's
-    /// self-review fields are left empty here; a producer that captures a
-    /// model-emitted self-assessment can `INSERT OR REPLACE` over this row.
-    pub fn finalize_execution_reflection(&self, execution_id: i64) -> Result<()> {
-        let (prompt, produced_output, wrote_files, truncated) = {
+    /// Materialize the normalized `tool_calls` log for an execution from its
+    /// already-persisted `events` stream (`tool_start` + `tool_result`). Rows
+    /// are emitted in call order; a `tool_start` with no matching result (turn
+    /// cut off mid-tool) is recorded as an incomplete, failed call so the count
+    /// stays honest. A re-emitted `tool_start` for an already-seen call_id
+    /// folds into that call's one row (first announcement keeps the position,
+    /// the last one's payload wins — the same newest-record keep-rule the
+    /// v0 → v1 dedup applies), because one call_id is one call no matter how
+    /// many times the stream announced it. Idempotent (INSERT OR REPLACE on
+    /// seq). Returns the count.
+    pub fn materialize_tool_calls(&self, execution_id: i64) -> Result<usize> {
+        let payloads: Vec<String> = {
             let conn = self.lock();
-            let prompt: String = conn
-                .query_row(
-                    "SELECT prompt FROM executions WHERE id = ?1",
-                    params![execution_id],
-                    |r| r.get(0),
-                )
-                .optional()?
-                .unwrap_or_default();
-            let produced_output: bool = conn.query_row(
-                "SELECT COUNT(*) FROM events \
-                 WHERE execution_id = ?1 AND event_type IN ('text', 'tool_start')",
-                params![execution_id],
-                |r| r.get::<_, i64>(0),
-            )? > 0;
-            // "output-token limit" is the phrase every truncation emitter
-            // shares (stella-core's empty-turn abort, stella-model's
-            // truncated tool-input error); no wider net — a bare "truncated"
-            // substring also matched unrelated failures that merely mention
-            // the word (a torn fixture, a cut-short MCP tool list).
-            let truncated: bool = conn.query_row(
-                "SELECT COUNT(*) FROM events \
-                 WHERE execution_id = ?1 AND event_type = 'error' \
-                   AND payload LIKE '%output-token limit%'",
-                params![execution_id],
-                |r| r.get::<_, i64>(0),
-            )? > 0;
-            let wrote_files: bool = conn.query_row(
-                "SELECT COUNT(*) FROM files_touched \
-                 WHERE execution_id = ?1 \
-                   AND (ops LIKE '%C%' OR ops LIKE '%U%' OR ops LIKE '%D%')",
-                params![execution_id],
-                |r| r.get::<_, i64>(0),
-            )? > 0;
-            (prompt, produced_output, wrote_files, truncated)
+            let mut stmt = conn.prepare(
+                "SELECT payload FROM events \
+                 WHERE execution_id = ?1 AND event_type IN ('tool_start', 'tool_result') \
+                 ORDER BY seq ASC",
+            )?;
+            let rows = stmt.query_map(params![execution_id], |row| row.get::<_, String>(0))?;
+            let mut out = Vec::new();
+            for r in rows {
+                out.push(r?);
+            }
+            out
         };
-        self.record_execution_reflection(
-            execution_id,
-            &ExecutionReflectionRow {
-                prompt,
-                delivered: None,
-                self_rating: None,
-                what_went_well: String::new(),
-                what_to_improve: String::new(),
-                critique: String::new(),
-                produced_output,
-                wrote_files,
-                truncated,
-            },
-        )
+
+        use std::collections::HashMap;
+        let mut order: Vec<String> = Vec::new();
+        // call_id -> (name, surface, args_json)
+        let mut starts: HashMap<String, (String, String, String)> = HashMap::new();
+        // call_id -> (ok, error, bytes_out, duration_ms)
+        let mut results: HashMap<String, (bool, String, i64, i64)> = HashMap::new();
+
+        for payload in &payloads {
+            let Ok(ev) = serde_json::from_str::<AgentEvent>(payload) else {
+                continue;
+            };
+            match ev {
+                AgentEvent::ToolStart { call } => {
+                    let args_json =
+                        serde_json::to_string(&call.input).unwrap_or_else(|_| "{}".into());
+                    let surface = if call.name.starts_with("mcp__") {
+                        "mcp"
+                    } else {
+                        "native"
+                    };
+                    // One position per call_id: pushing every announcement
+                    // would mint a second row (and double the call count)
+                    // for a re-emitted start, and its result — keyed by
+                    // call_id alone — would attach to both.
+                    if !starts.contains_key(&call.call_id) {
+                        order.push(call.call_id.clone());
+                    }
+                    starts.insert(call.call_id, (call.name, surface.into(), args_json));
+                }
+                AgentEvent::ToolResult {
+                    call_id,
+                    output,
+                    duration_ms,
+                    ..
+                } => {
+                    let (ok, error, bytes) = match output {
+                        ToolOutput::Ok { content } => (true, String::new(), content.len() as i64),
+                        ToolOutput::Error { message } => {
+                            let len = message.len() as i64;
+                            (false, message, len)
+                        }
+                    };
+                    results.insert(call_id, (ok, error, bytes, duration_ms as i64));
+                }
+                _ => {}
+            }
+        }
+
+        let mut rows: Vec<ToolCallRow> = Vec::with_capacity(order.len());
+        for call_id in &order {
+            let Some((name, surface, args_json)) = starts.get(call_id) else {
+                continue;
+            };
+            let digest = fnv_hex(args_json);
+            let (ok, error, bytes_out, duration_ms) = match results.get(call_id) {
+                Some((ok, error, bytes, dur)) => (*ok, error.clone(), *bytes, *dur),
+                None => (
+                    false,
+                    "no result (turn ended before the tool returned)".to_string(),
+                    0,
+                    0,
+                ),
+            };
+            rows.push(ToolCallRow {
+                call_id: call_id.clone(),
+                name: name.clone(),
+                surface: surface.clone(),
+                args_json: args_json.clone(),
+                args_digest: digest,
+                reason: String::new(),
+                ok,
+                error,
+                bytes_out,
+                duration_ms,
+            });
+        }
+        let n = rows.len();
+        self.record_tool_calls(execution_id, &rows)?;
+        Ok(n)
+    }
+
+    /// The most recent `tool_calls` rows for one tool, newest first, capped at
+    /// `limit`. Reads through the `tool_calls_by_name` index. The Tool Foundry
+    /// gap detector consumes this for `name = "bash"` to mine repeated command
+    /// shapes (`stella_core::detect_tool_gaps`); it is a general reader, not
+    /// bash-specific. `limit == 0` returns an empty vec.
+    pub fn recent_tool_calls(&self, name: &str, limit: usize) -> Result<Vec<ToolCallRow>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT call_id, name, surface, args_json, args_digest, reason, \
+                    ok, error, bytes_out, duration_ms \
+             FROM tool_calls WHERE name = ?1 \
+             ORDER BY execution_id DESC, seq DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![name, limit as i64], |r| {
+            Ok(ToolCallRow {
+                call_id: r.get(0)?,
+                name: r.get(1)?,
+                surface: r.get(2)?,
+                args_json: r.get(3)?,
+                args_digest: r.get(4)?,
+                reason: r.get(5)?,
+                ok: r.get::<_, i64>(6)? != 0,
+                error: r.get(7)?,
+                bytes_out: r.get(8)?,
+                duration_ms: r.get(9)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
     }
 
     /// Assemble the user-tier [`usage::ExecutionRollupRow`] for one execution
