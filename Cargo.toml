@@ -21,7 +21,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.6.15"
+version = "0.6.17"
 edition = "2024"
 rust-version = "1.90"
 license = "AGPL-3.0-only"
