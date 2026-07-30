@@ -5,5 +5,5 @@
     "kind": "rust_stack",
     "recorded_by": "stella-pipeline::pipeline::tests::golden::judge_escalation_without_a_test_command"
   },
-  "event_count": 18
+  "event_count": 23
 }
