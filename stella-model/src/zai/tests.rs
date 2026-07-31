@@ -1683,3 +1683,38 @@ fn a_caps_flip_degrades_instead_of_aborting_the_turn() {
         );
     }
 }
+
+/// The output allowance an un-capped reasoning turn gets, and the parity that
+/// makes it correct: `anthropic.rs` picks 32k for a thinking model and this
+/// adapter must not disagree. Reasoning spends from the same allowance as the
+/// answer, so a provider's own non-thinking-sized default truncates the turn
+/// mid-thought — and on this dialect that lands as a `finish_reason: length`
+/// step carrying chain-of-thought and no tool call, the exact shape that ended
+/// 30 of 30 cap-hit steps in the 2026-07-31 Terminal-Bench bundle.
+#[test]
+fn an_uncapped_reasoning_turn_gets_thinking_headroom() {
+    assert_eq!(reasoning_aware_max_tokens(None, Some(true)), Some(32_000));
+}
+
+/// A caller who pinned a cap keeps it verbatim — the default only fills the
+/// hole where no preference was expressed. Overriding an explicit ceiling
+/// would silently spend a caller's money on a budget they declined.
+#[test]
+fn a_pinned_cap_is_honored_whatever_the_reasoning_setting() {
+    for reasoning in [None, Some(false), Some(true)] {
+        assert_eq!(
+            reasoning_aware_max_tokens(Some(8_192), reasoning),
+            Some(8_192),
+            "an explicit cap survives reasoning={reasoning:?}"
+        );
+    }
+}
+
+/// Reasoning off (or unstated) leaves the field absent, so a request without
+/// a cap serializes byte-identical to what this adapter has always sent —
+/// the prompt-cache stability contract the params work established.
+#[test]
+fn a_non_reasoning_turn_still_sends_no_cap() {
+    assert_eq!(reasoning_aware_max_tokens(None, Some(false)), None);
+    assert_eq!(reasoning_aware_max_tokens(None, None), None);
+}
