@@ -291,7 +291,7 @@ class TestBuildCommand:
         ]
         assert cmd[cmd.index("--output-format") + 1] == "stream-json"
         assert cmd[cmd.index("--budget") + 1] == "5.0"  # default budget
-        assert cmd[-2:] == ["run", "Fix the bug"]
+        assert cmd[-3:] == ["run", "--", "Fix the bug"]
         assert "--base-url" not in cmd  # not set
 
     def test_env_overrides_and_base_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -352,7 +352,7 @@ class TestBuildCommand:
         agent.model_name = "anthropic/claude-fable-5"
         instruction = "rm -rf / ; echo $HOME && $(touch /tmp/owned)"
         cmd = agent._build_command(instruction)
-        assert cmd[-2:] == ["run", instruction]
+        assert cmd[-3:] == ["run", "--", instruction]
 
     def test_secret_bearing_base_url_never_enters_command(
         self, monkeypatch: pytest.MonkeyPatch
@@ -460,7 +460,7 @@ class TestNoBudgetCap:
         assert "--budget" not in cmd
         # The failure mode was an empty argv element, not just a stray flag.
         assert "" not in cmd
-        assert cmd[-2:] == ["run", "Fix the bug"]
+        assert cmd[-3:] == ["run", "--", "Fix the bug"]
 
     def test_whitespace_budget_is_treated_as_no_cap_not_as_a_number(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1223,7 +1223,7 @@ class TestRun:
                 self, *, command: list[str], env: dict[str, str], stdin: bytes
             ):
                 assert command[0] == _INSTALL_PATH
-                assert command[-2:] == ["run", "Fix the task."]
+                assert command[-3:] == ["run", "--", "Fix the task."]
                 assert command[command.index("--base-url") + 1] == (
                     "https://openrouter.ai/api/v1"
                 )

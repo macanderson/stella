@@ -111,6 +111,14 @@ _STREAM_EVENTS_NAME = "stella-events.jsonl"
 _STREAM_EVENTS_PATH = f"/logs/agent/{_STREAM_EVENTS_NAME}"
 _TRAJECTORY_NAME = "trajectory.json"
 
+# The one log line that means telemetry was actually lost: a host-side
+# artifact write failed AND no copy of the artifact exists on disk. Grep for
+# this token during run validation (PROMPT-3 step 5). It is deliberately NOT
+# the old "could not write" wording — that line also fired when a complete
+# container copy was already present (11 false alarms in one 2026-07-31 run,
+# zero bytes lost), which trained readers to ignore it.
+_TELEMETRY_INCOMPLETE = "stella-adapter: TELEMETRY-INCOMPLETE"
+
 # Defaults when neither Harbor nor the environment specify a value.
 _DEFAULT_MODEL = "anthropic/claude-fable-5"
 _DEFAULT_BUDGET = "5.0"
@@ -1429,7 +1437,12 @@ class StellaAgent(BaseInstalledAgent):
         if base_url:
             base_url = _validated_public_base_url(base_url)
             parts += ["--base-url", base_url]
-        parts += ["run", instruction]
+        # `--` ends option parsing so a task instruction that begins with a
+        # dash (a markdown list, a CLI transcript) binds to the positional
+        # instead of parsing as a flag. Without it, `stella run '- foo'`
+        # exits 2 before the agent starts — one 2026-07-31 trial
+        # (pytorch-model-recovery) died exactly this way and scored 0.
+        parts += ["run", "--", instruction]
         return parts
 
     def _selected_provider_credential(self) -> tuple[str, str]:
@@ -1839,8 +1852,10 @@ class StellaAgent(BaseInstalledAgent):
                 ),
             )
         except Exception as exc:  # noqa: BLE001 - metadata must not fail a trial
+            # Serialization failures only: `_write_log` handles (and honestly
+            # classifies) filesystem failures itself and does not raise.
             print(
-                f"stella-adapter: could not write {_TRAJECTORY_NAME}: {exc}",
+                f"stella-adapter: could not build {_TRAJECTORY_NAME}: {exc}",
                 file=sys.stderr,
             )
 
@@ -1853,6 +1868,22 @@ class StellaAgent(BaseInstalledAgent):
         return Path(logs_dir) / name
 
     def _write_log(self, name: str, content: str | None) -> None:
+        """Persist ``content`` under ``logs_dir`` without clobbering — or
+        false-alarming about — a copy that is already there.
+
+        The events file arrives by two racing paths: Stella's in-container
+        sink (downloaded by Harbor, often root-owned) and this host-side
+        write. Whichever lost the race used to hit the other's file and print
+        "could not write" — eleven times in one run, with zero bytes lost,
+        and the error anti-correlated with actual loss. Now: an existing
+        file is left alone (whatever is there is the container's own artifact
+        or an earlier successful write — both authoritative over a host-side
+        reconstruction); a failed write re-checks the filesystem and stays
+        silent when a non-empty copy exists (the race was lost, nothing was);
+        and only "nothing exists and nothing could be written" is loud, with
+        the greppable ``TELEMETRY-INCOMPLETE`` marker run validation looks
+        for.
+        """
         if not content:
             return
         path = self._log_path(name)
@@ -1860,9 +1891,32 @@ class StellaAgent(BaseInstalledAgent):
             return
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
+            if path.exists():
+                # Non-destructive by design; never replace an existing
+                # artifact with a reconstruction.
+                return
             path.write_text(content, encoding="utf-8")
         except OSError as exc:
-            print(f"stella-adapter: could not write {name}: {exc}", file=sys.stderr)
+            if self._artifact_present(path):
+                # Lost the race to the container download: the artifact is
+                # present and non-empty, so nothing was lost and nothing is
+                # printed.
+                return
+            print(
+                f"{_TELEMETRY_INCOMPLETE} {name}: no copy exists and the host "
+                f"write failed: {exc}",
+                file=sys.stderr,
+            )
+
+    @staticmethod
+    def _artifact_present(path: Path) -> bool:
+        """Whether a non-empty file exists at ``path``. Checked *after* a
+        failed write, so a lost race reads as presence rather than loss; a
+        root-owned unreadable file still counts (stat needs only the parent)."""
+        try:
+            return path.stat().st_size > 0
+        except OSError:
+            return False
 
     def _read_log(self, name: str) -> str | None:
         path = self._log_path(name)

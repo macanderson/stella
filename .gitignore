@@ -174,3 +174,8 @@ docs/brand/__pycache__/
 
 # Terminal recordings (scripts/record-demo.sh)
 /recordings/
+
+# Benchmark evidence handoffs: raw trial traces (100s of MB) plus rig
+# credentials (*.pem). Never committed — a bare `git add .` must not be able
+# to publish an SSH key.
+/docs/stella-bench-handoff/

@@ -10,14 +10,17 @@ JOB="${2:?usage: primary.sh <A|B> <job-name>}"
 test ! -e "$JOBS/$JOB" || { echo "FATAL: $JOBS/$JOB exists — a run never resumes"; exit 1; }
 
 case "$PHASE" in
-  A) KEY=phaseA; CONC="${TB_CONCURRENCY_A:-3}" ;;
-  B) KEY=phaseB; CONC=1 ;;
-  *) echo "FATAL: phase must be A or B"; exit 1 ;;
+  A)   KEY=phaseA; CONC="${TB_CONCURRENCY_A:-3}" ;;
+  B)   KEY=phaseB; CONC=1 ;;
+  ALL) KEY=all;    CONC="${TB_CONCURRENCY:-3}" ;;
+  *)   echo "FATAL: phase must be A, B or ALL"; exit 1 ;;
 esac
 
 python3 -c "
 import json,sys
-print('\n'.join(json.load(open('$TB_ROOT/phases.json'))['$KEY']))
+p=json.load(open('$TB_ROOT/phases.json'))
+names = p['phaseA'] + p['phaseB'] if '$KEY'=='all' else p['$KEY']
+print('\n'.join(sorted(names)))
 " > "$TB_ROOT/$KEY.tasks"
 N=$(grep -c . "$TB_ROOT/$KEY.tasks")
 test "$N" -gt 0 || { echo "FATAL: no tasks for phase $PHASE"; exit 1; }
