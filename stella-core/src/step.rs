@@ -242,6 +242,12 @@ pub struct TurnState {
     pub(crate) step: usize,
     /// The per-turn memos a checkpoint deliberately drops (module docs).
     pub(crate) memos: TurnMemos,
+    /// In-turn continuations already spent on steps that ended at the
+    /// output-token limit with no tool call (`Engine::dispatch_completion`).
+    /// Bounded per turn so a model that keeps truncating cannot loop the
+    /// spend; deliberately NOT checkpointed — a resumed turn starts the
+    /// allowance over, which only re-permits a bounded amount of work.
+    pub(crate) length_continuations: u32,
     /// The host's stop signal, checked at the top of every step.
     pub(crate) cancel: CancelToken,
 }
@@ -266,6 +272,7 @@ impl TurnState {
             transcript_rewrites: 0,
             step: 0,
             memos: TurnMemos::new(config.turn_instance, config.lifecycle_enabled),
+            length_continuations: 0,
             cancel: CancelToken::new(),
         }
     }
@@ -284,6 +291,7 @@ impl TurnState {
             transcript_rewrites: checkpoint.transcript_rewrites,
             step: checkpoint.step,
             memos: TurnMemos::new(config.turn_instance, config.lifecycle_enabled),
+            length_continuations: 0,
             cancel: CancelToken::new(),
         }
     }

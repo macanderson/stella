@@ -368,6 +368,33 @@ const SPECULATION_DISCARD_HARVEST_MISMATCH: &str = "harvest_mismatch";
 /// could harvest it, so it is discarded on the abort unwind instead (#460).
 const SPECULATION_DISCARD_BUDGET_ABORT: &str = "budget_abort";
 
+/// How many times one turn may continue past a step that ended at the
+/// output-token limit having called no tool (`FinishReason::Length`,
+/// `tool_calls` empty). Two, not one, because the observed failure is a
+/// reasoning model spending a whole output budget on chain-of-thought: the
+/// first continuation often finishes the thinking, and the second lands the
+/// action. Bounded because each continuation is a paid call, and a model
+/// that truncates a third time is not going to stop on its own — the turn
+/// falls through to the existing truncation warning and the verification
+/// ladder's no-op rung takes it from there.
+const MAX_LENGTH_CONTINUATIONS: u32 = 2;
+
+/// The user message a length-truncated, tool-less step is continued with.
+///
+/// Written for the two shapes the trigger cannot distinguish and does not
+/// need to: chain-of-thought promoted to text by an adapter's reasoning-only
+/// fallback (the Terminal-Bench zero-tool trials — 30 of 30 cap-hit steps in
+/// the 2026-07-31 bundle carried no tool call), and a genuine prose answer
+/// cut off mid-sentence. Both are told the same thing: the turn is not over,
+/// go do the work — with tool calls, not narration. At temperature 0 a bare
+/// retry of the identical request re-truncates identically, which is why
+/// this is a *continuation with new input* rather than a retry.
+const LENGTH_CONTINUATION_NUDGE: &str = "Your previous message hit the output-token limit and \
+     was cut off before any tool call or finished answer. The turn is not over. Continue from \
+     exactly where you stopped: if work remains, emit the tool calls that perform it now — \
+     writing files, running commands, applying edits. Do not restate your reasoning or repeat \
+     text you already produced; describing the work is not doing it.";
+
 /// One committed model call plus the step-scoped context the phases after
 /// it consume: the pre-call raw token estimate (drift feedback + telemetry
 /// — raw, never calibrated, see [`Engine::run_model_call`]) and the
@@ -760,7 +787,13 @@ impl<'a> Engine<'a> {
         }
 
         if let Some(completed) = self
-            .dispatch_completion(committed, state.total_cost_usd, &mut state.messages, events)
+            .dispatch_completion(
+                committed,
+                state.total_cost_usd,
+                &mut state.messages,
+                &mut state.length_continuations,
+                events,
+            )
             .await
         {
             return completed.into();
@@ -1676,11 +1709,20 @@ impl<'a> Engine<'a> {
     /// assistant message, execute its tool calls, record their results,
     /// and return `None` so the loop takes another step. Consumes the
     /// step: the result's text moves into the `Completed` outcome.
+    ///
+    /// A tool-less step that ended at the output-token limit is the one
+    /// no-tool shape that does NOT finish the turn (up to
+    /// [`MAX_LENGTH_CONTINUATIONS`] times): the model was cut off, not done,
+    /// so the step is recorded and the turn continues with
+    /// [`LENGTH_CONTINUATION_NUDGE`]. `length_continuations` is the turn's
+    /// running count ([`TurnState`]'s, threaded rather than owned so the
+    /// bound survives across steps).
     async fn dispatch_completion(
         &self,
         committed: CommittedStep,
         total_cost_usd: f64,
         messages: &mut Vec<CompletionMessage>,
+        length_continuations: &mut u32,
         events: &EventSender,
     ) -> Option<TurnOutcome> {
         let CommittedStep {
@@ -1740,9 +1782,46 @@ impl<'a> Engine<'a> {
                     cost_usd: total_cost_usd,
                 });
             }
-            // A non-empty answer that was still truncated at the limit: keep the
-            // partial answer (already emitted above) but tell the user it was
-            // cut off, so a mid-thought stop is never mistaken for a full one.
+            // A non-empty response cut off at the output limit with no tool
+            // call is not a finished turn — it is a step that ran out of room,
+            // and on the Chat Completions dialects it is usually
+            // chain-of-thought promoted to text by the adapter's
+            // reasoning-only fallback. Completing here is the defect that
+            // shipped the zero-tool Terminal-Bench trials: the turn ends,
+            // verification finds nothing observable, and the run reports a
+            // task it never touched (30 of 30 cap-hit steps in the 2026-07-31
+            // bundle carried no tool call). Continue the turn instead: record
+            // the partial, tell the model to act, take another step. A
+            // continuation rather than a retry because at temperature 0 the
+            // identical request re-truncates identically — the nudge is what
+            // changes the outcome.
+            if result.finish_reason == Some(FinishReason::Length)
+                && *length_continuations < MAX_LENGTH_CONTINUATIONS
+            {
+                *length_continuations += 1;
+                let _ = events.send(AgentEvent::Text {
+                    delta: format!(
+                        "\n\n⚠ Output-token limit reached ({} tokens) before any tool call; \
+                         continuing ({}/{}).",
+                        result.usage.output_tokens, *length_continuations, MAX_LENGTH_CONTINUATIONS
+                    ),
+                });
+                messages.push(CompletionMessage {
+                    role: MessageRole::Assistant,
+                    content: result.text.clone(),
+                    tool_calls: Vec::new(),
+                    tool_results: Vec::new(),
+                    attachments: Vec::new(),
+                });
+                messages.push(CompletionMessage::user(LENGTH_CONTINUATION_NUDGE));
+                return None;
+            }
+            // A non-empty answer truncated with the continuation allowance
+            // spent: keep the partial answer (already emitted above) but tell
+            // the user it was cut off, so a mid-thought stop is never
+            // mistaken for a full one. The verification ladder's no-op rung
+            // is what stops a turn that still did nothing from reporting
+            // success past this point.
             if result.finish_reason == Some(FinishReason::Length) {
                 let _ = events.send(AgentEvent::Text {
                     delta: format!(
