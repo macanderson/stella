@@ -266,6 +266,23 @@ def cmd_score(args: argparse.Namespace) -> int:
     tokens_out = sum(row["n_output_tokens"] or 0 for row in rows)
     zero_tool = sum(1 for row in rows if not row.get("tool_calls"))
     errored = sum(1 for row in rows if row.get("exception_type"))
+    # The distinction that separates "the agent failed the task" from "the
+    # harness never got to ask". reward == 0.0 means the external verifier ran
+    # and the work did not pass; reward is None means it produced no verdict at
+    # all — it timed out, or crashed, or never started. Both score 0 under the
+    # preregistered fixed denominator, and they must not, so the count is
+    # published as the ceiling on how much of the score is infrastructure.
+    no_verdict = sum(1 for row in rows if row.get("reward") is None)
+    stella_completed = sum(1 for row in rows if row.get("stella_status") == "completed")
+    # Preregistered secondary metric. A trial stopped by its spend cap was
+    # truncated rather than beaten, which biases the score DOWN — so it is
+    # published rather than folded silently into the failures. Within a cent of
+    # the cap counts, because the last call is billed after the check.
+    capped = (
+        sum(1 for row in rows if (row.get("usd") or 0) >= float(args.budget_cap) - 0.01)
+        if args.budget_cap
+        else None
+    )
 
     summary = {
         "schema": "stella-tb21-dev-baseline-score-v1",
@@ -289,6 +306,24 @@ def cmd_score(args: argparse.Namespace) -> int:
             "completion_tokens": tokens_out,
             "trials_with_zero_tool_calls": zero_tool,
             "trials_with_an_exception": errored,
+            "trials_with_no_verifier_verdict": no_verdict,
+            "trials_stella_reported_completed": stella_completed,
+            "trials_that_hit_the_budget_cap": capped,
+        },
+        "reading_the_number": {
+            "no_verifier_verdict": (
+                "trials where the external verifier produced no reward at all — it timed "
+                "out, crashed, or never ran. They score 0 like any other failure, because "
+                "the denominator was fixed before the data; this count is the ceiling on "
+                "how much of the score is infrastructure rather than the agent."
+            ),
+            "exceptions_are_not_failures": (
+                "while #960 stands, Stella's process does not exit after finishing its "
+                "turn, so Harbor kills every trial at its agent timeout and records "
+                "AgentTimeoutError even on trials that scored 1.0. Compare "
+                "trials_stella_reported_completed against trials_with_an_exception before "
+                "reading the exception count as a failure rate."
+            ),
         },
     }
     print(json.dumps(summary, indent=2))
@@ -331,6 +366,12 @@ def main() -> int:
     score.add_argument("trials")
     score.add_argument("--tasks", type=int, required=True, help="preregistered denominator")
     score.add_argument("--markdown", help="also write a per-task markdown table here")
+    score.add_argument(
+        "--budget-cap",
+        type=float,
+        default=None,
+        help="per-trial USD cap, to count truncated trials (preregistered secondary metric)",
+    )
     score.set_defaults(func=cmd_score)
 
     args = parser.parse_args()

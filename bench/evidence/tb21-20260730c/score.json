@@ -1,0 +1,35 @@
+{
+  "schema": "stella-tb21-dev-baseline-score-v1",
+  "tasks_declared": 89,
+  "tasks_with_a_trial": 89,
+  "tasks_missing_a_trial": 0,
+  "trials": 89,
+  "passes": 38,
+  "accuracy": 0.42696629213483145,
+  "ci95_bootstrap": {
+    "low": 0.3258426966292135,
+    "high": 0.5280898876404494,
+    "seed": 20260729,
+    "draws": 50000,
+    "method": "percentile over per-task binary outcomes"
+  },
+  "ci95_clopper_pearson": {
+    "low": 0.3226332730819298,
+    "high": 0.5362990070889029,
+    "method": "exact binomial"
+  },
+  "descriptive": {
+    "usd_total": 23.0513,
+    "prompt_tokens": 86986478,
+    "completion_tokens": 1516700,
+    "trials_with_zero_tool_calls": 7,
+    "trials_with_an_exception": 46,
+    "trials_with_no_verifier_verdict": 2,
+    "trials_stella_reported_completed": 74,
+    "trials_that_hit_the_budget_cap": null
+  },
+  "reading_the_number": {
+    "no_verifier_verdict": "trials where the external verifier produced no reward at all \u2014 it timed out, crashed, or never ran. They score 0 like any other failure, because the denominator was fixed before the data; this count is the ceiling on how much of the score is infrastructure rather than the agent.",
+    "exceptions_are_not_failures": "while #960 stands, Stella's process does not exit after finishing its turn, so Harbor kills every trial at its agent timeout and records AgentTimeoutError even on trials that scored 1.0. Compare trials_stella_reported_completed against trials_with_an_exception before reading the exception count as a failure rate."
+  }
+}

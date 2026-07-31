@@ -1,0 +1,95 @@
+{
+  "artifacts": {
+    "results.md": "2acdd746a446604f375cf5f09c50fd0601d87e2af09bd53873cf30ae33f115df",
+    "score.json": "24591f3aefb43abb5b90f4e35514ecd964a11df4eae4f15edab76b139a1ff0e1",
+    "trials.jsonl": "5ed46bb254676df0b107a0dfbb73297f735ecdc18adba7a3b276b0bc5f4b5aba"
+  },
+  "benchmark": {
+    "adapter": "bench/harbor_adapter (stella_harbor:StellaAgent)",
+    "dataset": "terminal-bench/terminal-bench-2-1@sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0ea7c4186773687d177ad3a0699a",
+    "harbor_version": "0.6.1",
+    "tasks_declared": 89,
+    "verifier": "the dataset's own, unmodified"
+  },
+  "claim_eligibility": {
+    "audited_public_row": false,
+    "what_it_is": "a self-reported development baseline, adequate as the held-out number the self-improvement track needs and as a falsifiable check on Stella's own claims; not adequate for a leaderboard row or a competitor comparison without restating every caveat above",
+    "why_not": [
+      "host is not a native x86_64 Linux Docker host: linux/amd64 containers run under Rosetta inside a colima VM on macOS",
+      "credentials came from the ambient environment, the adapter's environment-fallback source, not a Management-API-minted spend-capped key",
+      "no host attestation was collected or committed",
+      "no six-comment intent ledger; a single human-readable preregistration instead",
+      "launched through the plain adapter path, not secure_launcher.py",
+      "no external Terminal-Bench maintainer trajectory review"
+    ]
+  },
+  "engine": {
+    "budget_usd_per_trial": "0.60",
+    "model": "openrouter/z-ai/glm-5.1",
+    "normalized_bytes": 365,
+    "normalized_sha256": "55fdf3421ae4c8625ab8bdedb11a59867b6d81a20ad378a2080e7e944229f4bd",
+    "posture": {
+      "agents": {
+        "default": {
+          "effort": "high",
+          "reasoning": "on"
+        },
+        "judge": {
+          "effort": "high",
+          "reasoning": "on"
+        },
+        "triage": {
+          "effort": "low",
+          "reasoning": "off"
+        },
+        "worker": {
+          "effort": "high",
+          "reasoning": "on"
+        }
+      },
+      "allowed_models": [
+        "openrouter/z-ai/glm-5.1"
+      ],
+      "auto_mode": "off",
+      "default_model": "openrouter/z-ai/glm-5.1",
+      "effort_auto": "off",
+      "headless_scope_bypass": "on",
+      "reasoning_auto": "off"
+    },
+    "reflection_disabled": true
+  },
+  "host": {
+    "container_platform": "linux/amd64 (DOCKER_DEFAULT_PLATFORM)",
+    "docker": "29.6.2",
+    "kernel": "Linux-6.8.0-1061-aws-x86_64-with-glibc2.35",
+    "machine": "x86_64",
+    "note": "shared developer workstation, not a dedicated benchmark host. Concurrent unrelated load was present; see wall-clock fields per trial.",
+    "vm": null
+  },
+  "preregistration_url": "https://github.com/macanderson/stella/issues/1002",
+  "sampling": {
+    "attempts_per_task": 1,
+    "excluded_tasks": null,
+    "max_retries": 0,
+    "n_concurrent": 3,
+    "task_filters": null
+  },
+  "schema": "stella-tb21-dev-baseline-manifest-v1",
+  "system_under_test": {
+    "binary_sha256": "b55053cae2f82387d132a5eedc673d6abb25db1c2ffee421cc33f71a8c8fc55c",
+    "binary_sha256_note": "host-specific: release builds bake in the builder's cargo/rustup paths. The authoritative identity is the STELLA_BUILD_GIT_SHA stamp, which the adapter verifies against the uploaded binary on every trial.",
+    "build_stamp_env": "STELLA_BUILD_GIT_SHA=250976d3fd3b64e5db94aded4b1e6e08a63dca17",
+    "commit": "250976d3fd3b64e5db94aded4b1e6e08a63dca17",
+    "describe": "v0.5.68-124-g250976d",
+    "is_ancestor_of_main": true,
+    "target": "x86_64-unknown-linux-gnu, glibc 2.17 floor"
+  },
+  "timing": {
+    "finished_at": null,
+    "started_at": null
+  },
+  "trials": {
+    "count": 0,
+    "ids": []
+  }
+}
