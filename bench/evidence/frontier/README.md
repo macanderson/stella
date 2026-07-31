@@ -81,6 +81,20 @@ row that looks exactly like a genuine failure. Lower `FB_MEMORY_HEADROOM_MB`
 (default 2048) to attempt them anyway; every exclusion is named with its reason,
 so nothing disappears quietly either way.
 
+## Two Harbor majors means the CLI is a moving contract
+
+`--agent-import-path` is 0.6.1 spelling; 0.20.0 folds it into `--agent`, which
+takes either a built-in name or an import path. This lane uses `--agent`, the
+Terminal-Bench lane keeps the old flag, and both are correct for their pin. The
+preflight's `fb_assert_cli_flags` asserts every flag these scripts pass is still
+advertised, so the next rename costs one message rather than a run — it would
+otherwise surface as `No such option` at the first trial, after the venv build,
+dataset download, image warm and preflight had all passed.
+
+The trial result schema, by contrast, is unchanged: `task_name`,
+`agent_result`, `verifier_result.rewards`, and `exception_info` are identical in
+both versions, so the sentinel's gates read the same fields either way.
+
 ## Harbor version and the test suite
 
 `bench/harbor_adapter/tests/` passes 132/132 under 0.6.1 and 131/132 under
