@@ -123,10 +123,23 @@ def _benchmark_engine_posture(
         # so scope review has nothing to protect here and nobody to ask. Left
         # off, any plan over the thresholds (more than 5 steps) ends the run.
         "headless_scope_bypass": "on",
+        # `max`, not `high`, for every role the outcome depends on. The
+        # comparator this benchmark is scored against is "Claude Code using
+        # GLM-5.1 at **max effort**" (protocol, §Comparator and thresholds), and
+        # the public leaderboard carries `high`, `xhigh` and `max` as distinct
+        # values — so `high` was not a naming variation on the comparator's
+        # setting, it was less compute applied to one side only. Every
+        # Terminal-Bench number published before this change was produced under
+        # that handicap.
+        #
+        # `triage` deliberately stays low/off, and that is parity rather than an
+        # exception to it: it emits a three-line classification and never edits
+        # the workspace, so raising it would change what Stella *is* rather than
+        # what it was allowed to spend.
         "agents": {
-            "default": {"effort": "high", "reasoning": "on"},
-            "worker": {"effort": "high", "reasoning": "on"},
-            "judge": {"effort": "high", "reasoning": "on"},
+            "default": {"effort": "max", "reasoning": "on"},
+            "worker": {"effort": "max", "reasoning": "on"},
+            "judge": {"effort": "max", "reasoning": "on"},
             "triage": {"effort": "low", "reasoning": "off"},
         },
     }
