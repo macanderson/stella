@@ -2963,3 +2963,85 @@ mod compute_passes;
 mod steer_midturn;
 mod usage_completeness;
 mod zero_copy_request;
+
+/// A provider that streams a fragment every `interval` forever: answering the
+/// whole time, never finishing. The shape a reasoning model at high effort
+/// presents on a hard task, where a single call can legitimately stream for
+/// far longer than any fixed wall-clock bound.
+struct SlowStreamingProvider {
+    interval: Duration,
+    calls: Arc<AtomicU32>,
+}
+#[async_trait]
+impl Provider for SlowStreamingProvider {
+    fn id(&self) -> &str {
+        "slow-streaming"
+    }
+    async fn complete_ref(
+        &self,
+        _req: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResultAlias, ProviderError> {
+        unreachable!("the engine always takes the observed path")
+    }
+    async fn complete_observed_ref(
+        &self,
+        _req: CompletionRequestRef<'_>,
+        observer: &dyn stella_protocol::provider::ToolCallObserver,
+    ) -> Result<CompletionResultAlias, ProviderError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        loop {
+            tokio::time::sleep(self.interval).await;
+            observer.text_delta("thinking…");
+        }
+    }
+}
+
+/// The distinction the deadline is supposed to draw. This provider streams a
+/// fragment every 20ms against a 50ms deadline: under a wall-clock bound the
+/// call dies the moment total duration passes 50ms, even though something
+/// arrived 20ms ago. Under an idle bound it runs indefinitely, which is
+/// correct — it is answering.
+///
+/// Asserted by *not* aborting within a window many multiples of the deadline:
+/// the turn is still running when the timeout fires, so the future is dropped
+/// with the call still in flight.
+#[tokio::test]
+async fn a_streaming_generation_outlives_the_deadline_because_it_is_not_stalled() {
+    let calls = Arc::new(AtomicU32::new(0));
+    let provider = SlowStreamingProvider {
+        interval: Duration::from_millis(20),
+        calls: calls.clone(),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let config = EngineConfig {
+        model_timeout: Some(Duration::from_millis(50)),
+        ..EngineConfig::default()
+    };
+    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("hi"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = tokio::time::timeout(
+        Duration::from_millis(600),
+        engine.run_turn(&mut messages, &mut budget, &tx),
+    )
+    .await;
+
+    assert!(
+        outcome.is_err(),
+        "a provider that keeps streaming must not trip the deadline: {outcome:?}"
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "the streaming call is never re-issued"
+    );
+    drain_events(&mut rx);
+}
