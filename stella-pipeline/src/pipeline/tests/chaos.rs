@@ -268,6 +268,7 @@ async fn run_scenario(
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,

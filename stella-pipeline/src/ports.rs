@@ -438,6 +438,43 @@ pub trait TestRunner: Send + Sync {
     async fn run_test(&self, invocation: &TestInvocation) -> CmdOutcome;
 }
 
+/// One parsed lint/typecheck record for the regression veto (#861).
+///
+/// Identity deliberately excludes line/column: the candidate's edits shift
+/// positions, and a pre-existing diagnostic that moved is the same fact, not
+/// a new regression. What remains — file, severity class, rule code, message
+/// — is what a set-difference against the baseline can honestly call "new".
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LintRecord {
+    /// Repo-relative file the diagnostic points at.
+    pub file: String,
+    /// `true` for an error, `false` for a warning.
+    pub error: bool,
+    /// The toolchain's rule/code (`E0308`, `TS2322`, an eslint rule), when
+    /// the dialect carries one.
+    pub code: Option<String>,
+    /// The diagnostic message.
+    pub message: String,
+}
+
+/// Lint/typecheck snapshots for the regression veto (#861). Lint is rightly
+/// excluded from the flip oracle — a lint pass verifies nothing — but it can
+/// *veto*: a candidate that flips its witness while introducing a fresh type
+/// error is exactly the inconclusive case the judge exists for.
+///
+/// The host implementation resolves the workspace's own diagnostics plan
+/// (closed toolchain vocabulary, fixed argv — no model text crosses this
+/// boundary) and returns parsed records. `None` — no toolchain, no parse,
+/// probe failure — degrades open: lint can only ever withhold a fast-submit,
+/// never grant one, so an absent probe restores the pre-veto behavior.
+#[async_trait]
+pub trait LintProbe: Send + Sync {
+    /// Parsed diagnostics of the tree rooted at `root` (`None` = process
+    /// cwd). The root parameter is what lets one probe serve both the
+    /// session tree and an isolated candidate worktree.
+    async fn snapshot(&self, root: Option<&str>) -> Option<Vec<LintRecord>>;
+}
+
 /// One file the winning best-of-N candidate changed, as applied to the real
 /// tree by [`CandidateWorkspace::adopt`]. Paths are repo-relative.
 ///
@@ -779,6 +816,10 @@ pub struct PipelinePorts<'a> {
     pub diagnostics: &'a dyn DiagnosticRunner,
     /// Runs validated test invocations directly, without a shell.
     pub tests: &'a dyn TestRunner,
+    /// Lint/typecheck snapshots for the regression veto (#861). `None` —
+    /// hosts without a diagnostics toolchain — disables the veto and nothing
+    /// else.
+    pub lint: Option<&'a dyn LintProbe>,
     /// The interactive scope-review gate (L-E5).
     pub approvals: &'a dyn ApprovalGate,
     /// The delay port for retry backoff — the same testability seam

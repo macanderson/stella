@@ -37,6 +37,7 @@ fn a_flaky_flip_is_caught_by_the_confirmation_run() {
         diff_available: true,
         file_change_events: 1,
         mutating_actions: 1,
+        ..Default::default()
     };
     assert_eq!(
         ladder_decision(&inputs),

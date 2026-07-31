@@ -73,6 +73,7 @@ async fn aborted_pipeline_totals_match_every_management_and_execute_usage_record
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,

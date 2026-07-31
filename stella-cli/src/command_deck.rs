@@ -4190,6 +4190,7 @@ async fn run_lead_pipeline_turn(
             touches: &crate::agent::RegistryTouches(registry),
             diagnostics: &ws_ports.diagnostic_runner,
             tests: &ws_ports.test_runner,
+            lint: Some(&ws_ports.lint_probe),
             approvals: scope_gate,
             sleeper: &TokioSleeper,
             hooks: cfg

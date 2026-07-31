@@ -301,6 +301,8 @@ pub(crate) struct WorkspacePorts {
     pub(crate) repo_structure: GitRepoStructure,
     pub(crate) repo_status: GitRepoStatus,
     pub(crate) diagnostic_runner: GitDiagnosticRunner,
+    /// The regression-veto lint probe (#861), rooted at the session tree.
+    pub(crate) lint_probe: ToolchainLintProbe,
     pub(crate) test_runner: TypedTestRunner,
     /// Used for best-of-N and for candidate-local authored witnesses at N=1.
     pub(crate) candidate_workspaces: crate::candidate_ws::GitCandidateWorkspaces,
@@ -380,10 +382,46 @@ pub(crate) fn workspace_ports(
         repo_structure: GitRepoStructure { root: root.clone() },
         repo_status: GitRepoStatus { root: root.clone() },
         diagnostic_runner: GitDiagnosticRunner::new(root.clone()),
+        lint_probe: ToolchainLintProbe { root: root.clone() },
         test_runner: TypedTestRunner { root },
         candidate_workspaces,
         mcp_prefetch: mcp.map(crate::candidate_ws::McpPrefetchAdapter::new),
     })
+}
+
+/// The regression-veto lint probe (#861): the workspace's own diagnostics
+/// plan (cargo check / tsc / eslint / ruff — closed vocabulary, fixed argv),
+/// run at a caller-chosen root and returned as parsed, root-relative
+/// records. The `root` override is what lets one probe serve the session
+/// tree and every isolated candidate worktree.
+pub(crate) struct ToolchainLintProbe {
+    pub(crate) root: std::path::PathBuf,
+}
+
+/// Bounded like the diagnostics tool itself, well under the pipeline's own
+/// patience: a lint pass that needs longer than this is not a cheap veto
+/// probe any more.
+const LINT_PROBE_TIMEOUT_SECS: u64 = 240;
+
+#[async_trait::async_trait]
+impl stella_pipeline::LintProbe for ToolchainLintProbe {
+    async fn snapshot(&self, root: Option<&str>) -> Option<Vec<stella_pipeline::LintRecord>> {
+        let root = root
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| self.root.clone());
+        let records = stella_tools::diagnostics::snapshot(&root, LINT_PROBE_TIMEOUT_SECS).await?;
+        Some(
+            records
+                .into_iter()
+                .map(|d| stella_pipeline::LintRecord {
+                    file: d.file,
+                    error: d.severity == stella_tools::diagnostics::Severity::Error,
+                    code: d.code,
+                    message: d.message,
+                })
+                .collect(),
+        )
+    }
 }
 
 /// Workspace-rooted closed Git diagnostics. Every variant maps to fixed argv;

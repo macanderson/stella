@@ -395,6 +395,9 @@ impl<'a> Pipeline<'a> {
         let baseline_surface = CandidateSurface {
             diagnostics: baseline.diagnostics(),
             tests: baseline.tests(),
+            // The authoring snapshot never fast-submits, so the regression
+            // veto has nothing to audit here.
+            lint: None,
             repo_status: baseline.repo_status(),
             cwd: Some(baseline.root()),
             // No hooks in the baseline: nothing there is the user's work, and

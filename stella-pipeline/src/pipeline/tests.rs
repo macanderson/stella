@@ -801,6 +801,7 @@ async fn single_task_with_a_flip_submits_fast_and_skips_the_judge() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -839,244 +840,6 @@ async fn single_task_with_a_flip_submits_fast_and_skips_the_judge() {
             evidence
         } if evidence.deterministic
     )));
-}
-
-/// #860 acceptance: a baseline that TIMES OUT observed no failing assertion,
-/// so a candidate whose suite then passes has no fail→pass flip — the run
-/// must escalate to the model judge, never credit `DeterministicPass`. Before
-/// the typed outcome, the timeout's non-zero exit locked the oracle onto a
-/// phantom `Failing` and the faster candidate "flipped" it.
-#[tokio::test]
-async fn a_timed_out_baseline_never_manufactures_a_flip() {
-    // triage → "single"; worker → final text; judge → verdict (the ladder
-    // escalates because no flip evidence exists).
-    let provider = ScriptedProvider::new(vec![
-        text_result("single"),
-        text_result("done"),
-        text_result("PASS — change looks consistent with the goal"),
-    ]);
-    let resolver = OneProvider(&provider);
-    let runner = ScriptedRunner::scripted(
-        vec![TestScript::TimeOut, TestScript::Pass],
-        "@@ -1 +1 @@\n-old\n+new",
-    );
-    let tools = EmptyTools;
-    let recall = NoContextRecall;
-    let repo = NoRepoStructure;
-    let repo_status = NoRepoStatus;
-    let approvals = AutoApproveGate;
-    let sleeper = NoopSleeper;
-    let router = router();
-    let (tx, mut rx) = mpsc::unbounded_channel();
-
-    let config = PipelineConfig {
-        test_command: Some("cargo test -p x".into()),
-        diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
-        ..PipelineConfig::default()
-    };
-    let pipeline = Pipeline::new(
-        PipelinePorts {
-            router: &router,
-            providers: &resolver,
-            tools: &tools,
-            recall: &recall,
-            repo: &repo,
-            repo_status: &repo_status,
-            touches: &NoFileTouches,
-            diagnostics: &runner,
-            tests: &runner,
-            approvals: &approvals,
-            sleeper: &sleeper,
-            hooks: None,
-            candidate_workspaces: None,
-            mcp_prefetch: None,
-            steering: None,
-        },
-        tx,
-        config,
-    );
-
-    let mut messages = vec![CompletionMessage::system("sys")];
-    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
-    let outcome = pipeline
-        .run("Fix the failing test", &mut messages, &mut budget)
-        .await
-        .expect("run succeeds");
-
-    let verdict = outcome.verdict.expect("a verdict was produced");
-    assert!(
-        !verdict.deterministic,
-        "a timed-out baseline plus a passing candidate is NOT a deterministic flip"
-    );
-    let events = drain(&mut rx);
-    assert!(
-        stages(&events).contains(&StageKind::Judge),
-        "no flip evidence exists, so the ladder must escalate to the judge"
-    );
-}
-
-/// #860 acceptance, candidate side: a suite that times out AFTER the change
-/// is inconclusive (judge), not a deterministic red (revise). Spending a
-/// revision turn "fixing" a timeout the change may not have caused burned a
-/// full worker call on infra noise; the judge sees `test_run=timed_out` and
-/// reasons about it instead.
-#[tokio::test]
-async fn a_timed_out_candidate_suite_escalates_instead_of_revising() {
-    let provider = ScriptedProvider::new(vec![
-        text_result("single"),
-        text_result("done"),
-        text_result("PASS — the timeout is pre-existing infra noise, the diff is sound"),
-    ]);
-    let resolver = OneProvider(&provider);
-    // Baseline genuinely fails (oracle arms), candidate run times out.
-    let runner = ScriptedRunner::scripted(
-        vec![TestScript::Fail, TestScript::TimeOut],
-        "@@ -1 +1 @@\n-old\n+new",
-    );
-    let tools = EmptyTools;
-    let recall = NoContextRecall;
-    let repo = NoRepoStructure;
-    let repo_status = NoRepoStatus;
-    let approvals = AutoApproveGate;
-    let sleeper = NoopSleeper;
-    let router = router();
-    let (tx, mut rx) = mpsc::unbounded_channel();
-
-    let config = PipelineConfig {
-        test_command: Some("cargo test -p x".into()),
-        diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
-        ..PipelineConfig::default()
-    };
-    let pipeline = Pipeline::new(
-        PipelinePorts {
-            router: &router,
-            providers: &resolver,
-            tools: &tools,
-            recall: &recall,
-            repo: &repo,
-            repo_status: &repo_status,
-            touches: &NoFileTouches,
-            diagnostics: &runner,
-            tests: &runner,
-            approvals: &approvals,
-            sleeper: &sleeper,
-            hooks: None,
-            candidate_workspaces: None,
-            mcp_prefetch: None,
-            steering: None,
-        },
-        tx,
-        config,
-    );
-
-    let mut messages = vec![CompletionMessage::system("sys")];
-    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
-    let outcome = pipeline
-        .run("Fix the failing test", &mut messages, &mut budget)
-        .await
-        .expect("run succeeds");
-
-    let events = drain(&mut rx);
-    assert!(
-        stages(&events).contains(&StageKind::Judge),
-        "an unobservable suite is inconclusive — judge, not revise"
-    );
-    // No deterministic red verdict may be emitted for infra noise: every
-    // deterministic JudgeVerdict{passed:false} is the revise path's badge.
-    assert!(
-        !events.iter().any(|e| matches!(
-            e,
-            AgentEvent::JudgeVerdict {
-                passed: false,
-                evidence
-            } if evidence.deterministic
-        )),
-        "a timeout must not be reported as a deterministic test failure"
-    );
-    let verdict = outcome.verdict.expect("a verdict was produced");
-    assert!(!verdict.deterministic);
-}
-
-/// #859 acceptance: a flaky flip — fail on the baseline, pass on the
-/// candidate, fail again on the confirmation re-run — must not fast-submit.
-/// The pre-submit audit demotes the oracle to `Unstable` and the ladder
-/// escalates to the judge with `unstable_flip=true` in its evidence.
-#[tokio::test]
-async fn a_flaky_flip_fails_its_confirmation_and_escalates() {
-    let provider = ScriptedProvider::new(vec![
-        text_result("single"),
-        text_result("done"),
-        text_result("PASS — the change is right; the test itself is flaky"),
-    ]);
-    let resolver = OneProvider(&provider);
-    // Baseline fail → candidate pass (flip) → confirmation FAIL (flake).
-    let runner = ScriptedRunner::scripted(
-        vec![TestScript::Fail, TestScript::Pass, TestScript::Fail],
-        "@@ -1 +1 @@\n-old\n+new",
-    );
-    let tools = EmptyTools;
-    let recall = NoContextRecall;
-    let repo = NoRepoStructure;
-    let repo_status = NoRepoStatus;
-    let approvals = AutoApproveGate;
-    let sleeper = NoopSleeper;
-    let router = router();
-    let (tx, mut rx) = mpsc::unbounded_channel();
-
-    let config = PipelineConfig {
-        test_command: Some("cargo test -p x".into()),
-        diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
-        ..PipelineConfig::default()
-    };
-    let pipeline = Pipeline::new(
-        PipelinePorts {
-            router: &router,
-            providers: &resolver,
-            tools: &tools,
-            recall: &recall,
-            repo: &repo,
-            repo_status: &repo_status,
-            touches: &NoFileTouches,
-            diagnostics: &runner,
-            tests: &runner,
-            approvals: &approvals,
-            sleeper: &sleeper,
-            hooks: None,
-            candidate_workspaces: None,
-            mcp_prefetch: None,
-            steering: None,
-        },
-        tx,
-        config,
-    );
-
-    let mut messages = vec![CompletionMessage::system("sys")];
-    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
-    let outcome = pipeline
-        .run("Fix the failing test", &mut messages, &mut budget)
-        .await
-        .expect("run succeeds");
-
-    let verdict = outcome.verdict.expect("a verdict was produced");
-    assert!(
-        !verdict.deterministic,
-        "a flip that failed its confirmation must never wear the deterministic badge"
-    );
-    let events = drain(&mut rx);
-    assert!(
-        stages(&events).contains(&StageKind::Judge),
-        "the unconfirmed flip escalates to the judge instead of fast-submitting"
-    );
-    assert!(
-        !events.iter().any(|e| matches!(
-            e,
-            AgentEvent::JudgeVerdict {
-                passed: true,
-                evidence
-            } if evidence.deterministic
-        )),
-        "no deterministic pass may be emitted for an unconfirmed flip"
-    );
 }
 
 /// A context-recall port that never answers — a wedged embedding call or an
@@ -1132,6 +895,7 @@ async fn a_wedged_context_recall_degrades_instead_of_hanging_the_turn() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1199,6 +963,7 @@ async fn a_queued_steer_is_injected_into_the_execute_turn() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1270,6 +1035,7 @@ async fn misclassified_lookup_that_touches_files_still_gets_verified() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1331,6 +1097,7 @@ async fn clean_lookup_skips_plan_verify_and_judge() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1397,6 +1164,7 @@ async fn a_greeting_takes_the_conversational_path_and_skips_all_work() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1494,6 +1262,7 @@ async fn paid_headless_scope_review_error_retains_settled_cost() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1563,6 +1332,7 @@ async fn user_abort_at_scope_review_is_a_clean_abort() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1627,6 +1397,7 @@ async fn gather_diff_counts_real_new_file_lines_and_excludes_pre_existing() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1641,6 +1412,7 @@ async fn gather_diff_counts_real_new_file_lines_and_excludes_pre_existing() {
     let surface = CandidateSurface {
         diagnostics: &runner,
         tests: &runner,
+        lint: None,
         repo_status: &repo_status,
         cwd: None,
         hook_runner: None,
@@ -2017,6 +1789,7 @@ async fn second_consecutive_red_verification_gets_judge_guidance() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -2125,6 +1898,7 @@ async fn a_setup_failure_degrades_to_a_bare_execution_instead_of_aborting() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -2194,6 +1968,7 @@ async fn run_unisolated_with_router(
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -2244,6 +2019,7 @@ async fn run_isolated_with_router(
             touches: &NoFileTouches,
             diagnostics: &diagnostics,
             tests: &diagnostics,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -2331,6 +2107,7 @@ mod mcp_prefetch;
 mod scope_gate_interactive;
 mod terminal_outcomes;
 mod usage;
+mod verification_hardening;
 /// Proportionate verification: changes with nothing to prove complete with a
 /// stated reason rather than escalating. A child module, so it reaches the
 /// scripted ports above via `super::*`.
@@ -2456,6 +2233,7 @@ async fn the_context_recall_event_carries_the_cgp_usage_report() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
