@@ -1212,6 +1212,150 @@ async fn empty_completion_aborts_with_a_visible_message_not_a_silent_success() {
     );
 }
 
+/// A `finish_reason: length` result that still carries text — the shape the
+/// zai adapter produces when a reasoning model spends its whole output budget
+/// on chain-of-thought and the reasoning-only fallback promotes it to text.
+/// `output_tokens` matches the default cap because that is the real trace
+/// shape (30/30 cap-hit steps in the 2026-07-31 Terminal-Bench bundle).
+fn length_text_result(text: &str) -> CompletionResultAlias {
+    CompletionResultAlias {
+        text: text.into(),
+        tool_calls: vec![],
+        usage: CompletionUsage {
+            reported: true,
+            input_tokens: 100,
+            output_tokens: 16384,
+            cached_input_tokens: 0,
+            cache_write_tokens: 0,
+        },
+        model: "scripted".into(),
+        cost_usd: 0.001,
+        finish_reason: Some(FinishReason::Length),
+    }
+}
+
+#[tokio::test]
+async fn a_length_truncated_tool_less_step_continues_the_turn_instead_of_completing() {
+    // Step 0 is cut off at the output limit mid-"reasoning" with no tool
+    // call. That is not a finished turn: the engine must record the partial,
+    // nudge the model to act, and take another step — in which the scripted
+    // model does the work and then completes. Regression for the zero-tool
+    // Terminal-Bench trials, where this shape completed instantly and
+    // reported success on tasks the model never touched.
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![
+            Ok(length_text_result("…half-finished chain of thought")),
+            Ok(tool_call_result("call_1", "bash")),
+            Ok(text_result("done")),
+        ]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tool_calls = Arc::new(AtomicU32::new(0));
+    let tools = CountingTools {
+        calls: tool_calls.clone(),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("build the feature"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+    match outcome {
+        TurnOutcome::Completed { text, .. } => {
+            assert_eq!(
+                text, "done",
+                "the turn's answer is the post-continuation one"
+            );
+        }
+        other => panic!("a continued turn must still complete: {other:?}"),
+    }
+    assert_eq!(
+        tool_calls.load(Ordering::SeqCst),
+        1,
+        "the continuation step's tool call actually ran"
+    );
+    let nudges = messages
+        .iter()
+        .filter(|m| m.role == MessageRole::User && m.content == LENGTH_CONTINUATION_NUDGE)
+        .count();
+    assert_eq!(nudges, 1, "exactly one continuation nudge in history");
+    assert!(
+        messages.iter().any(|m| {
+            m.role == MessageRole::Assistant && m.content.contains("half-finished chain of thought")
+        }),
+        "the truncated partial stays in history so the model can continue from it"
+    );
+    let events = drain_events(&mut rx);
+    assert!(
+        !events.iter().any(|e| matches!(e, AgentEvent::Error { .. })),
+        "a continued-and-recovered turn is not an error"
+    );
+    assert_tool_pairing(&messages);
+}
+
+#[tokio::test]
+async fn length_continuations_are_bounded_per_turn() {
+    // The model truncates tool-less on EVERY step (the scripted provider
+    // loops its last entry). The engine spends its whole continuation
+    // allowance, then falls through to the pre-existing behaviour: complete
+    // with the truncation warning rather than loop paid calls forever. The
+    // verification ladder's no-op rung is the layer that then stops this
+    // turn from reporting success.
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![Ok(length_text_result("still thinking…"))]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("build the feature"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "after the allowance is spent the turn completes (the ladder holds the line): {outcome:?}"
+    );
+    assert_eq!(
+        provider.calls.load(Ordering::SeqCst),
+        1 + MAX_LENGTH_CONTINUATIONS,
+        "one initial step plus exactly the bounded continuations"
+    );
+    let nudges = messages
+        .iter()
+        .filter(|m| m.role == MessageRole::User && m.content == LENGTH_CONTINUATION_NUDGE)
+        .count();
+    assert_eq!(nudges, MAX_LENGTH_CONTINUATIONS as usize);
+    let events = drain_events(&mut rx);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::Complete { .. }))
+            .count(),
+        1,
+        "exactly one Complete, from the final fall-through step"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Text { delta } if delta.contains("Response was truncated")
+        )),
+        "the exhausted turn still carries the truncation warning"
+    );
+}
+
 #[tokio::test]
 async fn tool_calls_execute_and_feed_back_into_history() {
     let provider = ScriptedProvider {
