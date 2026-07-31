@@ -179,9 +179,21 @@ impl<'a> Pipeline<'a> {
             CompletionMessage::system(WITNESS_SYSTEM_PROMPT),
             CompletionMessage::user(witness_prompt(goal, frames, &structure)),
         ];
+        // Both tallies are local and discarded, on the same reasoning: they
+        // measure the *witness author*, and the ladder's channels are about
+        // what the worker did toward the goal. A test file written here is not
+        // the change under verification, and counting it as a mutating action
+        // would let an authored witness disguise a worker that never acted.
         let mut file_changes = 0u32;
+        let mut mutating_actions = 0u32;
         let text = match self
-            .run_engine_turn(&engine, &mut messages, budget, &mut file_changes)
+            .run_engine_turn(
+                &engine,
+                &mut messages,
+                budget,
+                &mut file_changes,
+                &mut mutating_actions,
+            )
             .await
         {
             TurnOutcome::Completed { text, cost_usd } => {
@@ -219,7 +231,13 @@ impl<'a> Pipeline<'a> {
             )
             .with_call_role(stella_protocol::ModelCallRole::WitnessRepair);
             let repaired = match self
-                .run_engine_turn(&repair_engine, &mut messages, budget, &mut file_changes)
+                .run_engine_turn(
+                    &repair_engine,
+                    &mut messages,
+                    budget,
+                    &mut file_changes,
+                    &mut mutating_actions,
+                )
                 .await
             {
                 TurnOutcome::Completed { text, cost_usd } => {

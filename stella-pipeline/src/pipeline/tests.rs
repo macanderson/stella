@@ -17,7 +17,7 @@ use stella_core::{Clock, ToolExecutor};
 use stella_protocol::event::BudgetMode;
 use stella_protocol::{
     CompletionRequestRef, CompletionResult, CompletionUsage, FileChangeKind, MessageRole,
-    ProviderError, ScopeProposal, ToolOutput, ToolSchema,
+    ProviderError, ScopeProposal, ToolCall, ToolOutput, ToolSchema,
 };
 use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::mpsc;
@@ -620,6 +620,49 @@ struct FixedGate(ScopeDecision);
 impl ApprovalGate for FixedGate {
     async fn review(&self, _proposal: &ScopeProposal) -> ScopeDecision {
         self.0.clone()
+    }
+}
+
+/// A completion that calls one mutating tool — a turn that *acted*, whatever
+/// a probe can afterwards see of it.
+///
+/// The distinction [`text_result`] cannot express, and the one the ladder's
+/// no-op rung turns on: a turn with no tool calls could not have changed
+/// anything, so its dark channels mean "nothing happened"; a turn with this
+/// one could have, so the same dark channels mean "nobody can tell".
+fn writing_tool_result(text: &str) -> CompletionResult {
+    CompletionResult {
+        tool_calls: vec![ToolCall {
+            call_id: "call-1".into(),
+            name: WRITING_TOOL.into(),
+            input: serde_json::json!({}),
+        }],
+        ..text_result(text)
+    }
+}
+
+/// The one tool [`OneWritingTool`] advertises.
+const WRITING_TOOL: &str = "write_file";
+
+/// A registry with a single mutating tool, for fixtures that need a turn to
+/// have dispatched something. Its `execute` reports success and touches
+/// nothing real — which is exactly the state under test: the call happened,
+/// and no evidence channel can show what it did.
+struct OneWritingTool;
+#[async_trait]
+impl ToolExecutor for OneWritingTool {
+    fn schemas(&self) -> Vec<ToolSchema> {
+        vec![ToolSchema {
+            name: WRITING_TOOL.into(),
+            description: "write a file".into(),
+            input_schema: serde_json::json!({ "type": "object" }),
+            read_only: false,
+        }]
+    }
+    async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+        ToolOutput::Ok {
+            content: "written".into(),
+        }
     }
 }
 

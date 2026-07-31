@@ -40,7 +40,7 @@
 //! need `&mut Router`). That feedback is the responsibility of the glue that
 //! owns the `Router` — documented here so the boundary is explicit.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use std::sync::Arc;
@@ -81,8 +81,8 @@ use crate::triage::{
 use crate::verify::{
     FlipOracle, JudgeVerdict as ModelJudgeVerdict, LadderDecision, LadderInputs,
     deterministic_fail_evidence, deterministic_pass_evidence, guidance_prompt, heuristic_fallback,
-    judge_prompt, ladder_decision, model_verdict_evidence, parse_judge_response,
-    unverifiable_evidence,
+    judge_prompt, ladder_decision, model_verdict_evidence, nothing_attempted_evidence,
+    parse_judge_response, unverifiable_evidence,
 };
 use crate::witness::airlock::{
     DisclosureGrain, FailureFingerprint, SealedFailure, grain_for_repeats, redact, scrub,
@@ -158,6 +158,24 @@ const DIFF_PROBE_FAILED: &str = "[the diff probe failed; the working tree could 
 const DIFF_PROBE_NOT_A_REPO: &str = "[the working tree is not a git repository, so the diff probe cannot read it at all. This is \
      a permanent property of this workspace, NOT evidence that nothing changed — verify the \
      result on its own merits.]";
+
+/// What a [`LadderDecision::NothingAttempted`] revision turn is told.
+///
+/// Says only what was observed and what is required, and deliberately offers no
+/// theory about *why* the turn stopped — the pipeline does not know, and a
+/// wrong guess ("you seem to have thought the task was complete") is an
+/// invitation to argue with the premise instead of acting on it. The observed
+/// fact is the whole message: no tool ran, so nothing changed.
+///
+/// The last clause matters more than it looks. The turns this fires on ended
+/// with the model narrating a finished solution it never wrote down — on
+/// Terminal-Bench, 123 reasoning events and zero tool calls — so the one thing
+/// worth saying is that describing the work is not doing it.
+const NOTHING_ATTEMPTED_NUDGE: &str = "This turn ended without calling a single tool, so the \
+     workspace is exactly as it was. Nothing has been written yet, whatever the answer above \
+     describes. Carry out the task now with tool calls that change the workspace — writing the \
+     file, running the command, applying the edit. Reasoning about a solution, or stating one in \
+     prose, does not perform it.";
 
 /// One observation of the working tree by [`Pipeline::gather_diff`].
 ///
@@ -496,6 +514,12 @@ struct CandidateState {
     /// `FileChange` events observed across this candidate's engine turns —
     /// one half of the zero-diff guard's "touched files" signal (L-E2).
     file_changes: u32,
+    /// Tool calls this candidate dispatched whose tool is not advertised
+    /// `read_only` — the ladder's only evidence-of-absence channel
+    /// ([`crate::verify::LadderInputs::mutating_actions`]). Counted off the
+    /// engine's own `ToolStart` stream rather than probed for, which is what
+    /// lets `0` mean "never tried" instead of "could not tell".
+    mutating_actions: u32,
     oracle: FlipOracle,
     /// Untracked-file fingerprints snapshotted before the first turn, so
     /// every diff gather can exclude pre-existing dirty state.
@@ -1641,6 +1665,7 @@ impl<'a> Pipeline<'a> {
             messages: base_messages.to_vec(),
             final_text: String::new(),
             file_changes: 0,
+            mutating_actions: 0,
             oracle,
             untracked_before,
             diff_lines: 0,
@@ -1732,7 +1757,13 @@ impl<'a> Pipeline<'a> {
         let steps: &[PlanStep] = plan.unwrap_or_default();
         if steps.is_empty() {
             match self
-                .run_engine_turn(engine, &mut state.messages, budget, &mut state.file_changes)
+                .run_engine_turn(
+                    engine,
+                    &mut state.messages,
+                    budget,
+                    &mut state.file_changes,
+                    &mut state.mutating_actions,
+                )
                 .await
             {
                 TurnOutcome::Completed { text, cost_usd } => {
@@ -1754,7 +1785,13 @@ impl<'a> Pipeline<'a> {
                     step.description
                 )));
                 match self
-                    .run_engine_turn(engine, &mut state.messages, budget, &mut state.file_changes)
+                    .run_engine_turn(
+                        engine,
+                        &mut state.messages,
+                        budget,
+                        &mut state.file_changes,
+                        &mut state.mutating_actions,
+                    )
                     .await
                 {
                     TurnOutcome::Completed { text, cost_usd } => {
@@ -1851,6 +1888,7 @@ impl<'a> Pipeline<'a> {
                 diff_budget: self.config.diff_budget_lines,
                 diff_available: state.diff_available,
                 file_change_events: state.file_changes,
+                mutating_actions: state.mutating_actions,
             };
 
             // Everything the verification side knows about this round's
@@ -1881,6 +1919,44 @@ impl<'a> Pipeline<'a> {
                         score_from_verification(true, None),
                     );
                 }
+                LadderDecision::NothingAttempted => {
+                    // The turn ended without dispatching one call that could
+                    // write anything. Unlike the arm below, no probe failed
+                    // here and no evidence is missing — the pipeline is
+                    // reporting its own dispatch record — so this reports a
+                    // plain `passed: false` and pushes the worker to act.
+                    //
+                    // Before this arm existed the state fell through to
+                    // `Unverifiable`, whose four dark channels it satisfies,
+                    // and abstaining reported `passed: true`: eleven
+                    // Terminal-Bench trials completed "successfully" having
+                    // never touched the task, and Harbor scored every one 0.0.
+                    let evidence = nothing_attempted_evidence(&inputs);
+                    self.emit(AgentEvent::JudgeVerdict {
+                        passed: false,
+                        evidence: evidence.clone(),
+                    });
+                    if state.revisions >= self.config.max_revisions {
+                        return state.into_verified(
+                            false,
+                            &evidence,
+                            score_from_verification(false, Some(false)),
+                        );
+                    }
+                    if let Err(reason) = self
+                        .revise_candidate(
+                            engine,
+                            surface,
+                            budget,
+                            NOTHING_ATTEMPTED_NUDGE,
+                            total,
+                            &mut state,
+                        )
+                        .await
+                    {
+                        return CandidateResult::aborted(state.messages, reason);
+                    }
+                }
                 LadderDecision::Unverifiable => {
                     // Every channel was blind. The judge is not asked, because
                     // the only thing it could do is guess from an empty record
@@ -1895,6 +1971,17 @@ impl<'a> Pipeline<'a> {
                     // in its first word, and the score is `Unverified`, so this
                     // candidate can never tie a genuinely verified sibling in
                     // best-of-N and then win the smaller-diff tiebreak.
+                    //
+                    // The arm above is what makes this defensible. Reaching
+                    // here now means the turn *did* dispatch mutating calls and
+                    // no channel could see their effect — the state the abstain
+                    // rung was built for, and a real one: a Terminal-Bench
+                    // trial that wrote its answer through shell redirects
+                    // recorded no touch, could not be diffed, landed here, and
+                    // scored 1.0 against its verifier. Failing that closed
+                    // would report a correct run as broken, and no revision
+                    // could ever clear it, because nothing about that workspace
+                    // will ever become observable.
                     let evidence = unverifiable_evidence(&inputs);
                     self.unverifiable(&evidence.summary);
                     self.emit(AgentEvent::JudgeVerdict {
@@ -2138,6 +2225,7 @@ impl<'a> Pipeline<'a> {
                 budget,
                 reason,
                 &mut state.file_changes,
+                &mut state.mutating_actions,
                 &mut state.final_text,
                 total,
                 &state.untracked_before,
@@ -2161,6 +2249,7 @@ impl<'a> Pipeline<'a> {
         budget: &mut BudgetGuard,
         reason: &str,
         file_changes: &mut u32,
+        mutating_actions: &mut u32,
         final_text: &mut String,
         total: &mut f64,
         untracked_before: &HashMap<String, String>,
@@ -2170,7 +2259,7 @@ impl<'a> Pipeline<'a> {
             name: StageKind::Execute,
         });
         match self
-            .run_engine_turn(engine, messages, budget, file_changes)
+            .run_engine_turn(engine, messages, budget, file_changes, mutating_actions)
             .await
         {
             TurnOutcome::Completed { text, cost_usd } => {
@@ -2318,13 +2407,21 @@ impl<'a> Pipeline<'a> {
     /// run tool loops for minutes, and buffering froze the renderer for the
     /// whole turn) **except** the engine's `Stage`/`Complete` (the pipeline
     /// owns those), tallying `FileChange`s into `file_changes` for the
-    /// zero-diff guard.
+    /// zero-diff guard and mutating-capable `ToolStart`s into
+    /// `mutating_actions` for the ladder's no-op rung.
+    ///
+    /// The two tallies are deliberately independent. `file_changes` answers
+    /// "did the recorder see the tree change", which a shell redirect defeats;
+    /// `mutating_actions` answers "was anything even asked to change", which
+    /// nothing can defeat, because it is counted off the calls this pipeline
+    /// dispatched rather than off any look at the world.
     async fn run_engine_turn(
         &self,
         engine: &Engine<'_>,
         messages: &mut Vec<CompletionMessage>,
         budget: &mut BudgetGuard,
         file_changes: &mut u32,
+        mutating_actions: &mut u32,
     ) -> TurnOutcome {
         // The filtered sender is SYNCHRONOUS on purpose: when the outer
         // sender carries a durability boundary, a paid StepUsage cannot
@@ -2333,6 +2430,9 @@ impl<'a> Pipeline<'a> {
         // another paid call before the previous one's metering row is durable.
         let seen_file_changes = Arc::new(AtomicU32::new(0));
         let count = seen_file_changes.clone();
+        let seen_mutating = Arc::new(AtomicU32::new(0));
+        let mutating = seen_mutating.clone();
+        let read_only = self.read_only_tool_names();
         let consumer = self.events.clone();
         let filtered = EventSender::from_fn(move |event| {
             match &event {
@@ -2349,6 +2449,16 @@ impl<'a> Pipeline<'a> {
                     }
                     consumer.send(event)
                 }
+                AgentEvent::ToolStart { call } => {
+                    // Counted at dispatch, not at result: a call that errored
+                    // or timed out still means the turn *tried* to act, and
+                    // the no-op rung is about the attempt. Only a name the
+                    // registry positively advertises as read-only is excluded.
+                    if !read_only.contains(&call.name) {
+                        mutating.fetch_add(1, Ordering::Relaxed);
+                    }
+                    consumer.send(event)
+                }
                 _ => consumer.send(event),
             }
         });
@@ -2356,7 +2466,26 @@ impl<'a> Pipeline<'a> {
             .run_turn_with_sender(messages, budget, &filtered)
             .await;
         *file_changes += seen_file_changes.load(Ordering::Relaxed);
+        *mutating_actions += seen_mutating.load(Ordering::Relaxed);
         outcome
+    }
+
+    /// Tool names the registry advertises as `read_only` — the calls that
+    /// structurally cannot have changed the workspace.
+    ///
+    /// Membership is the *only* thing that lets a call be discounted, so the
+    /// direction of every uncertainty is fixed: a name this set has never
+    /// heard of (an MCP server attached mid-run, a host's own extension, a
+    /// tool added since) counts as mutating, and the ladder declines to call
+    /// the turn a no-op. Getting that backwards would let an unrecognized
+    /// tool's real work be reported as nothing attempted.
+    fn read_only_tool_names(&self) -> HashSet<String> {
+        self.tools
+            .schemas()
+            .into_iter()
+            .filter(|schema| schema.read_only)
+            .map(|schema| schema.name)
+            .collect()
     }
 
     /// The real added-line count of an untracked file, via a no-index diff

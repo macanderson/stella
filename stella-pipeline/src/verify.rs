@@ -21,7 +21,8 @@
 //! decides — *before any model judge runs*:
 //! - **submit fast** (judge skipped) when flip + touched-tests-green + diff
 //!   within budget all hold;
-//! - **revise** on a clear failure (touched tests red);
+//! - **revise** on a clear failure (touched tests red), or on a turn that
+//!   never attempted anything (`NothingAttempted`);
 //! - **abstain** (`Unverifiable`) when every channel was blind — no flip, no
 //!   test result, an unreadable working tree, and no recorded file touch;
 //! - **escalate to the model judge** only on genuinely inconclusive evidence.
@@ -32,6 +33,28 @@
 //! file that was on disk (#973). "I cannot see the tree" and "the file is not
 //! there" are opposite claims; a ladder that emits the second when it means the
 //! first is worse than one that says nothing.
+//!
+//! # Abstaining is not a place to hide a no-op
+//!
+//! The abstain rung has one failure mode of its own, and it is the mirror of
+//! the one it fixed: a turn that did *nothing* looks exactly like a turn whose
+//! work nothing could see. Both show no flip, no test result, an unreadable
+//! tree and a zero touch count — so both abstained, and abstaining reported a
+//! pass. Eleven Terminal-Bench 2.1 trials ended that way: `glm-5.2` reasoned
+//! for a while, called no tool at all, and the run declared success on a task
+//! it had not touched. Every one scored 0.0.
+//!
+//! [`LadderInputs::mutating_actions`] separates them, and it is the one input
+//! here that can never be blind. Every other channel is a *probe into the
+//! world* that can fail to see; the dispatch count is the pipeline's record of
+//! **what it itself ran**. Zero mutating calls is not "I could not tell whether
+//! anything changed", it is "nothing was ever asked to change" — evidence of
+//! absence, which the ladder is otherwise built never to infer. So it gets its
+//! own rung ([`LadderDecision::NothingAttempted`]) above the blind check, and
+//! that rung fails closed while abstain keeps failing open, because the case
+//! abstain exists for is real: one of those eleven trials' siblings did the
+//! work entirely through shell redirects, recorded no touch, could not be
+//! diffed — and passed its Harbor verifier.
 //!
 //! Linters and typecheckers are deliberately **excluded** from the flip
 //! oracle (L-E11): only a real test command's fail→pass counts. The pipeline
@@ -180,6 +203,11 @@ pub enum LadderDecision {
     /// Clear failure (touched tests are red): feed the evidence back into a
     /// revision turn. No judge call — the failure is already deterministic.
     Revise,
+    /// The turn dispatched nothing that could change the workspace, and no
+    /// channel saw anything change — see [`LadderInputs::nothing_was_attempted`].
+    /// A determinate finding, not an abstention: revise, and report `passed:
+    /// false` if the revisions run out.
+    NothingAttempted,
     /// **Every** evidence channel was unavailable — see
     /// [`LadderInputs::evidence_is_blind`]. The ladder abstains: no judge call,
     /// and the run is scored as unverified rather than passed or failed.
@@ -215,6 +243,21 @@ pub struct LadderInputs {
     /// that emitted the `FileChange` events (`FileTouchPort`). Non-zero is
     /// positive proof the tree changed even when nothing can render *how*.
     pub file_change_events: u32,
+    /// Tool calls this turn that were *capable* of changing the workspace:
+    /// every dispatched call except those whose tool the registry advertises
+    /// as `read_only`.
+    ///
+    /// Unlike every other field here this is not a probe into the world, so it
+    /// cannot come back blind — it is the pipeline's tally of the calls it
+    /// itself dispatched. That is what makes `0` mean "nothing was attempted"
+    /// rather than "nothing was seen", and it is the only input the ladder is
+    /// willing to read as evidence of *absence*.
+    ///
+    /// A call whose tool is unknown counts as mutating. Shell tools are the
+    /// reason: `bash` is not `read_only`, and on Terminal-Bench it is how
+    /// nearly all real work lands — so an unrecognized name must never be the
+    /// reason a turn is written off as a no-op.
+    pub mutating_actions: u32,
 }
 
 impl LadderInputs {
@@ -238,6 +281,30 @@ impl LadderInputs {
             && !self.diff_available
             && self.file_change_events == 0
     }
+
+    /// Whether this turn provably did nothing: it dispatched no call that
+    /// could change the workspace, and no channel that *did* report saw any
+    /// change.
+    ///
+    /// Deliberately says nothing about [`Self::diff_available`]. Every other
+    /// rung has to care whether the probe could look; this one does not,
+    /// because it does not rest on looking. If the model never asked for a
+    /// mutating action, the workspace cannot have changed, and an unreadable
+    /// tree is not a reason to doubt that — which is exactly why this must be
+    /// checked *before* [`Self::evidence_is_blind`], whose four dark channels
+    /// this state would otherwise satisfy on the way to reporting a pass.
+    ///
+    /// The remaining conjuncts are there so a single positive observation
+    /// always wins. A flip, a test result, a recorded touch or a non-empty
+    /// diff each mean *something* happened, whoever caused it — and a turn
+    /// with something to explain deserves a verdict, not this shortcut.
+    pub fn nothing_was_attempted(&self) -> bool {
+        self.mutating_actions == 0
+            && self.file_change_events == 0
+            && self.diff_lines == 0
+            && !self.flip_achieved
+            && self.touched_tests_passed.is_none()
+    }
 }
 
 /// The evidence ladder (L-E11). Decides submit/revise/abstain/escalate from
@@ -245,11 +312,15 @@ impl LadderInputs {
 ///
 /// 1. **Touched tests red → `Revise`.** A red test is a clear, deterministic
 ///    failure; never spend a judge call to "confirm" it.
-/// 2. **Every channel blind → `Unverifiable`.** Nothing could observe this
+/// 2. **Nothing attempted → `NothingAttempted`.** The turn dispatched no
+///    mutating call and nothing observed a change. Checked *above* the blind
+///    rung, which it would otherwise satisfy — and does not fall through to
+///    it, because "no action was taken" is knowledge, not an absence of it.
+/// 3. **Every channel blind → `Unverifiable`.** Nothing could observe this
 ///    turn, so nothing may be claimed about it — in particular not a failure.
-/// 3. **Flip + green + within budget → `SubmitFast`.** The full deterministic
+/// 4. **Flip + green + within budget → `SubmitFast`.** The full deterministic
 ///    pass: judge skipped.
-/// 4. **Otherwise → `ModelJudge`.** Genuinely inconclusive: no flip, or the
+/// 5. **Otherwise → `ModelJudge`.** Genuinely inconclusive: no flip, or the
 ///    diff is over budget (large change deserves a second opinion even with
 ///    green tests), or tests couldn't be run — but something could still see.
 pub fn ladder_decision(inputs: &LadderInputs) -> LadderDecision {
@@ -257,20 +328,27 @@ pub fn ladder_decision(inputs: &LadderInputs) -> LadderDecision {
     if inputs.touched_tests_passed == Some(false) {
         return LadderDecision::Revise;
     }
-    // 2. Nothing could observe the turn. Buying a judge call here spends money
+    // 2. The turn never acted. Ordered above the blind rung on purpose: this
+    //    state satisfies all four of its dark channels, so abstaining would
+    //    absorb it and report the pass that shipped eleven untouched
+    //    Terminal-Bench tasks as successes.
+    if inputs.nothing_was_attempted() {
+        return LadderDecision::NothingAttempted;
+    }
+    // 3. Nothing could observe the turn. Buying a judge call here spends money
     //    to ask a model to guess from an empty record, and the answer it
     //    produced in the wild was a confident FAIL naming a file that existed.
     if inputs.evidence_is_blind() {
         return LadderDecision::Unverifiable;
     }
-    // 3. Full deterministic pass — submit fast, judge skipped.
+    // 4. Full deterministic pass — submit fast, judge skipped.
     if inputs.flip_achieved
         && inputs.touched_tests_passed == Some(true)
         && inputs.diff_lines <= inputs.diff_budget
     {
         return LadderDecision::SubmitFast;
     }
-    // 4. Inconclusive — escalate to the model judge.
+    // 5. Inconclusive — escalate to the model judge.
     LadderDecision::ModelJudge
 }
 
@@ -312,6 +390,31 @@ pub fn unverifiable_evidence(inputs: &LadderInputs) -> JudgeEvidence {
             inputs.file_change_events
         ),
         deterministic: false,
+        evidence_refs: Vec::new(),
+    }
+}
+
+/// Build the `JudgeEvidence` for a [`LadderDecision::NothingAttempted`] turn.
+///
+/// `deterministic: true`, and the contrast with [`unverifiable_evidence`] is
+/// the entire point: that one is marked `false` because it reports the absence
+/// of a result, while this one *is* a result. The pipeline counted the calls it
+/// dispatched and none of them could write anything — no probe was consulted
+/// and none could have changed the answer.
+///
+/// The summary leads with what was and was not done rather than with a channel
+/// list, because unlike the blind case there is nothing here to diagnose: no
+/// instrument failed, and re-running the probes would report the same nothing.
+pub fn nothing_attempted_evidence(inputs: &LadderInputs) -> JudgeEvidence {
+    JudgeEvidence {
+        summary: format!(
+            "NO WORK ATTEMPTED — the turn ended without dispatching a single tool call that \
+             could change the workspace ({} mutating call(s), {} file-change event(s), {} \
+             diff line(s)). This is not an unverifiable result: nothing was asked to change, \
+             so nothing did, whatever the other channels could or could not see.",
+            inputs.mutating_actions, inputs.file_change_events, inputs.diff_lines
+        ),
+        deterministic: true,
         evidence_refs: Vec::new(),
     }
 }
@@ -554,6 +657,7 @@ mod tests {
             diff_budget: 100,
             diff_available: true,
             file_change_events: 0,
+            mutating_actions: 1,
         });
         assert_eq!(decision, LadderDecision::Revise);
     }
@@ -567,6 +671,7 @@ mod tests {
             diff_budget: 100,
             diff_available: true,
             file_change_events: 0,
+            mutating_actions: 1,
         });
         assert_eq!(decision, LadderDecision::SubmitFast);
     }
@@ -585,6 +690,7 @@ mod tests {
             diff_budget: 100,
             diff_available: false,
             file_change_events: 0,
+            mutating_actions: 1,
         };
         assert!(inputs.evidence_is_blind());
         assert_eq!(
@@ -613,6 +719,7 @@ mod tests {
             diff_budget: 100,
             diff_available: false,
             file_change_events: 6,
+            mutating_actions: 1,
         };
         assert!(
             !inputs.evidence_is_blind(),
@@ -633,6 +740,7 @@ mod tests {
             diff_budget: 100,
             diff_available: false,
             file_change_events: 0,
+            mutating_actions: 1,
         };
         assert!(!inputs.evidence_is_blind());
         assert_eq!(ladder_decision(&inputs), LadderDecision::Revise);
@@ -650,9 +758,154 @@ mod tests {
             diff_budget: 100,
             diff_available: true,
             file_change_events: 0,
+            mutating_actions: 1,
         };
         assert!(!inputs.evidence_is_blind());
         assert_eq!(ladder_decision(&inputs), LadderDecision::ModelJudge);
+    }
+
+    /// The `regex-log` Terminal-Bench 2.1 trial, reconstructed as ladder
+    /// inputs: `glm-5.2` emitted 123 reasoning events, called no tool at all,
+    /// and the run reported success on a task it never touched (Harbor scored
+    /// it 0.0). Every input below is read off that trial's own event stream.
+    ///
+    /// The assertion that matters is the second one. This turn *is* blind by
+    /// [`LadderInputs::evidence_is_blind`] — all four channels are dark, and
+    /// they were dark before the fix too — so the bug was never a wrong
+    /// blindness check. It was that blindness was asked first, and abstaining
+    /// answered `passed: true`. Ordering is the entire fix, which is why this
+    /// test pins both facts at once.
+    #[test]
+    fn a_turn_that_called_no_tool_is_a_no_op_not_an_abstention() {
+        let inputs = LadderInputs {
+            flip_achieved: false,
+            touched_tests_passed: None,
+            diff_lines: 0,
+            diff_budget: 400,
+            // Not a git repository, so the probe is permanently dark here.
+            diff_available: false,
+            file_change_events: 0,
+            mutating_actions: 0,
+        };
+        assert!(inputs.nothing_was_attempted());
+        assert!(
+            inputs.evidence_is_blind(),
+            "the no-op state satisfies the blind check too — the rung order is what separates them"
+        );
+        assert_eq!(
+            ladder_decision(&inputs),
+            LadderDecision::NothingAttempted,
+            "a turn that dispatched nothing must never reach the abstain rung and be passed"
+        );
+    }
+
+    /// The evidence a no-op turn carries, and the one word it must not borrow.
+    /// `UNVERIFIABLE` is a claim about the *instruments*; this turn's
+    /// instruments were fine and reported a determinate nothing, so it is
+    /// marked `deterministic: true` — the opposite of
+    /// [`unverifiable_evidence`], which is `false` precisely because it has no
+    /// result to report.
+    #[test]
+    fn a_no_op_verdict_is_a_result_not_a_missing_one() {
+        let inputs = LadderInputs {
+            flip_achieved: false,
+            touched_tests_passed: None,
+            diff_lines: 0,
+            diff_budget: 400,
+            diff_available: false,
+            file_change_events: 0,
+            mutating_actions: 0,
+        };
+        let evidence = nothing_attempted_evidence(&inputs);
+        assert!(evidence.summary.contains("NO WORK ATTEMPTED"));
+        assert!(
+            !evidence.summary.contains("UNVERIFIABLE"),
+            "a determinate no-op must not describe itself as unobservable"
+        );
+        assert!(
+            evidence.deterministic,
+            "the pipeline counted its own dispatches; no probe could have said otherwise"
+        );
+    }
+
+    /// The case the abstain rung exists for, and the reason the fix above is a
+    /// new rung rather than a flipped boolean: `log-summary-date-ranges` ran
+    /// eight tool calls, wrote its answer through shell redirects (so the
+    /// recorder logged no touch), could not be diffed — and scored **1.0**
+    /// against its Harbor verifier. Identical dark channels, opposite truth.
+    /// Only `mutating_actions` tells it apart from the trial above.
+    #[test]
+    fn a_blind_turn_that_did_act_still_abstains() {
+        let inputs = LadderInputs {
+            flip_achieved: false,
+            touched_tests_passed: None,
+            diff_lines: 0,
+            diff_budget: 400,
+            diff_available: false,
+            file_change_events: 0,
+            mutating_actions: 8,
+        };
+        assert!(inputs.evidence_is_blind());
+        assert!(
+            !inputs.nothing_was_attempted(),
+            "eight dispatched mutating calls are not an absence of work"
+        );
+        assert_eq!(
+            ladder_decision(&inputs),
+            LadderDecision::Unverifiable,
+            "work nothing could observe must still abstain — failing it closed would report a \
+             correct run as broken, and no revision could ever clear it"
+        );
+    }
+
+    /// Any single positive observation outranks the no-op rung, whatever the
+    /// dispatch count says. Something changed; something changed is a thing to
+    /// explain, and this shortcut does not get to skip explaining it.
+    #[test]
+    fn one_positive_observation_defeats_the_no_op_rung() {
+        let base = LadderInputs {
+            flip_achieved: false,
+            touched_tests_passed: None,
+            diff_lines: 0,
+            diff_budget: 400,
+            diff_available: false,
+            file_change_events: 0,
+            mutating_actions: 0,
+        };
+        assert!(base.nothing_was_attempted());
+
+        let recorded_touch = LadderInputs {
+            file_change_events: 1,
+            ..base
+        };
+        let visible_diff = LadderInputs {
+            diff_lines: 12,
+            ..base
+        };
+        let flipped = LadderInputs {
+            flip_achieved: true,
+            ..base
+        };
+        let tests_ran = LadderInputs {
+            touched_tests_passed: Some(true),
+            ..base
+        };
+        for (label, inputs) in [
+            ("a recorded file touch", recorded_touch),
+            ("a non-empty diff", visible_diff),
+            ("a flip", flipped),
+            ("a test result", tests_ran),
+        ] {
+            assert!(
+                !inputs.nothing_was_attempted(),
+                "{label} is a positive observation; the turn is not a no-op"
+            );
+            assert_ne!(
+                ladder_decision(&inputs),
+                LadderDecision::NothingAttempted,
+                "{label} must route somewhere that reasons about it"
+            );
+        }
     }
 
     /// The judge is only ever asked when something could see — but when it is
@@ -685,6 +938,7 @@ mod tests {
             diff_budget: 100,
             diff_available: true,
             file_change_events: 0,
+            mutating_actions: 1,
         });
         assert_eq!(
             decision,
@@ -703,6 +957,7 @@ mod tests {
             diff_budget: 100,
             diff_available: true,
             file_change_events: 0,
+            mutating_actions: 1,
         });
         assert_eq!(decision, LadderDecision::ModelJudge);
     }
@@ -716,6 +971,7 @@ mod tests {
             diff_budget: 100,
             diff_available: true,
             file_change_events: 0,
+            mutating_actions: 1,
         });
         assert_eq!(decision, LadderDecision::ModelJudge);
     }
@@ -764,6 +1020,7 @@ mod tests {
             diff_budget: 100,
             diff_available: true,
             file_change_events: 0,
+            mutating_actions: 1,
         });
         assert!(green.passed);
 
@@ -775,6 +1032,7 @@ mod tests {
                 diff_budget: 100,
                 diff_available: true,
                 file_change_events: 0,
+                mutating_actions: 1,
             });
             assert!(!v.passed, "unconfirmed tests must fall back to FAIL");
         }
@@ -897,6 +1155,69 @@ mod tests {
             let mut oracle = FlipOracle::new();
             oracle.observe("cargo test", passed);
             prop_assert_ne!(oracle.state(), FlipState::Flipped);
+        }
+
+        /// The binding invariant of the no-op rung: **no ladder input that
+        /// dispatched nothing and observed nothing can resolve to a rung that
+        /// reports a pass.**
+        ///
+        /// Stated over the whole input space rather than the eleven trials,
+        /// because the defect was never about a particular trial's numbers —
+        /// it was that one reachable combination fell into `Unverifiable`,
+        /// which answers `passed: true`. A ranged sweep is what proves no such
+        /// combination is left, including ones nobody has produced yet.
+        ///
+        /// `diff_available` is swept and deliberately unconstrained: whether
+        /// the probe could look must make no difference to a turn that never
+        /// gave it anything to look at.
+        #[test]
+        fn a_turn_that_dispatched_nothing_never_reaches_a_passing_rung(
+            diff_available in any::<bool>(),
+            diff_budget in 0u32..1000,
+        ) {
+            let inputs = LadderInputs {
+                flip_achieved: false,
+                touched_tests_passed: None,
+                diff_lines: 0,
+                diff_budget,
+                diff_available,
+                file_change_events: 0,
+                mutating_actions: 0,
+            };
+            prop_assert!(inputs.nothing_was_attempted());
+            let decision = ladder_decision(&inputs);
+            prop_assert_eq!(decision, LadderDecision::NothingAttempted);
+            // The two rungs that answer `passed: true` in the pipeline. Named
+            // individually so a future rung that also passes has to be
+            // considered here rather than silently inheriting a green test.
+            prop_assert_ne!(decision, LadderDecision::SubmitFast);
+            prop_assert_ne!(decision, LadderDecision::Unverifiable);
+        }
+
+        /// The converse, and the guard on the fix's blast radius: any turn
+        /// that *did* dispatch a mutating call keeps the decision it had
+        /// before this rung existed. The no-op rung may only ever claim the
+        /// zero-dispatch corner.
+        #[test]
+        fn dispatching_anything_leaves_every_other_rung_untouched(
+            mutating_actions in 1u32..50,
+            flip_achieved in any::<bool>(),
+            touched in prop::option::of(any::<bool>()),
+            diff_lines in 0u32..800,
+            diff_available in any::<bool>(),
+            file_change_events in 0u32..50,
+        ) {
+            let inputs = LadderInputs {
+                flip_achieved,
+                touched_tests_passed: touched,
+                diff_lines,
+                diff_budget: 400,
+                diff_available,
+                file_change_events,
+                mutating_actions,
+            };
+            prop_assert!(!inputs.nothing_was_attempted());
+            prop_assert_ne!(ladder_decision(&inputs), LadderDecision::NothingAttempted);
         }
     }
 }
