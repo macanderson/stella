@@ -66,9 +66,9 @@ use crate::candidate_steering::SteeringFanOut;
 use crate::plan::{PlanStep, build_planner_prompt, parse_plan, plan_repair_prompt};
 use crate::ports::{
     ApprovalGate, CandidateWorkspace, CandidateWorkspacePort, ContextRecallPort,
-    DiagnosticInvocation, DiagnosticRunner, FileTouchPort, McpPrefetchPort, PipelinePorts,
-    ProviderResolver, Recall, RecalledFrame, RepoStatusPort, RepoStructurePort, ScopeDecision,
-    TestInvocation, TestRunner, WorkspaceError,
+    DiagnosticInvocation, DiagnosticRunner, FileTouchPort, LintProbe, LintRecord, McpPrefetchPort,
+    PipelinePorts, ProviderResolver, Recall, RecalledFrame, RepoStatusPort, RepoStructurePort,
+    ScopeDecision, TestInvocation, TestRunner, WorkspaceError,
 };
 use crate::scope::{
     MAX_SCOPE_REVISIONS, PlannedScope, ScopeEstimate, ScopeVerdict, apply_trim, build_proposal,
@@ -98,6 +98,7 @@ mod raw_usage;
 mod run_error;
 mod scope_stage;
 mod stage_budget;
+mod verify_probes;
 mod witness_stage;
 use raw_usage::{RawCall, RawCallError};
 use run_error::RoleResolveError;
@@ -319,6 +320,11 @@ pub struct PipelineConfig {
     /// The diff-size budget in changed lines: a diff at or under this is
     /// "small enough" to trust deterministic evidence without a judge (L-E11).
     pub diff_budget_lines: u32,
+    /// Regression veto strictness (#861): when `true`, NEW lint/typecheck
+    /// warnings (not just errors) also block a deterministic fast-submit and
+    /// route to the judge. Off by default — a chatty linter would otherwise
+    /// tax every submit — while new *errors* always veto.
+    pub diagnostics_veto_warnings: bool,
     /// Maximum revision turns per candidate when verification fails.
     pub max_revisions: u32,
     /// Best-of-N (L-E7). `None` or `Some(1)` is single-shot (the default);
@@ -351,6 +357,7 @@ impl Default for PipelineConfig {
             distress_guidance: true,
             diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
             diff_budget_lines: 400,
+            diagnostics_veto_warnings: false,
             max_revisions: 2,
             candidates: None,
         }
@@ -535,6 +542,12 @@ struct CandidateState {
     /// turn. Every later reading is a delta from here, which is what makes a
     /// monotonic session-wide counter usable per candidate.
     touch_baseline: u64,
+    /// Pre-execution lint records for the regression veto (#861). Populated
+    /// eagerly only on the in-place path, whose baseline tree is destroyed
+    /// by execution; isolated candidates read theirs lazily at audit time
+    /// from the still-pristine session tree. `None` also covers "probe
+    /// unavailable", and the veto degrades open either way.
+    lint_baseline: Option<Vec<LintRecord>>,
     revisions: u32,
     /// Paths of the witness artifact grafted into this candidate, if the
     /// warrant bought one after execution. Empty until then, and empty forever
@@ -593,6 +606,9 @@ impl CandidateState {
 struct CandidateSurface<'c> {
     diagnostics: &'c dyn DiagnosticRunner,
     tests: &'c dyn TestRunner,
+    /// The lint probe for the regression veto (#861); rooted per surface
+    /// via `cwd`.
+    lint: Option<&'c dyn LintProbe>,
     repo_status: &'c dyn RepoStatusPort,
     cwd: Option<&'c str>,
     hook_runner: Option<&'c dyn HookRunner>,
@@ -614,6 +630,7 @@ pub struct Pipeline<'a> {
     touches: &'a dyn FileTouchPort,
     diagnostics: &'a dyn DiagnosticRunner,
     tests: &'a dyn TestRunner,
+    lint: Option<&'a dyn LintProbe>,
     approvals: &'a dyn ApprovalGate,
     sleeper: &'a dyn Sleeper,
     hooks: Option<(&'a Hooks, &'a dyn HookRunner)>,
@@ -654,6 +671,7 @@ impl<'a> Pipeline<'a> {
             touches: ports.touches,
             diagnostics: ports.diagnostics,
             tests: ports.tests,
+            lint: ports.lint,
             approvals: ports.approvals,
             sleeper: ports.sleeper,
             hooks: ports.hooks,
@@ -1304,6 +1322,7 @@ impl<'a> Pipeline<'a> {
         let surface = CandidateSurface {
             diagnostics: self.diagnostics,
             tests: self.tests,
+            lint: self.lint,
             repo_status: self.repo_status,
             cwd: None,
             hook_runner: None,
@@ -1499,6 +1518,7 @@ impl<'a> Pipeline<'a> {
                 let surface = CandidateSurface {
                     diagnostics: ws.diagnostics(),
                     tests: ws.tests(),
+                    lint: self.lint,
                     repo_status: ws.repo_status(),
                     cwd: Some(ws.root()),
                     hook_runner: bound_hook_runner
@@ -1646,13 +1666,40 @@ impl<'a> Pipeline<'a> {
             && let Some(cmd) = self.effective_test_command(None)
         {
             let pre = surface.tests.run_test(cmd.invocation).await;
-            oracle.observe(cmd.command, pre.passed());
-            self.emit_proof(ProofStep::Oracle {
-                command: cmd.command.to_string(),
-                passed: pre.passed(),
-                tree: ProofTree::Baseline,
-            });
+            // #860: only a completed run is an oracle observation. A baseline
+            // that timed out or never spawned observed no assertion, so it
+            // must not lock the oracle's `Failing` precondition — that is how
+            // infra noise plus a merely-faster candidate used to read as a
+            // verified fail→pass flip.
+            if let Some(passed) = pre.assertion_result() {
+                oracle.observe(cmd.command, passed);
+                self.emit_proof(ProofStep::Oracle {
+                    command: cmd.command.to_string(),
+                    passed,
+                    tree: ProofTree::Baseline,
+                });
+            }
         }
+
+        // Baseline lint snapshot for the regression veto (#861) — eager only
+        // where it must be. An in-place candidate executes into the session
+        // tree, so its pre-execution diagnostics are unreadable after this
+        // point; an isolated candidate leaves the session tree pristine, so
+        // its baseline is read lazily at audit time and a candidate that
+        // never reaches a fast-submit pays no lint run at all. Gated on the
+        // classes that verify: a fast-submit needs a flip, so where no flip
+        // is possible the snapshot would be spend without a consumer.
+        let lint_baseline = if surface.workspace.is_none()
+            && assessment.class.verifies_unconditionally()
+            && (self.effective_test_command(None).is_some() || self.config.witness_writer)
+        {
+            match surface.lint {
+                Some(probe) => probe.snapshot(surface.cwd).await,
+                None => None,
+            }
+        } else {
+            None
+        };
 
         // Snapshot untracked files (with content fingerprints) BEFORE
         // executing so `gather_diff` can tell files this turn created OR
@@ -1672,6 +1719,7 @@ impl<'a> Pipeline<'a> {
             diff_text: String::new(),
             diff_available: true,
             touch_baseline: self.touches.mutations_recorded(),
+            lint_baseline,
             revisions: 0,
             witness_paths: Vec::new(),
             failures: Vec::new(),
@@ -1839,7 +1887,7 @@ impl<'a> Pipeline<'a> {
                     format!("candidate could not be sealed for verification: {error}"),
                 );
             }
-            let (touched_tests_passed, test_tail) = self
+            let (touched_tests_passed, test_tail, test_infra) = self
                 .observe_touched_tests(surface, effective_cmd, &mut state.oracle)
                 .await;
             // Tamper exclusion is an authority boundary, not evidence for a
@@ -1881,7 +1929,7 @@ impl<'a> Pipeline<'a> {
                     }
                 }
             }
-            let inputs = LadderInputs {
+            let mut inputs = LadderInputs {
                 flip_achieved: state.oracle.is_flipped(),
                 touched_tests_passed,
                 diff_lines: state.diff_lines,
@@ -1889,7 +1937,58 @@ impl<'a> Pipeline<'a> {
                 diff_available: state.diff_available,
                 file_change_events: state.file_changes,
                 mutating_actions: state.mutating_actions,
+                // Filled by the pre-submit audit below (#861) — the lint
+                // probe only runs when a fast-submit is imminent.
+                new_diag_errors: 0,
+                new_diag_warnings: 0,
+                veto_warnings: self.config.diagnostics_veto_warnings,
             };
+
+            // Pre-submit audit (#859, #861): a deterministic pass is about
+            // to be credited, so spend the two cheap checks that can refute
+            // it — gated on the DECISION, not on the flip transition, so
+            // paths already headed to the judge pay nothing extra and the
+            // cost is bounded to one lint pass + one suite run per
+            // candidate, exactly where the credit is spent.
+            let mut lint_sample = String::new();
+            if matches!(ladder_decision(&inputs), LadderDecision::SubmitFast)
+                && let Some(cmd) = effective_cmd
+            {
+                // Regression veto first (#861): the lint delta is cheaper
+                // than a suite re-run, and a veto makes the confirmation
+                // moot. New errors (or opted-in warnings) drop the
+                // fast-submit rung and the run escalates to the judge with
+                // the delta in evidence.
+                let (new_errors, new_warnings, sample) = self.lint_delta(surface, &state).await;
+                inputs.new_diag_errors = new_errors;
+                inputs.new_diag_warnings = new_warnings;
+                lint_sample = sample;
+
+                // Confirmation run (#859), only if the veto left the
+                // fast-submit standing: re-run the tracked command once on
+                // the same sealed tree. A failed or infra confirmation moves
+                // the oracle to `Unstable`; the re-derived decision below
+                // then escalates instead of fast-submitting, with
+                // `unstable_flip=true` in the evidence.
+                if matches!(ladder_decision(&inputs), LadderDecision::SubmitFast) {
+                    let confirmation = surface.tests.run_test(cmd.invocation).await;
+                    match confirmation.assertion_result() {
+                        Some(passed) => {
+                            state.oracle.confirm(passed);
+                            self.emit_proof(ProofStep::Oracle {
+                                command: cmd.command.to_string(),
+                                passed,
+                                tree: ProofTree::Candidate,
+                            });
+                        }
+                        // An unobservable confirmation confirms nothing:
+                        // demote without fabricating a pass/fail proof step
+                        // (#860).
+                        None => state.oracle.confirm(false),
+                    }
+                    inputs.flip_achieved = state.oracle.is_flipped();
+                }
+            }
 
             // Everything the verification side knows about this round's
             // failure. Both failing arms disclose from it, and nothing reaches
@@ -2097,7 +2196,7 @@ impl<'a> Pipeline<'a> {
                     }
                     // Inconclusive — escalate to the model judge (judge ≠
                     // worker; a judge-call failure falls back to a heuristic).
-                    let evidence_summary = format!(
+                    let mut evidence_summary = format!(
                         "flip_achieved={}; touched_tests={:?}; diff_lines={} (budget {}); \
                          file_change_events={}",
                         inputs.flip_achieved,
@@ -2106,6 +2205,35 @@ impl<'a> Pipeline<'a> {
                         self.config.diff_budget_lines,
                         state.file_changes,
                     );
+                    if let Some(label) = test_infra {
+                        // #860: the run ended without observing an assertion.
+                        // Named so the judge reads "the suite timed out", not
+                        // "the suite failed".
+                        evidence_summary
+                            .push_str(&format!("; test_run={label} (no assertion observed)"));
+                    }
+                    if state.oracle.is_unstable() {
+                        // #859: a fail→pass flip WAS observed but could not
+                        // be reproduced on the same tree — a different fact
+                        // from "the test never passed", and one the judge
+                        // should weigh explicitly.
+                        evidence_summary.push_str(
+                            "; unstable_flip=true (the flip's confirmation re-run did not pass)",
+                        );
+                    }
+                    if inputs.new_diag_errors > 0 || inputs.new_diag_warnings > 0 {
+                        // #861: the regression the veto saw, capped to a
+                        // 3-line sample so the judge reads the delta, not
+                        // the linter's whole opinion.
+                        evidence_summary.push_str(&format!(
+                            "; new_diagnostics={} error(s), {} warning(s) vs baseline",
+                            inputs.new_diag_errors, inputs.new_diag_warnings
+                        ));
+                        if !lint_sample.is_empty() {
+                            evidence_summary.push('\n');
+                            evidence_summary.push_str(lint_sample.trim_end());
+                        }
+                    }
                     let verdict = match self
                         .judge(
                             goal,
@@ -2156,32 +2284,6 @@ impl<'a> Pipeline<'a> {
                     }
                 }
             }
-        }
-    }
-
-    /// Post-execute test observation for the flip oracle + the touched-tests
-    /// signal: `(Some(passed), stderr tail)` when a test command is available
-    /// (configured or witness-authored), `(None, "")` when there is nothing
-    /// to run.
-    async fn observe_touched_tests(
-        &self,
-        surface: CandidateSurface<'_>,
-        cmd: Option<EffectiveTestCommand<'_>>,
-        oracle: &mut FlipOracle,
-    ) -> (Option<bool>, String) {
-        match cmd {
-            Some(cmd) => {
-                let post = surface.tests.run_test(cmd.invocation).await;
-                let passed = post.passed();
-                oracle.observe(cmd.command, passed);
-                self.emit_proof(ProofStep::Oracle {
-                    command: cmd.command.to_string(),
-                    passed,
-                    tree: ProofTree::Candidate,
-                });
-                (Some(passed), post.stderr_tail)
-            }
-            None => (None, String::new()),
         }
     }
 

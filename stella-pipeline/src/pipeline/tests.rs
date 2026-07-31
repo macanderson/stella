@@ -7,6 +7,7 @@ mod management_accounting;
 mod telemetry;
 
 use super::*;
+use crate::CmdKind;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -275,8 +276,17 @@ impl ProviderResolver for OneProvider<'_> {
 /// reports the scripted untracked set; a `--no-index --numstat` reports
 /// that file's scripted added-line count; anything else pops the next
 /// queued test result (`true` = pass) or defaults to pass.
+/// One scripted `run_test` result: a real pass/fail, or an infra outcome
+/// (#860) so tests can model a timed-out runner without faking exit codes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TestScript {
+    Pass,
+    Fail,
+    TimeOut,
+}
+
 struct ScriptedRunner {
-    test_results: std::sync::Mutex<VecDeque<bool>>,
+    test_results: std::sync::Mutex<VecDeque<TestScript>>,
     diff: String,
     /// Untracked files this workspace reports, as `(path, added_lines)`.
     untracked: Vec<(String, u32)>,
@@ -293,6 +303,21 @@ struct ScriptedRunner {
 }
 impl ScriptedRunner {
     fn new(test_results: Vec<bool>, diff: &str) -> Self {
+        Self::scripted(
+            test_results
+                .into_iter()
+                .map(|passed| {
+                    if passed {
+                        TestScript::Pass
+                    } else {
+                        TestScript::Fail
+                    }
+                })
+                .collect(),
+            diff,
+        )
+    }
+    fn scripted(test_results: Vec<TestScript>, diff: &str) -> Self {
         Self {
             test_results: std::sync::Mutex::new(test_results.into_iter().collect()),
             diff: diff.to_string(),
@@ -343,6 +368,7 @@ impl DiagnosticRunner for ScriptedRunner {
                 exit_code: if numstat.is_empty() { 0 } else { 1 },
                 stdout_tail: numstat,
                 stderr_tail: String::new(),
+                kind: CmdKind::Completed,
             };
         }
         if matches!(invocation, DiagnosticInvocation::GitDiff) {
@@ -350,12 +376,14 @@ impl DiagnosticRunner for ScriptedRunner {
                 exit_code: self.diff_exit_code,
                 stdout_tail: self.diff.clone(),
                 stderr_tail: self.diff_stderr.clone(),
+                kind: CmdKind::Completed,
             };
         }
         CmdOutcome {
             exit_code: 0,
             stdout_tail: String::new(),
             stderr_tail: String::new(),
+            kind: CmdKind::Completed,
         }
     }
 }
@@ -363,19 +391,30 @@ impl DiagnosticRunner for ScriptedRunner {
 #[async_trait]
 impl TestRunner for ScriptedRunner {
     async fn run_test(&self, _invocation: &TestInvocation) -> CmdOutcome {
-        let passed = self
+        let script = self
             .test_results
             .lock()
             .unwrap()
             .pop_front()
-            .unwrap_or(true);
-        CmdOutcome {
-            exit_code: if passed { 0 } else { 1 },
-            stdout_tail: String::new(),
-            stderr_tail: if passed {
-                String::new()
-            } else {
-                self.failure_tail.clone()
+            .unwrap_or(TestScript::Pass);
+        match script {
+            TestScript::Pass => CmdOutcome {
+                exit_code: 0,
+                stdout_tail: String::new(),
+                stderr_tail: String::new(),
+                kind: CmdKind::Completed,
+            },
+            TestScript::Fail => CmdOutcome {
+                exit_code: 1,
+                stdout_tail: String::new(),
+                stderr_tail: self.failure_tail.clone(),
+                kind: CmdKind::Completed,
+            },
+            TestScript::TimeOut => CmdOutcome {
+                exit_code: -1,
+                stdout_tail: String::new(),
+                stderr_tail: "command timed out after 300s".to_string(),
+                kind: CmdKind::TimedOut,
             },
         }
     }
@@ -762,6 +801,7 @@ async fn single_task_with_a_flip_submits_fast_and_skips_the_judge() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -855,6 +895,7 @@ async fn a_wedged_context_recall_degrades_instead_of_hanging_the_turn() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -922,6 +963,7 @@ async fn a_queued_steer_is_injected_into_the_execute_turn() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -993,6 +1035,7 @@ async fn misclassified_lookup_that_touches_files_still_gets_verified() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1054,6 +1097,7 @@ async fn clean_lookup_skips_plan_verify_and_judge() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1120,6 +1164,7 @@ async fn a_greeting_takes_the_conversational_path_and_skips_all_work() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1217,6 +1262,7 @@ async fn paid_headless_scope_review_error_retains_settled_cost() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1286,6 +1332,7 @@ async fn user_abort_at_scope_review_is_a_clean_abort() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1350,6 +1397,7 @@ async fn gather_diff_counts_real_new_file_lines_and_excludes_pre_existing() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1364,6 +1412,7 @@ async fn gather_diff_counts_real_new_file_lines_and_excludes_pre_existing() {
     let surface = CandidateSurface {
         diagnostics: &runner,
         tests: &runner,
+        lint: None,
         repo_status: &repo_status,
         cwd: None,
         hook_runner: None,
@@ -1740,6 +1789,7 @@ async fn second_consecutive_red_verification_gets_judge_guidance() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1848,6 +1898,7 @@ async fn a_setup_failure_degrades_to_a_bare_execution_instead_of_aborting() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1917,6 +1968,7 @@ async fn run_unisolated_with_router(
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1967,6 +2019,7 @@ async fn run_isolated_with_router(
             touches: &NoFileTouches,
             diagnostics: &diagnostics,
             tests: &diagnostics,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -2054,6 +2107,7 @@ mod mcp_prefetch;
 mod scope_gate_interactive;
 mod terminal_outcomes;
 mod usage;
+mod verification_hardening;
 /// Proportionate verification: changes with nothing to prove complete with a
 /// stated reason rather than escalating. A child module, so it reaches the
 /// scripted ports above via `super::*`.
@@ -2179,6 +2233,7 @@ async fn the_context_recall_event_carries_the_cgp_usage_report() {
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,

@@ -221,7 +221,20 @@ impl<'a> Pipeline<'a> {
                 "witness author produced an unsafe or unsupported test command `{command}`"
             )));
         };
-        if baseline.tests.run_test(&invocation).await.passed() {
+        // #860: the "must fail first" gate needs a *completed* baseline run.
+        // A timed-out or unspawnable run observed no assertion, so it can
+        // neither arm the witness (a "failure" that was infra noise would
+        // fabricate the oracle's Failing precondition) nor justify a repair
+        // turn (the author cannot fix a toolchain). Degrade without a witness
+        // and say why — cheaper and honest.
+        let first_baseline = baseline.tests.run_test(&invocation).await;
+        if let Some(label) = first_baseline.infra_label() {
+            return Err(WitnessAbort::degradable(format!(
+                "witness baseline run was {label}; no assertion was observed, so a failing \
+                 baseline cannot be established"
+            )));
+        }
+        if first_baseline.passed() {
             messages.push(CompletionMessage::user(witness_repair_prompt(&command)));
             let repair_engine = Engine::with_sleeper(
                 author.provider,
@@ -261,7 +274,13 @@ impl<'a> Pipeline<'a> {
                 )));
             };
             invocation = repaired_invocation;
-            if baseline.tests.run_test(&invocation).await.passed() {
+            let repaired_baseline = baseline.tests.run_test(&invocation).await;
+            if let Some(label) = repaired_baseline.infra_label() {
+                return Err(WitnessAbort::degradable(format!(
+                    "witness baseline run after repair was {label}; no assertion was observed"
+                )));
+            }
+            if repaired_baseline.passed() {
                 return Err(WitnessAbort::degradable(
                     "witness test still passes on the unmodified code after one repair".to_string(),
                 ));
@@ -376,6 +395,9 @@ impl<'a> Pipeline<'a> {
         let baseline_surface = CandidateSurface {
             diagnostics: baseline.diagnostics(),
             tests: baseline.tests(),
+            // The authoring snapshot never fast-submits, so the regression
+            // veto has nothing to audit here.
+            lint: None,
             repo_status: baseline.repo_status(),
             cwd: Some(baseline.root()),
             // No hooks in the baseline: nothing there is the user's work, and

@@ -83,6 +83,35 @@ pub struct DiagnosticsPlan {
     pub format: DiagnosticsFormat,
 }
 
+/// One-call diagnostics snapshot for the verification regression veto
+/// (#861): resolve this root's plan, run it, and return normalized records
+/// (paths root-relative, so records from two different roots — the session
+/// tree and a candidate worktree — compare by identity).
+///
+/// `None` is "no honest snapshot": no toolchain resolves here, the run could
+/// not execute, or a failing run parsed to nothing (a broken manifest is not
+/// a clean tree). Callers degrade open on `None` — the veto may only ever
+/// withhold, never invent.
+pub async fn snapshot(root: &Path, timeout_secs: u64) -> Option<Vec<Diagnostic>> {
+    let plan = {
+        let root = root.to_path_buf();
+        tokio::task::spawn_blocking(move || resolve_plan(&root))
+            .await
+            .ok()?
+            .ok()?
+    };
+    let (code, raw) =
+        crate::exec::run_argv_untruncated(&plan.argv[0], &plan.argv[1..], root, timeout_secs)
+            .await
+            .ok()?;
+    let mut diags = parse(plan.format, &raw);
+    normalize(&mut diags, root);
+    if code != 0 && diags.is_empty() {
+        return None;
+    }
+    Some(diags)
+}
+
 /// Resolve the workspace's diagnostics command, in the script index's
 /// ecosystem-rank order (cargo → node → python). Static marker reads only —
 /// nothing is executed here.

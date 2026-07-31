@@ -62,6 +62,7 @@ assertion `left == right` failed
             touches: &NoFileTouches,
             diagnostics: &runner,
             tests: &runner,
+            lint: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
