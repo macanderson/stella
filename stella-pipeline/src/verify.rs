@@ -64,14 +64,28 @@ use stella_protocol::JudgeEvidence;
 
 /// The flip oracle's state. `None` = no failing observation yet; `Failing` =
 /// the tracked command has been seen failing; `Flipped` = the tracked command
-/// was seen failing and then passing. The invariant the whole design rests on:
-/// **`Flipped` is reachable only by passing through `Failing` for the same
-/// normalized command** — proven by `tests::flip_requires_a_prior_failing_observation`.
+/// was seen failing and then passing; `Unstable` = the command flipped but
+/// its confirmation re-run failed (#859), so the flip is not trusted as
+/// deterministic evidence.
+///
+/// The invariant the whole design rests on: **`Flipped` is reachable only by
+/// passing through `Failing` for the same normalized command** — proven by
+/// `tests::flip_requires_a_prior_failing_observation`. The confirmation run
+/// (#859) strengthens it at the moment it matters: a deterministic pass is
+/// only credited when the tracked command also passed a second time on the
+/// same sealed tree, so a flaky test that failed for an unrelated reason on
+/// the baseline cannot buy a `DeterministicPass` with one lucky pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FlipState {
     #[default]
     None,
     Failing,
+    /// A flip was observed but its confirmation re-run failed. Not `Flipped`
+    /// (no deterministic credit) and not `Failing` (a pass *was* seen) — the
+    /// distinction reaches the judge as `unstable_flip=true`, which reads
+    /// "the pass could not be reproduced", a different fact from "the test
+    /// never passed".
+    Unstable,
     Flipped,
 }
 
@@ -123,9 +137,18 @@ impl FlipOracle {
 
     /// Whether the oracle has observed a genuine fail→pass flip of the same
     /// normalized command. This is the *only* deterministic "verified" signal
-    /// the ladder trusts.
+    /// the ladder trusts. `Unstable` — a flip whose confirmation re-run
+    /// failed (#859) — is NOT flipped: the pass could not be reproduced.
     pub fn is_flipped(&self) -> bool {
         matches!(self.state, FlipState::Flipped)
+    }
+
+    /// Whether the oracle reached `Unstable`: a flip was observed but its
+    /// confirmation re-run failed (#859). Surfaced in judge evidence so the
+    /// model judge weighs "the pass was not reproducible" rather than
+    /// mistaking the state for an ordinary never-passed failure.
+    pub fn is_unstable(&self) -> bool {
+        matches!(self.state, FlipState::Unstable)
     }
 
     /// The normalized command the oracle is tracking, if it has locked onto
@@ -141,16 +164,22 @@ impl FlipOracle {
     /// |------------|--------------------------------------|------------|
     /// | None       | pass (any cmd)                       | None (NoEvidence) |
     /// | None       | fail (cmd C)                        | Failing, tracked=C |
-    /// | Failing/Flipped | different cmd than tracked      | unchanged (Ignored) |
+    /// | Failing/Flipped/Unstable | different cmd than tracked | unchanged (Ignored) |
     /// | Failing    | fail (tracked cmd)                  | Failing    |
     /// | Failing    | pass (tracked cmd)                  | Flipped    |
     /// | Flipped    | pass (tracked cmd)                  | Flipped    |
     /// | Flipped    | fail (tracked cmd)                  | Failing (honest regression) |
+    /// | Unstable   | pass (tracked cmd)                  | Flipped (a fresh flip, re-confirmed before credit) |
+    /// | Unstable   | fail (tracked cmd)                  | Unstable (the pass that *was* seen stays on record) |
     ///
     /// The honest `Flipped → Failing` regression edge keeps the oracle
     /// truthful if a "fixed" test starts failing again on re-run; it never
     /// violates the core invariant (reaching `Flipped` still required a prior
-    /// `Failing` of the same command).
+    /// `Failing` of the same command). `Unstable` (#859) is entered only
+    /// through [`Self::confirm`], never through an observation — and leaving
+    /// it through a pass puts the oracle back at `Flipped`, where the
+    /// pipeline's pre-submit audit will demand a fresh confirmation before
+    /// any deterministic credit is spent.
     pub fn observe(&mut self, command: &str, passed: bool) -> ObserveOutcome {
         let norm = normalize_command(command);
         match &self.tracked {
@@ -170,8 +199,14 @@ impl FlipOracle {
                     return ObserveOutcome::Ignored;
                 }
                 self.state = match (self.state, passed) {
-                    (FlipState::Failing, true) | (FlipState::Flipped, true) => FlipState::Flipped,
+                    (FlipState::Failing, true)
+                    | (FlipState::Flipped, true)
+                    | (FlipState::Unstable, true) => FlipState::Flipped,
                     (FlipState::Failing, false) | (FlipState::Flipped, false) => FlipState::Failing,
+                    // The confirmation already failed once; another failure
+                    // adds nothing, and the pass that WAS observed stays on
+                    // record for the judge.
+                    (FlipState::Unstable, false) => FlipState::Unstable,
                     // `None` with a tracked command is unreachable (they are
                     // set together), but stay total rather than panic.
                     (FlipState::None, true) => FlipState::None,
@@ -179,6 +214,25 @@ impl FlipOracle {
                 };
                 ObserveOutcome::Advanced
             }
+        }
+    }
+
+    /// The confirmation verdict (#859), fed by the pipeline's pre-submit
+    /// audit: with the oracle at `Flipped` and a deterministic fast-submit
+    /// imminent, the tracked command is re-run once on the same sealed tree
+    /// and the result lands here.
+    ///
+    /// - `passed = true` — the flip is confirmed; the oracle stays `Flipped`.
+    /// - `passed = false` — the pass could not be reproduced (a flake, or an
+    ///   infra outcome that observed nothing); the oracle moves to
+    ///   [`FlipState::Unstable`] and `is_flipped()` turns false, so the
+    ///   ladder escalates instead of crediting a `DeterministicPass`.
+    ///
+    /// A no-op in any state but `Flipped`: confirmation is only meaningful
+    /// where a flip stands to be credited.
+    pub fn confirm(&mut self, passed: bool) {
+        if self.state == FlipState::Flipped && !passed {
+            self.state = FlipState::Unstable;
         }
     }
 }
@@ -620,6 +674,104 @@ mod tests {
         oracle.observe("t", false);
         assert_eq!(oracle.state(), FlipState::Failing);
         assert!(!oracle.is_flipped());
+    }
+
+    // ── Confirmation run (#859) ──────────────────────────────────────────
+
+    #[test]
+    fn confirmation_pass_keeps_the_flip() {
+        let mut oracle = FlipOracle::new();
+        oracle.observe("t", false);
+        oracle.observe("t", true);
+        assert!(oracle.is_flipped());
+        oracle.confirm(true);
+        assert!(oracle.is_flipped());
+        assert!(!oracle.is_unstable());
+    }
+
+    #[test]
+    fn confirmation_fail_makes_the_flip_unstable() {
+        // A flaky test: fail → pass (flip), but the confirmation re-run
+        // fails. The oracle must NOT credit a deterministic pass.
+        let mut oracle = FlipOracle::new();
+        oracle.observe("t", false);
+        oracle.observe("t", true);
+        assert!(oracle.is_flipped());
+        oracle.confirm(false);
+        assert!(!oracle.is_flipped(), "an unconfirmed flip is not Flipped");
+        assert!(oracle.is_unstable());
+    }
+
+    #[test]
+    fn confirm_outside_flipped_is_a_noop() {
+        // Confirmation is only meaningful where a flip stands to be credited.
+        let mut oracle = FlipOracle::new();
+        oracle.confirm(false);
+        assert_eq!(oracle.state(), FlipState::None);
+        oracle.observe("t", false); // Failing
+        oracle.confirm(false);
+        assert_eq!(oracle.state(), FlipState::Failing);
+        assert!(!oracle.is_unstable());
+    }
+
+    #[test]
+    fn a_flaky_test_that_passes_again_recovers_from_unstable() {
+        // A later pass of the tracked command re-flips; the pipeline's
+        // pre-submit audit will demand a FRESH confirmation before crediting
+        // that new flip, so recovery never skips the guard.
+        let mut oracle = FlipOracle::new();
+        oracle.observe("t", false);
+        oracle.observe("t", true);
+        oracle.confirm(false);
+        assert!(oracle.is_unstable());
+        oracle.observe("t", true);
+        assert!(oracle.is_flipped(), "a pass after Unstable re-flips");
+        assert!(!oracle.is_unstable());
+    }
+
+    #[test]
+    fn unstable_stays_unstable_on_another_failure() {
+        let mut oracle = FlipOracle::new();
+        oracle.observe("t", false);
+        oracle.observe("t", true);
+        oracle.confirm(false);
+        oracle.observe("t", false);
+        assert_eq!(oracle.state(), FlipState::Unstable);
+        assert!(!oracle.is_flipped());
+    }
+
+    #[test]
+    fn unstable_ignores_other_commands_like_every_locked_state() {
+        let mut oracle = FlipOracle::new();
+        oracle.observe("a", false);
+        oracle.observe("a", true);
+        oracle.confirm(false);
+        assert_eq!(oracle.observe("b", true), ObserveOutcome::Ignored);
+        assert_eq!(oracle.state(), FlipState::Unstable);
+    }
+
+    /// The binding #859 property at the ladder level: an unconfirmed flip
+    /// must escalate, never fast-submit.
+    #[test]
+    fn an_unstable_oracle_does_not_credit_a_deterministic_pass() {
+        let mut oracle = FlipOracle::new();
+        oracle.observe("t", false);
+        oracle.observe("t", true);
+        oracle.confirm(false);
+        let inputs = LadderInputs {
+            flip_achieved: oracle.is_flipped(), // false
+            touched_tests_passed: Some(true),
+            diff_lines: 5,
+            diff_budget: 100,
+            diff_available: true,
+            file_change_events: 1,
+            mutating_actions: 1,
+        };
+        assert_eq!(
+            ladder_decision(&inputs),
+            LadderDecision::ModelJudge,
+            "an unconfirmed flip must escalate to the judge, not SubmitFast"
+        );
     }
 
     #[test]
@@ -1155,6 +1307,37 @@ mod tests {
             let mut oracle = FlipOracle::new();
             oracle.observe("cargo test", passed);
             prop_assert_ne!(oracle.state(), FlipState::Flipped);
+        }
+
+        /// #859: `confirm` can only ever demote. Under any interleaving of
+        /// observations and confirmations, `confirm(true)` never changes the
+        /// state and `confirm(false)` never leaves a flip standing — so the
+        /// confirmation guard cannot be gamed into MINTING deterministic
+        /// credit, only into withholding it.
+        #[test]
+        fn confirm_only_demotes(
+            seq in prop::collection::vec(
+                (
+                    (0u8..3).prop_map(|n| format!("cmd{n}")),
+                    any::<bool>(),
+                    prop::option::of(any::<bool>()),
+                ),
+                0..40,
+            )
+        ) {
+            let mut oracle = FlipOracle::new();
+            for (cmd, passed, confirmation) in &seq {
+                oracle.observe(cmd, *passed);
+                if let Some(confirmed) = confirmation {
+                    let state_before = oracle.state();
+                    oracle.confirm(*confirmed);
+                    if *confirmed {
+                        prop_assert_eq!(oracle.state(), state_before, "confirm(true) never moves the oracle");
+                    } else {
+                        prop_assert!(!oracle.is_flipped(), "confirm(false) never leaves a flip standing");
+                    }
+                }
+            }
         }
 
         /// The binding invariant of the no-op rung: **no ladder input that

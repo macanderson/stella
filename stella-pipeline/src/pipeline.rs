@@ -1888,7 +1888,7 @@ impl<'a> Pipeline<'a> {
                     }
                 }
             }
-            let inputs = LadderInputs {
+            let mut inputs = LadderInputs {
                 flip_achieved: state.oracle.is_flipped(),
                 touched_tests_passed,
                 diff_lines: state.diff_lines,
@@ -1897,6 +1897,36 @@ impl<'a> Pipeline<'a> {
                 file_change_events: state.file_changes,
                 mutating_actions: state.mutating_actions,
             };
+
+            // Pre-submit audit (#859): a deterministic pass is about to be
+            // credited on the strength of a single flip observation, so
+            // re-run the tracked command once on the same sealed tree. Gated
+            // on the decision, not the flip transition — paths already headed
+            // to the judge (diff over budget, tests inconclusive) never pay
+            // the extra run, which bounds the cost to at most one suite run
+            // per candidate, spent only where the credit is spent. A failed
+            // or infra confirmation moves the oracle to `Unstable`; the
+            // re-derived decision below then escalates instead of
+            // fast-submitting, with `unstable_flip=true` in the evidence.
+            if matches!(ladder_decision(&inputs), LadderDecision::SubmitFast)
+                && let Some(cmd) = effective_cmd
+            {
+                let confirmation = surface.tests.run_test(cmd.invocation).await;
+                match confirmation.assertion_result() {
+                    Some(passed) => {
+                        state.oracle.confirm(passed);
+                        self.emit_proof(ProofStep::Oracle {
+                            command: cmd.command.to_string(),
+                            passed,
+                            tree: ProofTree::Candidate,
+                        });
+                    }
+                    // An unobservable confirmation confirms nothing: demote
+                    // without fabricating a pass/fail proof step (#860).
+                    None => state.oracle.confirm(false),
+                }
+                inputs.flip_achieved = state.oracle.is_flipped();
+            }
 
             // Everything the verification side knows about this round's
             // failure. Both failing arms disclose from it, and nothing reaches
@@ -2119,6 +2149,15 @@ impl<'a> Pipeline<'a> {
                         // "the suite failed".
                         evidence_summary
                             .push_str(&format!("; test_run={label} (no assertion observed)"));
+                    }
+                    if state.oracle.is_unstable() {
+                        // #859: a fail→pass flip WAS observed but could not
+                        // be reproduced on the same tree — a different fact
+                        // from "the test never passed", and one the judge
+                        // should weigh explicitly.
+                        evidence_summary.push_str(
+                            "; unstable_flip=true (the flip's confirmation re-run did not pass)",
+                        );
                     }
                     let verdict = match self
                         .judge(

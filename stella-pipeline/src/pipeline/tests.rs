@@ -997,6 +997,88 @@ async fn a_timed_out_candidate_suite_escalates_instead_of_revising() {
     assert!(!verdict.deterministic);
 }
 
+/// #859 acceptance: a flaky flip — fail on the baseline, pass on the
+/// candidate, fail again on the confirmation re-run — must not fast-submit.
+/// The pre-submit audit demotes the oracle to `Unstable` and the ladder
+/// escalates to the judge with `unstable_flip=true` in its evidence.
+#[tokio::test]
+async fn a_flaky_flip_fails_its_confirmation_and_escalates() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),
+        text_result("PASS — the change is right; the test itself is flaky"),
+    ]);
+    let resolver = OneProvider(&provider);
+    // Baseline fail → candidate pass (flip) → confirmation FAIL (flake).
+    let runner = ScriptedRunner::scripted(
+        vec![TestScript::Fail, TestScript::Pass, TestScript::Fail],
+        "@@ -1 +1 @@\n-old\n+new",
+    );
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let config = PipelineConfig {
+        test_command: Some("cargo test -p x".into()),
+        diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
+        ..PipelineConfig::default()
+    };
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        config,
+    );
+
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let outcome = pipeline
+        .run("Fix the failing test", &mut messages, &mut budget)
+        .await
+        .expect("run succeeds");
+
+    let verdict = outcome.verdict.expect("a verdict was produced");
+    assert!(
+        !verdict.deterministic,
+        "a flip that failed its confirmation must never wear the deterministic badge"
+    );
+    let events = drain(&mut rx);
+    assert!(
+        stages(&events).contains(&StageKind::Judge),
+        "the unconfirmed flip escalates to the judge instead of fast-submitting"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            AgentEvent::JudgeVerdict {
+                passed: true,
+                evidence
+            } if evidence.deterministic
+        )),
+        "no deterministic pass may be emitted for an unconfirmed flip"
+    );
+}
+
 /// A context-recall port that never answers — a wedged embedding call or an
 /// unresponsive CGP host.
 struct WedgedRecall;
