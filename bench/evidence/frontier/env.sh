@@ -108,11 +108,16 @@ mkdir -p "$JOBS"
 # Set FB_ALLOW_GPU=1 only on a host that actually has one; `plan.py` checks.
 export FB_ALLOW_GPU="${FB_ALLOW_GPU:-0}"
 
-# The declared storage footprint of the full set is ~1.9 TB, one task
-# (jax-speedrun-gpu) accounting for 1 TB of it. A run that fills the disk
-# halfway through does not fail cleanly — it fails as a scatter of unrelated
-# task errors — so the plan refuses to schedule a bin the host cannot hold.
-export FB_STORAGE_HEADROOM_MB="${FB_STORAGE_HEADROOM_MB:-20480}"
+# Memory the plan leaves to the Docker daemon itself rather than handing to a
+# task. A task declaring more than what remains is excluded as unrunnable.
+#
+# This is deliberately conservative: `memory_mb` is a cap Docker will happily
+# accept on a smaller VM, so an 8 GB task on a 10 GB daemon usually *starts* —
+# and then competes with the daemon, swaps, and gets OOM-killed partway in,
+# which arrives as a reward-0 row indistinguishable from a genuine failure.
+# Excluding it and saying so is the honest version of the same outcome. Lower
+# this to attempt those tasks anyway; the exclusion list names every one.
+export FB_MEMORY_HEADROOM_MB="${FB_MEMORY_HEADROOM_MB:-2048}"
 
 fb_preflight() {
   test -n "${OPENROUTER_API_KEY:-}" || { echo "FATAL: OPENROUTER_API_KEY unset"; return 1; }

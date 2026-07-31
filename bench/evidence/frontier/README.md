@@ -74,6 +74,13 @@ typical Mac) it admits **48 of 74** tasks — 4 GPU-excluded and 22 over the mem
 budget. That is a real constraint, not a bug, and it is why a submittable run
 needs a bigger machine: see [SUBMISSION.md](SUBMISSION.md).
 
+The memory exclusion is deliberately conservative. `memory_mb` is a cap Docker
+accepts even when the VM is smaller, so an 8 GB task on a 10 GB daemon usually
+starts — and then swaps and gets OOM-killed partway in, arriving as a reward-0
+row that looks exactly like a genuine failure. Lower `FB_MEMORY_HEADROOM_MB`
+(default 2048) to attempt them anyway; every exclusion is named with its reason,
+so nothing disappears quietly either way.
+
 ## Harbor version and the test suite
 
 `bench/harbor_adapter/tests/` passes 132/132 under 0.6.1 and 131/132 under
