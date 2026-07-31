@@ -385,7 +385,7 @@ class TestForwardedEnv:
         )
         for role in ("default", "worker", "judge"):
             assert posture["agents"][role] == {
-                "effort": "high",
+                "effort": "max",
                 "reasoning": "on",
             }
         assert posture["agents"]["triage"] == {
@@ -397,7 +397,7 @@ class TestForwardedEnv:
         # #322, after the #301 freeze). See bench/terminal-bench-2.1-protocol.md
         # "Engine posture" prose + calibration table for the recomputed hashes.
         assert digest == (
-            "1740fa2f3f1bea66c348c7ffca151f526019ef0278829d23acb391e7b2f07159"
+            "0de2116f1773a81a1ab5590313efba49120ac119149ee21c0b13271a5f469bb2"
         )
 
     def test_excludes_all_provider_keys_and_selects_only_effective_provider(
