@@ -1096,6 +1096,32 @@ def _host_preflight_fixture(
     )
 
 
+def test_frozen_adapter_source_paths_match_the_package_on_disk() -> None:
+    """The freeze list must enumerate every .py the runtime actually hashes.
+
+    The runtime digest rglobs ``*.py`` under the package while the public-tree
+    check walks this hand-written tuple, so a module added to one and not the
+    other makes the two disagree and everything downstream fails closed. That
+    is the design working — but it announces itself as thirty unrelated tests
+    failing with "public adapter tree hash differs from runtime identity",
+    which names neither the file nor the fix.
+
+    This is what happened when ``live_feed.py`` arrived in #1027 without being
+    added here. One assertion that names the offending file is worth more than
+    thirty that describe its consequences.
+    """
+    package_dir = Path(stella_harbor.__file__).parent
+    on_disk = {
+        f"bench/harbor_adapter/stella_harbor/{p.relative_to(package_dir)}"
+        for p in package_dir.rglob("*.py")
+    }
+    assert on_disk == set(launcher_module._FIXED_ADAPTER_SOURCE_PATHS), (
+        "add new adapter modules to _FIXED_ADAPTER_SOURCE_PATHS in "
+        "secure_launcher.py (and push them publicly — the check reads the "
+        "published tree)"
+    )
+
+
 def test_launch_receipt_controls_are_exact_nonsecret_attestation() -> None:
     assert LAUNCH_RECEIPT_CONTROLS == {
         "command": "harbor-run-only",

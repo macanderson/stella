@@ -5,11 +5,12 @@ with other agents, and standalone. Everything here is **BYOK** (bring your own
 key), makes **no phone-home**, and never hard-codes a secret. Claim runs use a
 secure launcher that consumes the selected credential before Harbor starts.
 
-Four entry points:
+Five entry points:
 
 | Path | What it does | Needs |
 |---|---|---|
 | [`harbor_adapter/`](harbor_adapter/) | A Harbor *installed-agent* adapter — run Stella on Terminal-Bench 2.x / SWE-bench in the same container + verifier as Claude Code, Codex CLI, Terminus, etc. | Docker, `harbor`, a provider key |
+| [`evidence/frontier/`](evidence/frontier/) | **Frontier-Bench** — Harbor's successor to Terminal-Bench, 74 tasks over seven domains. Same adapter, unmodified; a separate Harbor pin, a resource-aware schedule, and GPU tasks excluded by name rather than scored as zeros. | Docker, a provider key (a *submittable* run needs GPUs — see its [SUBMISSION.md](evidence/frontier/SUBMISSION.md)) |
 | [`run_swebench.py`](run_swebench.py) | A standalone SWE-bench *prediction* harness — clone each instance, run Stella, emit the official predictions JSONL. No Harbor. | `git`, a provider key (Docker only for the official scoring step) |
 | [`loop-bench/`](loop-bench/) | A cheap **turn-loop + context-query correctness** harness: runs N tasks on a flash-tier model, budget-capped, and reports loop health (silent-death / zero-work / stuck-loop) and `project_overview`/`graph_query` adoption — the signals the pass-rate number hides. | `cargo`, Docker, `harbor`, a key |
 | [`smoke/smoke_test.py`](smoke/smoke_test.py) | An **offline, zero-cost** self-test of the adapter wiring for CI. | just the built `stella` binary |
