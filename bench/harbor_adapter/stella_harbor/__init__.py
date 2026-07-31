@@ -114,6 +114,12 @@ _TRAJECTORY_NAME = "trajectory.json"
 # Defaults when neither Harbor nor the environment specify a value.
 _DEFAULT_MODEL = "anthropic/claude-fable-5"
 _DEFAULT_BUDGET = "5.0"
+# What a run with no per-trial spend cap discloses as its cap. A word rather
+# than an omission, because the metadata dict drops `None` values entirely and
+# a published manifest would then spell "no cap" and "this adapter never
+# recorded one" the same way. Deliberately not numeric: nothing downstream
+# should be able to read it as a ceiling that was in force.
+_NO_BUDGET_CAP = "unbounded"
 _DEFAULT_DISABLE_REFLECTION = "1"
 _DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 _ADAPTER_VERSION = "0.6.0"
@@ -1060,7 +1066,9 @@ class StellaAgent(BaseInstalledAgent):
     _base_url: str | None
     _provider_route_policy: str | None
     _disable_reflection: str
-    _budget_usd: str
+    # `None` is "no per-trial cap", which is a real posture and not a missing
+    # value — see `_configured_budget`.
+    _budget_usd: str | None
     _credential_handoff_mode: str
     _host_credential_source: str
     _host_credential_name: str | None
@@ -1243,9 +1251,7 @@ class StellaAgent(BaseInstalledAgent):
         configured_model = self._effective_model()
         env = self._forwarded_env()
         self._disable_reflection = env["STELLA_DISABLE_REFLECTION"]
-        self._budget_usd = (
-            self._configured_value("STELLA_BUDGET", _DEFAULT_BUDGET) or _DEFAULT_BUDGET
-        )
+        self._budget_usd = self._configured_budget()
         witness_author = self._witness_author_model()
         self._witness_author_model_value = witness_author
         (
@@ -1394,14 +1400,16 @@ class StellaAgent(BaseInstalledAgent):
         the instruction as one literal argument without shell quoting/parsing.
         """
         model = model or self._effective_model()
-        budget = self._configured_value("STELLA_BUDGET", _DEFAULT_BUDGET)
+        budget = self._configured_budget()
         base_url = base_url or self._effective_base_url(model)
         parts = [
             _INSTALL_PATH,
             "--model",
             model,
-            "--budget",
-            budget,
+            # Omitted entirely when there is no cap. `--budget ""` is not "no
+            # budget" to clap, it is a malformed number, and it exits 2 before
+            # the turn starts.
+            *(["--budget", budget] if budget is not None else []),
             "--output-format",
             "stream-json",
         ]
@@ -1490,6 +1498,33 @@ class StellaAgent(BaseInstalledAgent):
                 value = str(extra[key])
         return value
 
+    def _configured_budget(self) -> str | None:
+        """Resolve the per-trial spend cap, where **empty means no cap**.
+
+        ``--budget`` is ``Option<f64>`` in the CLI and is documented as "omit to
+        meter spend for the cost summary without ever blocking", so "no cap" is
+        a state the contract already has — reachable only by *omitting* the
+        flag. ``_configured_value`` cannot express it: ``os.environ.get`` treats
+        an exported empty string as a present value, so ``_DEFAULT_BUDGET``
+        never fires and the empty string is forwarded as though it were a
+        number. It then reaches clap's ``parse_budget``, which rejects it
+        (```` is not a number``) and exits 2 **before the turn starts** — a
+        failure Harbor can only record as ``NonZeroAgentExitCodeError``, which
+        is arithmetically indistinguishable from the agent failing the task.
+
+        A head-to-head against a comparator that has no spend ceiling has to be
+        able to say "no ceiling" on this side too, or the cap is a difference
+        between the agents that is not the one being measured. Empty resolves to
+        ``None`` and every caller omits: the flag, the forwarded variable, and
+        the recorded value alike. ``None`` in the manifest reads as "no cap",
+        which is the truth; ``_DEFAULT_BUDGET`` there would be a number no run
+        ever enforced.
+        """
+        budget = self._configured_value("STELLA_BUDGET", _DEFAULT_BUDGET)
+        if budget is None or not str(budget).strip():
+            return None
+        return budget
+
     def _forwarded_env(self) -> dict[str, str]:
         """Build the registered minimal claim environment.
 
@@ -1546,7 +1581,10 @@ class StellaAgent(BaseInstalledAgent):
                         + ", ".join(unexpected_extra)
                     )
 
-        budget = self._configured_value("STELLA_BUDGET", _DEFAULT_BUDGET)
+        # Not forwarded at all when there is no cap: the CLI declares `--budget`
+        # with `env = "STELLA_BUDGET"`, so an empty value in the container's
+        # environment fails the same parse the omitted flag was avoiding.
+        budget = self._configured_budget()
         if budget is not None:
             forwarded["STELLA_BUDGET"] = budget
         reflection = self._configured_value(
@@ -1622,7 +1660,9 @@ class StellaAgent(BaseInstalledAgent):
             )
         budget_usd = getattr(self, "_budget_usd", None)
         if budget_usd is None:
-            budget_usd = self._configured_value("STELLA_BUDGET", _DEFAULT_BUDGET)
+            budget_usd = self._configured_budget()
+        if budget_usd is None:
+            budget_usd = _NO_BUDGET_CAP
         credential_handoff_mode = getattr(
             self, "_credential_handoff_mode", _HANDOFF_MODE
         )
