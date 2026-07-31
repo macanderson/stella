@@ -22,7 +22,12 @@ export PYTHONPATH="$TB_REPO/bench/harbor_adapter"
 export STELLA_TARGET_TRIPLE="x86_64-unknown-linux-gnu"
 export STELLA_GLIBC_FLOOR="2.17"
 export STELLA_BINARY="$TB_REPO/target/$STELLA_TARGET_TRIPLE/release/stella"
-export STELLA_BUDGET="${STELLA_BUDGET:-0.60}"
+# `-` and not `:-`: unset still takes the development default, but an
+# explicitly empty value stays empty and means *no per-trial cap*, which a
+# head-to-head against a comparator with no spend ceiling has to be able to
+# say. With `:-` that posture is unreachable — the empty string is substituted
+# away here, and every run silently carries a cap the other side does not.
+export STELLA_BUDGET="${STELLA_BUDGET-0.60}"
 export STELLA_DISABLE_REFLECTION=1
 
 # The frozen dataset, pinned by digest. An unversioned name is not a freeze.
