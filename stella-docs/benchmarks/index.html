@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Benchmarks · Stella</title>
+<meta name="description" content="Pre-registered benchmark reports for Stella, published with the raw per-trial data.">
+<style>
+*,*::before,*::after{box-sizing:border-box}
+body,h1,h2,p,ul{margin:0} ul{list-style:none;padding:0}
+:root{
+  --bg:#F7F5F3; --panel:#FFFFFF; --ink:#1A1614; --ink-2:#5C534D; --ink-3:#8B8078;
+  --rule:#E2DCD6; --rule-2:#CFC7BF; --a:#B4741C; --pass:#3F7A50;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#14110F; --panel:#1C1815; --ink:#F2EDE7; --ink-2:#B5AAA1; --ink-3:#7E736B;
+  --rule:#2C2622; --rule-2:#3D352F; --a:#E8A33D; --pass:#6FB183;}}
+:root[data-theme="dark"]{
+  --bg:#14110F; --panel:#1C1815; --ink:#F2EDE7; --ink-2:#B5AAA1; --ink-3:#7E736B;
+  --rule:#2C2622; --rule-2:#3D352F; --a:#E8A33D; --pass:#6FB183;}
+:root[data-theme="light"]{
+  --bg:#F7F5F3; --panel:#FFFFFF; --ink:#1A1614; --ink-2:#5C534D; --ink-3:#8B8078;
+  --rule:#E2DCD6; --rule-2:#CFC7BF; --a:#B4741C; --pass:#3F7A50;}
+body{background:var(--bg); color:var(--ink);
+  font:400 17px/1.62 Georgia,"Iowan Old Style","Times New Roman",serif;
+  -webkit-font-smoothing:antialiased}
+.mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace; font-variant-numeric:tabular-nums}
+.wrap{max-width:820px; margin:0 auto; padding:0 24px}
+.crumb{border-bottom:1px solid var(--rule); font-family:ui-monospace,Menlo,monospace;
+  font-size:11.5px; letter-spacing:.06em}
+.crumb .wrap{display:flex; gap:10px; align-items:center; padding:13px 24px}
+.crumb a{color:var(--ink-3); text-decoration:none} .crumb a:hover{color:var(--a)}
+.crumb .sep{color:var(--rule-2)} .crumb .here{color:var(--ink-2)}
+header{padding:56px 0 34px; border-bottom:1px solid var(--rule)}
+.eyebrow{font-family:ui-monospace,Menlo,monospace; font-size:11.5px; letter-spacing:.16em;
+  text-transform:uppercase; color:var(--ink-3); margin-bottom:14px}
+h1{font-family:ui-sans-serif,-apple-system,"Segoe UI",sans-serif; font-weight:750;
+  letter-spacing:-.028em; font-size:clamp(28px,4vw,42px); line-height:1.08; margin-bottom:14px}
+.dek{color:var(--ink-2); max-width:58ch}
+main{padding:34px 0 64px}
+.rep{display:block; text-decoration:none; color:inherit; border:1px solid var(--rule);
+  background:var(--panel); padding:22px 24px; margin-bottom:14px}
+.rep:hover{border-color:var(--a)}
+.rep .t{font-family:ui-sans-serif,-apple-system,sans-serif; font-weight:700; font-size:20px;
+  letter-spacing:-.02em; margin-bottom:6px}
+.rep .d{color:var(--ink-2); font-size:15.5px; margin-bottom:14px}
+.rep .m{display:flex; flex-wrap:wrap; gap:16px; font-family:ui-monospace,Menlo,monospace;
+  font-size:11.5px; color:var(--ink-3); letter-spacing:.05em}
+.rep .m b{color:var(--pass); font-weight:700}
+.note{margin-top:26px; color:var(--ink-3); font-size:14.5px; max-width:58ch}
+a.dl{color:var(--a); text-decoration-color:var(--rule-2); text-underline-offset:3px}
+:focus-visible{outline:2px solid var(--a); outline-offset:3px}
+</style>
+</head>
+<body>
+<div class="crumb"><div class="wrap">
+  <a href="https://stella.oxagen.sh">Stella</a><span class="sep">/</span>
+  <span class="here">Benchmarks</span>
+</div></div>
+
+<header><div class="wrap">
+  <div class="eyebrow">Reports</div>
+  <h1>Benchmarks</h1>
+  <p class="dek">Every report here is pre-registered before the run and published with its raw
+    per-trial data, so the numbers can be re-derived rather than taken on trust. Failures are
+    published alongside passes.</p>
+</div></header>
+
+<main class="wrap">
+  <a class="rep" href="/benchmarks/terminal-bench-2-1-glm-5-2.html">
+    <div class="t">Terminal-Bench 2.1 — same model, different harness</div>
+    <div class="d">Stella and Claude Code ran the same 89 terminal tasks on the same model,
+      on the same machine, at the same hour. Isolating the harness from the model.</div>
+    <div class="m">
+      <span>2026-07-31</span>
+      <span>89 tasks · paired · 1 trial</span>
+      <span>GLM-5.2 both arms</span>
+      <span><b>58 – 44</b></span>
+    </div>
+  </a>
+  <p class="note">Raw data for the run above:
+    <a class="dl" href="/benchmarks/terminal-bench-2-1-glm-5-2.json">terminal-bench-2-1-glm-5-2.json</a>
+    — one record per task per agent, straight from the trial directories.</p>
+</main>
+</body>
+</html>
