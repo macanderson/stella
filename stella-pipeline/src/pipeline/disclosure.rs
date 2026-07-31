@@ -89,6 +89,7 @@ impl Pipeline<'_> {
         let brief = redact(sealed, grain_for_repeats(repeats));
         let evidence = JudgeEvidence {
             evidence_refs: brief.evidence_refs(&fingerprint),
+            ladder: None,
             ..deterministic_fail_evidence(tail)
         };
         (evidence, brief)
@@ -113,6 +114,7 @@ impl Pipeline<'_> {
             summary: format!("no witness test warranted: {}", reason.sentence()),
             deterministic: true,
             evidence_refs: vec![format!("warrant:{reason:?}")],
+            ladder: None,
         };
         self.emit(AgentEvent::JudgeVerdict {
             passed: true,

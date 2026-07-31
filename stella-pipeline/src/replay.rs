@@ -41,7 +41,83 @@
 pub mod golden;
 pub mod reference_adapter;
 
-use stella_protocol::{AgentEvent, StageKind};
+use stella_protocol::{AgentEvent, JudgeEvidence, OracleObservation, ProofTree, StageKind};
+
+/// Render an oracle trace compactly — `baseline:fail → candidate:pass` —
+/// the canonical rendering shared by the judge prompt (#864) and verdict
+/// provenance (#865). A trailing candidate entry after a flip is the
+/// pre-submit confirmation run.
+pub fn render_oracle_trace(trace: &[OracleObservation]) -> String {
+    trace
+        .iter()
+        .map(|obs| {
+            let tree = match obs.tree {
+                ProofTree::Baseline => "baseline",
+                ProofTree::Candidate => "candidate",
+            };
+            let result = if obs.passed { "pass" } else { "fail" };
+            format!("{tree}:{result}")
+        })
+        .collect::<Vec<_>>()
+        .join(" → ")
+}
+
+/// Answer "why did this verdict happen?" from its recorded ladder snapshot
+/// (#865) — no re-derivation, no probes. The snapshot was frozen at decision
+/// time; this only renders it. `None` for evidence recorded before
+/// snapshots existed, which a caller reports as "provenance not recorded",
+/// never as a reconstructed guess.
+pub fn verdict_provenance(evidence: &JudgeEvidence) -> Option<String> {
+    let snapshot = evidence.ladder.as_deref()?;
+    let flip = if snapshot.flip_achieved {
+        "achieved".to_string()
+    } else if snapshot.unstable_flip {
+        "unstable (confirmation re-run did not pass)".to_string()
+    } else {
+        "none".to_string()
+    };
+    let mut out = format!("flip={flip}");
+    if let Some(cmd) = &snapshot.tracked_command {
+        out.push_str(&format!(" tracking `{cmd}`"));
+    }
+    if !snapshot.oracle_trace.is_empty() {
+        out.push_str(&format!(
+            " [{}]",
+            render_oracle_trace(&snapshot.oracle_trace)
+        ));
+    }
+    out.push_str(&format!(
+        "; touched_tests={}",
+        match (snapshot.touched_tests_passed, &snapshot.test_infra) {
+            (Some(true), _) => "green".to_string(),
+            (Some(false), _) => "red".to_string(),
+            (None, Some(label)) => format!("unobserved ({label})"),
+            (None, None) => "not run".to_string(),
+        }
+    ));
+    out.push_str(&format!(
+        "; diff={}/{} lines ({}); file_changes={}; mutating_actions={}",
+        snapshot.diff_lines,
+        snapshot.diff_budget,
+        if snapshot.diff_available {
+            "readable"
+        } else {
+            "unreadable tree"
+        },
+        snapshot.file_change_events,
+        snapshot.mutating_actions,
+    ));
+    if snapshot.new_diag_errors > 0 || snapshot.new_diag_warnings > 0 {
+        out.push_str(&format!(
+            "; new_diagnostics={}e/{}w",
+            snapshot.new_diag_errors, snapshot.new_diag_warnings
+        ));
+    }
+    if snapshot.witness_intact == Some(true) {
+        out.push_str("; witness=intact");
+    }
+    Some(out)
+}
 
 /// A structural invariant an event stream violated, with a human-readable
 /// reason. Returned as a list so a single validation pass reports every
@@ -595,6 +671,7 @@ mod tests {
                 summary: "x".into(),
                 deterministic,
                 evidence_refs: vec![],
+                ladder: None,
             },
         }
     }

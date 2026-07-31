@@ -654,6 +654,7 @@ fn sample_events() -> Vec<AgentEvent> {
                 summary: "the tracked command flipped".into(),
                 deterministic: true,
                 evidence_refs: vec!["trace:t1#verify".into()],
+                ladder: None,
             },
         },
         AgentEvent::JudgeVerdict {
@@ -662,6 +663,7 @@ fn sample_events() -> Vec<AgentEvent> {
                 summary: "no evidence".into(),
                 deterministic: false,
                 evidence_refs: vec![],
+                ladder: None,
             },
         },
         AgentEvent::ScopeReview {

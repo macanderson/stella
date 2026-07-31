@@ -72,9 +72,9 @@ pub use error::ProviderError;
 pub use event::{
     AgentEvent, BlockKind, BlockOrigin, BudgetMode, BudgetScope, CacheZone, CiStatus,
     ContextFrameRef, ContextProviderUsage, ContextUsage, FileChangeKind, JudgeEvidence,
-    KNOWN_TYPE_TAGS, ManifestEntry, MediaArtifactRef, MediaJobState, MediaKind, ModelCallRole,
-    PolicyKind, PrStatus, ProofStep, ProofTree, ProviderShare, ScopeProposal, StageKind, TaskItem,
-    TaskStatus, UsageIncompleteReason,
+    KNOWN_TYPE_TAGS, LadderSnapshot, ManifestEntry, MediaArtifactRef, MediaJobState, MediaKind,
+    ModelCallRole, OracleObservation, PolicyKind, PrStatus, ProofStep, ProofTree, ProviderShare,
+    ScopeProposal, StageKind, TaskItem, TaskStatus, UsageIncompleteReason,
 };
 pub use provider::{Provider, ToolCallObserver};
 pub use role::{ModelRef, Role};

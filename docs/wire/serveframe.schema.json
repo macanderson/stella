@@ -1838,6 +1838,17 @@
           },
           "type": "array"
         },
+        "ladder": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LadderSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The full ladder input snapshot this verdict was decided from (#865).\n`replay` answers \"why did this run fast-submit / revise / judge?\"\nfrom here without re-deriving, and a judge escalation renders it into\nthe prompt (#864) so the judge sees *why* the ladder was inconclusive\nrather than a diff cold. Absent on events recorded before it existed."
+        },
         "summary": {
           "description": "One line naming what was checked and what it showed.",
           "type": "string"
@@ -1846,6 +1857,104 @@
       "required": [
         "summary",
         "deterministic"
+      ],
+      "type": "object"
+    },
+    "LadderSnapshot": {
+      "description": "The deterministic evidence the ladder decided a verdict from, snapshotted\nat decision time (#865). Everything here existed when the decision was\nmade; attaching it to the verdict is what makes \"why?\" answerable later\nwithout re-deriving — and re-deriving is exactly what a replay of an\nevent stream cannot do, because the world the probes read is gone.",
+      "properties": {
+        "diff_available": {
+          "description": "Whether the diff probe could read the working tree at all.",
+          "type": "boolean"
+        },
+        "diff_budget": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "diff_lines": {
+          "description": "Lines changed, and the budget they were judged against.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "file_change_events": {
+          "description": "Mutating file touches the recorder observed.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "flip_achieved": {
+          "description": "Whether the oracle's flip was achieved — after the confirmation run,\nso an unconfirmed flip reads `false` here with `unstable_flip: true`.",
+          "type": "boolean"
+        },
+        "mutating_actions": {
+          "description": "Dispatched tool calls capable of changing the workspace.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "new_diag_errors": {
+          "description": "New lint/typecheck errors/warnings over the pre-execution baseline\n(#861); zeros when the probe was unavailable or never consulted.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "new_diag_warnings": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "oracle_trace": {
+          "description": "The oracle's observations in order (baseline, candidate runs, the\npre-submit confirmation). Infra runs are absent by construction.",
+          "items": {
+            "$ref": "#/$defs/OracleObservation"
+          },
+          "type": "array"
+        },
+        "test_infra": {
+          "description": "Why the test run observed nothing, when it didn't (`timed_out`,\n`infra_failure`) — the #860 distinction between \"the suite failed\"\nand \"the suite could not be watched\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "touched_tests_passed": {
+          "description": "Touched-tests result: `None` is \"could not be observed\", not a pass.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "tracked_command": {
+          "description": "The normalized test command the flip oracle locked onto, when it\narmed at all.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unstable_flip": {
+          "description": "A flip was observed but its confirmation re-run did not pass (#859).",
+          "type": "boolean"
+        },
+        "witness_intact": {
+          "description": "The witness-tamper check's result: `None` when no witness was armed,\n`Some(true)` when every witness artifact matched its pinned identity.\n`Some(false)` never reaches a verdict — tampering aborts the\ncandidate — so its presence here is the *stated* proof the check ran.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "flip_achieved",
+        "unstable_flip",
+        "diff_lines",
+        "diff_budget",
+        "diff_available",
+        "file_change_events",
+        "mutating_actions",
+        "new_diag_errors",
+        "new_diag_warnings"
       ],
       "type": "object"
     },
@@ -2102,6 +2211,24 @@
           "type": "string"
         }
       ]
+    },
+    "OracleObservation": {
+      "description": "One flip-oracle observation, in the order the pipeline made it — together\nthey are the oracle trace a verdict carries (#864).",
+      "properties": {
+        "passed": {
+          "description": "Whether the tracked command's assertions passed. Infra outcomes never\nappear here — an unobservable run is not an oracle observation.",
+          "type": "boolean"
+        },
+        "tree": {
+          "$ref": "#/$defs/ProofTree",
+          "description": "Which tree the observation ran against."
+        }
+      },
+      "required": [
+        "tree",
+        "passed"
+      ],
+      "type": "object"
     },
     "PolicyKind": {
       "description": "What kind of policy-plane decision a [`AgentEvent::PolicyDecision`]\nrecords (receipts spec §6.4).",

@@ -450,6 +450,7 @@ pub fn deterministic_pass_evidence(tracked_cmd: Option<&str>, diff_lines: u32) -
         summary,
         deterministic: true,
         evidence_refs: Vec::new(),
+        ladder: None,
     }
 }
 
@@ -473,6 +474,7 @@ pub fn unverifiable_evidence(inputs: &LadderInputs) -> JudgeEvidence {
         ),
         deterministic: false,
         evidence_refs: Vec::new(),
+        ladder: None,
     }
 }
 
@@ -498,6 +500,7 @@ pub fn nothing_attempted_evidence(inputs: &LadderInputs) -> JudgeEvidence {
         ),
         deterministic: true,
         evidence_refs: Vec::new(),
+        ladder: None,
     }
 }
 
@@ -508,6 +511,7 @@ pub fn deterministic_fail_evidence(tail: &str) -> JudgeEvidence {
         summary: format!("touched tests failed after execution: {}", tail.trim()),
         deterministic: true,
         evidence_refs: Vec::new(),
+        ladder: None,
     }
 }
 
@@ -578,6 +582,7 @@ pub fn model_verdict_evidence(verdict: &JudgeVerdict) -> JudgeEvidence {
         summary: verdict.reasoning.clone(),
         deterministic: false,
         evidence_refs: Vec::new(),
+        ladder: None,
     }
 }
 

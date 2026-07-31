@@ -547,6 +547,7 @@ mod tests {
                 summary: "looks right".into(),
                 deterministic: false,
                 evidence_refs: vec![],
+                ladder: None,
             },
         );
         let row = state.rows()[4].clone();

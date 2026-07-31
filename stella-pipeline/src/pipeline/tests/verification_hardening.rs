@@ -421,6 +421,30 @@ async fn without_a_lint_probe_the_flip_still_fast_submits() {
     let verdict = outcome.verdict.expect("a verdict was produced");
     assert!(verdict.passed);
     assert!(verdict.deterministic, "no probe, no veto — the flip stands");
+    // #865: the verdict carries its own provenance — the ladder inputs it
+    // was decided from, including the oracle trace with the confirmation
+    // run — and replay renders "why" from it without re-deriving.
+    let snapshot = verdict
+        .ladder
+        .as_deref()
+        .expect("a fast-submit verdict records the snapshot it was decided from");
+    assert!(snapshot.flip_achieved);
+    assert!(!snapshot.unstable_flip);
+    assert_eq!(snapshot.tracked_command.as_deref(), Some("cargo test -p x"));
+    assert_eq!(
+        snapshot.oracle_trace.len(),
+        3,
+        "baseline fail + candidate pass + confirmation pass"
+    );
+    let why = crate::replay::verdict_provenance(&stella_protocol::JudgeEvidence {
+        summary: verdict.summary.clone(),
+        deterministic: verdict.deterministic,
+        evidence_refs: vec![],
+        ladder: verdict.ladder.clone(),
+    })
+    .expect("provenance renders from the recorded snapshot");
+    assert!(why.contains("flip=achieved"), "got: {why}");
+    assert!(why.contains("baseline:fail → candidate:pass"), "got: {why}");
     let events = drain(&mut rx);
     assert!(!stages(&events).contains(&StageKind::Judge));
 }

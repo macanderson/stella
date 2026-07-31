@@ -246,9 +246,86 @@ export interface JudgeEvidence {
    */
   evidence_refs?: string[];
   /**
+   * The full ladder input snapshot this verdict was decided from (#865).
+   * `replay` answers "why did this run fast-submit / revise / judge?"
+   * from here without re-deriving, and a judge escalation renders it into
+   * the prompt (#864) so the judge sees *why* the ladder was inconclusive
+   * rather than a diff cold. Absent on events recorded before it existed.
+   */
+  ladder?: LadderSnapshot | null;
+  /**
    * One line naming what was checked and what it showed.
    */
   summary: string;
+}
+
+/**
+ * The deterministic evidence the ladder decided a verdict from, snapshotted
+ * at decision time (#865). Everything here existed when the decision was
+ * made; attaching it to the verdict is what makes "why?" answerable later
+ * without re-deriving — and re-deriving is exactly what a replay of an
+ * event stream cannot do, because the world the probes read is gone.
+ */
+export interface LadderSnapshot {
+  /**
+   * Whether the diff probe could read the working tree at all.
+   */
+  diff_available: boolean;
+  diff_budget: number;
+  /**
+   * Lines changed, and the budget they were judged against.
+   */
+  diff_lines: number;
+  /**
+   * Mutating file touches the recorder observed.
+   */
+  file_change_events: number;
+  /**
+   * Whether the oracle's flip was achieved — after the confirmation run,
+   * so an unconfirmed flip reads `false` here with `unstable_flip: true`.
+   */
+  flip_achieved: boolean;
+  /**
+   * Dispatched tool calls capable of changing the workspace.
+   */
+  mutating_actions: number;
+  /**
+   * New lint/typecheck errors/warnings over the pre-execution baseline
+   * (#861); zeros when the probe was unavailable or never consulted.
+   */
+  new_diag_errors: number;
+  new_diag_warnings: number;
+  /**
+   * The oracle's observations in order (baseline, candidate runs, the
+   * pre-submit confirmation). Infra runs are absent by construction.
+   */
+  oracle_trace?: OracleObservation[];
+  /**
+   * Why the test run observed nothing, when it didn't (`timed_out`,
+   * `infra_failure`) — the #860 distinction between "the suite failed"
+   * and "the suite could not be watched".
+   */
+  test_infra?: string | null;
+  /**
+   * Touched-tests result: `None` is "could not be observed", not a pass.
+   */
+  touched_tests_passed?: boolean | null;
+  /**
+   * The normalized test command the flip oracle locked onto, when it
+   * armed at all.
+   */
+  tracked_command?: string | null;
+  /**
+   * A flip was observed but its confirmation re-run did not pass (#859).
+   */
+  unstable_flip: boolean;
+  /**
+   * The witness-tamper check's result: `None` when no witness was armed,
+   * `Some(true)` when every witness artifact matched its pinned identity.
+   * `Some(false)` never reaches a verdict — tampering aborts the
+   * candidate — so its presence here is the *stated* proof the check ran.
+   */
+  witness_intact?: boolean | null;
 }
 
 /**
@@ -357,6 +434,22 @@ export type MediaKind = "image" | "svg" | "video";
  * is.
  */
 export type ModelCallRole = "unknown" | "triage" | "plan" | "plan_repair" | "witness_author" | "witness_repair" | "worker" | "distress_guidance" | "judge" | "agent_author" | "skill_author" | "domain_inference" | "reflection" | "summarization";
+
+/**
+ * One flip-oracle observation, in the order the pipeline made it — together
+ * they are the oracle trace a verdict carries (#864).
+ */
+export interface OracleObservation {
+  /**
+   * Whether the tracked command's assertions passed. Infra outcomes never
+   * appear here — an unobservable run is not an oracle observation.
+   */
+  passed: boolean;
+  /**
+   * Which tree the observation ran against.
+   */
+  tree: ProofTree;
+}
 
 /**
  * What kind of policy-plane decision a [`AgentEvent::PolicyDecision`]

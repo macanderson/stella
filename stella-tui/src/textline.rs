@@ -1011,6 +1011,7 @@ mod tests {
                     summary: "s".into(),
                     deterministic: true,
                     evidence_refs: vec![],
+                    ladder: None,
                 },
             },
             AgentEvent::ScopeReview {
