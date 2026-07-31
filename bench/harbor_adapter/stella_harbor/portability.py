@@ -397,9 +397,9 @@ def _read_version_requirements(
 def read_libc_profile(path: Path | str) -> LibcProfile:
     """Read a binary's C-library requirements from disk.
 
-    ``mmap`` rather than ``read_bytes`` because the SUT is ~32 MiB and the
-    adapter may profile it on concurrent trials; only the pages actually
-    touched are ever resident.
+    ``mmap`` rather than ``read_bytes`` because the SUT is ~32 MiB and several
+    trials can be diagnosing a failure at once; only the pages actually touched
+    — the headers and two small sections — are ever resident.
     """
     binary = Path(path)
     with binary.open("rb") as handle:
