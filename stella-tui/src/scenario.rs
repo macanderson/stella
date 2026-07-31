@@ -403,6 +403,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                     summary: "flip oracle: fail→pass on `pnpm --filter app test:unit`".into(),
                     deterministic: true,
                     evidence_refs: vec![],
+                    ladder: None,
                 },
             },
         ),

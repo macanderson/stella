@@ -54,8 +54,8 @@ use stella_core::retry::{RetryPolicy, Sleeper};
 use stella_core::router::FallbackInfo;
 use stella_core::{BudgetGuard, Engine, EngineConfig, EventSender, Router, TurnOutcome};
 use stella_protocol::{
-    AgentEvent, CompletionMessage, JudgeEvidence, MessageRole, ModelCallRole, ModelRef, ProofStep,
-    ProofTree, Provider, Role, StageKind,
+    AgentEvent, CompletionMessage, JudgeEvidence, LadderSnapshot, MessageRole, ModelCallRole,
+    ModelRef, OracleObservation, ProofStep, ProofTree, Provider, Role, StageKind,
 };
 
 use crate::candidate::{
@@ -379,6 +379,11 @@ pub struct Verdict {
     pub passed: bool,
     pub deterministic: bool,
     pub summary: String,
+    /// The ladder input snapshot this verdict was decided from (#865), when
+    /// verification ran far enough to take one. `replay` answers "why did
+    /// this run fast-submit / revise / judge?" from here without
+    /// re-deriving.
+    pub ladder: Option<Box<stella_protocol::LadderSnapshot>>,
 }
 
 impl Verdict {
@@ -387,6 +392,7 @@ impl Verdict {
             passed,
             deterministic: evidence.deterministic,
             summary: evidence.summary.clone(),
+            ladder: evidence.ladder.clone(),
         }
     }
 }
@@ -528,6 +534,11 @@ struct CandidateState {
     /// lets `0` mean "never tried" instead of "could not tell".
     mutating_actions: u32,
     oracle: FlipOracle,
+    /// The oracle's observations in the order they were made (#864) —
+    /// baseline, per-iteration candidate runs, the pre-submit confirmation.
+    /// Mirrors the emitted `ProofStep::Oracle` events, accumulated here so
+    /// the verdict can carry its own trace without replaying the stream.
+    oracle_trace: Vec<OracleObservation>,
     /// Untracked-file fingerprints snapshotted before the first turn, so
     /// every diff gather can exclude pre-existing dirty state.
     untracked_before: HashMap<String, String>,
@@ -1662,6 +1673,7 @@ impl<'a> Pipeline<'a> {
         // prove — and its baseline is observed where it is written, in a
         // pristine snapshot of this same pre-execution tree.
         let mut oracle = FlipOracle::new();
+        let mut oracle_trace = Vec::new();
         if assessment.class.verifies_unconditionally()
             && let Some(cmd) = self.effective_test_command(None)
         {
@@ -1673,6 +1685,10 @@ impl<'a> Pipeline<'a> {
             // verified fail→pass flip.
             if let Some(passed) = pre.assertion_result() {
                 oracle.observe(cmd.command, passed);
+                oracle_trace.push(OracleObservation {
+                    tree: ProofTree::Baseline,
+                    passed,
+                });
                 self.emit_proof(ProofStep::Oracle {
                     command: cmd.command.to_string(),
                     passed,
@@ -1714,6 +1730,7 @@ impl<'a> Pipeline<'a> {
             file_changes: 0,
             mutating_actions: 0,
             oracle,
+            oracle_trace,
             untracked_before,
             diff_lines: 0,
             diff_text: String::new(),
@@ -1888,7 +1905,7 @@ impl<'a> Pipeline<'a> {
                 );
             }
             let (touched_tests_passed, test_tail, test_infra) = self
-                .observe_touched_tests(surface, effective_cmd, &mut state.oracle)
+                .observe_touched_tests(surface, effective_cmd, &mut state)
                 .await;
             // Tamper exclusion is an authority boundary, not evidence for a
             // model to weigh. Any post-baseline witness mutation hard-fails
@@ -1975,6 +1992,10 @@ impl<'a> Pipeline<'a> {
                     match confirmation.assertion_result() {
                         Some(passed) => {
                             state.oracle.confirm(passed);
+                            state.oracle_trace.push(OracleObservation {
+                                tree: ProofTree::Candidate,
+                                passed,
+                            });
                             self.emit_proof(ProofStep::Oracle {
                                 command: cmd.command.to_string(),
                                 passed,
@@ -1990,6 +2011,13 @@ impl<'a> Pipeline<'a> {
                 }
             }
 
+            // The verdict's provenance (#865): the ladder inputs frozen at
+            // decision time, attached to every evidence value emitted below.
+            // `witness_intact` states that the tamper exclusion above RAN
+            // and passed — a tampered witness never reaches a verdict.
+            let snapshot =
+                Self::ladder_snapshot(&inputs, &state, test_infra, witness.map(|_| true));
+
             // Everything the verification side knows about this round's
             // failure. Both failing arms disclose from it, and nothing reaches
             // the worker except through `Pipeline::airlock_forward` or a
@@ -2004,10 +2032,11 @@ impl<'a> Pipeline<'a> {
             match ladder_decision(&inputs) {
                 LadderDecision::SubmitFast => {
                     // Deterministic pass — judge SKIPPED (L-E11).
-                    let evidence = deterministic_pass_evidence(
+                    let mut evidence = deterministic_pass_evidence(
                         state.oracle.tracked_command(),
                         state.diff_lines,
                     );
+                    evidence.ladder = Some(Box::new(snapshot.clone()));
                     self.emit(AgentEvent::JudgeVerdict {
                         passed: true,
                         evidence: evidence.clone(),
@@ -2030,7 +2059,8 @@ impl<'a> Pipeline<'a> {
                     // and abstaining reported `passed: true`: eleven
                     // Terminal-Bench trials completed "successfully" having
                     // never touched the task, and Harbor scored every one 0.0.
-                    let evidence = nothing_attempted_evidence(&inputs);
+                    let mut evidence = nothing_attempted_evidence(&inputs);
+                    evidence.ladder = Some(Box::new(snapshot.clone()));
                     self.emit(AgentEvent::JudgeVerdict {
                         passed: false,
                         evidence: evidence.clone(),
@@ -2081,7 +2111,8 @@ impl<'a> Pipeline<'a> {
                     // would report a correct run as broken, and no revision
                     // could ever clear it, because nothing about that workspace
                     // will ever become observable.
-                    let evidence = unverifiable_evidence(&inputs);
+                    let mut evidence = unverifiable_evidence(&inputs);
+                    evidence.ladder = Some(Box::new(snapshot.clone()));
                     self.unverifiable(&evidence.summary);
                     self.emit(AgentEvent::JudgeVerdict {
                         passed: true,
@@ -2096,8 +2127,9 @@ impl<'a> Pipeline<'a> {
                 LadderDecision::Revise => {
                     // Deterministic failure (touched tests red) — no judge.
                     //
-                    let (evidence, brief) =
+                    let (mut evidence, brief) =
                         Self::deterministic_disclosure(&mut state, &sealed, &test_tail);
+                    evidence.ladder = Some(Box::new(snapshot.clone()));
                     self.emit(AgentEvent::JudgeVerdict {
                         passed: false,
                         evidence: evidence.clone(),
@@ -2161,6 +2193,7 @@ impl<'a> Pipeline<'a> {
                             .to_string(),
                         deterministic: false,
                         evidence_refs: vec![],
+                        ladder: Some(Box::new(snapshot.clone())),
                     };
                     self.emit(AgentEvent::JudgeVerdict {
                         passed: true,
@@ -2234,6 +2267,23 @@ impl<'a> Pipeline<'a> {
                             evidence_summary.push_str(lint_sample.trim_end());
                         }
                     }
+                    if !snapshot.oracle_trace.is_empty() {
+                        // #864: the oracle trace, rendered compactly. The
+                        // judge sees WHY the ladder was inconclusive — which
+                        // runs happened, in order, and what each observed —
+                        // instead of a diff cold.
+                        evidence_summary.push_str(&format!(
+                            "; oracle_trace=[{}]",
+                            crate::replay::render_oracle_trace(&snapshot.oracle_trace)
+                        ));
+                    }
+                    if snapshot.witness_intact == Some(true) {
+                        // #864: the tamper-exclusion result, stated. A
+                        // tampered witness never reaches a judge, so what the
+                        // judge learns here is that the check RAN and the
+                        // witness it is weighing is the authored one.
+                        evidence_summary.push_str("; witness_tamper_check=intact");
+                    }
                     let verdict = match self
                         .judge(
                             goal,
@@ -2250,7 +2300,8 @@ impl<'a> Pipeline<'a> {
                             return CandidateResult::aborted(state.messages, abort.reason);
                         }
                     };
-                    let evidence = model_verdict_evidence(&verdict);
+                    let mut evidence = model_verdict_evidence(&verdict);
+                    evidence.ladder = Some(Box::new(snapshot.clone()));
                     self.emit(AgentEvent::JudgeVerdict {
                         passed: verdict.passed,
                         evidence: evidence.clone(),

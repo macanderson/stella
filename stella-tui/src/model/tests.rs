@@ -466,6 +466,7 @@ fn media_and_judge_and_pr_events_land_on_the_transcript() {
             summary: "flip oracle passed".into(),
             deterministic: true,
             evidence_refs: vec![],
+            ladder: None,
         },
     });
     model.apply(&AgentEvent::Pr {

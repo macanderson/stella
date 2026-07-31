@@ -1090,6 +1090,75 @@ pub struct JudgeEvidence {
     /// take it on faith.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence_refs: Vec<String>,
+    /// The full ladder input snapshot this verdict was decided from (#865).
+    /// `replay` answers "why did this run fast-submit / revise / judge?"
+    /// from here without re-deriving, and a judge escalation renders it into
+    /// the prompt (#864) so the judge sees *why* the ladder was inconclusive
+    /// rather than a diff cold. Absent on events recorded before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ladder: Option<Box<LadderSnapshot>>,
+}
+
+/// One flip-oracle observation, in the order the pipeline made it — together
+/// they are the oracle trace a verdict carries (#864).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct OracleObservation {
+    /// Which tree the observation ran against.
+    pub tree: ProofTree,
+    /// Whether the tracked command's assertions passed. Infra outcomes never
+    /// appear here — an unobservable run is not an oracle observation.
+    pub passed: bool,
+}
+
+/// The deterministic evidence the ladder decided a verdict from, snapshotted
+/// at decision time (#865). Everything here existed when the decision was
+/// made; attaching it to the verdict is what makes "why?" answerable later
+/// without re-deriving — and re-deriving is exactly what a replay of an
+/// event stream cannot do, because the world the probes read is gone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct LadderSnapshot {
+    /// The normalized test command the flip oracle locked onto, when it
+    /// armed at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tracked_command: Option<String>,
+    /// The oracle's observations in order (baseline, candidate runs, the
+    /// pre-submit confirmation). Infra runs are absent by construction.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub oracle_trace: Vec<OracleObservation>,
+    /// Whether the oracle's flip was achieved — after the confirmation run,
+    /// so an unconfirmed flip reads `false` here with `unstable_flip: true`.
+    pub flip_achieved: bool,
+    /// A flip was observed but its confirmation re-run did not pass (#859).
+    pub unstable_flip: bool,
+    /// Touched-tests result: `None` is "could not be observed", not a pass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub touched_tests_passed: Option<bool>,
+    /// Why the test run observed nothing, when it didn't (`timed_out`,
+    /// `infra_failure`) — the #860 distinction between "the suite failed"
+    /// and "the suite could not be watched".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_infra: Option<String>,
+    /// Lines changed, and the budget they were judged against.
+    pub diff_lines: u32,
+    pub diff_budget: u32,
+    /// Whether the diff probe could read the working tree at all.
+    pub diff_available: bool,
+    /// Mutating file touches the recorder observed.
+    pub file_change_events: u32,
+    /// Dispatched tool calls capable of changing the workspace.
+    pub mutating_actions: u32,
+    /// New lint/typecheck errors/warnings over the pre-execution baseline
+    /// (#861); zeros when the probe was unavailable or never consulted.
+    pub new_diag_errors: u32,
+    pub new_diag_warnings: u32,
+    /// The witness-tamper check's result: `None` when no witness was armed,
+    /// `Some(true)` when every witness artifact matched its pinned identity.
+    /// `Some(false)` never reaches a verdict — tampering aborts the
+    /// candidate — so its presence here is the *stated* proof the check ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub witness_intact: Option<bool>,
 }
 
 /// Which code state a [`ProofStep::Oracle`] observation was made against.
@@ -1835,12 +1904,76 @@ mod tests {
                 summary: "flip oracle: fail→pass on `cargo test -p x`".into(),
                 deterministic: true,
                 evidence_refs: vec!["trace:t1#verify".into()],
+                ladder: None,
+            },
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(
+            !json.contains("ladder"),
+            "an absent snapshot must not serialize a null field"
+        );
+        let back: AgentEvent = serde_json::from_str(&json).unwrap();
+        match back {
+            AgentEvent::JudgeVerdict { evidence, .. } => assert!(evidence.deterministic),
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    /// #865 wire compatibility, both directions: a verdict recorded before
+    /// snapshots existed parses (`ladder` absent → `None`), and a snapshot
+    /// roundtrips with its oracle trace intact.
+    #[test]
+    fn ladder_snapshot_is_additive_and_roundtrips() {
+        let legacy = r#"{"type":"judge_verdict","passed":true,
+            "evidence":{"summary":"ok","deterministic":true}}"#;
+        let back: AgentEvent = serde_json::from_str(legacy).unwrap();
+        match back {
+            AgentEvent::JudgeVerdict { evidence, .. } => assert!(evidence.ladder.is_none()),
+            other => panic!("unexpected variant: {other:?}"),
+        }
+
+        let event = AgentEvent::JudgeVerdict {
+            passed: true,
+            evidence: JudgeEvidence {
+                summary: "flip + confirmation".into(),
+                deterministic: true,
+                evidence_refs: vec![],
+                ladder: Some(Box::new(LadderSnapshot {
+                    tracked_command: Some("cargo test -p x".into()),
+                    oracle_trace: vec![
+                        OracleObservation {
+                            tree: ProofTree::Baseline,
+                            passed: false,
+                        },
+                        OracleObservation {
+                            tree: ProofTree::Candidate,
+                            passed: true,
+                        },
+                    ],
+                    flip_achieved: true,
+                    unstable_flip: false,
+                    touched_tests_passed: Some(true),
+                    test_infra: None,
+                    diff_lines: 12,
+                    diff_budget: 400,
+                    diff_available: true,
+                    file_change_events: 2,
+                    mutating_actions: 3,
+                    new_diag_errors: 0,
+                    new_diag_warnings: 0,
+                    witness_intact: Some(true),
+                })),
             },
         };
         let json = serde_json::to_string(&event).unwrap();
         let back: AgentEvent = serde_json::from_str(&json).unwrap();
         match back {
-            AgentEvent::JudgeVerdict { evidence, .. } => assert!(evidence.deterministic),
+            AgentEvent::JudgeVerdict { evidence, .. } => {
+                let snapshot = evidence.ladder.expect("snapshot survives the wire");
+                assert_eq!(snapshot.oracle_trace.len(), 2);
+                assert!(snapshot.flip_achieved);
+                assert_eq!(snapshot.tracked_command.as_deref(), Some("cargo test -p x"));
+            }
             other => panic!("unexpected variant: {other:?}"),
         }
     }

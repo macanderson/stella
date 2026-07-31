@@ -82,14 +82,18 @@ impl<'a> Pipeline<'a> {
         &self,
         surface: CandidateSurface<'_>,
         cmd: Option<EffectiveTestCommand<'_>>,
-        oracle: &mut FlipOracle,
+        state: &mut CandidateState,
     ) -> (Option<bool>, String, Option<&'static str>) {
         match cmd {
             Some(cmd) => {
                 let post = surface.tests.run_test(cmd.invocation).await;
                 match post.assertion_result() {
                     Some(passed) => {
-                        oracle.observe(cmd.command, passed);
+                        state.oracle.observe(cmd.command, passed);
+                        state.oracle_trace.push(OracleObservation {
+                            tree: ProofTree::Candidate,
+                            passed,
+                        });
                         self.emit_proof(ProofStep::Oracle {
                             command: cmd.command.to_string(),
                             passed,
@@ -107,6 +111,35 @@ impl<'a> Pipeline<'a> {
                 }
             }
             None => (None, String::new(), None),
+        }
+    }
+
+    /// The verdict-provenance snapshot (#865): everything the ladder decided
+    /// from, frozen at decision time so `replay` answers "why fast-submit /
+    /// revise / judge?" without re-deriving — and so the judge prompt can
+    /// carry it (#864). Pure assembly over already-gathered evidence: no
+    /// probe runs here.
+    pub(super) fn ladder_snapshot(
+        inputs: &LadderInputs,
+        state: &CandidateState,
+        test_infra: Option<&'static str>,
+        witness_intact: Option<bool>,
+    ) -> LadderSnapshot {
+        LadderSnapshot {
+            tracked_command: state.oracle.tracked_command().map(str::to_string),
+            oracle_trace: state.oracle_trace.clone(),
+            flip_achieved: inputs.flip_achieved,
+            unstable_flip: state.oracle.is_unstable(),
+            touched_tests_passed: inputs.touched_tests_passed,
+            test_infra: test_infra.map(str::to_string),
+            diff_lines: inputs.diff_lines,
+            diff_budget: inputs.diff_budget,
+            diff_available: inputs.diff_available,
+            file_change_events: inputs.file_change_events,
+            mutating_actions: inputs.mutating_actions,
+            new_diag_errors: inputs.new_diag_errors,
+            new_diag_warnings: inputs.new_diag_warnings,
+            witness_intact,
         }
     }
 }
