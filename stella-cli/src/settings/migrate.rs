@@ -27,6 +27,7 @@ use super::toml_config::{self, CURRENT_SCHEMA_VERSION, ConfigScope};
 use super::{Settings, toml_io};
 
 /// One scope's migration outcome, for the report.
+#[derive(Debug)]
 pub enum Outcome {
     /// No `settings.json` at this scope — nothing to do.
     NothingToDo,
@@ -155,6 +156,28 @@ pub fn migrate_scope(
     // with their working config already shadowed by the broken one.
     let reparsed = toml_config::TomlConfig::parse(&rendered, toml_path)?;
     reparsed.validate_meta(toml_path, scope)?;
+    // A project-scope `stella.toml` lives at the repo root and is committed, so
+    // the loader refuses an inline `api_key` there. Apply the SAME rule before
+    // writing: `render` serializes `providers` verbatim, so without this a key
+    // sitting in `.stella/settings.json` would be copied into the committed
+    // file — leaking it — and produce a config stella then refuses to load.
+    //
+    // The refusal happens BEFORE `write_settings`, so the secret never reaches
+    // disk. The loader's message names `toml_path`, which does not exist yet at
+    // this point, so name the file the secret is actually in — that is the one
+    // the user has to edit. Scoped to THIS file rather than "nothing was
+    // written", because `run` migrates the user scope first and has already
+    // printed what it wrote by the time the project scope is refused.
+    reparsed
+        .validate_project_secrets(toml_path, scope)
+        .map_err(|err| {
+            format!(
+                "{err}\nThe key is in {} — move it out of that file, then re-run \
+                 `stella migrate config`. {} was not written.",
+                json_path.display(),
+                toml_path.display()
+            )
+        })?;
 
     if !dry_run {
         let user_private = scope == ConfigScope::User;

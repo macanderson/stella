@@ -721,6 +721,118 @@ fn a_migrated_file_round_trips_through_a_section_save() {
     );
 }
 
+/// A project `settings.json` holding an inline `api_key`.
+const PROJECT_SETTINGS_WITH_SECRET: &str = r#"{
+  "providers": {
+    "anthropic": {"api_key": "sk-secret", "default_model": "claude-fable-5"}
+  }
+}"#;
+
+/// The security regression. `render` serializes `providers` verbatim and the
+/// loader refuses an inline `api_key` at the project scope, so a migration that
+/// skipped that rule would write the secret into the committed repo-root file
+/// AND produce a config stella then refuses to load. Both halves are asserted:
+/// the refusal, and that nothing reached disk.
+#[test]
+fn migrating_an_inline_api_key_to_project_scope_is_refused_and_writes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = write(dir.path(), "settings.json", PROJECT_SETTINGS_WITH_SECRET);
+    let toml_path = dir.path().join("stella.toml");
+
+    let err = super::migrate::migrate_scope(&json, &toml_path, ConfigScope::Project, false)
+        .expect_err("a committed file must not receive a literal secret");
+
+    // The secret never reaches the filesystem — not even partially written.
+    assert!(
+        !toml_path.exists(),
+        "refusal must leave no file behind: {}",
+        toml_path.display()
+    );
+    // Same two alternatives the loader names, so the advice cannot diverge.
+    assert!(err.contains("api_key_env"), "{err}");
+    assert!(err.contains("credentials.toml"), "{err}");
+    // And the file the user has to actually edit, which is the JSON — the
+    // stella.toml the loader's message names does not exist yet.
+    assert!(err.contains("settings.json"), "names the source: {err}");
+    // The secret itself is never echoed, so the error stays safe to paste.
+    assert!(!err.contains("sk-secret"), "the key is not echoed: {err}");
+}
+
+/// Why the check above is load-bearing rather than defensive: `render` is a
+/// pure serializer with no opinion about secrets, and `api_key` is
+/// `skip_serializing_if = "Option::is_none"`, so a key that is present IS
+/// written. This pins that — if `render` ever stopped emitting it, the guard
+/// would silently become untested rather than unnecessary.
+#[test]
+fn render_itself_would_write_the_secret_if_nothing_stopped_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = write(dir.path(), "settings.json", PROJECT_SETTINGS_WITH_SECRET);
+    let settings = Settings::load_scope(&json).unwrap();
+
+    let rendered = super::migrate::render(&settings, ConfigScope::Project).unwrap();
+
+    assert!(
+        rendered.contains("sk-secret"),
+        "render emits the key verbatim; only the guard keeps it off disk:\n{rendered}"
+    );
+}
+
+/// `--dry-run` reports what a real run WOULD do, so it has to fail here too. A
+/// dry run that printed "would write" for a config the real run refuses would
+/// be the one output the user trusts before committing.
+#[test]
+fn a_dry_run_refuses_the_same_project_scope_secret() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = write(dir.path(), "settings.json", PROJECT_SETTINGS_WITH_SECRET);
+    let toml_path = dir.path().join("stella.toml");
+
+    assert!(super::migrate::migrate_scope(&json, &toml_path, ConfigScope::Project, true).is_err());
+    assert!(!toml_path.exists());
+}
+
+/// The rule is scoped to the committed file, not to secrets in general.
+/// `~/.stella/stella.toml` is private and 0600, and the loader accepts an
+/// inline key there — so migration must keep working, or users with a
+/// perfectly legal user-scope key could never migrate at all.
+#[test]
+fn migrating_an_inline_api_key_to_user_scope_still_works() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = write(dir.path(), "settings.json", PROJECT_SETTINGS_WITH_SECRET);
+    let toml_path = dir.path().join("stella.toml");
+
+    super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
+
+    let settings = load_toml(&toml_path, ConfigScope::User).unwrap();
+    assert_eq!(
+        settings.providers["anthropic"].api_key.as_deref(),
+        Some("sk-secret")
+    );
+}
+
+/// The general invariant the specific tests above are instances of: whatever
+/// migration writes, the loader can read back at the same scope.
+#[test]
+fn a_migration_that_succeeds_always_produces_a_loadable_file() {
+    for (scope, body) in [
+        (ConfigScope::User, PROJECT_SETTINGS_WITH_SECRET),
+        (ConfigScope::Project, PROJECT_SETTINGS_WITH_SECRET),
+        (ConfigScope::User, RICH_SETTINGS),
+        (ConfigScope::Project, RICH_SETTINGS),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let json = write(dir.path(), "settings.json", body);
+        let toml_path = dir.path().join("stella.toml");
+
+        if super::migrate::migrate_scope(&json, &toml_path, scope, false).is_err() {
+            // A refusal is a valid outcome; it just must not have written.
+            assert!(!toml_path.exists(), "{scope:?} refused but wrote a file");
+            continue;
+        }
+        load_toml(&toml_path, scope)
+            .unwrap_or_else(|e| panic!("{scope:?} migrated to an unloadable file: {e}"));
+    }
+}
+
 /// The engine config splits across two sections, so clearing it has to remove
 /// both — a stale `[models]` left behind would keep narrowing the vocabulary
 /// after the user cleared the setting that created it.
