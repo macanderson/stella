@@ -951,6 +951,7 @@ def _stream_to_envelope(
     usage_count = 0
     complete_count = 0
     error_count = 0
+
     for event in events:
         event_type = event.get("type")
         if event_type == "step_usage":
