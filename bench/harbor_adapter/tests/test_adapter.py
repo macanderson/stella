@@ -367,6 +367,72 @@ class TestBuildCommand:
             agent._build_command("Fix it")
 
 
+class TestRunScriptEnvironmentIsRegistered:
+    """Every ``STELLA_*`` the run scripts export must be a knob the adapter knows.
+
+    ``_forwarded_env`` fails **closed** on any ambient ``STELLA_*`` it does not
+    recognise, which is correct — an unregistered knob is an undisclosed change
+    to the SUT. But every script in ``bench/evidence/run/`` sources ``env.sh``
+    before invoking Harbor, so whatever ``env.sh`` exports is ambient in the
+    adapter's own process.
+
+    That makes the two files halves of one contract, and #1018 moved one half:
+    it added ``STELLA_TARGET_TRIPLE`` and ``STELLA_GLIBC_FLOOR`` to ``env.sh``
+    without registering them, so the sanctioned run path aborted before the
+    first trial. Pinning the two names would only catch the defect already
+    found; this asserts the invariant, so the *next* export to ``env.sh`` fails
+    here rather than in front of a benchmark run.
+    """
+
+    @staticmethod
+    def _exported_stella_names() -> set[str]:
+        import re
+
+        repo_root = Path(__file__).resolve().parents[3]
+        env_sh = repo_root / "bench" / "evidence" / "run" / "env.sh"
+        assert env_sh.is_file(), env_sh
+        return set(re.findall(r"export\s+(STELLA_[A-Z0-9_]+)=", env_sh.read_text()))
+
+    def test_every_stella_export_in_env_sh_is_a_registered_knob(self) -> None:
+        exported = self._exported_stella_names()
+        # Guard the guard: a rename that empties this set would pass vacuously.
+        assert "STELLA_BINARY" in exported
+        assert "STELLA_GLIBC_FLOOR" in exported
+
+        registered = (
+            adapter_module._CLAIM_CONTAINER_ENV | adapter_module._HOST_ONLY_STELLA_ENV
+        )
+        assert exported <= registered, (
+            "env.sh exports STELLA_* knobs the adapter fails closed on: "
+            f"{sorted(exported - registered)}"
+        )
+
+    def test_build_only_constants_never_reach_the_task_container(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Recognised, but host-only: they describe the build, not the run."""
+        monkeypatch.setenv("STELLA_TARGET_TRIPLE", "x86_64-unknown-linux-gnu")
+        monkeypatch.setenv("STELLA_GLIBC_FLOOR", "2.17")
+        agent = _bare_agent()
+        agent.model_name = "openrouter/z-ai/glm-5.2"
+
+        forwarded = agent._forwarded_env()  # must not raise
+
+        assert "STELLA_TARGET_TRIPLE" not in forwarded
+        assert "STELLA_GLIBC_FLOOR" not in forwarded
+
+    def test_a_genuinely_unregistered_knob_still_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The registration widened by exactly two names, not in principle."""
+        monkeypatch.setenv("STELLA_SOMETHING_INVENTED", "1")
+        agent = _bare_agent()
+        agent.model_name = "openrouter/z-ai/glm-5.2"
+
+        with pytest.raises(RuntimeError, match="unregistered STELLA_"):
+            agent._forwarded_env()
+
+
 class TestForwardedEnv:
     def test_canonical_engine_posture_has_one_inherited_model_and_fixed_effort(
         self,

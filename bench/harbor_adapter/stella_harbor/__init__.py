@@ -174,6 +174,19 @@ _HOST_ONLY_STELLA_ENV = frozenset(
         "STELLA_MODEL",
         "STELLA_BASE_URL",
         _WITNESS_AUTHOR_ENV,
+        # The portability target triple and glibc floor (#1018). `env.sh` exports
+        # both so `build_sut.sh` builds to the same floor `preflight` asserts
+        # against — keeping them apart is what let a glibc-2.35 binary reach five
+        # trials. But every script in `bench/evidence/run/` sources `env.sh`
+        # *before* invoking Harbor, so both are ambient in the adapter's process
+        # and the fail-closed ambient check rejected the run outright.
+        #
+        # Registered host-only rather than added to `_CLAIM_CONTAINER_ENV`: they
+        # describe how the binary was built and verified *on the host*, and mean
+        # nothing inside a task container. Host-only is the honest bucket, and it
+        # keeps the container environment exactly as narrow as it was.
+        "STELLA_TARGET_TRIPLE",
+        "STELLA_GLIBC_FLOOR",
     }
 )
 
