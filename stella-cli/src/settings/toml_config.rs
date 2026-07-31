@@ -261,6 +261,37 @@ impl TomlConfig {
         Ok(())
     }
 
+    /// Refuse an inline `providers.<id>.api_key` at the project scope.
+    ///
+    /// `<repo>/stella.toml` lives at the repository root and is meant to be
+    /// committed and reviewed like source, so a literal secret in it leaks into
+    /// version control. The rule is enforced on BOTH the load path and the
+    /// migration path from one definition here — when only the loader had it,
+    /// `stella migrate config` would happily copy a key out of
+    /// `.stella/settings.json` into the committed file and then produce a
+    /// config stella refuses to read on the next launch.
+    ///
+    /// The offending value is never echoed: the message names the provider and
+    /// the file, so it stays safe to paste into an issue.
+    pub fn validate_project_secrets(&self, path: &Path, scope: ConfigScope) -> Result<(), String> {
+        if scope != ConfigScope::Project {
+            return Ok(());
+        }
+        for (id, entry) in &self.providers {
+            if entry.api_key.is_some() {
+                return Err(format!(
+                    "config file {}: providers.{id}.api_key is a literal secret in a \
+                     file that belongs in version control. Use `api_key_env = \"...\"` \
+                     to name an environment variable, or run \
+                     `stella auth set {id}` to store the key in \
+                     ~/.stella/credentials.toml (owner-only).",
+                    path.display()
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Lower this document into the [`Settings`] the merge chain consumes, plus
     /// the MCP servers it declared (empty when the document has no
     /// `[mcp.servers]`, which is how a workspace keeps using `.stella/mcp.toml`
@@ -369,21 +400,9 @@ pub fn load_toml_scope(
     // ever was, so the one field that was tolerable purely through obscurity
     // stops being tolerable. Env-var indirection and the 0600 credentials file
     // both already exist; this is a refusal with two named alternatives, not a
-    // capability being removed.
-    if scope == ConfigScope::Project {
-        for (id, entry) in &parsed.providers {
-            if entry.api_key.is_some() {
-                return Err(format!(
-                    "config file {}: providers.{id}.api_key is a literal secret in a \
-                     file that belongs in version control. Use `api_key_env = \"...\"` \
-                     to name an environment variable, or run \
-                     `stella auth set {id}` to store the key in \
-                     ~/.stella/credentials.toml (owner-only).",
-                    path.display()
-                ));
-            }
-        }
-    }
+    // capability being removed. `stella migrate config` applies the same rule
+    // before it writes, so the two paths cannot disagree about what is legal.
+    parsed.validate_project_secrets(path, scope)?;
 
     let mut warnings = Vec::new();
     let server_count = parsed

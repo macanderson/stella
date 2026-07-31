@@ -415,10 +415,20 @@ predates the field is version 1 by definition.
 It is tolerable in `.stella/settings.json`. It is not tolerable in a file
 sitting next to `README.md`.
 
-**Decision:** `api_key` at **project scope** becomes a load-time error naming
+**Decision:** `api_key` at **project scope** becomes an error naming
 `credentials.toml` and `api_key_env` as the two right answers. At user and
 managed scope it keeps working unchanged. Credentials never merge into
 `stella.toml` at any scope.
+
+The rule is enforced on **every path that reads or writes** a project
+`stella.toml`, from one definition (`TomlConfig::validate_project_secrets`) —
+not on load alone. Specifying it as load-only is what let the first
+implementation ship a hole: `stella migrate config` serializes `providers`
+verbatim, so with the check only in the loader it copied a key out of
+`.stella/settings.json` into the committed file *and* produced a config the
+loader then refused to read. A refusal that only fires after the secret is
+already written is not a refusal. Any future writer of this file consults the
+same method, before the write.
 
 ### 6.3 Retire bare root scalars
 
@@ -542,7 +552,7 @@ more code, for a shape that reads worse. Keyed tables throughout.
 | **Comment loss on save** silently deletes the migration's whole value | `toml_edit` + a round-trip test asserting comments and key order survive; build this first (§3.1) |
 | **Trust model quietly weakened** by "simplifying" the scope chain | Port `merge_captured_scopes` unchanged; the existing trust tests must pass against TOML fixtures with no assertion edits |
 | **Two config files both present**, silently composing | Never merge; warn once naming both paths (§6.1) |
-| **Secrets committed** now that the file is at the repo root | `api_key` is a load error at project scope (§6.2) |
+| **Secrets committed** now that the file is at the repo root | `api_key` is an error at project scope on both the load and the migration path, from one shared check (§6.2) |
 | **Per-agent tool scope grants rather than narrows** | `ToolPolicy::intersect` + a property test that the result is never more permissive than either input (§4.4) |
 | **Fallback corrupts cost attribution** | Record resolved provider + model id per call, not the configured intent (§4.2) |
 | **Opened agent set turns silent-ignore into silent-orphan** | Flag agent names no `task` call or pipeline stage references (§4.1) |
