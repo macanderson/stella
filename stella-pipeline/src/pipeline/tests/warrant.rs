@@ -107,14 +107,25 @@ async fn a_docs_only_change_completes_without_buying_a_judge_call() {
 /// the ladder with nothing at all to reason over, and a judge handed an empty
 /// record does not produce a better answer — it produced `FAIL … the file
 /// likely does not exist` about a file that was in the container (#973). So the
-/// ladder abstains, and the fixture size is again the assertion: exactly two
-/// provider calls, because a third would mean a judge was bought to guess.
+/// ladder abstains, and the fixture size is again the assertion: exactly three
+/// provider calls, because a fourth would mean a judge was bought to guess.
+///
+/// The worker must *dispatch a mutating tool call* for this to be the abstain
+/// case at all. A turn that calls nothing has the same four dark channels but
+/// a different truth — it could not have changed anything — and now resolves
+/// as `NothingAttempted` instead (see the two no-op tests at the end of this
+/// module). Handing this fixture `EmptyTools` would quietly retarget it at
+/// that rung and stop it testing abstention.
 #[tokio::test]
 async fn a_blind_diff_probe_never_completes_as_nothing_changed() {
-    let provider = ScriptedProvider::new(vec![text_result("single"), text_result("done")]);
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        writing_tool_result("writing the fix"),
+        text_result("done"),
+    ]);
     let resolver = OneProvider(&provider);
     let runner = ScriptedRunner::new(vec![], DOCS_DIFF).with_blind_diff();
-    let tools = EmptyTools;
+    let tools = OneWritingTool;
     let recall = NoContextRecall;
     let repo = NoRepoStructure;
     let repo_status = NoRepoStatus;
@@ -336,5 +347,193 @@ async fn a_non_repository_says_so_rather_than_reporting_a_generic_failure() {
         probe.text.contains("NOT evidence that nothing changed"),
         "and must refuse the inversion outright: {}",
         probe.text
+    );
+}
+
+/// The `regex-log` Terminal-Bench 2.1 trial, end to end: the worker answers in
+/// prose, calls no tool, and the workspace is a plain directory the diff probe
+/// can never read. Harbor scored the real trial 0.0; Stella reported success.
+///
+/// [`crate::verify`]'s ladder tests pin the *decision*; this pins what the
+/// pipeline does with it, which is where the defect was actually visible. The
+/// ladder emitted its abstention correctly the whole time — it was the
+/// `passed: true` beside it, and the `Complete` stage after it, that told
+/// every reader downstream the task was done.
+///
+/// `max_revisions: 0` so the turn is terminal here rather than looping; the
+/// revision behaviour is the next test.
+#[tokio::test]
+async fn a_turn_that_called_no_tool_does_not_report_success() {
+    // triage → single; worker → a confident claim it never acted on. The
+    // scripted provider serves exactly two calls: a judge call would exhaust
+    // it and error the run, so the fixture size asserts none is bought.
+    let provider = ScriptedProvider::new(vec![
+        text_result("CLASS: single\nWITNESS: no\nJUDGE: yes"),
+        text_result("I've written the regex to /app/regex.txt. The task is complete."),
+    ]);
+    let resolver = OneProvider(&provider);
+    // No test results and no readable tree: on Terminal-Bench every channel
+    // except the dispatch count is structurally dark.
+    let runner = ScriptedRunner::new(vec![], "").with_not_a_repository();
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig {
+            test_command: None,
+            max_revisions: 0,
+            ..PipelineConfig::default()
+        },
+    );
+
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let outcome = pipeline
+        .run(
+            "Write a regex to /app/regex.txt",
+            &mut messages,
+            &mut budget,
+        )
+        .await
+        .expect("run completes");
+
+    let verdict = outcome
+        .verdict
+        .expect("a no-op turn still reports a verdict");
+    assert!(
+        !verdict.passed,
+        "a turn that dispatched no tool must not report success: {}",
+        verdict.summary
+    );
+    assert!(
+        verdict.summary.contains("NO WORK ATTEMPTED"),
+        "and must say plainly what happened: {}",
+        verdict.summary
+    );
+    assert!(
+        !verdict.summary.contains("UNVERIFIABLE"),
+        "this is a determinate finding, not a missing one: {}",
+        verdict.summary
+    );
+
+    let events = drain(&mut rx);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::JudgeVerdict {
+                passed: false,
+                evidence
+            } if evidence.summary.contains("NO WORK ATTEMPTED")
+        )),
+        "the emitted verdict — the field every downstream reader keys on — must be false"
+    );
+    assert!(
+        !stages(&events).contains(&StageKind::Judge),
+        "nothing was attempted, so there is nothing for a judge to weigh"
+    );
+}
+
+/// The recovery half: given a revision to spend, a no-op turn is pushed to act
+/// rather than ending the run. This is the behaviour that would have changed
+/// the eleven trials' outcomes — each stopped at 2–3 steps with revisions
+/// still on the table.
+#[tokio::test]
+async fn a_no_op_turn_is_sent_back_to_do_the_work() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("CLASS: single\nWITNESS: no\nJUDGE: yes"),
+        text_result("I've written the regex to /app/regex.txt. The task is complete."),
+        // The revision turn. Still no tools — the second no-op is terminal,
+        // which keeps this test about the push-back and not about recovery
+        // the fixture cannot actually stage.
+        text_result("Confirmed, the file is written."),
+    ]);
+    let resolver = OneProvider(&provider);
+    let runner = ScriptedRunner::new(vec![], "").with_not_a_repository();
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig {
+            test_command: None,
+            max_revisions: 1,
+            ..PipelineConfig::default()
+        },
+    );
+
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let outcome = pipeline
+        .run(
+            "Write a regex to /app/regex.txt",
+            &mut messages,
+            &mut budget,
+        )
+        .await
+        .expect("run completes");
+
+    let revision = provider
+        .prompts()
+        .into_iter()
+        .find(|p| p.contains("without calling a single tool"))
+        .expect("the worker was sent back with the no-op told plainly");
+    assert!(
+        revision.contains("does not perform it"),
+        "and told that describing the work is not doing it: {revision}"
+    );
+    assert_eq!(
+        outcome.revisions, 1,
+        "exactly the one revision the config allowed was spent"
+    );
+    assert!(
+        !outcome.verdict.expect("a verdict").passed,
+        "a second no-op exhausts the revisions and still must not report success"
     );
 }
