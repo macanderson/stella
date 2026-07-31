@@ -141,6 +141,59 @@ fn an_explicit_model_flag_outranks_pipeline_worker_model() {
     );
 }
 
+/// The benchmark's two arms, at the layer that decides whether the authored
+/// witness can run at all (#1007).
+///
+/// `Pipeline::can_author_independent_witness` compares the resolved judge's
+/// `model_ref` with the worker's and refuses to let the worker author the test
+/// that verifies it. The benchmark posture expresses routing only through
+/// `default_model`, so both roles land on one model and the witness tier is
+/// structurally off — every Terminal-Bench number before #1007 was measured
+/// that way. Adding `pipeline_judge_model` is what splits them.
+///
+/// Both arms asserted together because the pair is the point: the control arm
+/// must keep collapsing (it is the published baseline) and the treatment arm
+/// must actually separate.
+#[test]
+fn the_benchmark_posture_splits_worker_and_judge_only_on_the_witness_arm() {
+    let worker_ref = ModelRef::new("openrouter", "z-ai/glm-5.1");
+    let configured = vec![configured_provider("openrouter")];
+
+    let control = cfg_with_engine(
+        "openrouter",
+        r#"{ "default_model": "openrouter/z-ai/glm-5.1",
+             "allowed_models": ["openrouter/z-ai/glm-5.1"] }"#,
+    );
+    let control = resolve_engine_wiring(&control, &worker_ref, &configured);
+    assert_eq!(
+        control.pins.get(Role::Judge),
+        control.pins.get(Role::Worker),
+        "the control arm must keep the judge on the worker's model — that is \
+         precisely what leaves the authored witness with no independent author"
+    );
+
+    let treatment = cfg_with_engine(
+        "openrouter",
+        r#"{ "default_model": "openrouter/z-ai/glm-5.1",
+             "pipeline_judge_model": "openrouter/deepseek/deepseek-v4-pro",
+             "allowed_models": ["openrouter/z-ai/glm-5.1",
+                                "openrouter/deepseek/deepseek-v4-pro"] }"#,
+    );
+    let treatment = resolve_engine_wiring(&treatment, &worker_ref, &configured);
+    let author = ModelRef::new("openrouter", "deepseek/deepseek-v4-pro");
+    assert_eq!(
+        treatment.pins.get(Role::Judge),
+        Some(&author),
+        "the witness arm must pin the judge to the second model"
+    );
+    assert_ne!(
+        treatment.pins.get(Role::Judge),
+        treatment.pins.get(Role::Worker),
+        "worker and judge must resolve to different models, or the witness \
+         tier stays off with a posture hash claiming it is on"
+    );
+}
+
 #[test]
 fn an_explicit_model_flag_leaves_triage_and_judge_pins_alone() {
     // `--model` says nothing about the triage/judge roles, so their own

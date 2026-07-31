@@ -9,7 +9,9 @@ parameters, and the host the trials actually ran on.
 
 The posture hash is read from the adapter's own `_benchmark_engine_posture`, not
 recomputed here, so a hand-written value cannot drift from what the agent
-actually sent.
+actually sent. The `assurance` block does the same for which verification tiers
+the run exercised — a scored run either runs a tier or declares it off here,
+never leaves it discoverable only by grepping trajectories (#1007).
 
 Usage::
 
@@ -17,6 +19,9 @@ Usage::
         --sut-commit <sha> --binary-sha256 <sha> --model <spec> \
         --dataset <name@sha256:...> --tasks 89 --attempts 1 \
         --concurrency 3 --budget-per-trial 0.60
+
+Add `--witness-author <provider/model>` for the witness-on arm; omit it for the
+control arm, whose posture hash and number stay exactly as published.
 """
 
 from __future__ import annotations
@@ -30,7 +35,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-SCHEMA = "stella-tb21-dev-baseline-manifest-v1"
+# v2 adds the `assurance` block (#1007). The bump is the point: a v1 manifest
+# has no tier declaration, so "which rungs of the ladder did this number come
+# from" is unanswerable for it — and that must stay visible rather than being
+# papered over by an optional field that is simply absent on older runs.
+SCHEMA = "stella-tb21-dev-baseline-manifest-v2"
 
 
 def _run(*command: str) -> str | None:
@@ -55,15 +64,39 @@ def _succeeds(*command: str) -> bool:
         return False
 
 
-def _posture(model: str) -> dict[str, Any]:
+def _posture(model: str, witness_author: str | None) -> dict[str, Any]:
     """Read the posture + its hash from the adapter itself."""
     try:
         from stella_harbor import _benchmark_engine_posture  # type: ignore[attr-defined]
     except ImportError as error:
         return {"error": f"adapter not importable: {error}"}
-    posture, normalized, digest = _benchmark_engine_posture(model)
+    posture, normalized, digest = _benchmark_engine_posture(model, witness_author=witness_author)
     return {
         "posture": posture,
+        "normalized_sha256": digest,
+        "normalized_bytes": len(normalized.encode()),
+    }
+
+
+def _assurance(model: str, witness_author: str | None) -> dict[str, Any]:
+    """Declare which verification tiers this run exercised.
+
+    A scored run must not silently disable a tier (#1007). Before this block the
+    authored witness was off on every trial and the only trace was a warning
+    line inside each trajectory, so a reader of the manifest had no way to know
+    the number came from a ladder with a rung missing. Read from the adapter for
+    the same reason the posture is: a hand-written declaration can drift from
+    what the agent actually ran.
+    """
+    try:
+        from stella_harbor import (  # type: ignore[attr-defined]
+            _benchmark_assurance_tiers,
+        )
+    except ImportError as error:
+        return {"error": f"adapter not importable: {error}"}
+    tiers, normalized, digest = _benchmark_assurance_tiers(model, witness_author=witness_author)
+    return {
+        "tiers": tiers,
         "normalized_sha256": digest,
         "normalized_bytes": len(normalized.encode()),
     }
@@ -98,10 +131,25 @@ def main() -> int:
     parser.add_argument("--attempts", type=int, required=True)
     parser.add_argument("--concurrency", type=int, required=True)
     parser.add_argument("--budget-per-trial", required=True)
+    parser.add_argument(
+        "--witness-author",
+        default=None,
+        help=(
+            "provider/model pinned as the witness/judge author (#1007). Omit for "
+            "the control arm, in which every role inherits one model and the "
+            "authored-witness tier is structurally off."
+        ),
+    )
     parser.add_argument("--prereg-url", default=None)
     parser.add_argument("--started-at", default=None)
     parser.add_argument("--finished-at", default=None)
     args = parser.parse_args()
+
+    # `--witness-author "$STELLA_WITNESS_AUTHOR_MODEL"` from finalize.sh passes an
+    # empty string on the control arm, and empty is not a model spec — without
+    # this the control run, the one that must keep working untouched, would be
+    # the only one that fails to produce a manifest.
+    witness_author = (args.witness_author or "").strip() or None
 
     job_dir = Path(args.job_dir)
     run_dir = Path(args.run_dir)
@@ -162,10 +210,12 @@ def main() -> int:
         },
         "engine": {
             "model": args.model,
+            "witness_author_model": witness_author,
             "budget_usd_per_trial": args.budget_per_trial,
             "reflection_disabled": True,
-            **_posture(args.model),
+            **_posture(args.model, witness_author),
         },
+        "assurance": _assurance(args.model, witness_author),
         "host": {
             "kernel": platform.platform(),
             "machine": platform.machine(),

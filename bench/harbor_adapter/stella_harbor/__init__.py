@@ -116,6 +116,15 @@ _ENGINE_CONFIG_ENV = "STELLA_ENGINE_CONFIG_JSON"
 _HANDOFF_MODE = "anonymous-fd"
 _ENGINE_POSTURE_VERSION = "stella-tb21-engine-posture-v1"
 
+# Host-side selector for the witness/judge author. Unset (the default) is the
+# control arm: one inherited model, authored witness structurally off. Set to a
+# second `provider/model` on the worker's provider and the same 89 tasks run the
+# treatment arm. Never forwarded into the container — the decision reaches
+# Stella only as `pipeline_judge_model` inside the hashed posture, so the arm a
+# trial ran cannot disagree with the arm its digest records (#1007).
+_WITNESS_AUTHOR_ENV = "STELLA_WITNESS_AUTHOR_MODEL"
+_ASSURANCE_TIERS_VERSION = "stella-tb21-assurance-tiers-v1"
+
 # Apply these *after* every ambient/Harbor-provided extra. A benchmark task is
 # untrusted input: it must not load a repository .env, opt itself into trusted
 # project settings/hooks, or route paid provider traffic through a task-chosen
@@ -165,6 +174,7 @@ _HOST_ONLY_STELLA_ENV = frozenset(
         "STELLA_SOURCE_COMMIT",
         "STELLA_MODEL",
         "STELLA_BASE_URL",
+        _WITNESS_AUTHOR_ENV,
     }
 )
 
@@ -307,26 +317,75 @@ def _apply_launcher_env_controls(env: dict[str, str]) -> dict[str, str]:
     return controlled
 
 
-def _benchmark_engine_posture(model: str) -> tuple[dict[str, Any], str, str]:
-    """Return the one canonical Terminal-Bench engine posture and its hash.
+def _validated_witness_author(model: str, witness_author: str) -> str:
+    """Return the pinned witness/judge author, or refuse it with the reason.
 
-    Model routing is intentionally expressed only by ``default_model``. Every
-    role inherits it; no role has a provider/model override. Request posture is
-    explicit per role so ordinary auto-mode defaults cannot drift across Stella
-    versions. The normalized JSON is the exact value delivered through the
-    trusted launcher override consumed by the CLI.
+    Three fail-closed conditions, because a treatment arm that quietly
+    degrades into the control arm is precisely the failure #1007 is about:
+    the number would be produced by a posture the manifest does not describe.
 
-    Known consequence, stated here because it is a property of this posture and
-    not of the runs it produces: **every Terminal-Bench number is measured with
-    the authored witness off.** Stella will not let the worker write its own
-    verifying test, so it requires a witness author resolving to a different
-    model than the worker; one model for every role means that author never
-    exists, and the run reports ``WitnessUnavailable`` and proceeds unproven
-    (#973). That is a deliberate trade — a single inherited model is what makes
-    the posture one hash, and the hash is what the pre-registration pins — but a
-    reader comparing these numbers to a run with a role split is not comparing
-    like with like. Splitting the roles is a measurement decision that changes
-    ``digest``, and therefore the registered SUT; it is not a bug fix.
+    The provider check is the non-obvious one. A trial receives exactly one
+    provider credential, over the anonymous FD (`_selected_provider_credential`
+    resolves it from the *worker* model's provider), so an author on a second
+    provider has nothing to authenticate with and would fail every call. Pin
+    both roles inside one provider — the protocol's roster is entirely
+    ``openrouter/…`` for this reason.
+    """
+    author = witness_author.strip()
+    if not author or "/" not in author:
+        raise ValueError(
+            "benchmark witness author must be a non-empty provider/model spec"
+        )
+    if author == model:
+        raise ValueError(
+            "benchmark witness author must differ from the worker model: Stella "
+            "requires an author independent of the worker, so pinning the "
+            "worker's own model leaves the witness tier off while changing the "
+            "posture hash — the worst of both arms"
+        )
+    worker_provider = model.split("/", 1)[0].strip().lower()
+    author_provider = author.split("/", 1)[0].strip().lower()
+    if worker_provider != author_provider:
+        raise ValueError(
+            "benchmark witness author must share the worker's provider "
+            f"(`{worker_provider}`): a trial carries exactly one provider "
+            f"credential over the anonymous FD, so an author on "
+            f"`{author_provider}` would authenticate against nothing"
+        )
+    return author
+
+
+def _benchmark_engine_posture(
+    model: str,
+    *,
+    witness_author: str | None = None,
+) -> tuple[dict[str, Any], str, str]:
+    """Return a canonical Terminal-Bench engine posture and its hash.
+
+    Request posture is explicit per role so ordinary auto-mode defaults cannot
+    drift across Stella versions. The normalized JSON is the exact value
+    delivered through the trusted launcher override consumed by the CLI.
+
+    Two arms, and which one a run used is a property of the hash rather than of
+    the logs (#1007):
+
+    * ``witness_author=None`` — the **control arm**. Model routing is expressed
+      only by ``default_model``; every role inherits it and no role has a
+      provider/model override. Stella will not let the worker write the test
+      that verifies it, so with one model for every role the independent author
+      never exists: the run reports ``WitnessUnavailable`` and proceeds unproven
+      (#973). Every Terminal-Bench number published before #1007 is this arm.
+    * ``witness_author="provider/slug"`` — the **treatment arm**. A second model
+      is pinned for the judge role via ``pipeline_judge_model``, which is what
+      the authored-witness tier resolves its author from, and ``allowed_models``
+      widens to name both. Still fully pinned, still one hash, still no
+      auto-selection — the reproducibility argument is untouched; the posture
+      simply now says which of two frozen configurations it is.
+
+    Both arms are frozen and disclosed. Choosing between them is a measurement
+    decision that changes ``digest``, and therefore the registered SUT; the
+    point of having both is that the choice is made in the manifest instead of
+    being discovered by grepping a trajectory for a warning line.
     """
     selected_model = model.strip()
     if not selected_model or "/" not in selected_model:
@@ -348,6 +407,14 @@ def _benchmark_engine_posture(model: str) -> tuple[dict[str, Any], str, str]:
             "triage": {"effort": "low", "reasoning": "off"},
         },
     }
+    if witness_author is not None:
+        author = _validated_witness_author(selected_model, witness_author)
+        # The flat root key, never `agents.judge.model`. Both resolve, but the
+        # flat key is what `settings_check` and `stella config` report as the
+        # judge's origin, so the disclosed posture and the engine's own account
+        # of its wiring name the same field.
+        posture["pipeline_judge_model"] = author
+        posture["allowed_models"] = [selected_model, author]
     normalized = json.dumps(
         posture,
         sort_keys=True,
@@ -356,6 +423,70 @@ def _benchmark_engine_posture(model: str) -> tuple[dict[str, Any], str, str]:
     )
     digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
     return posture, normalized, digest
+
+
+def _benchmark_assurance_tiers(
+    model: str,
+    *,
+    witness_author: str | None = None,
+) -> tuple[dict[str, Any], str, str]:
+    """Return which verification tiers this posture exercises, and its hash.
+
+    A sibling of the posture rather than a field inside it, and that is forced
+    rather than stylistic: the trusted launcher seam
+    (``config::trusted_engine_config_shape_is_strict``) fails **closed** on any
+    root key outside ``ENGINE_ROOT_FIELDS``, so a ``tiers`` key inside the
+    posture would refuse the run outright. Hashing it separately keeps the
+    declaration frozen and disclosed on the same terms as the posture.
+
+    This exists because "the witness did not run" used to be a log line inside
+    the event stream, discoverable only by reading trajectories — which is what
+    turns a stated caveat into a misread number. A scored run now either
+    exercises a tier or declares it off in metadata a manifest can read (#1007).
+    """
+    selected_model = model.strip()
+    if not selected_model or "/" not in selected_model:
+        raise ValueError("benchmark model must be a non-empty provider/model spec")
+    author = (
+        _validated_witness_author(selected_model, witness_author)
+        if witness_author is not None
+        else None
+    )
+    declaration: dict[str, Any] = {
+        "version": _ASSURANCE_TIERS_VERSION,
+        "arm": "witness-on" if author else "witness-off",
+        "worker_model": selected_model,
+        "witness_author_model": author,
+        "tiers": {
+            # Flip oracle and recorded test results need no second model, so
+            # this rung is on in both arms.
+            "deterministic_verify": "on",
+            "authored_witness": "on" if author else "off",
+            # The judge rung runs either way; in the control arm it resolves to
+            # the worker's own model, which is a materially weaker claim and is
+            # named as such rather than reported as a plain "on".
+            "model_judge": (
+                "on-independent-of-worker" if author else "on-same-model-as-worker"
+            ),
+        },
+        "authored_witness_off_reason": (
+            None
+            if author
+            else (
+                "no author independent of the worker: every role inherits "
+                "default_model, so the witness tier cannot be authored on any "
+                "task in this run"
+            )
+        ),
+    }
+    normalized = json.dumps(
+        declaration,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return declaration, normalized, digest
 
 
 def _compose_base_argv(environment: BaseEnvironment) -> list[str]:
@@ -540,6 +671,8 @@ async def _secure_exec_with_credential_fd(
     command: list[str],
     env: dict[str, str],
     credential: str,
+    witness_author: str | None = None,
+    expected_posture_json: str | None = None,
 ) -> ExecResult:
     """Execute in Harbor Docker with the credential only on anonymous stdin.
 
@@ -567,7 +700,21 @@ async def _secure_exec_with_credential_fd(
         command_model = command[command.index("--model") + 1]
     except (ValueError, IndexError) as exc:
         raise RuntimeError("secure benchmark runner requires a pinned --model") from exc
-    _, normalized_posture, _ = _benchmark_engine_posture(command_model)
+    # Recomputed here from the canonical builder rather than trusted from the
+    # caller, so no future caller can append an override between collection and
+    # the process boundary. `witness_author` must ride along: recomputing
+    # without it would rebuild the *control* posture and ship it to a trial
+    # whose metadata records the treatment arm — a silently disabled tier,
+    # which is the whole of #1007. The equality check makes that divergence a
+    # refused run instead of an unlabelled one.
+    _, normalized_posture, _ = _benchmark_engine_posture(
+        command_model, witness_author=witness_author
+    )
+    if expected_posture_json is not None and normalized_posture != expected_posture_json:
+        raise RuntimeError(
+            "benchmark engine posture recomputed at the process boundary does "
+            "not match the posture recorded for this trial"
+        )
     env[_ENGINE_CONFIG_ENV] = normalized_posture
     test_hook = getattr(environment, "_stella_secure_exec_with_stdin", None)
     wire = bytearray(credential.encode("utf-8"))
@@ -975,10 +1122,41 @@ def _stream_to_envelope(
     usage_count = 0
     complete_count = 0
     error_count = 0
+    proof_kinds: dict[str, int] = {}
+    witness_unavailable_reasons: list[str] = []
+    witness_warranted = 0
+    assurance_witness_planned: bool | None = None
 
     for event in events:
         event_type = event.get("type")
-        if event_type == "step_usage":
+        if event_type == "proof":
+            # `{"type":"proof","step":{"kind":…}}` — the verification ladder's
+            # own account of itself (`stella_protocol::ProofStep`). Folded here
+            # so a trial reports whether the authored witness ran as a field,
+            # instead of leaving an analysis to grep trajectories for the
+            # warning line that says it did not (#1007).
+            step = event.get("step")
+            if isinstance(step, dict):
+                kind = step.get("kind")
+                if isinstance(kind, str) and kind:
+                    proof_kinds[kind] = proof_kinds.get(kind, 0) + 1
+                if kind == "witness_unavailable":
+                    reason_text = step.get("reason")
+                    if (
+                        isinstance(reason_text, str)
+                        and reason_text
+                        and reason_text not in witness_unavailable_reasons
+                        and len(witness_unavailable_reasons) < 8
+                    ):
+                        witness_unavailable_reasons.append(reason_text)
+                elif kind == "warrant":
+                    if step.get("required") is True:
+                        witness_warranted += 1
+                elif kind == "assurance":
+                    planned = step.get("witness")
+                    if isinstance(planned, bool):
+                        assurance_witness_planned = planned
+        elif event_type == "step_usage":
             usage_count += 1
             model = event.get("model")
             if isinstance(model, str) and model:
@@ -1035,6 +1213,23 @@ def _stream_to_envelope(
     if last_error is not None and isinstance(last_error.get("message"), str):
         reason = last_error["message"]
 
+    # Tri-state on purpose. `False` means the ladder said it could not author a
+    # witness; `None` means the stream never reached the question at all (an
+    # interrupted trial, or a task where triage waived assurance) — collapsing
+    # those two into one boolean is how "not measured" starts reading as
+    # "measured and absent".
+    witness_authored_count = proof_kinds.get("witness_authored", 0)
+    witness_unavailable_count = proof_kinds.get("witness_unavailable", 0)
+    if witness_authored_count:
+        witness_authored: bool | None = True
+        witness_authored_state = "authored"
+    elif witness_unavailable_count:
+        witness_authored = False
+        witness_authored_state = "unavailable"
+    else:
+        witness_authored = None
+        witness_authored_state = "not_reported"
+
     return {
         "status": status,
         "text": last_text,
@@ -1053,6 +1248,14 @@ def _stream_to_envelope(
             "complete_event_count": complete_count,
             "error_event_count": error_count,
             "cost_source": cost_source,
+            "proof_step_counts": proof_kinds,
+            "witness_authored": witness_authored,
+            "witness_authored_state": witness_authored_state,
+            "witness_authored_count": witness_authored_count,
+            "witness_unavailable_count": witness_unavailable_count,
+            "witness_unavailable_reasons": witness_unavailable_reasons,
+            "witness_warranted_count": witness_warranted,
+            "assurance_witness_planned": assurance_witness_planned,
         },
     }
 
@@ -1086,6 +1289,10 @@ class StellaAgent(BaseInstalledAgent):
     _engine_posture: dict[str, Any]
     _engine_posture_json: str
     _engine_posture_sha256: str
+    _witness_author_model_value: str | None
+    _assurance_tiers: dict[str, Any]
+    _assurance_tiers_json: str
+    _assurance_tiers_sha256: str
 
     @staticmethod
     def name() -> str:
@@ -1252,11 +1459,18 @@ class StellaAgent(BaseInstalledAgent):
         self._budget_usd = (
             self._configured_value("STELLA_BUDGET", _DEFAULT_BUDGET) or _DEFAULT_BUDGET
         )
+        witness_author = self._witness_author_model()
+        self._witness_author_model_value = witness_author
         (
             self._engine_posture,
             self._engine_posture_json,
             self._engine_posture_sha256,
-        ) = _benchmark_engine_posture(configured_model)
+        ) = _benchmark_engine_posture(configured_model, witness_author=witness_author)
+        (
+            self._assurance_tiers,
+            self._assurance_tiers_json,
+            self._assurance_tiers_sha256,
+        ) = _benchmark_assurance_tiers(configured_model, witness_author=witness_author)
         # Highest precedence, after ambient and all Harbor extra env. A task
         # cannot replace this with its own routing or request-effort config.
         env[_ENGINE_CONFIG_ENV] = self._engine_posture_json
@@ -1292,6 +1506,8 @@ class StellaAgent(BaseInstalledAgent):
             command=command,
             env=env,
             credential=credential,
+            witness_author=witness_author,
+            expected_posture_json=self._engine_posture_json,
         )
 
         stdout = getattr(result, "stdout", None)
@@ -1344,6 +1560,20 @@ class StellaAgent(BaseInstalledAgent):
             or self._configured_value("STELLA_MODEL")
             or _DEFAULT_MODEL
         )
+
+    def _witness_author_model(self) -> str | None:
+        """Return the pinned witness/judge author, or ``None`` for the control arm.
+
+        Unset defaults to the control arm, which keeps every published number
+        and every registered posture hash exactly as it was — the treatment arm
+        has to be asked for, so this can never change a run's meaning by
+        arriving in the tree.
+        """
+        value = self._configured_value(_WITNESS_AUTHOR_ENV)
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
 
     def _effective_base_url(self, model: str) -> str | None:
         """Resolve and validate the authoritative provider endpoint."""
@@ -1619,6 +1849,34 @@ class StellaAgent(BaseInstalledAgent):
         engine_posture = getattr(self, "_engine_posture", None)
         engine_posture_json = getattr(self, "_engine_posture_json", None)
         engine_posture_sha256 = getattr(self, "_engine_posture_sha256", None)
+        witness_author_model = getattr(self, "_witness_author_model_value", None)
+        assurance_tiers = getattr(self, "_assurance_tiers", None)
+        assurance_tiers_json = getattr(self, "_assurance_tiers_json", None)
+        assurance_tiers_sha256 = getattr(self, "_assurance_tiers_sha256", None)
+        # An outer timeout can reach this hook before run() built the posture.
+        # Reconstruct the declaration from the same inputs rather than leaving
+        # the arm unstated on exactly the trials most likely to be re-read.
+        if assurance_tiers is None:
+            try:
+                (
+                    assurance_tiers,
+                    assurance_tiers_json,
+                    assurance_tiers_sha256,
+                ) = _benchmark_assurance_tiers(
+                    self._effective_model(),
+                    witness_author=self._witness_author_model(),
+                )
+            except (ValueError, RuntimeError):
+                assurance_tiers = None
+        assurance_arm = (
+            assurance_tiers.get("arm") if isinstance(assurance_tiers, dict) else None
+        )
+        stream_view = envelope.get("_stella_stream") if envelope is not None else None
+        witness_authored_state = (
+            stream_view.get("witness_authored_state")
+            if isinstance(stream_view, dict)
+            else None
+        ) or "not_reported"
 
         extra: dict[str, Any] = {
             "stella_status": metrics.get("status"),
@@ -1661,6 +1919,17 @@ class StellaAgent(BaseInstalledAgent):
             "stella_engine_posture": engine_posture,
             "stella_engine_posture_json": engine_posture_json,
             "stella_engine_posture_sha256": engine_posture_sha256,
+            # Which tiers this posture *declares*, and what the run's own proof
+            # stream *observed*. Both first-class, so an analysis reports
+            # `witness_authored: false` from metadata rather than inferring it
+            # from a warning line in a trajectory (#1007).
+            "stella_assurance_tiers_version": _ASSURANCE_TIERS_VERSION,
+            "stella_assurance_arm": assurance_arm,
+            "stella_assurance_tiers": assurance_tiers,
+            "stella_assurance_tiers_json": assurance_tiers_json,
+            "stella_assurance_tiers_sha256": assurance_tiers_sha256,
+            "stella_witness_author_model": witness_author_model,
+            "stella_witness_authored_state": witness_authored_state,
         }
         if envelope is not None:
             extra["stella_accounting"] = envelope_accounting(envelope)
@@ -1713,6 +1982,13 @@ class StellaAgent(BaseInstalledAgent):
                 engine_posture=engine_posture,
                 engine_posture_json=engine_posture_json,
                 engine_posture_sha256=engine_posture_sha256,
+                assurance_tiers_version=_ASSURANCE_TIERS_VERSION,
+                assurance_arm=assurance_arm,
+                assurance_tiers=assurance_tiers,
+                assurance_tiers_json=assurance_tiers_json,
+                assurance_tiers_sha256=assurance_tiers_sha256,
+                witness_author_model=witness_author_model,
+                witness_authored_state=witness_authored_state,
             )
             self._write_log(
                 _TRAJECTORY_NAME,
