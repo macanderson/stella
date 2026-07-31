@@ -1646,12 +1646,19 @@ impl<'a> Pipeline<'a> {
             && let Some(cmd) = self.effective_test_command(None)
         {
             let pre = surface.tests.run_test(cmd.invocation).await;
-            oracle.observe(cmd.command, pre.passed());
-            self.emit_proof(ProofStep::Oracle {
-                command: cmd.command.to_string(),
-                passed: pre.passed(),
-                tree: ProofTree::Baseline,
-            });
+            // #860: only a completed run is an oracle observation. A baseline
+            // that timed out or never spawned observed no assertion, so it
+            // must not lock the oracle's `Failing` precondition — that is how
+            // infra noise plus a merely-faster candidate used to read as a
+            // verified fail→pass flip.
+            if let Some(passed) = pre.assertion_result() {
+                oracle.observe(cmd.command, passed);
+                self.emit_proof(ProofStep::Oracle {
+                    command: cmd.command.to_string(),
+                    passed,
+                    tree: ProofTree::Baseline,
+                });
+            }
         }
 
         // Snapshot untracked files (with content fingerprints) BEFORE
@@ -1839,7 +1846,7 @@ impl<'a> Pipeline<'a> {
                     format!("candidate could not be sealed for verification: {error}"),
                 );
             }
-            let (touched_tests_passed, test_tail) = self
+            let (touched_tests_passed, test_tail, test_infra) = self
                 .observe_touched_tests(surface, effective_cmd, &mut state.oracle)
                 .await;
             // Tamper exclusion is an authority boundary, not evidence for a
@@ -2097,7 +2104,7 @@ impl<'a> Pipeline<'a> {
                     }
                     // Inconclusive — escalate to the model judge (judge ≠
                     // worker; a judge-call failure falls back to a heuristic).
-                    let evidence_summary = format!(
+                    let mut evidence_summary = format!(
                         "flip_achieved={}; touched_tests={:?}; diff_lines={} (budget {}); \
                          file_change_events={}",
                         inputs.flip_achieved,
@@ -2106,6 +2113,13 @@ impl<'a> Pipeline<'a> {
                         self.config.diff_budget_lines,
                         state.file_changes,
                     );
+                    if let Some(label) = test_infra {
+                        // #860: the run ended without observing an assertion.
+                        // Named so the judge reads "the suite timed out", not
+                        // "the suite failed".
+                        evidence_summary
+                            .push_str(&format!("; test_run={label} (no assertion observed)"));
+                    }
                     let verdict = match self
                         .judge(
                             goal,
@@ -2160,28 +2174,41 @@ impl<'a> Pipeline<'a> {
     }
 
     /// Post-execute test observation for the flip oracle + the touched-tests
-    /// signal: `(Some(passed), stderr tail)` when a test command is available
-    /// (configured or witness-authored), `(None, "")` when there is nothing
-    /// to run.
+    /// signal: `(Some(passed), stderr tail, None)` when a test command ran to
+    /// completion, `(None, "", None)` when there is nothing to run, and
+    /// `(None, tail, Some(label))` when the run was infra noise (#860) — a
+    /// timeout or spawn failure observed no assertion, so it is inconclusive
+    /// (judge), not a deterministic red (revise). The label reaches the judge
+    /// evidence so "the suite timed out" is never read as "the suite failed".
     async fn observe_touched_tests(
         &self,
         surface: CandidateSurface<'_>,
         cmd: Option<EffectiveTestCommand<'_>>,
         oracle: &mut FlipOracle,
-    ) -> (Option<bool>, String) {
+    ) -> (Option<bool>, String, Option<&'static str>) {
         match cmd {
             Some(cmd) => {
                 let post = surface.tests.run_test(cmd.invocation).await;
-                let passed = post.passed();
-                oracle.observe(cmd.command, passed);
-                self.emit_proof(ProofStep::Oracle {
-                    command: cmd.command.to_string(),
-                    passed,
-                    tree: ProofTree::Candidate,
-                });
-                (Some(passed), post.stderr_tail)
+                match post.assertion_result() {
+                    Some(passed) => {
+                        oracle.observe(cmd.command, passed);
+                        self.emit_proof(ProofStep::Oracle {
+                            command: cmd.command.to_string(),
+                            passed,
+                            tree: ProofTree::Candidate,
+                        });
+                        (Some(passed), post.stderr_tail, None)
+                    }
+                    // No proof step: an infra run is not an oracle
+                    // observation, and recording one either way would put a
+                    // fabricated pass/fail into the proof trace.
+                    None => {
+                        let label = post.infra_label();
+                        (None, post.stderr_tail, label)
+                    }
+                }
             }
-            None => (None, String::new()),
+            None => (None, String::new(), None),
         }
     }
 

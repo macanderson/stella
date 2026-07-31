@@ -7,6 +7,7 @@ mod management_accounting;
 mod telemetry;
 
 use super::*;
+use crate::CmdKind;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -275,8 +276,17 @@ impl ProviderResolver for OneProvider<'_> {
 /// reports the scripted untracked set; a `--no-index --numstat` reports
 /// that file's scripted added-line count; anything else pops the next
 /// queued test result (`true` = pass) or defaults to pass.
+/// One scripted `run_test` result: a real pass/fail, or an infra outcome
+/// (#860) so tests can model a timed-out runner without faking exit codes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TestScript {
+    Pass,
+    Fail,
+    TimeOut,
+}
+
 struct ScriptedRunner {
-    test_results: std::sync::Mutex<VecDeque<bool>>,
+    test_results: std::sync::Mutex<VecDeque<TestScript>>,
     diff: String,
     /// Untracked files this workspace reports, as `(path, added_lines)`.
     untracked: Vec<(String, u32)>,
@@ -293,6 +303,21 @@ struct ScriptedRunner {
 }
 impl ScriptedRunner {
     fn new(test_results: Vec<bool>, diff: &str) -> Self {
+        Self::scripted(
+            test_results
+                .into_iter()
+                .map(|passed| {
+                    if passed {
+                        TestScript::Pass
+                    } else {
+                        TestScript::Fail
+                    }
+                })
+                .collect(),
+            diff,
+        )
+    }
+    fn scripted(test_results: Vec<TestScript>, diff: &str) -> Self {
         Self {
             test_results: std::sync::Mutex::new(test_results.into_iter().collect()),
             diff: diff.to_string(),
@@ -343,6 +368,7 @@ impl DiagnosticRunner for ScriptedRunner {
                 exit_code: if numstat.is_empty() { 0 } else { 1 },
                 stdout_tail: numstat,
                 stderr_tail: String::new(),
+                kind: CmdKind::Completed,
             };
         }
         if matches!(invocation, DiagnosticInvocation::GitDiff) {
@@ -350,12 +376,14 @@ impl DiagnosticRunner for ScriptedRunner {
                 exit_code: self.diff_exit_code,
                 stdout_tail: self.diff.clone(),
                 stderr_tail: self.diff_stderr.clone(),
+                kind: CmdKind::Completed,
             };
         }
         CmdOutcome {
             exit_code: 0,
             stdout_tail: String::new(),
             stderr_tail: String::new(),
+            kind: CmdKind::Completed,
         }
     }
 }
@@ -363,19 +391,30 @@ impl DiagnosticRunner for ScriptedRunner {
 #[async_trait]
 impl TestRunner for ScriptedRunner {
     async fn run_test(&self, _invocation: &TestInvocation) -> CmdOutcome {
-        let passed = self
+        let script = self
             .test_results
             .lock()
             .unwrap()
             .pop_front()
-            .unwrap_or(true);
-        CmdOutcome {
-            exit_code: if passed { 0 } else { 1 },
-            stdout_tail: String::new(),
-            stderr_tail: if passed {
-                String::new()
-            } else {
-                self.failure_tail.clone()
+            .unwrap_or(TestScript::Pass);
+        match script {
+            TestScript::Pass => CmdOutcome {
+                exit_code: 0,
+                stdout_tail: String::new(),
+                stderr_tail: String::new(),
+                kind: CmdKind::Completed,
+            },
+            TestScript::Fail => CmdOutcome {
+                exit_code: 1,
+                stdout_tail: String::new(),
+                stderr_tail: self.failure_tail.clone(),
+                kind: CmdKind::Completed,
+            },
+            TestScript::TimeOut => CmdOutcome {
+                exit_code: -1,
+                stdout_tail: String::new(),
+                stderr_tail: "command timed out after 300s".to_string(),
+                kind: CmdKind::TimedOut,
             },
         }
     }
@@ -800,6 +839,162 @@ async fn single_task_with_a_flip_submits_fast_and_skips_the_judge() {
             evidence
         } if evidence.deterministic
     )));
+}
+
+/// #860 acceptance: a baseline that TIMES OUT observed no failing assertion,
+/// so a candidate whose suite then passes has no fail→pass flip — the run
+/// must escalate to the model judge, never credit `DeterministicPass`. Before
+/// the typed outcome, the timeout's non-zero exit locked the oracle onto a
+/// phantom `Failing` and the faster candidate "flipped" it.
+#[tokio::test]
+async fn a_timed_out_baseline_never_manufactures_a_flip() {
+    // triage → "single"; worker → final text; judge → verdict (the ladder
+    // escalates because no flip evidence exists).
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),
+        text_result("PASS — change looks consistent with the goal"),
+    ]);
+    let resolver = OneProvider(&provider);
+    let runner = ScriptedRunner::scripted(
+        vec![TestScript::TimeOut, TestScript::Pass],
+        "@@ -1 +1 @@\n-old\n+new",
+    );
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let config = PipelineConfig {
+        test_command: Some("cargo test -p x".into()),
+        diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
+        ..PipelineConfig::default()
+    };
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        config,
+    );
+
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let outcome = pipeline
+        .run("Fix the failing test", &mut messages, &mut budget)
+        .await
+        .expect("run succeeds");
+
+    let verdict = outcome.verdict.expect("a verdict was produced");
+    assert!(
+        !verdict.deterministic,
+        "a timed-out baseline plus a passing candidate is NOT a deterministic flip"
+    );
+    let events = drain(&mut rx);
+    assert!(
+        stages(&events).contains(&StageKind::Judge),
+        "no flip evidence exists, so the ladder must escalate to the judge"
+    );
+}
+
+/// #860 acceptance, candidate side: a suite that times out AFTER the change
+/// is inconclusive (judge), not a deterministic red (revise). Spending a
+/// revision turn "fixing" a timeout the change may not have caused burned a
+/// full worker call on infra noise; the judge sees `test_run=timed_out` and
+/// reasons about it instead.
+#[tokio::test]
+async fn a_timed_out_candidate_suite_escalates_instead_of_revising() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),
+        text_result("PASS — the timeout is pre-existing infra noise, the diff is sound"),
+    ]);
+    let resolver = OneProvider(&provider);
+    // Baseline genuinely fails (oracle arms), candidate run times out.
+    let runner = ScriptedRunner::scripted(
+        vec![TestScript::Fail, TestScript::TimeOut],
+        "@@ -1 +1 @@\n-old\n+new",
+    );
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let config = PipelineConfig {
+        test_command: Some("cargo test -p x".into()),
+        diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
+        ..PipelineConfig::default()
+    };
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        config,
+    );
+
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let outcome = pipeline
+        .run("Fix the failing test", &mut messages, &mut budget)
+        .await
+        .expect("run succeeds");
+
+    let events = drain(&mut rx);
+    assert!(
+        stages(&events).contains(&StageKind::Judge),
+        "an unobservable suite is inconclusive — judge, not revise"
+    );
+    // No deterministic red verdict may be emitted for infra noise: every
+    // deterministic JudgeVerdict{passed:false} is the revise path's badge.
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            AgentEvent::JudgeVerdict {
+                passed: false,
+                evidence
+            } if evidence.deterministic
+        )),
+        "a timeout must not be reported as a deterministic test failure"
+    );
+    let verdict = outcome.verdict.expect("a verdict was produced");
+    assert!(!verdict.deterministic);
 }
 
 /// A context-recall port that never answers — a wedged embedding call or an

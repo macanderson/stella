@@ -7,8 +7,8 @@
 
 use super::*;
 use stella_pipeline::{
-    ArtifactIdentity, ArtifactKind, DiagnosticInvocation, DiagnosticRunner, TestInvocation,
-    TestRunner,
+    ArtifactIdentity, ArtifactKind, CmdKind, DiagnosticInvocation, DiagnosticRunner,
+    TestInvocation, TestRunner,
 };
 
 /// Apply the cross-crate policy shared by every model/repository-controlled
@@ -521,6 +521,7 @@ async fn run_command(mut cmd: tokio::process::Command) -> CmdOutcome {
                 exit_code: -1,
                 stdout_tail: String::new(),
                 stderr_tail: format!("failed to spawn: {e}"),
+                kind: CmdKind::Infra,
             };
         }
     };
@@ -550,6 +551,7 @@ async fn run_command(mut cmd: tokio::process::Command) -> CmdOutcome {
                 exit_code: -1,
                 stdout_tail: String::new(),
                 stderr_tail: format!("command failed: {e}"),
+                kind: CmdKind::Infra,
             };
         }
         Err(_) => {
@@ -559,6 +561,7 @@ async fn run_command(mut cmd: tokio::process::Command) -> CmdOutcome {
                 exit_code: -1,
                 stdout_tail: String::new(),
                 stderr_tail: format!("command timed out after {}s", timeout.as_secs()),
+                kind: CmdKind::TimedOut,
             };
         }
     };
@@ -569,6 +572,7 @@ async fn run_command(mut cmd: tokio::process::Command) -> CmdOutcome {
         exit_code: output.status.code().unwrap_or(-1),
         stdout_tail: truncate_tail(&stdout, 100_000),
         stderr_tail: truncate_tail(&stderr, 20_000),
+        kind: CmdKind::Completed,
     }
 }
 

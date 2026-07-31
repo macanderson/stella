@@ -111,7 +111,7 @@ pub use pipeline::{
 };
 pub use ports::{
     AdoptedChange, AlwaysAbortGate, ApprovalGate, ArtifactIdentity, ArtifactKind,
-    CandidateWorkspace, CandidateWorkspacePort, CmdOutcome, ContextRecallPort,
+    CandidateWorkspace, CandidateWorkspacePort, CmdKind, CmdOutcome, ContextRecallPort,
     DiagnosticInvocation, DiagnosticRunner, FileTouchPort, McpPrefetchPort, NoContextRecall,
     NoFileTouches, NoRepoStatus, NoRepoStructure, PipelinePorts, ProviderResolver, Recall,
     RecalledFrame, RepoStatusPort, RepoStructurePort, ScopeDecision, StdioApprovalGate,

@@ -323,6 +323,28 @@ impl ArtifactIdentity {
     }
 }
 
+/// How one local process run ended, as only the runner can know it (#860).
+///
+/// The runner is the sole party that can tell "the process ran and exited
+/// non-zero" from "I killed it at my deadline" or "it never started" — after
+/// the fact all three collapse into a non-zero `exit_code`. The distinction is
+/// load-bearing for verification: a timed-out baseline is not a failing
+/// assertion, and letting it lock the flip oracle onto a command that never
+/// really failed manufactures a fake fail→pass flip when the candidate merely
+/// runs faster.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CmdKind {
+    /// The process ran to completion; `exit_code` is its real exit status.
+    #[default]
+    Completed,
+    /// The runner killed the process at its own deadline. `exit_code` is
+    /// synthetic, and nothing about the command's assertions was observed.
+    TimedOut,
+    /// The process never produced a real exit status — it could not be
+    /// spawned (missing program/toolchain) or its wait failed.
+    Infra,
+}
+
 /// The outcome of running one local process through a pipeline runner. Output
 /// is pre-truncated by the runner (middle-out, L-S3) into head+tail tails —
 /// the pipeline never needs the full stream, only exit status and enough
@@ -331,12 +353,18 @@ impl ArtifactIdentity {
 pub struct CmdOutcome {
     /// Process exit code. `0` conventionally means success; any non-zero is
     /// a failure. A signal-killed process reports a conventional 128+n here
-    /// (the runner's responsibility, L-L1).
+    /// (the runner's responsibility, L-L1). Synthetic (typically `-1`) when
+    /// [`Self::kind`] is not [`CmdKind::Completed`].
     pub exit_code: i32,
     /// Truncated stdout tail (middle-out elision applied by the runner).
     pub stdout_tail: String,
     /// Truncated stderr tail.
     pub stderr_tail: String,
+    /// Whether the process completed, timed out, or never ran (#860). Only
+    /// the runner can classify this; everyone downstream must go through
+    /// [`Self::assertion_result`] rather than re-deriving pass/fail from the
+    /// exit code.
+    pub kind: CmdKind,
 }
 
 /// One test process invocation after the untrusted command text has crossed
@@ -351,11 +379,39 @@ pub struct TestInvocation {
 }
 
 impl CmdOutcome {
-    /// Whether the command succeeded (exit code 0). The single place the
-    /// pipeline decides pass/fail for a command — never string-sniffing the
-    /// output.
+    /// Whether the command succeeded (ran to completion with exit code 0).
+    /// The single place the pipeline decides pass/fail for a command — never
+    /// string-sniffing the output. A timed-out or unspawnable run never
+    /// passed, whatever its synthetic exit code says.
     pub fn passed(&self) -> bool {
-        self.exit_code == 0
+        self.kind == CmdKind::Completed && self.exit_code == 0
+    }
+
+    /// What this run says about the command's *assertions* (#860):
+    /// `Some(true)` = ran and passed, `Some(false)` = ran and genuinely
+    /// failed, `None` = infrastructure noise (timeout, missing toolchain) —
+    /// the assertions were never observed.
+    ///
+    /// This is the only reading the flip oracle may consume. Feeding it a raw
+    /// `!passed()` is exactly the bug this type exists to close: an infra
+    /// failure would satisfy the oracle's `Failing` precondition and a later
+    /// clean run would be credited as a verified fix.
+    pub fn assertion_result(&self) -> Option<bool> {
+        match self.kind {
+            CmdKind::Completed => Some(self.exit_code == 0),
+            CmdKind::TimedOut | CmdKind::Infra => None,
+        }
+    }
+
+    /// A short label for evidence text when [`Self::assertion_result`] is
+    /// `None`, so a judge reads "the run timed out" instead of a bare
+    /// failure it would treat as an assertion.
+    pub fn infra_label(&self) -> Option<&'static str> {
+        match self.kind {
+            CmdKind::Completed => None,
+            CmdKind::TimedOut => Some("timed_out"),
+            CmdKind::Infra => Some("infra_failure"),
+        }
     }
 }
 
@@ -761,6 +817,7 @@ mod tests {
                 exit_code: 0,
                 stdout_tail: String::new(),
                 stderr_tail: String::new(),
+                kind: CmdKind::Completed,
             }
             .passed()
         );
@@ -770,11 +827,53 @@ mod tests {
                     exit_code: code,
                     stdout_tail: String::new(),
                     stderr_tail: String::new(),
+                    kind: CmdKind::Completed,
                 }
                 .passed(),
                 "exit {code} must not be treated as passing"
             );
         }
+    }
+
+    /// The #860 boundary: an infra outcome is neither a pass nor a failing
+    /// assertion, whatever exit code the runner synthesized — including the
+    /// pathological `exit_code: 0` shapes a buggy runner could produce.
+    #[test]
+    fn infra_outcomes_are_never_assertions() {
+        for kind in [CmdKind::TimedOut, CmdKind::Infra] {
+            for code in [0, 1, -1, 124] {
+                let out = CmdOutcome {
+                    exit_code: code,
+                    stdout_tail: String::new(),
+                    stderr_tail: String::new(),
+                    kind,
+                };
+                assert!(!out.passed(), "{kind:?}/exit {code} must not pass");
+                assert_eq!(
+                    out.assertion_result(),
+                    None,
+                    "{kind:?}/exit {code} observed no assertion either way"
+                );
+                assert!(out.infra_label().is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn completed_runs_report_their_assertion() {
+        let ok = CmdOutcome {
+            exit_code: 0,
+            stdout_tail: String::new(),
+            stderr_tail: String::new(),
+            kind: CmdKind::Completed,
+        };
+        assert_eq!(ok.assertion_result(), Some(true));
+        assert_eq!(ok.infra_label(), None);
+        let fail = CmdOutcome {
+            exit_code: 101,
+            ..ok.clone()
+        };
+        assert_eq!(fail.assertion_result(), Some(false));
     }
 
     #[tokio::test]
