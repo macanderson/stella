@@ -119,6 +119,35 @@ export FB_ALLOW_GPU="${FB_ALLOW_GPU:-0}"
 # this to attempt those tasks anyway; the exclusion list names every one.
 export FB_MEMORY_HEADROOM_MB="${FB_MEMORY_HEADROOM_MB:-2048}"
 
+# Assert `harbor run` still advertises every flag these scripts pass it.
+#
+# Running two Harbor major versions in one repo means the CLI is a moving
+# contract, and it has already moved once: 0.6.1's `--agent-import-path` was
+# folded into `--agent` by 0.20.0, which accepts either a built-in name or an
+# import path. The Terminal-Bench lane still passes the old spelling and is
+# still correct to, because it is pinned to 0.6.1. This lane would have died on
+# `No such option` at the first trial of the first run.
+#
+# Checking the help text costs one subprocess and turns that into one message.
+fb_assert_cli_flags() {
+  local help missing=""
+  # Scrub ANSI first. Harbor renders help through Rich, which styles each
+  # option individually and leaves escape sequences *inside* the flag names —
+  # a literal search for `--env` over the raw 42 KB finds nothing, so an
+  # unscrubbed version of this check reports every flag missing and fails
+  # closed on a perfectly good CLI.
+  help="$(harbor run --help 2>&1 | LC_ALL=C sed $'s/\033\[[0-9;?]*[a-zA-Z]//g')" ||
+    { echo "FATAL: \`harbor run --help\` failed"; return 1; }
+  for flag in --env --dataset --path --agent --model --job-name --jobs-dir \
+              --include-task-name --n-attempts --n-concurrent --max-retries; do
+    case "$help" in *"$flag"*) ;; *) missing="$missing $flag" ;; esac
+  done
+  test -z "$missing" || {
+    echo "FATAL: harbor $(harbor --version) does not advertise:$missing"
+    echo "       The CLI contract moved. Update this lane's scripts before running."
+    return 1; }
+}
+
 fb_preflight() {
   test -n "${OPENROUTER_API_KEY:-}" || { echo "FATAL: OPENROUTER_API_KEY unset"; return 1; }
   test -x "$STELLA_BINARY" || { echo "FATAL: no SUT binary at $STELLA_BINARY (run ../run/build_sut.sh)"; return 1; }
@@ -133,6 +162,7 @@ fb_preflight() {
     echo "FATAL: harbor $(harbor --version) != $FB_HARBOR_VERSION"
     echo "       0.6.1 silently ignores this dataset's verifier environment_mode."
     return 1; }
+  fb_assert_cli_flags || return 1
   docker info >/dev/null 2>&1 || { echo "FATAL: docker unreachable"; return 1; }
 }
 

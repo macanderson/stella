@@ -62,7 +62,7 @@ harbor run \
   --env docker \
   --dataset "$FB_DATASET" \
   $INCLUDES \
-  --agent-import-path stella_harbor:StellaAgent \
+  --agent stella_harbor:StellaAgent \
   --model "$TB_MODEL" \
   --job-name "$JOB" \
   --jobs-dir "$JOBS" \

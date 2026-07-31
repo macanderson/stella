@@ -36,7 +36,7 @@ echo "=== stage 1: synthetic fixture (gate: reward == 1.0)"
 harbor run \
   --env docker \
   --path "$TB_REPO/bench/readiness/synthetic-adapter-sentinel" \
-  --agent-import-path stella_harbor:StellaAgent \
+  --agent stella_harbor:StellaAgent \
   --model "$TB_MODEL" \
   --job-name "$JOB" \
   --jobs-dir "$JOBS" \
@@ -82,7 +82,7 @@ harbor run \
   --env docker \
   --dataset "$FB_DATASET" \
   --include-task-name "$FB_TASK_PREFIX/$TASK" \
-  --agent-import-path stella_harbor:StellaAgent \
+  --agent stella_harbor:StellaAgent \
   --model "$TB_MODEL" \
   --job-name "$JOB2" \
   --jobs-dir "$JOBS" \
