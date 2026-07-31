@@ -444,6 +444,14 @@ Every result exposes manifest-ready metadata keys:
   CLI-authoritative base URLs.
 - `stella_engine_posture_version`, `stella_engine_posture`,
   `stella_engine_posture_json`, and `stella_engine_posture_sha256`.
+- `stella_assurance_arm` (`witness-off` / `witness-on`),
+  `stella_assurance_tiers` + its version, JSON and SHA-256, and
+  `stella_witness_author_model` — **which verification tiers the posture
+  declares** (#1007). Paired with `stella_witness_authored_state`
+  (`authored` / `unavailable` / `not_reported`) and the `stella_stream`
+  witness counters, which report what this trial's proof stream actually
+  observed. Declared and observed are different claims, so both are recorded:
+  a run must never disable a tier discoverably only by grepping trajectories.
 
 ## Configuration
 
@@ -456,6 +464,7 @@ Every result exposes manifest-ready metadata keys:
 | `STELLA_SOURCE_COMMIT` | Development-only runs may omit it. The claim launcher requires an exact lowercase 40-hex value and verifies that it is the unique commit embedded by `STELLA_BUILD_GIT_SHA`. |
 | `STELLA_DISABLE_REFLECTION` | Disable post-turn reflection for ephemeral trials. The claim launcher requires exact `1`; development can explicitly set `0`/`false` to enable. |
 | `STELLA_CATALOG_AUTO_REFRESH` | Forced to `0` by the adapter so benchmark startup cannot make an unmetered model-list request or drift the frozen catalog. |
+| `STELLA_WITNESS_AUTHOR_MODEL` | Host-only. Unset = the control arm, in which every role inherits `--model` and the authored-witness tier cannot run. Set to a second `provider/model` **on the worker's provider** to run the witness arm; it reaches Stella only as `pipeline_judge_model` inside the hashed posture and is never forwarded into the container. An author equal to the worker, on another provider, or not a `provider/model` spec is refused fail-closed. |
 | `STELLA_ENGINE_CONFIG_JSON` | Internal trusted-launcher seam. The adapter discards ambient/extra values and authoritatively supplies the canonical posture above. |
 | selected provider key (`OPENROUTER_API_KEY`, etc.) | Consumed by the secure host launcher; one selected key is bundled, then delivered to Stella through inherited anonymous stdin. |
 

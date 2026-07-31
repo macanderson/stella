@@ -160,6 +160,32 @@ raw trials, and disclosed comparator below.
   so an unknown key would fail closed rather than run misconfigured. The
   canonical JSON and its SHA-256 are emitted in Harbor context and ATIF and
   claim-gated per trial.
+- Verification tiers exercised: a scored run **declares which rungs of Stella's
+  verification ladder it exercises**, in the manifest's `assurance` block and in
+  each trial's `stella_assurance_*` metadata (#1007). Two frozen arms, and the
+  arm is part of the posture hash, so it can never be a property of the logs
+  alone:
+  - **`witness-off` (control).** Routing is expressed only by `default_model`,
+    so every role inherits one model. Stella refuses to let a worker author the
+    test that verifies it and requires an author resolving to a different model;
+    with one model there is no such author, so the **authored-witness tier
+    cannot run on any task**, each trial emits `ProofStep::WitnessUnavailable`,
+    and the model-judge rung runs on the worker's own model. Every number
+    published before #1007 is this arm — a lower bound on the full ladder, not
+    a measurement of it.
+  - **`witness-on` (treatment).** A second model from the roster above is pinned
+    for the judge role via `pipeline_judge_model`, the field the witness author
+    resolves from, and `allowed_models` names both. Nothing is auto-selected and
+    the posture is still exactly one hash; the hash simply now distinguishes
+    which frozen configuration produced the number. It parses through the same
+    fail-closed seam
+    (`config::tests::the_benchmark_witness_arm_posture_survives_the_trusted_launcher_seam`).
+
+  The author must share the worker's provider — a trial carries exactly one
+  provider credential, resolved from the worker's provider — and must differ
+  from the worker model; both are refused fail-closed rather than degraded.
+  Comparing a `witness-off` number to a `witness-on` number is comparing two
+  different systems, which is the point of naming the arm in the hash.
 - Agent entry point: `/usr/local/bin/stella run` through
   `stella_harbor:StellaAgent`; the secure launcher requires exactly one
   explicit `--env docker` so its Docker receipt never relies on a Harbor

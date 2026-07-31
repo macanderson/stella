@@ -64,11 +64,18 @@ _FIXED_MANIFEST_PATH = "bench/evidence/stella-tb21-study-manifest.json"
 _FIXED_ANALYZER_PATH = "bench/terminal_bench_analysis/tb21_analysis.py"
 _FIXED_PUBLIC_TIMING_PATH = "bench/terminal_bench_analysis/github_public_timing.py"
 _FIXED_PROTOCOL_PATH = "bench/terminal-bench-2.1-protocol.md"
+# Every Python source in the adapter package, enumerated rather than globbed:
+# the public-tree check compares this exact set against what the published
+# commit contains, so an adapter file that exists locally but is missing here
+# would be executed without ever being byte-compared to the published source.
+# A new module must therefore be added here, and the fail-closed set mismatch
+# ("public adapter tree hash differs from runtime identity") is what enforces it.
 _FIXED_ADAPTER_SOURCE_PATHS = (
     "bench/harbor_adapter/stella_harbor/__init__.py",
     "bench/harbor_adapter/stella_harbor/atif.py",
     "bench/harbor_adapter/stella_harbor/credential_bundle.py",
     "bench/harbor_adapter/stella_harbor/host_attestation.py",
+    "bench/harbor_adapter/stella_harbor/posture.py",
     "bench/harbor_adapter/stella_harbor/secure_launcher.py",
 )
 _FIXED_READINESS_SOURCE_PATHS = (
@@ -3521,6 +3528,20 @@ def _binary_version_texts(path: Path) -> set[str]:
     return matches
 
 
+def _witness_author_env_name() -> str:
+    """The adapter's witness-author knob, read from the adapter itself.
+
+    Resolved lazily rather than imported at module scope: this module is loaded
+    as a submodule of the package that defines the name, and every other
+    adapter-owned value here (`_benchmark_engine_posture` and friends) is
+    likewise reached through the package object at call time. One source, so a
+    rename cannot leave this guard silently watching a variable nobody sets.
+    """
+    from . import _WITNESS_AUTHOR_ENV
+
+    return _WITNESS_AUTHOR_ENV
+
+
 def _validate_claim_environment(environ: Mapping[str, str]) -> tuple[Path, str]:
     """Validate immutable claim controls and the exact host Stella artifact."""
     if environ.get("STELLA_BUDGET") != _CANONICAL_BUDGET:
@@ -3531,6 +3552,23 @@ def _validate_claim_environment(environ: Mapping[str, str]) -> tuple[Path, str]:
         raise RuntimeError(
             "secure launcher requires exact STELLA_DISABLE_REFLECTION="
             f"{_CANONICAL_DISABLE_REFLECTION}"
+        )
+
+    # The audited claim is the control arm, and this launcher computes the
+    # postures it discloses by calling `_benchmark_engine_posture(model)` with
+    # no author. The adapter, meanwhile, reads this knob from the ambient
+    # environment. Left unguarded, setting it would have trials run the witness
+    # arm while every hash the launcher published described the control arm —
+    # a disclosed configuration that was never the one measured, which is the
+    # failure #1007 exists to close rather than reopen elsewhere.
+    witness_author_env = _witness_author_env_name()
+    if environ.get(witness_author_env):
+        raise RuntimeError(
+            "secure launcher refuses an ambient "
+            f"{witness_author_env}: the audited claim path pins the "
+            "witness-off arm, and this launcher's disclosed posture hashes are "
+            "computed for that arm. Run the witness arm through the "
+            "development-baseline path (bench/evidence/run) instead."
         )
 
     source_commit = environ.get("STELLA_SOURCE_COMMIT", "")
