@@ -44,7 +44,7 @@
 
 use std::future::Future;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -698,7 +698,41 @@ pub(crate) struct CompactionPass {
 // billed model call, one for speculative tool work that already ran real I/O.
 // Neither guard can prevent the loss; both make it visible.
 
-/// Bound one provider dispatch by [`EngineConfig::model_timeout`].
+/// Monotonic count of stream fragments a provider dispatch has delivered.
+///
+/// The one signal that separates "wedged" from "working": a provider still
+/// emitting fragments is answering, however slowly. Cloned into the gate's
+/// delta path and read by [`bounded_generation`]; `Relaxed` because the only
+/// question asked of it is "did this change since I last looked", which no
+/// ordering with other memory affects.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct StreamProgress(Arc<AtomicU64>);
+
+impl StreamProgress {
+    pub(crate) fn record(&self) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn count(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+/// Bound one provider dispatch by [`EngineConfig::model_timeout`], measured as
+/// **idle time** — time since the last streamed fragment — rather than total
+/// call duration.
+///
+/// The deadline exists to close an unbounded wait on a provider that is not
+/// answering. Total duration cannot express that: it also fires on a provider
+/// that is answering *the whole time*, just slowly. That distinction stopped
+/// being academic when reasoning models arrived — a single hard-task call at
+/// high effort can legitimately stream for well past ten minutes, and a
+/// wall-clock bound kills it mid-answer and reports it as a provider fault.
+/// Idle time asks the question the deadline actually means: has anything
+/// arrived recently?
+///
+/// A provider that streams nothing at all is bounded exactly as before, since
+/// with no fragments the idle clock and the wall clock are the same clock.
 ///
 /// The trip is [`ProviderError::Terminal`] on purpose. `Transport` is
 /// retryable, so classifying it that way would hand a provider that is simply
@@ -712,6 +746,7 @@ pub(crate) struct CompactionPass {
 /// attempt already spent.
 pub(crate) async fn bounded_generation<F>(
     limit: Option<Duration>,
+    progress: &StreamProgress,
     call: F,
 ) -> Result<CompletionResult, ProviderError>
 where
@@ -720,12 +755,26 @@ where
     let Some(limit) = limit else {
         return call.await;
     };
-    match tokio::time::timeout(limit, call).await {
-        Ok(result) => result,
-        Err(_) => Err(ProviderError::Terminal(format!(
-            "generation exceeded the {}s model deadline",
-            limit.as_secs()
-        ))),
+    let mut call = std::pin::pin!(call);
+    let mut seen = progress.count();
+    loop {
+        match tokio::time::timeout(limit, &mut call).await {
+            Ok(result) => return result,
+            Err(_) => {
+                // The window elapsed. Whether that is a fault depends on what
+                // arrived during it: any fragment at all means the provider is
+                // answering, so re-arm and keep waiting. Only a window that
+                // passed in complete silence is the wedge this bound is for.
+                let now = progress.count();
+                if now == seen {
+                    return Err(ProviderError::Terminal(format!(
+                        "generation stalled: no stream fragment for {}s (model deadline)",
+                        limit.as_secs()
+                    )));
+                }
+                seen = now;
+            }
+        }
     }
 }
 
