@@ -49,6 +49,84 @@ bench/evidence/run/primary.sh A "<job-name>-phaseA"
 bench/evidence/run/finalize.sh "<run-id>" "<job-name>"
 ```
 
+## The SUT binary must be the portable build
+
+`build_sut.sh` cross-compiles against `x86_64-unknown-linux-gnu.2.17` via
+`cargo-zigbuild`. That glibc floor is what lets one binary run in every task
+container. **Do not** substitute a plain host build:
+
+```bash
+# This is the mistake. It produces a host-glibc binary wearing the portable
+# build's filename, in the exact path env.sh exports as STELLA_BINARY.
+cargo build --release --locked -p stella-cli --bin stella
+cp target/release/stella target/x86_64-unknown-linux-gnu/release/stella
+```
+
+On 2026-07-31 a run provisioned that way lost five trials before the agent ever
+started. Every integrity check still passed, because they all answer a different
+question: the host/container SHA-256 comparison confirms *the file arrived
+intact* — and it did, it was the same file on both sides. Nothing answered *can
+this file run here*. The first thing to touch the dynamic loader was
+`stella --version`, inside the container, per trial:
+
+```
+/usr/local/bin/stella: /lib/x86_64-linux-gnu/libc.so.6:
+    version `GLIBC_2.34' not found (required by /usr/local/bin/stella)
+```
+
+Harbor recorded `NonZeroAgentExitCodeError` and scored each trial 0.0 —
+indistinguishable, under a fixed denominator, from Stella failing those tasks.
+
+`preflight` now refuses to start a run whose `STELLA_BINARY` requires a glibc
+symbol above the floor, on the host, before any container is created. The floor
+and the target triple are exported once from `env.sh` and consumed by both
+`build_sut.sh` and the check, so the build and the assertion cannot drift apart.
+To inspect a binary directly:
+
+```bash
+python3 bench/harbor_adapter/stella_harbor/portability.py "$STELLA_BINARY" --json
+```
+
+### Is a musl build needed as well? No.
+
+glibc 2.17 fixes containers with *older glibc*. It does nothing for a container
+with no glibc at all, so the question had to be settled against the dataset
+rather than assumed. Every base image across all 89 Terminal-Bench 2.1 tasks:
+
+| base image | tasks | libc |
+|---|---|---|
+| `python:3.13-slim-bookworm` | 41 | glibc |
+| `ubuntu:24.04` | 39 | glibc |
+| `python:3.11-slim` | 2 | glibc |
+| `python:3.10-slim-bookworm` | 2 | glibc |
+| `debian:bullseye-slim` | 2 | glibc **2.31 — the oldest in the set** |
+| `debian:13.0-slim` | 2 | glibc |
+| `python:3.11` | 1 | glibc |
+
+No task image is musl-based, so **no `x86_64-unknown-linux-musl` target is
+added**. An unused second build path is a liability: it doubles what a release
+has to prove and rots silently between the runs that would exercise it.
+
+The name `qemu-alpine-ssh` is the trap here — it is one of the two
+`debian:bullseye-slim` tasks. Alpine appears as an ISO the *agent* downloads and
+boots inside QEMU; it is the guest OS, never the container Stella runs in. The
+loader error confirms this independently: it names
+`/lib/x86_64-linux-gnu/libc.so.6`, a path that exists only where glibc does.
+
+Two independent methods agree on that container's glibc. Statically, its
+Dockerfile says bullseye (glibc 2.31). At runtime, the loader reported
+`GLIBC_2.32`, `2.33` and `2.34` missing while saying nothing about the
+`GLIBC_2.18` … `2.30` the same binary also required — so it provides at least
+2.30 and lacks 2.32, which is 2.31 exactly.
+
+This answer is a property of the pinned dataset, not of Docker. If `TB_DATASET`
+is ever repinned, re-run the tally over the new task set before trusting it:
+
+```bash
+rg --no-filename -N -i -m1 '^\s*FROM\s+(\S+)' -o -r '$1' \
+  "$DATASET_DIR"/*/*/environment/Dockerfile | sort | uniq -c | sort -rn
+```
+
 ## Why the pre-pull is not optional
 
 The first attempt at this run lost four trials in its opening minutes to

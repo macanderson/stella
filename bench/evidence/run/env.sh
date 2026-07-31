@@ -12,7 +12,16 @@ export VENV="$TB_REPO/bench/harbor_adapter/.venv"
 export PATH="$VENV/bin:$PATH"
 export PYTHONPATH="$TB_REPO/bench/harbor_adapter"
 
-export STELLA_BINARY="$TB_REPO/target/x86_64-unknown-linux-gnu/release/stella"
+# The SUT is cross-compiled against an old glibc so it runs in every task image,
+# including the two on `debian:bullseye-slim` (glibc 2.31). Both halves of that
+# contract are pinned here — `build_sut.sh` builds to this floor and `preflight`
+# refuses to start a run with a binary that exceeds it — because keeping them
+# apart is how a glibc-2.35 binary reached five trials on 2026-07-31 wearing the
+# portable build's filename. Constants, not overridable defaults: an operator
+# able to raise the floor to silence the error is the failure being prevented.
+export STELLA_TARGET_TRIPLE="x86_64-unknown-linux-gnu"
+export STELLA_GLIBC_FLOOR="2.17"
+export STELLA_BINARY="$TB_REPO/target/$STELLA_TARGET_TRIPLE/release/stella"
 export STELLA_BUDGET="${STELLA_BUDGET:-0.60}"
 export STELLA_DISABLE_REFLECTION=1
 
@@ -45,9 +54,34 @@ mkdir -p "$JOBS"
 
 [ -f "$TB_ROOT/sut_commit.txt" ] && export STELLA_SOURCE_COMMIT="$(cat "$TB_ROOT/sut_commit.txt")"
 
+# Assert the SUT binary can actually execute inside a task container.
+#
+# Every other integrity check answers "did the file arrive intact" — the
+# host/container SHA-256 comparison passes because it is the same file on both
+# sides. Nothing answered "can this file run here", and the first thing to touch
+# the dynamic linker was `stella --version`, inside the container, per trial,
+# after the run had already started. Harbor recorded the loader's rejection as
+# NonZeroAgentExitCodeError and the trial scored 0.0, indistinguishable from the
+# agent failing the task. This check runs on the host before any container is
+# created, so a substituted binary costs one message instead of a run.
+assert_portable_binary() {
+  local binary="${1:-$STELLA_BINARY}"
+  local checker="$TB_REPO/bench/harbor_adapter/stella_harbor/portability.py"
+  command -v python3 >/dev/null 2>&1 || {
+    echo "FATAL: python3 is required to verify SUT binary portability"; return 1; }
+  test -f "$checker" || { echo "FATAL: portability checker missing at $checker"; return 1; }
+  python3 "$checker" "$binary" --max-glibc "$STELLA_GLIBC_FLOOR" || {
+    echo "FATAL: $binary cannot execute in a Terminal-Bench task container."
+    echo "       Rebuild with bench/evidence/run/build_sut.sh — do not substitute"
+    echo "       a plain \`cargo build --release\` artifact into the target/ path."
+    return 1
+  }
+}
+
 preflight() {
   test -n "${OPENROUTER_API_KEY:-}" || { echo "FATAL: OPENROUTER_API_KEY unset"; return 1; }
   test -x "$STELLA_BINARY" || { echo "FATAL: no SUT binary at $STELLA_BINARY (run build_sut.sh)"; return 1; }
+  assert_portable_binary || return 1
   test "${#STELLA_SOURCE_COMMIT}" = 40 || { echo "FATAL: STELLA_SOURCE_COMMIT is not a full SHA"; return 1; }
   test "$(command -v harbor)" = "$VENV/bin/harbor" || { echo "FATAL: wrong harbor on PATH"; return 1; }
   test "$(harbor --version)" = "0.6.1" || { echo "FATAL: harbor $(harbor --version) != 0.6.1 (audited constant)"; return 1; }

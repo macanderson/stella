@@ -75,6 +75,7 @@ from .credential_bundle import (
     HOST_CREDENTIAL_SOURCE,
     read_bundle_from_environment,
 )
+from .portability import raise_for_loader_failure
 from .posture import (
     _ASSURANCE_TIERS_VERSION,
     _ENGINE_POSTURE_VERSION,
@@ -1122,16 +1123,24 @@ class StellaAgent(BaseInstalledAgent):
         self._harbor_sha256 = _harbor_content_sha256()
 
         await environment.upload_file(str(binary_path), _REMOTE_TMP)
-        install_result = await self.exec_as_root(
-            environment,
-            command=(
-                f"sha256sum {_REMOTE_TMP} && "
-                f"cp {_REMOTE_TMP} {_INSTALL_PATH} && "
-                f"chmod +x {_INSTALL_PATH} && "
-                f"{_INSTALL_PATH} --version"
-            ),
-            timeout_sec=120,
-        )
+        # `--version` is the first command that touches the container's dynamic
+        # loader, so a binary that cannot run here dies at this exec and Harbor
+        # attributes the raw nonzero exit to the agent. Classify the loader's
+        # own diagnostic before that happens.
+        try:
+            install_result = await self.exec_as_root(
+                environment,
+                command=(
+                    f"sha256sum {_REMOTE_TMP} && "
+                    f"cp {_REMOTE_TMP} {_INSTALL_PATH} && "
+                    f"chmod +x {_INSTALL_PATH} && "
+                    f"{_INSTALL_PATH} --version"
+                ),
+                timeout_sec=120,
+            )
+        except NonZeroAgentExitCodeError as error:
+            raise_for_loader_failure(error, binary_path)
+            raise
         installed_stdout = getattr(install_result, "stdout", None) or ""
         remote_digest_match = re.search(r"(?m)^([0-9a-f]{64})\s+", installed_stdout)
         remote_digest = remote_digest_match.group(1) if remote_digest_match else None

@@ -19,14 +19,18 @@ echo "SUT=$SUT ($(git describe --tags "$SUT" 2>/dev/null || echo no-tag))"
 
 ZC="$(mktemp -d "${TMPDIR:-/tmp}/stella-zig.XXXXXX")"
 mkdir -p "$ZC/global" "$ZC/local"
-rustup target add x86_64-unknown-linux-gnu >/dev/null
+rustup target add "$STELLA_TARGET_TRIPLE" >/dev/null
 RUSTC="$(rustup which rustc)" \
 ZIG_GLOBAL_CACHE_DIR="$ZC/global" ZIG_LOCAL_CACHE_DIR="$ZC/local" \
 STELLA_BUILD_GIT_SHA="$SUT" \
 "$(rustup which cargo)" zigbuild --release --locked \
-  --target x86_64-unknown-linux-gnu.2.17 --package stella-cli --bin stella
+  --target "$STELLA_TARGET_TRIPLE.$STELLA_GLIBC_FLOOR" --package stella-cli --bin stella
 
 test -x "$STELLA_BINARY"
+# Verify the artifact, not that the right command was typed. Building through
+# this script and building through anything else are then distinguishable by
+# inspecting the output, which is the only evidence a later run actually has.
+assert_portable_binary
 file "$STELLA_BINARY"
 shasum -a 256 "$STELLA_BINARY" | awk '{print $1}' > "$TB_ROOT/binary_sha256.txt"
 echo "binary_sha256=$(cat "$TB_ROOT/binary_sha256.txt")"
