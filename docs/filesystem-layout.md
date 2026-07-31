@@ -5,11 +5,11 @@ commit, delete, or share.
 
 Three tiers, in the order the config chain merges them:
 
-| Tier | Location | Committed? |
-|---|---|---|
-| **user** | `~/.stella/` (override: `$STELLA_HOME`) | no — your machine only |
-| **managed** | OS-wide, administrator-owned (override: `$STELLA_MANAGED_SETTINGS`) | no — deployed by an org |
-| **workspace** | `<repo>/.stella/` + `<repo>/stella.toml` | **partly — see below** |
+| Tier          | Location                                                            | Committed?              |
+| ------------- | ------------------------------------------------------------------- | ----------------------- |
+| **user**      | `~/.stella/` (override: `$STELLA_HOME`)                             | no — your machine only  |
+| **managed**   | OS-wide, administrator-owned (override: `$STELLA_MANAGED_SETTINGS`) | no — deployed by an org |
+| **workspace** | `<repo>/.stella/` + `<repo>/stella.toml`                            | **partly — see below**  |
 
 > **Status:** `stella.toml` **works today** (see `docs/design/config-system/`).
 > `settings.json` is still read when no `stella.toml` exists, so nothing breaks
@@ -29,7 +29,7 @@ The only tier that is ever committed. The split is deliberate: everything a
 teammate should get is outside `private/`, everything machine-local is inside
 it, and `.stella/.gitignore` enforces the line.
 
-```
+```sh
 <repo>/
 ├── stella.toml ................. PROJECT CONFIG — live. COMMIT THIS.
 │                                 Reviewed in PRs like any source file. Never
@@ -161,11 +161,11 @@ Everything user-global used to live in the OS data dir. Stella moves entries
 across on first run and leaves the old directory in place; existing files are
 never overwritten.
 
-| Platform | Old location |
-|---|---|
-| macOS | `~/Library/Application Support/stella/` |
-| Windows | `%APPDATA%\stella\` |
-| Linux | `$XDG_DATA_HOME/stella/` → `~/.local/share/stella/` |
+| Platform | Old location                                        |
+| -------- | --------------------------------------------------- |
+| macOS    | `~/Library/Application Support/stella/`             |
+| Windows  | `%APPDATA%\stella\`                                 |
+| Linux    | `$XDG_DATA_HOME/stella/` → `~/.local/share/stella/` |
 
 Override with `$STELLA_DATA_DIR` (wins over `$STELLA_HOME` for the data tier).
 
@@ -173,7 +173,7 @@ Override with `$STELLA_DATA_DIR` (wins over `$STELLA_HOME` for the data tier).
 
 ## Managed — organization policy
 
-Administrator-owned. Read-only to Stella; the file's *location* is what grants
+Administrator-owned. Read-only to Stella; the file's _location_ is what grants
 it authority.
 
 ```
@@ -232,26 +232,26 @@ add a gate; none may remove another's.
 
 ## Environment overrides
 
-| Variable | Effect |
-|---|---|
-| `STELLA_HOME` | relocates the whole user tree (default `~/.stella`) |
-| `STELLA_DATA_DIR` | relocates the data tier (`usage.db`, `installation-id`) |
-| `STELLA_MANAGED_SETTINGS` | points at the managed policy file |
-| `STELLA_TRUST_PROJECT=1` | trusts this repo's hooks, context providers, and credential routing |
-| `STELLA_PROJECT_HOOKS=1` | legacy, hooks only |
-| `STELLA_NO_SETTINGS=1` | **benchmark isolation** — skips all three config tiers *and* rules, memories, skills, custom tools, MCP config, and persisted session state. A task image's preinstalled state is outside the frozen system under test. |
+| Variable                  | Effect                                                                                                                                                                                                                  |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `STELLA_HOME`             | relocates the whole user tree (default `~/.stella`)                                                                                                                                                                     |
+| `STELLA_DATA_DIR`         | relocates the data tier (`usage.db`, `installation-id`)                                                                                                                                                                 |
+| `STELLA_MANAGED_SETTINGS` | points at the managed policy file                                                                                                                                                                                       |
+| `STELLA_TRUST_PROJECT=1`  | trusts this repo's hooks, context providers, and credential routing                                                                                                                                                     |
+| `STELLA_PROJECT_HOOKS=1`  | legacy, hooks only                                                                                                                                                                                                      |
+| `STELLA_NO_SETTINGS=1`    | **benchmark isolation** — skips all three config tiers _and_ rules, memories, skills, custom tools, MCP config, and persisted session state. A task image's preinstalled state is outside the frozen system under test. |
 
 ---
 
 ## Deleting things safely
 
-| Want to | Delete | You lose |
-|---|---|---|
-| reset one project's history | `<repo>/.stella/private/` | transcripts, graph, embeddings, fleet ledger |
-| rebuild the code graph | `<repo>/.stella/private/codegraph.db` | nothing — `stella init` rebuilds it |
-| clear generated output | `artifacts/ attachments/ screenshots/ exports/` | generated files only |
-| sign out of everything | `~/.stella/credentials.toml`, `integrations.json`, `web_auth.toml` | all stored credentials |
-| full reset, all projects | `~/.stella/` | every key, all cross-project telemetry, the model catalog |
+| Want to                     | Delete                                                             | You lose                                                  |
+| --------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------- |
+| reset one project's history | `<repo>/.stella/private/`                                          | transcripts, graph, embeddings, fleet ledger              |
+| rebuild the code graph      | `<repo>/.stella/private/codegraph.db`                              | nothing — `stella init` rebuilds it                       |
+| clear generated output      | `artifacts/ attachments/ screenshots/ exports/`                    | generated files only                                      |
+| sign out of everything      | `~/.stella/credentials.toml`, `integrations.json`, `web_auth.toml` | all stored credentials                                    |
+| full reset, all projects    | `~/.stella/`                                                       | every key, all cross-project telemetry, the model catalog |
 
 `private/store.db` is the one worth a thought before deleting: it is the
 event-sourced fold every other surface reads. `stella doctor --repair` moves a
