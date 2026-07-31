@@ -367,6 +367,146 @@ class TestBuildCommand:
             agent._build_command("Fix it")
 
 
+class TestNoBudgetCap:
+    """An empty ``STELLA_BUDGET`` means *no cap*, and must reach nothing.
+
+    The head-to-head protocol permits exactly one difference between the arms —
+    the endpoint. Claude Code has no per-trial spend ceiling, so Stella must be
+    able to run without one too. ``race.sh`` says that with ``STELLA_BUDGET=""``.
+
+    Before this, the empty string was forwarded verbatim as ``--budget ""``.
+    Clap's ``parse_budget`` rejects it and exits 2 *before the turn starts*, so
+    Harbor records ``NonZeroAgentExitCodeError`` and scores 0.0 — the same
+    shape, and the same silence, as the substituted-binary failure #1018 was
+    written to make loud. Every trial in the arm, not a sample of them.
+    """
+
+    def test_empty_budget_omits_the_flag_instead_of_passing_an_unparseable_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("STELLA_BUDGET", "")
+        monkeypatch.delenv("STELLA_BASE_URL", raising=False)
+        agent = _bare_agent()
+        agent.model_name = "openrouter/z-ai/glm-5.2"
+
+        cmd = agent._build_command("Fix the bug")
+
+        assert "--budget" not in cmd
+        # The failure mode was an empty argv element, not just a stray flag.
+        assert "" not in cmd
+        assert cmd[-2:] == ["run", "Fix the bug"]
+
+    def test_whitespace_budget_is_treated_as_no_cap_not_as_a_number(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("STELLA_BUDGET", "   ")
+        agent = _bare_agent()
+        agent.model_name = "openrouter/z-ai/glm-5.2"
+
+        assert "--budget" not in agent._build_command("Fix the bug")
+
+    def test_unset_budget_still_takes_the_development_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No cap must be *opt-in*. Unset keeps the cap it always had."""
+        monkeypatch.delenv("STELLA_BUDGET", raising=False)
+        agent = _bare_agent()
+        agent.model_name = "openrouter/z-ai/glm-5.2"
+
+        cmd = agent._build_command("Fix the bug")
+
+        assert cmd[cmd.index("--budget") + 1] == "5.0"
+
+    def test_empty_budget_is_not_forwarded_into_the_container(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Omitting the flag is not enough: the CLI also reads the env var.
+
+        ``--budget`` is declared ``env = "STELLA_BUDGET"``, so forwarding an
+        empty value into the container fails the identical parse the omitted
+        flag was avoiding — just one layer further in, where it is harder to see.
+        """
+        monkeypatch.setenv("STELLA_BUDGET", "")
+        agent = _bare_agent()
+        agent.model_name = "openrouter/z-ai/glm-5.2"
+
+        assert "STELLA_BUDGET" not in agent._forwarded_env()
+
+    def test_a_cap_that_is_set_is_still_forwarded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("STELLA_BUDGET", "0.17")
+        agent = _bare_agent()
+        agent.model_name = "openrouter/z-ai/glm-5.2"
+
+        assert agent._forwarded_env()["STELLA_BUDGET"] == "0.17"
+        cmd = agent._build_command("Fix the bug")
+        assert cmd[cmd.index("--budget") + 1] == "0.17"
+
+    def test_no_cap_is_recorded_as_no_cap_rather_than_as_the_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The manifest must not name a ceiling the run never enforced.
+
+        The recording site used ``... or _DEFAULT_BUDGET``, so an uncapped run
+        would have been published as capped at ``5.0`` — a disclosed
+        measurement parameter that was never true of the run disclosing it.
+
+        Nor may it simply vanish: the metadata dict drops ``None`` values, and
+        an absent key reads identically to an adapter too old to record one.
+        """
+        monkeypatch.setenv("STELLA_BUDGET", "")
+        monkeypatch.delenv("STELLA_DISABLE_REFLECTION", raising=False)
+        agent = _bare_agent()
+        agent._metrics = {"status": "completed", "steps": 1}
+        agent._return_code = 0
+
+        class _Ctx:
+            cost_usd = None
+            n_input_tokens = None
+            n_output_tokens = None
+            n_cache_tokens = None
+            metadata = None
+
+        ctx = _Ctx()
+        agent.populate_context_post_run(ctx)
+
+        assert ctx.metadata["stella_budget_usd"] == "unbounded"
+        # Never a number: nothing downstream may read it as a ceiling in force.
+        with pytest.raises(ValueError):
+            float(ctx.metadata["stella_budget_usd"])
+
+    def test_env_sh_lets_an_explicit_empty_value_survive(self) -> None:
+        """``-`` and not ``:-``, asserted on the artifact rather than the diff.
+
+        ``${STELLA_BUDGET:-0.60}`` substitutes on *empty as well as unset*, so
+        the no-cap posture is unreachable through the sanctioned entry point no
+        matter what the adapter does.
+        """
+        import subprocess
+
+        repo_root = Path(__file__).resolve().parents[3]
+        env_sh = repo_root / "bench" / "evidence" / "run" / "env.sh"
+        assert env_sh.is_file()
+
+        def _budget_after_sourcing(preset: str | None) -> str:
+            setter = "export STELLA_BUDGET=''" if preset == "" else "true"
+            script = (
+                f'export TB_REPO="{repo_root}"; '
+                f'export TB_ROOT="$(mktemp -d)"; '
+                f"{setter}; "
+                f'source "{env_sh}" >/dev/null 2>&1; '
+                f'printf "%s" "${{STELLA_BUDGET-<unset>}}"'
+            )
+            done = subprocess.run(
+                ["bash", "-c", script], capture_output=True, text=True, check=False
+            )
+            return done.stdout
+
+        assert _budget_after_sourcing("") == ""
+        assert _budget_after_sourcing(None) == "0.60"
+
+
 class TestForwardedEnv:
     def test_canonical_engine_posture_has_one_inherited_model_and_fixed_effort(
         self,
