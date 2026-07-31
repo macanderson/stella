@@ -473,6 +473,13 @@ def envelope_to_trajectory(
     engine_posture: dict[str, Any] | None = None,
     engine_posture_json: str | None = None,
     engine_posture_sha256: str | None = None,
+    assurance_tiers_version: str | None = None,
+    assurance_arm: str | None = None,
+    assurance_tiers: dict[str, Any] | None = None,
+    assurance_tiers_json: str | None = None,
+    assurance_tiers_sha256: str | None = None,
+    witness_author_model: str | None = None,
+    witness_authored_state: str | None = None,
 ) -> Trajectory:
     """Build and validate an ATIF-v1.7 trajectory from a Stella envelope."""
     events = envelope.get("events")
@@ -628,6 +635,23 @@ def envelope_to_trajectory(
         agent_extra["engine_posture_json"] = engine_posture_json
     if engine_posture_sha256:
         agent_extra["engine_posture_sha256"] = engine_posture_sha256
+    if assurance_tiers_version:
+        agent_extra["assurance_tiers_version"] = assurance_tiers_version
+    if assurance_arm:
+        agent_extra["assurance_arm"] = assurance_arm
+    if assurance_tiers:
+        agent_extra["assurance_tiers"] = dict(assurance_tiers)
+    if assurance_tiers_json:
+        agent_extra["assurance_tiers_json"] = assurance_tiers_json
+    if assurance_tiers_sha256:
+        agent_extra["assurance_tiers_sha256"] = assurance_tiers_sha256
+    if witness_author_model:
+        agent_extra["witness_author_model"] = witness_author_model
+    # Written unconditionally, unlike its neighbours: "not_reported" is a
+    # result. An absent key here would be indistinguishable from an adapter too
+    # old to record it, which is the ambiguity this field exists to remove.
+    if witness_authored_state:
+        agent_extra["witness_authored_state"] = witness_authored_state
 
     return Trajectory(
         schema_version="ATIF-v1.7",

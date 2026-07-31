@@ -914,6 +914,49 @@ fn the_benchmark_engine_posture_survives_the_trusted_launcher_seam() {
     );
 }
 
+/// The same seam, for the posture that turns the authored witness back on.
+///
+/// The witness arm (#1007) pins a second model for the judge role, which is
+/// what the authored-witness tier resolves its independent author from. It
+/// reaches the CLI through this same fail-closed seam, so the field it uses
+/// must be part of the seam's vocabulary — and it must arrive as
+/// `pipeline_judge_model`, not as a new root key, because a descriptive key
+/// would not mislabel the run, it would refuse it.
+#[test]
+fn the_benchmark_witness_arm_posture_survives_the_trusted_launcher_seam() {
+    let posture = serde_json::json!({
+        "default_model": "openrouter/z-ai/glm-5.1",
+        "pipeline_judge_model": "openrouter/deepseek/deepseek-v4-pro",
+        "allowed_models": [
+            "openrouter/z-ai/glm-5.1",
+            "openrouter/deepseek/deepseek-v4-pro",
+        ],
+        "auto_mode": "off",
+        "effort_auto": "off",
+        "reasoning_auto": "off",
+        "headless_scope_bypass": "on",
+        "agents": {
+            "default": {"effort": "high", "reasoning": "on"},
+            "worker": {"effort": "high", "reasoning": "on"},
+            "judge": {"effort": "high", "reasoning": "on"},
+            "triage": {"effort": "low", "reasoning": "off"},
+        },
+    });
+    assert!(
+        super::trusted_engine_config_shape_is_strict(&posture),
+        "the witness-arm posture must pass the strict seam"
+    );
+    let parsed: crate::settings::AgentEngineConfig =
+        serde_json::from_value(posture).expect("and deserialize into the settings type");
+    assert_eq!(
+        parsed.pipeline_judge_model.as_deref(),
+        Some("openrouter/deepseek/deepseek-v4-pro"),
+        "the judge author must survive the round trip; dropping it here is a \
+         benchmark run that reports the witness on and measures it off"
+    );
+    assert!(parsed.headless_scope_bypass_on());
+}
+
 /// Witness for the first-run error rewrite: it used to join all thirteen
 /// `PROVIDERS` rows into ~400 characters that hard-wrap into an unreadable
 /// block, and pointed the user at hand-editing `~/.stella/credentials.toml`

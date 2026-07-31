@@ -33,12 +33,18 @@ a reader can tell whether what they have is what was published.
 
 ## Two kinds of run, and never confusing them
 
-**Development baseline** — `stella-tb21-dev-baseline-manifest-v1`. Self-reported.
+**Development baseline** — `stella-tb21-dev-baseline-manifest-v2`. Self-reported.
 Runs on whatever host is available, with ambient credentials, through the plain
 adapter path. Its manifest carries a `claim_eligibility` block that lists, in
 full, every reason it is not a leaderboard row. It exists to be a held-out number
 Stella can be measured against and improved against — the thing #830–#836 and
 #876 both presuppose.
+
+`v2` adds the `assurance` block (#1007): which rungs of the verification ladder
+the run actually exercised, and — when a rung is off — why. A `v1` manifest has
+no such block and cannot answer the question at all; every `v1` run was the
+witness-off arm, which is a lower bound on the full ladder rather than a
+measurement of it.
 
 **Audited public claim** — `bench/terminal-bench-2.1-protocol.md`, scored by
 `bench/terminal_bench_analysis/tb21_analysis.py`. Requires a dedicated native

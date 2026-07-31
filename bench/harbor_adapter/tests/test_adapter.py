@@ -400,37 +400,6 @@ class TestForwardedEnv:
             "1740fa2f3f1bea66c348c7ffca151f526019ef0278829d23acb391e7b2f07159"
         )
 
-    def test_one_inherited_model_means_the_authored_witness_can_never_run(
-        self,
-    ) -> None:
-        """The posture's cost, asserted rather than discovered on a trial.
-
-        Stella refuses to let a worker author the test that verifies it, so the
-        witness needs an author resolving to a different model. Every role here
-        inherits one ``default_model``, which is exactly the condition under
-        which no such author exists — so every number this posture produces is
-        measured with the witness off (#973).
-
-        Guarded so the trade stays a decision. If a future edit gives ``judge``
-        its own model the witness starts running, the posture digest changes,
-        and the registered SUT changes with it — all three at once, which is the
-        point: this must not happen as a side effect.
-        """
-        model = "openrouter/z-ai/glm-5.1"
-        posture, _normalized, _digest = _benchmark_engine_posture(model)
-
-        roles = posture["agents"]
-        assert "judge" in roles, "the judge role must be stated, not implied"
-        resolved = {
-            role: config.get("model", posture["default_model"])
-            for role, config in roles.items()
-        }
-        assert resolved["judge"] == resolved["worker"] == model
-        assert posture["allowed_models"] == [model], (
-            "one allowed model is what forbids a distinct witness author; "
-            "widening it is a measurement change, not a fix"
-        )
-
     def test_excludes_all_provider_keys_and_selects_only_effective_provider(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

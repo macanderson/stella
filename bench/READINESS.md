@@ -101,6 +101,7 @@ frozen." Verified on `fa2ec5b`:
 | Analyzer self-tests (`terminal_bench_analysis/tests`) | ✅ 234 passed |
 | Harbor adapter self-tests (`harbor_adapter/tests`) | ✅ 226 passed (after the two fixes in §4; was 224/2) |
 | Engine-posture parses through Stella's strict seam | ✅ `config::tests::the_benchmark_engine_posture_survives_the_trusted_launcher_seam` — proves `headless_scope_bypass:"on"` is accepted, not fail-closed |
+| Witness-arm posture parses through the same seam | ✅ `config::tests::the_benchmark_witness_arm_posture_survives_the_trusted_launcher_seam` — `pipeline_judge_model` survives the round trip (§9) |
 | Readiness-fixture integrity (`synthetic-adapter-sentinel`) | ✅ no drift since the `#301` freeze (only commit touching it) → still hashes to pinned `05a040c7…`; value pinned in `test_secure_launcher.py` |
 | Secret scan over git-tracked publication source | ✅ 1 finding = the scanner's *own synthetic test fixture* (`test_artifact_secret_scan.py`), by design; no real credential. (`.venv` hits are third-party dependency data, not publication content.) |
 | Cross-build toolchain reachable from macOS host | ✅ produced the frozen ELF (§1) |
@@ -310,3 +311,56 @@ the two scripts that recompute the number from them. Its preregistration is
 call. The manifest's `claim_eligibility` block states in full why it is a
 development baseline and not the audited row — start there before quoting the
 number anywhere.
+
+---
+
+## 9. Which verification tiers a scored run exercises
+
+Stella verifies work on a ladder, and a benchmark number is only a measurement
+of the ladder that actually ran. Every scored run declares its rungs in the
+manifest's `assurance` block and in each trial's metadata; nothing here is
+inferable only from a log line ([#1007](https://github.com/macanderson/stella/issues/1007)).
+
+| Rung | Control arm (`witness-off`) | Treatment arm (`witness-on`) |
+|---|---|---|
+| Deterministic verify (flip oracle, recorded test results) | on | on |
+| Authored witness | **off** — no author independent of the worker | on |
+| Model judge | on, **same model as the worker** | on, independent of the worker |
+
+**Every Terminal-Bench number published before #1007 is the control arm.** The
+posture pinned one model for every role; Stella will not let a worker author the
+test that verifies it, so the independent author never existed and each trial
+logged `continuing without an authored witness: no author independent of the
+worker`. That number is a **lower bound** on the full ladder, not a measurement
+of it.
+
+Selecting an arm:
+
+```bash
+# control arm — the default, and the posture every published number used
+unset STELLA_WITNESS_AUTHOR_MODEL
+
+# treatment arm — a second pinned model on the worker's provider
+export STELLA_WITNESS_AUTHOR_MODEL=openrouter/deepseek/deepseek-v4-pro
+```
+
+The arm changes `stella_engine_posture_sha256`, and therefore the registered
+SUT — that is intended. Two arms over the same 89 tasks on the same SUT is a
+direct, falsifiable test of whether the ladder's witness rung improves outcomes;
+one arm alone cannot answer it in either direction.
+
+Constraints, each enforced fail-closed by `_validated_witness_author`:
+
+- The author must differ from the worker model (otherwise the tier is still off,
+  with a hash claiming otherwise).
+- The author must share the worker's provider. A trial carries exactly one
+  provider credential over the anonymous FD, resolved from the worker's
+  provider, so a cross-provider author authenticates against nothing.
+- The author reaches Stella only as `pipeline_judge_model` inside the hashed
+  posture. It is never forwarded into the task container, so there is exactly
+  one channel and exactly one thing that can disagree.
+
+Guarded by `config::tests::the_benchmark_witness_arm_posture_survives_the_trusted_launcher_seam`
+(the arm passes the fail-closed launcher seam) and
+`agent::tests::engine_wiring::the_benchmark_posture_splits_worker_and_judge_only_on_the_witness_arm`
+(the arm actually separates the two roles the witness check compares).

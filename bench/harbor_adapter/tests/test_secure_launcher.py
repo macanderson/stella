@@ -1788,6 +1788,35 @@ def test_claim_environment_rejects_control_drift_before_launch(
         _validate_claim_environment(_claim_environment(binary, **{name: value}))
 
 
+def test_claim_environment_refuses_an_ambient_witness_author(
+    tmp_path: Path,
+) -> None:
+    """The audited claim path is the witness-off arm, and must stay honest.
+
+    This launcher computes the posture hashes it publishes by calling the
+    adapter's `_benchmark_engine_posture(model)` with no author. The adapter
+    itself reads the witness-author knob from the ambient environment, so
+    without this guard a set variable would run trials on the witness arm while
+    every disclosed hash described the control arm — the disclosed posture would
+    not be the measured one, which is exactly what #1007 closes.
+    """
+    binary = _write_claim_elf(tmp_path / "stella")
+    witness_env = launcher_module._witness_author_env_name()
+    assert witness_env == stella_harbor._WITNESS_AUTHOR_ENV, (
+        "the guard must watch the same variable the adapter reads"
+    )
+
+    poisoned = _claim_environment(
+        binary, **{witness_env: "openrouter/deepseek/deepseek-v4-pro"}
+    )
+    with pytest.raises(RuntimeError, match="refuses an ambient"):
+        _validate_claim_environment(poisoned)
+
+    # Empty is not "set": an exported-but-blank variable is the control arm.
+    blank = _claim_environment(binary, **{witness_env: ""})
+    assert _validate_claim_environment(blank) == (binary, _TEST_SOURCE_COMMIT)
+
+
 def test_claim_environment_requires_canonical_regular_executable(
     tmp_path: Path,
 ) -> None:
