@@ -94,7 +94,7 @@ use crate::retry::{RetryOutcome, RetryPolicy, Sleeper, retry_with_backoff_observ
 use crate::speculation::{SpeculationGate, SpeculationPool, SpeculativeResult};
 use crate::step::{
     BorrowedTurn, CancelUsageGuard, CompactionPass, SpeculationDropGuard, StepOutcome,
-    SummarizerHealth, TurnState, bounded_generation,
+    StreamProgress, SummarizerHealth, TurnState, bounded_generation,
 };
 // The latch count itself is only ever named by the test that pins it against
 // the number of failures the summarizer is actually allowed (`audit_fixes`);
@@ -1310,6 +1310,14 @@ impl<'a> Engine<'a> {
         // with no reset marker — the eventual `Text` event is authoritative
         // and consumers replace the preview with it (protocol docs).
         let delta_events = events.clone();
+        // What separates a wedged provider from a slow one, for the model
+        // deadline: every event the gate forwards is a fragment that arrived,
+        // so tapping the same sender the gate already writes to costs one
+        // relaxed increment and needs no new plumbing through the adapter.
+        // Per-attempt, like the pool it sits beside — a retry starts its own
+        // idle clock rather than inheriting the previous attempt's silence.
+        let stream_progress = StreamProgress::default();
+        let attempt_progress = stream_progress.clone();
         // The pump reports its discarded read-only work (a failed attempt's
         // pool, or a hard cancel mid-drain) as `SpeculationDiscarded` events
         // so I/O that actually ran is never silently lost (#370).
@@ -1326,7 +1334,16 @@ impl<'a> Engine<'a> {
         let attempt: RetryAttemptFn = Box::new(move || {
             let read_only = speculation_read_only.clone();
             let gated = speculation_hook_gated.clone();
-            let delta_tx = delta_events.clone();
+            let progress = attempt_progress.clone();
+            let ticked = progress.clone();
+            let forwarded = delta_events.clone();
+            // Every fragment the gate forwards bumps the idle clock on its way
+            // through, so "did anything arrive" is answered by the same events
+            // the consumer already sees — no second channel to keep in sync.
+            let delta_tx = EventSender::from_fn(move |event| {
+                ticked.record();
+                forwarded.send(event)
+            });
             let pump_tx = pump_events.clone();
             Box::pin(async move {
                 let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1351,7 +1368,7 @@ impl<'a> Engine<'a> {
                     // invariant 5 (no panics on runtime data) outranks
                     // asserting a structural claim (#618 item 17).
                     biased;
-                    result = bounded_generation(self.config.model_timeout, &mut complete) => result,
+                    result = bounded_generation(self.config.model_timeout, &progress, &mut complete) => result,
                     _ = &mut pump => Err(ProviderError::Terminal(
                         "speculation pump ended before the model call that feeds it; \
                          the speculation gate holds the channel open for the whole call, \

@@ -311,6 +311,26 @@ fn map_openrouter_effort(effort: ReasoningEffort) -> &'static str {
     }
 }
 
+/// The output allowance a request gets when the caller pinned none, matching
+/// `anthropic.rs`'s reasoning-aware default so the two adapters cannot
+/// disagree about what an un-capped reasoning turn is allowed to spend.
+///
+/// Reasoning spends from the SAME allowance as the answer. A ceiling sized for
+/// a non-thinking reply truncates a thinking model mid-thought, and on the
+/// Chat Completions dialects that lands as a `finish_reason: length` turn that
+/// carries chain-of-thought and no tool call — the shape that ended 30 of 30
+/// cap-hit steps in the 2026-07-31 Terminal-Bench bundle with zero tool calls.
+///
+/// A caller-set cap is still honored verbatim: this only fills the hole where
+/// the caller expressed no preference, which is exactly where a silent 4k-ish
+/// provider default would otherwise decide the turn's fate.
+fn reasoning_aware_max_tokens(requested: Option<u32>, reasoning: Option<bool>) -> Option<u32> {
+    requested.or(match reasoning {
+        Some(true) => Some(32_000),
+        _ => None,
+    })
+}
+
 /// Whether a terminal provider error says reasoning cannot be turned off.
 /// Matched on the upstream's own wording rather than a status code: the same
 /// 400 covers every other malformed-request cause, and only this one is
@@ -1012,7 +1032,7 @@ impl ZaiProvider {
             model: &self.model,
             messages: to_zai_messages(req.messages, &self.model),
             stream: true,
-            max_tokens: req.max_output_tokens,
+            max_tokens: reasoning_aware_max_tokens(req.max_output_tokens, req.reasoning),
             temperature: req.temperature,
             top_p: params.top_p,
             top_k: params.top_k,
