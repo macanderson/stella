@@ -28,7 +28,7 @@
 1952 stella-model/src/openai.rs
 1720 stella-model/src/zai/tests.rs
 3039 stella-pipeline/src/pipeline.rs
-2332 stella-pipeline/src/pipeline/tests.rs
+2343 stella-pipeline/src/pipeline/tests.rs
 2736 stella-protocol/src/event.rs
 2055 stella-store/src/lib.rs
 2204 stella-store/src/tests.rs

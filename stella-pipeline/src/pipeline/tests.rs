@@ -287,6 +287,9 @@ enum TestScript {
 
 struct ScriptedRunner {
     test_results: std::sync::Mutex<VecDeque<TestScript>>,
+    /// Total `run_test` invocations, whatever they returned — the
+    /// degradation gate pins this as the suite-run spend of a scenario.
+    test_runs: std::sync::atomic::AtomicU32,
     diff: String,
     /// Untracked files this workspace reports, as `(path, added_lines)`.
     untracked: Vec<(String, u32)>,
@@ -320,12 +323,17 @@ impl ScriptedRunner {
     fn scripted(test_results: Vec<TestScript>, diff: &str) -> Self {
         Self {
             test_results: std::sync::Mutex::new(test_results.into_iter().collect()),
+            test_runs: std::sync::atomic::AtomicU32::new(0),
             diff: diff.to_string(),
             untracked: Vec::new(),
             failure_tail: "test failed".to_string(),
             diff_exit_code: 0,
             diff_stderr: String::new(),
         }
+    }
+    /// How many times `run_test` was invoked on this runner.
+    fn test_runs(&self) -> u32 {
+        self.test_runs.load(std::sync::atomic::Ordering::SeqCst)
     }
     /// A diff probe that FAILS: no stdout and a non-zero exit, the shape a
     /// candidate whose worktree registration vanished actually produces.
@@ -391,6 +399,8 @@ impl DiagnosticRunner for ScriptedRunner {
 #[async_trait]
 impl TestRunner for ScriptedRunner {
     async fn run_test(&self, _invocation: &TestInvocation) -> CmdOutcome {
+        self.test_runs
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let script = self
             .test_results
             .lock()
@@ -2096,6 +2106,7 @@ mod verification_honesty {
 mod airlock;
 mod best_of_n;
 mod chaos;
+mod degradation_gate;
 /// Golden-trajectory recordings of this pipeline's real event stream — a
 /// child module so it reaches the scripted ports above via `super::*`.
 mod golden;
