@@ -20,14 +20,15 @@ export type InstallCounter = "hits" | "copies";
 
 function client(): Redis | null {
   // Checked per call rather than at module top level so `next build` (which
-  // evaluates module scope) never requires the env to exist.
-  if (
-    !process.env.UPSTASH_REDIS_REST_URL ||
-    !process.env.UPSTASH_REDIS_REST_TOKEN
-  ) {
-    return null;
-  }
-  return Redis.fromEnv();
+  // evaluates module scope) never requires the env to exist. The Vercel
+  // Marketplace integration (store: upstash-kv-carmine-notebook) injects
+  // KV_REST_API_*; the UPSTASH_REDIS_REST_* pair is the SDK's own default
+  // naming, kept as a fallback for a hand-configured environment.
+  const url = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
+  const token =
+    process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+  return new Redis({ url, token });
 }
 
 /**
