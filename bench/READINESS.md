@@ -330,6 +330,36 @@ the launcher emits:
 | x-ai/grok-4.5 | `3c7d6155…` | `ff61cb06…` |
 | z-ai/glm-5.1 | `55fdf342…` | `f15536e5…` |
 
+### 8.3.1 `max` → `xhigh`, for the Sonnet-5 comparator
+
+The rule that picked `max` above did not change; the comparator did. The rule
+is *spend what the other side spends*, because the leaderboard treats `high`,
+`xhigh` and `max` as distinct values, so a mismatch is less compute applied to
+one side rather than a naming variation. Against Claude Code on GLM-5.1 at max
+effort, that rule said `max`.
+
+The Sonnet-5 head-to-head compares against Claude Code on the **first-party
+Anthropic API**, which runs `xhigh` by default, so the same rule now says
+`xhigh`. Reading `max` as "more is safer" would invert the rule: it would hand
+Stella compute the comparator never receives. Anthropic separately documents
+`xhigh` — not `max` — as the setting for coding and agentic work, and warns
+`max` is prone to overthinking, so parity and the model's own guidance agree.
+
+Digests move again, recomputed the same way. These supersede the table above:
+
+| model | now |
+|---|---|
+| deepseek-v4-pro | `c19251f5…` |
+| z-ai/glm-5.2 | `29c1f162…` |
+| x-ai/grok-4.5 | `5402c38c…` |
+| z-ai/glm-5.1 | `641e98fd…` |
+| anthropic/claude-sonnet-5 | `5759a7ad…` |
+
+The GLM and deepseek rows are listed because the constant is shared, not
+because those arms were re-run. Runs published under the `max` posture remain
+described by the 8.3 table; a run states which posture it used in its own
+manifest, which is the point of hashing it.
+
 ### 8.4 The measured baseline
 
 See `bench/evidence/` for the run manifest, per-trial rows, per-task results and
