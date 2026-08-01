@@ -24,7 +24,6 @@
 3134 stella-core/src/driver/tests.rs
 1849 stella-fleet/src/fleet.rs
 1612 stella-model/src/anthropic/tests.rs
-1785 stella-model/src/bedrock.rs
 2037 stella-model/src/openai.rs
 1773 stella-model/src/zai/tests.rs
 3249 stella-pipeline/src/pipeline.rs
