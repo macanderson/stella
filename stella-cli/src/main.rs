@@ -400,12 +400,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 }
             };
         }
-        Some(Command::Tools { validate }) => {
-            return match validate {
+        Some(Command::Tools { validate, author }) => {
+            return match (validate, author) {
+                // `--author` (name optional) stages a tool-foundry proposal
+                // as a reviewable manifest+script pair — or lists proposals.
+                (_, Some(name)) => tool_foundry::run_tools_author(name.as_deref()),
                 // `--validate` (dir optional) is the strict pre-flight path;
                 // a plain `stella tools` stays the lenient listing.
-                Some(dir) => agent::run_tools_validation(dir.as_deref()),
-                None => agent::run_tools_listing(),
+                (Some(dir), None) => agent::run_tools_validation(dir.as_deref()),
+                (None, None) => agent::run_tools_listing(),
             };
         }
         Some(Command::Graph { op, target }) => {
