@@ -10,7 +10,7 @@ use clap::{CommandFactory, Parser};
 use super::build_info::{
     BUILD_VERSION_IDENTITY, long_version_static, version_static, version_string,
 };
-use super::term_policy::{animation_disabled, dumb_terminal};
+use super::term_policy::{PlainReason, animation_disabled, deck_decision, dumb_terminal};
 use super::{AuthCmd, Cli, Command, ConnectCmd, OutputFormat, TelemetryCmd, error_summary_json};
 
 /// `-V` stays one greppable line; `--version` answers the two questions a bug
@@ -192,6 +192,56 @@ fn a_dumb_terminal_disables_colour_unless_the_user_forces_it() {
     assert!(!dumb_terminal(term("xterm-256color").as_deref(), None));
     assert!(!dumb_terminal(term("dumb-but-not-really").as_deref(), None));
     assert!(!dumb_terminal(None, None));
+}
+
+/// The deck and the line REPL are different programs: the REPL has no prompt
+/// queue, no mid-turn steering, and exits at stdin EOF. Downgrading between
+/// them without saying so presents as "stella dies when a turn completes",
+/// because the surface that would have queued the next prompt is not running
+/// and nothing said so. Every fallback path must therefore name a reason —
+/// that is what the caller prints.
+#[test]
+fn every_plain_fallback_names_a_reason_and_a_real_terminal_gets_the_deck() {
+    // The only combination that earns the deck.
+    assert_eq!(deck_decision(false, false, true, true), None);
+
+    // Explicit opt-outs outrank stream shape: someone who passed `--plain`
+    // does not need to be told about their tty.
+    assert_eq!(
+        deck_decision(true, false, true, true),
+        Some(PlainReason::Flag)
+    );
+    assert_eq!(
+        deck_decision(false, true, true, true),
+        Some(PlainReason::Env)
+    );
+    assert_eq!(
+        deck_decision(true, false, false, false),
+        Some(PlainReason::Flag),
+        "the flag is reported ahead of the ttys it makes irrelevant"
+    );
+
+    // A piped stdin is the case behind the bug report: the deck never starts,
+    // and the REPL exits the moment that pipe ends.
+    assert_eq!(
+        deck_decision(false, false, false, true),
+        Some(PlainReason::StdinNotTty)
+    );
+    assert_eq!(
+        deck_decision(false, false, true, false),
+        Some(PlainReason::StdoutNotTty)
+    );
+
+    // No fallback is allowed to be silent — an empty explanation would print
+    // a notice that says nothing.
+    for reason in [
+        PlainReason::Flag,
+        PlainReason::Env,
+        PlainReason::StdinNotTty,
+        PlainReason::StdoutNotTty,
+    ] {
+        assert!(!reason.explain().is_empty(), "{reason:?} explains nothing");
+    }
 }
 
 /// `--no-anim`'s help promises "Also forced on by STELLA_NO_ANIM or NO_COLOR",
