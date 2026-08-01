@@ -23,6 +23,7 @@ pub mod edit;
 pub mod exec;
 pub mod exploration;
 pub mod file_touch;
+pub mod foundry_author;
 pub mod gather;
 pub mod github_rest;
 pub mod glob;

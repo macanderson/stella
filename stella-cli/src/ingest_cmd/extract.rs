@@ -34,7 +34,9 @@ use stella_core::ingest::{
     Proposal, Provenance, Record, RecordKind, Refutation, Steering, Truth, TruthBasis, Verdict,
     gate,
 };
-use stella_protocol::{CompletionMessage, CompletionRequest, ModelCallRole, Provider};
+use stella_protocol::{
+    CompletionMessage, CompletionRequest, FinishReason, ModelCallRole, Provider,
+};
 
 use super::probe;
 
@@ -295,6 +297,16 @@ fn build_defaults(
     }
 }
 
+/// The starting output budget: 16k, not the 4k this used to carry. A document
+/// near the [`MAX_PROMPT_CHARS`] cap can atomize into dozens of records, each
+/// carrying every optional field in the schema — 4k truncated mid-object on
+/// real instruction files (AGENTS.md-sized documents) well before reaching the
+/// closing `]`, which `parse_claims` then reported as a JSON syntax error
+/// rather than what it actually was. 16k matches the ceiling `EngineConfig`
+/// already uses for the same reason, and sits within every seeded catalog
+/// model's output limit.
+const BASE_OUTPUT_TOKENS: u32 = 16_384;
+
 /// Call the model, tolerating prose and one bad reply. Mirrors `infer_domains`:
 /// bounded repair, then give up on this document rather than hammering.
 async fn call_model(
@@ -314,12 +326,13 @@ async fn call_model(
         CompletionMessage::user(&user),
     ];
     let mut total_cost = 0.0;
+    let mut max_output_tokens = BASE_OUTPUT_TOKENS;
     const ATTEMPTS: usize = 2;
 
     for attempt in 0..ATTEMPTS {
         let request = CompletionRequest {
             messages: messages.clone(),
-            max_output_tokens: Some(4096),
+            max_output_tokens: Some(max_output_tokens),
             temperature: Some(0.0),
             effort: None,
             tools: Vec::new(),
@@ -339,11 +352,28 @@ async fn call_model(
         {
             Ok(accounted) => {
                 total_cost += accounted.cost_usd;
+                let cut_off = accounted.result.finish_reason == Some(FinishReason::Length);
                 match parse_claims(&accounted.result.text) {
                     Ok(claims) => return Ok((claims, total_cost)),
                     // Last attempt: no more repairs, report why it failed.
                     Err(err) if attempt + 1 == ATTEMPTS => {
-                        return Err(format!("could not parse the model's records: {err}"));
+                        return Err(if cut_off {
+                            format!(
+                                "the model's reply was cut off at {max_output_tokens} output \
+                                 tokens before finishing the record list — try a smaller or \
+                                 split document"
+                            )
+                        } else {
+                            format!("could not parse the model's records: {err}")
+                        });
+                    }
+                    // Cut off, not malformed: the reply was on track but ran out of
+                    // room. Asking it to "respond with ONLY the JSON array" again
+                    // wouldn't fix a token budget, and at temperature 0 would likely
+                    // just truncate at the same point — give it more room instead
+                    // and repeat the same request rather than re-litigating it.
+                    Err(_) if cut_off => {
+                        max_output_tokens = max_output_tokens.saturating_mul(2);
                     }
                     Err(_) => {
                         // Feed the failure back once.

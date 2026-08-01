@@ -12,9 +12,12 @@
 //! turn.
 
 use std::collections::HashSet;
+use std::path::Path;
 
+use colored::Colorize;
 use stella_core::{GapDetectionConfig, ProposedTool, ShellInvocation, detect_tool_gaps};
 use stella_store::{Notification, NotificationStore, Store, ToolCallRow};
+use stella_tools::foundry_author::{self, PROPOSED_DIR};
 
 /// How many recent `bash` receipts to mine per pass. A few hundred is plenty:
 /// the detector only needs enough history to see a shape recur, and the read
@@ -142,10 +145,158 @@ fn proposal_body(p: &ProposedTool) -> String {
         .join("\n");
     format!(
         "{desc}\n\nProposed command:\n  {template}\n\nParameters:\n{params}\n\nSeen:\n{examples}\n\n\
-         This is a suggestion only — no tool was installed. Review it before authoring one.",
+         This is a suggestion only — no tool was installed. Stage it for review with \
+         `stella tools --author {name}`.",
         desc = p.description,
         template = p.command_template,
+        name = p.name,
     )
+}
+
+/// `stella tools --author [NAME]` — the authorship slice of #830: turn one
+/// mined proposal into a staged, reviewable custom tool, or (with no name)
+/// list the proposals the detector currently mines from recent `bash`
+/// receipts. Authoring installs nothing: the manifest+script pair lands in
+/// `.stella/tools/proposed/`, a directory discovery's non-recursive scan can
+/// never register from, and enabling remains an explicit human move of the
+/// manifest into `.stella/tools/`.
+pub(crate) fn run_tools_author(name: Option<&str>) -> Result<(), String> {
+    let root =
+        std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
+    let store = Store::open(&root).map_err(|e| format!("cannot open the workspace store: {e}"))?;
+    run_tools_author_in(&root, &store, name, GapDetectionConfig::default())
+}
+
+/// The testable core of [`run_tools_author`]: store and workspace root
+/// injected, so a test can drive it with an in-memory store and a tempdir.
+fn run_tools_author_in(
+    root: &Path,
+    store: &Store,
+    name: Option<&str>,
+    config: GapDetectionConfig,
+) -> Result<(), String> {
+    let rows = store
+        .recent_tool_calls("bash", HISTORY_WINDOW)
+        .map_err(|e| format!("cannot read the bash receipt log: {e}"))?;
+    let invocations: Vec<ShellInvocation> =
+        rows.into_iter().filter_map(invocation_from_row).collect();
+    let proposals = detect_tool_gaps(&invocations, config);
+
+    let Some(name) = name else {
+        crate::tui::section_header("Tool-foundry proposals");
+        if proposals.is_empty() {
+            println!(
+                "  {}",
+                format!(
+                    "none right now — a shape must recur ≥{} times across ≥{} distinct \
+                     argument sets in the last {HISTORY_WINDOW} bash receipts",
+                    config.min_occurrences, config.min_distinct_arguments
+                )
+                .dimmed()
+            );
+            return Ok(());
+        }
+        for p in &proposals {
+            println!(
+                "  {} {} {}",
+                "·".dimmed(),
+                p.name.bright_magenta(),
+                format!(
+                    "— `{}` ({}× across {} argument sets)",
+                    p.signature, p.occurrences, p.distinct_arguments
+                )
+                .dimmed()
+            );
+        }
+        println!(
+            "\n  {}",
+            "stage one for review with `stella tools --author <name>`".dimmed()
+        );
+        return Ok(());
+    };
+
+    let Some(proposal) = proposals.iter().find(|p| p.name == name) else {
+        let available: Vec<&str> = proposals.iter().map(|p| p.name.as_str()).collect();
+        return Err(if available.is_empty() {
+            format!(
+                "no proposal named `{name}` — the detector currently proposes nothing \
+                 (run `stella tools --author` to see why)"
+            )
+        } else {
+            format!(
+                "no proposal named `{name}` — current proposals: {}",
+                available.join(", ")
+            )
+        });
+    };
+
+    let authored = foundry_author::author(proposal)?;
+    let staged_dir = root.join(PROPOSED_DIR);
+    std::fs::create_dir_all(&staged_dir)
+        .map_err(|e| format!("cannot create {}: {e}", staged_dir.display()))?;
+    let manifest_path = staged_dir.join(&authored.manifest_filename);
+    let script_path = staged_dir.join(&authored.script_filename);
+    // Never clobber: a staged pair may carry a reviewer's hand edits, and
+    // re-running the detector regenerates a fresh one anyway.
+    for path in [&manifest_path, &script_path] {
+        if path.exists() {
+            return Err(format!(
+                "`{}` is already staged — review it (or remove it) and re-run",
+                path.display()
+            ));
+        }
+    }
+    std::fs::write(&script_path, &authored.script)
+        .map_err(|e| format!("cannot write {}: {e}", script_path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("cannot mark {} executable: {e}", script_path.display()))?;
+    }
+    std::fs::write(&manifest_path, &authored.manifest_toml)
+        .map_err(|e| format!("cannot write {}: {e}", manifest_path.display()))?;
+
+    crate::tui::section_header("Tool staged — not installed");
+    println!(
+        "  {} {}\n  {} {}",
+        "·".green(),
+        manifest_path.display(),
+        "·".green(),
+        script_path.display()
+    );
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let live = stella_tools::custom::discover_in(root, home.as_deref());
+    if live.tools.iter().any(|t| t.name == authored.name) {
+        println!(
+            "  {} {}",
+            "!".yellow(),
+            format!(
+                "a custom tool named `{}` already exists — adopting this one will be \
+                 ignored as a duplicate until that is resolved",
+                authored.name
+            )
+            .yellow()
+        );
+    }
+    println!(
+        "\n  {}",
+        format!(
+            "staged only — discovery cannot see {PROPOSED_DIR}/, so nothing is \
+             registered or executable until a human enables it:"
+        )
+        .dimmed()
+    );
+    println!(
+        "  {}\n  {}",
+        format!("pre-flight:  stella tools --validate {PROPOSED_DIR}").dimmed(),
+        format!(
+            "enable:      mv {PROPOSED_DIR}/{} .stella/tools/",
+            authored.manifest_filename
+        )
+        .dimmed()
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -267,6 +418,116 @@ mod tests {
         assert_eq!(
             surface_tool_gaps_into(&store, &inbox, GapDetectionConfig::default()),
             0
+        );
+    }
+
+    #[test]
+    fn author_stages_a_reviewable_pair_that_discovery_cannot_see() {
+        let store = store_with(&[
+            ("c1", "jq '.a' a.json", true),
+            ("c2", "jq '.b' b.json", true),
+            ("c3", "jq '.c' c.json", true),
+        ]);
+        let ws = tempfile::tempdir().expect("tmp");
+
+        run_tools_author_in(ws.path(), &store, Some("jq"), GapDetectionConfig::default())
+            .expect("authoring succeeds");
+
+        let manifest_path = ws.path().join(PROPOSED_DIR).join("jq.toml");
+        let script_path = ws.path().join(PROPOSED_DIR).join("jq.sh");
+        assert!(manifest_path.exists(), "manifest staged");
+        assert!(script_path.exists(), "script staged");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&script_path)
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o111, 0o111, "script is executable");
+        }
+
+        // The staged manifest is real: it parses with the discovery parser.
+        let text = std::fs::read_to_string(&manifest_path).unwrap();
+        let parsed = stella_tools::custom::parse_manifest(&text, &manifest_path)
+            .expect("staged manifest parses");
+        assert_eq!(parsed.name, "jq");
+
+        // The guardrail: discovery over this workspace registers nothing.
+        let report = stella_tools::custom::discover_in(ws.path(), None);
+        assert!(report.tools.is_empty(), "staged tool must not register");
+        assert!(report.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn author_refuses_to_clobber_a_staged_pair() {
+        let store = store_with(&[
+            ("c1", "jq '.a' a.json", true),
+            ("c2", "jq '.b' b.json", true),
+            ("c3", "jq '.c' c.json", true),
+        ]);
+        let ws = tempfile::tempdir().expect("tmp");
+        run_tools_author_in(ws.path(), &store, Some("jq"), GapDetectionConfig::default())
+            .expect("first authoring succeeds");
+
+        // A reviewer may have hand-edited the staged pair; re-authoring must
+        // fail closed instead of silently regenerating over it.
+        let err = run_tools_author_in(ws.path(), &store, Some("jq"), GapDetectionConfig::default())
+            .expect_err("second authoring refuses");
+        assert!(err.contains("already staged"), "{err}");
+    }
+
+    #[test]
+    fn author_with_unknown_name_lists_what_is_available() {
+        let store = store_with(&[
+            ("c1", "jq '.a' a.json", true),
+            ("c2", "jq '.b' b.json", true),
+            ("c3", "jq '.c' c.json", true),
+        ]);
+        let ws = tempfile::tempdir().expect("tmp");
+        let err = run_tools_author_in(
+            ws.path(),
+            &store,
+            Some("not_a_proposal"),
+            GapDetectionConfig::default(),
+        )
+        .expect_err("unknown name errors");
+        assert!(err.contains("jq"), "error names the real proposals: {err}");
+        assert!(
+            !ws.path().join(PROPOSED_DIR).exists(),
+            "nothing staged on error"
+        );
+    }
+
+    #[test]
+    fn author_listing_mode_writes_nothing() {
+        let store = store_with(&[
+            ("c1", "jq '.a' a.json", true),
+            ("c2", "jq '.b' b.json", true),
+            ("c3", "jq '.c' c.json", true),
+        ]);
+        let ws = tempfile::tempdir().expect("tmp");
+        run_tools_author_in(ws.path(), &store, None, GapDetectionConfig::default())
+            .expect("listing succeeds");
+        assert!(!ws.path().join(".stella").exists(), "listing is read-only");
+    }
+
+    #[test]
+    fn inbox_proposals_point_at_the_author_command() {
+        let store = store_with(&[
+            ("c1", "jq '.a' a.json", true),
+            ("c2", "jq '.b' b.json", true),
+            ("c3", "jq '.c' c.json", true),
+        ]);
+        let dir = tempfile::tempdir().expect("tmp");
+        let inbox = NotificationStore::open(dir.path());
+        surface_tool_gaps_into(&store, &inbox, GapDetectionConfig::default());
+        let items = inbox.list();
+        assert_eq!(items.len(), 1);
+        assert!(
+            items[0].body.contains("stella tools --author jq"),
+            "body must name the concrete next step: {}",
+            items[0].body
         );
     }
 

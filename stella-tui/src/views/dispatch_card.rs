@@ -70,6 +70,7 @@ mod tests {
         let pending = PendingDispatch {
             text: text.to_string(),
             next_lane: "req:2".into(),
+            agent_id: "lead".into(),
         };
         let area = Rect::new(0, 0, width, 7);
         let mut buf = Buffer::empty(area);

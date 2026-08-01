@@ -8,7 +8,7 @@ List every tool available to the agent for the current session — built-in tool
 ## Synopsis
 
 ```bash
-stella tools [--validate [DIR]] [global flags]
+stella tools [--validate [DIR]] [--author [NAME]] [global flags]
 ```
 
 ## What it does
@@ -33,6 +33,12 @@ Custom tools come from a `<name>.toml` manifest dropped in `<workspace>/.stella/
     reports errors, warnings, and info per manifest, and exits non-zero if any manifest
     has errors.
   </OptionCard>
+  <OptionCard name="--author [NAME]">
+    Author a tool-foundry proposal into a staged custom tool: writes `NAME.toml` +
+    `NAME.sh` under `.stella/tools/proposed/`, where discovery cannot see them — nothing
+    registers or executes until you move the manifest into `.stella/tools/`. Omit `NAME`
+    to list the proposals currently mined from recent `bash` receipts.
+  </OptionCard>
 </CardGrid>
 
 `stella tools` otherwise takes the [global flags](/docs/commands); model selection rarely matters for this diagnostic command.
@@ -56,3 +62,18 @@ Validate one directory of manifests before installing them:
 ```bash
 stella tools --validate ./contrib/stella-tools
 ```
+
+Stage a tool-foundry proposal for review, pre-flight it, then enable it:
+
+```bash
+stella tools --author            # list current proposals
+stella tools --author jq         # stage jq.toml + jq.sh in .stella/tools/proposed/
+stella tools --validate .stella/tools/proposed
+mv .stella/tools/proposed/jq.toml .stella/tools/   # the explicit human enablement
+```
+
+When the agent keeps reconstructing the same shell shape by hand, the tool foundry
+proposes a reusable tool in `/inbox`. `--author` turns one proposal into a reviewable
+manifest + script pair — staged, never installed. The generated script expands every
+parameter as a quoted `"$STELLA_INPUT_*"` reference, so parameter values stay data
+rather than shell syntax.
