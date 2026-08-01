@@ -512,6 +512,56 @@ async fn openrouter_reasoning_deltas_surface_like_reasoning_content() {
 }
 
 #[tokio::test]
+async fn a_truncated_reasoning_only_turn_is_reported_empty_not_as_its_own_scratchpad() {
+    let server = MockServer::start().await;
+    // The same reasoning-only shape as above, but CUT OFF at the token limit.
+    // The fallback's justification — "the turn would otherwise be blank" —
+    // does not hold here: `stella_core::driver` has a branch for a truncated
+    // step that says so and continues the turn, and it can only recognize the
+    // case while `text` is still empty. Promoting anyway published an
+    // abandoned scratchpad as the answer and then kept it, as protected
+    // context, for every remaining step of the turn.
+    let sse_body = concat!(
+        "data: {\"choices\":[{\"delta\":{\"reasoning\":\"deliberating \"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{\"reasoning\":\"at length\"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
+        "data: [DONE]\n\n",
+    );
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+        .mount(&server)
+        .await;
+
+    let provider = ZaiProvider::new(ApiKey::new("sk-or-test"), "openrouter/auto")
+        .with_base_url(server.uri())
+        .with_identity("openrouter", "OpenRouter");
+    let req = CompletionRequest {
+        messages: vec![CompletionMessage::user("hi")],
+        max_output_tokens: None,
+        temperature: None,
+        effort: None,
+        tools: vec![],
+        reasoning: None,
+        params: None,
+    };
+    let result = provider.complete(req).await.expect("should succeed");
+    assert_eq!(
+        result.text, "",
+        "a cut-off turn's chain-of-thought must not become its answer"
+    );
+    assert_eq!(
+        result.finish_reason,
+        Some(FinishReason::Length),
+        "and the driver must still be told why the turn stopped"
+    );
+    assert!(
+        result.tool_calls.is_empty(),
+        "no tool call: this is the shape the continuation path exists for"
+    );
+}
+
+#[tokio::test]
 async fn complete_falls_back_to_null_when_streamed_tool_arguments_never_parse() {
     let server = MockServer::start().await;
     // GLM streams a tool call whose argument fragments never form valid
