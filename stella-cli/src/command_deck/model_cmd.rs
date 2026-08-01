@@ -146,7 +146,7 @@ pub fn set_default_model(cfg: &Config, id: &str) -> Result<String, String> {
     // machine-wide default that outlives the repo it came from. The same rule
     // `tool_switches::save_switches` already follows.
     let mut engine = crate::settings::user_engine_config_at(&path)
-        .map_err(|e| format!("could not save the default model: {e}"))?;
+        .map_err(|e| format!("could not load the current engine configuration: {e}"))?;
     engine.default_model = Some(format!("{}/{}", spec.provider, spec.model));
     // A hand-edited `agents.default.model` outranks the flat `default_model`
     // (settings precedence), so clear it — exactly what the tab's save does.
