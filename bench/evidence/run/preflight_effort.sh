@@ -1,0 +1,131 @@
+#!/bin/bash
+# Prove EFFORT actually lands, on both arms, before a scored run spends anything.
+#
+# `preflight-parity` proves both keys reach the same model with thinking on. It
+# says nothing about effort, which is the whole variable a pinned-effort run
+# exists to fix. The failure being prevented is the one that voided three
+# earlier head-to-heads: a flag was passed, assumed effective, and never checked
+# on the wire. An unexercised guard is indistinguishable from a broken one.
+#
+# Three independent checks, because each can pass while another fails:
+#
+#   1. The API honours `output_config.effort` on this model, for BOTH keys.
+#      Probed behaviourally — same prompt at `low` and at the target tier — so
+#      the check tests the observable effect rather than that the field was
+#      accepted and ignored. Anthropic rejects unknown fields, but "accepted"
+#      and "acted on" are different claims and only one of them is the point.
+#   2. Stella's frozen posture actually carries the target tier. Asserted by
+#      digest, not by reading the constant, so the value the launcher delivers
+#      and the value asserted here cannot drift.
+#   3. Claude Code's CLI accepts `--effort <tier>`. Deferred to the in-container
+#      smoke run: the CLI is installed per trial from `claude.ai/install.sh`, so
+#      the host has no copy to interrogate.
+#
+# Usage: preflight_effort.sh [model] [tier] [expected-posture-digest-prefix]
+set -uo pipefail
+
+MODEL="${1:-claude-sonnet-5}"
+TIER="${2:-xhigh}"
+EXPECT_DIGEST="${3:-5759a7ad}"
+ENV_FILE="${TB_ANTHROPIC_ENV_FILE:-$HOME/.env.harbor-anthropic.local}"
+REPO="${TB_REPO:-$HOME/stella}"
+
+test -f "$ENV_FILE" || { echo "FATAL: no env file at $ENV_FILE"; exit 1; }
+set -a
+# shellcheck source=/dev/null
+. "$ENV_FILE"
+set +a
+: "${STELLA_ANTHROPIC_API_KEY:?missing STELLA_ANTHROPIC_API_KEY}"
+: "${CLAUDE_CODE_ANTHROPIC_API_KEY:?missing CLAUDE_CODE_ANTHROPIC_API_KEY}"
+
+FAIL=0
+
+# A prompt with genuine reasoning depth, so the tiers have somewhere to differ.
+# A trivial prompt collapses every tier onto the same short answer and the
+# comparison proves nothing.
+read -r -d '' PROMPT <<'PROMPT_END'
+A 3x3 grid of switches, each toggling itself and its orthogonal neighbours.
+Prove whether every configuration is solvable, and give the full reasoning.
+PROMPT_END
+
+probe() { # $1=key  $2=effort  -> output_tokens | ERROR:...
+  python3 - "$1" "$2" "$MODEL" "$PROMPT" <<'PY'
+import json, sys, urllib.request, urllib.error
+
+key, effort, model, prompt = sys.argv[1:5]
+body = json.dumps({
+    "model": model,
+    "max_tokens": 8192,
+    "thinking": {"type": "adaptive"},
+    "output_config": {"effort": effort},
+    "messages": [{"role": "user", "content": prompt}],
+}).encode()
+req = urllib.request.Request(
+    "https://api.anthropic.com/v1/messages",
+    data=body,
+    headers={
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    },
+)
+try:
+    with urllib.request.urlopen(req, timeout=300) as r:
+        print(json.load(r).get("usage", {}).get("output_tokens", 0))
+except urllib.error.HTTPError as e:
+    # The body carries the actual reason (unknown field, bad tier, bad key);
+    # the status alone would not distinguish "effort rejected" from "no quota".
+    try:
+        msg = json.load(e).get("error", {}).get("message", "")
+    except Exception:
+        msg = e.reason
+    print("ERROR:%s" % str(msg)[:100])
+except Exception as e:
+    print("ERROR:%s" % str(e)[:100])
+PY
+}
+
+echo "== effort preflight: model=$MODEL tier=$TIER =="
+
+for arm in stella claude; do
+  case "$arm" in
+    stella) key="$STELLA_ANTHROPIC_API_KEY" ;;
+    claude) key="$CLAUDE_CODE_ANTHROPIC_API_KEY" ;;
+  esac
+  lo=$(probe "$key" low)
+  hi=$(probe "$key" "$TIER")
+  echo "  $arm: low=$lo $TIER=$hi"
+  case "$lo$hi" in
+    *ERROR*) echo "FAIL: $arm effort probe errored"; FAIL=1; continue ;;
+  esac
+  # Strictly greater, not >=: identical counts are the signature of a field
+  # that was parsed and discarded, which is the exact defect being hunted.
+  if ! [ "$hi" -gt "$lo" ] 2>/dev/null; then
+    echo "FAIL: $arm $TIER ($hi) did not exceed low ($lo) — effort may be ignored"
+    FAIL=1
+  fi
+done
+
+# Assert by digest rather than by reading the constant: the digest is what the
+# trusted launcher delivers and what the manifest registers as the SUT, so a
+# match here proves the run and this check agree on one posture.
+posture=$(cd "$REPO" && PYTHONPATH=bench/harbor_adapter python3 - "$MODEL" <<'PY' 2>&1
+import sys
+from stella_harbor.posture import _benchmark_engine_posture
+p, _, d = _benchmark_engine_posture("anthropic/%s" % sys.argv[1])
+print("%s %s" % (d[:8], p["agents"]["worker"]["effort"]))
+PY
+)
+echo "  posture: $posture"
+if [ "$posture" != "$EXPECT_DIGEST $TIER" ]; then
+  echo "FAIL: posture is not the $TIER arm (expected '$EXPECT_DIGEST $TIER')"
+  FAIL=1
+fi
+
+if [ $FAIL -eq 0 ]; then
+  echo "EFFORT PREFLIGHT PASS: $TIER honoured on both keys; Stella posture pinned $TIER"
+  echo "NOTE: Claude Code's own --effort flag is verified in-container by the smoke run."
+else
+  echo "EFFORT PREFLIGHT FAIL — do not launch"
+fi
+exit $FAIL
