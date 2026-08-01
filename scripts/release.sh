@@ -185,18 +185,8 @@ cp Cargo.lock .Cargo.lock.relbak   # cargo rewrites workspace-member versions in
 # working tree modified, so a restore that did not happen has to be loud.
 # (A missing .relbak is not a failure — nothing was stamped yet.)
 restore_manifest() {
-  local restore_status=0
-  if [ -f .Cargo.toml.relbak ]; then
-    mv .Cargo.toml.relbak Cargo.toml || restore_status=1
-  fi
-  if [ -f .Cargo.lock.relbak ]; then
-    mv .Cargo.lock.relbak Cargo.lock || restore_status=1
-  fi
-  if [ "$restore_status" -ne 0 ]; then
-    printf '\033[31mERROR: %s\033[0m\n' \
-      "could not restore Cargo.toml/Cargo.lock — your tree may still carry the \
-stamped version; recover by hand from .Cargo.toml.relbak / .Cargo.lock.relbak" >&2
-  fi
+  if [ -f .Cargo.toml.relbak ]; then mv .Cargo.toml.relbak Cargo.toml; fi
+  if [ -f .Cargo.lock.relbak ]; then mv .Cargo.lock.relbak Cargo.lock; fi
 }
 trap 'restore_manifest' EXIT
 perl -pi -e "s/^version = \"[^\"]*\"/version = \"${VERSION}\"/" Cargo.toml

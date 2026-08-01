@@ -414,7 +414,15 @@ impl TurnState {
 /// The results are mirrored onto the event stream (no `ToolStart` — these
 /// calls never ran) so a transcript reconstructed from events resolves every
 /// announced call the same way `messages` does.
-fn close_open_tool_calls(
+///
+/// Shared by the two places a turn can stop holding an unanswered call: the
+/// cancellation check above, and the budget abort in
+/// `Engine::handle_committed_result` (which appends the assistant message
+/// carrying the calls it is about to refuse to dispatch, then closes them
+/// here). They differ only in `message`. Keeping one implementation matters
+/// because the failure mode is silent and delayed — a missed pairing is not
+/// noticed until the NEXT provider call rejects the history outright.
+pub(crate) fn close_open_tool_calls(
     messages: &mut Vec<CompletionMessage>,
     message: &str,
     events: &EventSender,
