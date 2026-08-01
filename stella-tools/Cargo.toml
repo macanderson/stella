@@ -35,6 +35,9 @@ toml.workspace = true
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "fs", "io-util"] }
 tempfile.workspace = true
+# Property tests for foundry authorship: every detector proposal must author
+# and round-trip through the real manifest parser.
+proptest.workspace = true
 wiremock.workspace = true
 # Tests only: install a trigger in the code-graph index so its next write pass
 # fails while every read still answers — the one way to exercise the non-fatal
