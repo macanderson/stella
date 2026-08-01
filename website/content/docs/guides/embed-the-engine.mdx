@@ -1,0 +1,236 @@
+---
+title: Drop Stella in as your agent engine
+description: Replace your hand-rolled agent loop with Stella's, keeping your own models, tools, keys, and data — and end on an integration test that needs no API key.
+---
+
+You shipped an LLM feature. The first version was a `while` loop around a
+completions call, and it worked. Then it met production, and the loop grew:
+a step cap, because a model called the same tool nine times. A truncation, because
+the history outgrew the context window. A retry, then a *smarter* retry, because
+a 429 and a 400 should not be treated the same. Somewhere in there it stopped
+being a feature and started being a distributed system nobody owns.
+
+None of that is your product. All of it is on your critical path.
+
+This guide replaces that loop with Stella's, without giving up a single thing
+you care about — your models, your keys, your tools, your data, your bill.
+
+## The move, in one paragraph
+
+You run `stella-serve` as a process next to your app. When you start a turn, the
+engine drives the loop and **asks your app** to do the two things that touch
+anything sensitive: make the model call, and run the tool. It has no HTTP
+client, no TLS stack, and no provider adapter, so it is not able to make either
+call itself.
+
+<EngineOwnershipDiagram />
+
+That inversion is the whole design, and it is why this is a reasonable thing to
+put inside a product: the engine is a scheduler for work your app performs. It
+never holds a credential, so it cannot leak one.
+
+## Before you start
+
+<CardGrid size="md">
+  <OptionCard name="A Rust toolchain, once">
+    Only to build the server. Your app can be TypeScript, Python, Go, or anything
+    else that speaks HTTP — nothing you write is Rust unless you choose the linked
+    shape below.
+  </OptionCard>
+  <OptionCard name="An LLM feature that already works">
+    Port something running, not something you are also designing. You want exactly
+    one variable changing this afternoon.
+  </OptionCard>
+  <OptionCard name="A decision on shape, made first">
+    Sidecar or linked crates. It changes your licensing obligations, so make it
+    before you build, not after.
+  </OptionCard>
+</CardGrid>
+
+<Callout type="warn">
+Pick the shape first. Linking `stella-core` into a closed-source binary is a
+combined work and needs a commercial license. The sidecar depends on facts about
+your deployment. Neither is automatically free — the
+[licensing section](/docs/agent-engine-in-your-app#licensing-agpl-or-commercial)
+is specific about which facts decide it, and
+[licensing@oxagen.sh](mailto:licensing@oxagen.sh) will tell you if the answer is
+"you need nothing."
+</Callout>
+
+## Step 1: Get a server running
+
+Two commands. There is no `stella serve` subcommand and no release tarball ships
+the server — it is a separate crate with its own binary.
+
+```bash
+cargo build --release -p stella-serve --bin stella-serve
+
+STELLA_SERVE_BIND=127.0.0.1:8137 \
+STELLA_SERVE_TOKEN="$(openssl rand -base64 32)" \
+./target/release/stella-serve
+# stella-serve listening on 127.0.0.1:8137
+```
+
+It is a fast build; the server pulls in two crates, not the CLI or the TUI.
+
+Record the version it prints next to your client code. The wire format is
+additive, but a pin plus a round-trip test is how you find out about a change on
+your schedule instead of in production.
+
+## Step 2: Port the loop, not the feature
+
+Here is the part people over-plan. Your existing feature already contains the
+two functions the engine needs. Find them:
+
+<CardGrid size="md">
+  <SpecCard title="The one that calls the model">
+    Whatever wraps your gateway today. It becomes the handler for
+    `provider_request` frames. Keep your routing, your keys, your logging, your
+    rate limiting — all of it stays exactly where it is.
+  </SpecCard>
+  <SpecCard title="The one that dispatches a tool">
+    Your `switch` over tool names, behind whatever authorization you already
+    enforce. It becomes the handler for `tool_request` frames. The engine never
+    sees your database, your sandbox, or your permission model.
+  </SpecCard>
+</CardGrid>
+
+Everything between those two functions — the stepping, the history threading,
+the compaction, the retries — is what you are deleting.
+
+The [complete working host](/docs/agent-engine-in-your-app#step-4-write-the-host)
+is about eighty lines of dependency-free Node, and the reference page walks the
+six routes, the four frame types, and the error classes. Do not restate it here;
+open it in another tab and come back when your first turn completes.
+
+<Callout type="warn">
+Three assumptions a correct host must not make, because each one produces a bug
+that only shows up under load. `event` frames are **not ordered** against request
+frames. **Several `tool_request`s can be outstanding at once**, because the engine
+runs read-only tools concurrently — answer by `request_id` and never serialize
+them. And the auth check runs **before** routing, so a wrong path returns 401,
+not 404; a 401 is not proof your token is bad.
+</Callout>
+
+## Step 3: The payoff — a test that costs nothing
+
+This is the reason to do the port, and it is worth doing on day one rather than
+day thirty.
+
+Because your app is the model, you can substitute a scripted reply for your
+gateway. The engine cannot tell the difference: it emits the same frames, runs
+the same steps, threads the same history, and settles the same outcome.
+
+<EngineTestHarnessDiagram />
+
+So a full multi-step agent turn becomes an ordinary unit test. No network, no
+key, no spend, milliseconds.
+
+```js
+import { test } from "node:test";
+import assert from "node:assert/strict";
+
+test("the model can call a tool and answer from its result", async () => {
+  const replies = [
+    { tool_calls: [{ call_id: "c1", name: "get_weather", input: { city: "Paris" } }],
+      finish_reason: "tool_calls" },
+    { text: "It is 18C and clear in Paris.", finish_reason: "stop" },
+  ];
+  let n = 0;
+
+  const outcome = await runTurn({
+    prompt: "What is the weather in Paris?",
+    // your gateway, replaced by an array
+    onProviderRequest: () => withUsage(replies[n++]),
+    onToolRequest: (name, input) => dispatch(name, input),
+  });
+
+  assert.equal(outcome.status, "completed");
+  assert.match(outcome.text, /18C/);
+  assert.equal(n, 2, "one call to ask for the tool, one to answer from it");
+});
+```
+
+What that test actually covers is larger than it looks: the engine recorded the
+assistant's tool call, matched your result to it by `call_id`, rebuilt the
+conversation in your provider's shape, and ran the second step from it. That is
+the machinery you deleted in step 2, under test, for free.
+
+Write these for the cases you cannot afford to hit in production — a tool that
+errors, a model that returns malformed arguments, a rate limit mid-turn, a turn
+that hits its step cap. Each one is a scripted array, and none of them cost a
+cent.
+
+<Callout type="info">
+Report failures as the `error` arm of a tool result rather than throwing. The
+model reads that text and can correct itself, which is usually what you want. And
+say *why* a model call failed: `transport` and `rate_limited` are retried with
+backoff, while `auth`, `unknown_model`, `malformed`, `cancelled`, and `terminal`
+fail the turn at once. Reporting a rate limit as `terminal` silently disables the
+backoff you were trying to get.
+</Callout>
+
+## Step 4: Before it carries traffic
+
+Short list, each item a real failure someone has had:
+
+<CardGrid size="md">
+  <OptionCard name="One process per trust boundary">
+    Several provider and sandbox settings are process-global, so multi-tenant in
+    one process is not safe. Run an engine per tenant, inside the isolation you
+    already use for untrusted code.
+  </OptionCard>
+  <OptionCard name="Keep the port private">
+    Loopback, or a private network behind the token. There is no `Host` guard and
+    no CORS handling — never expose it to a browser directly.
+  </OptionCard>
+  <OptionCard name="Cancel turns you abandon">
+    Each live turn holds an OS thread, and at most 32 are allowed at once. Past
+    that you get a 429. `POST /v1/turns/{id}/cancel` unwinds cleanly and still
+    reports a settled cost.
+  </OptionCard>
+  <OptionCard name="Record every step_usage event">
+    Per-step tokens, cost, model, and duration. `cost_usd` is the sum of what
+    *your* app reported, so your billing system stays the authority — these events
+    are how you cross-check it.
+  </OptionCard>
+</CardGrid>
+
+There is also a list of things that genuinely do not exist yet — no stream
+resumption, no server-side conversation state, no approval routes, no `/metrics`.
+Design around them rather than discovering them:
+[what is not built yet](/docs/agent-engine-in-your-app#what-is-not-built-yet).
+
+## Where this goes next
+
+You now have an agent loop that runs in CI without a key. The natural next move
+is to make CI *care* about it — because the engine is a dependency now, and
+dependencies regress.
+
+<CardGrid size="md">
+  <SpecCard title="Gate on engine quality in CI" href="/docs/guides/ci-engine-gate">
+    Run Stella and Claude Code side by side on the same committed task set on every
+    pull request. Block the merge on loop correctness, which is deterministic and
+    cheap; report the quality delta, which is neither. The companion to this guide.
+  </SpecCard>
+  <SpecCard title="Agent Engine in your app" href="/docs/agent-engine-in-your-app">
+    The reference this guide links into — six routes, four frame types, the full
+    environment surface, the licensing detail, and the eighty-line host in full.
+  </SpecCard>
+</CardGrid>
+
+## Related reading
+
+<CardGrid size="sm">
+  <SpecCard title="Event stream compatibility" href="/docs/event-stream-compatibility">
+    The `AgentEvent` vocabulary you receive in `event` frames, and the
+    forward-compatibility rule your parser has to follow.
+  </SpecCard>
+  <SpecCard title="Inference pipeline" href="/docs/inference-pipeline">
+    What the engine does inside a single step, if you want to know what you bought.
+  </SpecCard>
+  <SpecCard title="Agent Engine paths" href="/docs/agent-engine-paths">
+    The command-line doors into the same engine, for the parts of your workflow
+    that are not a product surface.
+  </SpecCard>
+</CardGrid>
