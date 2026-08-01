@@ -28,6 +28,15 @@ record of *changes*, curated by the person who made them.
 
 ## [0.6.42] — 2026-08-01
 
+### Fixed
+
+- **A locally-cut release's tag now points at a tree stamped with its own
+  version.** `scripts/release.sh` (the degraded, Actions-down release path)
+  reverted the version stamp before tagging, so `cargo install --git … --tag`
+  and any other from-tag source build produced a binary whose `--version`
+  reported the *previous* release — only the prebuilt tarballs were stamped
+  right. The script now cuts a release commit with `scripts/sync-versions.sh`
+  and tags that, exactly like `auto-tag.yml` (#822).
 ## [0.6.41] — 2026-08-01
 
 ## [0.6.40] — 2026-08-01
