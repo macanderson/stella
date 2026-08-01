@@ -792,7 +792,7 @@ impl ToolsSettings {
 pub struct UiSettings {
     /// The TUI colour theme slug (`stella-dark` | `stella-light`). Unset — or
     /// unrecognised — falls back to the default (`stella-dark`, electric blue
-    /// on deep space; the brand kit has since moved to `docs/brand/README.md`).
+    /// on deep space; the brand kit has since moved to `docs/brand/BRAND.md`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
 }

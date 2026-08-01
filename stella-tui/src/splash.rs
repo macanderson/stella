@@ -10,7 +10,7 @@
 //! done — even mid-fade. If there is no init to cover, it is gone in well
 //! under a second.
 //!
-//! What it draws is the previous identity's lockup (see `docs/brand/README.md`
+//! What it draws is the previous identity's lockup (see `docs/brand/BRAND.md`
 //! for the current kit, which the terminal has not yet adopted): the chevron, the
 //! `stella` wordmark, and the block cursor — plus the build version and the
 //! resolved model once one is known. Colours come from [`crate::theme`]'s

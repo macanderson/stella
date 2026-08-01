@@ -9,7 +9,7 @@
 //! identities: a terminal-green dark theme and an ember red-orange light one,
 //! neither of which any surface has rendered for two recolours. The palette's
 //! own spec (BRAND.md) has since been retired in favour of the brand kit at
-//! `docs/brand/README.md`; the terminal has not yet been repainted to it.
+//! `docs/brand/BRAND.md`; the terminal has not yet been repainted to it.
 //! The switch itself is a per-frame buffer remap in
 //! [`stella_tui::theme`], so it takes effect on the next frame with nothing to
 //! re-lay-out — this module only flips the global and writes `ui.theme`.
