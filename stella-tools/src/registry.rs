@@ -83,6 +83,11 @@ pub struct ToolRegistry {
     /// mid-execution, so [`ToolRegistry::classify_file_op`] cannot see it in
     /// the input the way it sees `read_file`'s `path`.
     span_reads: crate::read_symbol::SpanReadLedger,
+    /// The workspace before-image for the turn in flight, when one was taken
+    /// ([`ToolRegistry::begin_workspace_probe`]). `None` between turns, and
+    /// `None` for every host that never brackets one — which is why an
+    /// unbracketed session behaves exactly as it did before this existed.
+    workspace_probe: std::sync::Mutex<Option<crate::shell_touch::WorkspaceProbe>>,
     /// The session's memory-citation ledger, shared with the registered
     /// `cite_memory` tool instance and drained per execution by
     /// [`ToolRegistry::take_memory_citations`].
@@ -441,6 +446,7 @@ impl ToolRegistry {
             root,
             touched: std::sync::Mutex::new(FileTouchLedger::default()),
             span_reads,
+            workspace_probe: std::sync::Mutex::new(None),
             citations,
             agent_uses: std::sync::Mutex::new(crate::agent_use::AgentUseLedger::default()),
             mcp_usage,
@@ -910,18 +916,6 @@ impl ToolRegistry {
             );
         }
 
-        // Opaque calls get a before-image. A tool whose input named no file
-        // op but which is allowed to mutate is precisely `bash` and its
-        // relatives: the schema cannot say what they will touch, so the tree
-        // is asked instead (see [`crate::shell_touch`]). Read-only tools are
-        // skipped, and an *unknown* tool counts as mutating for the same
-        // reason the ladder counts it so — on Terminal-Bench the shell is how
-        // nearly all real work lands, and a name we fail to recognize must
-        // never be the reason a change goes unattributed.
-        let shell_probe = (pending_ops.is_empty()
-            && !tool.as_ref().map(|t| t.schema().read_only).unwrap_or(false))
-        .then(|| crate::shell_touch::WorkspaceProbe::capture(&self.root));
-
         let mut output = match tool {
             Some(tool) => tool.execute(input, &self.root).await,
             None => ToolOutput::Error {
@@ -965,41 +959,6 @@ impl ToolRegistry {
                         );
                     }
                 }
-            }
-        }
-        // Attribute what the opaque call actually did. Deliberately OUTSIDE
-        // the success gate below: a shell command that exits non-zero has
-        // very often still written something (a build that failed halfway, a
-        // patch that applied two hunks of three), and the ledger's job is to
-        // describe the tree as it is, not as the exit code implies.
-        if let Some(before) = shell_probe {
-            let after = crate::shell_touch::WorkspaceProbe::capture(&self.root);
-            for touch in before.diff(&after) {
-                let Some(full) = crate::resolve_within_root(&self.root, &touch.path) else {
-                    continue;
-                };
-                // An unmeasurable update carries its own post-image as the
-                // pre-image, yielding 0/0. The alternative — an empty
-                // pre-image — would render a same-file rewrite as a
-                // whole-file insertion, which is a louder lie than silence.
-                let pre_content = match (touch.counts_measurable, touch.op) {
-                    (true, _) => touch.pre_content,
-                    (false, FileOp::Update | FileOp::Delete) => std::fs::read(&full)
-                        .ok()
-                        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()),
-                    (false, _) => None,
-                };
-                self.record_touch(
-                    PendingTouch {
-                        path: touch.path,
-                        full,
-                        op: touch.op,
-                    },
-                    pre_content,
-                    name,
-                    &serde_json::json!({ "reason": format!("attributed to `{name}`") }),
-                    bus.as_ref(),
-                );
             }
         }
         if !output.is_error() {
@@ -1690,6 +1649,77 @@ impl ToolRegistry {
         self.mutations.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Take a before-image of the workspace for the turn about to run.
+    ///
+    /// Paired with [`Self::settle_workspace_probe`]. `classify_file_op` reads
+    /// a tool's *input*, which cannot describe what `bash` will touch, so the
+    /// tree is asked instead — see [`crate::shell_touch`] for the measurement
+    /// that motivated it (757 of 1,063 Terminal-Bench tool calls were shell
+    /// calls, and the ledger recorded none of them).
+    ///
+    /// Bracketing the TURN rather than each call is deliberate and measured:
+    /// one walk of a 20,000-entry tree costs ~1s, a turn issues hundreds of
+    /// shell calls, and the harness kills a trial at 900s. Per-call probing
+    /// would have spent the entire trial budget watching itself work. The
+    /// cost is that a change is attributed to the turn rather than to the
+    /// exact call within it — which is all the ledger and the ladder ever
+    /// read.
+    pub fn begin_workspace_probe(&self) {
+        let probe = crate::shell_touch::WorkspaceProbe::capture(&self.root);
+        *self
+            .workspace_probe
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some(probe);
+    }
+
+    /// Attribute anything this turn changed that no tool schema described.
+    ///
+    /// Routed through `record_touch` so a `FileChange` keeps exactly
+    /// one birthplace. Paths the CRUD tools already recorded are re-recorded
+    /// here as the same op on the same path — the ledger is keyed by path and
+    /// folds repeats, so an edit that a tool declared and the tree confirms
+    /// stays one entry rather than becoming two.
+    pub fn settle_workspace_probe(&self) {
+        let Some(before) = self
+            .workspace_probe
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+        else {
+            return;
+        };
+        let after = crate::shell_touch::WorkspaceProbe::capture(&self.root);
+        for touch in before.diff(&after) {
+            let Some(full) = crate::resolve_within_root(&self.root, &touch.path) else {
+                continue;
+            };
+            // An attributed update carries its own POST-image as its
+            // pre-image, yielding 0 added / 0 removed. Deliberate: the probe
+            // is metadata-only, so the line counts are genuinely unknown
+            // here. Passing an empty pre-image instead would render every
+            // same-file rewrite as a whole-file insertion — a louder lie than
+            // silence. The `U` event, which is what the ladder reads, is
+            // unaffected.
+            let pre_content = match touch.op {
+                FileOp::Update => std::fs::read(&full)
+                    .ok()
+                    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()),
+                _ => None,
+            };
+            self.record_touch(
+                PendingTouch {
+                    path: touch.path,
+                    full,
+                    op: touch.op,
+                },
+                pre_content,
+                "workspace_probe",
+                &serde_json::json!({ "reason": "observed in the workspace" }),
+                None,
+            );
+        }
+    }
+
     /// Snapshot of every file touched this session, insertion-ordered,
     /// with its ops as a compact CRUD string (e.g. `"RU"`).
     pub fn files_touched(&self) -> Vec<(String, String)> {
@@ -1954,6 +1984,7 @@ mod tests {
         let (root, reg) = bare_registry(None);
         assert_eq!(reg.mutations_recorded(), 0, "clean before");
 
+        reg.begin_workspace_probe();
         let out = reg
             .execute(
                 "bash",
@@ -1962,6 +1993,12 @@ mod tests {
             .await;
         assert!(!out.is_error(), "{out:?}");
         assert!(root.path().join("made_by_shell.txt").exists());
+        assert_eq!(
+            reg.mutations_recorded(),
+            0,
+            "nothing is attributed until the turn settles"
+        );
+        reg.settle_workspace_probe();
 
         let touched = reg.files_touched();
         assert!(
@@ -1980,6 +2017,7 @@ mod tests {
     async fn a_failing_shell_command_still_reports_what_it_wrote() {
         let (root, reg) = bare_registry(None);
 
+        reg.begin_workspace_probe();
         let out = reg
             .execute(
                 "bash",
@@ -1988,6 +2026,7 @@ mod tests {
             .await;
         // Whatever the tool reports, the tree changed and the ledger says so.
         let _ = out;
+        reg.settle_workspace_probe();
         assert!(root.path().join("half_done.txt").exists());
         assert!(
             reg.files_touched()
@@ -2004,10 +2043,12 @@ mod tests {
         let (root, reg) = bare_registry(None);
         std::fs::write(root.path().join("existing.txt"), "unchanged\n").unwrap();
 
+        reg.begin_workspace_probe();
         let out = reg
             .execute("bash", &serde_json::json!({"command": "cat existing.txt"}))
             .await;
         assert!(!out.is_error(), "{out:?}");
+        reg.settle_workspace_probe();
         assert_eq!(
             reg.mutations_recorded(),
             0,

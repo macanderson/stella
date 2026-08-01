@@ -285,6 +285,26 @@ pub trait FileTouchPort: Send + Sync {
     /// observability, not change, exactly as `FileChangeKind::is_mutation`
     /// decides for the event.
     fn mutations_recorded(&self) -> u64;
+
+    /// Take a before-image of the workspace for the turn about to run.
+    ///
+    /// The pair with [`Self::settle_workspace_probe`] exists because a tool's
+    /// schema cannot describe what `bash` will touch, so the tree has to be
+    /// asked instead. Bracketing the TURN rather than each call is a measured
+    /// choice: a single walk of a 20,000-entry tree costs ~1s, a turn issues
+    /// hundreds of shell calls, and a trial is killed at 900s — per-call
+    /// probing would spend the whole budget observing.
+    ///
+    /// Default no-op, so a host with no recorder (and every test double)
+    /// keeps working: an unprobed turn simply reports what its other channels
+    /// saw, which is the pre-existing behaviour.
+    fn begin_workspace_probe(&self) {}
+
+    /// Attribute anything the turn changed that no tool schema described.
+    ///
+    /// Records through the same emitter as every other touch, so the ledger
+    /// keeps exactly one birthplace for a `FileChange`.
+    fn settle_workspace_probe(&self) {}
 }
 
 /// A [`FileTouchPort`] that never observes anything, for hosts with no file
