@@ -109,6 +109,7 @@ mod tests {
         let observer = null_observer();
         observer.emit(&ServeEvent::Listening {
             addr: "127.0.0.1:0".to_string(),
+            host_guard: crate::HostMode::Loopback,
         });
     }
 
@@ -122,6 +123,7 @@ mod tests {
             scope.spawn(|| {
                 observer.emit(&ServeEvent::Listening {
                     addr: "elsewhere".to_string(),
+                    host_guard: crate::HostMode::Loopback,
                 });
             });
         });

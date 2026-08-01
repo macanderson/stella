@@ -294,7 +294,7 @@ async fn post_json_head(
         .map(|t| format!("Authorization: Bearer {t}\r\n"))
         .unwrap_or_default();
     let request = format!(
-        "POST {path} HTTP/1.1\r\nHost: engine\r\n{auth}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "POST {path} HTTP/1.1\r\nHost: localhost\r\n{auth}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len(),
     );
     stream.write_all(request.as_bytes()).await.unwrap();
@@ -324,7 +324,7 @@ async fn an_oversized_body_is_refused_with_413_rather_than_silence() {
     let declared = 8 * 1024 * 1024 + 1;
     let mut stream = TcpStream::connect(addr).await.unwrap();
     let request = format!(
-        "POST /v1/turns HTTP/1.1\r\nHost: engine\r\nAuthorization: Bearer {TOKEN}\r\nContent-Length: {declared}\r\nConnection: close\r\n\r\n"
+        "POST /v1/turns HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {TOKEN}\r\nContent-Length: {declared}\r\nConnection: close\r\n\r\n"
     );
     stream.write_all(request.as_bytes()).await.unwrap();
     let mut response = String::new();
@@ -471,7 +471,7 @@ async fn a_known_path_with_the_wrong_method_is_405_with_an_allow_header() {
     // GET the create route (a POST route).
     let mut stream = TcpStream::connect(addr).await.unwrap();
     let request = format!(
-        "GET /v1/turns HTTP/1.1\r\nHost: engine\r\nAuthorization: Bearer {TOKEN}\r\nConnection: close\r\n\r\n"
+        "GET /v1/turns HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {TOKEN}\r\nConnection: close\r\n\r\n"
     );
     stream.write_all(request.as_bytes()).await.unwrap();
     let mut response = String::new();
@@ -498,7 +498,7 @@ async fn a_chunked_request_is_refused_by_name() {
 
     let mut stream = TcpStream::connect(addr).await.unwrap();
     let request = format!(
-        "POST /v1/turns HTTP/1.1\r\nHost: engine\r\nAuthorization: Bearer {TOKEN}\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n2\r\n{{}}\r\n0\r\n\r\n"
+        "POST /v1/turns HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {TOKEN}\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n2\r\n{{}}\r\n0\r\n\r\n"
     );
     stream.write_all(request.as_bytes()).await.unwrap();
     let mut response = String::new();
@@ -935,7 +935,7 @@ async fn a_request_id_is_echoed_and_a_hostile_one_is_replaced() {
 
     let head = raw_request(
         addr,
-        "GET /healthz HTTP/1.1\r\nHost: engine\r\nX-Request-Id: abc-123\r\nConnection: close\r\n\r\n",
+        "GET /healthz HTTP/1.1\r\nHost: localhost\r\nX-Request-Id: abc-123\r\nConnection: close\r\n\r\n",
     )
     .await;
     assert!(
@@ -945,7 +945,7 @@ async fn a_request_id_is_echoed_and_a_hostile_one_is_replaced() {
 
     let head = raw_request(
         addr,
-        "GET /healthz HTTP/1.1\r\nHost: engine\r\nX-Request-Id: has space and \"quotes\"\r\nConnection: close\r\n\r\n",
+        "GET /healthz HTTP/1.1\r\nHost: localhost\r\nX-Request-Id: has space and \"quotes\"\r\nConnection: close\r\n\r\n",
     )
     .await;
     assert!(

@@ -34,6 +34,7 @@
 //!   sender clone onto the session thread: a thread that holds its own gate's
 //!   sender can park on it forever.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use stella_core::ports::{TurnGate, TurnSteering};
@@ -101,6 +102,31 @@ impl Controls {
     pub(crate) fn steer(&self, text: String) {
         self.steering.push(text);
     }
+
+    /// Ask the turn to stop at its next step boundary, keeping everything it
+    /// has completed. The graceful half of a shutdown drain (#1131).
+    ///
+    /// Distinct from [`crate::session::Session::cancel`] in exactly one way
+    /// that matters here: cancel wakes a parked reverse request *immediately*,
+    /// which throws away a model call the host is already paying for. A soft
+    /// stop lets that call land, folds its result into the transcript, and
+    /// ends the turn at the boundary after it. That is the difference between
+    /// a redeploy that costs one in-flight generation per turn and one that
+    /// costs nothing.
+    ///
+    /// It follows that a soft stop is *not* a bound: a turn parked on a host
+    /// that never answers will never reach a boundary to observe it. The drain
+    /// pairs it with a grace period and cancels whatever outlives that — see
+    /// `crate::server::drain`.
+    ///
+    /// The pause gate is released as a matter of course, for the same reason
+    /// every cancel path releases it: a paused turn is parked on the gate, not
+    /// at a step boundary, so it cannot observe a stop request until something
+    /// unparks it.
+    pub(crate) fn soft_stop(&self) {
+        self.steering.request_soft_stop();
+        self.resume();
+    }
 }
 
 impl ControlPorts {
@@ -133,12 +159,20 @@ impl TurnGate for PauseGate {
 /// `TurnSteering` over a shared queue. The drain is destructive by the trait's
 /// contract — whatever it returns *will* be injected.
 ///
-/// `soft_stop_requested` is a hard `false`: the HTTP surface deliberately does
-/// not expose the soft stop (issue #932 scopes the wire to steer, pause and
-/// resume), so no state exists that could request one.
+/// `soft_stop_requested` has no HTTP route behind it: #932 scoped the wire to
+/// steer, pause and resume, and that is still the case. What sets it is the
+/// **shutdown drain** (#1131) — a process-level event, not a request — so the
+/// latch is reachable from `crate::server` and from nowhere a client can
+/// address.
 #[derive(Default)]
 pub(crate) struct SteerQueue {
     queue: Mutex<Vec<String>>,
+    /// Latched, never cleared: a turn asked to stop does not un-ask. Relaxed
+    /// ordering is sufficient because the flag guards nothing but itself —
+    /// the engine reads it at a step boundary and needs only to observe the
+    /// write eventually, and "eventually" here is bounded by the drain's own
+    /// grace period.
+    soft_stop: AtomicBool,
 }
 
 impl SteerQueue {
@@ -148,6 +182,10 @@ impl SteerQueue {
             .unwrap_or_else(|p| p.into_inner())
             .push(text);
     }
+
+    fn request_soft_stop(&self) {
+        self.soft_stop.store(true, Ordering::Relaxed);
+    }
 }
 
 impl TurnSteering for SteerQueue {
@@ -156,7 +194,7 @@ impl TurnSteering for SteerQueue {
     }
 
     fn soft_stop_requested(&self) -> bool {
-        false
+        self.soft_stop.load(Ordering::Relaxed)
     }
 }
 

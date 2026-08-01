@@ -19,12 +19,11 @@
 2316 stella-cli/src/agent.rs
 1576 stella-cli/src/candidate_ws.rs
 4413 stella-cli/src/command_deck.rs
-2095 stella-core/src/bus.rs
-2220 stella-core/src/driver.rs
-3133 stella-core/src/driver/tests.rs
+2129 stella-core/src/bus.rs
+2377 stella-core/src/driver.rs
+3134 stella-core/src/driver/tests.rs
 1849 stella-fleet/src/fleet.rs
 1612 stella-model/src/anthropic/tests.rs
-1785 stella-model/src/bedrock.rs
 2037 stella-model/src/openai.rs
 1773 stella-model/src/zai/tests.rs
 3249 stella-pipeline/src/pipeline.rs

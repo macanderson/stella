@@ -57,7 +57,9 @@ mod controls;
 mod error;
 mod frame;
 mod history;
+mod hostguard;
 mod http;
+mod lifecycle;
 pub mod observe;
 mod pending;
 mod remote;
@@ -67,15 +69,18 @@ pub mod schema_export;
 mod server;
 mod session;
 mod sessions;
+mod throttle;
 
 pub use error::ServeError;
 pub use frame::{
     ProviderErrorWire, ProviderOutcomeIn, ProviderResultIn, ServerFrame, ToolResultIn,
     TurnOutcomeWire,
 };
+pub use hostguard::HostMode;
 pub use observe::{Metrics, Observer, ServeEvent, SharedObserver};
 pub use pending::Pending;
 pub use server::{
-    DEFAULT_RESUME_GRACE, DEFAULT_SESSION_IDLE_TTL, MAX_RESUME_GRACE, ServeConfig, serve,
+    DEFAULT_RESUME_GRACE, DEFAULT_SESSION_IDLE_TTL, DEFAULT_SHUTDOWN_GRACE, MAX_RESUME_GRACE,
+    MAX_SHUTDOWN_GRACE, ServeConfig, serve, serve_until,
 };
 pub use session::{Session, SessionSpec, SettleHook, TurnSettlement};

@@ -310,7 +310,7 @@ mod tests {
     fn adapter_sources() -> [&'static str; 9] {
         [
             include_str!("anthropic/tests.rs"),
-            include_str!("bedrock.rs"),
+            include_str!("bedrock/tests.rs"),
             include_str!("openai.rs"),
             include_str!("gemini/tests.rs"),
             include_str!("vertex.rs"),

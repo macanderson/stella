@@ -635,6 +635,13 @@ impl Engine<'_> {
             calibration: self.calibration,
             gate: self.gate,
             steering,
+            // The child rides the parent's bus. A sub-agent's steps and model
+            // calls are work the session really did — billed to it, visible
+            // in its spend — so hiding them from an observer would make the
+            // lifecycle stream disagree with the cost. `HookEvent` carries
+            // `agent_id`, which is what lets a consumer tell parent work from
+            // child work without a second bus.
+            bus: self.bus,
         };
 
         // The child's private transcript. It is a local: nothing outside

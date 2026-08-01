@@ -26,7 +26,7 @@ use stella_protocol::{CompletionMessage, ToolSchema};
 use stella_serve::observe::{
     Capture, Fanout, Metrics, ServeEvent, SharedObserver, StreamEndReason,
 };
-use stella_serve::{ServeConfig, serve};
+use stella_serve::{ServeConfig, serve_until};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
@@ -70,10 +70,31 @@ pub async fn start_observed_server() -> (SocketAddr, Arc<Capture>) {
 /// [`start_observed_server`] with an explicit resume window, for the tests that
 /// are *about* that window.
 pub async fn start_observed_server_with(resume_grace: Duration) -> (SocketAddr, Arc<Capture>) {
+    let (addr, capture, _shutdown) =
+        start_drainable_server(resume_grace, stella_serve::DEFAULT_SHUTDOWN_GRACE).await;
+    // The shutdown handle is dropped: a dropped `oneshot::Sender` resolves its
+    // receiver, so the returned future would fire immediately and every server
+    // in the suite would drain the moment it started. `pending_shutdown`
+    // inside is what keeps that from happening — see there.
+    (addr, capture)
+}
+
+/// A server whose drain a test can trigger, plus the handle that triggers it.
+///
+/// Sending on the returned [`oneshot::Sender`] is the test-side stand-in for a
+/// `SIGTERM`. It drives the identical path — `serve` is `serve_until` with the
+/// process's signals supplied — without registering a real signal handler,
+/// which would replace `SIGTERM`'s disposition for the whole test binary and
+/// quietly make the suite un-killable (#1131).
+pub async fn start_drainable_server(
+    resume_grace: Duration,
+    shutdown_grace: Duration,
+) -> (SocketAddr, Arc<Capture>, oneshot::Sender<()>) {
     let capture = Arc::new(Capture::new());
     let observer = capture.clone();
     let metrics = Arc::new(Metrics::new());
     let (tx, rx) = oneshot::channel();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let fanout: SharedObserver = Arc::new(Fanout::new(vec![observer, metrics.clone()]));
     tokio::spawn(async move {
         let config = ServeConfig {
@@ -83,14 +104,37 @@ pub async fn start_observed_server_with(resume_grace: Duration) -> (SocketAddr, 
             metrics,
             resume_grace,
             session_idle_ttl: stella_serve::DEFAULT_SESSION_IDLE_TTL,
+            // Empty on purpose: the bind is loopback, so the `Host` guard
+            // already knows what this server is called and needs no
+            // allow-list. Every helper below dials 127.0.0.1 and announces
+            // `Host: localhost` accordingly — `Host: engine` was a fiction no
+            // real client would send (#1130).
+            allowed_hosts: Vec::new(),
+            shutdown_grace,
         };
-        let _ = serve(config, move |addr| {
-            let _ = tx.send(addr);
-        })
+        let _ = serve_until(
+            config,
+            move |addr| {
+                let _ = tx.send(addr);
+            },
+            pending_shutdown(shutdown_rx),
+        )
         .await;
     });
     let addr = rx.await.expect("server reported its bound address");
-    (addr, capture)
+    (addr, capture, shutdown_tx)
+}
+
+/// Resolve when the sender *sends*, never when it is merely dropped.
+///
+/// A bare `oneshot::Receiver` resolves (with an error) on drop, which would
+/// make every server started by [`start_observed_server_with`] — which drops
+/// its handle immediately — drain before its test did anything. Swallowing the
+/// drop case turns the handle into a pure "trigger" rather than a lifetime.
+async fn pending_shutdown(rx: oneshot::Receiver<()>) {
+    if rx.await.is_err() {
+        std::future::pending::<()>().await;
+    }
 }
 
 /// POST a JSON body and read the whole response (server sends `Connection:
@@ -106,7 +150,7 @@ pub async fn post_json(
         .map(|t| format!("Authorization: Bearer {t}\r\n"))
         .unwrap_or_default();
     let request = format!(
-        "POST {path} HTTP/1.1\r\nHost: engine\r\n{auth}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "POST {path} HTTP/1.1\r\nHost: localhost\r\n{auth}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len(),
     );
     stream.write_all(request.as_bytes()).await.unwrap();
@@ -120,7 +164,7 @@ pub async fn post_json(
 /// GET a plain endpoint (used for `/healthz`), returning `(status_line, body)`.
 pub async fn get_json(addr: SocketAddr, path: &str) -> (String, String) {
     let mut stream = TcpStream::connect(addr).await.unwrap();
-    let request = format!("GET {path} HTTP/1.1\r\nHost: engine\r\nConnection: close\r\n\r\n");
+    let request = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
     stream.write_all(request.as_bytes()).await.unwrap();
     let mut response = String::new();
     stream.read_to_string(&mut response).await.unwrap();
@@ -131,12 +175,52 @@ pub async fn get_json(addr: SocketAddr, path: &str) -> (String, String) {
     )
 }
 
+/// GET with an explicit `Host` header, for the `Host`-guard tests — every
+/// other helper hardcodes a loopback identity, which is precisely what these
+/// need to vary.
+pub async fn get_with_host(
+    addr: SocketAddr,
+    path: &str,
+    host: &str,
+    token: Option<&str>,
+) -> (String, String) {
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+    let auth = token
+        .map(|t| format!("Authorization: Bearer {t}\r\n"))
+        .unwrap_or_default();
+    let request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\n{auth}Connection: close\r\n\r\n");
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.unwrap();
+    let (head, body) = response.split_once("\r\n\r\n").unwrap_or((&response, ""));
+    (
+        head.lines().next().unwrap_or_default().to_string(),
+        body.to_string(),
+    )
+}
+
+/// GET with no `Host` header at all — the HTTP/1.0-style request the guard
+/// deliberately permits.
+pub async fn get_without_host(addr: SocketAddr, path: &str) -> String {
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+    let request = format!("GET {path} HTTP/1.1\r\nConnection: close\r\n\r\n");
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.unwrap();
+    response
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim_end()
+        .to_string()
+}
+
 /// GET with the bearer token, reading the whole response. Used to probe a
 /// route's status without the side effect a POST would carry.
 pub async fn get_json_authed(addr: SocketAddr, path: &str, token: &str) -> (String, String) {
     let mut stream = TcpStream::connect(addr).await.unwrap();
     let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: engine\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+        "GET {path} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
     );
     stream.write_all(request.as_bytes()).await.unwrap();
     let mut response = String::new();
@@ -153,7 +237,7 @@ pub async fn get_json_authed(addr: SocketAddr, path: &str, token: &str) -> (Stri
 pub async fn open_sse(addr: SocketAddr, path: &str, token: &str) -> BufReader<TcpStream> {
     let mut stream = TcpStream::connect(addr).await.unwrap();
     let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: engine\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+        "GET {path} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
     );
     stream.write_all(request.as_bytes()).await.unwrap();
     let mut reader = BufReader::new(stream);
@@ -287,7 +371,7 @@ pub async fn open_sse_resuming(
 ) -> BufReader<TcpStream> {
     let mut stream = TcpStream::connect(addr).await.unwrap();
     let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: engine\r\nAuthorization: Bearer {token}\r\n\
+        "GET {path} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\n\
          Last-Event-ID: {last_event_id}\r\nConnection: close\r\n\r\n"
     );
     stream.write_all(request.as_bytes()).await.unwrap();

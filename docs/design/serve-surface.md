@@ -5,8 +5,9 @@
 Option B, the Rust sidecar. It builds its own binary and nothing in
 `stella-cli` links it, so a change here never reaches a `stella` user.
 **This document describes the target surface, not all of it is built:** the
-code today has no approval gate, no `Host`-header guard, and no SIGTERM
-drain. Turn cancellation, a reverse-request deadline, — as of #971 phase 2 —
+code today has no approval gate. Turn cancellation, a reverse-request
+deadline, — as of #1130 — the **DNS-rebinding `Host` guard**, — as of #1131 —
+the **SIGTERM drain and `GET /readyz`**, — as of #971 phase 2 —
 **resumable SSE streams** (`seq`, retained history, `?after=` /
 `Last-Event-ID`), — as of #932 — **mid-turn steering and pause/resume**, and —
 as of #931 — **server-owned sessions** (`/v1/sessions`, retained history,
@@ -18,8 +19,17 @@ treat `stella-serve/src/` as the state and this doc as the destination.
 `stella-cli` so a server can assemble the same stack without linking a binary)
 and `stella-engine` (phase 1 — `run_step`, a serde `Checkpoint`, and a
 step-boundary `CancelToken`, with `run_turn` re-implemented as a loop over
-`run_step` so there is one code path). `stella-serve` does **not** yet drive
-`run_step`; it still calls `Engine::run_turn`, which is the next increment.
+`run_step` so there is one code path). As of #1129 `stella-serve` **does**
+drive `run_step`: `session.rs` owns a `TurnState` carrying a `CancelToken`
+and loops over steps, so `POST /v1/turns/{id}/cancel` unwinds at the next
+step boundary — interrupting CPU-bound work *between* reverse requests
+(compaction, loop detection), which the previous cancel could not reach. The
+difference is visible in the abort reason: it now names a step-boundary
+cancel rather than a failed model call, because the turn ends by being asked
+to rather than by having its transport pulled. `StepOutcome::Continue` is
+also now the seam where a durable runner would persist
+`state.to_checkpoint()`; nothing is persisted yet, since this server has
+nowhere to put it.
 
 **Date:** 2026-07-20, revised 2026-07-30. **Owner:** Mac Anderson.
 **Companion:** `oxagen-platform/docs/specs/agent-engine-v2/` (ADR-033 + spec) —
@@ -42,13 +52,14 @@ not in this table is a 404.
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/healthz` | The **only** unauthenticated route. `{"status":"ok"}` |
+| `GET` | `/healthz` | Unauthenticated. Liveness — is the process alive. `{"status":"ok"}` |
+| `GET` | `/readyz` | Unauthenticated. Readiness — is it safe to send new work. `200 {"state":"ready"}`, or `503` with `"starting"` / `"draining"` (#1131) |
 | `GET` | `/v1/metrics` | Counters as a flat JSON object of integers. Authenticated like every other route, and **pull-only** — see [serve-observability.md](./serve-observability.md) |
 | `POST` | `/v1/turns` | Body is `TurnRequest`; returns `{"turn_id":"turn-<32 hex>"}` |
 | `GET` | `/v1/turns/{id}/events` | SSE `id: <seq>` + `data: <ServerFrame>`. Resumable via `?after=<seq>` or `Last-Event-ID`. One concurrent subscriber; a second gets 409 |
 | `POST` | `/v1/turns/{id}/provider-result` | Answers a `provider_request` |
 | `POST` | `/v1/turns/{id}/tool-result` | Answers a `tool_request` |
-| `POST` | `/v1/turns/{id}/cancel` | Hard teardown: drops the turn and its transcript. There is no `DELETE` |
+| `POST` | `/v1/turns/{id}/cancel` | Step-boundary stop (#1129): the turn unwinds at its next step, keeping completed steps, and still emits `turn_complete`. Deregistered immediately, so a second cancel is a 404. There is no `DELETE` |
 | `POST` | `/v1/turns/{id}/steer` | `{"message": "…"}` — injected at the next step boundary, echoed as a `steered` event (#932) |
 | `POST` | `/v1/turns/{id}/pause` | Hold at the next step boundary. Idempotent; never mid-tool (#932) |
 | `POST` | `/v1/turns/{id}/resume` | Release a held turn. Idempotent (#932) |
@@ -73,7 +84,9 @@ destination, and which a client written from it gets wrong:
   drives exactly one turn with host-supplied messages and retains nothing.
   Sessions are additive (#931), not a replacement — and note the shape is
   `POST /v1/sessions/{id}/turns` (plural), not the singular `/turn` some
-  diagrams below sketch. `/readyz` does not exist. `/v1/metrics` **does**.
+  diagrams below sketch. `/readyz` **now exists** (#1131) and, like `/healthz`,
+  is unauthenticated — a kubelet has no bearer token. `/v1/metrics` **does**
+  exist and is authenticated.
 - **Reverse RPC is keyed by `request_id` on its own frame types**, not by a
   `call_id` on a `tool_start` / `scope_review` / `ask_user` `AgentEvent`. The
   engine emits dedicated `tool_request` / `provider_request` `ServerFrame`
@@ -153,6 +166,25 @@ the engine is structured as a headless library, not a terminal program:
    first-class, and a headless scope-review over threshold returns the named
    error `ScopeReviewRequiredHeadless` — **never a silent auto-approve**.
    `AutoApproveGate` / `AlwaysAbortGate` are the headless approval ports.
+
+   **Correction (#932 approval half).** This paragraph is the premise behind
+   "surface `ScopeReviewRequiredHeadless` to the host as a decision", and the
+   premise does not hold for `stella-serve` as built: **a served turn never
+   reaches a scope review at all.** `ApprovalGate::review` has exactly one
+   call site — `stella-pipeline/src/pipeline/scope_stage.rs` — and
+   `stella-serve` does not depend on `stella-pipeline`. It drives the
+   *engine* (`stella_engine::run_step`), which has no plan or scope stage.
+   Only `stella-cli` and `stella-runtime` link the pipeline.
+
+   So `POST /v1/turns/{id}/approve` is not merely unbuilt, it is currently
+   **unreachable**: a route no turn could trigger, and a row in the table
+   above that a client could code against and never exercise. Building it
+   is blocked on a prior decision — whether `stella-serve` grows a
+   pipeline-driving surface (`POST /v1/runs`, distinct from `/v1/turns`)
+   or whether the approval boundary moves down into the engine. That is a
+   design question, not an increment, which is why the steering and
+   pause/resume halves of #932 shipped on their own (#1056) and this one
+   did not.
 
 4. **Multi-workspace in one process already works.** `stella-fleet` runs N
    workers concurrently in one process, each with `cfg.workspace_root` overridden
@@ -344,18 +376,45 @@ Oxagen's existing Firecracker/Modal sandbox** (the same isolation
 — the engine does not spawn its own shells server-side. `stella-serve` in server
 mode:
 
-- **binds to a token-gated port only** (no ambient trust). **Not yet built:**
-  reusing the Observatory's DNS-rebinding `Host`-header guard
-  (`stella-observatory/src/lib.rs::host_is_local`) — `stella-serve` performs no
-  `Host` validation today.
+- **binds to a token-gated port only** (no ambient trust), behind a
+  DNS-rebinding `Host`-header guard (`stella-serve/src/hostguard.rs`, #1130)
+  that runs before route dispatch on every route — `/healthz` included, since
+  that is the one route the bearer token does not cover. The policy is derived
+  from the bind rather than hardcoded, because the Observatory's
+  `host_is_local` was written for a loopback-only surface and this one also
+  binds `0.0.0.0` in a container:
+  - **loopback bind** → only loopback names/addresses are accepted;
+  - **non-loopback bind + `STELLA_SERVE_ALLOWED_HOSTS`** → that list, plus
+    loopback (a container's own probe) and the bound literal;
+  - **non-loopback bind, no allow-list** → the guard is *inert*, since nothing
+    can know what the deployment is legitimately called. That arm is named on
+    the `listening` record (`host_guard`) rather than left silent, and refusals
+    are counted (`host_rejected_total`) and reported (`host_rejected`) so a
+    missing allow-list entry is distinguishable from an attack.
+
+  A request with no `Host` at all is permitted, matching the Observatory: a
+  browser `fetch` always sends one, so its absence is not the attack.
 - **disables the local shell/web tool surface by default** (`--tools remote`),
   delegating all execution to the host's `RemoteToolExecutor`.
 - **does not use `stella-store` or `stella-cli` shell hooks server-side** (per
   ADR-033 §4.1) — persistence and policy are the platform's.
-- **Not yet built:** the **graceful shutdown** the CLI lacks — SIGTERM draining
-  in-flight turns to the next step boundary (soft-stop), then exiting. There is
-  no signal handling in `stella-serve/src/` today; only the per-session
-  lifecycle tears down cleanly (the CLI has SIGPIPE + TUI-drop cleanup).
+- **drains on SIGTERM** rather than hard-killing in-flight turns (#1131).
+  `SIGTERM`/`SIGINT` flips `GET /readyz` to `503`, refuses `POST /v1/turns` and
+  both session-creating routes with `503` + `Retry-After`, and asks every live
+  turn to stop at its next step boundary — so an in-flight model call *lands*
+  and its result is kept, which cancelling would have thrown away. Turns that
+  do not reach a boundary inside `STELLA_SERVE_SHUTDOWN_GRACE_SECS` (25s by
+  default, under Kubernetes' 30s `terminationGracePeriodSeconds`) are then
+  cancelled — still a step-boundary unwind that emits `turn_complete`, never a
+  dropped future. The outcome is reported as `drain_completed
+  {drained, cancelled, timed_out}`.
+
+  The **listener stays open for the whole drain**, which is the
+  counter-intuitive part and load-bearing: reverse RPC means a parked turn is
+  finished *by the host* over new connections, so closing the port would strand
+  every turn the drain is waiting for — and would take `/readyz` with it.
+  New work is refused by status code; the port is released when the process
+  exits.
 
 ## Metering parity
 
@@ -384,8 +443,26 @@ ADR-033 §7 names).
    deliberate corruptions.
    **Correction:** `validate_stream` lives in `stella-pipeline/src/replay.rs`,
    not `stella-protocol` as earlier editions of this document said.
-5. ⬜ Host-emitted bus lifecycle events (`emit_named` helpers) — closes "the bus
-   is only emitted from the tool registry."
+5. ✅ **DONE (#1133).** Bus lifecycle events at the turn, step and model-call
+   boundaries — closes "the bus is only emitted from the tool registry."
+   `Engine::with_bus` attaches a `HookBus`; the engine then emits
+   `agent.turn.started`/`.completed`, `agent.step.started`/`.completed`, and
+   `model.request.started`/`.completed`/`.failed`. `HookBus::session_started`
+   emits `session.started` and is called by whoever *mints* the bus (today
+   `stella-cli`'s rule guards), because construction is the only place the
+   session boundary actually is — and it fires after subscribing, or the one
+   event that opens the stream would be the one nobody sees.
+   **Correction:** earlier editions implied the catalog already declared step
+   names. It did not — `agent.step.started`/`.completed` were added with the
+   emitters, since a catalog name nothing emits is a promise rather than a
+   contract. Turn-level `agent.turn.*` did already exist.
+   These are **observer-only**: none is on the blocking allowlist, so an
+   extension can watch a step begin but not veto one. Payloads carry counts
+   and identifiers (message count, tokens, cost, model id, step index) and
+   never transcript content — the one free-text field is an abort `reason`,
+   which already reaches `AgentEvent::Error`. An engine with no bus attached
+   pays nothing: every emit site is behind one `if let Some(bus)`, and the
+   payload closure is not called without one.
 6. ✅ **DONE (#971 phase 1).** A real `CancelToken` threaded through `run_step`,
    read at the step boundary, closing any open `tool_use` with synthetic error
    `tool_result`s so the transcript stays valid; hard-drop semantics documented

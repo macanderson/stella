@@ -92,6 +92,8 @@ impl LevelFilter {
 pub enum Route {
     #[serde(rename = "/healthz")]
     Healthz,
+    #[serde(rename = "/readyz")]
+    Readyz,
     #[serde(rename = "/v1/metrics")]
     Metrics,
     #[serde(rename = "/v1/turns")]
@@ -130,6 +132,7 @@ impl Route {
     pub fn template(self) -> &'static str {
         match self {
             Self::Healthz => "/healthz",
+            Self::Readyz => "/readyz",
             Self::Metrics => "/v1/metrics",
             Self::TurnsCreate => "/v1/turns",
             Self::TurnEvents => "/v1/turns/{id}/events",
@@ -407,6 +410,8 @@ pub enum AcceptKind {
 pub enum ShutdownReason {
     /// The listener returned a fatal error, or backoff gave up.
     ListenerFailed,
+    /// `SIGTERM`/`SIGINT` arrived — an orderly drain, not a failure (#1131).
+    SignalReceived,
 }
 
 /// What one turn actually did, folded from the engine's own `AgentEvent`
@@ -438,12 +443,30 @@ pub struct TurnTally {
 pub enum ServeEvent {
     // ---- process lifecycle ----
     /// The listener is bound and accepting. Replaces the startup `println!`.
+    ///
+    /// Carries the compiled `Host`-guard mode because a guard that is
+    /// [`crate::HostMode::Inert`] — the honest answer for a `0.0.0.0` bind
+    /// with no allow-list — must be visible to an operator at startup rather
+    /// than mistaken for one that is enforcing (#1130).
     Listening {
         addr: String,
+        host_guard: crate::HostMode,
     },
     ShuttingDown {
         reason: ShutdownReason,
         live_turns: usize,
+    },
+    /// A shutdown drain finished (#1131). The pair of counts is the whole
+    /// operational question a redeploy asks: `drained` turns reached a step
+    /// boundary with their work kept, `cancelled` ones had to be unwound
+    /// because they never got there — a persistently non-zero `cancelled`
+    /// across deploys means the grace period is shorter than this workload's
+    /// steps, which is a dial, not a mystery.
+    DrainCompleted {
+        drained: usize,
+        cancelled: usize,
+        /// Whether the grace period elapsed with turns still live.
+        timed_out: bool,
     },
 
     // ---- the request fold: exactly one per accepted connection ----
@@ -468,6 +491,21 @@ pub enum ServeEvent {
         request_id: RequestId,
         route: Route,
         held_ms: u64,
+    },
+    /// A request was refused by the `Host` guard before any routing happened
+    /// (#1130). Split out of `RequestCompleted` for the same reason
+    /// `Unauthorized` is: the two things an operator wants to find here — a
+    /// rebinding attempt, and their own missing allow-list entry — are one
+    /// grep rather than a scan of every 403.
+    ///
+    /// `host` is attacker-controlled, so `host_for_record` truncates it: it is
+    /// worth recording because it is exactly what tells a misconfiguration
+    /// apart from an attack, and worth bounding because a 64 KiB header would
+    /// otherwise become a log-flooding lever.
+    HostRejected {
+        request_id: RequestId,
+        route: Route,
+        host: String,
     },
 
     // ---- turn registry ----
@@ -586,6 +624,7 @@ impl ServeEvent {
             // Routine progress.
             Self::Listening { .. }
             | Self::ShuttingDown { .. }
+            | Self::DrainCompleted { .. }
             | Self::RequestCompleted { .. }
             | Self::TurnCreated { .. }
             | Self::TurnSettled { .. }
@@ -600,6 +639,7 @@ impl ServeEvent {
 
             // Somebody is misbehaving, or the server is under pressure.
             Self::Unauthorized { .. }
+            | Self::HostRejected { .. }
             | Self::TurnRefused { .. }
             | Self::TurnReclaimed { .. }
             | Self::SessionRefused { .. }
@@ -622,6 +662,26 @@ pub fn millis(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
+/// How many characters of a refused `Host` header reach a record.
+///
+/// Long enough for any real hostname (the DNS limit is 253) plus a port,
+/// short enough that the 64 KiB a peer may spend on a request head cannot be
+/// turned into 64 KiB of log line per connection.
+const HOST_LOG_LIMIT: usize = 256;
+
+/// A refused `Host` as it appears in a record: bounded, never verbatim.
+///
+/// Truncation is on a **character** boundary, not a byte one: a `Host` header
+/// is `from_utf8_lossy`'d at parse time, so it can carry multi-byte
+/// characters, and slicing those by byte index panics.
+#[must_use]
+pub fn host_for_record(host: &str) -> String {
+    if host.chars().count() <= HOST_LOG_LIMIT {
+        return host.to_string();
+    }
+    host.chars().take(HOST_LOG_LIMIT).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -633,6 +693,7 @@ mod tests {
         let events = vec![
             ServeEvent::Listening {
                 addr: "127.0.0.1:8080".to_string(),
+                host_guard: crate::HostMode::Loopback,
             },
             ServeEvent::RequestCompleted {
                 request_id: RequestId("abc123".to_string()),
