@@ -441,6 +441,33 @@ impl LadderInputs {
             && self.file_change_events == 0
     }
 
+    /// Whether a model judge's `passed` would be the *only* thing standing
+    /// behind the claim — no flip, and no test that ran green.
+    ///
+    /// Deliberately narrow. A recorded touch or a readable diff proves the
+    /// tree **changed**; neither says the change is **correct**, and only the
+    /// second claim is the one a pass makes. So they are excluded here even
+    /// though they are real evidence elsewhere on the ladder.
+    ///
+    /// This exists because the judge's authority was measured and found
+    /// wanting. Across an 89-task Terminal-Bench run the authored-witness
+    /// rung never fired — the posture pins one model for every role, and
+    /// Stella will not let the worker write the test that proves the worker,
+    /// so the judge was reasoning from a diff and its own opinion. It agreed
+    /// with the benchmark's grader 46% of the time, and 17 of its false
+    /// passes cost 5 tasks outright.
+    ///
+    /// The response is asymmetric trust rather than removal. A judge that
+    /// says "not yet" is still useful with weak evidence — being wrong costs
+    /// one more revision. A judge that says "done" on the same evidence ends
+    /// the run, so that direction has to be earned. When it is not, the turn
+    /// is scored **unverified**, never failed: a run is not broken by the
+    /// absence of a way to check it, and a Terminal-Bench trial that scored
+    /// 1.0 against its own verifier has taken exactly this path.
+    pub fn judge_pass_stands_alone(&self) -> bool {
+        !self.flip_achieved && self.touched_tests_passed != Some(true)
+    }
+
     /// Whether this turn provably did nothing: it dispatched no call that
     /// could change the workspace, and no channel that *did* report saw any
     /// change.

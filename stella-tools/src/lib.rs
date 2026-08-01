@@ -46,6 +46,7 @@ pub mod sandbox;
 pub mod schema_gate;
 pub mod screenshot;
 pub mod scripts;
+pub mod shell_touch;
 pub mod staleness;
 pub mod subagent;
 /// Shared environment policy for every subprocess that can execute model- or

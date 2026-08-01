@@ -1028,3 +1028,57 @@ fn a_tautological_witness_blocks_the_fast_submit() {
         "a witness that constrains nothing may not buy a deterministic pass"
     );
 }
+
+/// Asymmetric trust (#871). A judge that says "done" with nothing but its own
+/// opinion behind it ends the run on the strength of a model's guess — the
+/// shape that put 17 false passes into an 89-task Terminal-Bench run.
+#[test]
+fn a_judge_pass_with_no_flip_and_no_green_test_stands_alone() {
+    // The benchmark's real state: work happened and was seen to happen, but
+    // nothing test-shaped ever ran.
+    let inputs = LadderInputs {
+        flip_achieved: false,
+        touched_tests_passed: None,
+        diff_available: true,
+        diff_lines: 40,
+        diff_budget: 400,
+        file_change_events: 12,
+        mutating_actions: 30,
+        ..Default::default()
+    };
+    assert!(
+        inputs.judge_pass_stands_alone(),
+        "a visible diff proves the tree changed, never that the change is right"
+    );
+}
+
+/// Either test-shaped signal is enough to corroborate a pass.
+#[test]
+fn a_flip_or_a_green_test_corroborates_a_judge_pass() {
+    let flipped = LadderInputs {
+        flip_achieved: true,
+        ..Default::default()
+    };
+    assert!(!flipped.judge_pass_stands_alone(), "a flip corroborates");
+
+    let green = LadderInputs {
+        touched_tests_passed: Some(true),
+        ..Default::default()
+    };
+    assert!(
+        !green.judge_pass_stands_alone(),
+        "a green test corroborates"
+    );
+}
+
+/// A *red* test is not corroboration — it points the other way. Reading
+/// `Some(false)` as support would be the exact inversion the ladder exists to
+/// prevent.
+#[test]
+fn a_red_test_does_not_corroborate_a_judge_pass() {
+    let red = LadderInputs {
+        touched_tests_passed: Some(false),
+        ..Default::default()
+    };
+    assert!(red.judge_pass_stands_alone());
+}

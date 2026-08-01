@@ -2399,6 +2399,33 @@ impl<'a> Pipeline<'a> {
                         evidence: evidence.clone(),
                     });
                     if verdict.passed {
+                        // Asymmetric trust (#871). "Not yet" from a judge is
+                        // cheap to be wrong about — it buys one more revision.
+                        // "Done" ends the run, so it has to be corroborated by
+                        // something that is not another model's opinion.
+                        //
+                        // Unsupported, the pass is recorded as UNVERIFIED, not
+                        // as a failure. The distinction is load-bearing: a
+                        // Terminal-Bench trial that solved its task through
+                        // shell redirects and scored 1.0 against its own
+                        // verifier reaches exactly this state, and failing it
+                        // closed would report a correct run as broken. The
+                        // `Unverified` score keeps it from tying a genuinely
+                        // verified sibling in best-of-N.
+                        if inputs.judge_pass_stands_alone() {
+                            let mut abstained = evidence.clone();
+                            abstained.summary = format!(
+                                "UNVERIFIED: judge passed with no deterministic \
+                                 corroboration (no flip, no green test) — {}",
+                                abstained.summary
+                            );
+                            self.unverifiable(&abstained.summary);
+                            return state.into_verified(
+                                true,
+                                &abstained,
+                                score_from_verification(false, None),
+                            );
+                        }
                         return state.into_verified(
                             true,
                             &evidence,
