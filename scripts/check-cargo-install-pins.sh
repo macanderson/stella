@@ -4,8 +4,8 @@
 # for each crate it installs (#915).
 #
 # `--locked` pins a tool's own transitive dependency graph; it does not pin
-# the tool itself. An unpinned `cargo install cargo-deny cargo-audit` in the
-# supply-chain job resolved whatever those crates' newest published version
+# the tool itself. An unpinned `cargo install cargo-deny` in the
+# supply-chain job resolved whatever that crate's newest published version
 # was at run time — the one job whose purpose is keeping untrusted code out
 # was also the only one fetching an unversioned executable from the network.
 #
@@ -53,7 +53,7 @@ if [ "$fail" -ne 0 ]; then
   echo >&2
   echo "Pin each crate to an exact version, e.g.:" >&2
   echo >&2
-  echo "    run: cargo install --locked cargo-deny@0.20.2 cargo-audit@0.22.2" >&2
+  echo "    run: cargo install --locked cargo-deny@0.20.2" >&2
   exit 1
 fi
 
