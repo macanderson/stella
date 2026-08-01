@@ -297,14 +297,35 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * Page chrome — recede
  *
- * The sidebar and header exist to be ignored until wanted. No fills, no
- * borders on items, no bold. The active page is the only thing in the tree
- * that takes colour, and it takes the ground-aware gold because it is the
- * signal.
+ * The sidebar and header exist to be ignored until wanted. No borders on
+ * items, no bold. The active page is the only thing in the tree that takes
+ * colour, and it takes the ground-aware gold because it is the signal.
+ *
+ * The sidebar's ground is WHITE, not the page's warm paper. Fumadocs paints
+ * the aside with `bg-fd-card` (#fcfaf4 here), which sat within 1.02:1 of the
+ * #f6f2e9 page — the two grounds read as one soft warm field with no seam.
+ * Navigation is chrome, not page: it gets the cool white ground so the warm
+ * paper reads as "the document" and the sidebar reads as "the frame". The
+ * fd tokens are re-scoped inside the aside so hover/selected chips stay
+ * neutral on white instead of dropping warm cream blobs on it. Dark mode
+ * needs no override: fd-card (#131315) already lifts off the ink ground.
  * ═════════════════════════════════════════════════════════════════════════ */
 
 #nd-sidebar {
   font-size: var(--stella-type-sm);
+  --color-fd-card: #ffffff;
+  --color-fd-accent: #f0f0ee; /* hover/selected chip — neutral on white */
+  --color-fd-secondary: #f0f0ee;
+  --color-fd-muted: #f6f6f4;
+  background-color: #ffffff;
+}
+
+.dark #nd-sidebar {
+  --color-fd-card: var(--stella-surface);
+  --color-fd-accent: #201d15; /* restore the ink-warmed hover on dark */
+  --color-fd-secondary: #1a1a1d;
+  --color-fd-muted: var(--stella-surface);
+  background-color: var(--stella-surface);
 }
 
 #nd-sidebar a,
@@ -662,6 +683,356 @@
 }
 .term-ok {
   color: var(--stella-success); /* 11.4:1 on ink */
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Install block — the one-liner you copy.
+ *
+ * A real surface, not a sticker: hovering lifts it on a spring (Motion-
+ * generated linear() curve, ~6% overshoot, settles in 350ms — physical, not
+ * cartoon), and a gold sheen sweeps left→right — the comet's direction —
+ * once on arrival and again every 10 seconds for as long as the pointer
+ * stays. The 10s cycle is one keyframe track: the sweep occupies the first
+ * 14% (1.4s), the rest holds off-screen, so `infinite` re-fires it on
+ * exactly the requested period with no JavaScript.
+ *
+ * The wrapper owns overflow (to clip the sweeping pseudo-element) and
+ * therefore must also own the card shadow — a shadow on the inner .term
+ * would be clipped by this very overflow.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+.lp-install {
+  position: relative;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  box-shadow: var(--stella-shadow-card);
+  transition: transform 350ms
+    linear(
+      0,
+      0.3667,
+      0.8271,
+      1.0379,
+      1.0652,
+      1.0332,
+      1.006,
+      0.9961,
+      0.996,
+      0.9984,
+      0.9999,
+      1
+    );
+}
+.lp-install .term {
+  box-shadow: none;
+  border-radius: inherit;
+}
+.lp-install:hover,
+.lp-install:focus-within {
+  transform: scale(1.02);
+}
+
+/* The sheen. Ink ground in both themes, so one gold tint serves both. */
+.lp-install::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent 35%,
+    rgb(255 176 0 / 0.05) 45%,
+    rgb(255 216 115 / 0.16) 50%,
+    rgb(255 176 0 / 0.05) 55%,
+    transparent 65%
+  );
+  transform: translateX(-101%);
+}
+.lp-install:hover::after,
+.lp-install:focus-within::after {
+  animation: lp-shimmer 10s var(--stella-ease-arrive) infinite;
+}
+@keyframes lp-shimmer {
+  0% {
+    transform: translateX(-101%);
+  }
+  14% {
+    transform: translateX(101%);
+  }
+  100% {
+    transform: translateX(101%);
+  }
+}
+
+/* The stretched hit target: one control, covering the whole block. */
+.lp-install-hit {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+.lp-install-hit:focus-visible {
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 2px;
+}
+
+/* Corner chip — visual state only (aria-hidden); clicks fall through. */
+.lp-install-chip {
+  position: absolute;
+  top: 0.55rem;
+  inset-inline-end: 0.6rem;
+  pointer-events: none;
+  font-family: var(--font-mono);
+  font-size: var(--stella-type-2xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9b9890; /* muted on ink, regardless of page theme */
+  background: #1a1a1d;
+  border: 1px solid #232327;
+  border-radius: 0.375rem;
+  padding: 0.15rem 0.5rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-install {
+    transition: none;
+  }
+  .lp-install:hover,
+  .lp-install:focus-within {
+    transform: none;
+  }
+  .lp-install:hover::after,
+  .lp-install:focus-within::after {
+    animation: none;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Animated lockup — the kit's typing lockup, played once.
+ *
+ * Timeline, percentages, and easings are copied from
+ * docs/brand/brand-guidelines.html § motion (the 3.6s variant) — assemble,
+ * don't spin. The kit loops it; here every track runs once and holds its
+ * 100% state (`forwards`), which is each element's resting state, so the
+ * lockup finishes assembled and stays. The cursor's resting state is
+ * hidden — with animation off (reduced motion) it must be hidden explicitly,
+ * because its base style is visible.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+.lp-lk-t0 {
+  animation: lp-lk-t0 3.6s linear 1 forwards;
+}
+@keyframes lp-lk-t0 {
+  0%,
+  4.5% {
+    opacity: 0;
+    transform: translateX(-14px);
+    animation-timing-function: var(--stella-ease-arrive);
+  }
+  11.5%,
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.lp-lk-t1 {
+  animation: lp-lk-t1 3.6s linear 1 forwards;
+}
+@keyframes lp-lk-t1 {
+  0%,
+  1% {
+    opacity: 0;
+    transform: translateX(-14px);
+    animation-timing-function: var(--stella-ease-arrive);
+  }
+  8%,
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.lp-lk-t2 {
+  animation: lp-lk-t2 3.6s linear 1 forwards;
+}
+@keyframes lp-lk-t2 {
+  0%,
+  8% {
+    opacity: 0;
+    transform: translateX(-14px);
+    animation-timing-function: var(--stella-ease-arrive);
+  }
+  15%,
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.lp-lk-star {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: lp-lk-star 3.6s linear 1 forwards;
+}
+@keyframes lp-lk-star {
+  0%,
+  16% {
+    opacity: 0;
+    transform: scale(0);
+    animation-timing-function: var(--stella-ease-pop);
+  }
+  26%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* The letters type on; steps(1,end) snaps each one in with no fade. */
+.lp-lk-l0 {
+  animation: lp-lk-l0 3.6s steps(1, end) 1 forwards;
+}
+@keyframes lp-lk-l0 {
+  0% {
+    opacity: 0;
+  }
+  28%,
+  100% {
+    opacity: 1;
+  }
+}
+.lp-lk-l1 {
+  animation: lp-lk-l1 3.6s steps(1, end) 1 forwards;
+}
+@keyframes lp-lk-l1 {
+  0% {
+    opacity: 0;
+  }
+  33%,
+  100% {
+    opacity: 1;
+  }
+}
+.lp-lk-l2 {
+  animation: lp-lk-l2 3.6s steps(1, end) 1 forwards;
+}
+@keyframes lp-lk-l2 {
+  0% {
+    opacity: 0;
+  }
+  38%,
+  100% {
+    opacity: 1;
+  }
+}
+.lp-lk-l3 {
+  animation: lp-lk-l3 3.6s steps(1, end) 1 forwards;
+}
+@keyframes lp-lk-l3 {
+  0% {
+    opacity: 0;
+  }
+  43%,
+  100% {
+    opacity: 1;
+  }
+}
+.lp-lk-l4 {
+  animation: lp-lk-l4 3.6s steps(1, end) 1 forwards;
+}
+@keyframes lp-lk-l4 {
+  0% {
+    opacity: 0;
+  }
+  48%,
+  100% {
+    opacity: 1;
+  }
+}
+.lp-lk-l5 {
+  animation: lp-lk-l5 3.6s steps(1, end) 1 forwards;
+}
+@keyframes lp-lk-l5 {
+  0% {
+    opacity: 0;
+  }
+  53%,
+  100% {
+    opacity: 1;
+  }
+}
+
+/* The cursor advances a letter-width per typed letter, blinks, and rests
+ * hidden. */
+.lp-lk-cur {
+  animation: lp-lk-cur 3.6s steps(1, end) 1 forwards;
+}
+@keyframes lp-lk-cur {
+  0%,
+  24% {
+    opacity: 0;
+    transform: translateX(0);
+  }
+  28% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  33% {
+    transform: translateX(36px);
+  }
+  38% {
+    transform: translateX(72px);
+  }
+  43% {
+    transform: translateX(108px);
+  }
+  48% {
+    transform: translateX(144px);
+  }
+  53% {
+    transform: translateX(180px);
+  }
+  58% {
+    opacity: 0;
+    transform: translateX(216px);
+  }
+  62.5% {
+    opacity: 1;
+  }
+  67% {
+    opacity: 0;
+  }
+  71.5% {
+    opacity: 1;
+  }
+  76% {
+    opacity: 0;
+  }
+  80.5% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 0;
+  }
+  89.5% {
+    opacity: 1;
+  }
+  90%,
+  100% {
+    opacity: 0;
+    transform: translateX(216px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [class^="lp-lk-"],
+  [class*=" lp-lk-"] {
+    animation: none;
+  }
+  .lp-lk-cur {
+    opacity: 0;
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

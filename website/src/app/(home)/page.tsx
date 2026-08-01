@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { HeroTerminal } from "@/components/command-deck";
-import { Mark, Wordmark } from "@/components/brand";
+import { AnimatedLockup } from "@/components/animated-lockup";
+import { Mark } from "@/components/brand";
+import { InstallBlock } from "@/components/install-block";
 import { PROVIDER_CATALOG } from "@/components/provider-cards";
 
 /**
@@ -20,9 +22,12 @@ import { PROVIDER_CATALOG } from "@/components/provider-cards";
  * Copied from content/docs/getting-started/installation.mdx. If that page's
  * command changes, this one has to change with it — a landing page that
  * installs a different thing than the docs say is worse than no landing page.
+ *
+ * The URL is the site's own /install.sh, which serves the canonical script
+ * from the repo (src/app/install.sh/route.ts) and counts the download — the
+ * copy beacon in InstallBlock counts the other half of the funnel.
  */
-const INSTALL =
-  "curl -fsSL https://raw.githubusercontent.com/macanderson/stella/main/install.sh | sh";
+const INSTALL = "curl -fsSL https://stella.oxagen.sh/install.sh | sh";
 
 /** The four entry points, in the order a new reader needs them. */
 const DOORS = [
@@ -54,10 +59,6 @@ export default function HomePage() {
       {/* ── What it is ─────────────────────────────────────────────────── */}
       <section className="lp-hero">
         <div className="mx-auto w-full max-w-3xl px-4 py-20 sm:py-28">
-          <span className="mb-10 inline-flex items-center gap-3">
-            <Mark className="h-10 w-auto" label="stella" />
-            <Wordmark className="h-8 w-auto text-fd-foreground" />
-          </span>
           <h1 className="lp-h1">
             <span className="lp-brand-face">stella</span> is a terminal coding
             agent that proves its work finished.
@@ -69,14 +70,16 @@ export default function HomePage() {
             and telemetry never leaves your disk.
           </p>
 
-          <div className="mt-10">
-            <p className="mb-2 text-sm text-fd-muted-foreground">Install it:</p>
-            <div className="term">
-              <pre className="term-body">
-                <span className="term-prompt">$ </span>
-                {INSTALL}
-              </pre>
+          {/* The lockup assembles once, front and center, and hands the eye
+              straight down to the one action this page wants: install. The
+              hero's old static lockup above the h1 is gone — one mark, where
+              it points at something. */}
+          <div className="mt-12">
+            <div className="mb-8 flex justify-center">
+              <AnimatedLockup className="h-16 w-auto text-fd-foreground sm:h-20" />
             </div>
+            <p className="mb-2 text-sm text-fd-muted-foreground">Install it:</p>
+            <InstallBlock command={INSTALL} />
           </div>
 
           <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
