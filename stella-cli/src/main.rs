@@ -137,6 +137,33 @@ pub(crate) mod test_env {
             }
         }
     }
+
+    /// Witness for #911: the hand-rolled "capture previous, mutate, restore
+    /// at the end of the function" sequence this replaced across ~42 tests
+    /// never runs its restore step when an assertion panics first — this
+    /// fails on that pattern and passes on [`EnvRestore`], whose `Drop` runs
+    /// during unwinding too.
+    #[test]
+    fn restore_runs_on_unwind_not_just_normal_return() {
+        let _outer = lock();
+        let key = "STELLA_TEST_ENV_RESTORE_WITNESS";
+        let original = std::env::var_os(key);
+        unsafe { std::env::remove_var(key) };
+
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _restore = EnvRestore::capture(&[key]);
+            unsafe { std::env::set_var(key, "mutated-by-panicking-test") };
+            panic!("simulated assertion failure mid-test");
+        }))
+        .is_err();
+
+        assert!(panicked, "the closure must have actually unwound");
+        assert_eq!(
+            std::env::var_os(key),
+            original,
+            "EnvRestore must undo the mutation even when the guarded body panics"
+        );
+    }
 }
 
 use std::process::ExitCode;
