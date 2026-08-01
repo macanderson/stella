@@ -241,6 +241,8 @@ effort passed through — same dataset literal, same task list, same concurrency
 same `--n-attempts 1 --max-retries 0`:
 
 ```bash
+source bench/evidence/run/env.sh     # exports TB_DATASET and JOBS
+
 harbor run \
   --env docker \
   --dataset "$TB_DATASET" \
@@ -249,8 +251,13 @@ harbor run \
   --model claude-sonnet-5 \
   --job-name "<tag>-armB-claudecode" \
   --jobs-dir "$JOBS" \
-  --n-attempts 1 --n-concurrent "$CONC" --max-retries 0
+  --n-attempts 1 --n-concurrent 3 --max-retries 0
 ```
+
+Set `--n-concurrent` to the number arm A actually ran at, and pass the same
+`--include-task-name` list if you scoped arm A to a subset. Concurrency is not a
+free parameter in a head-to-head: it changes how much CPU and memory each trial
+gets, and a comparator run at a different width is running a different benchmark.
 
 The `armA` / `armB` segments in the job names are not cosmetic — the ingester
 matches on them, and it matches on the segment rather than the whole suffix so
