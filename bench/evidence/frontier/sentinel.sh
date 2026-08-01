@@ -34,7 +34,7 @@ cd "$TB_REPO" || exit 1
 
 echo "=== stage 1: synthetic fixture (gate: reward == 1.0)"
 harbor run \
-  --env docker \
+  --env "$FB_ENV" \
   --path "$TB_REPO/bench/readiness/synthetic-adapter-sentinel" \
   --agent stella_harbor:StellaAgent \
   --model "$TB_MODEL" \
@@ -79,7 +79,7 @@ test -n "$TASK" || { echo "SKIP stage 2: no runnable task in the plan"; exit 0; 
 JOB2="$JOB-real"
 echo "=== stage 2: real task $TASK (gate: the trial ran; any reward is acceptable)"
 harbor run \
-  --env docker \
+  --env "$FB_ENV" \
   --dataset "$FB_DATASET" \
   --include-task-name "$FB_TASK_PREFIX/$TASK" \
   --agent stella_harbor:StellaAgent \

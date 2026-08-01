@@ -38,7 +38,20 @@ while IFS= read -r t; do
   INCLUDES="$INCLUDES --include-task-name $FB_TASK_PREFIX/$t"
 done < "$TB_ROOT/frontier-$TIER.tasks"
 
+# Uploading publishes every trajectory. Build the flags once, here, so the
+# invocation below cannot half-apply them — `--public` without `--upload` is a
+# Harbor error, and `--upload` without meaning to is a disclosure.
+UPLOAD_FLAGS=""
+if [ "$FB_UPLOAD" = 1 ]; then
+  UPLOAD_FLAGS="--upload --$FB_UPLOAD_VISIBILITY"
+  if [ "$FB_UPLOAD_VISIBILITY" = public ]; then
+    echo "NOTE: this run will be uploaded to Harbor Hub as PUBLIC — every"
+    echo "      trajectory and command becomes permanently world-readable."
+  fi
+fi
+
 echo "tier=$TIER job=$JOB tasks=$N concurrency=$CONC attempts=$FB_ATTEMPTS"
+echo "backend=$FB_ENV upload=${FB_UPLOAD}${FB_UPLOAD:+/$FB_UPLOAD_VISIBILITY}"
 echo "sut=$STELLA_SOURCE_COMMIT model=$TB_MODEL budget/trial=${STELLA_BUDGET:-uncapped}"
 echo "dataset=$FB_DATASET"
 echo "harbor=$(harbor --version) started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -48,24 +61,38 @@ echo "harbor=$(harbor --version) started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 # five-plus attempts with no subsetting. Both are legitimate — reporting one as
 # the other is not, and the distinction is easiest to lose at the moment a
 # number finally appears.
-if [ "$TIER" != "all" ] || [ "$FB_ATTEMPTS" -lt "$FB_SUBMISSION_MIN_ATTEMPTS" ]; then
-  echo "posture=development-baseline (not submittable: see SUBMISSION.md)"
+# Name every reason this run would be refused, not just the first. An operator
+# who fixes one and reruns only to be told about the next has paid for a full
+# run to learn something this loop could have said in one line.
+EXCLUDED_N=$(python3 -c "import json;print(len(json.load(open('$FB_PLAN'))['excluded']))")
+GAPS=""
+[ "$TIER" = "all" ] || GAPS="$GAPS tier=$TIER(needs-all)"
+[ "$FB_ATTEMPTS" -ge "$FB_SUBMISSION_MIN_ATTEMPTS" ] || GAPS="$GAPS attempts=$FB_ATTEMPTS(needs-$FB_SUBMISSION_MIN_ATTEMPTS)"
+[ "$EXCLUDED_N" = 0 ] || GAPS="$GAPS excluded=$EXCLUDED_N(needs-0;-subsetting-is-not-allowed)"
+[ "$FB_UPLOAD" = 1 ] || GAPS="$GAPS upload=off"
+[ "$FB_UPLOAD_VISIBILITY" = public ] || GAPS="$GAPS visibility=$FB_UPLOAD_VISIBILITY(needs-public)"
+if [ -n "$GAPS" ]; then
+  echo "posture=development-baseline — not submittable:$GAPS"
+  echo "         (see SUBMISSION.md; a baseline is a legitimate thing to run,"
+  echo "          it just must not be reported as a leaderboard number)"
 else
   echo "posture=submission-shaped"
 fi
 
 cd "$TB_REPO" || exit 1
-# INCLUDES is deliberately unquoted: a pre-built flag list, one word per token,
-# every task name a fixed [a-z0-9-] slug from the digest-pinned dataset.
+# INCLUDES and UPLOAD_FLAGS are deliberately unquoted: pre-built flag lists,
+# one word per token, every task name a fixed [a-z0-9-] slug from the
+# digest-pinned dataset and every upload flag a literal from this script.
 # shellcheck disable=SC2086
 harbor run \
-  --env docker \
+  --env "$FB_ENV" \
   --dataset "$FB_DATASET" \
   $INCLUDES \
   --agent stella_harbor:StellaAgent \
   --model "$TB_MODEL" \
   --job-name "$JOB" \
   --jobs-dir "$JOBS" \
+  $UPLOAD_FLAGS \
   --n-attempts "$FB_ATTEMPTS" --n-concurrent "$CONC" --max-retries 0
 rc=$?
 echo "harbor_exit=$rc finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
