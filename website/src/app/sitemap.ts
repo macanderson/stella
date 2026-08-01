@@ -19,6 +19,18 @@ import { SITE_URL } from "@/lib/site";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * The `last-modified` plugin is registered in source.config.ts only when the
+ * checkout has deep-enough git history to produce real per-file dates (see the
+ * shallow-clone note there). That makes `lastModified` present in the generated
+ * page data on deep clones and absent on shallow ones — so the generated type
+ * does NOT include the field in every environment (Vercel's default checkout is
+ * shallow). Read it as an optional field so the type checks regardless of how
+ * the plugin was configured; at runtime it is simply `undefined` on a shallow
+ * clone, which is exactly the "omit the date rather than lie" behavior above.
+ */
+type WithLastModified = { lastModified?: Date };
+
+/**
  * Derive changeFrequency from how recently a page actually changed, instead of
  * declaring a flat "weekly" for a fast-moving release-notes page and a settled
  * ADR-derived principles page alike.
@@ -37,7 +49,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const pages = source.getPages();
 
   const docs = pages.map((page) => {
-    const lastModified = page.data.lastModified;
+    const lastModified = (page.data as WithLastModified).lastModified;
     return {
       url: `${SITE_URL}${page.url}`,
       lastModified,
@@ -50,7 +62,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   // it here. It exists to surface the docs, so the newest page date is a
   // defensible stand-in — and still a real date rather than the build clock.
   const homeLastModified = pages
-    .map((page) => page.data.lastModified)
+    .map((page) => (page.data as WithLastModified).lastModified)
     .filter((date): date is Date => date instanceof Date)
     .reduce<Date | undefined>(
       (newest, date) => (!newest || date > newest ? date : newest),
