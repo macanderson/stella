@@ -49,7 +49,7 @@ script says so and prints the `export` line to add. Two env vars tune it:
 </CardGrid>
 
 ```bash
-STELLA_INSTALL_DIR=/usr/local/bin STELLA_VERSION=v0.6.10 \
+STELLA_INSTALL_DIR=/usr/local/bin STELLA_VERSION=v0.6.44 \
   sh -c "$(curl -fsSL https://stella.oxagen.sh/install.sh)"
 ```
 
@@ -99,7 +99,7 @@ resolve no provider and need no API key:
 
 ```bash
 stella version                  # the build you just installed
-stella models --all             # every provider, its slugs, pricing, and key status
+stella models list --all        # every provider, its slugs, pricing, and key status
 stella doctor                   # the integrity of this workspace's local state
 ```
 
