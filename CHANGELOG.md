@@ -44,6 +44,12 @@ skip the roll) were re-inserted the same way.
   can see them — none of which was true of a git rev. `deny.toml`'s `allow-git`
   exemption is removed, so the workspace now has no vetted git sources at all.
 
+## [0.6.57] — 2026-08-01
+
+## [0.6.56] — 2026-08-01
+
+## [0.6.55] — 2026-08-01
+
 ## [0.6.54] — 2026-08-01
 
 ## [0.6.53] — 2026-08-01

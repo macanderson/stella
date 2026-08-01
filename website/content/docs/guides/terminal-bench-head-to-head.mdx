@@ -306,14 +306,36 @@ re-derive it instead of trusting it.
 **Self-reported cost can invert the ranking.** On one smoke dataset the agents'
 own numbers said Claude Code $2.65 / Stella $3.27, while a single price table
 applied to both said Claude Code $3.00 / Stella $1.93 — the opposite ordering.
-Always publish a recomputed, normalized cost, and confirm your price table has
-an entry for the exact model slug both arms used.
+Always publish a recomputed, normalized cost. The price table in
+`bench/terminal_bench_analysis/normalized_cost.py` strips the routing prefix
+Stella carries and the comparator does not, so `anthropic/claude-sonnet-5` and
+`claude-sonnet-5` hit one row — but it still needs an entry for the model
+itself, and for the date the run happened on when that model's rate has
+changed.
 </Callout>
 
-One related sharp edge in the same path: `ingest.py` inserts **NULL** into
-`cost_usd_norm`, `wall_seconds`, `started_at` and `finished_at`. Those are
-placeholders the analysis step fills — read the column straight out of the
-database and you will publish `0.00` as a "normalized" cost.
+Ingest computes the normalized cost itself rather than leaving it for a later
+step, because it already holds every input: the token counts, the model the
+trial ran (`config.agent.model_name`, which beats the `--model` label when they
+disagree), and the day it ran on. It writes `wall_seconds`, `started_at` and
+`finished_at` at the same time.
+
+When it *cannot* price a trial it writes NULL and says why in
+`cost_norm_status`, so an absent figure can never be read as a computed zero:
+
+| `cost_norm_status` | Meaning |
+| --- | --- |
+| `priced` | The only state in which `cost_usd_norm` means anything. A genuine $0.00 here is a real measurement. |
+| `no_model` | Neither the trial nor `--model` named a model. |
+| `unpriced_model` | No rate in the table applies to that model on that day. |
+| `no_tokens` | The trial crashed before reporting usage. Charging it zero would make a crash look free. |
+| `no_run_date` | The model's rate changed and the trial has no readable start time, so no entry can be chosen. |
+| `unmigrated` | Written by an ingester that predates the column. |
+
+**Any query that aggregates `cost_usd_norm` must filter on
+`cost_norm_status = 'priced'`.** Ingest also prints a count of the unpriced
+trials per run, so a comparable-cost column that is empty for a whole arm shows
+up at load time rather than as a hole in a published table.
 
 ## The two things you cannot pin
 
