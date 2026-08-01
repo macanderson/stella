@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-<p align="center"><strong>Fully Autonomous Software Delivery with Deterministic Verification Ladder</strong></p>
+<p align="center"><strong>A coding agent that doesn't lie to you</strong></p>
 <p align="center">Open Source · Rust · BYOK · No Phone Home</p>
 
 <p align="center">
