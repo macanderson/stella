@@ -272,6 +272,12 @@ fn the_drivers_own_messages_stop_being_attributed_to_the_user() {
         user_block_kind(crate::driver::LOOP_STEER_PREFIX),
         BlockKind::Steered
     );
+    // The continuation nudge is engine-written too — it shares `Steered`
+    // rather than widening the wire enum.
+    assert_eq!(
+        user_block_kind(crate::driver::CONTINUATION_MARKER_PREFIX),
+        BlockKind::Steered
+    );
     assert_eq!(user_block_kind(RECALL_MARKER), BlockKind::RecalledFrame);
     assert_eq!(user_block_kind("fix the failing test"), BlockKind::UserGoal);
 }
