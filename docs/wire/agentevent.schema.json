@@ -420,6 +420,11 @@
           "description": "Whether the oracle's flip was achieved — after the confirmation run,\nso an unconfirmed flip reads `false` here with `unstable_flip: true`.",
           "type": "boolean"
         },
+        "flip_refused_different_failure": {
+          "default": false,
+          "description": "A would-be flip was refused because the passing run named its tests\nand none of the baseline's failing tests were among them — the pass\ndemonstrably fixed a *different* failure (#867), most concretely a\ndeleted or renamed failing test. `serde(default)` so pre-#867\nsnapshots keep parsing.",
+          "type": "boolean"
+        },
         "mutating_actions": {
           "description": "Dispatched tool calls capable of changing the workspace.",
           "format": "uint32",
@@ -471,6 +476,13 @@
         },
         "witness_intact": {
           "description": "The witness-tamper check's result: `None` when no witness was armed,\n`Some(true)` when every witness artifact matched its pinned identity.\n`Some(false)` never reaches a verdict — tampering aborts the\ncandidate — so its presence here is the *stated* proof the check ran.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "witness_mutation": {
+          "description": "The mutation audit's finding (#870): `Some(true)` = the witness\nfailed under at least one trivial mutant of the changed lines (it\nconstrains the change); `Some(false)` = it stayed green under every\nobserved mutant (tautological — the deterministic credit was\nwithheld); `None` = the check never ran.",
           "type": [
             "boolean",
             "null"

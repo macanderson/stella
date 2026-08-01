@@ -475,6 +475,54 @@ pub trait LintProbe: Send + Sync {
     async fn snapshot(&self, root: Option<&str>) -> Option<Vec<LintRecord>>;
 }
 
+/// One single-line mutant for the witness mutation check (#870), proposed by
+/// `verify::mutation::mutants_from_diff` from the candidate's own diff.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineMutation {
+    /// Repo-relative file to mutate.
+    pub path: String,
+    /// 1-based line number in the file's current (post-candidate) state.
+    pub line: u32,
+    /// The line's expected current content — the host verifies it before
+    /// mutating, so a drifted diff aborts the mutant instead of corrupting
+    /// an unrelated line.
+    pub original: String,
+    /// The broken replacement line.
+    pub mutated: String,
+}
+
+/// What one mutant run established (#870).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MutantOutcome {
+    /// The witness ran to completion against the mutant, and this is what it
+    /// said. `passed: true` — the witness stayed green while the change was
+    /// broken under it — is the tautology signal.
+    Witness { passed: bool },
+    /// The mutant could not be staged or observed (line drifted, file
+    /// unreadable, infra outcome). Counts neither way; the check degrades
+    /// open.
+    Unavailable,
+    /// The mutation was applied and the ORIGINAL BYTES COULD NOT BE
+    /// RESTORED. The tree is no longer the verified candidate; the caller
+    /// must fail the candidate closed rather than ship it.
+    TreePoisoned,
+}
+
+/// Runs one witness invocation against a single-line mutant of the tree at
+/// `root` (#870). The host owns the mechanics — stage the mutation, run,
+/// restore the original bytes — and must report [`MutantOutcome::TreePoisoned`]
+/// if restoration cannot be guaranteed, because verification's seal
+/// discipline depends on the tree ending byte-identical.
+#[async_trait]
+pub trait MutationProbe: Send + Sync {
+    async fn run_mutant(
+        &self,
+        root: Option<&str>,
+        mutation: &LineMutation,
+        invocation: &TestInvocation,
+    ) -> MutantOutcome;
+}
+
 /// One file the winning best-of-N candidate changed, as applied to the real
 /// tree by [`CandidateWorkspace::adopt`]. Paths are repo-relative.
 ///
@@ -820,6 +868,9 @@ pub struct PipelinePorts<'a> {
     /// hosts without a diagnostics toolchain — disables the veto and nothing
     /// else.
     pub lint: Option<&'a dyn LintProbe>,
+    /// The witness mutation check (#870). `None` disables the check and
+    /// nothing else.
+    pub mutation: Option<&'a dyn MutationProbe>,
     /// The interactive scope-review gate (L-E5).
     pub approvals: &'a dyn ApprovalGate,
     /// The delay port for retry backoff — the same testability seam

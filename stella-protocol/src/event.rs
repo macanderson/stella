@@ -1132,6 +1132,13 @@ pub struct LadderSnapshot {
     pub flip_achieved: bool,
     /// A flip was observed but its confirmation re-run did not pass (#859).
     pub unstable_flip: bool,
+    /// A would-be flip was refused because the passing run named its tests
+    /// and none of the baseline's failing tests were among them — the pass
+    /// demonstrably fixed a *different* failure (#867), most concretely a
+    /// deleted or renamed failing test. `serde(default)` so pre-#867
+    /// snapshots keep parsing.
+    #[serde(default)]
+    pub flip_refused_different_failure: bool,
     /// Touched-tests result: `None` is "could not be observed", not a pass.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub touched_tests_passed: Option<bool>,
@@ -1159,6 +1166,13 @@ pub struct LadderSnapshot {
     /// candidate — so its presence here is the *stated* proof the check ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub witness_intact: Option<bool>,
+    /// The mutation audit's finding (#870): `Some(true)` = the witness
+    /// failed under at least one trivial mutant of the changed lines (it
+    /// constrains the change); `Some(false)` = it stayed green under every
+    /// observed mutant (tautological — the deterministic credit was
+    /// withheld); `None` = the check never ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub witness_mutation: Option<bool>,
 }
 
 /// Which code state a [`ProofStep::Oracle`] observation was made against.
@@ -1952,6 +1966,7 @@ mod tests {
                     ],
                     flip_achieved: true,
                     unstable_flip: false,
+                    flip_refused_different_failure: false,
                     touched_tests_passed: Some(true),
                     test_infra: None,
                     diff_lines: 12,
@@ -1962,6 +1977,7 @@ mod tests {
                     new_diag_errors: 0,
                     new_diag_warnings: 0,
                     witness_intact: Some(true),
+                    witness_mutation: None,
                 })),
             },
         };

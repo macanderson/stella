@@ -1,6 +1,7 @@
 //! SKILLS-tab helper cluster: the deck's skill vocabulary, npx-skills
 //! registry parsing, and install/preview/authoring ops.
 use super::*;
+use stella_tui::strip_ansi;
 
 /// The deck's slash vocabulary: the productized commands (🔒) followed by
 /// every custom command/skill (⚡) currently on disk. Rebuilt after `/init`
@@ -78,29 +79,6 @@ pub(super) fn parse_skill_hits(out: &str) -> Vec<SkillSearchHit> {
         }
     }
     hits
-}
-
-/// Strip ANSI/CSI escape sequences (`ESC [ … final`) from a line, leaving the
-/// visible text. Robust to the SGR color codes `npx skills` emits.
-fn strip_ansi(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c == '\u{1b}' {
-            // A CSI sequence: '[' then params/intermediates, then a final byte
-            // in 0x40..=0x7e. Consume through the final byte.
-            if chars.next() == Some('[') {
-                for n in chars.by_ref() {
-                    if ('\u{40}'..='\u{7e}').contains(&n) {
-                        break;
-                    }
-                }
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
 }
 
 /// If a (de-ANSI'd) line is a URL continuation (`└ https://skills.sh/…`),
@@ -198,7 +176,7 @@ async fn fetch_skill_markdown(registry: &SkillRegistry, id: &str) -> (String, Op
 /// back to the text after a leading preamble (from the first `---` frontmatter
 /// or `#` heading), never a blank preview.
 pub(super) fn extract_skill_md_from_use(out: &str) -> String {
-    let out = strip_ansi(out);
+    let out: &str = &strip_ansi(out);
     if let Some(start) = out.find("<SKILL.md>") {
         let after = &out[start + "<SKILL.md>".len()..];
         let body = match after.find("</SKILL.md>") {

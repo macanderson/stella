@@ -202,6 +202,7 @@ fn tool_schemas() -> Vec<ToolSchema> {
                 "additionalProperties": false,
             }),
             read_only: i % 3 == 0,
+            speculation_safe: false,
         })
         .collect()
 }

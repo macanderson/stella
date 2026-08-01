@@ -472,10 +472,17 @@ impl SessionMemory {
         outcome: EpisodeOutcome,
         files_touched: &[(String, String)],
         started_unix_secs: i64,
+        tag: Option<&str>,
     ) {
         let mut summary: String = prompt.chars().take(240).collect();
         if prompt.chars().count() > 240 {
             summary.push('…');
+        }
+        // A tag (the #1042 trace pointer) lands AFTER truncation: it is a
+        // join key, and a key a long prompt silently truncates away is not
+        // a key.
+        if let Some(tag) = tag {
+            summary.push_str(tag);
         }
 
         let mut domains: Vec<String> = Vec::new();

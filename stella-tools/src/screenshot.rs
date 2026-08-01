@@ -72,6 +72,7 @@ impl Tool for Screenshot {
                 }
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 

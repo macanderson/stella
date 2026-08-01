@@ -32,6 +32,7 @@ const ROOT_FIELDS: &[&str] = &[
     "agent_engine_config",
     "tools",
     "enable_recap",
+    "trace_capture",
     "ui",
     "context",
     "context_providers",
@@ -150,7 +151,7 @@ const TOML_ROOT_FIELDS: &[&str] = &[
 ];
 
 const META_FIELDS: &[&str] = &["schema_version", "scope"];
-const RUN_FIELDS: &[&str] = &["recap"];
+const RUN_FIELDS: &[&str] = &["recap", "trace_capture"];
 const MODELS_FIELDS: &[&str] = &["allowed"];
 const TOML_MCP_FIELDS: &[&str] = &["registry_url", "servers"];
 

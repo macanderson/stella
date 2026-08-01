@@ -41,9 +41,10 @@
 //!
 //! **Tools are read-only by default.** Write access is opt-in per spawn.
 //! Beyond the obvious safety argument this is also the *fast* default: the
-//! engine's speculation pump (`crate::speculation`) overlaps read-only tool
-//! calls with the response still streaming, so a read-only child hides its
-//! I/O behind generation on every step.
+//! engine's speculation pump (`crate::speculation`) overlaps
+//! speculation-safe read-only tool calls with the response still
+//! streaming, so a read-only child hides most of its I/O behind
+//! generation on every step.
 //!
 //! **Failure is data.** [`SubAgentOutcome`] is a value the parent reasons
 //! about, never an error that kills the parent turn. A child that aborts on

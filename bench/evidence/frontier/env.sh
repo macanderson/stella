@@ -50,6 +50,20 @@ export FB_TASK_COUNT="${FB_TASK_COUNT:-74}"
 export FB_ATTEMPTS="${FB_ATTEMPTS:-1}"
 export FB_SUBMISSION_MIN_ATTEMPTS=5
 
+# Upload the finished job to Harbor Hub. Off by default and opt-in per run,
+# because it is not a transport detail: the leaderboard requires the trials to
+# be *publicly readable* — CI re-derives every trial from the uploaded job and a
+# maintainer's judge reads every trajectory — so setting this publishes the
+# agent's full reasoning and every command it ran, permanently and to everyone.
+# That is a deliberate act. It should never be inherited from a shell that
+# happened to have it set for some earlier run.
+export FB_UPLOAD="${FB_UPLOAD:-0}"
+export FB_UPLOAD_VISIBILITY="${FB_UPLOAD_VISIBILITY:-private}"
+case "$FB_UPLOAD_VISIBILITY" in
+  public|private) ;;
+  *) echo "FATAL: FB_UPLOAD_VISIBILITY must be 'public' or 'private'"; return 1 2>/dev/null || exit 1 ;;
+esac
+
 # Frontier-Bench tasks run far longer than Terminal-Bench ones: declared agent
 # timeouts run from 30 minutes to 8 hours, with a 2-hour mode, against expert
 # time estimates measured in whole days. Terminal-Bench's $0.60 per-trial cap
@@ -84,6 +98,23 @@ source "$FB_HERE/../run/env.sh"
 # So this lane pins its own Harbor, in its own virtualenv, and asserts it. The
 # Terminal-Bench venv at bench/harbor_adapter/.venv is left untouched.
 export FB_HARBOR_VERSION="${FB_HARBOR_VERSION:-0.20.0}"
+
+# Where trials actually run. `docker` is this host; `modal` is the cloud
+# sandbox the benchmark's own authors used.
+#
+# The distinction is not a preference. A submittable run must cover all 74
+# tasks, four of which want a GPU, and must not override any task's declared
+# resources — so it needs a machine that can hand a container 32 GB and an
+# H100 on demand. This laptop cannot, and no amount of scheduling makes it.
+# On `docker` the plan honestly reports what the host can take and excludes
+# the rest by name; on `modal` each sandbox is provisioned per task, so the
+# host's shape stops being a term in the measurement at all.
+export FB_ENV="${FB_ENV:-docker}"
+case "$FB_ENV" in
+  docker|modal) ;;
+  *) echo "FATAL: FB_ENV must be 'docker' or 'modal' (got '$FB_ENV')"; return 1 2>/dev/null || exit 1 ;;
+esac
+
 export VENV="$FB_HERE/.venv"
 export PATH="$VENV/bin:$PATH"
 export PYTHONPATH="$TB_REPO/bench/harbor_adapter"
@@ -106,7 +137,16 @@ mkdir -p "$JOBS"
 # The default is therefore to exclude them and say so, loudly, in the score's
 # denominator — not to include them and quietly absorb four guaranteed zeros.
 # Set FB_ALLOW_GPU=1 only on a host that actually has one; `plan.py` checks.
-export FB_ALLOW_GPU="${FB_ALLOW_GPU:-0}"
+#
+# On Modal the hazard does not exist: sandboxes are provisioned per task and
+# Harbor passes each task's declared `gpus`/`gpu_types` straight through, so
+# the four run for real. Defaulting them off there would silently drop the
+# tasks a submission is required to cover.
+if [ "$FB_ENV" = modal ]; then
+  export FB_ALLOW_GPU="${FB_ALLOW_GPU:-1}"
+else
+  export FB_ALLOW_GPU="${FB_ALLOW_GPU:-0}"
+fi
 
 # Memory the plan leaves to the Docker daemon itself rather than handing to a
 # task. A task declaring more than what remains is excluded as unrunnable.
@@ -148,6 +188,34 @@ fb_assert_cli_flags() {
     return 1; }
 }
 
+# Whatever FB_ENV names must actually be reachable before a run starts.
+#
+# Note what is *not* branched here: the glibc portability assert runs for both.
+# Modal is a different scheduler, not a different libc — the SUT still has to
+# exec inside a Linux container there, and a binary that cannot would fail the
+# same way it did on 2026-07-31, as an ordinary reward-0 row.
+fb_assert_backend() {
+  case "$FB_ENV" in
+    docker)
+      docker info >/dev/null 2>&1 || { echo "FATAL: docker unreachable"; return 1; }
+      ;;
+    modal)
+      "$VENV/bin/python" -c 'import modal' 2>/dev/null || {
+        echo "FATAL: the modal SDK is not installed in $VENV"
+        echo "       Rebuild the venv: bench/evidence/frontier/setup_venv.sh"
+        return 1; }
+      # Harbor's own ModalEnvironment.preflight accepts either form; mirror it
+      # exactly rather than inventing a stricter rule it would then contradict.
+      if [ ! -f "$HOME/.modal.toml" ] &&
+         { [ -z "${MODAL_TOKEN_ID:-}" ] || [ -z "${MODAL_TOKEN_SECRET:-}" ]; }; then
+        echo "FATAL: Modal is not authenticated."
+        echo "       Run 'modal token new', or set MODAL_TOKEN_ID and MODAL_TOKEN_SECRET."
+        return 1
+      fi
+      ;;
+  esac
+}
+
 fb_preflight() {
   test -n "${OPENROUTER_API_KEY:-}" || { echo "FATAL: OPENROUTER_API_KEY unset"; return 1; }
   test -x "$STELLA_BINARY" || { echo "FATAL: no SUT binary at $STELLA_BINARY (run ../run/build_sut.sh)"; return 1; }
@@ -163,7 +231,7 @@ fb_preflight() {
     echo "       0.6.1 silently ignores this dataset's verifier environment_mode."
     return 1; }
   fb_assert_cli_flags || return 1
-  docker info >/dev/null 2>&1 || { echo "FATAL: docker unreachable"; return 1; }
+  fb_assert_backend || return 1
 }
 
 # The Terminal-Bench lane's `preflight` is still defined and still asserts

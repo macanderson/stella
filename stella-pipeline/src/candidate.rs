@@ -28,20 +28,40 @@ pub enum CandidateScore {
     DeterministicPass,
 }
 
-/// One candidate's summary for selection: its verification score and the size
-/// of its diff (the tiebreak). Kept a plain owned struct so selection is a
-/// pure function.
+/// One candidate's summary for selection: its verification score and the
+/// tie-break evidence. Kept a plain owned struct so selection is a pure
+/// function.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CandidateSummary {
     pub score: CandidateScore,
-    /// Diff size in lines — the tiebreak when scores are equal (smaller wins).
+    /// The candidate's witness failed under at least one trivial mutant of
+    /// the changed lines (#870) — the strongest within-rank evidence, and
+    /// the FIRST tiebreak (#869): a mutation-survived verification beats one
+    /// the check never reached. `false` covers both not-run and the
+    /// tautological case, which never holds `DeterministicPass` anyway (the
+    /// #870 downgrade demoted it).
+    pub mutation_survived: bool,
+    /// New lint/typecheck warnings this candidate introduced over its
+    /// baseline (#869) — the second tiebreak within a rank. New *errors*
+    /// never appear among `DeterministicPass` candidates (the #861 veto
+    /// already demoted those), so warnings are the quality signal that
+    /// remains; `0` when the probe never ran, which is also what every
+    /// pre-#861 caller reports.
+    pub new_diag_warnings: u32,
+    /// Diff size in lines — the final tiebreak (smaller wins).
     pub diff_lines: u32,
 }
 
 /// Select the index of the best candidate: highest [`CandidateScore`] first,
-/// then the smallest `diff_lines` as a tiebreak, then the earliest index (a
-/// stable choice so best-of-N is reproducible given identical evidence).
-/// Returns `None` only for an empty slice.
+/// then within a rank the *best-verified* candidate rather than merely the
+/// smallest (#869) — fewer new diagnostics, then the smallest `diff_lines`,
+/// then the earliest index (a stable choice so best-of-N is reproducible
+/// given identical evidence). Returns `None` only for an empty slice.
+///
+/// The refinement deliberately lives inside the rank comparison: the coarse
+/// `DeterministicPass > JudgePass > Unverified > Failed` ordering is
+/// untouched, so a warning-free judge-pass still never beats a warned
+/// deterministic pass.
 ///
 /// The earliest-index tiebreak matters for determinism: candidate 0 is the
 /// single-shot result, so an all-equal field selects it — best-of-N never
@@ -54,10 +74,25 @@ pub fn select_best_candidate(candidates: &[CandidateSummary]) -> Option<usize> {
     let mut best_idx = 0usize;
     for (i, cand) in candidates.iter().enumerate().skip(1) {
         let best = &candidates[best_idx];
+        // Within a rank: mutation-survived first (#870), then fewer new
+        // diagnostics (#861), then the smaller diff — best-VERIFIED before
+        // merely smallest, per #869.
         let better = match cand.score.cmp(&best.score) {
             std::cmp::Ordering::Greater => true,
             std::cmp::Ordering::Less => false,
-            std::cmp::Ordering::Equal => cand.diff_lines < best.diff_lines,
+            std::cmp::Ordering::Equal => {
+                match cand.mutation_survived.cmp(&best.mutation_survived) {
+                    std::cmp::Ordering::Greater => true,
+                    std::cmp::Ordering::Less => false,
+                    std::cmp::Ordering::Equal => {
+                        match cand.new_diag_warnings.cmp(&best.new_diag_warnings) {
+                            std::cmp::Ordering::Less => true,
+                            std::cmp::Ordering::Greater => false,
+                            std::cmp::Ordering::Equal => cand.diff_lines < best.diff_lines,
+                        }
+                    }
+                }
+            }
         };
         if better {
             best_idx = i;
@@ -88,7 +123,12 @@ mod tests {
     use super::*;
 
     fn c(score: CandidateScore, diff_lines: u32) -> CandidateSummary {
-        CandidateSummary { score, diff_lines }
+        CandidateSummary {
+            score,
+            mutation_survived: false,
+            new_diag_warnings: 0,
+            diff_lines,
+        }
     }
 
     #[test]
@@ -183,5 +223,61 @@ mod tests {
             score_from_verification(false, None),
             CandidateScore::Unverified
         );
+    }
+
+    // ── Within-rank refinement (#869) ────────────────────────────────────
+
+    fn cw(score: CandidateScore, warnings: u32, diff_lines: u32) -> CandidateSummary {
+        CandidateSummary {
+            score,
+            mutation_survived: false,
+            new_diag_warnings: warnings,
+            diff_lines,
+        }
+    }
+
+    /// The #869 acceptance: among `DeterministicPass` candidates, a larger
+    /// verified diff with NO new diagnostics beats a smaller one that
+    /// introduced a warning — "smallest" is not "best-verified".
+    #[test]
+    fn no_new_diagnostics_beats_a_smaller_diff_with_a_warning() {
+        let cands = [
+            cw(CandidateScore::DeterministicPass, 1, 10),
+            cw(CandidateScore::DeterministicPass, 0, 80),
+        ];
+        assert_eq!(select_best_candidate(&cands), Some(1));
+    }
+
+    /// Diff size stays the final tiebreak when the diagnostics agree.
+    #[test]
+    fn equal_diagnostics_fall_back_to_the_smaller_diff() {
+        let cands = [
+            cw(CandidateScore::DeterministicPass, 1, 80),
+            cw(CandidateScore::DeterministicPass, 1, 20),
+        ];
+        assert_eq!(select_best_candidate(&cands), Some(1));
+    }
+
+    /// #870/#869: a mutation-survived verification outranks an unchecked one
+    /// within the same rank, ahead of both warnings and diff size.
+    #[test]
+    fn mutation_survival_is_the_first_within_rank_tiebreak() {
+        let unchecked = cw(CandidateScore::DeterministicPass, 0, 5);
+        let survived = CandidateSummary {
+            mutation_survived: true,
+            ..cw(CandidateScore::DeterministicPass, 1, 500)
+        };
+        assert_eq!(select_best_candidate(&[unchecked, survived]), Some(1));
+    }
+
+    /// The coarse rank ordering is untouched: a warning-free judge-pass
+    /// still never beats a warned deterministic pass.
+    #[test]
+    fn the_refinement_never_crosses_ranks() {
+        let cands = [
+            cw(CandidateScore::DeterministicPass, 5, 500),
+            cw(CandidateScore::JudgePass, 0, 5),
+        ];
+        assert_eq!(select_best_candidate(&cands), Some(0));
     }
 }

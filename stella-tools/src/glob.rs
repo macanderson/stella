@@ -55,6 +55,7 @@ impl Tool for Glob {
                 "required": ["pattern"]
             }),
             read_only: true,
+            speculation_safe: true,
         }
     }
 

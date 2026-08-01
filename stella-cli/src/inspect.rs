@@ -184,6 +184,46 @@ pub(crate) fn run_inspect(args: &InspectArgs) -> Result<(), String> {
     }
 }
 
+/// `stella calibration` (#871): fold every recorded session's pass verdicts
+/// against the CI verdicts observed after them and report the judge's
+/// measured false-positive rate beside the deterministic cohort's. A pure
+/// reading of the event journal the store already keeps — no new write
+/// path, no daemon.
+pub(crate) fn run_calibration(format: InspectFormat) -> Result<(), String> {
+    let store = open_readonly_store()?;
+    let sessions = store
+        .event_session_ids()
+        .map_err(|e| format!("cannot enumerate recorded sessions: {e}"))?;
+    let mut total = stella_pipeline::replay::CalibrationReport::default();
+    for session_id in &sessions {
+        let journal = store
+            .session_events(session_id)
+            .map_err(|e| format!("cannot read session {session_id}: {e}"))?;
+        let events: Vec<stella_protocol::AgentEvent> =
+            journal.events.into_iter().map(|r| r.event).collect();
+        total = total.merge(stella_pipeline::replay::calibration(&events));
+    }
+    if matches!(format, InspectFormat::Json) {
+        return print_json(&serde_json::json!({
+            "sessions": sessions.len(),
+            "judge_passes": total.judge_passes,
+            "judge_reconciled": total.judge_reconciled,
+            "judge_false_positives": total.judge_false_positives,
+            "judge_false_positive_rate": total.judge_false_positive_rate(),
+            "deterministic_passes": total.deterministic_passes,
+            "deterministic_reconciled": total.deterministic_reconciled,
+            "deterministic_false_positives": total.deterministic_false_positives,
+            "deterministic_false_positive_rate": total.deterministic_false_positive_rate(),
+        }));
+    }
+    println!(
+        "{} session(s) with recorded events\n{}",
+        sessions.len(),
+        stella_pipeline::replay::render_calibration(&total)
+    );
+    Ok(())
+}
+
 /// Open the workspace store without creating it. Mirrors `stella stats`: a
 /// question about recorded history must never write.
 fn open_readonly_store() -> Result<Store, String> {

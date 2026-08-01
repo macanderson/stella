@@ -26,6 +26,7 @@ impl Tool for DeleteFile {
                 "required": ["path"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 

@@ -112,10 +112,11 @@ pub use pipeline::{
 pub use ports::{
     AdoptedChange, AlwaysAbortGate, ApprovalGate, ArtifactIdentity, ArtifactKind,
     CandidateWorkspace, CandidateWorkspacePort, CmdKind, CmdOutcome, ContextRecallPort,
-    DiagnosticInvocation, DiagnosticRunner, FileTouchPort, LintProbe, LintRecord, McpPrefetchPort,
-    NoContextRecall, NoFileTouches, NoRepoStatus, NoRepoStructure, PipelinePorts, ProviderResolver,
-    Recall, RecalledFrame, RepoStatusPort, RepoStructurePort, ScopeDecision, StdioApprovalGate,
-    TestInvocation, TestRunner, WorkspaceError,
+    DiagnosticInvocation, DiagnosticRunner, FileTouchPort, LineMutation, LintProbe, LintRecord,
+    McpPrefetchPort, MutantOutcome, MutationProbe, NoContextRecall, NoFileTouches, NoRepoStatus,
+    NoRepoStructure, PipelinePorts, ProviderResolver, Recall, RecalledFrame, RepoStatusPort,
+    RepoStructurePort, ScopeDecision, StdioApprovalGate, TestInvocation, TestRunner,
+    WorkspaceError,
 };
 pub use triage::TaskClass;
 pub use verify::{FlipOracle, FlipState, LadderDecision, LadderInputs};

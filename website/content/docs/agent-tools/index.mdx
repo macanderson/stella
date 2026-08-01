@@ -19,7 +19,9 @@ This reflects the live session: it accounts for custom tools discovered in `.ste
 
 Each tool is either **read-only** (it only observes your workspace and environment) or **mutating** (it changes files, runs commands, or performs side effects). The read-only marker is the schema's `read_only: true` flag; anything else is treated as capable of side effects.
 
-Read-only also means **speculative-eligible**: the engine executes an all-read-only prefix of a step's tool calls concurrently — while the model is still streaming — and harvests the results at dispatch, so read-only lookups cost almost no wall-clock. A mutating tool is never speculated.
+A subset of the read-only tools is also **speculation-safe** (the schema's `speculation_safe: true` flag): the engine executes a step's leading run of speculation-safe calls concurrently — while the model is still streaming — and harvests the results at dispatch, so those lookups cost almost no wall-clock. Speculation is a separate, narrower claim than read-only because a retried stream can run a speculated call twice. A web search burns a metered API call on every run, an issue lookup spends a rate-limited API, and the graph-backed tools write catch-up state to `codegraph.db` on the read path — so those reads run only at dispatch, exactly once per committed call. A mutating tool is never speculated, and MCP-provided tools never opt in.
+
+The speculation-safe subset is exactly: `read_file`, `grep`, `glob`, `explorations`, `list_scripts`, `repo_status`, `repo_diff`, `task_list` — plus `tool_search` and `skill_search` at the session layer.
 
 Tool names are their exact identifiers — the agent dispatches by name, and these are the names `stella tools` prints.
 

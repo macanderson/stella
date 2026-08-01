@@ -53,6 +53,7 @@
 //! (the route table, and why `cancel` is a path segment rather than a `DELETE`).
 
 mod accept;
+mod controls;
 mod error;
 mod frame;
 mod history;
@@ -65,6 +66,7 @@ mod routes;
 pub mod schema_export;
 mod server;
 mod session;
+mod sessions;
 
 pub use error::ServeError;
 pub use frame::{
@@ -73,5 +75,7 @@ pub use frame::{
 };
 pub use observe::{Metrics, Observer, ServeEvent, SharedObserver};
 pub use pending::Pending;
-pub use server::{DEFAULT_RESUME_GRACE, MAX_RESUME_GRACE, ServeConfig, serve};
-pub use session::{Session, SessionSpec};
+pub use server::{
+    DEFAULT_RESUME_GRACE, DEFAULT_SESSION_IDLE_TTL, MAX_RESUME_GRACE, ServeConfig, serve,
+};
+pub use session::{Session, SessionSpec, SettleHook, TurnSettlement};

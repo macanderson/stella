@@ -51,6 +51,13 @@ its own merge rule across the [scope hierarchy](#the-scope-hierarchy):
     Print a deterministic end-of-run recap in text mode. Off unless set.
   </SpecCard>
   <SpecCard
+    title={<code>trace_capture</code>}
+    href="#trajectory-trace-capture"
+    meta={[{ label: "Values", value: '"on" | "off"' }]}
+  >
+    Write one training-ready trajectory record per finished run. Off unless set.
+  </SpecCard>
+  <SpecCard
     title={<code>context</code>}
     href="#the-context-block"
     meta={[{ label: "Merges", value: "whole block, last scope wins", mono: false }]}
@@ -385,6 +392,29 @@ deterministic synthesis of the outcome (`completed`, `completed — verified`,
 `verification failed`, `aborted`) plus a created/modified/deleted tally. It reads the
 run's own facts and costs **no model call** — it is the "so what" line that the file list
 alone does not give you.
+
+## Trajectory trace capture
+
+`trace_capture` uses the same strict `"on"`/`"off"` vocabulary; an absent key means off.
+
+```json title="~/.stella/settings.json"
+{
+  "trace_capture": "on"
+}
+```
+
+With it on, each finished run appends one JSON record to
+`.stella/private/traces.jsonl` (owner-only): the exact messages every model call was
+sent — reconstructed from the run's own receipts and verified against emission
+digests — plus the stage each call ran under, the tools it requested, and its token
+and dollar cost. Credentials are redacted before anything is written, and the file
+never leaves your machine — it lives beside `store.db` under the same zero-egress
+rule. The run's episodic memory carries a `[trace:exec-N]` pointer, so recall can
+surface "we did something like this before" together with the key to the full record.
+
+This is the raw material for the self-improvement track (curated dataset export
+builds on it), and it costs **no model call** — the record is assembled from what the
+store already persisted.
 
 ## The `ui` section
 

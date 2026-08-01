@@ -41,6 +41,7 @@ impl Tool for WriteFile {
                 "required": ["path", "content"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 

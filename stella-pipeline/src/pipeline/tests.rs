@@ -283,6 +283,11 @@ enum TestScript {
     Pass,
     Fail,
     TimeOut,
+    /// A pass whose stdout carries scripted runner output — for the #867
+    /// fingerprint scenarios, which read test names from the tail.
+    PassWith(&'static str),
+    /// A failure whose stdout carries scripted runner output.
+    FailWith(&'static str),
 }
 
 struct ScriptedRunner {
@@ -425,6 +430,18 @@ impl TestRunner for ScriptedRunner {
                 stdout_tail: String::new(),
                 stderr_tail: "command timed out after 300s".to_string(),
                 kind: CmdKind::TimedOut,
+            },
+            TestScript::PassWith(output) => CmdOutcome {
+                exit_code: 0,
+                stdout_tail: output.to_string(),
+                stderr_tail: String::new(),
+                kind: CmdKind::Completed,
+            },
+            TestScript::FailWith(output) => CmdOutcome {
+                exit_code: 1,
+                stdout_tail: output.to_string(),
+                stderr_tail: self.failure_tail.clone(),
+                kind: CmdKind::Completed,
             },
         }
     }
@@ -706,6 +723,7 @@ impl ToolExecutor for OneWritingTool {
             description: "write a file".into(),
             input_schema: serde_json::json!({ "type": "object" }),
             read_only: false,
+            speculation_safe: false,
         }]
     }
     async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
@@ -812,6 +830,7 @@ async fn single_task_with_a_flip_submits_fast_and_skips_the_judge() {
             diagnostics: &runner,
             tests: &runner,
             lint: None,
+            mutation: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -906,6 +925,7 @@ async fn a_wedged_context_recall_degrades_instead_of_hanging_the_turn() {
             diagnostics: &runner,
             tests: &runner,
             lint: None,
+            mutation: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -974,6 +994,7 @@ async fn a_queued_steer_is_injected_into_the_execute_turn() {
             diagnostics: &runner,
             tests: &runner,
             lint: None,
+            mutation: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1046,6 +1067,7 @@ async fn misclassified_lookup_that_touches_files_still_gets_verified() {
             diagnostics: &runner,
             tests: &runner,
             lint: None,
+            mutation: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1108,6 +1130,7 @@ async fn clean_lookup_skips_plan_verify_and_judge() {
             diagnostics: &runner,
             tests: &runner,
             lint: None,
+            mutation: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1175,6 +1198,7 @@ async fn a_greeting_takes_the_conversational_path_and_skips_all_work() {
             diagnostics: &runner,
             tests: &runner,
             lint: None,
+            mutation: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1273,6 +1297,7 @@ async fn paid_headless_scope_review_error_retains_settled_cost() {
             diagnostics: &runner,
             tests: &runner,
             lint: None,
+            mutation: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1343,6 +1368,7 @@ async fn user_abort_at_scope_review_is_a_clean_abort() {
             diagnostics: &runner,
             tests: &runner,
             lint: None,
+            mutation: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1408,6 +1434,7 @@ async fn gather_diff_counts_real_new_file_lines_and_excludes_pre_existing() {
             diagnostics: &runner,
             tests: &runner,
             lint: None,
+            mutation: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1423,6 +1450,7 @@ async fn gather_diff_counts_real_new_file_lines_and_excludes_pre_existing() {
         diagnostics: &runner,
         tests: &runner,
         lint: None,
+        mutation: None,
         repo_status: &repo_status,
         cwd: None,
         hook_runner: None,
@@ -1800,6 +1828,7 @@ async fn second_consecutive_red_verification_gets_judge_guidance() {
             diagnostics: &runner,
             tests: &runner,
             lint: None,
+            mutation: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1909,6 +1938,7 @@ async fn a_setup_failure_degrades_to_a_bare_execution_instead_of_aborting() {
             diagnostics: &runner,
             tests: &runner,
             lint: None,
+            mutation: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1979,6 +2009,7 @@ async fn run_unisolated_with_router(
             diagnostics: &runner,
             tests: &runner,
             lint: None,
+            mutation: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -2009,6 +2040,22 @@ async fn run_isolated_with_router(
     Vec<AgentEvent>,
     Vec<CompletionMessage>,
 ) {
+    run_isolated_full(provider, port, config, goal, router, None).await
+}
+
+/// [`run_isolated_with_router`] plus an optional mutation probe (#870).
+async fn run_isolated_full(
+    provider: &ScriptedProvider,
+    port: &FakeWorkspacePort,
+    config: PipelineConfig,
+    goal: &str,
+    router: Router,
+    mutation: Option<&dyn MutationProbe>,
+) -> (
+    Result<PipelineOutcome, PipelineRunError>,
+    Vec<AgentEvent>,
+    Vec<CompletionMessage>,
+) {
     let resolver = OneProvider(provider);
     let diagnostics = NeverRunner;
     let repo_status = NeverRepoStatus;
@@ -2030,6 +2077,7 @@ async fn run_isolated_with_router(
             diagnostics: &diagnostics,
             tests: &diagnostics,
             lint: None,
+            mutation,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -2245,6 +2293,7 @@ async fn the_context_recall_event_carries_the_cgp_usage_report() {
             diagnostics: &runner,
             tests: &runner,
             lint: None,
+            mutation: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,

@@ -84,6 +84,7 @@ mod term_policy;
 mod tool_foundry;
 mod tool_policy;
 mod tool_switches;
+mod trace;
 mod tui;
 mod tune_cmd;
 mod usage_cmd;
@@ -438,6 +439,10 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         // writes settings only on `--promote`. No provider, no API key.
         Some(Command::Tune { cmd }) => {
             return tune_cmd::run_tune(cmd);
+        }
+        Some(Command::Calibration { format }) => {
+            // Reads the local event journal only — no provider, no API key.
+            return inspect::run_calibration(*format);
         }
         Some(Command::Inspect {
             execution_id,
@@ -799,6 +804,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         | Command::Storage { .. }
         | Command::Commands { .. }
         | Command::Inspect { .. }
+        | Command::Calibration { .. }
         // Phase 3 (#714)
         | Command::Proposals { .. }
         // Epic #897

@@ -22,7 +22,7 @@
 //! flight emits one `Cancelled` envelope from a drop guard
 //! (`CancelUsageGuard`) armed for exactly that window.
 //!
-//! # Retry re-executes only read-only tool calls, never a mutating one
+//! # Retry re-executes only speculation-safe read-only calls, never a mutating one
 //!
 //! `retry_with_backoff_observed` wraps the model call
 //! (`Provider::complete_observed`) together with that attempt's speculation
@@ -34,14 +34,17 @@
 //! `retry_never_re_executes_a_tool_call` below, which proves it by counting
 //! real executions against a flaky scripted provider.
 //!
-//! READ-ONLY tools carry no such guarantee: a read-only call announced by
-//! the stream DOES execute inside the retried attempt closure and can run
+//! SPECULATED tools carry no such guarantee: a call announced by the
+//! stream DOES execute inside the retried attempt closure and can run
 //! more than once per step (a failed attempt runs it, the retry re-announces
-//! and runs it again). That is safe for the *workspace* — read-only calls
-//! mutate nothing — but a maintainer must not assume a read-only tool with
-//! an observable side channel (a network read, a rate-limited API, a write
-//! to internal state like `codegraph.db`) runs at most once. See
-//! `crate::speculation` for the read-only overlap semantics: user hooks are
+//! and runs it again). Which is why eligibility takes two schema claims,
+//! not one (#923): `read_only` (safe for the *workspace* — the call
+//! mutates nothing) AND `speculation_safe` (safe to run twice — no
+//! metered network read, no rate-limited API, no write to internal state
+//! like `codegraph.db` on the read path). A tool that is read-only but
+//! not speculation-safe runs only at dispatch, exactly once per committed
+//! call, with no hook to attach and nothing to remember. See
+//! `crate::speculation` for the overlap semantics: user hooks are
 //! excluded from that overlap so they still fire exactly once per committed
 //! call, and every speculative execution that never commits is reported as a
 //! `SpeculationDiscarded` event so the I/O it ran stays accountable (#370).
@@ -1277,12 +1280,26 @@ impl<'a> Engine<'a> {
             .filter(|s| s.read_only)
             .map(|s| s.name.clone())
             .collect();
-        // Read-only tools a configured hook matches are excluded from
-        // speculation (they run only on the committed dispatch path so their
-        // hooks fire exactly once — #370). The gate still needs the full
-        // read-only set for its mutation fence, so `hook_gated` is carried
-        // alongside it, not subtracted from it. Empty whenever hooks are off.
-        let hook_gated: HashSet<String> = read_only_tools
+        // Speculation eligibility is the CONJUNCTION of the two schema
+        // claims: `read_only` (mutates no workspace state) and
+        // `speculation_safe` (tolerates the duplicate run a stream retry
+        // causes — #923). The gate still needs the full read-only set for
+        // its mutation fence, so both sets are carried, one never
+        // subtracted from the other. A tool claiming `speculation_safe`
+        // without `read_only` is ignored here — a mutating call can never
+        // run before its step commits, whatever its author believes about
+        // idempotence.
+        let speculation_safe_tools: HashSet<String> = tools_schema
+            .iter()
+            .filter(|s| s.read_only && s.speculation_safe)
+            .map(|s| s.name.clone())
+            .collect();
+        // Speculatable tools a configured hook matches are excluded as well
+        // (they run only on the committed dispatch path so their hooks fire
+        // exactly once — #370). Built from the eligibility set, not the
+        // read-only set: hook-gating only ever needs to veto a call that
+        // would otherwise be speculated. Empty whenever hooks are off.
+        let hook_gated: HashSet<String> = speculation_safe_tools
             .iter()
             .filter(|name| self.tool_has_matching_hook(name))
             .cloned()
@@ -1304,6 +1321,7 @@ impl<'a> Engine<'a> {
             tools: &tools_schema,
         };
         let speculation_read_only = read_only_tools.clone();
+        let speculation_safe = speculation_safe_tools;
         let speculation_hook_gated = hook_gated;
         // The gate forwards answer fragments as `TextDelta` previews. Deliberately NOT rolled back
         // on a failed attempt: a retry's deltas re-stream from the start
@@ -1333,6 +1351,7 @@ impl<'a> Engine<'a> {
         // the way out (#370) — and the retry builds a fresh channel and pool.
         let attempt: RetryAttemptFn = Box::new(move || {
             let read_only = speculation_read_only.clone();
+            let safe = speculation_safe.clone();
             let gated = speculation_hook_gated.clone();
             let progress = attempt_progress.clone();
             let ticked = progress.clone();
@@ -1349,7 +1368,7 @@ impl<'a> Engine<'a> {
                 let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
                 let mut pump: SpeculationFuture<'_> = Box::pin(self.pump_speculations(rx, pump_tx));
                 let mut complete = Box::pin(async move {
-                    let gate = SpeculationGate::new(read_only, gated, tx, delta_tx);
+                    let gate = SpeculationGate::new(read_only, safe, gated, tx, delta_tx);
                     self.provider.complete_observed_ref(req, &gate).await
                     // `gate` (and its sender) drop here → the pump's
                     // stream ends once in-flight executions drain.

@@ -136,6 +136,7 @@ async fn witness_worker_and_revision_hooks_are_bound_to_the_candidate_root() {
             diagnostics: &session_runner,
             tests: &session_runner,
             lint: None,
+            mutation: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: Some((&hooks, &hook_runner)),
@@ -227,6 +228,7 @@ async fn authored_witness_degrades_when_judge_is_worker() {
             diagnostics: &runner,
             tests: &runner,
             lint: None,
+            mutation: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -470,6 +472,7 @@ async fn authored_witness_isolation_failure_degrades_to_a_bare_run() {
             diagnostics: &runner,
             tests: &runner,
             lint: None,
+            mutation: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -1067,5 +1070,91 @@ async fn a_grafted_witness_is_not_billed_to_the_workers_diff() {
         !stages(&events).contains(&StageKind::Judge),
         "no judge is bought: {:?}",
         stages(&events)
+    );
+}
+
+/// ROADMAP §6's residual, pinned: the witness seal holds BETWEEN the revise
+/// turns of a single candidate. The tamper check runs every verify-loop
+/// iteration, so a revise turn that edits the witness file it is being
+/// judged by is caught at the next iteration's check and hard-fails the
+/// candidate — no judge can be asked to bless it, and nothing is adopted.
+#[tokio::test]
+async fn a_revise_turn_that_edits_the_witness_hard_fails_at_the_next_check() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("worker done"),
+        text_result("TEST_COMMAND: cargo test --test witness witness -- --exact"),
+        // The revise turn — where the tampering happens.
+        text_result("adjusted the implementation"),
+    ]);
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    // Iteration 1 sees the witness at its pinned identity (w1) and a red
+    // test → revise. Iteration 2 finds the file at w2: the revise turn
+    // rewrote the test it was being judged by.
+    //
+    // `artifact_identity` is consumed three times on the candidate: once by
+    // the graft re-pin (w1, accepted), once by iteration 1's tamper check
+    // (w1, still matches → the red test drives the revise turn), and once by
+    // iteration 2's tamper check (w2, mismatch → abort AFTER the revise).
+    let candidate_status = SeqRepoStatus::new(vec![
+        vec![],
+        vec![("tests/witness.rs", "w1")],
+        vec![("tests/witness.rs", "w2")],
+    ])
+    .with_artifact_identities(vec![
+        Some(ArtifactIdentity {
+            fingerprint: "w1".into(),
+            kind: ArtifactKind::Regular,
+            mode: 0o100644,
+            link_count: 1,
+        }),
+        Some(ArtifactIdentity {
+            fingerprint: "w1".into(),
+            kind: ArtifactKind::Regular,
+            mode: 0o100644,
+            link_count: 1,
+        }),
+        Some(ArtifactIdentity {
+            fingerprint: "w2".into(),
+            kind: ArtifactKind::Regular,
+            mode: 0o100644,
+            link_count: 1,
+        }),
+    ]);
+    let baseline_status = SeqRepoStatus::new(vec![vec![], vec![("tests/witness.rs", "w1")]])
+        .with_artifact_identity(ArtifactIdentity {
+            fingerprint: "w1".into(),
+            kind: ArtifactKind::Regular,
+            mode: 0o100644,
+            link_count: 1,
+        });
+    // Red on both observations: the first drives the revise, the second is
+    // never reached — the tamper check aborts first.
+    let candidate = FakeWorkspace::new(0, vec![false, false], Ok(vec![]), log.clone())
+        .with_repo_status(candidate_status);
+    let baseline = FakeWorkspace::new(1, vec![false], Ok(vec![]), log.clone())
+        .with_repo_status(baseline_status);
+    let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log.clone());
+
+    let (outcome, events, _) = run_isolated(
+        &provider,
+        &port,
+        PipelineConfig {
+            max_revisions: 1,
+            ..PipelineConfig::default()
+        },
+        "Fix the retry bug",
+    )
+    .await;
+    let outcome = outcome.expect("mid-loop tamper is a truthful candidate failure");
+    assert_aborted_because(
+        &outcome.status,
+        "witness artifact changed after its accepted baseline: tests/witness.rs",
+    );
+    assert!(!stages(&events).contains(&StageKind::Judge));
+    let log = log.lock().unwrap().clone();
+    assert!(
+        !log.iter().any(|entry| entry.starts_with("adopt:")),
+        "{log:?}"
     );
 }

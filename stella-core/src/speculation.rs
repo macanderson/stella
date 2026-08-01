@@ -1,13 +1,26 @@
-//! Speculative execution of read-only tool calls.
+//! Speculative execution of speculation-safe read-only tool calls.
 //!
 //! A step's tool calls normally wait for the entire model response to
 //! finish streaming before any of them run. But a call is fully known the
 //! moment its own block finishes streaming — often seconds before the
 //! response ends — and a *read-only* call (per `ToolSchema::read_only`) can
-//! be executed early with zero observable difference: it mutates nothing,
-//! so running it during the stream instead of after commutes with
-//! everything around it, and a result that ends up unused (stream error,
-//! retry, input mismatch) is simply discarded work, never a wrong state.
+//! be executed early with zero observable difference to the workspace: it
+//! mutates nothing, so running it during the stream instead of after
+//! commutes with everything around it, and a result that ends up unused
+//! (stream error, retry, input mismatch) is simply discarded work, never a
+//! wrong state.
+//!
+//! "Safe to waste" is a second claim on top of "read-only", and the two
+//! diverge (#923): a failed stream attempt re-announces its prefix on
+//! retry, so a speculated call can execute twice per step. That is free
+//! for a filesystem read but not for a web search that burns a metered
+//! API call each run, an MCP tool whose server counts requests, or a
+//! graph query that writes catch-up state to its own database on the way
+//! to answering — the workspace stays correct, the user's quota does not.
+//! A tool states the second claim with `ToolSchema::speculation_safe`;
+//! only calls whose tools declare BOTH flags are ever run early. A
+//! read-only call without it is *skipped, not fenced* — like a hook-gated
+//! call, it is not a mutation, so the reads after it stay eligible.
 //!
 //! The flow: `Engine::run_model_call` hands the provider a
 //! [`SpeculationGate`] (a `stella_protocol::ToolCallObserver`). As the
@@ -91,7 +104,18 @@ pub(crate) type SpeculationPool = HashMap<String, SpeculativeResult>;
 /// turn's event channel as a best-effort `TextDelta` preview (the step's
 /// eventual `Text` event stays authoritative — see its protocol docs).
 pub(crate) struct SpeculationGate {
+    /// Tools whose schemas declare `read_only` — the FENCE set. The first
+    /// announced call outside it is a mutation, which permanently stops
+    /// speculation for the step (ordering safety, module docs). Broader
+    /// than `speculation_safe` on purpose: a read-only tool that opted out
+    /// of speculation still must not fence the reads behind it.
     read_only_tools: HashSet<String>,
+    /// Tools whose schemas declare `speculation_safe` as well — the
+    /// ELIGIBILITY set, always a subset of `read_only_tools`. A read-only
+    /// call outside it (web search, MCP-provided tool) is skipped, not
+    /// fenced: running it twice would bill the user or the remote, but it
+    /// mutates no workspace state (#923).
+    speculation_safe: HashSet<String>,
     /// Read-only tools that must NOT be speculated because a configured
     /// `PreToolUse`/`PostToolUse` hook matches them: those hooks fire
     /// exactly once, on the committed dispatch path, never for a
@@ -114,12 +138,14 @@ pub(crate) struct SpeculationGate {
 impl SpeculationGate {
     pub(crate) fn new(
         read_only_tools: HashSet<String>,
+        speculation_safe: HashSet<String>,
         hook_gated: HashSet<String>,
         tx: UnboundedSender<ToolCall>,
         events: impl Into<EventSender>,
     ) -> Self {
         Self {
             read_only_tools,
+            speculation_safe,
             hook_gated,
             fenced: AtomicBool::new(false),
             tx,
@@ -158,6 +184,14 @@ impl ToolCallObserver for SpeculationGate {
         }
         if !self.read_only_tools.contains(&call.name) {
             self.fenced.store(true, Ordering::Relaxed);
+            return;
+        }
+        // Read-only but not speculation-safe (a metered web call, an MCP
+        // tool, a read that writes internal state): a retry would run it
+        // twice, so it only ever executes on the committed dispatch path.
+        // Skipped, not fenced — the workspace is untouched, so the reads
+        // that follow stay eligible (#923).
+        if !self.speculation_safe.contains(&call.name) {
             return;
         }
         // Read-only but hook-gated: never speculated (its hooks must fire
@@ -210,12 +244,28 @@ mod tests {
         tokio::sync::mpsc::UnboundedReceiver<ToolCall>,
         tokio::sync::mpsc::UnboundedReceiver<AgentEvent>,
     ) {
+        // Every read-only name doubles as speculation-safe here; tests about
+        // the two flags diverging use `gate_full` directly.
+        gate_full(names, names, gated)
+    }
+
+    fn gate_full(
+        read_only: &[&str],
+        speculation_safe: &[&str],
+        gated: &[&str],
+    ) -> (
+        SpeculationGate,
+        tokio::sync::mpsc::UnboundedReceiver<ToolCall>,
+        tokio::sync::mpsc::UnboundedReceiver<AgentEvent>,
+    ) {
         let (tx, rx) = unbounded_channel();
         let (events_tx, events_rx) = unbounded_channel();
-        let read_only: HashSet<String> = names.iter().map(|s| s.to_string()).collect();
+        let read_only: HashSet<String> = read_only.iter().map(|s| s.to_string()).collect();
+        let speculation_safe: HashSet<String> =
+            speculation_safe.iter().map(|s| s.to_string()).collect();
         let hook_gated: HashSet<String> = gated.iter().map(|s| s.to_string()).collect();
         (
-            SpeculationGate::new(read_only, hook_gated, tx, events_tx),
+            SpeculationGate::new(read_only, speculation_safe, hook_gated, tx, events_tx),
             rx,
             events_rx,
         )
@@ -313,6 +363,28 @@ mod tests {
             forwarded,
             vec!["c1".to_string(), "c3".to_string()],
             "a hook-gated read is skipped, never fences the reads around it"
+        );
+    }
+
+    #[test]
+    fn a_read_only_but_speculation_unsafe_call_is_skipped_not_fenced() {
+        // `web_search` is read-only (mutates no workspace state) but NOT
+        // speculation-safe: a retried stream would announce it twice and
+        // each run burns a metered API call (#923). It must never reach the
+        // pump — and since it is not a mutation, the reads on either side
+        // of it must stay eligible.
+        let (gate, mut rx, _events) = gate_full(&["read_file", "web_search"], &["read_file"], &[]);
+        gate.tool_call_streamed(&call("read_file", "c1"));
+        gate.tool_call_streamed(&call("web_search", "c2"));
+        gate.tool_call_streamed(&call("read_file", "c3"));
+
+        let forwarded: Vec<String> = std::iter::from_fn(|| rx.try_recv().ok())
+            .map(|c| c.call_id)
+            .collect();
+        assert_eq!(
+            forwarded,
+            vec!["c1".to_string(), "c3".to_string()],
+            "a speculation-unsafe read is skipped, never fences the reads around it"
         );
     }
 

@@ -286,6 +286,14 @@ export interface LadderSnapshot {
    */
   flip_achieved: boolean;
   /**
+   * A would-be flip was refused because the passing run named its tests
+   * and none of the baseline's failing tests were among them — the pass
+   * demonstrably fixed a *different* failure (#867), most concretely a
+   * deleted or renamed failing test. `serde(default)` so pre-#867
+   * snapshots keep parsing.
+   */
+  flip_refused_different_failure?: boolean;
+  /**
    * Dispatched tool calls capable of changing the workspace.
    */
   mutating_actions: number;
@@ -326,6 +334,14 @@ export interface LadderSnapshot {
    * candidate — so its presence here is the *stated* proof the check ran.
    */
   witness_intact?: boolean | null;
+  /**
+   * The mutation audit's finding (#870): `Some(true)` = the witness
+   * failed under at least one trivial mutant of the changed lines (it
+   * constrains the change); `Some(false)` = it stayed green under every
+   * observed mutant (tautological — the deterministic credit was
+   * withheld); `None` = the check never ran.
+   */
+  witness_mutation?: boolean | null;
 }
 
 /**

@@ -75,6 +75,7 @@ impl ToolExecutor for WedgedTool {
             description: "run a command".into(),
             input_schema: serde_json::json!({"type": "object"}),
             read_only: false,
+            speculation_safe: false,
         }]
     }
     async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {

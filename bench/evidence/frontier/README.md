@@ -23,6 +23,30 @@ bench/evidence/frontier/sentinel.sh          # two cheap trials, end to end
 bench/evidence/frontier/primary.sh small fb-small-01
 ```
 
+## Pick a backend
+
+`FB_ENV` selects where trials run — `docker` (this host, the default) or
+`modal` (a sandbox provisioned per task, which is what the benchmark's own
+authors used).
+
+```bash
+FB_ENV=modal FB_CONCURRENCY=32 bench/evidence/frontier/fetch_dataset.sh
+```
+
+This is not a preference. A submittable run must cover all 74 tasks — four of
+which want a GPU — without overriding any task's declared resources, so it needs
+a machine that can hand a container 32 GB and an H100 on demand. On `docker` the
+plan reports what this host can take and names what it cannot; on `modal` the
+host's shape stops being a term in the measurement, and the plan is 74/74.
+
+Modal needs `modal token new` (or `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET`); the
+preflight checks for it and distinguishes "not authenticated" from "SDK not
+installed", because they have different fixes. `warm_images.sh` skips on Modal —
+the builds happen in the cloud, so a local pull warms a cache no trial reads.
+
+The glibc-2.17 assert runs on both. Modal is a different scheduler, not a
+different libc.
+
 ## What differs from Terminal-Bench, and why each difference exists
 
 **A second Harbor pin (0.20.0), not the audited 0.6.1.** Every one of the 74
@@ -72,7 +96,13 @@ scored 0.0 passes stage 2, correctly.
 `plan.py` reports what the host can take. On a 10 GB / 6-CPU Docker VM (a
 typical Mac) it admits **48 of 74** tasks — 4 GPU-excluded and 22 over the memory
 budget. That is a real constraint, not a bug, and it is why a submittable run
-needs a bigger machine: see [SUBMISSION.md](SUBMISSION.md).
+uses `FB_ENV=modal`, where the same plan is 74/74: see
+[SUBMISSION.md](SUBMISSION.md).
+
+Worth knowing before you conclude the laptop is hopeless: 18 of those 22 want
+exactly 8192 MB, which needs roughly a 10.2 GB VM once headroom is taken. Raising
+Docker Desktop's memory allocation moves local coverage from 48 to 66 without
+touching anything here.
 
 The memory exclusion is deliberately conservative. `memory_mb` is a cap Docker
 accepts even when the VM is smaller, so an 8 GB task on a 10 GB daemon usually

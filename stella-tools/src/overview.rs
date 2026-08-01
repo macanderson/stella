@@ -51,11 +51,12 @@ impl Tool for ProjectOverview {
                 .into(),
             input_schema: json!({ "type": "object", "properties": {} }),
             // Read-only in the sense the flag means: it mutates no
-            // workspace state, so speculative execution commutes with
-            // everything around it. The index catch-up writes only to
-            // Stella's own codegraph.db, which is invisible to the model and
-            // serialized by the store's write guard.
+            // workspace state. NOT speculation-safe: the index catch-up
+            // writes to Stella's own codegraph.db on the read path, which
+            // is exactly the internal-state side effect a duplicate
+            // speculative run must not repeat (#923).
             read_only: true,
+            speculation_safe: false,
         }
     }
 

@@ -156,6 +156,12 @@ pub struct Settings {
     /// changed, beside the file and cost panels. No model call. Default off.
     #[serde(default)]
     pub enable_recap: Option<Toggle>,
+    /// `on` = assemble a trajectory trace after each finished execution
+    /// (#1042): the exact model inputs, staged path, tool activity, and cost,
+    /// appended to `.stella/private/traces.jsonl` and pointed to from the
+    /// run's episode. Local-only by construction. Default off.
+    #[serde(default)]
+    pub trace_capture: Option<Toggle>,
     /// Appearance preferences — currently just the TUI colour theme
     /// (`/theme`). Whole-block last-wins across scopes; carries no authority.
     #[serde(default)]
@@ -856,6 +862,13 @@ impl Settings {
     /// it on (a later `"off"` turns it back off — project wins per field).
     pub fn recap_enabled(&self) -> bool {
         self.enable_recap.is_some_and(Toggle::is_on)
+    }
+
+    /// Whether trajectory trace capture (#1042) is enabled. Default off;
+    /// only an explicit `"trace_capture": "on"` in the scope chain turns it
+    /// on (a later `"off"` turns it back off — project wins per field).
+    pub fn trace_capture_enabled(&self) -> bool {
+        self.trace_capture.is_some_and(Toggle::is_on)
     }
 
     /// The persisted TUI colour-theme slug (`ui.theme`), if any. `None` means

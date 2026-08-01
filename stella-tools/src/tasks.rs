@@ -97,6 +97,7 @@ impl Tool for TaskCreate {
                 "required": ["subject"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 
@@ -136,6 +137,7 @@ impl Tool for TaskList {
                 "properties": {}
             }),
             read_only: true,
+            speculation_safe: true,
         }
     }
 
@@ -180,6 +182,7 @@ impl Tool for TaskStart {
                 "required": ["id"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 
@@ -221,6 +224,7 @@ impl Tool for TaskComplete {
                 "required": ["id"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 
@@ -262,6 +266,7 @@ impl Tool for TaskCancel {
                 "required": ["id"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 
@@ -313,6 +318,7 @@ impl Tool for TaskAssign {
                 "required": ["id", "briefing"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 

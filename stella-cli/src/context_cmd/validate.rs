@@ -93,10 +93,43 @@ pub fn run_list(root: &Path, json: bool) -> Result<(), String> {
 
 /// `stella context validate`.
 pub fn run_validate(root: &Path, json: bool) -> Result<(), String> {
+    // The promotion ledger's hash chain first (#994): a tampered ledger is a
+    // governance failure that must fail the check regardless of what the
+    // records themselves say — an edited grant is worse than a missing one.
+    let promotions = crate::context_records::read_promotions(root)
+        .map_err(|violation| format!("promotion ledger failed verification: {violation}"))?;
+    let governance = crate::context_records::read_governance(root);
+
     let files = rule_files(root, true, true);
     let now = now_rfc3339();
     let cache = probe_everything(root, &files.all(), &now);
     let registry = registry_with_cache(root, &files, &cache, &now);
+
+    // Regulated tier: a project record armed to block must hold a ledger
+    // grant — an armed guard nobody accountably approved is exactly what the
+    // tier exists to prevent.
+    if governance.mode == stella_core::records::promotion::GovernanceMode::Regulated {
+        let grants = stella_core::records::promotion::blocking_grants(&promotions);
+        let ungoverned: Vec<String> = registry
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.is_enforced()
+                    && entry.record.trust == stella_core::records::trust::Trust::Project
+                    && !grants.contains_key(&entry.record.record.lineage_id)
+            })
+            .map(|entry| format!("^{}", entry.record.handle))
+            .collect();
+        if !ungoverned.is_empty() {
+            return Err(format!(
+                "regulated governance: {} armed blocking record(s) hold no promotion-ledger \
+                 grant ({}) — record the grant with `stella context promote <rule> --to \
+                 blocking --reason …`, or demote the record",
+                ungoverned.len(),
+                ungoverned.join(", ")
+            ));
+        }
+    }
 
     if json {
         let report = Report::build(&registry, &cache);
