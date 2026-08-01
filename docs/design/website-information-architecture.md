@@ -1,9 +1,14 @@
 # Stella website information architecture — one site for the pitch and the manual
 
-**Status:** first-pass proposal for review — nothing is built. This document
-covers the navigation tree, the page templates, and the content rules for
-`website/`. It does not move any page yet, and it does not change any visual
-design (`docs/brand/BRAND.md` governs that).
+**Status:** Phase 1 (§ Sequencing) is implemented: the five-section tree and
+the command regroup are live in `website/content/docs/` as reorder-without-move
+`meta.json` changes (no slug moved, so no redirect was needed), and the
+no-orphans and help-text-parity invariants are enforced by
+`the_docs_nav_mirrors_these_groups` and
+`the_docs_index_summaries_are_the_clis_own` in `stella-cli/src/cli/help/tests.rs`.
+Phases 2–4 (home rebuilt around a recorded run, guides adopting the template,
+the recorded-run component) remain unbuilt. This document does not change any
+visual design (`docs/brand/BRAND.md` governs that).
 **Date:** 2026-07-31. **Owner:** Mac Anderson.
 **Companions:** `website/content/docs/meta.json` (the tree as it stands),
 `stella-cli/src/cli/help.rs` (the CLI's own command grouping),
@@ -185,7 +190,7 @@ stella.oxagen.sh
 
 ### Commands: mirror the CLI, don't re-invent it
 
-`stella-cli/src/cli/help.rs` already groups all 34 commands into six
+`stella-cli/src/cli/help.rs` already groups all 35 commands into six
 task-shaped groups, and a test fails if a command is left out. The site's
 commands section currently presents a flat 35-item list in a hand-curated
 order. The site should adopt the CLI's grouping verbatim:
@@ -194,7 +199,7 @@ order. The site should adopt the CLI's grouping verbatim:
 2. Run many at once — `fleet`, `monitor`, `arena`
 3. Ask about this workspace — `graph`, `storage`, `scripts`, `tools`, `commands`
 4. Steer what the agent knows — `ingest`, `context`, `proposals`, `memory`
-5. What it cost, what happened — `stats`, `scoreboard`, `observe`, `inspect`, `usage`, `tune`
+5. What it cost, what happened — `stats`, `scoreboard`, `observe`, `inspect`, `calibration`, `usage`, `tune`
 6. Set up — `auth`, `models`, `connect`, `mcp`, `config`, `migrate`, `doctor`, `completions`, `cloud`, `telemetry`, `version`
 
 Two invariants come along with this: the **no-orphans rule** (every command
