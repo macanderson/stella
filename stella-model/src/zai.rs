@@ -1470,7 +1470,16 @@ async fn aggregate_zai_stream(
     // "The user is asking… I should clarify…" third-person deliberation in
     // place of a reply). A turn that called a tool is not blank, so it never
     // needs the fallback.
-    if text.trim().is_empty() && calls.is_empty() && !reasoning.trim().is_empty() {
+    // `!truncated_at_token_limit` is the second load-bearing guard. "Otherwise
+    // blank" holds for a model that FINISHED thinking and wrote no answer, not one
+    // CUT OFF mid-thought — `stella_core::driver::truncation` handles that case and
+    // can only recognize it while `text` is still empty. Promoting anyway published
+    // an abandoned scratchpad as the answer, which the driver then kept for the turn.
+    if text.trim().is_empty()
+        && calls.is_empty()
+        && !reasoning.trim().is_empty()
+        && !truncated_at_token_limit
+    {
         text = reasoning;
     }
 
