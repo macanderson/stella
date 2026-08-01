@@ -95,11 +95,18 @@ roxmltree = "0.21"
 scraper = { version = "0.27", default-features = false, features = ["errors"] }
 # Held at 0.39 by the declared MSRV, not by anything this workspace needs from
 # it. rusqlite 0.40 requires libsqlite3-sys ^0.38, whose build script calls
-# `cfg_select!` — an unstable library feature until Rust 1.94, five releases
-# above the `rust-version` above. It arrived in a *patch* release (0.38.1), so
-# it reached every open branch at once through the lockfile and failed the msrv
-# job on all of them; 0.38.0 carries it too, which is why the pin has to be on
-# rusqlite rather than on libsqlite3-sys.
+# `cfg_select!` — a library feature that stayed unstable through 1.94 and
+# stabilized in 1.95, five releases above the `rust-version` above (probed
+# directly on 1.90, 1.91, 1.93, 1.94 and 1.95). It arrived in a *patch* release
+# (0.38.1), so it reached every open branch at once through the lockfile and
+# failed the msrv job on all of them; 0.38.0 carries it too, which is why the
+# pin has to be on rusqlite rather than on libsqlite3-sys.
+#
+# The pin also has to be on rusqlite because 0.40.1 calls `cfg_select!` from
+# its OWN source — lib.rs, statement.rs, raw_statement.rs, inner_connection.rs
+# — not only from the build script. That is why selecting different
+# libsqlite3-sys features cannot avoid it (#1112 tried; the swap moved the
+# failure from the build script into the crate and the job still went red).
 #
 # Raising `rust-version` would also fix the job, and is the wrong trade: it
 # spends a five-version jump in a public compatibility promise to satisfy a
