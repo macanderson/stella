@@ -6,9 +6,13 @@
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use stella_core::context_record::RecordProposalStatus;
 use stella_core::ingest::{ContextFile, ProbeKind, Verdict};
-use stella_protocol::{CompletionRequestRef, CompletionResult, CompletionUsage, ProviderError};
+
+use stella_protocol::{
+    CompletionRequestRef, CompletionResult, CompletionUsage, FinishReason, ProviderError,
+};
 
 use super::*;
 
@@ -238,6 +242,97 @@ impl Provider for CannedProvider {
             finish_reason: None,
         })
     }
+}
+
+/// A provider whose first reply is cut off at the token limit (`finish_reason:
+/// Length`, no closing `]`) and whose second reply is the same records,
+/// complete — the shape a real truncation-then-retry takes. Records the
+/// `max_output_tokens` each call was asked for, so the test can prove the
+/// retry actually grew the budget rather than only asking more politely.
+struct TruncatesOnceProvider {
+    calls: AtomicUsize,
+    requested_budgets: std::sync::Mutex<Vec<Option<u32>>>,
+}
+
+#[async_trait]
+impl Provider for TruncatesOnceProvider {
+    fn id(&self) -> &str {
+        "truncates-once"
+    }
+
+    async fn complete_ref(
+        &self,
+        request: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
+        self.requested_budgets
+            .lock()
+            .expect("lock")
+            .push(request.max_output_tokens);
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        let (text, finish_reason) = if call == 0 {
+            // Cut off mid-object: no closing `}` for the record, no closing `]`
+            // for the array — exactly what a token-limit truncation leaves.
+            (
+                "[{\"lineage_suffix\":\"pkg-manager\",\"kind\":\"fact\",\"statement\":\"Th"
+                    .to_string(),
+                Some(FinishReason::Length),
+            )
+        } else {
+            (
+                "[{\"lineage_suffix\":\"pkg-manager\",\"kind\":\"fact\",\
+                 \"statement\":\"This repository uses pnpm.\"}]"
+                    .to_string(),
+                Some(FinishReason::Stop),
+            )
+        };
+        Ok(CompletionResult {
+            text,
+            tool_calls: Vec::new(),
+            usage: CompletionUsage {
+                reported: true,
+                input_tokens: 20,
+                output_tokens: 8,
+                ..CompletionUsage::default()
+            },
+            model: "canned-model".into(),
+            cost_usd: 0.001,
+            finish_reason,
+        })
+    }
+}
+
+#[test]
+fn a_truncated_reply_is_retried_with_a_larger_budget_instead_of_failing() {
+    let root = temp_root("truncated-retry");
+    let provider = TruncatesOnceProvider {
+        calls: AtomicUsize::new(0),
+        requested_budgets: std::sync::Mutex::new(Vec::new()),
+    };
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let (claims, _cost) = runtime
+        .block_on(call_model(
+            &provider,
+            "canned-model",
+            &root,
+            "AGENTS.md",
+            "# Conventions\nThis repository uses pnpm.\n",
+        ))
+        .expect("recovers from the truncated first reply");
+
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0].lineage_suffix, "pkg-manager");
+
+    let budgets = provider.requested_budgets.lock().expect("lock").clone();
+    assert_eq!(
+        budgets,
+        vec![Some(BASE_OUTPUT_TOKENS), Some(BASE_OUTPUT_TOKENS * 2)],
+        "the retry must ask for more room, not repeat the same budget"
+    );
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
