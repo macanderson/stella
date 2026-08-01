@@ -70,10 +70,81 @@ pub(crate) fn animation_disabled(no_anim_flag: bool) -> bool {
     no_anim_flag || stella || no_color
 }
 
+/// Why `chat` fell back to the line REPL instead of the Command Deck.
+///
+/// Carried rather than collapsed to a bool because the two surfaces are not
+/// the same program with different paint. The REPL has no prompt queue and no
+/// mid-turn steering, and it exits the moment stdin reaches EOF — so a user
+/// who is silently downgraded sees follow-up prompts vanish, a queue that
+/// never drains, and an exit the instant a turn ends, with nothing anywhere
+/// saying why. Naming the reason is what lets the caller say it out loud.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlainReason {
+    /// `--plain` was passed.
+    Flag,
+    /// `STELLA_PLAIN` is set to something other than `0`.
+    Env,
+    /// stdin is a pipe or a file, so there are no keystrokes to read.
+    StdinNotTty,
+    /// stdout is redirected, so raw mode and the alternate screen are moot.
+    StdoutNotTty,
+}
+
+impl PlainReason {
+    /// One line naming the cause, for the notice printed before the REPL
+    /// banner. Phrased as the condition observed, not as an instruction —
+    /// `--plain` and a piped stdin are both legitimate ways to run.
+    pub(crate) fn explain(self) -> &'static str {
+        match self {
+            Self::Flag => "--plain was passed",
+            Self::Env => "STELLA_PLAIN is set",
+            Self::StdinNotTty => "stdin is not a terminal (piped or redirected)",
+            Self::StdoutNotTty => "stdout is not a terminal (piped or redirected)",
+        }
+    }
+}
+
+/// The deck-or-REPL decision, kept pure so both branches are testable without
+/// a pty and without touching the process's real streams. `None` means the
+/// Command Deck runs.
+///
+/// Explicit opt-outs are reported ahead of stream shape: someone who passed
+/// `--plain` does not need to be told about their tty.
+pub(crate) fn deck_decision(
+    plain_flag: bool,
+    plain_env: bool,
+    stdin_tty: bool,
+    stdout_tty: bool,
+) -> Option<PlainReason> {
+    if plain_flag {
+        Some(PlainReason::Flag)
+    } else if plain_env {
+        Some(PlainReason::Env)
+    } else if !stdin_tty {
+        Some(PlainReason::StdinNotTty)
+    } else if !stdout_tty {
+        Some(PlainReason::StdoutNotTty)
+    } else {
+        None
+    }
+}
+
 /// Whether `chat` should launch the Command Deck: an explicit `--plain` or
 /// STELLA_PLAIN=1 opts out, and both stdin and stdout must be real terminals
 /// (raw mode + the alternate screen are meaningless on a pipe).
+///
+/// [`deck_decision`] is the same question with the reason kept; this wrapper
+/// exists for the call sites that only branch on it.
 pub(crate) fn use_deck(plain_flag: bool) -> bool {
-    let plain_env = std::env::var_os("STELLA_PLAIN").is_some_and(|v| !v.is_empty() && v != "0");
-    !plain_flag && !plain_env && std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+    plain_fallback(plain_flag).is_none()
+}
+
+/// [`deck_decision`] applied to this process's real environment and streams.
+pub(crate) fn plain_fallback(plain_flag: bool) -> Option<PlainReason> {
+    deck_decision(
+        plain_flag,
+        std::env::var_os("STELLA_PLAIN").is_some_and(|v| !v.is_empty() && v != "0"),
+        std::io::stdin().is_terminal(),
+        std::io::stdout().is_terminal(),
+    )
 }
