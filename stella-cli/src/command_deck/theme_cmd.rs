@@ -3,14 +3,12 @@
 //! the already-large `command_deck` dispatcher: the parser, the live switch,
 //! and the settings write live here; `command_deck` only wires them to `say`.
 //!
-//! Two themes ship. `stella-dark` (electric blue on deep space) is the
-//! default; `stella-light` is the same blue on paper. Both were described here
-//! — and to users, through [`blurb`] — in the vocabulary of two retired
-//! identities: a terminal-green dark theme and an ember red-orange light one,
-//! neither of which any surface has rendered for two recolours. The palette's
-//! own spec (BRAND.md) has since been retired in favour of the brand kit at
-//! `docs/brand/BRAND.md`; the terminal has not yet been repainted to it.
-//! The switch itself is a per-frame buffer remap in
+//! Two themes ship. `stella-dark` (Phosphor Gold on Ink — the comet kit at
+//! `docs/brand/BRAND.md`) is the default; `stella-light` is the same gold
+//! darkened onto warm paper. [`blurb`] is the user-visible naming of both,
+//! and it has drifted behind the identity before (it once named a terminal
+//! green and an ember red-orange two recolours dead) — keep it telling the
+//! truth. The switch itself is a per-frame buffer remap in
 //! [`stella_tui::theme`], so it takes effect on the next frame with nothing to
 //! re-lay-out — this module only flips the global and writes `ui.theme`.
 
@@ -57,14 +55,13 @@ fn theme_menu() -> String {
 
 /// A one-line description of what each theme looks like.
 ///
-/// Printed to users by `/theme`, which made it the most visible piece of
-/// retired-identity prose left in the product: it named a terminal green and an
-/// ember red-orange that nothing has rendered since two recolours ago. Both
-/// themes carry the same electric-blue brand hue; the ground is what differs.
+/// Printed to users by `/theme`, which has made it the most visible piece of
+/// retired-identity prose in the product more than once. Both themes carry
+/// the same Phosphor Gold brand hue; the ground is what differs.
 fn blurb(theme: ThemeName) -> &'static str {
     match theme {
-        ThemeName::StellaDark => "electric blue on deep space (default)",
-        ThemeName::StellaLight => "electric blue on paper",
+        ThemeName::StellaDark => "phosphor gold on ink (default)",
+        ThemeName::StellaLight => "phosphor gold on paper",
     }
 }
 

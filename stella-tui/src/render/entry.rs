@@ -245,9 +245,9 @@ fn entry_body(
             let total_lines = text.lines().count().max(1);
             let show_all = expand_thinking || expanded;
             let chevron = if show_all { "⏶" } else { "⏵" };
-            // Dim, not tinted. Reasoning is the agent talking to itself; it is
-            // the *least* load-bearing text on screen, and the glacier blue it
-            // used to wear now reads as the brand accent.
+            // Dim, not tinted. Reasoning is the agent talking to itself; it
+            // is the *least* load-bearing text on screen, so it wears the
+            // quiet warm neutral, never a hue.
             let header_style = quiet();
             let reasoning_style = Style::new()
                 .fg(theme::TEXT_TERTIARY)
