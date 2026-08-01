@@ -52,6 +52,12 @@ pub struct Metrics {
     turns_reclaimed_total: AtomicU64,
     turns_live: AtomicI64,
 
+    sessions_created_total: AtomicU64,
+    sessions_refused_total: AtomicU64,
+    sessions_deleted_total: AtomicU64,
+    sessions_reclaimed_total: AtomicU64,
+    sessions_live: AtomicI64,
+
     turn_duration_ms_total: AtomicU64,
     model_calls_total: AtomicU64,
     model_retries_total: AtomicU64,
@@ -104,6 +110,12 @@ pub struct Snapshot {
     pub turns_aborted_total: u64,
     pub turns_reclaimed_total: u64,
     pub turns_live: u64,
+
+    pub sessions_created_total: u64,
+    pub sessions_refused_total: u64,
+    pub sessions_deleted_total: u64,
+    pub sessions_reclaimed_total: u64,
+    pub sessions_live: u64,
 
     pub turn_duration_ms_total: u64,
     pub model_calls_total: u64,
@@ -163,6 +175,12 @@ impl Metrics {
             turns_aborted_total: self.turns_aborted_total.load(ORDER),
             turns_reclaimed_total: self.turns_reclaimed_total.load(ORDER),
             turns_live: gauge(&self.turns_live),
+
+            sessions_created_total: self.sessions_created_total.load(ORDER),
+            sessions_refused_total: self.sessions_refused_total.load(ORDER),
+            sessions_deleted_total: self.sessions_deleted_total.load(ORDER),
+            sessions_reclaimed_total: self.sessions_reclaimed_total.load(ORDER),
+            sessions_live: gauge(&self.sessions_live),
 
             turn_duration_ms_total: self.turn_duration_ms_total.load(ORDER),
             model_calls_total: self.model_calls_total.load(ORDER),
@@ -271,6 +289,22 @@ impl Observer for Metrics {
             }
             ServeEvent::TurnReclaimed { .. } => {
                 self.turns_reclaimed_total.fetch_add(1, ORDER);
+            }
+
+            ServeEvent::SessionCreated { live_sessions, .. } => {
+                self.sessions_created_total.fetch_add(1, ORDER);
+                self.sessions_live.store(as_i64(*live_sessions), ORDER);
+            }
+            ServeEvent::SessionRefused { live_sessions } => {
+                self.sessions_refused_total.fetch_add(1, ORDER);
+                self.sessions_live.store(as_i64(*live_sessions), ORDER);
+            }
+            ServeEvent::SessionDeleted { live_sessions, .. } => {
+                self.sessions_deleted_total.fetch_add(1, ORDER);
+                self.sessions_live.store(as_i64(*live_sessions), ORDER);
+            }
+            ServeEvent::SessionReclaimed { .. } => {
+                self.sessions_reclaimed_total.fetch_add(1, ORDER);
             }
 
             ServeEvent::ReverseDispatched { kind, .. } => {

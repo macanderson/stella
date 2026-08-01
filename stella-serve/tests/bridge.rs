@@ -68,6 +68,7 @@ fn spec_for(prompt: &str) -> SessionSpec {
         reverse_request_timeout: SessionSpec::DEFAULT_REVERSE_REQUEST_TIMEOUT,
         turn: TurnRef::new("turn-bridgetest0"),
         observer: stella_serve::observe::null_observer(),
+        on_settled: None,
     }
 }
 

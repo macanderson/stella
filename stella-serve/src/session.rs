@@ -24,6 +24,7 @@ use stella_protocol::{
 use tokio::runtime::Builder;
 use tokio::sync::mpsc;
 
+use crate::controls::{ControlPorts, Controls};
 use crate::error::ServeError;
 use crate::frame::{ServerFrame, TurnOutcomeWire};
 use crate::history::{Encoded, FrameHistory, encode_seq_frame};
@@ -65,6 +66,35 @@ pub struct SessionSpec {
     /// Where this session's boundary events go. `observe::null_observer()` for
     /// callers using [`Session`] as a library type without a sink.
     pub observer: SharedObserver,
+    /// Called exactly once when the turn settles, with the final transcript
+    /// and spend — before the terminal frame is emitted, so a host that sees
+    /// `turn_complete` and immediately reads its session observes the
+    /// write-back. `None` for a stateless turn (the pre-#931 behavior: the
+    /// mutated transcript is simply dropped).
+    ///
+    /// If the hook is never *called* — the session thread could not be spawned
+    /// — it is still *dropped*, and the owner's drop-side bookkeeping runs; a
+    /// session-owned turn uses that to release its live-turn slot rather than
+    /// wedge the session forever (see `crate::sessions`).
+    pub on_settled: Option<SettleHook>,
+}
+
+/// The settlement callback a session owner installs on a turn — see
+/// [`SessionSpec::on_settled`].
+pub type SettleHook = Box<dyn FnOnce(TurnSettlement) + Send>;
+
+/// What a settled turn hands back to its owner: the transcript as the engine
+/// left it, and the budget guard carrying the turn's true spend.
+pub struct TurnSettlement {
+    /// `true` for [`TurnOutcomeWire::Completed`]. An aborted turn still
+    /// settles — its spend is real even though its transcript may not be
+    /// worth keeping (a hard cancel can leave a dangling `tool_use` that
+    /// would poison the next model call).
+    pub completed: bool,
+    /// The conversation as the engine left it, compaction rewrites included.
+    pub messages: Vec<CompletionMessage>,
+    /// The guard the turn ran under; `session_spent_usd` is the running total.
+    pub budget: BudgetGuard,
 }
 
 impl SessionSpec {
@@ -79,6 +109,11 @@ impl SessionSpec {
 pub struct Session {
     frames: mpsc::UnboundedReceiver<ServerFrame>,
     pending: Pending,
+    /// The sender half of this turn's mid-turn controls (pause/steer). Shared
+    /// with the registry entry the same way [`Pending`] is, and for the same
+    /// reason: the session object itself is exclusively owned by whichever
+    /// stream is running, so control POSTs need a handle that is not it.
+    controls: Controls,
     thread: Option<JoinHandle<()>>,
     /// This turn's sequenced, bounded frame tail.
     ///
@@ -99,6 +134,7 @@ impl Session {
     pub fn start(spec: SessionSpec) -> Session {
         let (frame_tx, frame_rx) = mpsc::unbounded_channel::<ServerFrame>();
         let pending = Pending::new(spec.observer.clone(), spec.turn.clone());
+        let (controls, control_ports) = Controls::new();
         // Fallible spawn on purpose: a host that opens more turns than the OS
         // will grant threads must see a cleanly aborted turn on the wire, not
         // the panic bare `std::thread::spawn` raises when creation fails.
@@ -108,7 +144,8 @@ impl Session {
         let abort_turn = spec.turn.clone();
         let thread_pending = pending.clone();
         let builder = std::thread::Builder::new().name("stella-serve-session".to_string());
-        let spawned = builder.spawn(move || run_session(spec, frame_tx, thread_pending));
+        let spawned =
+            builder.spawn(move || run_session(spec, frame_tx, thread_pending, control_ports));
         let thread = match spawned {
             Ok(thread) => Some(thread),
             Err(err) => {
@@ -133,6 +170,7 @@ impl Session {
         Session {
             frames: frame_rx,
             pending,
+            controls,
             thread,
             history: Arc::new(FrameHistory::new()),
         }
@@ -189,6 +227,12 @@ impl Session {
         self.pending.clone()
     }
 
+    /// A handle to this turn's mid-turn controls, cloneable and `Send` — same
+    /// contract as [`Session::pending`], for the pause/steer POST handlers.
+    pub(crate) fn controls(&self) -> Controls {
+        self.controls.clone()
+    }
+
     /// Answer a [`ServerFrame::ToolRequest`] with the host-run tool output.
     pub fn resolve_tool(&self, request_id: &str, output: ToolOutput) -> Result<(), ServeError> {
         self.pending.resolve_tool(request_id, output)
@@ -217,8 +261,14 @@ impl Session {
     /// thread is mid-turn — [`Pending`] is the shared handle both sides hold. It
     /// does **not** kill the thread outright: the turn is allowed to unwind so
     /// the terminal frame still reaches a host that is streaming events.
+    ///
+    /// Also releases the pause gate: the engine only re-checks its cancel
+    /// latch once `wait_if_paused` returns, so a cancel that leaves a paused
+    /// turn parked would hold its OS thread for a resume that is never coming
+    /// (see `crate::controls`).
     pub fn cancel(&self) {
         self.pending.cancel();
+        self.controls.resume();
     }
 
     /// Whether the session thread has finished — i.e. the turn has produced
@@ -254,15 +304,25 @@ impl Drop for Session {
         // not join (a still-running turn could take arbitrarily long) — the
         // thread detaches and drains itself.
         self.pending.cancel();
+        // A paused turn is parked on the gate, not on a reverse request, so the
+        // cancel above cannot wake it — the release here is what lets the
+        // detached thread observe the latch and unwind (see `crate::controls`).
+        self.controls.resume();
         drop(self.thread.take());
     }
 }
 
 /// The body of the session thread: build a current-thread runtime, construct the
 /// remoted ports, and drive one turn to its outcome.
-fn run_session(spec: SessionSpec, frame_tx: mpsc::UnboundedSender<ServerFrame>, pending: Pending) {
+fn run_session(
+    mut spec: SessionSpec,
+    frame_tx: mpsc::UnboundedSender<ServerFrame>,
+    pending: Pending,
+    control_ports: ControlPorts,
+) {
     let observer = spec.observer.clone();
     let turn = spec.turn.clone();
+    let on_settled = spec.on_settled.take();
     let started = Instant::now();
     let runtime = match Builder::new_current_thread().enable_time().build() {
         Ok(runtime) => runtime,
@@ -297,7 +357,14 @@ fn run_session(spec: SessionSpec, frame_tx: mpsc::UnboundedSender<ServerFrame>, 
             spec.reverse_request_timeout,
         );
         let sleeper = TokioSleeper;
-        let engine = Engine::with_sleeper(&provider, &tools, spec.config, &sleeper);
+        // The controls' receiver half is lent to the engine for the turn: the
+        // gate parks each step while `POST /pause` holds, and the steering tap
+        // drains `POST /steer` messages into the transcript at the same
+        // boundary. The sender half stays on the registry entry.
+        let (gate, steering) = control_ports.into_ports();
+        let engine = Engine::with_sleeper(&provider, &tools, spec.config, &sleeper)
+            .with_gate(&gate)
+            .with_steering(&*steering);
 
         // The engine emits `AgentEvent`s; wrap each as a frame for the host. The
         // reverse-RPC request frames bypass this and go straight to `frame_tx`
@@ -339,6 +406,17 @@ fn run_session(spec: SessionSpec, frame_tx: mpsc::UnboundedSender<ServerFrame>, 
             TurnOutcomeWire::Completed { .. } => SettledOutcome::Completed,
             TurnOutcomeWire::Aborted { .. } => SettledOutcome::Aborted,
         };
+        // Settle the owning session BEFORE the terminal frame goes out: the
+        // frame is the host's cue that the turn is over, and a `GET` on the
+        // session issued the moment it arrives must read the written-back
+        // history, not the previous turn's.
+        if let Some(on_settled) = on_settled {
+            on_settled(TurnSettlement {
+                completed: matches!(settled, SettledOutcome::Completed),
+                messages,
+                budget,
+            });
+        }
         let _ = frame_tx.send(ServerFrame::TurnComplete { outcome: wire });
         observer.emit(&ServeEvent::TurnSettled {
             turn,

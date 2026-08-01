@@ -14,6 +14,13 @@
 //! | `POST /v1/turns/{id}/tool-result` | answer a `tool_request` (`ToolResultIn`) |
 //! | `POST /v1/turns/{id}/provider-result` | answer a `provider_request` (`ProviderResultIn`) |
 //! | `POST /v1/turns/{id}/cancel` | end an in-flight turn → `{ "status": "cancelled" }` |
+//! | `POST /v1/turns/{id}/steer` | inject a mid-turn user message (#932) |
+//! | `POST /v1/turns/{id}/pause` | hold the turn at its next step boundary (#932) |
+//! | `POST /v1/turns/{id}/resume` | release a held turn (#932) |
+//! | `POST /v1/sessions` | open a server-owned conversation (#931) → `{ "session_id": … }` |
+//! | `GET /v1/sessions/{id}` | history, cost to date, live turn |
+//! | `POST /v1/sessions/{id}/turns` | run the next turn (turn semantics minus `messages`) |
+//! | `DELETE /v1/sessions/{id}` | end the session, cancelling its live turn |
 //!
 //! Any other method on one of those paths is a `405` carrying `Allow`; any
 //! other path is a `404`. The handlers themselves live in `src/routes.rs`; this
@@ -139,6 +146,16 @@ pub struct ServeConfig {
     /// not a bound, and this one exists to stop an abandoned turn holding
     /// resources forever. See [`ServeConfig::resume_grace`].
     pub resume_grace: Duration,
+    /// How long a session must sit idle (no turn started or settled) before
+    /// the registry may reclaim it to admit a new one.
+    ///
+    /// This is *not* an expiry clock — an idle session inside the cap is kept
+    /// indefinitely. It only decides who is evictable when `POST /v1/sessions`
+    /// finds the registry full: idle past this window → reclaimable, longest
+    /// idle first; otherwise the create is refused with `429`. Memory is
+    /// bounded by the session cap either way, which is why this dial has no
+    /// ceiling: raising it trades `429`s for retention, never boundedness.
+    pub session_idle_ttl: Duration,
 }
 
 /// The default [`ServeConfig::resume_grace`]: thirty seconds.
@@ -156,6 +173,13 @@ pub const DEFAULT_RESUME_GRACE: Duration = Duration::from_secs(30);
 /// infinity could remove it.
 pub const MAX_RESUME_GRACE: Duration = Duration::from_secs(300);
 
+/// The default [`ServeConfig::session_idle_ttl`]: one hour.
+///
+/// Long enough that a conversation paced by a human — minutes between turns —
+/// is never the one evicted; short enough that a host leaking sessions finds
+/// the registry self-healing under pressure rather than permanently full.
+pub const DEFAULT_SESSION_IDLE_TTL: Duration = Duration::from_secs(3600);
+
 impl ServeConfig {
     /// The production wiring: bind, token, and the standard observability stack.
     #[must_use]
@@ -167,6 +191,7 @@ impl ServeConfig {
             observer,
             metrics,
             resume_grace: DEFAULT_RESUME_GRACE,
+            session_idle_ttl: DEFAULT_SESSION_IDLE_TTL,
         }
     }
 
@@ -180,6 +205,15 @@ impl ServeConfig {
     #[must_use]
     pub fn with_resume_grace(mut self, grace: Duration) -> Self {
         self.resume_grace = grace.min(MAX_RESUME_GRACE);
+        self
+    }
+
+    /// Set how long a session must sit idle before it is reclaimable under
+    /// pressure — see [`ServeConfig::session_idle_ttl`] for what this does
+    /// and does not bound.
+    #[must_use]
+    pub fn with_session_idle_ttl(mut self, ttl: Duration) -> Self {
+        self.session_idle_ttl = ttl;
         self
     }
 }
@@ -216,6 +250,10 @@ pub(crate) struct Entry {
     /// that includes age. This counter is internal and never leaves the process.
     seq: u64,
     pub(crate) pending: Pending,
+    /// Mid-turn controls (pause/resume/steer) — like `pending`, the shared,
+    /// always-available handle: the session itself is exclusively owned by
+    /// whichever stream is running, so control POSTs go through this instead.
+    pub(crate) controls: crate::controls::Controls,
     pub(crate) session: Mutex<Option<Session>>,
     /// This turn's retained frame tail, shared with the [`Session`].
     ///
@@ -248,11 +286,25 @@ pub(crate) struct ServerState {
     /// See [`ServeConfig::resume_grace`]. `Duration::ZERO` means a disconnect
     /// cancels the turn at once, with no resume window.
     resume_grace: Duration,
+    /// The server-owned conversations (`/v1/sessions`, #931). A separate
+    /// registry from `turns` on purpose: a session is retained state, a turn
+    /// is live work, and they are capped, reclaimed and locked independently.
+    sessions: crate::sessions::SessionRegistry,
+    /// See [`ServeConfig::session_idle_ttl`].
+    session_idle_ttl: Duration,
 }
 
 impl ServerState {
     pub(crate) fn turns(&self) -> MutexGuard<'_, HashMap<String, Arc<Entry>>> {
         self.turns.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    pub(crate) fn sessions(&self) -> &crate::sessions::SessionRegistry {
+        &self.sessions
+    }
+
+    pub(crate) fn session_idle_ttl(&self) -> Duration {
+        self.session_idle_ttl
     }
 
     pub(crate) fn lookup(&self, id: &str) -> Option<Arc<Entry>> {
@@ -314,6 +366,7 @@ impl ServerState {
                         slot.insert(Arc::new(Entry {
                             seq: self.counter.fetch_add(1, Ordering::Relaxed),
                             pending: session.pending(),
+                            controls: session.controls(),
                             history: session.history(),
                             stream_generation: AtomicU64::new(0),
                             session: Mutex::new(Some(session)),
@@ -628,6 +681,8 @@ pub async fn serve(config: ServeConfig, on_ready: impl FnOnce(SocketAddr)) -> st
         observer: config.observer,
         metrics: config.metrics,
         resume_grace: config.resume_grace.min(MAX_RESUME_GRACE),
+        sessions: crate::sessions::SessionRegistry::new(),
+        session_idle_ttl: config.session_idle_ttl,
     });
     state.observer.emit(&ServeEvent::Listening {
         addr: bound.to_string(),
@@ -811,10 +866,14 @@ async fn route(
         None => (req.path.clone(), String::new()),
     };
     let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    let (route, turn_id) = classify(&segs);
+    let (route, member_id) = classify(&segs);
     record.set_route(route);
-    let turn_id = turn_id.map(str::to_string);
-    if let Some(id) = turn_id.as_deref() {
+    let member_id = member_id.map(str::to_string);
+    // The member id is a turn id on `/v1/turns/...` and a session id on
+    // `/v1/sessions/...`; only the former belongs in the record's turn slot.
+    if let Some(id) = member_id.as_deref()
+        && route_addresses_a_turn(route)
+    {
         record.set_turn(id);
     }
 
@@ -869,17 +928,54 @@ async fn route(
                 res,
                 record,
                 state,
-                turn_id.as_deref().unwrap_or_default(),
+                member_id.as_deref().unwrap_or_default(),
                 resume_point(&query, &req),
             )
             .await;
         }
         ("POST", Route::TurnCancel) => {
             discard_body(res.stream_mut(), &mut req).await;
-            return routes::handle_cancel(res, state, turn_id.as_deref().unwrap_or_default()).await;
+            return routes::handle_cancel(res, state, member_id.as_deref().unwrap_or_default())
+                .await;
+        }
+        ("POST", Route::TurnPause) => {
+            discard_body(res.stream_mut(), &mut req).await;
+            return routes::handle_pause(res, state, member_id.as_deref().unwrap_or_default())
+                .await;
+        }
+        ("POST", Route::TurnResume) => {
+            discard_body(res.stream_mut(), &mut req).await;
+            return routes::handle_resume(res, state, member_id.as_deref().unwrap_or_default())
+                .await;
+        }
+        ("GET", Route::Session) => {
+            discard_body(res.stream_mut(), &mut req).await;
+            return routes::handle_session_get(
+                res,
+                state,
+                member_id.as_deref().unwrap_or_default(),
+            )
+            .await;
+        }
+        ("DELETE", Route::Session) => {
+            discard_body(res.stream_mut(), &mut req).await;
+            return routes::handle_session_delete(
+                res,
+                state,
+                member_id.as_deref().unwrap_or_default(),
+            )
+            .await;
         }
         // The body-bearing routes fall through to the read below.
-        ("POST", Route::TurnsCreate | Route::TurnToolResult | Route::TurnProviderResult) => {}
+        (
+            "POST",
+            Route::TurnsCreate
+            | Route::TurnToolResult
+            | Route::TurnProviderResult
+            | Route::TurnSteer
+            | Route::SessionsCreate
+            | Route::SessionTurns,
+        ) => {}
         (_, Route::Unrouted) => {
             discard_body(res.stream_mut(), &mut req).await;
             return res.json("404 Not Found", br#"{"error":"not found"}"#).await;
@@ -901,18 +997,36 @@ async fn route(
     }
     record.set_bytes_in(req.body.len() as u64);
 
-    let id = turn_id.as_deref().unwrap_or_default();
+    let id = member_id.as_deref().unwrap_or_default();
     match route {
         Route::TurnsCreate => routes::handle_create(res, state, &req.body).await,
         Route::TurnToolResult => routes::handle_tool_result(res, state, id, &req.body).await,
         Route::TurnProviderResult => {
             routes::handle_provider_result(res, state, id, &req.body).await
         }
-        // Unreachable: the match above admits exactly the three body-bearing
+        Route::TurnSteer => routes::handle_steer(res, state, id, &req.body).await,
+        Route::SessionsCreate => routes::handle_session_create(res, state, &req.body).await,
+        Route::SessionTurns => routes::handle_session_turn(res, state, id, &req.body).await,
+        // Unreachable: the match above admits exactly the body-bearing
         // routes. Answering rather than panicking keeps a future edit that
         // widens that match from taking down a request thread.
         _ => res.json("404 Not Found", br#"{"error":"not found"}"#).await,
     }
+}
+
+/// Whether this route's member id names a turn (as opposed to a session) —
+/// what decides if it belongs in a record's turn slot.
+fn route_addresses_a_turn(route: Route) -> bool {
+    matches!(
+        route,
+        Route::TurnEvents
+            | Route::TurnToolResult
+            | Route::TurnProviderResult
+            | Route::TurnCancel
+            | Route::TurnSteer
+            | Route::TurnPause
+            | Route::TurnResume
+    )
 }
 
 /// Map a path to its route template and, where it has one, the turn id.
@@ -930,6 +1044,12 @@ fn classify<'a>(segs: &[&'a str]) -> (Route, Option<&'a str>) {
         ["v1", "turns", id, "tool-result"] => (Route::TurnToolResult, Some(id)),
         ["v1", "turns", id, "provider-result"] => (Route::TurnProviderResult, Some(id)),
         ["v1", "turns", id, "cancel"] => (Route::TurnCancel, Some(id)),
+        ["v1", "turns", id, "steer"] => (Route::TurnSteer, Some(id)),
+        ["v1", "turns", id, "pause"] => (Route::TurnPause, Some(id)),
+        ["v1", "turns", id, "resume"] => (Route::TurnResume, Some(id)),
+        ["v1", "sessions"] => (Route::SessionsCreate, None),
+        ["v1", "sessions", id] => (Route::Session, Some(id)),
+        ["v1", "sessions", id, "turns"] => (Route::SessionTurns, Some(id)),
         _ => (Route::Unrouted, None),
     }
 }
@@ -974,7 +1094,13 @@ fn allowed(route: Route) -> &'static str {
         Route::TurnsCreate
         | Route::TurnToolResult
         | Route::TurnProviderResult
-        | Route::TurnCancel => "POST",
+        | Route::TurnCancel
+        | Route::TurnSteer
+        | Route::TurnPause
+        | Route::TurnResume
+        | Route::SessionsCreate
+        | Route::SessionTurns => "POST",
+        Route::Session => "GET, DELETE",
         // Never reached: `Unrouted` is answered as a 404 before this is called.
         Route::Unrouted => "",
     }
@@ -1076,6 +1202,8 @@ mod tests {
             observer: capture.clone(),
             metrics: Arc::new(Metrics::new()),
             resume_grace: DEFAULT_RESUME_GRACE,
+            sessions: crate::sessions::SessionRegistry::new(),
+            session_idle_ttl: DEFAULT_SESSION_IDLE_TTL,
         };
         (state, capture)
     }
@@ -1090,6 +1218,7 @@ mod tests {
             reverse_request_timeout: SessionSpec::DEFAULT_REVERSE_REQUEST_TIMEOUT,
             turn: TurnRef::new(turn_id),
             observer: crate::observe::null_observer(),
+            on_settled: None,
         }
     }
 
