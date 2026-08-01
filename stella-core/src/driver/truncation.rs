@@ -109,6 +109,18 @@ pub(super) const LENGTH_CONTINUATION_NUDGE: &str = "Your previous message hit th
 pub(super) const REASONING_ONLY_PARTIAL: &str = "[no answer produced: this step's entire output budget went to reasoning and was cut off \
      at the token limit before any answer or tool call — nothing was kept]";
 
+/// Stands in history — and in the turn's final text — for a turn that stopped
+/// at the output-token limit with nothing kept because its wall clock ran out.
+///
+/// [`REASONING_ONLY_PARTIAL`] cannot serve here: it is written for a step that
+/// is about to be continued, and says the step produced nothing. This one ends
+/// the turn, so it also has to say why nothing more is coming — otherwise the
+/// only record of a deliberate, time-aware stop is an assistant turn that reads
+/// as a silent failure.
+pub(super) const TIME_EXHAUSTED_PARTIAL: &str = "[no answer produced: this step's entire output budget went to reasoning and was cut off \
+     at the token limit, and too little of the turn's time remained to continue — the turn stops \
+     here, keeping whatever its earlier steps already did]";
+
 /// The two messages a continuation appends, plus the line the user sees.
 ///
 /// Returned as data rather than pushed here so the decision stays a pure
@@ -145,14 +157,6 @@ impl Continuation {
     }
 }
 
-/// Decide what a length-truncated, tool-less step continues with, or `None`
-/// when the turn's continuation allowance is spent and the caller should fall
-/// through to its terminal handling.
-///
-/// `spent` is the turn's running count and is incremented by the caller on
-/// `Some` — threaded rather than owned so the bound survives across steps.
-/// Callers establish `FinishReason::Length` and an empty `tool_calls` before
-/// calling; this decides only what happens next.
 /// What one turn has left to spend on continuing, in wall clock.
 ///
 /// The count alone cannot see the constraint that actually binds. A harness
@@ -192,25 +196,62 @@ impl ContinuationBudget {
     }
 }
 
+/// What a length-truncated, tool-less step does next.
+///
+/// Three outcomes rather than `Option<Continuation>`, because the two ways of
+/// *not* continuing need opposite terminal handling and collapsing them cost a
+/// measured benchmark gate. Both used to return `None`, and the caller's only
+/// reading of `None` was "the allowance is spent", whose empty-text branch
+/// aborts the turn. So a turn that declined *for time* — the one path whose
+/// entire purpose is to stop gracefully while it still can — exited nonzero
+/// instead. On a ten-task Terminal-Bench 2.1 set, four of five nonzero exits
+/// were exactly this, each on its **first** cap hit with zero continuations
+/// spent: the wall clock had already run out, so the allowance never applied.
+/// Trading a timeout for an abort is not a fix; both read at the results layer
+/// as the harness killing the agent.
+pub(super) enum ContinuationPlan {
+    /// Continue the turn with these two messages.
+    Continue(Continuation),
+    /// The turn spent its whole [`MAX_LENGTH_CONTINUATIONS`] allowance and
+    /// truncated again. Terminal handling applies: a model truncating past the
+    /// allowance is saying the effort tier is mispriced, not that one more
+    /// retry would land it.
+    AllowanceSpent,
+    /// There is not enough wall clock left to *finish* another continuation.
+    ///
+    /// Distinct from [`Self::AllowanceSpent`] because nothing here is the
+    /// model's fault and nothing is exhausted — the turn is choosing to stop
+    /// early while stopping is still cheap. It ends as an ordinary result
+    /// carrying whatever it has, and the verification ladder judges that
+    /// record like any other.
+    OutOfTime,
+}
+
+/// Decide what a length-truncated, tool-less step continues with.
+///
+/// `spent` is the turn's running count and is incremented by the caller on
+/// [`ContinuationPlan::Continue`] — threaded rather than owned so the bound
+/// survives across steps. Callers establish `FinishReason::Length` and an empty
+/// `tool_calls` before calling; this decides only what happens next.
 pub(super) fn plan_continuation(
     text: &str,
     output_tokens: u64,
     spent: u32,
     budget: Option<ContinuationBudget>,
-) -> Option<Continuation> {
+) -> ContinuationPlan {
     if spent >= MAX_LENGTH_CONTINUATIONS {
-        return None;
+        return ContinuationPlan::AllowanceSpent;
     }
     // Checked after the count, so a turn with no deadline configured behaves
     // exactly as before — the budget is opt-in and absent by default.
     if let Some(budget) = budget
         && !budget.affords_another()
     {
-        return None;
+        return ContinuationPlan::OutOfTime;
     }
     let attempt = spent + 1;
     if text.trim().is_empty() {
-        return Some(Continuation {
+        return ContinuationPlan::Continue(Continuation {
             retained: REASONING_ONLY_PARTIAL.to_string(),
             note: format!(
                 "\n\n⚠ Output-token limit reached ({output_tokens} tokens) with the budget spent \
@@ -219,7 +260,7 @@ pub(super) fn plan_continuation(
             ),
         });
     }
-    Some(Continuation {
+    ContinuationPlan::Continue(Continuation {
         retained: crate::compaction::elide_truncated_partial(text)
             .unwrap_or_else(|| text.to_string()),
         note: format!(
@@ -238,29 +279,58 @@ mod tests {
     /// without owning a second copy of the whole string.
     const PARTIAL_ELISION_SIGNPOST: &str = "middle of this cut-off message elided";
 
-    #[test]
-    fn a_spent_allowance_declines_to_continue() {
-        assert!(plan_continuation("cut off", 16_384, MAX_LENGTH_CONTINUATIONS, None).is_none());
-        assert!(plan_continuation("", 16_384, MAX_LENGTH_CONTINUATIONS, None).is_none());
-        // ...and every attempt below it does continue.
-        for spent in 0..MAX_LENGTH_CONTINUATIONS {
-            assert!(plan_continuation("cut off", 16_384, spent, None).is_some());
+    /// The continuation, or a panic naming what was decided instead.
+    fn expect_continue(plan: ContinuationPlan) -> Continuation {
+        match plan {
+            ContinuationPlan::Continue(plan) => plan,
+            ContinuationPlan::AllowanceSpent => panic!("expected a continuation, got AllowanceSpent"),
+            ContinuationPlan::OutOfTime => panic!("expected a continuation, got OutOfTime"),
         }
     }
 
     #[test]
-    fn a_continuation_it_cannot_finish_is_declined() {
+    fn a_spent_allowance_declines_to_continue() {
+        assert!(matches!(
+            plan_continuation("cut off", 16_384, MAX_LENGTH_CONTINUATIONS, None),
+            ContinuationPlan::AllowanceSpent
+        ));
+        assert!(matches!(
+            plan_continuation("", 16_384, MAX_LENGTH_CONTINUATIONS, None),
+            ContinuationPlan::AllowanceSpent
+        ));
+        // ...and every attempt below it does continue.
+        for spent in 0..MAX_LENGTH_CONTINUATIONS {
+            assert!(matches!(
+                plan_continuation("cut off", 16_384, spent, None),
+                ContinuationPlan::Continue(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn a_continuation_it_cannot_finish_is_declined_for_time_not_allowance() {
         // The continuation costs what its predecessor cost, so 60s of work with
         // 30s left is a continuation that gets killed mid-flight. Declining
         // keeps the truthful partial and lets the turn end as an ordinary
         // result; taking it trades that for an external timeout, which reads at
         // the results layer exactly like the agent failing the task.
+        //
+        // Reported as `OutOfTime` and never as `AllowanceSpent`, which is the
+        // whole distinction: the allowance here is untouched (`spent` is 0), and
+        // the caller's terminal handling for a spent allowance aborts the turn.
+        // Collapsing the two is what made a graceful stop exit nonzero.
         let broke = ContinuationBudget {
             remaining: Duration::from_secs(30),
             last_step: Duration::from_secs(60),
         };
-        assert!(plan_continuation("cut off", 16_384, 0, Some(broke)).is_none());
-        assert!(plan_continuation("", 16_384, 0, Some(broke)).is_none());
+        assert!(matches!(
+            plan_continuation("cut off", 16_384, 0, Some(broke)),
+            ContinuationPlan::OutOfTime
+        ));
+        assert!(matches!(
+            plan_continuation("", 16_384, 0, Some(broke)),
+            ContinuationPlan::OutOfTime
+        ));
     }
 
     #[test]
@@ -269,7 +339,26 @@ mod tests {
             remaining: Duration::from_secs(600),
             last_step: Duration::from_secs(60),
         };
-        assert!(plan_continuation("cut off", 16_384, 0, Some(flush)).is_some());
+        assert!(matches!(
+            plan_continuation("cut off", 16_384, 0, Some(flush)),
+            ContinuationPlan::Continue(_)
+        ));
+    }
+
+    #[test]
+    fn a_spent_allowance_outranks_a_broken_budget() {
+        // Both conditions true at once. The count is checked first, so this
+        // reports `AllowanceSpent` — the turn really did burn every retry, and
+        // the terminal abort naming the allowance is then accurate. The order
+        // matters only because the two arms now diverge.
+        let broke = ContinuationBudget {
+            remaining: Duration::from_secs(30),
+            last_step: Duration::from_secs(60),
+        };
+        assert!(matches!(
+            plan_continuation("cut off", 16_384, MAX_LENGTH_CONTINUATIONS, Some(broke)),
+            ContinuationPlan::AllowanceSpent
+        ));
     }
 
     #[test]
@@ -281,7 +370,10 @@ mod tests {
             remaining: Duration::from_secs(60),
             last_step: Duration::from_secs(60),
         };
-        assert!(plan_continuation("cut off", 16_384, 0, Some(exact)).is_none());
+        assert!(matches!(
+            plan_continuation("cut off", 16_384, 0, Some(exact)),
+            ContinuationPlan::OutOfTime
+        ));
     }
 
     #[test]
@@ -290,7 +382,10 @@ mod tests {
         // count it was before — a caller that knows nothing about its wall
         // clock must not have work declined on a guess.
         for spent in 0..MAX_LENGTH_CONTINUATIONS {
-            assert!(plan_continuation("cut off", 16_384, spent, None).is_some());
+            assert!(matches!(
+                plan_continuation("cut off", 16_384, spent, None),
+                ContinuationPlan::Continue(_)
+            ));
         }
     }
 
@@ -299,7 +394,7 @@ mod tests {
         // The shape the zai adapter used to hide by promoting reasoning into
         // `text`: no answer at all. There is nothing to resume from, so the
         // transcript records the fact and none of the deliberation.
-        let plan = plan_continuation("   \n  ", 16_384, 0, None).expect("continues");
+        let plan = expect_continue(plan_continuation("   \n  ", 16_384, 0, None));
         assert_eq!(plan.retained, REASONING_ONLY_PARTIAL);
         assert!(
             plan.note.contains("spent entirely on reasoning"),
@@ -314,7 +409,7 @@ mod tests {
         // never trimmed, so eliding can never lose an answer small enough to
         // have been worth reading whole.
         let answer = "The fix is to widen the guard in ";
-        let plan = plan_continuation(answer, 16_384, 0, None).expect("continues");
+        let plan = expect_continue(plan_continuation(answer, 16_384, 0, None));
         assert_eq!(plan.retained, answer);
     }
 
@@ -332,7 +427,7 @@ mod tests {
             "a".repeat(5_000),
             "b".repeat(5_000)
         );
-        let plan = plan_continuation(&partial, 16_384, 0, None).expect("continues");
+        let plan = expect_continue(plan_continuation(&partial, 16_384, 0, None));
 
         assert!(
             plan.retained.len() < partial.len() / 4,
@@ -369,9 +464,8 @@ mod tests {
 
     #[test]
     fn the_nudge_is_marked_so_it_is_never_mistaken_for_the_user() {
-        let (_note, [assistant, nudge]) = plan_continuation("cut off", 16_384, 0, None)
-            .expect("continues")
-            .into_parts();
+        let (_note, [assistant, nudge]) =
+            expect_continue(plan_continuation("cut off", 16_384, 0, None)).into_parts();
         assert_eq!(assistant.role, stella_protocol::MessageRole::Assistant);
         assert_eq!(nudge.role, stella_protocol::MessageRole::User);
         assert!(
