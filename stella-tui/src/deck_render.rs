@@ -17,7 +17,7 @@ use stella_protocol::{CiStatus, PrStatus};
 use crate::cache_panel;
 use crate::composer::{ComposerLayout, layout as composer_layout, split_row_at};
 use crate::deck::{DeckTab, PrInfo, WorkspaceModel};
-use crate::deck_ui::DeckUi;
+use crate::deck_ui::{DeckUi, InstalledMode, IssuesMode};
 use crate::render::{render_slash_popup, scroll_window_start, slash_popup_area};
 use crate::textline::{self, pr_status_label, stage_label};
 use crate::{notice, splash, theme, views};
@@ -162,7 +162,22 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         || ui.inbox_open
         || ui.context_open
         || ui.inspect_open
-        || slash_open;
+        || slash_open
+        // The routing card holds the user's words and owns every key until
+        // they say where they go — it is checked first in `handle_deck_key`.
+        || ui.pending_dispatch.is_some()
+        // The INSTALLED AGENTS sub-modes (editor / create flow / version
+        // picker) are modal text inputs while open.
+        || ui.installed.mode != InstalledMode::Browse
+        // The ISSUES tab's sub-modes (search / create form / comment /
+        // set-status) are modal while the tab is active.
+        || (ui.tab == DeckTab::Issues && ui.issues.mode != IssuesMode::Browse)
+        // The transcript search bar is a modal text input while up.
+        || ui.search.open
+        // The SETTINGS tab's ENGINE / TOOLS config editors own the keyboard
+        // (inline edit buffers, model/picker filters) while focused.
+        || (ui.tab == DeckTab::Settings && ui.engine.focused)
+        || (ui.tab == DeckTab::Settings && ui.tools.focused);
     if !overlay_owns_keyboard && let Some(pos) = composer_cursor {
         frame.set_cursor_position(pos);
     }
