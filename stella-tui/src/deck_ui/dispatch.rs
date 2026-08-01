@@ -23,6 +23,10 @@ pub struct PendingDispatch {
     /// The lane a sidecar would get (`req:2`), so the card can name it rather
     /// than describing it. Purely cosmetic — the driver assigns the real one.
     pub next_lane: String,
+    /// The agent whose `Running` status raised this card, so the deck can
+    /// tell when that turn ends out from under it (see
+    /// `deck_ui::ingest_inbound`'s auto-release of a stale card).
+    pub agent_id: String,
 }
 
 /// The routes the card offers. Each maps onto a `WorkspaceInput` the driver
@@ -74,10 +78,8 @@ fn carries_its_own_intent(text: &str) -> bool {
 /// (`SteeringTap::is_settling`), which is what keeps the two layers agreeing
 /// about what "still running" means.
 pub fn route(ui: &mut DeckUi, model: &WorkspaceModel, text: String) -> Option<WorkspaceInput> {
-    let running = model
-        .agents
-        .get(ui.focused)
-        .is_some_and(|a| a.status == crate::AgentStatus::Running);
+    let focused = model.agents.get(ui.focused);
+    let running = focused.is_some_and(|a| a.status == crate::AgentStatus::Running);
     if !running || carries_its_own_intent(&text) || ui.ask_before_spawn.not_asking() {
         return Some(WorkspaceInput::Enqueue { text });
     }
@@ -89,6 +91,8 @@ pub fn route(ui: &mut DeckUi, model: &WorkspaceModel, text: String) -> Option<Wo
     ui.pending_dispatch = Some(PendingDispatch {
         text,
         next_lane: format!("req:{}", live + 1),
+        // `running` is only true when `focused` is `Some`.
+        agent_id: focused.expect("running agent is present").meta.id.clone(),
     });
     None
 }
@@ -122,6 +126,46 @@ pub fn handle_key(key: KeyEvent, ui: &mut DeckUi) -> Option<DeckAction> {
     let text = pending.text.clone();
     ui.pending_dispatch = None;
     Some(DeckAction::Send(route.input(text)))
+}
+
+/// Release a card raised against `agent` if `event` just ended that agent's
+/// turn — a `Complete`, a hard (non-retryable) `Error`, or a fresh
+/// `AskUser`/`ScopeReview` gate, the same set the model fold's own
+/// `status_from_event` maps away from [`crate::AgentStatus::Running`]. A
+/// no-op unless the card is up and belongs to this agent.
+///
+/// Without this the card is sticky forever once raised: it owns every key
+/// ahead of the composer ([`handle_key`], checked first in
+/// `deck_ui::handle_deck_key`), and only `s`/`n`/`p`/Esc clear it. If the
+/// turn it was asking about finishes before the user answers, every further
+/// keystroke — Enter, Backspace, anything typed — dies silently at the
+/// catch-all, and the deck reads as though it stopped accepting input.
+/// Released exactly like Esc: the text goes back to the composer, nothing is
+/// sent, and the very next keystroke reaches it instead of the card.
+pub fn release_if_settled(ui: &mut DeckUi, agent: &str, event: &stella_protocol::AgentEvent) {
+    use stella_protocol::AgentEvent;
+    let vacates_running = matches!(
+        event,
+        AgentEvent::Complete { .. }
+            | AgentEvent::Error {
+                retryable: false,
+                ..
+            }
+            | AgentEvent::AskUser { .. }
+            | AgentEvent::ScopeReview { .. }
+    );
+    if !vacates_running {
+        return;
+    }
+    let Some(pending) = ui.pending_dispatch.as_ref() else {
+        return;
+    };
+    if pending.agent_id != agent {
+        return;
+    }
+    let text = pending.text.clone();
+    ui.pending_dispatch = None;
+    ui.composer.load(text);
 }
 
 /// Whether the deck asks before forking a turn into a sidecar.
