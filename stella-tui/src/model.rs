@@ -17,6 +17,7 @@
 //! function of the model. Determinism therefore extends all the way to the
 //! backing cell buffer (the replay-determinism test in [`mod@crate::render`]).
 
+use crate::ansi::strip_ansi;
 use stella_protocol::{
     AgentEvent, BudgetMode, CiStatus, FileChangeKind, MediaJobState, MediaKind, PrStatus,
     ScopeProposal, StageKind, SubAgentPhase, SubAgentStatus, TaskItem, TaskStatus, ToolOutput,
@@ -431,15 +432,27 @@ impl SessionModel {
                 duration_ms,
                 speculated,
             } => {
+                // ANSI escapes are stripped here, at fold time, and nowhere
+                // else: the fold cache would retain them if the renderer
+                // stripped per frame, and ratatui renders everything after
+                // the ESC byte literally (#934).
                 let (ok, summary, full) = match output {
                     ToolOutput::Ok { content } => {
-                        (true, summarize(content), cap_middle(content, OUTPUT_BUDGET))
+                        let content = strip_ansi(content);
+                        (
+                            true,
+                            summarize(&content),
+                            cap_middle(&content, OUTPUT_BUDGET),
+                        )
                     }
-                    ToolOutput::Error { message } => (
-                        false,
-                        summarize(message),
-                        cap_middle(message, OUTPUT_BUDGET),
-                    ),
+                    ToolOutput::Error { message } => {
+                        let message = strip_ansi(message);
+                        (
+                            false,
+                            summarize(&message),
+                            cap_middle(&message, OUTPUT_BUDGET),
+                        )
+                    }
                 };
                 // Resolve the tool's name from its start entry (results only
                 // carry the call id on the wire).
