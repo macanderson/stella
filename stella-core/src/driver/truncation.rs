@@ -283,7 +283,9 @@ mod tests {
     fn expect_continue(plan: ContinuationPlan) -> Continuation {
         match plan {
             ContinuationPlan::Continue(plan) => plan,
-            ContinuationPlan::AllowanceSpent => panic!("expected a continuation, got AllowanceSpent"),
+            ContinuationPlan::AllowanceSpent => {
+                panic!("expected a continuation, got AllowanceSpent")
+            }
             ContinuationPlan::OutOfTime => panic!("expected a continuation, got OutOfTime"),
         }
     }
