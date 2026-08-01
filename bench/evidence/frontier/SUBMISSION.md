@@ -45,9 +45,9 @@ reward hacking, then merge.
 | Dataset pinned to the leaderboard's `DATASET_REF` | **Done.** `env.sh` pins `sha256:97fd2ba3…`, the leaderboard's own ref |
 | Harbor ≥ 0.20.0 | **Done.** This lane pins 0.20.0 |
 | Default execution settings; no timeout or resource overrides | **Done.** Nothing here overrides either; tiering only chooses what runs *concurrently* |
-| All 74 tasks, no subsetting | **Blocked by hardware** — see below |
+| All 74 tasks, no subsetting | **Done on Modal.** `FB_ENV=modal` plans 74/74 with zero exclusions; `FB_ENV=docker` on a laptop plans 48 |
 | ≥ 5 trials per task | **Supported, off by default.** `FB_ATTEMPTS=5`; default 1 is the dev baseline |
-| `--upload --public` | **Not wired.** Deliberate: uploading publishes trajectories, which is a decision to take explicitly, not a flag to inherit |
+| `--upload --public` | **Wired, opt-in.** `FB_UPLOAD=1 FB_UPLOAD_VISIBILITY=public`. Off by default because uploading publishes every trajectory — a decision to take explicitly, never inherited from a shell |
 | Agent + model disclosure metadata | Supplied at `lb submit` time, not by this lane |
 
 Note the metric: **accuracy = trials with reward > 0, over all trials**. Not
@@ -55,20 +55,43 @@ reward == 1.0, and errored trials count as reward 0 rather than being dropped.
 Infrastructure flakiness therefore lands directly in the score, which is exactly
 why `warm_images.sh` and the preflight exist.
 
-## The two real blockers
+## The two hardware blockers, and how the lane clears them
 
 **1. GPUs.** Four tasks need one, and the benchmark authors ran them on a single
-H100 each. Subsetting is not allowed for a submission, so those four cannot be
-excluded the way the dev baseline excludes them — they must actually run.
+H100 each. Subsetting is not allowed, so they must actually run.
 
-**2. Host size.** On a 10 GB / 6-CPU Docker VM, `plan.py` admits 48 of 74 tasks;
-22 more are simply over the memory budget. The full set declares up to 32 GB
-memory, 16 CPUs, and ~1.9 TB of storage in aggregate.
+**2. Host size.** On a 10 GB / 6-CPU Docker VM `plan.py` admits 48 of 74; 22 more
+are over the memory budget. The full set declares up to 32 GB memory, 16 CPUs,
+and ~1.9 TB of storage in aggregate.
 
-Both point the same way: **a submission run does not happen on a Mac.** The
-benchmark's own guidance is Modal (`uv tool install 'harbor[modal]'`, `--env
-modal`), with Daytona as an alternative that recently added GPU support. Harbor's
-repo CI defaults to `env: modal`.
+Both point the same way: **a submission run does not happen on a Mac.** So the
+lane takes a backend:
+
+```bash
+FB_ENV=modal bench/evidence/frontier/fetch_dataset.sh      # plans 74/74
+FB_ENV=modal FB_CONCURRENCY=32 bench/evidence/frontier/sentinel.sh
+```
+
+`FB_ENV=modal` changes three things, each because a docker assumption is simply
+false there rather than merely cautious:
+
+- **Nothing is excluded for capacity.** Modal builds a sandbox per trial from
+  that trial's own declared resources, so "does this task fit" is the wrong
+  question. Carrying the laptop's exclusions over would produce a 48-task
+  result that looks like a complete one.
+- **GPU tasks default to *on*.** Harbor passes each task's `gpus`/`gpu_types`
+  straight through to Modal. Defaulting them off there would silently drop the
+  four tasks a submission is required to cover. `--no-allow-gpu` still wins if
+  you say it.
+- **`warm_images.sh` skips.** The builds happen in the cloud; a local pull warms
+  a cache no trial reads.
+
+What does *not* change: the glibc-2.17 portability assert still runs. Modal is a
+different scheduler, not a different libc — the SUT still has to exec inside a
+Linux container.
+
+Daytona is the documented alternative that recently added GPU support; Harbor's
+own repo CI defaults to `env: modal`.
 
 ## Cost, honestly
 
@@ -91,6 +114,22 @@ was.
    run all 74 at five attempts uncapped with `--upload --public`.
 4. File the PR once #1405 merges.
 
-Steps 1 and 2 are what this directory is for. Step 3 needs a Modal environment
-this lane does not yet configure — `primary.sh` hardcodes `--env docker`, and
-adding a Modal path is the next piece of work, not something already done.
+Step 3 is now a matter of setting variables rather than writing code:
+
+```bash
+export FB_ENV=modal FB_ATTEMPTS=5 FB_CONCURRENCY=32
+export STELLA_BUDGET=            # explicitly empty = no per-trial cap
+export FB_UPLOAD=1 FB_UPLOAD_VISIBILITY=public
+bench/evidence/frontier/fetch_dataset.sh
+bench/evidence/frontier/primary.sh all fb-submission-01
+```
+
+`primary.sh` prints `posture=` on every run and names every reason a run would
+be refused — wrong tier, too few attempts, any excluded task, upload off,
+visibility private — so a baseline cannot be mistaken for a submission at the
+moment a number appears. It says `posture=submission-shaped` only when all five
+hold.
+
+Do not skip the preregistration. This is ~370 trials of multi-hour work with no
+spend cap; that is a four-figure decision and it deserves the same treatment the
+Terminal-Bench claim got.

@@ -295,6 +295,88 @@ class TestBaseImages:
         assert images == ["ubuntu:24.04"]
 
 
+class TestModalBackend:
+    """On a per-task backend the host stops being a term in the measurement.
+
+    These matter because the docker path's caution becomes a bug when carried
+    over unchanged: a Modal run that excludes tasks for *this laptop's* memory
+    would silently produce a 48-task result while looking like a complete one,
+    and a submission may not subset.
+    """
+
+    def test_a_task_far_larger_than_this_host_still_runs(self, tmp_path, host):
+        host(memory_mb=8192, cpus=2)  # deliberately smaller than the task
+        _task(tmp_path, "huge", memory_mb=32768, cpus=16)
+
+        result = plan.build_plan(
+            tmp_path, allow_gpu=True, memory_headroom_mb=2048,
+            backend="modal", concurrency=32,
+        )
+
+        assert result["runnable_tasks"] == ["huge"]
+        assert result["excluded"] == []
+
+    def test_gpu_tasks_are_runnable(self, tmp_path, host):
+        host(memory_mb=8192, cpus=2, gpu=False)  # the *host* has no GPU; Modal does
+        _task(tmp_path, "gpu-task", gpus=1)
+
+        result = plan.build_plan(
+            tmp_path, allow_gpu=True, memory_headroom_mb=2048,
+            backend="modal", concurrency=32,
+        )
+
+        assert result["runnable_tasks"] == ["gpu-task"]
+
+    def test_docker_probe_is_not_consulted_at_all(self, tmp_path, monkeypatch):
+        """A Modal plan must not fail because Docker is absent."""
+
+        def _explode():
+            raise AssertionError("_host_capacity must not run for backend=modal")
+
+        monkeypatch.setattr(plan, "_host_capacity", _explode)
+        _task(tmp_path, "a", memory_mb=32768)
+
+        result = plan.build_plan(
+            tmp_path, allow_gpu=True, memory_headroom_mb=2048,
+            backend="modal", concurrency=8,
+        )
+
+        assert result["backend"] == "modal"
+        assert result["runnable_tasks"] == ["a"]
+
+    def test_explicit_concurrency_beats_the_capacity_arithmetic(self, tmp_path, host):
+        """Unknown capacity would otherwise derive 1 and serialise the run."""
+        host()
+        _task(tmp_path, "a", memory_mb=16384, cpus=16)
+
+        tiers = plan.build_plan(
+            tmp_path, allow_gpu=True, memory_headroom_mb=2048,
+            backend="modal", concurrency=64,
+        )["tiers"]
+
+        assert tiers["xlarge"]["concurrency"] == 64
+
+    def test_explicit_concurrency_also_overrides_on_docker(self, tmp_path, host):
+        """The override is a property of the flag, not of the backend."""
+        host(memory_mb=65536, cpus=64)
+        _task(tmp_path, "a", memory_mb=2048, cpus=1)
+
+        tiers = plan.build_plan(
+            tmp_path, allow_gpu=False, memory_headroom_mb=2048,
+            backend="docker", concurrency=2,
+        )["tiers"]
+
+        # 2, not MAX_CONCURRENCY, which the arithmetic alone would have chosen.
+        assert tiers["small"]["concurrency"] == 2
+
+    def test_backend_is_recorded_in_the_plan(self, tmp_path, host):
+        host()
+        _task(tmp_path, "a")
+        assert plan.build_plan(
+            tmp_path, allow_gpu=False, memory_headroom_mb=2048,
+        )["backend"] == "docker"
+
+
 class TestPlanShape:
     def test_counts_reconcile(self, tmp_path, host):
         host(memory_mb=10240, cpus=8, gpu=False)

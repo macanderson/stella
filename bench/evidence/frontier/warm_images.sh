@@ -14,6 +14,15 @@
 set -uo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env.sh"
 
+# On Modal the builds happen in the cloud, against Modal's own registry path.
+# Pulling those bases onto this laptop would warm a cache no trial ever reads —
+# minutes and gigabytes spent to change nothing. Skipping is the correct
+# behaviour, and saying so beats appearing to have prepared something.
+if [ "$FB_ENV" = modal ]; then
+  echo "SKIP: FB_ENV=modal builds task images in the cloud; a local pull warms nothing."
+  exit 0
+fi
+
 LIST="${1:-$TB_ROOT/frontier-images.txt}"
 FAILED="$TB_ROOT/frontier_warm_failed.txt"
 test -f "$LIST" || { echo "FATAL: no image list at $LIST (run fetch_dataset.sh)"; exit 1; }
