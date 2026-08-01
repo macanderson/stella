@@ -334,6 +334,14 @@ export interface LadderSnapshot {
    * candidate — so its presence here is the *stated* proof the check ran.
    */
   witness_intact?: boolean | null;
+  /**
+   * The mutation audit's finding (#870): `Some(true)` = the witness
+   * failed under at least one trivial mutant of the changed lines (it
+   * constrains the change); `Some(false)` = it stayed green under every
+   * observed mutant (tautological — the deterministic credit was
+   * withheld); `None` = the check never ran.
+   */
+  witness_mutation?: boolean | null;
 }
 
 /**

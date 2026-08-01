@@ -1003,3 +1003,28 @@ fn a_newer_failure_replaces_the_tracked_fingerprint() {
     assert_eq!(outcome, ObserveOutcome::NoEvidence);
     assert!(!oracle.is_flipped());
 }
+
+/// #870 at the ladder level: a tautological witness withholds the
+/// fast-submit even when every other conjunct holds.
+#[test]
+fn a_tautological_witness_blocks_the_fast_submit() {
+    let sound = LadderInputs {
+        flip_achieved: true,
+        touched_tests_passed: Some(true),
+        diff_lines: 10,
+        diff_budget: 100,
+        diff_available: true,
+        mutating_actions: 1,
+        ..Default::default()
+    };
+    assert_eq!(ladder_decision(&sound), LadderDecision::SubmitFast);
+    let tautological = LadderInputs {
+        witness_tautological: true,
+        ..sound
+    };
+    assert_eq!(
+        ladder_decision(&tautological),
+        LadderDecision::ModelJudge,
+        "a witness that constrains nothing may not buy a deterministic pass"
+    );
+}

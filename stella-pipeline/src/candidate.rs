@@ -34,13 +34,19 @@ pub enum CandidateScore {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CandidateSummary {
     pub score: CandidateScore,
+    /// The candidate's witness failed under at least one trivial mutant of
+    /// the changed lines (#870) — the strongest within-rank evidence, and
+    /// the FIRST tiebreak (#869): a mutation-survived verification beats one
+    /// the check never reached. `false` covers both not-run and the
+    /// tautological case, which never holds `DeterministicPass` anyway (the
+    /// #870 downgrade demoted it).
+    pub mutation_survived: bool,
     /// New lint/typecheck warnings this candidate introduced over its
-    /// baseline (#869) — the first tiebreak within a rank. New *errors*
+    /// baseline (#869) — the second tiebreak within a rank. New *errors*
     /// never appear among `DeterministicPass` candidates (the #861 veto
     /// already demoted those), so warnings are the quality signal that
     /// remains; `0` when the probe never ran, which is also what every
-    /// pre-#861 caller reports. The mutation-survival tier sketched in the
-    /// roadmap joins ahead of this when #870 lands.
+    /// pre-#861 caller reports.
     pub new_diag_warnings: u32,
     /// Diff size in lines — the final tiebreak (smaller wins).
     pub diff_lines: u32,
@@ -68,14 +74,23 @@ pub fn select_best_candidate(candidates: &[CandidateSummary]) -> Option<usize> {
     let mut best_idx = 0usize;
     for (i, cand) in candidates.iter().enumerate().skip(1) {
         let best = &candidates[best_idx];
+        // Within a rank: mutation-survived first (#870), then fewer new
+        // diagnostics (#861), then the smaller diff — best-VERIFIED before
+        // merely smallest, per #869.
         let better = match cand.score.cmp(&best.score) {
             std::cmp::Ordering::Greater => true,
             std::cmp::Ordering::Less => false,
             std::cmp::Ordering::Equal => {
-                match cand.new_diag_warnings.cmp(&best.new_diag_warnings) {
-                    std::cmp::Ordering::Less => true,
-                    std::cmp::Ordering::Greater => false,
-                    std::cmp::Ordering::Equal => cand.diff_lines < best.diff_lines,
+                match cand.mutation_survived.cmp(&best.mutation_survived) {
+                    std::cmp::Ordering::Greater => true,
+                    std::cmp::Ordering::Less => false,
+                    std::cmp::Ordering::Equal => {
+                        match cand.new_diag_warnings.cmp(&best.new_diag_warnings) {
+                            std::cmp::Ordering::Less => true,
+                            std::cmp::Ordering::Greater => false,
+                            std::cmp::Ordering::Equal => cand.diff_lines < best.diff_lines,
+                        }
+                    }
                 }
             }
         };
@@ -110,6 +125,7 @@ mod tests {
     fn c(score: CandidateScore, diff_lines: u32) -> CandidateSummary {
         CandidateSummary {
             score,
+            mutation_survived: false,
             new_diag_warnings: 0,
             diff_lines,
         }
@@ -214,6 +230,7 @@ mod tests {
     fn cw(score: CandidateScore, warnings: u32, diff_lines: u32) -> CandidateSummary {
         CandidateSummary {
             score,
+            mutation_survived: false,
             new_diag_warnings: warnings,
             diff_lines,
         }
@@ -239,6 +256,18 @@ mod tests {
             cw(CandidateScore::DeterministicPass, 1, 20),
         ];
         assert_eq!(select_best_candidate(&cands), Some(1));
+    }
+
+    /// #870/#869: a mutation-survived verification outranks an unchecked one
+    /// within the same rank, ahead of both warnings and diff size.
+    #[test]
+    fn mutation_survival_is_the_first_within_rank_tiebreak() {
+        let unchecked = cw(CandidateScore::DeterministicPass, 0, 5);
+        let survived = CandidateSummary {
+            mutation_survived: true,
+            ..cw(CandidateScore::DeterministicPass, 1, 500)
+        };
+        assert_eq!(select_best_candidate(&[unchecked, survived]), Some(1));
     }
 
     /// The coarse rank ordering is untouched: a warning-free judge-pass
