@@ -29,6 +29,7 @@
 //! (L-T6), the panel panic boundary (L-T7, [`mod@render`]), and the debug channel
 //! (L-T8, [`DebugLog`]).
 
+pub mod ansi;
 pub mod attach;
 pub mod clipboard;
 pub mod composer;
@@ -66,6 +67,7 @@ pub mod theme;
 pub mod transcript_nav;
 pub mod views;
 
+pub use ansi::strip_ansi;
 pub use attach::probe_path_attachment;
 pub use clipboard::{ClipboardPaste, default_attachments_dir};
 pub use composer::{
