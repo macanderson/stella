@@ -35,13 +35,47 @@ skip the roll) were re-inserted the same way.
 
 ## [Unreleased]
 
+## [0.6.52] — 2026-08-01
+
+## [0.6.51] — 2026-08-01
+
+## [0.6.50] — 2026-08-01
+
 ## [0.6.49] — 2026-08-01
 
 ## [0.6.48] — 2026-08-01
 
 ## [0.6.47] — 2026-08-01
 
-## [0.6.46] — 2026-08-01
+- **`/profile fast|balanced|pro|ultra` retunes every engine role from one
+  word.** The deck now has a posture command that picks a model *and* a
+  reasoning effort for the default, worker, judge, and triage roles at once,
+  choosing only from models your configured API keys can actually reach. Models
+  are ranked by list output price — the same capability proxy `auto_mode`
+  already uses — so the choice follows catalog refreshes instead of a hardcoded
+  table, and rows the catalog has no price for are excluded rather than read as
+  free.
+
+  Triage is held below the worker. The judge resolves two competing goals in
+  the order that gives up least: independent *and* at least as capable wins
+  outright; if nothing clears that bar, an independent model one rung down is
+  still preferred, because losing bias resistance over a single rung is
+  overcorrection; only past that does capability take over, and then the
+  confirmation reports that review is correlated with the work.
+
+  Effort is clamped to the rungs each provider actually exposes (Gemini stops
+  at `high`, Z.ai has no effort knob at all). Because clamping alone would
+  flatten the ladder — `fast` and `balanced` both reaching `low` on a two-rung
+  provider — the missing rung is bought back by preferring, *among models at
+  the same price*, one whose provider can express the requested level. It never
+  leaves the price band, so a profile cannot overspend its tier to buy a knob.
+
+  Applying a profile turns `effort_auto`, `reasoning_auto` and `auto_mode` off
+  so the levels it prints are the levels that run, and **`/profile auto`** is
+  the way back: it restores all three and drops the per-role pins. Custom
+  per-agent prompts, providers, temperatures, model pins and your
+  `allowed_models` list are left untouched throughout. Bare `/profile` shows
+  what is set and what each profile would choose right now.
 
 ## [0.6.45] — 2026-08-01
 

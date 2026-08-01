@@ -21,6 +21,57 @@ fn missing_files_merge_to_empty_settings() {
 }
 
 #[test]
+fn the_edit_reader_returns_one_files_engine_block_not_the_merge() {
+    // An editor that rewrites the whole `agent_engine_config` block must read
+    // the file it is about to write. Reading the merged view instead would
+    // carry the project's pins into whatever scope it saves to.
+    let dir = tempfile::tempdir().unwrap();
+    let user = write(
+        dir.path(),
+        "user.json",
+        r#"{"agent_engine_config": {"default_model": "anthropic/claude-fable-5"}}"#,
+    );
+    let project = write(
+        dir.path(),
+        "project.json",
+        r#"{"agent_engine_config": {"pipeline_worker_model": "zai/glm-5.2"}}"#,
+    );
+
+    let merged = Settings::load_from(&[user.clone(), project])
+        .unwrap()
+        .agent_engine_config
+        .unwrap();
+    assert_eq!(
+        merged.pipeline_worker_model.as_deref(),
+        Some("zai/glm-5.2"),
+        "the merge should carry the project's pin"
+    );
+
+    let scoped = user_engine_config_at(&user);
+    assert_eq!(
+        scoped.default_model.as_deref(),
+        Some("anthropic/claude-fable-5")
+    );
+    assert_eq!(
+        scoped.pipeline_worker_model, None,
+        "the project's pin must not appear in a user-scope read"
+    );
+}
+
+#[test]
+fn the_edit_reader_treats_a_missing_or_broken_file_as_empty() {
+    // The caller is about to overwrite this block; refusing because of an
+    // unrelated malformed key would leave no way out through the UI.
+    assert_eq!(
+        user_engine_config_at(&PathBuf::from("/nonexistent/settings.json")),
+        AgentEngineConfig::default()
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let broken = write(dir.path(), "broken.json", "{ this is not json");
+    assert_eq!(user_engine_config_at(&broken), AgentEngineConfig::default());
+}
+
+#[test]
 fn later_scopes_overlay_earlier_ones_field_by_field() {
     let dir = tempfile::tempdir().unwrap();
     let user = write(
