@@ -19,6 +19,19 @@ pub enum PipelineError {
         "no provider adapter is configured for the resolved model `{0}` — configure the provider or refresh the catalog"
     )]
     NoProviderForModel(String),
+    /// [`crate::PipelineConfig::require_independent_witness`] is on and the
+    /// wiring cannot supply a witness author independent of the worker.
+    ///
+    /// The ordinary posture degrades here instead — losing the author costs
+    /// the run its authored witness, never the task. This variant exists for
+    /// the caller that has already PUBLISHED the claim that an independent
+    /// author exists (a benchmark arm whose posture digest names a second
+    /// model): for them a degraded run is not a weaker result, it is a number
+    /// described by the wrong posture, and refusing is the only honest outcome.
+    #[error(
+        "an independent witness author was required but {0} — refusing rather than running as the single-model arm under a configuration that claims otherwise"
+    )]
+    WitnessAuthorUnavailable(String),
     /// A required role (worker) could not be resolved at all.
     #[error(transparent)]
     Routing(#[from] RouterError),
@@ -40,6 +53,21 @@ impl PipelineRunError {
             total_cost_usd,
         }
     }
+}
+
+/// What [`super::Pipeline::witness_author_independence`] found. Three states,
+/// not a bool: "the judge is the worker" and "the worker itself will not
+/// resolve" are different facts with different owners, and collapsing them is
+/// how a routing failure starts reading as a witness verdict.
+pub(super) enum WitnessAuthorIndependence {
+    /// A judge distinct from the worker resolves — the author exists.
+    Independent,
+    /// No author independent of the worker, with the reason to announce.
+    Unavailable(String),
+    /// The worker role itself will not resolve. Not a witness verdict at all:
+    /// the run fails on its own terms a few steps later, with the routing
+    /// error that actually explains it.
+    WorkerUnresolvable,
 }
 
 pub(super) enum RoleResolveError {

@@ -1257,3 +1257,187 @@ async fn a_revise_turn_that_edits_the_witness_hard_fails_at_the_next_check() {
         "{log:?}"
     );
 }
+
+/// `require_independent_witness` turns the degradation above into a refusal —
+/// and does it BEFORE the run spends anything (#1147).
+///
+/// The soft path is right for a session: a missing author costs the run its
+/// authored witness, never the task. It is wrong for a host that has already
+/// published the claim that an independent author exists. A benchmark arm
+/// hashes its posture, names a second model in it, and reports numbers against
+/// that hash; if the author silently goes missing the run still finishes, still
+/// scores, and the number is now described by a configuration the run did not
+/// have. Refusing is the only outcome that keeps the manifest true.
+///
+/// The provider is scripted with NO responses at all: reaching a single model
+/// call would panic, which is how "before it spends anything" is proven rather
+/// than asserted.
+#[tokio::test]
+async fn requiring_an_independent_witness_refuses_before_spending_anything() {
+    let provider = ScriptedProvider::new(vec![]);
+    let resolver = OneProvider(&provider);
+    let runner = ScriptedRunner::new(vec![], "");
+    let repo_status = SeqRepoStatus::new(vec![vec![]]);
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let same = ModelRef::new("scripted", "same-model");
+    let mut roles = RoleTable::new();
+    roles.pin(Role::Worker, same.clone());
+    roles.pin(Role::Judge, same);
+    let router = Router::new(
+        roles,
+        vec![ProviderProfile::new(
+            "scripted",
+            ModelRef::new("scripted", "worker"),
+            ModelRef::new("scripted", "triage"),
+            ModelRef::new("scripted", "judge"),
+        )],
+        CircuitBreaker::new(Box::new(ZeroClock)),
+    );
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig {
+            require_independent_witness: true,
+            ..PipelineConfig::default()
+        },
+    );
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+
+    let error = pipeline
+        .run("Fix the failing test", &mut messages, &mut budget)
+        .await
+        .expect_err("a published independence claim the wiring cannot honor must refuse");
+
+    match &error.cause {
+        PipelineError::WitnessAuthorUnavailable(reason) => assert!(
+            reason.contains("no author independent of the worker"),
+            "the refusal must carry the reason, not just the verdict: {reason}"
+        ),
+        other => panic!("expected WitnessAuthorUnavailable, got {other:?}"),
+    }
+    assert_eq!(
+        error.total_cost_usd, 0.0,
+        "refusing after paying for a trajectory nobody may use defeats the point"
+    );
+    assert!(
+        stages(&drain(&mut rx)).is_empty(),
+        "no stage may open before the refusal"
+    );
+}
+
+/// The same wiring with the flag OFF — the default every ordinary session
+/// runs on — must still degrade rather than refuse. The refusal is opt-in for
+/// hosts that made a claim outside the run; changing the default would turn a
+/// single-provider setup into a broken CLI.
+#[tokio::test]
+async fn the_independence_requirement_is_opt_in() {
+    assert!(
+        !PipelineConfig::default().require_independent_witness,
+        "a single-key setup must keep working: the judge legitimately rides \
+         the worker there, and `authored_witness_degrades_when_judge_is_worker` \
+         pins that path"
+    );
+}
+
+/// A judge distinct from the worker satisfies the requirement, so the flag is
+/// inert on the arm it exists to protect: the treatment arm must RUN, not
+/// merely fail loudly. Without this the previous test would pass just as well
+/// against a guard that refuses unconditionally.
+#[tokio::test]
+async fn requiring_an_independent_witness_lets_a_distinct_judge_through() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),
+        text_result("PASS looks right"),
+    ]);
+    let resolver = OneProvider(&provider);
+    let runner = ScriptedRunner::new(vec![], "@@ -1 +1 @@\n-a\n+b");
+    let repo_status = SeqRepoStatus::new(vec![vec![]]);
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let mut roles = RoleTable::new();
+    roles.pin(Role::Worker, ModelRef::new("scripted", "worker-model"));
+    roles.pin(Role::Judge, ModelRef::new("scripted", "author-model"));
+    let router = Router::new(
+        roles,
+        vec![ProviderProfile::new(
+            "scripted",
+            ModelRef::new("scripted", "worker-model"),
+            ModelRef::new("scripted", "triage"),
+            ModelRef::new("scripted", "author-model"),
+        )],
+        CircuitBreaker::new(Box::new(ZeroClock)),
+    );
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig {
+            require_independent_witness: true,
+            // Witness authoring itself needs candidate workspaces, which this
+            // fixture has none of; the user's own test command keeps the run
+            // on the single-shot path. The claim under test is the GUARD, and
+            // the guard reads the router, not the ladder.
+            test_command: Some("cargo test".to_string()),
+            ..PipelineConfig::default()
+        },
+    );
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+
+    let outcome = pipeline
+        .run("Fix the failing test", &mut messages, &mut budget)
+        .await;
+    assert!(
+        !matches!(
+            outcome.as_ref().map_err(|e| &e.cause),
+            Err(PipelineError::WitnessAuthorUnavailable(_))
+        ),
+        "an independent judge must satisfy the requirement: {outcome:?}"
+    );
+}

@@ -15,7 +15,7 @@
 1887 bench/terminal_bench_analysis/tb21_evidence_contract.py
 4173 bench/terminal_bench_analysis/tests/test_tb21_analysis.py
 1615 bench/terminal_bench_analysis/tests/test_tb21_evidence_contract.py
-1790 stella-cli/src/agent_tests.rs
+1791 stella-cli/src/agent_tests.rs
 2316 stella-cli/src/agent.rs
 1576 stella-cli/src/candidate_ws.rs
 4413 stella-cli/src/command_deck.rs
@@ -27,7 +27,7 @@
 1785 stella-model/src/bedrock.rs
 1955 stella-model/src/openai.rs
 1773 stella-model/src/zai/tests.rs
-3204 stella-pipeline/src/pipeline.rs
+3249 stella-pipeline/src/pipeline.rs
 2393 stella-pipeline/src/pipeline/tests.rs
 2778 stella-protocol/src/event.rs
 2074 stella-store/src/lib.rs
