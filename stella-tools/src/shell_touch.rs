@@ -1,7 +1,7 @@
 //! Attributing workspace mutations that no tool schema can describe.
 //!
-//! The file ledger ([`crate::registry::ToolRegistry::record_touch`]) is fed by
-//! [`crate::registry::ToolRegistry::classify_file_op`], which reads a tool's
+//! The file ledger (`ToolRegistry::record_touch`) is fed by
+//! `ToolRegistry::classify_file_op`, which reads a tool's
 //! *input* to decide what it is about to do. That works for the CRUD tools —
 //! `write_file` names its path, `edit_file` names its path — and it cannot work
 //! for `bash`. A shell command is an opaque string: `make`, `python build.py`,
