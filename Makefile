@@ -176,12 +176,8 @@ docs: ## Build rustdoc for the workspace (skip dep docs)
 deny: ## cargo deny: advisories, dependency bans, source provenance, licenses
 	cargo deny check advisories bans sources licenses
 
-.PHONY: vuln-scan
-vuln-scan: ## cargo audit: security vulnerability scan
-	cargo audit
-
 .PHONY: supply-chain
-supply-chain: deny vuln-scan ## Run both supply-chain checks
+supply-chain: deny ## Run the supply-chain check (alias for `deny`; see #919)
 
 CARGO_WATCH := $(shell command -v cargo-watch 2>/dev/null)
 
@@ -252,8 +248,8 @@ reap-agents: ## List orphaned stella agents/tool-subprocesses idle 20m+ (dry run
 reap-agents-kill: ## Kill orphaned stella agents/tool-subprocesses idle 20m+ (asks first)
 	scripts/reap-agents.sh
 
-# The supply-chain steps gate on the TOOL being present, not on its exit code:
-# a missing cargo-deny/cargo-audit soft-skips with a message, but a real
+# The supply-chain step gates on the TOOL being present, not on its exit code:
+# a missing cargo-deny soft-skips with a message, but a real
 # advisory/license/vulnerability failure from an installed tool fails the
 # target. (The old `cmd || printf` form swallowed genuine failures too.)
 .PHONY: audit
@@ -267,11 +263,6 @@ audit: ## Run full codebase audit (clippy, tests, supply-chain, dead-code scan)
 		cargo deny check advisories bans sources licenses; \
 	else \
 		printf '  \033[33mcargo-deny not installed — skipping (cargo install cargo-deny)\033[0m\n'; \
-	fi
-	@if command -v cargo-audit >/dev/null 2>&1; then \
-		cargo audit; \
-	else \
-		printf '  \033[33mcargo-audit not installed — skipping (cargo install cargo-audit)\033[0m\n'; \
 	fi
 	@printf '\n\033[1m=== Unused dependencies ===\033[0m\n'
 	@# Same shape as the two steps above, and for the same reason: gate on the

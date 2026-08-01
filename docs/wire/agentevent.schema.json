@@ -1640,6 +1640,11 @@
           },
           "type": "array"
         },
+        "retryable": {
+          "default": true,
+          "description": "Whether the LAST attempt's error was of a retryable class —\nmirrors the paired [`AgentEvent::Error`]'s `retryable` field,\ncomputed from the same `ProviderError::is_retryable()` call.\n`false` means retrying again could never have helped: the\nclearest case is `ProviderError::Auth` failing on attempt 1,\nwhere `attempts` is 1 and no retry was ever attempted despite\nthis event's name (#926) — a receipts/telemetry consumer that\nonly sees `RetriesExhausted` would otherwise record a\nreliability incident for what is really a bad credential.\n`#[serde(default = \"retries_exhausted_retryable_default\")]`:\nevent logs recorded before this field existed predate the\ndistinction, so on replay they read as \"genuinely retryable\"\n— the pre-#926 behavior — rather than being silently\nreclassified as terminal.",
+          "type": "boolean"
+        },
         "turn_instance": {
           "format": "uint32",
           "minimum": 0,

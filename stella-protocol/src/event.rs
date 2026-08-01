@@ -249,6 +249,15 @@ pub enum UsageIncompleteReason {
     Cancelled,
 }
 
+/// `serde(default)` value for [`AgentEvent::RetriesExhausted::retryable`]:
+/// event logs recorded before the field existed (#926) replay as if every
+/// failure were a genuine, potentially-retryable exhaustion — the reading
+/// that was already implied by the event's name before this distinction
+/// existed — rather than being silently reclassified as terminal.
+fn retries_exhausted_retryable_default() -> bool {
+    true
+}
+
 /// One event in the turn's stream. Every stage boundary emits an event;
 /// nothing user-visible is derived from internal state that isn't also in
 /// this stream.
@@ -381,6 +390,22 @@ pub enum AgentEvent {
         attempts: u32,
         /// Per-attempt failure reasons, oldest first.
         reasons: Vec<String>,
+        /// Whether the LAST attempt's error was of a retryable class —
+        /// mirrors the paired [`AgentEvent::Error`]'s `retryable` field,
+        /// computed from the same `ProviderError::is_retryable()` call.
+        /// `false` means retrying again could never have helped: the
+        /// clearest case is `ProviderError::Auth` failing on attempt 1,
+        /// where `attempts` is 1 and no retry was ever attempted despite
+        /// this event's name (#926) — a receipts/telemetry consumer that
+        /// only sees `RetriesExhausted` would otherwise record a
+        /// reliability incident for what is really a bad credential.
+        /// `#[serde(default = "retries_exhausted_retryable_default")]`:
+        /// event logs recorded before this field existed predate the
+        /// distinction, so on replay they read as "genuinely retryable"
+        /// — the pre-#926 behavior — rather than being silently
+        /// reclassified as terminal.
+        #[serde(default = "retries_exhausted_retryable_default")]
+        retryable: bool,
     },
     /// One decision from the extension/policy audit plane bridged into the
     /// event stream (receipts spec §6.4, #364 gap 6). The `HookBus` audit
@@ -2523,6 +2548,7 @@ mod tests {
                 turn_instance: 1,
                 attempts: 3,
                 reasons: vec!["t".into()],
+                retryable: true,
             },
             AgentEvent::PolicyDecision {
                 kind: PolicyKind::Blocked,

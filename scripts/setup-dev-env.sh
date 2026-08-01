@@ -246,8 +246,7 @@ fi
 # Format: name|tier|why|installer|package
 tool_table() {
   cat <<'EOF'
-cargo-deny|ci|CI job "cargo deny + cargo audit" is a required check; make deny|cargo|cargo-deny
-cargo-audit|ci|same required check; make vuln-scan|cargo|cargo-audit
+cargo-deny|ci|CI job "cargo deny + cargo audit" (name kept for branch protection; only cargo-deny actually runs, see #919) is a required check; make deny|cargo|cargo-deny
 gh|repo|PR + release flow (scripts/release.sh hard-requires it)|brew|gh
 rg|repo|repo convention: rg over grep, and it is gitignore-aware|brew|ripgrep
 fd|repo|repo convention: fd over find|brew|fd
@@ -481,8 +480,10 @@ cat <<'EOF'
     - release smoke   CI also runs `cargo build --workspace --release`
                       (thin LTO). Not in any make target.
     - normative-home  scripts/check-normative-home.sh runs in CI only.
-    - supply chain    `cargo deny` + `cargo audit` are a SEPARATE required
-                      check. `make gate` does not run them; `make supply-chain` does.
+    - supply chain    `cargo deny` is a SEPARATE required check (the CI job
+                      keeps the name "cargo deny + cargo audit" for branch
+                      protection; cargo-audit itself was dropped in #919).
+                      `make gate` does not run it; `make supply-chain` does.
 EOF
 
 hdr "Next"
