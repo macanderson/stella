@@ -1485,6 +1485,24 @@ impl Store {
         Ok(out)
     }
 
+    /// Session ids with at least one persisted event, newest execution
+    /// first — the enumeration `stella calibration` folds over (#871).
+    pub fn event_session_ids(&self) -> Result<Vec<String>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT x.session_id, MAX(x.id) AS latest FROM executions x \
+             JOIN events e ON e.execution_id = x.id \
+             WHERE x.session_id IS NOT NULL \
+             GROUP BY x.session_id ORDER BY latest DESC",
+        )?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
     /// The replay reader: a session's COMPLETE event journal, reassembled
     /// across every execution stamped with `session_id`
     /// ([`Store::set_execution_session`]), ordered by (execution_id, seq) —
