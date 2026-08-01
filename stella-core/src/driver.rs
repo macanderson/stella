@@ -371,6 +371,12 @@ const SPECULATION_DISCARD_HARVEST_MISMATCH: &str = "harvest_mismatch";
 /// could harvest it, so it is discarded on the abort unwind instead (#460).
 const SPECULATION_DISCARD_BUDGET_ABORT: &str = "budget_abort";
 
+/// The `ToolOutput::Error` that closes a `tool_use` the budget abort refused
+/// to dispatch. The twin of `step::CANCELLED_TOOL_RESULT`: same repair, same
+/// helper, different reason — the model is told the call did not run, so the
+/// pairing is honest as well as structurally valid.
+const BUDGET_ABORT_TOOL_RESULT: &str = "not executed — turn aborted on budget";
+
 /// How many times one turn may continue past a step that ended at the
 /// output-token limit having called no tool (`FinishReason::Length`,
 /// `tool_calls` empty). Two, not one, because the observed failure is a
@@ -1687,40 +1693,13 @@ impl<'a> Engine<'a> {
         // with no matching `tool_result` is a broken history: when a
         // REPL caller reuses this `messages` vec, the next turn's first
         // provider call is hard-rejected ("tool_use must be followed by
-        // tool_result"). Close the pairing with a synthetic error
-        // result per un-run call so resumption stays valid.
-        if !result.tool_calls.is_empty() {
-            let tool_results: Vec<ToolResult> = result
-                .tool_calls
-                .iter()
-                .map(|call| ToolResult {
-                    call_id: call.call_id.clone(),
-                    output: ToolOutput::Error {
-                        message: "not executed — turn aborted on budget".to_string(),
-                    },
-                })
-                .collect();
-            // Mirror the synthetic results onto the event stream: this
-            // step's `StepUsage` already reported `tool_calls: N`, and a
-            // transcript reconstructed from events must resolve every
-            // announced call the same way `messages` does. No `ToolStart`
-            // — these calls never ran.
-            for tool_result in &tool_results {
-                let _ = events.send(AgentEvent::ToolResult {
-                    call_id: tool_result.call_id.clone(),
-                    output: tool_result.output.clone(),
-                    duration_ms: 0,
-                    speculated: false,
-                });
-            }
-            messages.push(CompletionMessage {
-                role: MessageRole::Tool,
-                content: String::new(),
-                tool_calls: Vec::new(),
-                tool_results,
-                attachments: Vec::new(),
-            });
-        }
+        // tool_result"). Close the pairing with a synthetic error result
+        // per un-run call so resumption stays valid — through the same
+        // helper the cancellation path uses, since a second copy of this
+        // repair is a second place for it to rot (the results are likewise
+        // mirrored onto the event stream, with no `ToolStart`, because this
+        // step's `StepUsage` already reported `tool_calls: N`).
+        crate::step::close_open_tool_calls(messages, BUDGET_ABORT_TOOL_RESULT, events);
         // The typed twin of the prose denial (receipts spec §6.3). Mode is
         // `Enforced` by construction — only enforced budgets abort.
         let _ = events.send(AgentEvent::BudgetDenied {

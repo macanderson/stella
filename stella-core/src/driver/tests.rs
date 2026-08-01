@@ -9,7 +9,7 @@ use stella_protocol::event::BudgetMode;
 use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::mpsc;
 
-use super::*;
+use super::{CONTINUATION_MARKER_PREFIX as NUDGE, *};
 use crate::hooks::{HookAction, HookExecError, HookExecResult, HookMatcher};
 use crate::retry::Sleeper;
 
@@ -1360,9 +1360,7 @@ async fn a_length_truncated_tool_less_step_continues_the_turn_instead_of_complet
     );
     let nudges = messages
         .iter()
-        .filter(|m| {
-            m.role == MessageRole::User && m.content.starts_with(CONTINUATION_MARKER_PREFIX)
-        })
+        .filter(|m| m.role == MessageRole::User && m.content.starts_with(NUDGE))
         .count();
     assert_eq!(nudges, 1, "exactly one continuation nudge in history");
     assert!(
@@ -1416,9 +1414,7 @@ async fn length_continuations_are_bounded_per_turn() {
     );
     let nudges = messages
         .iter()
-        .filter(|m| {
-            m.role == MessageRole::User && m.content.starts_with(CONTINUATION_MARKER_PREFIX)
-        })
+        .filter(|m| m.role == MessageRole::User && m.content.starts_with(NUDGE))
         .count();
     assert_eq!(nudges, MAX_LENGTH_CONTINUATIONS as usize);
     let events = drain_events(&mut rx);
