@@ -1,6 +1,6 @@
 ---
 title: How to use Stella as the Agent Engine in your GenAI app
-description: Run Stella's agent loop inside your own product. The engine orchestrates, your app owns every model call, tool call, credential, and byte of data. Includes a working host in 80 lines, and how to license it for a closed-source product.
+description: Run Stella's agent loop inside your own product — the engine orchestrates, your app owns every model call, tool call, and credential. Includes an 80-line working host.
 ---
 
 Writing an agent loop that survives contact with production is a grind. You
@@ -107,7 +107,7 @@ Confirm what you built:
 
 ```bash
 ./target/release/stella-serve --version
-# stella-serve 0.6.10
+# stella-serve 0.6.44
 ```
 
 Record that version in your repo next to the client code. The wire format is

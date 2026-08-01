@@ -71,5 +71,13 @@ function clamp(url: URL) {
 
 export async function GET(request: NextRequest) {
   const url = clamp(new URL(request.url));
-  return search(new Request(url, request));
+  try {
+    return await search(new Request(url, request));
+  } catch (error) {
+    // Same convention as /api/hit and /install.sh: never let a raw 500 with
+    // no context reach the client — log it server-side and return an empty
+    // result set rather than a page-breaking error.
+    console.error(JSON.stringify({ event: "search_failed", error: String(error) }));
+    return Response.json({ results: [] }, { status: 500 });
+  }
 }

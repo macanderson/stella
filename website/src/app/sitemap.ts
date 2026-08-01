@@ -14,8 +14,7 @@
  */
 import type { MetadataRoute } from "next";
 import { source } from "@/lib/source";
-
-const SITE_URL = "https://stella.oxagen.sh";
+import { SITE_URL } from "@/lib/site";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

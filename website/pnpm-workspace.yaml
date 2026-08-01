@@ -32,3 +32,12 @@ minimumReleaseAge: 1440
 # Re-pinning it by hand every week is not a supply-chain control, just churn.
 minimumReleaseAgeExclude:
   - baseline-browser-mapping
+
+# Next 16.2.11 pulls in postcss@8.4.31 (path traversal + XSS, patched at
+# 8.5.10/8.5.18) and sharp@0.34.5 (patched at 0.35.0) through its own
+# dependency tree — not through anything this package depends on directly, so
+# there's no version bump here that fixes it. `pnpm audit` clears once these
+# are forced across every resolution.
+overrides:
+  postcss: ">=8.5.18"
+  sharp: ">=0.35.0"

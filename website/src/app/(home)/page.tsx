@@ -1,9 +1,47 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { HeroTerminal } from "@/components/command-deck";
 import { AnimatedLockup } from "@/components/animated-lockup";
 import { Mark } from "@/components/brand";
 import { InstallBlock } from "@/components/install-block";
 import { PROVIDER_CATALOG } from "@/components/provider-cards";
+import { REPO_URL, SITE_URL } from "@/lib/site";
+
+// The root layout's metadata is titled/described for the docs section it
+// mostly serves ("stella — docs"); the landing page is the one route that
+// needs its own voice instead of inheriting that.
+const HOME_TITLE = "stella — the terminal agent that proves its work finished";
+const HOME_DESCRIPTION =
+  "A terminal coding agent that runs on the API keys you already have, speaks ten providers' own protocols, and ends a run only when a second model has confirmed the goal from evidence.";
+
+export const metadata: Metadata = {
+  title: HOME_TITLE,
+  description: HOME_DESCRIPTION,
+  alternates: { canonical: SITE_URL },
+  openGraph: {
+    title: HOME_TITLE,
+    description: HOME_DESCRIPTION,
+    url: SITE_URL,
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: HOME_TITLE,
+    description: HOME_DESCRIPTION,
+  },
+};
+
+const softwareJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "stella",
+  description: HOME_DESCRIPTION,
+  url: SITE_URL,
+  applicationCategory: "DeveloperApplication",
+  operatingSystem: "macOS, Linux, Windows",
+  license: "https://www.gnu.org/licenses/agpl-3.0.html",
+  offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+};
 
 /**
  * The landing page.
@@ -56,6 +94,10 @@ const DOORS = [
 export default function HomePage() {
   return (
     <div id="content" tabIndex={-1} className="flex flex-1 flex-col">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareJsonLd) }}
+      />
       {/* ── What it is ─────────────────────────────────────────────────── */}
       <section className="lp-hero">
         <div className="mx-auto w-full max-w-3xl px-4 py-20 sm:py-28">
@@ -94,7 +136,7 @@ export default function HomePage() {
 
           <div className="mt-6">
             <a
-              href="https://github.com/macanderson/stella"
+              href={REPO_URL}
               className="text-sm text-fd-muted-foreground underline underline-offset-4 hover:text-fd-foreground"
             >
               Source on GitHub
@@ -193,10 +235,7 @@ export default function HomePage() {
             >
               Install
             </Link>
-            <a
-              href="https://github.com/macanderson/stella"
-              className="hover:text-fd-foreground"
-            >
+            <a href={REPO_URL} className="hover:text-fd-foreground">
               GitHub
             </a>
           </nav>
