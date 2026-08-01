@@ -44,6 +44,9 @@ impl Tool for CiStatus {
                 }
             }),
             read_only: true,
+            // Reads through `gh`/the forge API — someone else's rate
+            // limit, not free to hit twice per step (#923).
+            speculation_safe: false,
         }
     }
 

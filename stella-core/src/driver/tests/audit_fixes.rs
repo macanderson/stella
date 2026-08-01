@@ -1119,6 +1119,9 @@ impl ToolExecutor for CountingReadTools {
             description: "read a file".into(),
             input_schema: serde_json::json!({"type": "object"}),
             read_only: true,
+            // The recycled-call-id fixture only works if the read is
+            // actually speculated, so it states both claims (#923).
+            speculation_safe: true,
         }]
     }
     async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
@@ -1249,6 +1252,7 @@ impl ToolExecutor for BulkyTools {
             description: "run a command".into(),
             input_schema: serde_json::json!({"type": "object"}),
             read_only: false,
+            speculation_safe: false,
         }]
     }
     async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {

@@ -132,6 +132,11 @@ inside a candidate's isolated snapshot, which is exactly the correctness
 hazard the isolation exists to prevent). Flip it on only for servers you've
 checked are genuinely read-only and cwd-independent.
 
+Speculative execution is off the table entirely for MCP tools: they register
+as mutating (`read_only: false`) and never claim `speculation_safe`, so the
+engine runs each call exactly once, at dispatch — an external server's
+request count and rate limit are not Stella's to spend twice.
+
 Two things follow from a server being `candidate_safe`:
 
 - Every candidate's engine can call that server's tools live, mid-turn,

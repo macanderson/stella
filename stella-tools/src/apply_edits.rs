@@ -176,6 +176,7 @@ impl Tool for ApplyEdits {
                 "required": ["edits"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 

@@ -168,6 +168,7 @@ impl Tool for ReadFile {
                 "required": ["path"]
             }),
             read_only: true,
+            speculation_safe: true,
         }
     }
 

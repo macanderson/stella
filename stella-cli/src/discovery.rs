@@ -242,6 +242,9 @@ impl<'a> DiscoveryToolSet<'a> {
                 "required": ["query"]
             }),
             read_only: true,
+            // A search over the session's own tool stack — local, safe to
+            // run twice under speculation (#923).
+            speculation_safe: true,
         }];
         // Skills and MCP are extension-discovery surfaces backed by workspace,
         // user, or registry state outside the benchmark's frozen engine
@@ -273,6 +276,9 @@ impl<'a> DiscoveryToolSet<'a> {
                     "required": ["query"]
                 }),
                 read_only: true,
+                // Reads local skill indexes only — the registry-querying
+                // sibling is `search_skills`, which stays unspeculated.
+                speculation_safe: true,
             },
             ToolSchema {
                 name: MCP_SEARCH.into(),
@@ -292,6 +298,9 @@ impl<'a> DiscoveryToolSet<'a> {
                     "required": ["query"]
                 }),
                 read_only: true,
+                // scope "registry"/"all" hits the public MCP registry — a
+                // duplicate run is real traffic, so never speculated (#923).
+                speculation_safe: false,
             },
         ]);
         schemas
@@ -819,6 +828,8 @@ mod tests {
             description: description.into(),
             input_schema: serde_json::json!({"type": "object"}),
             read_only,
+            // Irrelevant to these discovery tests - the searches never speculate.
+            speculation_safe: false,
         }
     }
 

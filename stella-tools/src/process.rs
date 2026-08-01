@@ -379,6 +379,7 @@ impl Tool for StartProcess {
                 "required": ["argv"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 
@@ -513,6 +514,7 @@ impl Tool for ReadOutput {
                 "required": ["handle"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 
@@ -616,6 +618,7 @@ impl Tool for SendStdin {
                 "required": ["handle", "text"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 
@@ -703,6 +706,7 @@ impl Tool for StopProcess {
                 "required": ["handle"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 

@@ -84,6 +84,9 @@ impl Tool for CodeGraphQuery {
                 "required": ["op", "target"]
             }),
             read_only: true,
+            // `open_or_build` may bootstrap or catch up codegraph.db on the
+            // read path — the in-tree example of a read that writes (#923).
+            speculation_safe: false,
         }
     }
 

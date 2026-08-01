@@ -61,6 +61,7 @@ impl Tool for PollVideo {
                 "required": ["job_id"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 

@@ -49,6 +49,7 @@ impl Tool for BuildProject {
                 }
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 
@@ -109,6 +110,7 @@ impl Tool for RunTests {
                 }
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 
@@ -583,6 +585,7 @@ impl Tool for RunLint {
                 }
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 
@@ -626,6 +629,7 @@ impl Tool for FormatCode {
                 }
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 
