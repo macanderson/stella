@@ -90,6 +90,14 @@ no-scratch: ## Assert no tracked file is gitignored (agent scratch guard, #448)
 action-pins: ## Assert every workflow `uses:` is pinned to a commit SHA (#648)
 	@./scripts/check-action-pins.sh
 
+.PHONY: cargo-install-pins
+cargo-install-pins: ## Assert every workflow `cargo install` names an exact version (#915)
+	@./scripts/check-cargo-install-pins.sh
+
+.PHONY: license-allowlist-parity
+license-allowlist-parity: ## Assert deny.toml and dependency-review.yml agree on allowed licenses (#920)
+	@./scripts/check-license-allowlist-parity.sh
+
 .PHONY: doc-citations
 doc-citations: ## Assert docs citations resolve and none cite by line number (#652, #561)
 	@./scripts/check-doc-citations.sh
@@ -118,6 +126,10 @@ file-size-update: ## Retighten the 1500-line ratchet baseline (run after splitti
 doc-warnings: ## Assert rustdoc is clean workspace-wide (#634)
 	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
+.PHONY: shellcheck
+shellcheck: ## Lint install.sh, scripts/*.sh, and .githooks/* (#916)
+	shellcheck install.sh scripts/*.sh .githooks/*
+
 # Deliberately not part of `gate`: it needs a Docker daemon, which the gate
 # must not. CI runs the same two commands (.github/workflows/docker-serve.yml).
 .PHONY: serve-image
@@ -126,10 +138,10 @@ serve-image: ## Build the stella-serve image and smoke the container (needs Dock
 	@./scripts/smoke-serve-image.sh stella-serve:ci
 
 .PHONY: gate
-gate: no-scratch action-pins doc-citations invariants file-size wire-schema doc-warnings format-check lint test ## Full CI gate: no-scratch + action-pins + doc-citations + invariants + file-size + wire-schema + rustdoc + fmt-check + clippy + test
+gate: no-scratch action-pins cargo-install-pins license-allowlist-parity shellcheck doc-citations invariants file-size wire-schema doc-warnings format-check lint test ## Full CI gate: no-scratch + action-pins + cargo-install-pins + license-allowlist-parity + shellcheck + doc-citations + invariants + file-size + wire-schema + rustdoc + fmt-check + clippy + test
 
 .PHONY: check
-check: no-scratch action-pins invariants file-size format-check lint ## Fast pre-push check (scratch + pins + invariants + file-size + fmt + clippy, no tests)
+check: no-scratch action-pins cargo-install-pins license-allowlist-parity shellcheck invariants file-size format-check lint ## Fast pre-push check (scratch + pins + license parity + shellcheck + invariants + file-size + fmt + clippy, no tests)
 
 .PHONY: hooks
 hooks: ## Install the pre-push gate hook (runs `make gate` on every push)

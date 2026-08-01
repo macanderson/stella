@@ -104,10 +104,12 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     render_composer(&c_layout, bands[4], buf);
     render_composer_footer(model, ui, &c_layout, bands[5], buf);
     render_status_bar(model, ui, bands[6], buf);
+    let composer_cursor = composer_cursor_position(&c_layout, bands[4]);
 
     // Floating popups sit above the chrome: the slash menu anchors to the
     // composer; the queue editor centers over the content.
     let slash = ui.composer.slash_menu(&ui.slash_commands);
+    let slash_open = slash.as_ref().is_some_and(|m| !m.is_empty());
     if let Some(menu) = slash.filter(|m| !m.is_empty()) {
         let selected = ui.slash_selected.min(menu.matches.len().saturating_sub(1));
         let popup = slash_popup_area(area, bands[4], menu.matches.len());
@@ -143,6 +145,26 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
 
     if ui.help_open {
         render_help(ui, area, buf);
+    }
+
+    // Position the hardware cursor at the composer caret so the terminal (and
+    // anything anchored to it — CJK/IME candidate windows, screen readers,
+    // cursor-following tmux panes) has something to track. Suppressed under
+    // any overlay that owns the keyboard ahead of the composer — matching the
+    // precedence `handle_key` already applies — so the caret doesn't sit in
+    // the composer while the user is typing into a dialog. The startup
+    // notice is deliberately excluded: it is non-modal, and a key still
+    // reaches the composer while it's showing (see `handle_key`).
+    let overlay_owns_keyboard = ui.help_open
+        || ui.queue_open
+        || ui.graph_picker_open
+        || ui.sessions_open
+        || ui.inbox_open
+        || ui.context_open
+        || ui.inspect_open
+        || slash_open;
+    if !overlay_owns_keyboard && let Some(pos) = composer_cursor {
+        frame.set_cursor_position(pos);
     }
 }
 
@@ -967,12 +989,7 @@ const DECK_COMPOSER_MAX_ROWS: usize = 4;
 fn render_composer(layout: &ComposerLayout, area: Rect, buf: &mut Buffer) {
     let visible = (area.height as usize).max(1);
     let total = layout.rows.len();
-    // Scroll so the caret's row is always within the visible window.
-    let first = if layout.cursor_row < visible {
-        0
-    } else {
-        layout.cursor_row + 1 - visible
-    };
+    let first = composer_scroll_first(layout.cursor_row, visible);
 
     let cursor_style = theme::accent().add_modifier(Modifier::REVERSED);
     let mut lines: Vec<Line<'static>> = Vec::new();
@@ -1006,6 +1023,37 @@ fn render_composer(layout: &ComposerLayout, area: Rect, buf: &mut Buffer) {
     if total > visible {
         render_scroll_gutter(first, visible, total, area, buf);
     }
+}
+
+/// The first visible composer row for a given viewport height: the scroll
+/// offset that keeps the caret's row always within the window. Split out of
+/// [`render_composer`] so [`composer_cursor_position`] computes the exact
+/// same windowing rather than a second copy that could drift from it.
+fn composer_scroll_first(cursor_row: usize, visible: usize) -> usize {
+    if cursor_row < visible {
+        0
+    } else {
+        cursor_row + 1 - visible
+    }
+}
+
+/// Absolute screen cell of the composer caret, or `None` if the composer
+/// area is degenerate (nothing was drawn for it to sit in). Ratatui hides
+/// the hardware cursor whenever a frame never positions it — which starves
+/// CJK/IME candidate windows (they anchor to the terminal cursor, not to
+/// styled cells) and gives screen readers nothing to track (#935).
+fn composer_cursor_position(layout: &ComposerLayout, area: Rect) -> Option<(u16, u16)> {
+    if area.width == 0 || area.height == 0 {
+        return None;
+    }
+    let visible = (area.height as usize).max(1);
+    let first = composer_scroll_first(layout.cursor_row, visible);
+    let row_in_view = layout.cursor_row.checked_sub(first)?;
+    let y = area.y.checked_add(u16::try_from(row_in_view).ok()?)?;
+    let x = area
+        .x
+        .checked_add(u16::try_from(PROMPT_PREFIX_W + layout.cursor_col).ok()?)?;
+    Some((x, y))
 }
 
 /// A slim scrollbar in the composer's right gutter: a dim track with a violet

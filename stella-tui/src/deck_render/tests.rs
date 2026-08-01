@@ -280,6 +280,114 @@ fn the_prompt_prefix_is_a_steady_uniform_accent() {
 }
 
 #[test]
+fn composer_cursor_position_sits_right_after_the_prefix_on_an_empty_composer() {
+    let layout = ComposerLayout {
+        rows: vec![String::new()],
+        cursor_row: 0,
+        cursor_col: 0,
+    };
+    let area = Rect::new(0, 0, 40, 4);
+    // Matches `empty_composer_is_a_single_accent_prompt_line_with_the_caret`,
+    // which asserts the drawn reversed-cell caret sits at column 4.
+    assert_eq!(composer_cursor_position(&layout, area), Some((4, 0)));
+}
+
+#[test]
+fn composer_cursor_position_offsets_by_the_composer_areas_origin() {
+    let layout = ComposerLayout {
+        rows: vec!["hi".into()],
+        cursor_row: 0,
+        cursor_col: 2,
+    };
+    let area = Rect::new(10, 20, 30, 3);
+    assert_eq!(composer_cursor_position(&layout, area), Some((16, 20)));
+}
+
+#[test]
+fn composer_cursor_position_tracks_the_caret_through_the_scroll_window() {
+    // 9 rows in a 4-row viewport, caret on the last row — the same shape
+    // `a_multiline_paste_prefixes_every_row_and_scrolls_instead_of_chipping`
+    // renders behind a `▐` gutter thumb. `first` must land on the same
+    // window `render_composer` scrolls to, or the caret drifts from what's
+    // actually drawn.
+    let layout = ComposerLayout {
+        rows: (0..9).map(|i| format!("row{i}")).collect(),
+        cursor_row: 8,
+        cursor_col: 4, // "row8" is 4 columns wide
+    };
+    let area = Rect::new(0, 0, 40, 4);
+    // visible=4, first = cursor_row + 1 - visible = 5, row_in_view = 3.
+    assert_eq!(composer_cursor_position(&layout, area), Some((8, 3)));
+}
+
+#[test]
+fn composer_cursor_position_is_none_for_a_degenerate_area() {
+    let layout = ComposerLayout {
+        rows: vec![String::new()],
+        cursor_row: 0,
+        cursor_col: 0,
+    };
+    assert_eq!(
+        composer_cursor_position(&layout, Rect::new(0, 0, 0, 4)),
+        None
+    );
+    assert_eq!(
+        composer_cursor_position(&layout, Rect::new(0, 0, 40, 0)),
+        None
+    );
+}
+
+#[test]
+fn render_deck_positions_the_hardware_cursor_at_the_composer_caret() {
+    let model = running_model_with_queue();
+    let mut ui = DeckUi::default();
+    ui.splash.skip();
+    for c in "hi".chars() {
+        ui.composer.insert_char(c);
+    }
+
+    let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    term.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+
+    assert!(
+        term.backend().cursor_visible(),
+        "nothing owns the keyboard ahead of the composer — the terminal \
+         cursor must be shown, or CJK IME composition has nowhere to anchor"
+    );
+    let text = buffer_text(term.backend().buffer());
+    let composer_row = text
+        .lines()
+        .position(|l| l.starts_with(">>> hi"))
+        .expect("the typed composer row is on screen");
+    let pos = term.backend().cursor_position();
+    assert_eq!(
+        pos.y as usize, composer_row,
+        "cursor sits on the composer row"
+    );
+    assert_eq!(
+        pos.x, 6,
+        "cursor sits right after '>>> hi' (4-col prefix + 2 chars)"
+    );
+}
+
+#[test]
+fn render_deck_hides_the_hardware_cursor_under_a_modal_overlay() {
+    let model = running_model_with_queue();
+    let mut ui = DeckUi::default();
+    ui.splash.skip();
+    ui.help_open = true;
+
+    let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    term.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+
+    assert!(
+        !term.backend().cursor_visible(),
+        "the help overlay owns the keyboard; the caret must not sit in the \
+         composer underneath it"
+    );
+}
+
+#[test]
 fn composer_footer_shows_keys_line_counter_and_queue_status() {
     let model = running_model_with_queue();
     let ui = DeckUi::default();
