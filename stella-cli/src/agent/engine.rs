@@ -31,6 +31,11 @@ fn tuned_engine_config(
     let (provider_id, model_id) = catalog_ref;
     let mut engine = EngineConfig {
         cwd: cfg.workspace_root.display().to_string(),
+        // Every role gets the same turn budget: the deadline it guards is the
+        // process's, not one agent's, so a worker that declines a continuation
+        // while a judge spends the remaining time past it would defeat the
+        // point. `None` unless `--turn-budget` was given.
+        turn_budget: cfg.turn_budget,
         // Phase 2 (#713): the adaptive-context lifecycle switch, off by
         // default. Read here rather than at each receipt site so every engine
         // this session builds — default, worker, judge — agrees on it.

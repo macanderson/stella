@@ -702,11 +702,17 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
     }
 
     // Run/Chat/Config need a resolved config (which requires an API key).
-    let cfg = config::Config::load(
+    let mut cfg = config::Config::load(
         cli.globals.model.as_deref(),
         cli.globals.api_key.as_deref(),
         cli.globals.base_url.as_deref(),
     )?;
+    // Stamped here for the same reason `model_pinned_by_flag` is: `Config::load`
+    // resolves provider and credentials and has no view of the parsed CLI, and
+    // giving it one for a value it never consults would widen its signature to
+    // carry something straight through. `main` is where the flag and the config
+    // are both in hand.
+    cfg.turn_budget = cli.globals.turn_budget;
 
     // Correctness pass over the resolved settings — model-slug problems (an
     // unknown provider, a typo, an over-qualified slug that would 400 on the

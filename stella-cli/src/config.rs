@@ -314,6 +314,16 @@ pub struct Config {
     /// must not override (see `crate::agent::resolve_engine_wiring`).
     pub model_pinned_by_flag: bool,
     pub api_key: ApiKey,
+    /// `--turn-budget`: the wall clock one turn may spend, used only to decide
+    /// whether an output-limit continuation is affordable
+    /// (`EngineConfig::turn_budget`). `None` leaves that a pure count.
+    ///
+    /// It enforces nothing and cancels nothing — there is no deadline killer
+    /// behind it. It exists so a caller running under an EXTERNAL deadline
+    /// (a benchmark harness that kills the process on elapsed time) can let
+    /// the engine decline to start a continuation it cannot finish, ending
+    /// with a truthful partial instead of being destroyed mid-flight.
+    pub turn_budget: Option<std::time::Duration>,
     pub workspace_root: std::path::PathBuf,
     /// `--base-url`: required for the `local` provider (it IS the server
     /// address), an optional proxy/override for every other provider.
@@ -664,6 +674,9 @@ impl Config {
                     // Stamped by `load_with_settings`, the only place that
                     // still knows whether the flag or the settings answered.
                     model_pinned_by_flag: false,
+                    // Stamped by the caller that holds the parsed CLI; see the
+                    // field's doc comment.
+                    turn_budget: None,
                     api_key: ApiKey::new(api_key),
                     workspace_root,
                     base_url_override: Some(base_url),
@@ -853,6 +866,8 @@ impl Config {
             model_id,
             // Stamped by `load_with_settings` — see the field's doc comment.
             model_pinned_by_flag: false,
+            // Likewise stamped by the caller that holds the parsed CLI.
+            turn_budget: None,
             api_key: key,
             workspace_root: workspace_root.to_path_buf(),
             base_url_override: base_url_override.map(str::to_string),
