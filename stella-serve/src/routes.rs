@@ -137,9 +137,35 @@ pub(crate) async fn method_not_allowed(
     .await
 }
 
-/// `GET /healthz` — the only unauthenticated route.
+/// `GET /healthz` — liveness. Is this process alive?
+///
+/// Unauthenticated, and unconditionally `200` while the process can answer at
+/// all. It deliberately says nothing about whether the server should be sent
+/// work: that is [`handle_ready`]'s question, and conflating the two is what
+/// makes an orchestrator either restart a draining instance (reading
+/// not-ready as dead) or keep routing to it (having no way to ask).
 pub(crate) async fn handle_health(res: &mut Responder<'_>) -> std::io::Result<()> {
     res.json("200 OK", br#"{"status":"ok"}"#).await
+}
+
+/// `GET /readyz` — readiness. Is it safe to send this process new work?
+///
+/// `200` only while serving; `503` while starting up and while draining. The
+/// status code is the part an orchestrator acts on, so it carries the whole
+/// signal — the `state` field is for the human reading the probe by hand,
+/// which is why it names the phase rather than repeating the boolean.
+pub(crate) async fn handle_ready(
+    res: &mut Responder<'_>,
+    state: &ServerState,
+) -> std::io::Result<()> {
+    let readiness = state.lifecycle().readiness();
+    let body = format!(r#"{{"state":"{}"}}"#, readiness.as_str());
+    let status = if readiness.is_ready() {
+        "200 OK"
+    } else {
+        "503 Service Unavailable"
+    };
+    res.json(status, body.as_bytes()).await
 }
 
 /// `GET /v1/metrics` — the counters, behind the same bearer token as everything

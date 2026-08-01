@@ -7,7 +7,8 @@
 //!
 //! | Method + path | Purpose |
 //! |---|---|
-//! | `GET /healthz` | liveness |
+//! | `GET /healthz` | liveness — is this process alive |
+//! | `GET /readyz` | readiness — is it safe to send new work (#1131) |
 //! | `GET /v1/metrics` | counters ([`crate::observe::Snapshot`]) — authenticated, pull-only |
 //! | `POST /v1/turns` | start a turn (`TurnRequest` body) → `{ "turn_id": … }` |
 //! | `GET /v1/turns/{id}/events` | SSE stream of [`ServerFrame`]s until `turn_complete` |
@@ -101,19 +102,19 @@ use std::time::Duration;
 use rand::Rng as _;
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::accept::{self, AcceptAction, AcceptBackoff};
 use crate::history::FrameHistory;
 use crate::http::{BodyOutcome, ReadOutcome, discard_body, read_body, read_head};
+use crate::lifecycle::{Lifecycle, accept_loop, drain, termination_signal};
 use crate::observe::event::StreamEndReason;
 use crate::observe::event::{
-    AcceptKind, RefusalReason, RequestId, Route, ServeEvent, ShutdownReason, TurnRef,
-    host_for_record, millis,
+    RefusalReason, RequestId, Route, ServeEvent, TurnRef, host_for_record, millis,
 };
 use crate::observe::record::{RequestRecord, Responder};
 use crate::observe::{Metrics, SharedObserver};
 use crate::pending::Pending;
 use crate::routes::{self, error_body};
 use crate::session::Session;
+use crate::throttle::TokenBucket;
 
 /// How to bind, authenticate, and observe the server.
 pub struct ServeConfig {
@@ -165,6 +166,17 @@ pub struct ServeConfig {
     /// [`crate::HostMode::Inert`] — reported on `Listening` rather than
     /// silently assumed; see `crate::hostguard` for why that arm exists.
     pub allowed_hosts: Vec<String>,
+    /// How long a shutdown drain waits for in-flight turns to reach a step
+    /// boundary before cancelling what is left (#1131).
+    ///
+    /// Clamped to [`MAX_SHUTDOWN_GRACE`]. The number that matters is the
+    /// orchestrator's own: Kubernetes sends `SIGKILL` once
+    /// `terminationGracePeriodSeconds` (30 by default) elapses, and a drain
+    /// budgeted past that is not a longer drain — it is the same drain with
+    /// its tail replaced by a hard kill, which is the outcome the drain exists
+    /// to avoid. [`DEFAULT_SHUTDOWN_GRACE`] deliberately finishes inside the
+    /// default window.
+    pub shutdown_grace: Duration,
 }
 
 /// The default [`ServeConfig::resume_grace`]: thirty seconds.
@@ -189,6 +201,23 @@ pub const MAX_RESUME_GRACE: Duration = Duration::from_secs(300);
 /// the registry self-healing under pressure rather than permanently full.
 pub const DEFAULT_SESSION_IDLE_TTL: Duration = Duration::from_secs(3600);
 
+/// The default [`ServeConfig::shutdown_grace`]: twenty-five seconds.
+///
+/// Chosen against Kubernetes' 30-second default
+/// `terminationGracePeriodSeconds`, not picked as a round number: the drain
+/// has to *finish* inside the orchestrator's window, because a drain still
+/// running when `SIGKILL` lands has achieved nothing that a hard kill would
+/// not have. Five seconds of headroom covers the signal delivery, the poll
+/// granularity, and the final terminal frames.
+pub const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(25);
+
+/// Ceiling on [`ServeConfig::shutdown_grace`]: five minutes.
+///
+/// Same reasoning as [`MAX_RESUME_GRACE`]: a bound a caller could raise
+/// without limit is not a bound. A drain that cannot end is a process that
+/// cannot be redeployed.
+pub const MAX_SHUTDOWN_GRACE: Duration = Duration::from_secs(300);
+
 impl ServeConfig {
     /// The production wiring: bind, token, and the standard observability stack.
     #[must_use]
@@ -202,7 +231,20 @@ impl ServeConfig {
             resume_grace: DEFAULT_RESUME_GRACE,
             session_idle_ttl: DEFAULT_SESSION_IDLE_TTL,
             allowed_hosts: Vec::new(),
+            shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
         }
+    }
+
+    /// Set how long a shutdown drain waits before cancelling what is left,
+    /// clamped to [`MAX_SHUTDOWN_GRACE`].
+    ///
+    /// Clamped rather than rejected, for the same reason as
+    /// [`ServeConfig::with_resume_grace`]: a tuning mistake in an operational
+    /// dial must not become a failure to boot.
+    #[must_use]
+    pub fn with_shutdown_grace(mut self, grace: Duration) -> Self {
+        self.shutdown_grace = grace.min(MAX_SHUTDOWN_GRACE);
+        self
     }
 
     /// Name the hostnames this deployment answers to — see
@@ -312,6 +354,9 @@ pub(crate) struct ServerState {
     session_idle_ttl: Duration,
     /// The compiled `Host` guard, consulted before any route dispatch (#1130).
     host_policy: crate::hostguard::HostPolicy,
+    /// Ready/draining latches behind `GET /readyz` and the shutdown drain
+    /// (#1131).
+    lifecycle: Lifecycle,
 }
 
 impl ServerState {
@@ -333,6 +378,30 @@ impl ServerState {
 
     pub(crate) fn observer(&self) -> &SharedObserver {
         &self.observer
+    }
+
+    pub(crate) fn lifecycle(&self) -> &Lifecycle {
+        &self.lifecycle
+    }
+
+    /// Clones of every live turn's controls, taken under one lock and handed
+    /// back released.
+    ///
+    /// Cloning rather than acting under the lock is load-bearing: a settling
+    /// turn takes this same lock on its way out, so a drain that held it
+    /// while waiting for turns to settle would be waiting on work it was
+    /// itself blocking.
+    pub(crate) fn live_controls(&self) -> Vec<crate::controls::Controls> {
+        self.turns()
+            .values()
+            .map(|entry| entry.controls.clone())
+            .collect()
+    }
+
+    /// Every live turn's registry entry, same locking discipline as
+    /// [`ServerState::live_controls`].
+    pub(crate) fn live_entries(&self) -> Vec<Arc<Entry>> {
+        self.turns().values().map(Arc::clone).collect()
     }
 
     pub(crate) fn metrics(&self) -> &Metrics {
@@ -595,56 +664,6 @@ fn reclaim_finished_unstreamed(
     }
 }
 
-/// Burst of 401s answered with no delay. A host that restarts and races a few
-/// requests against a not-yet-updated token, or a health probe that forgets the
-/// header, should not be punished for the first handful.
-const UNAUTHORIZED_BURST: f64 = 8.0;
-
-/// Steady-state 401s per second once the burst is spent.
-const UNAUTHORIZED_REFILL_PER_SEC: f64 = 2.0;
-
-/// Delay applied to a 401 that arrives with the bucket empty.
-///
-/// This is deliberately a *delay*, not a rejection: a 429 or a dropped
-/// connection would tell an attacker they had been noticed and would break a
-/// legitimate client that is merely misconfigured. Holding the response instead
-/// costs the guesser wall-clock time per attempt — which is the entire point,
-/// since the token is a fixed shared secret with no lockout behind it — while a
-/// correctly-configured host never reaches this path at all.
-const UNAUTHORIZED_PENALTY: Duration = Duration::from_millis(500);
-
-/// A dependency-free token bucket. Deliberately per-process and not per-peer:
-/// tracking source addresses would mean unbounded state keyed by something the
-/// caller chooses, which is its own denial-of-service surface, and this is a
-/// sidecar for exactly one trusted host — a legitimate deployment produces no
-/// sustained 401s at all, so a global bucket costs it nothing.
-struct TokenBucket {
-    tokens: f64,
-    last: std::time::Instant,
-}
-
-impl TokenBucket {
-    fn new() -> Self {
-        Self {
-            tokens: UNAUTHORIZED_BURST,
-            last: std::time::Instant::now(),
-        }
-    }
-
-    /// Spend one token, returning the delay the caller must observe first.
-    fn take(&mut self, now: std::time::Instant) -> Duration {
-        let elapsed = now.saturating_duration_since(self.last).as_secs_f64();
-        self.last = now;
-        self.tokens = (self.tokens + elapsed * UNAUTHORIZED_REFILL_PER_SEC).min(UNAUTHORIZED_BURST);
-        if self.tokens >= 1.0 {
-            self.tokens -= 1.0;
-            Duration::ZERO
-        } else {
-            UNAUTHORIZED_PENALTY
-        }
-    }
-}
-
 /// Bind and serve until the accept loop hits a **fatal** error. `on_ready` fires
 /// once with the bound address (so a `:0` bind can report its port).
 ///
@@ -691,6 +710,54 @@ impl TokenBucket {
 ///
 /// [`SessionSpec::reverse_request_timeout`]: crate::SessionSpec::reverse_request_timeout
 pub async fn serve(config: ServeConfig, on_ready: impl FnOnce(SocketAddr)) -> std::io::Result<()> {
+    serve_until(config, on_ready, termination_signal()).await
+}
+
+/// [`serve`], stopping when `shutdown` resolves instead of only on a fatal
+/// listener error — the injectable form the drain is tested through (#1131).
+///
+/// `serve` is this with the process's own termination signals supplied. The
+/// split exists because a signal is the one input a test cannot deliver
+/// without affecting the whole test binary: `tokio::signal` replaces a
+/// signal's default disposition process-wide, so a suite whose servers each
+/// registered a `SIGTERM` handler would quietly become un-killable. A oneshot
+/// exercises the identical drain path with none of that.
+///
+/// # What a drain does
+///
+/// 1. Report not-ready. `GET /readyz` answers `503` from this moment, so a
+///    load balancer stops routing new traffic here.
+/// 2. Refuse new work. `POST /v1/turns` and both session-creating routes
+///    answer `503`; everything an in-flight turn needs keeps working.
+/// 3. Ask every live turn to stop at its next step boundary. An in-flight
+///    model call *completes* and its result is kept — see
+///    `Controls::soft_stop` for why that is not the same as cancelling.
+/// 4. Wait, up to [`ServeConfig::shutdown_grace`], for the turns to settle.
+/// 5. Cancel whatever is left. A turn parked on a host that never answered has
+///    no boundary to reach, so the graceful ask cannot bound it; the cancel
+///    can, and still lets each turn emit its terminal frame rather than having
+///    its future dropped.
+///
+/// # The listener stays open for the whole drain
+///
+/// It is tempting to close the port first — it reads like "stop accepting" —
+/// and it is wrong twice over. The reverse-RPC protocol means an in-flight
+/// turn is finished *by the host*, over new connections: a turn parked on a
+/// `provider_request` reaches its step boundary only once a
+/// `POST /v1/turns/{id}/provider-result` arrives. Close the port and every
+/// parked turn is unreachable, so the drain waits out its whole grace period
+/// and then cancels turns it wedged itself. `GET /readyz` is likewise
+/// unanswerable, so the one signal telling a balancer to route elsewhere
+/// disappears exactly when it is needed.
+///
+/// Refusing new work is done by *status code*, not by closing the socket. The
+/// port is released when the process exits, which is the moment the
+/// replacement instance actually needs it.
+pub async fn serve_until(
+    config: ServeConfig,
+    on_ready: impl FnOnce(SocketAddr),
+    shutdown: impl std::future::Future<Output = ()>,
+) -> std::io::Result<()> {
     let listener = TcpListener::bind(config.bind).await?;
     let bound = listener.local_addr()?;
     // Compiled against the address actually bound, not the one requested: a
@@ -708,94 +775,33 @@ pub async fn serve(config: ServeConfig, on_ready: impl FnOnce(SocketAddr)) -> st
         sessions: crate::sessions::SessionRegistry::new(),
         session_idle_ttl: config.session_idle_ttl,
         host_policy,
+        lifecycle: Lifecycle::new(),
     });
     state.observer.emit(&ServeEvent::Listening {
         addr: bound.to_string(),
         host_guard,
     });
+    // Construction is done: every later request finds a complete state, so
+    // `/readyz` may now answer `200`.
+    state.lifecycle.mark_ready();
     on_ready(bound);
-    let mut backoff = AcceptBackoff::new();
-    // Mirrors `AcceptBackoff`'s own streak. Kept here rather than exposed from
-    // `accept.rs` because that file is guarded byte-identical against
-    // `stella-observatory`'s copy — reporting is this server's concern, not the
-    // shared policy's.
-    let mut streak = 0_u32;
-    loop {
-        let stream = match listener.accept().await {
-            Ok((stream, _)) => {
-                backoff.succeeded();
-                streak = 0;
-                stream
-            }
-            Err(err) => match accept::classify(&err) {
-                // A dead pending connection or an interrupted syscall: the
-                // listener is fine, and this cannot spin (see `accept`).
-                AcceptAction::Retry => {
-                    backoff.succeeded();
-                    streak = 0;
-                    continue;
-                }
-                // Exhaustion, or a condition `io::ErrorKind` cannot name. Sleep
-                // so it cannot busy-loop, and give up if it never clears.
-                AcceptAction::Backoff => {
-                    streak += 1;
-                    let kind = accept_kind(&err);
-                    match backoff.next_delay() {
-                        Some(delay) => {
-                            state.observer.emit(&ServeEvent::AcceptBackoff {
-                                kind,
-                                delay_ms: millis(delay),
-                                streak,
-                            });
-                            tokio::time::sleep(delay).await;
-                            continue;
-                        }
-                        None => {
-                            state
-                                .observer
-                                .emit(&ServeEvent::AcceptGaveUp { kind, streak });
-                            shutting_down(&state);
-                            return Err(err);
-                        }
-                    }
-                }
-                AcceptAction::Fatal => {
-                    shutting_down(&state);
-                    return Err(err);
-                }
-            },
-        };
-        // Nagle off. Every frame on this wire gates the next engine step — a
-        // `provider_request` the host has not seen yet is a step that cannot
-        // proceed — so coalescing a small write with the next one trades
-        // nothing for up to a delayed-ACK's worth of added latency per step.
-        let _ = stream.set_nodelay(true);
-        let state = Arc::clone(&state);
-        // Per-connection errors (client hangup, bad request) stay local to the
-        // connection; the accept loop keeps serving. The error is no longer
-        // discarded — `RequestRecord::close` names it before this returns.
-        tokio::spawn(async move {
-            let _ = handle_conn(stream, state).await;
-        });
-    }
-}
+    let shutdown_grace = config.shutdown_grace.min(MAX_SHUTDOWN_GRACE);
 
-/// Which exhaustion class an accept error belongs to, mirroring `accept.rs`'s
-/// own split without modifying that (drift-guarded) file.
-fn accept_kind(err: &std::io::Error) -> AcceptKind {
-    match err.kind() {
-        std::io::ErrorKind::OutOfMemory => AcceptKind::Exhaustion,
-        // EMFILE/ENFILE/ENOBUFS have no `ErrorKind`, so they land here too —
-        // "unnameable" is the honest label for what we can actually tell.
-        _ => AcceptKind::Unnameable,
+    // The two run concurrently on purpose — see the "listener stays open"
+    // note above. Whichever finishes first ends the server: a completed drain
+    // is the orderly exit, a returning accept loop is the fatal-listener one.
+    // Dropping the loser is safe either way; `TcpListener::accept` is
+    // cancel-safe, and an in-flight connection lives in its own spawned task
+    // rather than in this future.
+    let accepting = accept_loop(&state, listener);
+    let draining = async {
+        shutdown.await;
+        drain(&state, shutdown_grace).await;
+    };
+    tokio::select! {
+        result = accepting => result,
+        () = draining => Ok(()),
     }
-}
-
-fn shutting_down(state: &Arc<ServerState>) {
-    state.observer.emit(&ServeEvent::ShuttingDown {
-        reason: ShutdownReason::ListenerFailed,
-        live_turns: state.turns().len(),
-    });
 }
 
 /// Serve one connection, and report it exactly once.
@@ -807,7 +813,10 @@ fn shutting_down(state: &Arc<ServerState>) {
 /// "remember to report" across its sixteen exits is one refactor away from
 /// being silently false, which is exactly how the PROOF rail (#901) shipped a
 /// surface that reported only on the happy path.
-async fn handle_conn(mut stream: TcpStream, state: Arc<ServerState>) -> std::io::Result<()> {
+pub(crate) async fn handle_conn(
+    mut stream: TcpStream,
+    state: Arc<ServerState>,
+) -> std::io::Result<()> {
     let mut record = RequestRecord::opening(RequestId::generate());
     // Read the head first so the peer's correlation id can be adopted, but note
     // the record already exists: a peer that never completes a head still gets
@@ -930,6 +939,16 @@ async fn route(
         discard_body(res.stream_mut(), &mut req).await;
         return routes::handle_health(res).await;
     }
+    // Unauthenticated for the same reason `/healthz` is: a readiness probe is
+    // infrastructure, run by a kubelet or a load balancer that has no bearer
+    // token and no way to be given one. It reveals strictly less than
+    // `/healthz` already does — that the process is alive is implied by any
+    // answer at all, and "draining" is a state an operator's own orchestrator
+    // put it in.
+    if route == Route::Readyz && req.method == "GET" {
+        discard_body(res.stream_mut(), &mut req).await;
+        return routes::handle_ready(res, state).await;
+    }
     // Compared in constant time: `==` on a `&str` stops at the first differing
     // byte, which leaks the shared secret one byte at a time to a caller that
     // can time its own 401s. A missing header stays a hard `false` so an
@@ -960,6 +979,38 @@ async fn route(
             .json(
                 "401 Unauthorized",
                 br#"{"error":"missing or invalid bearer token"}"#,
+            )
+            .await;
+    }
+
+    // A draining process finishes what it has and admits nothing new (#1131).
+    //
+    // The split is what makes a drain a drain rather than a stall: the three
+    // routes below *start* work, so they are refused, while everything an
+    // in-flight turn needs to reach its step boundary — `tool-result` and
+    // `provider-result` above all, but also cancel/pause/resume/steer and the
+    // `/events` stream watching it — keeps working. Refusing a
+    // `provider-result` here would park every turn on a reverse request it
+    // could no longer be answered on, and the drain would then time out
+    // cancelling turns it had itself wedged.
+    //
+    // Placed after the auth check on purpose: an anonymous caller learns
+    // "wrong token", not "this instance is going away".
+    if state.lifecycle().is_draining()
+        && matches!(
+            route,
+            Route::TurnsCreate | Route::SessionsCreate | Route::SessionTurns
+        )
+    {
+        discard_body(res.stream_mut(), &mut req).await;
+        // `Retry-After: 1` points a client at its *next* attempt, which a load
+        // balancer that has seen `/readyz` go `503` will route to a different
+        // instance. It is not a promise that this one will be back.
+        return res
+            .json_with_headers(
+                "503 Service Unavailable",
+                &[("Retry-After", "1")],
+                &error_body("server is shutting down and is not accepting new work"),
             )
             .await;
     }
@@ -1087,6 +1138,7 @@ fn route_addresses_a_turn(route: Route) -> bool {
 fn classify<'a>(segs: &[&'a str]) -> (Route, Option<&'a str>) {
     match segs {
         ["healthz"] => (Route::Healthz, None),
+        ["readyz"] => (Route::Readyz, None),
         ["v1", "metrics"] => (Route::Metrics, None),
         ["v1", "turns"] => (Route::TurnsCreate, None),
         ["v1", "turns", id, "events"] => (Route::TurnEvents, Some(id)),
@@ -1139,7 +1191,7 @@ fn resume_point(query: &str, req: &crate::http::Request) -> Option<u64> {
 /// The `Allow` header value for a known route.
 fn allowed(route: Route) -> &'static str {
     match route {
-        Route::Healthz | Route::Metrics | Route::TurnEvents => "GET",
+        Route::Healthz | Route::Readyz | Route::Metrics | Route::TurnEvents => "GET",
         Route::TurnsCreate
         | Route::TurnToolResult
         | Route::TurnProviderResult
@@ -1198,49 +1250,6 @@ mod tests {
     use stella_core::{BudgetGuard, EngineConfig};
     use stella_protocol::{BudgetMode, CompletionMessage};
 
-    /// A brute-force run against the only credential this service has must
-    /// stop being free after the burst. Driven over an injected `Instant` so
-    /// the refill is asserted exactly, with no sleeping in the test.
-    #[test]
-    fn sustained_401s_are_throttled_once_the_burst_is_spent() {
-        let start = std::time::Instant::now();
-        let mut bucket = TokenBucket::new();
-        for attempt in 0..UNAUTHORIZED_BURST as usize {
-            assert_eq!(
-                bucket.take(start),
-                Duration::ZERO,
-                "attempt {attempt} is within the burst and must not be delayed"
-            );
-        }
-        assert_eq!(
-            bucket.take(start),
-            UNAUTHORIZED_PENALTY,
-            "the first attempt past the burst is held"
-        );
-        // Half a second of refill at 2/sec is exactly one token.
-        assert_eq!(
-            bucket.take(start + Duration::from_millis(500)),
-            Duration::ZERO
-        );
-        assert_eq!(
-            bucket.take(start + Duration::from_millis(500)),
-            UNAUTHORIZED_PENALTY,
-            "and it is spent again immediately"
-        );
-    }
-
-    #[test]
-    fn refill_is_capped_at_the_burst_size() {
-        let start = std::time::Instant::now();
-        let mut bucket = TokenBucket::new();
-        // An hour idle must not bank an hour of tokens.
-        let later = start + Duration::from_secs(3600);
-        for _ in 0..UNAUTHORIZED_BURST as usize {
-            assert_eq!(bucket.take(later), Duration::ZERO);
-        }
-        assert_eq!(bucket.take(later), UNAUTHORIZED_PENALTY);
-    }
-
     fn test_state() -> (ServerState, Arc<Capture>) {
         let capture = Arc::new(Capture::new());
         let state = ServerState {
@@ -1259,6 +1268,13 @@ mod tests {
                     .expect("a literal loopback address"),
                 &[],
             ),
+            // Ready, not draining: the unit tests below exercise routing and
+            // the turn registry, neither of which is about the drain.
+            lifecycle: {
+                let lifecycle = Lifecycle::new();
+                lifecycle.mark_ready();
+                lifecycle
+            },
         };
         (state, capture)
     }

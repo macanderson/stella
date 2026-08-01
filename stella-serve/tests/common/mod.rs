@@ -26,7 +26,7 @@ use stella_protocol::{CompletionMessage, ToolSchema};
 use stella_serve::observe::{
     Capture, Fanout, Metrics, ServeEvent, SharedObserver, StreamEndReason,
 };
-use stella_serve::{ServeConfig, serve};
+use stella_serve::{ServeConfig, serve_until};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
@@ -70,10 +70,31 @@ pub async fn start_observed_server() -> (SocketAddr, Arc<Capture>) {
 /// [`start_observed_server`] with an explicit resume window, for the tests that
 /// are *about* that window.
 pub async fn start_observed_server_with(resume_grace: Duration) -> (SocketAddr, Arc<Capture>) {
+    let (addr, capture, _shutdown) =
+        start_drainable_server(resume_grace, stella_serve::DEFAULT_SHUTDOWN_GRACE).await;
+    // The shutdown handle is dropped: a dropped `oneshot::Sender` resolves its
+    // receiver, so the returned future would fire immediately and every server
+    // in the suite would drain the moment it started. `pending_shutdown`
+    // inside is what keeps that from happening — see there.
+    (addr, capture)
+}
+
+/// A server whose drain a test can trigger, plus the handle that triggers it.
+///
+/// Sending on the returned [`oneshot::Sender`] is the test-side stand-in for a
+/// `SIGTERM`. It drives the identical path — `serve` is `serve_until` with the
+/// process's signals supplied — without registering a real signal handler,
+/// which would replace `SIGTERM`'s disposition for the whole test binary and
+/// quietly make the suite un-killable (#1131).
+pub async fn start_drainable_server(
+    resume_grace: Duration,
+    shutdown_grace: Duration,
+) -> (SocketAddr, Arc<Capture>, oneshot::Sender<()>) {
     let capture = Arc::new(Capture::new());
     let observer = capture.clone();
     let metrics = Arc::new(Metrics::new());
     let (tx, rx) = oneshot::channel();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let fanout: SharedObserver = Arc::new(Fanout::new(vec![observer, metrics.clone()]));
     tokio::spawn(async move {
         let config = ServeConfig {
@@ -89,14 +110,31 @@ pub async fn start_observed_server_with(resume_grace: Duration) -> (SocketAddr, 
             // `Host: localhost` accordingly — `Host: engine` was a fiction no
             // real client would send (#1130).
             allowed_hosts: Vec::new(),
+            shutdown_grace,
         };
-        let _ = serve(config, move |addr| {
-            let _ = tx.send(addr);
-        })
+        let _ = serve_until(
+            config,
+            move |addr| {
+                let _ = tx.send(addr);
+            },
+            pending_shutdown(shutdown_rx),
+        )
         .await;
     });
     let addr = rx.await.expect("server reported its bound address");
-    (addr, capture)
+    (addr, capture, shutdown_tx)
+}
+
+/// Resolve when the sender *sends*, never when it is merely dropped.
+///
+/// A bare `oneshot::Receiver` resolves (with an error) on drop, which would
+/// make every server started by [`start_observed_server_with`] — which drops
+/// its handle immediately — drain before its test did anything. Swallowing the
+/// drop case turns the handle into a pure "trigger" rather than a lifetime.
+async fn pending_shutdown(rx: oneshot::Receiver<()>) {
+    if rx.await.is_err() {
+        std::future::pending::<()>().await;
+    }
 }
 
 /// POST a JSON body and read the whole response (server sends `Connection:

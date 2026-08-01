@@ -5,9 +5,9 @@
 Option B, the Rust sidecar. It builds its own binary and nothing in
 `stella-cli` links it, so a change here never reaches a `stella` user.
 **This document describes the target surface, not all of it is built:** the
-code today has no approval gate and no SIGTERM drain. Turn cancellation, a
-reverse-request deadline, — as of #1130 — the **DNS-rebinding `Host` guard**,
-— as of #971 phase 2 —
+code today has no approval gate. Turn cancellation, a reverse-request
+deadline, — as of #1130 — the **DNS-rebinding `Host` guard**, — as of #1131 —
+the **SIGTERM drain and `GET /readyz`**, — as of #971 phase 2 —
 **resumable SSE streams** (`seq`, retained history, `?after=` /
 `Last-Event-ID`), — as of #932 — **mid-turn steering and pause/resume**, and —
 as of #931 — **server-owned sessions** (`/v1/sessions`, retained history,
@@ -43,7 +43,8 @@ not in this table is a 404.
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/healthz` | The **only** unauthenticated route. `{"status":"ok"}` |
+| `GET` | `/healthz` | Unauthenticated. Liveness — is the process alive. `{"status":"ok"}` |
+| `GET` | `/readyz` | Unauthenticated. Readiness — is it safe to send new work. `200 {"state":"ready"}`, or `503` with `"starting"` / `"draining"` (#1131) |
 | `GET` | `/v1/metrics` | Counters as a flat JSON object of integers. Authenticated like every other route, and **pull-only** — see [serve-observability.md](./serve-observability.md) |
 | `POST` | `/v1/turns` | Body is `TurnRequest`; returns `{"turn_id":"turn-<32 hex>"}` |
 | `GET` | `/v1/turns/{id}/events` | SSE `id: <seq>` + `data: <ServerFrame>`. Resumable via `?after=<seq>` or `Last-Event-ID`. One concurrent subscriber; a second gets 409 |
@@ -74,7 +75,9 @@ destination, and which a client written from it gets wrong:
   drives exactly one turn with host-supplied messages and retains nothing.
   Sessions are additive (#931), not a replacement — and note the shape is
   `POST /v1/sessions/{id}/turns` (plural), not the singular `/turn` some
-  diagrams below sketch. `/readyz` does not exist. `/v1/metrics` **does**.
+  diagrams below sketch. `/readyz` **now exists** (#1131) and, like `/healthz`,
+  is unauthenticated — a kubelet has no bearer token. `/v1/metrics` **does**
+  exist and is authenticated.
 - **Reverse RPC is keyed by `request_id` on its own frame types**, not by a
   `call_id` on a `tool_start` / `scope_review` / `ask_user` `AgentEvent`. The
   engine emits dedicated `tool_request` / `provider_request` `ServerFrame`
@@ -367,10 +370,23 @@ mode:
   delegating all execution to the host's `RemoteToolExecutor`.
 - **does not use `stella-store` or `stella-cli` shell hooks server-side** (per
   ADR-033 §4.1) — persistence and policy are the platform's.
-- **Not yet built:** the **graceful shutdown** the CLI lacks — SIGTERM draining
-  in-flight turns to the next step boundary (soft-stop), then exiting. There is
-  no signal handling in `stella-serve/src/` today; only the per-session
-  lifecycle tears down cleanly (the CLI has SIGPIPE + TUI-drop cleanup).
+- **drains on SIGTERM** rather than hard-killing in-flight turns (#1131).
+  `SIGTERM`/`SIGINT` flips `GET /readyz` to `503`, refuses `POST /v1/turns` and
+  both session-creating routes with `503` + `Retry-After`, and asks every live
+  turn to stop at its next step boundary — so an in-flight model call *lands*
+  and its result is kept, which cancelling would have thrown away. Turns that
+  do not reach a boundary inside `STELLA_SERVE_SHUTDOWN_GRACE_SECS` (25s by
+  default, under Kubernetes' 30s `terminationGracePeriodSeconds`) are then
+  cancelled — still a step-boundary unwind that emits `turn_complete`, never a
+  dropped future. The outcome is reported as `drain_completed
+  {drained, cancelled, timed_out}`.
+
+  The **listener stays open for the whole drain**, which is the
+  counter-intuitive part and load-bearing: reverse RPC means a parked turn is
+  finished *by the host* over new connections, so closing the port would strand
+  every turn the drain is waiting for — and would take `/readyz` with it.
+  New work is refused by status code; the port is released when the process
+  exits.
 
 ## Metering parity
 

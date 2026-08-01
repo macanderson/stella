@@ -14,6 +14,8 @@
 //!                          for the DNS-rebinding Host guard. Only consulted on a
 //!                          non-loopback bind; unset there leaves the guard inert,
 //!                          which is reported on the `listening` record
+//! STELLA_SERVE_SHUTDOWN_GRACE_SECS  seconds a SIGTERM drain waits for in-flight turns to
+//!                          reach a step boundary before cancelling (default 25, max 300)
 //! STELLA_SERVE_LOG         off | error | warn | info (default) | debug — verbosity of
 //!                          the JSON-per-line records on stderr. An unrecognised value
 //!                          falls back to `info`: a typo in a log knob must not take a
@@ -32,6 +34,12 @@
 //!
 //! `stella-serve healthcheck` probes `/healthz` on the bind port and exits 0/1,
 //! so a container HEALTHCHECK needs no extra tooling in the runtime image.
+//!
+//! `SIGTERM` (and `SIGINT`) begin a graceful drain rather than killing the
+//! process: `/readyz` flips to `503` so a balancer stops routing here, new
+//! turns and sessions are refused, and every in-flight turn is asked to stop
+//! at its next step boundary — keeping the model call it already paid for —
+//! before the process exits.
 //!
 //! `--version` and `--help` exist for host integrations rather than for people.
 //! A host that embeds this server (Oxagen — see `docs/design/serve-surface.md`)
@@ -83,10 +91,17 @@ ENVIRONMENT:
     STELLA_SERVE_LOG         off | error | warn | info (default) | debug —
                              verbosity of the JSON-per-line records on stderr.
                              An unrecognised value falls back to `info`.
+    STELLA_SERVE_SHUTDOWN_GRACE_SECS
+                             how long a SIGTERM drain waits for in-flight turns
+                             to reach a step boundary before cancelling what is
+                             left (default 25, capped at 300). Keep it under the
+                             orchestrator's own termination grace period, or
+                             SIGKILL lands mid-drain and the drain bought
+                             nothing.
 
 One of STELLA_SERVE_TOKEN_FILE / STELLA_SERVE_TOKEN is required.
 
-The server exposes GET /healthz unauthenticated, and GET /v1/metrics,
+The server exposes GET /healthz and GET /readyz unauthenticated, and GET /v1/metrics,
 POST /v1/turns, GET /v1/turns/{id}/events,
 POST /v1/turns/{id}/{provider-result,tool-result,cancel} behind the bearer
 token. See docs/design/serve-surface.md and docs/design/serve-observability.md.
@@ -185,7 +200,9 @@ async fn run() -> ExitCode {
     // on stdout because it is the process's readiness contract — the container
     // healthcheck and the dev scripts parse it, and a record on stderr at a
     // configurable level is not something a supervisor can depend on.
-    let config = ServeConfig::new(addr, token).with_allowed_hosts(allowed_hosts());
+    let config = ServeConfig::new(addr, token)
+        .with_allowed_hosts(allowed_hosts())
+        .with_shutdown_grace(shutdown_grace());
     match serve(config, |bound| {
         println!("stella-serve listening on {bound}")
     })
@@ -215,6 +232,18 @@ fn allowed_hosts() -> Vec<String> {
         .filter(|h| !h.is_empty())
         .map(str::to_string)
         .collect()
+}
+
+/// How long a `SIGTERM` drain waits, from `STELLA_SERVE_SHUTDOWN_GRACE_SECS`.
+///
+/// An unparseable value falls back to the default rather than refusing to
+/// boot, the same posture `STELLA_SERVE_LOG` takes: a typo in an operational
+/// dial must not take a service down, and the default is a safe answer.
+fn shutdown_grace() -> Duration {
+    std::env::var("STELLA_SERVE_SHUTDOWN_GRACE_SECS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .map_or(stella_serve::DEFAULT_SHUTDOWN_GRACE, Duration::from_secs)
 }
 
 /// Resolve the bearer token from `STELLA_SERVE_TOKEN_FILE` (preferred) or

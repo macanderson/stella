@@ -35,12 +35,14 @@ async-trait.workspace = true
 # other live turn addressable to anyone who sees one in a log. Already a
 # workspace dependency (stella-core, stella-store, stella-tools, stella-mcp).
 rand.workspace = true
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros", "net", "io-util"] }
+# `signal` is what makes the SIGTERM drain possible (#1131); without it a
+# redeploy hard-kills whatever turns happen to be in flight.
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros", "net", "io-util", "signal"] }
 
 [dev-dependencies]
 # `test-util` gives the paused clock, which is what makes the 30s read deadline
 # assertable in microseconds instead of thirty real seconds of CI time.
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros", "net", "io-util", "test-util"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros", "net", "io-util", "signal", "test-util"] }
 # Already in `[workspace.dependencies]` and already built for other crates, so
 # this adds no crate to the graph. Needed for the one property that matters
 # here: every connection produces exactly one record. The original bug this

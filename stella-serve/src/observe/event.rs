@@ -92,6 +92,8 @@ impl LevelFilter {
 pub enum Route {
     #[serde(rename = "/healthz")]
     Healthz,
+    #[serde(rename = "/readyz")]
+    Readyz,
     #[serde(rename = "/v1/metrics")]
     Metrics,
     #[serde(rename = "/v1/turns")]
@@ -130,6 +132,7 @@ impl Route {
     pub fn template(self) -> &'static str {
         match self {
             Self::Healthz => "/healthz",
+            Self::Readyz => "/readyz",
             Self::Metrics => "/v1/metrics",
             Self::TurnsCreate => "/v1/turns",
             Self::TurnEvents => "/v1/turns/{id}/events",
@@ -407,6 +410,8 @@ pub enum AcceptKind {
 pub enum ShutdownReason {
     /// The listener returned a fatal error, or backoff gave up.
     ListenerFailed,
+    /// `SIGTERM`/`SIGINT` arrived — an orderly drain, not a failure (#1131).
+    SignalReceived,
 }
 
 /// What one turn actually did, folded from the engine's own `AgentEvent`
@@ -450,6 +455,18 @@ pub enum ServeEvent {
     ShuttingDown {
         reason: ShutdownReason,
         live_turns: usize,
+    },
+    /// A shutdown drain finished (#1131). The pair of counts is the whole
+    /// operational question a redeploy asks: `drained` turns reached a step
+    /// boundary with their work kept, `cancelled` ones had to be unwound
+    /// because they never got there — a persistently non-zero `cancelled`
+    /// across deploys means the grace period is shorter than this workload's
+    /// steps, which is a dial, not a mystery.
+    DrainCompleted {
+        drained: usize,
+        cancelled: usize,
+        /// Whether the grace period elapsed with turns still live.
+        timed_out: bool,
     },
 
     // ---- the request fold: exactly one per accepted connection ----
@@ -607,6 +624,7 @@ impl ServeEvent {
             // Routine progress.
             Self::Listening { .. }
             | Self::ShuttingDown { .. }
+            | Self::DrainCompleted { .. }
             | Self::RequestCompleted { .. }
             | Self::TurnCreated { .. }
             | Self::TurnSettled { .. }
