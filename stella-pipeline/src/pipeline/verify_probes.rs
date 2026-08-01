@@ -145,6 +145,7 @@ impl<'a> Pipeline<'a> {
             new_diag_errors: inputs.new_diag_errors,
             new_diag_warnings: inputs.new_diag_warnings,
             witness_intact,
+            witness_mutation: state.witness_mutation,
         }
     }
 }

@@ -301,8 +301,9 @@ pub(crate) struct WorkspacePorts {
     pub(crate) repo_structure: GitRepoStructure,
     pub(crate) repo_status: GitRepoStatus,
     pub(crate) diagnostic_runner: GitDiagnosticRunner,
-    /// The regression-veto lint probe (#861), rooted at the session tree.
     pub(crate) lint_probe: ToolchainLintProbe,
+    /// The witness mutation check (#870), rooted at the session tree.
+    pub(crate) mutation_probe: FsMutationProbe,
     pub(crate) test_runner: TypedTestRunner,
     /// Used for best-of-N and for candidate-local authored witnesses at N=1.
     pub(crate) candidate_workspaces: crate::candidate_ws::GitCandidateWorkspaces,
@@ -383,6 +384,7 @@ pub(crate) fn workspace_ports(
         repo_status: GitRepoStatus { root: root.clone() },
         diagnostic_runner: GitDiagnosticRunner::new(root.clone()),
         lint_probe: ToolchainLintProbe { root: root.clone() },
+        mutation_probe: FsMutationProbe { root: root.clone() },
         test_runner: TypedTestRunner { root },
         candidate_workspaces,
         mcp_prefetch: mcp.map(crate::candidate_ws::McpPrefetchAdapter::new),
@@ -402,6 +404,75 @@ pub(crate) struct ToolchainLintProbe {
 /// patience: a lint pass that needs longer than this is not a cheap veto
 /// probe any more.
 const LINT_PROBE_TIMEOUT_SECS: u64 = 240;
+
+/// The witness mutation check's host half (#870): apply one single-line
+/// mutant IN PLACE, run the witness invocation, and restore the original
+/// bytes. In-place with restore — instead of a scratch copy — because the
+/// tree at `root` is the sealed candidate itself and a full copy per mutant
+/// would dwarf the cost of the check; the restore is byte-exact and its
+/// failure is reported as `TreePoisoned` so the pipeline fails the candidate
+/// closed rather than shipping a mutated tree.
+pub(crate) struct FsMutationProbe {
+    pub(crate) root: std::path::PathBuf,
+}
+
+#[async_trait::async_trait]
+impl stella_pipeline::MutationProbe for FsMutationProbe {
+    async fn run_mutant(
+        &self,
+        root: Option<&str>,
+        mutation: &stella_pipeline::LineMutation,
+        invocation: &stella_pipeline::TestInvocation,
+    ) -> stella_pipeline::MutantOutcome {
+        use stella_pipeline::MutantOutcome;
+        let root = root
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| self.root.clone());
+        let file = root.join(&mutation.path);
+        let Ok(original) = tokio::fs::read_to_string(&file).await else {
+            return MutantOutcome::Unavailable;
+        };
+        // The mutant applies to ONE known line whose content must still
+        // match the diff it was proposed from — a drifted line means we
+        // would be breaking something other than the candidate's change.
+        let mut lines: Vec<&str> = original.split_inclusive('\n').collect();
+        let index = (mutation.line as usize).saturating_sub(1);
+        let Some(line) = lines.get(index) else {
+            return MutantOutcome::Unavailable;
+        };
+        if line.trim_end_matches(['\n', '\r']) != mutation.original {
+            return MutantOutcome::Unavailable;
+        }
+        let newline = &line[line.trim_end_matches(['\n', '\r']).len()..];
+        let mutated_line = format!("{}{newline}", mutation.mutated);
+        lines[index] = &mutated_line;
+        let mutated = lines.concat();
+        if tokio::fs::write(&file, &mutated).await.is_err() {
+            // Nothing was changed; the check simply cannot run here.
+            return MutantOutcome::Unavailable;
+        }
+        let outcome = run_command(test_process(invocation, &root)).await;
+        // Restore is the safety-critical half: the tree must end
+        // byte-identical to the sealed candidate. Retry before declaring
+        // the tree poisoned.
+        let mut restored = false;
+        for _ in 0..3 {
+            if tokio::fs::write(&file, &original).await.is_ok() {
+                restored = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        if !restored {
+            return MutantOutcome::TreePoisoned;
+        }
+        match outcome.assertion_result() {
+            Some(passed) => MutantOutcome::Witness { passed },
+            // A timed-out mutant run observed nothing about the witness.
+            None => MutantOutcome::Unavailable,
+        }
+    }
+}
 
 #[async_trait::async_trait]
 impl stella_pipeline::LintProbe for ToolchainLintProbe {
