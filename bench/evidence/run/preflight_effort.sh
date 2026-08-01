@@ -56,10 +56,16 @@ PROMPT_END
 MAX_TOKENS=64000
 
 probe() { # $1=key  $2=effort  -> output_tokens | ERROR:...
-  python3 - "$1" "$2" "$MODEL" "$PROMPT" "$MAX_TOKENS" <<'PY'
-import json, sys, urllib.request, urllib.error
+  # The key goes through the environment, never argv. A process's command line
+  # is world-readable via ps/pgrep on a shared host, so passing a credential
+  # as an argument publishes it to every user on the box for the life of the
+  # call — and this script's calls are the slow ones. The env block of another
+  # user's process is not readable the same way.
+  PROBE_KEY="$1" python3 - "$2" "$MODEL" "$PROMPT" "$MAX_TOKENS" <<'PY'
+import json, os, sys, urllib.request, urllib.error
 
-key, effort, model, prompt, max_tokens = sys.argv[1:6]
+key = os.environ["PROBE_KEY"]
+effort, model, prompt, max_tokens = sys.argv[1:5]
 body = json.dumps({
     "model": model,
     "max_tokens": int(max_tokens),
