@@ -1,7 +1,6 @@
 {
   "title": "Guides",
   "pages": [
-    "index",
     "fix-failing-ci",
     "unfamiliar-codebase",
     "budget",
