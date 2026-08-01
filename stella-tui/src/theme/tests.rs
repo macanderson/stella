@@ -154,7 +154,7 @@ fn every_named_token_has_a_fallback() {
 fn role_aliases_track_their_palette_token() {
     // Brand roles resolve to the generated palette, not to a local literal.
     // Under the comet kit the accent IS the gold: one Phosphor Gold serves
-    // text, rules and fills (10.74:1 on ground), so ACCENT, ACCENT_FILL and
+    // text, rules and fills (11.36:1 on ground), so ACCENT, ACCENT_FILL and
     // GOLD are one value on purpose.
     assert_eq!(ACCENT, palette::BRAND);
     assert_eq!(ACCENT_FILL, ACCENT);
@@ -311,7 +311,7 @@ fn hue_separation(a: Color, b: Color) -> f64 {
 /// deleting it.
 ///
 /// The comet recolour changed the law in three real ways. First, the exact
-/// values are load-bearing: Phosphor Gold `#FFB000` and Ink `#0B0B0C` are
+/// values are load-bearing: Phosphor Gold `#FFB81A` and Ink `#0B0B0C` are
 /// the brand, so clause 1 pins the hex rather than merely the dominance.
 /// Second, the ground lost its cast: ink is a warm-neutral near-black, so
 /// the old "the canvas must carry the blue cast" clause inverts back into
@@ -363,7 +363,7 @@ fn palette_law_gold_is_the_brand() {
     const RETIRED_BLUE_INK: Color = Color::Rgb(0x15, 0x50, 0xC8);
     const RETIRED_BLUE_INK_DEEP: Color = Color::Rgb(0x0F, 0x3A, 0x94);
     /// The warm-tinted gold that shipped beside the blue (`#F5C145` family).
-    /// The comet gold is `#FFB000` exactly; the old tint may not resurface.
+    /// The comet gold is `#FFB81A` exactly; the old tint may not resurface.
     const RETIRED_WARM_GOLD: Color = Color::Rgb(0xF5, 0xC1, 0x45);
     const RETIRED_WARM_GOLD_BRIGHT: Color = Color::Rgb(0xFF, 0xD8, 0x73);
     const RETIRED_WARM_GOLD_DEEP: Color = Color::Rgb(0xC9, 0x94, 0x20);
@@ -377,12 +377,12 @@ fn palette_law_gold_is_the_brand() {
 
     // 1. The accent is Phosphor Gold and the ground is Ink — the exact kit
     //    values, pinned by hex so the brand cannot silently drift. This is
-    //    the one clause that names numbers: `#FFB000` on `#0B0B0C` is the
+    //    the one clause that names numbers: `#FFB81A` on `#0B0B0C` is the
     //    identity.
     assert_eq!(
         ACCENT,
-        Color::Rgb(0xFF, 0xB0, 0x00),
-        "the accent must be Phosphor Gold #FFB000, exactly"
+        Color::Rgb(0xFF, 0xB8, 0x1A),
+        "the accent must be Phosphor Gold #FFB81A, exactly"
     );
     assert_eq!(
         GROUND,

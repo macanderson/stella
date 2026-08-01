@@ -138,8 +138,8 @@ pub const MAGENTA: Color = palette::DATA_3;
 // Role names remap onto the palette so call sites read as intent (accent,
 // ink, rule) rather than as a hue that a future recolor would falsify.
 
-/// stella's brand accent — Phosphor Gold `#FFB000`, the kit value exactly
-/// (10.74:1 on [`GROUND`]). Brand, active/running, focus, selection, and
+/// stella's brand accent — Phosphor Gold `#FFB81A`, the kit value lifted 10%
+/// in lightness (11.36:1 on [`GROUND`]). Brand, active/running, focus, selection, and
 /// progress only. In the transcript, the tool name and nothing else. The
 /// active theme's actual hue is applied per-frame by [`apply_theme`]; this is
 /// the canonical dark value every call site renders.
@@ -147,15 +147,16 @@ pub const MAGENTA: Color = palette::DATA_3;
 /// Unlike the blue it replaced, gold needs no separate text tone: the same
 /// value clears AA on a glyph, a one-cell rule, and a fill on every dark
 /// ground. When it is a *fill*, the text on it must be [`GROUND`]-dark —
-/// ink on gold is 10.74:1 where white on gold is 1.83:1.
+/// ink on gold is 11.36:1 where white on gold is 1.73:1.
 pub const ACCENT: Color = palette::BRAND;
 /// The brand hue for *fills* — a pill, a bar body, a selected-tab wash. The
 /// same Phosphor Gold: one owned colour means the stroke and the fill agree,
 /// and the fill's legibility comes from pairing it with ink text, never from
 /// a second hue.
 pub const ACCENT_FILL: Color = palette::BRAND;
-/// A deeper accent (gradient / pressed) — kit `gold-600`, the leading stop of
-/// the progress fill (7.24:1 on ground, so the fill's tail clears AA).
+/// A deeper accent (gradient / pressed) — kit `gold-600` lifted 10% with the
+/// brand, the leading stop of the progress fill (8.77:1 on ground, so the
+/// fill's tail clears AA).
 pub const ACCENT_DEEP: Color = palette::BRAND_DEEP;
 
 /// The identity gold — the logo's block cursor, splash rules, section
@@ -571,7 +572,7 @@ const FALLBACKS: &[(Color, u8, u8)] = &[
     (TEXT_PRIMARY, 255, 15),
     (TEXT_SECONDARY, 246, 7),
     (TEXT_TERTIARY, 245, 8),
-    // Phosphor Gold `#FFB000` sits one unit from cube entry 214 (255,175,0) —
+    // Phosphor Gold `#FFB81A` sits one unit from cube entry 214 (255,175,0) —
     // for once the terminal cube holds the brand almost exactly. The family
     // stays on the *yellow* side everywhere: the nearest entry to
     // `gold-bright` is 215 (255,175,95), an orange, and orange is the one
@@ -683,7 +684,7 @@ const LIGHT_REMAP: &[(Color, Color)] = &[
     (TEXT_TERTIARY, palette::INK_DIM),
     // Brand → the deep gold ramp. ACCENT, ACCENT_FILL and GOLD are one
     // Phosphor Gold value, so one entry sends every flat gold cell to
-    // `brand-ink` (kit gold-800, 6.04:1 on paper) — the kit's `gold-deep`
+    // `brand-ink` (kit gold-800 lifted 10%, 5.22:1 on paper) — the kit's `gold-deep`
     // is reserved for *graphical* chrome via `gold_stops`, because at
     // 3.79:1 it cannot carry terminal-cell text on paper.
     (ACCENT, palette::BRAND_INK),
