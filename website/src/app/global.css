@@ -611,6 +611,28 @@
   color: var(--color-fd-foreground);
 }
 
+/* The home page's top bar (#nd-nav, unique to fumadocs' HomeLayout header —
+ * docs pages never render an element with this id) fades in once the reader
+ * scrolls; see components/home-chrome.tsx for the attribute it toggles. No
+ * attribute at all — no JS, or any non-home page — means the default: shown.
+ * Opacity/transform only, never `display` or height, so the bar keeps its
+ * sticky flow space reserved and nothing jumps when it appears. */
+#nd-nav {
+  transition:
+    opacity 220ms ease,
+    transform 220ms ease;
+}
+html[data-home-nav="hidden"] #nd-nav {
+  opacity: 0;
+  transform: translateY(-0.5rem);
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  #nd-nav {
+    transition: none;
+  }
+}
+
 /* The brand name set in running text — always lowercase, always mono. */
 .lp-brand-face {
   font-family: var(--font-mono);

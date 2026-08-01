@@ -59,6 +59,11 @@ export default function HomePage() {
       {/* ── What it is ─────────────────────────────────────────────────── */}
       <section className="lp-hero">
         <div className="mx-auto w-full max-w-3xl px-4 py-20 sm:py-28">
+          {/* The home page hides the standard nav bar until the reader
+              scrolls (see components/home-chrome.tsx), so the lockup takes
+              the corner the nav's own logo would otherwise own — large,
+              top-left, first thing assembled. */}
+          <AnimatedLockup className="mb-10 h-20 w-auto text-fd-foreground sm:h-28" />
           <h1 className="lp-h1">
             <span className="lp-brand-face">stella</span> is a terminal coding
             agent that proves its work finished.
@@ -70,25 +75,24 @@ export default function HomePage() {
             and telemetry never leaves your disk.
           </p>
 
-          {/* The lockup assembles once, front and center, and hands the eye
-              straight down to the one action this page wants: install. The
-              hero's old static lockup above the h1 is gone — one mark, where
-              it points at something. */}
+          {/* Install and "read the docs" are the same decision — try it now,
+              or read first — so they sit side by side instead of stacked. */}
           <div className="mt-12">
-            <div className="mb-8 flex justify-center">
-              <AnimatedLockup className="h-16 w-auto text-fd-foreground sm:h-20" />
-            </div>
             <p className="mb-2 text-sm text-fd-muted-foreground">Install it:</p>
-            <InstallBlock command={INSTALL} />
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-stretch">
+              <div className="min-w-0 flex-1">
+                <InstallBlock command={INSTALL} />
+              </div>
+              <Link
+                href="/docs"
+                className="lp-cta flex shrink-0 items-center justify-center rounded-md px-6 text-sm"
+              >
+                Read the docs
+              </Link>
+            </div>
           </div>
 
-          <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
-            <Link
-              href="/docs"
-              className="lp-cta inline-flex items-center rounded-md px-4 py-2 text-sm"
-            >
-              Read the docs
-            </Link>
+          <div className="mt-6">
             <a
               href="https://github.com/macanderson/stella"
               className="text-sm text-fd-muted-foreground underline underline-offset-4 hover:text-fd-foreground"
