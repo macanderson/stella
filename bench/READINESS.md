@@ -330,6 +330,66 @@ the launcher emits:
 | x-ai/grok-4.5 | `3c7d6155…` | `ff61cb06…` |
 | z-ai/glm-5.1 | `55fdf342…` | `f15536e5…` |
 
+### 8.3.1 `max` → `xhigh`, for the Sonnet-5 comparator
+
+The rule that picked `max` above did not change; the comparator did. The rule
+is *spend what the other side spends*, because the leaderboard treats `high`,
+`xhigh` and `max` as distinct values, so a mismatch is less compute applied to
+one side rather than a naming variation. Against Claude Code on GLM-5.1 at max
+effort, that rule said `max`.
+
+The Sonnet-5 head-to-head compares against Claude Code on the **first-party
+Anthropic API**, which runs `xhigh` by default, so the same rule now says
+`xhigh`. Reading `max` as "more is safer" would invert the rule: it would hand
+Stella compute the comparator never receives. Anthropic separately documents
+`xhigh` — not `max` — as the setting for coding and agentic work, and warns
+`max` is prone to overthinking, so parity and the model's own guidance agree.
+
+### 8.3.2 The output cap moves with the effort tier
+
+Raising the tier alone was not enough, and the smoke run said so before the
+scored run could. Two of three Stella trials at xhigh died with:
+
+```
+output_tokens=16384, tool_calls=0
+"reached its output-token limit before producing any visible response —
+ its budget was likely spent on reasoning"
+```
+
+Effort and the output cap are coupled. The engine's 16384 default carries a
+comment recording that it was itself raised from 8192 for this same failure on
+glm-5.2, and naming per-model caps as the real fix. Raising the tier without
+raising the cap buys reasoning with no room for an answer beside it, and the
+step ends emitting no tool call at all — which Harbor records as
+`NonZeroAgentExitCodeError`, indistinguishable at the results layer from the
+agent simply failing the task.
+
+The posture now sets `agents.<role>.params.max_tokens = 32000` for the three
+roles the outcome depends on. 32000 rather than more is bounded by
+`model_timeout` (600s): the effort preflight spent ~280s reaching 32000 output
+tokens, so ~64000 would sit close enough to that timeout to trade one
+truncation mode for another. Sonnet 5's own 128000 ceiling is not the binding
+constraint. `triage` keeps the default — at low effort it emits a three-line
+classification, so 16384 was never near binding.
+
+This is not compute handed to one side: Claude Code does not cap itself at 16k,
+so the cap was a Stella-side handicap and removing it restores parity.
+
+Digests move again, recomputed the same way. These supersede both tables above:
+
+| model | now |
+|---|---|
+| deepseek-v4-pro | `4249a1f9…` |
+| z-ai/glm-5.2 | `b906090c…` |
+| x-ai/grok-4.5 | `a1b0df58…` |
+| z-ai/glm-5.1 | `b80a9d06…` |
+| anthropic/claude-sonnet-5 | `55c6ef4c…` |
+
+The GLM and deepseek rows are listed because the constant is shared, not
+because those arms were re-run. Runs published under the `max` posture remain
+described by the 8.3 table; a run states which posture it used in its own
+manifest, which is the point of hashing it.
+
 ### 8.4 The measured baseline
 
 See `bench/evidence/` for the run manifest, per-trial rows, per-task results and
