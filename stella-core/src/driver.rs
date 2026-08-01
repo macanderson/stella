@@ -87,6 +87,11 @@ use crate::compaction::compact_measured;
 use crate::receipts::TranscriptRevision;
 
 mod loop_evidence;
+mod truncation;
+pub(crate) use truncation::CONTINUATION_MARKER_PREFIX;
+use truncation::{MAX_LENGTH_CONTINUATIONS, plan_continuation};
+// Named only by the tests that pin the nudge's exact body; the production path
+// reaches it through `Continuation::into_parts`.
 use crate::estimator::{CalibrationMap, estimate_conversation_tokens};
 use crate::event_sender::EventSender;
 use crate::hooks::{HookEvent, HookPayload, HookRunner, Hooks, any_matcher_matches, run_hooks};
@@ -99,6 +104,8 @@ use crate::step::{
     BorrowedTurn, CancelUsageGuard, CompactionPass, SpeculationDropGuard, StepOutcome,
     StreamProgress, SummarizerHealth, TurnState, bounded_generation,
 };
+#[cfg(test)]
+use truncation::LENGTH_CONTINUATION_NUDGE;
 // The latch count itself is only ever named by the test that pins it against
 // the number of failures the summarizer is actually allowed (`audit_fixes`);
 // the production path reads it through `SummarizerHealth::is_latched`.
@@ -371,40 +378,7 @@ const SPECULATION_DISCARD_HARVEST_MISMATCH: &str = "harvest_mismatch";
 /// could harvest it, so it is discarded on the abort unwind instead (#460).
 const SPECULATION_DISCARD_BUDGET_ABORT: &str = "budget_abort";
 
-/// The `ToolOutput::Error` that closes a `tool_use` the budget abort refused
-/// to dispatch. The twin of `step::CANCELLED_TOOL_RESULT`: same repair, same
-/// helper, different reason — the model is told the call did not run, so the
-/// pairing is honest as well as structurally valid.
 const BUDGET_ABORT_TOOL_RESULT: &str = "not executed — turn aborted on budget";
-
-/// How many times one turn may continue past a step that ended at the
-/// output-token limit having called no tool (`FinishReason::Length`,
-/// `tool_calls` empty). Two, not one, because the observed failure is a
-/// reasoning model spending a whole output budget on chain-of-thought: the
-/// first continuation often finishes the thinking, and the second lands the
-/// action. Bounded because each continuation is a paid call, and a model
-/// that truncates a third time is not going to stop on its own — the turn
-/// falls through to the existing truncation warning and the verification
-/// ladder's no-op rung takes it from there.
-const MAX_LENGTH_CONTINUATIONS: u32 = 2;
-
-/// The body of the user message a length-truncated, tool-less step is
-/// continued with. Pushed behind [`CONTINUATION_MARKER_PREFIX`], which is what
-/// marks it as engine-generated — see that constant.
-///
-/// Written for the two shapes the trigger cannot distinguish and does not
-/// need to: chain-of-thought promoted to text by an adapter's reasoning-only
-/// fallback (the Terminal-Bench zero-tool trials — 30 of 30 cap-hit steps in
-/// the 2026-07-31 bundle carried no tool call), and a genuine prose answer
-/// cut off mid-sentence. Both are told the same thing: the turn is not over,
-/// go do the work — with tool calls, not narration. At temperature 0 a bare
-/// retry of the identical request re-truncates identically, which is why
-/// this is a *continuation with new input* rather than a retry.
-const LENGTH_CONTINUATION_NUDGE: &str = "Your previous message hit the output-token limit and \
-     was cut off before any tool call or finished answer. The turn is not over. Continue from \
-     exactly where you stopped: if work remains, emit the tool calls that perform it now — \
-     writing files, running commands, applying edits. Do not restate your reasoning or repeat \
-     text you already produced; describing the work is not doing it.";
 
 /// One committed model call plus the step-scoped context the phases after
 /// it consume: the pre-call raw token estimate (drift feedback + telemetry
@@ -1776,6 +1750,24 @@ impl<'a> Engine<'a> {
                 SPECULATION_DISCARD_HARVEST_MISMATCH,
                 events,
             );
+            // A step that ended at the output-token limit with no tool call is
+            // not a finished turn — it ran out of room. `plan_continuation`
+            // owns what happens next and what history keeps (see
+            // `driver::truncation`); `None` means the turn's allowance is
+            // spent and the terminal handling below applies.
+            if result.finish_reason == Some(FinishReason::Length)
+                && let Some(plan) = plan_continuation(
+                    &result.text,
+                    result.usage.output_tokens,
+                    *length_continuations,
+                )
+            {
+                *length_continuations += 1;
+                let (note, appended) = plan.into_parts();
+                let _ = events.send(AgentEvent::Text { delta: note });
+                messages.extend(appended);
+                return None;
+            }
             // A turn that produced neither a tool call NOR any visible text is
             // never a real completion: the model was cut off at its output
             // limit (usually mid-reasoning) or returned nothing at all.
@@ -1788,7 +1780,8 @@ impl<'a> Engine<'a> {
                     // and compaction is automatic every step anyway.
                     Some(FinishReason::Length) => format!(
                         "The model reached its output-token limit ({} tokens) before producing \
-                         any visible response — its budget was likely spent on reasoning. Retry \
+                         any visible response — its budget was spent on reasoning — and did so \
+                         on every one of its {MAX_LENGTH_CONTINUATIONS} continuations. Retry \
                          or raise the output cap; context compacts automatically each step.",
                         result.usage.output_tokens
                     ),
@@ -1806,42 +1799,6 @@ impl<'a> Engine<'a> {
                     reason,
                     cost_usd: total_cost_usd,
                 });
-            }
-            // A non-empty response cut off at the output limit with no tool
-            // call is not a finished turn — it is a step that ran out of room,
-            // and on the Chat Completions dialects it is usually
-            // chain-of-thought promoted to text by the adapter's
-            // reasoning-only fallback. Completing here is the defect that
-            // shipped the zero-tool Terminal-Bench trials: the turn ends,
-            // verification finds nothing observable, and the run reports a
-            // task it never touched (30 of 30 cap-hit steps in the 2026-07-31
-            // bundle carried no tool call). Continue the turn instead: record
-            // the partial, tell the model to act, take another step. A
-            // continuation rather than a retry because at temperature 0 the
-            // identical request re-truncates identically — the nudge is what
-            // changes the outcome.
-            if result.finish_reason == Some(FinishReason::Length)
-                && *length_continuations < MAX_LENGTH_CONTINUATIONS
-            {
-                *length_continuations += 1;
-                let _ = events.send(AgentEvent::Text {
-                    delta: format!(
-                        "\n\n⚠ Output-token limit reached ({} tokens) before any tool call; \
-                         continuing ({}/{}).",
-                        result.usage.output_tokens, *length_continuations, MAX_LENGTH_CONTINUATIONS
-                    ),
-                });
-                messages.push(CompletionMessage {
-                    role: MessageRole::Assistant,
-                    content: result.text.clone(),
-                    tool_calls: Vec::new(),
-                    tool_results: Vec::new(),
-                    attachments: Vec::new(),
-                });
-                messages.push(CompletionMessage::user(format!(
-                    "{CONTINUATION_MARKER_PREFIX}] {LENGTH_CONTINUATION_NUDGE}"
-                )));
-                return None;
             }
             // A non-empty answer truncated with the continuation allowance
             // spent: keep the partial answer (already emitted above) but tell
@@ -2213,18 +2170,6 @@ pub(crate) const SUMMARY_MARKER_PREFIX: &str = "[earlier history summarized";
 /// the abort-on-re-detection would need a whole fresh threshold's worth of
 /// looping instead of one more no-progress call.
 pub(crate) const LOOP_STEER_PREFIX: &str = "[stuck-loop warning";
-/// Prefix of the engine-injected output-limit continuation nudge
-/// ([`Engine::dispatch_completion`], body in [`LENGTH_CONTINUATION_NUDGE`]).
-///
-/// The third engine-written `User`-role message, and it needs the marker for
-/// exactly the two reasons the other two do. [`recent_call_records`] would
-/// otherwise take it as a turn boundary and discard every call the turn had
-/// made so far — on the one path where the turn demonstrably *is* still the
-/// same turn, so a stuck model that also truncates would have its evidence
-/// erased up to twice per turn. And `receipts::user_block_kind` would file it
-/// as [`stella_protocol::BlockKind::UserGoal`], attributing engine text to the
-/// person, which is the misattribution Phase 2 introduced that function to fix.
-pub(crate) const CONTINUATION_MARKER_PREFIX: &str = "[output-limit continuation";
 /// The [`TurnOutcome::Aborted`] reason of a user-requested soft stop —
 /// callers match on this to render "stopped" rather than "failed", and to
 /// keep (never truncate) the turn's completed work.
