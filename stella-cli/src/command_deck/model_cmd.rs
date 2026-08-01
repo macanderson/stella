@@ -211,6 +211,7 @@ mod tests {
         Config {
             model_id: provider.default_model.to_string(),
             provider,
+            turn_budget: None,
             model_pinned_by_flag: false,
             api_key: stella_model::ApiKey::new("dummy-key-unused-offline"),
             workspace_root,

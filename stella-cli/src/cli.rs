@@ -126,6 +126,18 @@ pub(crate) struct GlobalArgs {
     #[arg(long, global = true, env = "STELLA_BUDGET", value_parser = parse_budget)]
     pub(crate) budget: Option<f64>,
 
+    /// Wall-clock seconds one turn may spend, for continuation decisions
+    ///
+    /// The time twin of `--budget`, and deliberately weaker: this enforces
+    /// nothing and cancels nothing. It exists for callers running under an
+    /// EXTERNAL deadline — a benchmark harness that kills the process on
+    /// elapsed time — so the engine can decline to start an output-limit
+    /// continuation it cannot finish, and end with a truthful partial instead
+    /// of being destroyed mid-flight. Set it slightly below the real deadline.
+    /// Omit for no time-based continuation limit. Env: STELLA_TURN_BUDGET.
+    #[arg(long, global = true, env = "STELLA_TURN_BUDGET", value_parser = parse_turn_budget)]
+    pub(crate) turn_budget: Option<std::time::Duration>,
+
     /// Use the plain line REPL instead of the Command Deck
     ///
     /// The deck (the tabbed TUI) also steps aside automatically when stdin or
@@ -836,4 +848,23 @@ fn parse_budget(raw: &str) -> Result<f64, String> {
         ));
     }
     Ok(value)
+}
+
+/// `--turn-budget` must be a positive, finite number of seconds.
+///
+/// Same reasoning as `parse_budget`, one step stronger: a zero or negative
+/// budget would make every continuation unaffordable and silently disable the
+/// recovery path entirely, which looks exactly like the truncation bug it
+/// exists to mitigate. Refusing at parse is the only place that is cheap to
+/// notice.
+fn parse_turn_budget(raw: &str) -> Result<std::time::Duration, String> {
+    let value: f64 = raw
+        .parse()
+        .map_err(|_| format!("`{raw}` is not a number"))?;
+    if !value.is_finite() || value <= 0.0 {
+        return Err(format!(
+            "turn budget must be a positive number of seconds, got `{raw}`"
+        ));
+    }
+    Ok(std::time::Duration::from_secs_f64(value))
 }

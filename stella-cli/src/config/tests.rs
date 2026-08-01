@@ -210,6 +210,7 @@ fn config_debug_never_leaks_the_api_key() {
     let cfg = Config {
         provider: PROVIDERS[0].clone(),
         model_id: "glm-5.2".to_string(),
+        turn_budget: None,
         model_pinned_by_flag: false,
         api_key: ApiKey::new(secret),
         workspace_root: std::path::PathBuf::from("/tmp/ws"),

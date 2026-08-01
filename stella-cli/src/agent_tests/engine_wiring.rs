@@ -24,6 +24,33 @@ fn cfg_with_engine(provider_id: &str, engine_settings_json: &str) -> Config {
 }
 
 #[test]
+fn the_turn_budget_flag_reaches_every_role_that_can_continue() {
+    // The policy it feeds (`driver::truncation::ContinuationBudget`) is inert
+    // unless something sets it, and "inert" is indistinguishable from "working"
+    // in every test that only exercises the engine crate. This is the wire, so
+    // it is what proves the flag is not decorative.
+    //
+    // Every role, not just the worker: the deadline being guarded belongs to
+    // the process, so a worker that declines a continuation while a judge
+    // spends the remaining time past it would defeat the point.
+    let mut cfg = cfg_for("zai");
+    cfg.turn_budget = Some(std::time::Duration::from_secs(840));
+
+    assert_eq!(
+        crate::agent::engine_config_for(&cfg).turn_budget,
+        Some(std::time::Duration::from_secs(840)),
+    );
+    assert_eq!(
+        crate::agent::judge_engine_config_for(&cfg).turn_budget,
+        Some(std::time::Duration::from_secs(840)),
+    );
+
+    // And absent by default, so no existing caller starts declining work.
+    let plain = cfg_for("zai");
+    assert_eq!(crate::agent::engine_config_for(&plain).turn_budget, None);
+}
+
+#[test]
 fn pipeline_worker_model_is_inert_without_the_fix_but_routes_with_it() {
     // Issue #276: `pipeline_worker_model` (and `agents.worker.*`) must
     // actually change what `Role::Worker` resolves to — previously the
