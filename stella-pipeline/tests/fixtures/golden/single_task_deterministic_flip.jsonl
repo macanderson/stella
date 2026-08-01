@@ -17,6 +17,6 @@
 {"type":"stage","name":"verify"}
 {"type":"proof","step":{"kind":"oracle","command":"cargo test -p x","passed":true,"tree":"candidate"}}
 {"type":"proof","step":{"kind":"oracle","command":"cargo test -p x","passed":true,"tree":"candidate"}}
-{"type":"judge_verdict","passed":true,"evidence":{"summary":"flip oracle: fail→pass of `cargo test -p x`; touched tests green; diff 2 lines within budget","deterministic":true}}
+{"type":"judge_verdict","passed":true,"evidence":{"summary":"flip oracle: fail→pass of `cargo test -p x`; touched tests green; diff 2 lines within budget","deterministic":true,"ladder":{"tracked_command":"cargo test -p x","oracle_trace":[{"tree":"baseline","passed":false},{"tree":"candidate","passed":true},{"tree":"candidate","passed":true}],"flip_achieved":true,"unstable_flip":false,"flip_refused_different_failure":false,"touched_tests_passed":true,"diff_lines":2,"diff_budget":400,"diff_available":true,"file_change_events":0,"mutating_actions":0,"new_diag_errors":0,"new_diag_warnings":0}}}
 {"type":"stage","name":"complete"}
 {"type":"complete","model":"scripted/worker","cost_usd":0.0002}

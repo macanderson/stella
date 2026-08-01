@@ -19,6 +19,8 @@
 {"type":"step_manifest","turn_instance":0,"step":0,"call_seq":3,"role":"judge","provider":"scripted","model":"scripted","blocks":[{"block_id":"blk_fbf39dd366f72e6ff4f6e453","cache_zone":"volatile","token_cost":218,"resident_since_step":0,"message_index":0}],"effective_budget_tokens":0,"calibration_factor":1.0,"estimated_input_tokens":222}
 {"type":"step_usage","step":0,"role":"judge","provider":"scripted","output_text":"PASS looks right","model":"scripted","input_tokens":0,"output_tokens":0,"cached_input_tokens":0,"cache_write_tokens":0,"estimated_input_tokens":0,"cost_usd":0.0001,"duration_ms":0,"retries":0,"tool_calls":0,"complete":true}
 {"type":"budget_tick","spent_usd":0.00030000000000000003,"limit_usd":null,"mode":"off","session_spent_usd":0.00030000000000000003,"session_limit_usd":null}
-{"type":"judge_verdict","passed":true,"evidence":{"summary":"PASS looks right","deterministic":false}}
+{"type":"judge_verdict","passed":true,"evidence":{"summary":"PASS looks right","deterministic":false,"ladder":{"flip_achieved":false,"unstable_flip":false,"flip_refused_different_failure":false,"diff_lines":2,"diff_budget":400,"diff_available":true,"file_change_events":0,"mutating_actions":0,"new_diag_errors":0,"new_diag_warnings":0}}}
+{"type":"error","message":"verification could not be performed: UNVERIFIED: judge passed with no deterministic corroboration (no flip, no green test) — PASS looks right","retryable":true}
+{"type":"proof","step":{"kind":"verification_unavailable","reason":"UNVERIFIED: judge passed with no deterministic corroboration (no flip, no green test) — PASS looks right"}}
 {"type":"stage","name":"complete"}
 {"type":"complete","model":"scripted/worker","cost_usd":0.00030000000000000003}
