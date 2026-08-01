@@ -303,3 +303,43 @@ async fn gate_a_no_op_turn_fails_closed_without_spend() {
     })
     .await;
 }
+
+/// Fix-by-disappearance (#867): the baseline names its failing test, the
+/// candidate's suite passes with a complete listing that no longer contains
+/// it (deleted/renamed). The exit code says flip; the same-failure rule says
+/// no — one judge call, and no confirmation run is bought for a flip that
+/// was never credited.
+#[tokio::test]
+async fn gate_a_vanished_failing_test_earns_no_flip() {
+    run_scenario(Scenario {
+        name: "vanished_failure",
+        goal: "Fix the failing test",
+        provider: vec![
+            text_result("single"),
+            text_result("done"),
+            text_result("FAIL — the failing test was removed, not fixed"),
+        ],
+        tests: vec![
+            TestScript::FailWith(
+                "test suite::test_a ... FAILED\n\
+                 test result: FAILED. 0 passed; 1 failed",
+            ),
+            TestScript::PassWith(
+                "test suite::test_b ... ok\n\
+                 test result: ok. 1 passed; 0 failed",
+            ),
+        ],
+        diff: "@@ -1 +1 @@\n-old\n+new",
+        lint: None,
+        test_command: Some("cargo test -p x"),
+        max_revisions: 0,
+        expect: Expect {
+            passed: false,
+            deterministic: false,
+            judge_stage: true,
+            roles: &[Triage, Worker, Judge],
+            test_runs: 2,
+        },
+    })
+    .await;
+}

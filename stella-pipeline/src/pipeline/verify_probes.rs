@@ -89,7 +89,11 @@ impl<'a> Pipeline<'a> {
                 let post = surface.tests.run_test(cmd.invocation).await;
                 match post.assertion_result() {
                     Some(passed) => {
-                        state.oracle.observe(cmd.command, passed);
+                        // Output rides along for the same-failure rule
+                        // (#867): a pass that names its tests but not the
+                        // baseline's failures earns no flip.
+                        let output = format!("{}\n{}", post.stdout_tail, post.stderr_tail);
+                        state.oracle.observe_run(cmd.command, passed, &output);
                         state.oracle_trace.push(OracleObservation {
                             tree: ProofTree::Candidate,
                             passed,
@@ -130,6 +134,7 @@ impl<'a> Pipeline<'a> {
             oracle_trace: state.oracle_trace.clone(),
             flip_achieved: inputs.flip_achieved,
             unstable_flip: state.oracle.is_unstable(),
+            flip_refused_different_failure: state.oracle.refused_different_failure(),
             touched_tests_passed: inputs.touched_tests_passed,
             test_infra: test_infra.map(str::to_string),
             diff_lines: inputs.diff_lines,

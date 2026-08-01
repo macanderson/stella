@@ -283,6 +283,11 @@ enum TestScript {
     Pass,
     Fail,
     TimeOut,
+    /// A pass whose stdout carries scripted runner output — for the #867
+    /// fingerprint scenarios, which read test names from the tail.
+    PassWith(&'static str),
+    /// A failure whose stdout carries scripted runner output.
+    FailWith(&'static str),
 }
 
 struct ScriptedRunner {
@@ -425,6 +430,18 @@ impl TestRunner for ScriptedRunner {
                 stdout_tail: String::new(),
                 stderr_tail: "command timed out after 300s".to_string(),
                 kind: CmdKind::TimedOut,
+            },
+            TestScript::PassWith(output) => CmdOutcome {
+                exit_code: 0,
+                stdout_tail: output.to_string(),
+                stderr_tail: String::new(),
+                kind: CmdKind::Completed,
+            },
+            TestScript::FailWith(output) => CmdOutcome {
+                exit_code: 1,
+                stdout_tail: output.to_string(),
+                stderr_tail: self.failure_tail.clone(),
+                kind: CmdKind::Completed,
             },
         }
     }

@@ -923,6 +923,14 @@ export interface LadderSnapshot {
    */
   flip_achieved: boolean;
   /**
+   * A would-be flip was refused because the passing run named its tests
+   * and none of the baseline's failing tests were among them — the pass
+   * demonstrably fixed a *different* failure (#867), most concretely a
+   * deleted or renamed failing test. `serde(default)` so pre-#867
+   * snapshots keep parsing.
+   */
+  flip_refused_different_failure?: boolean;
+  /**
    * Dispatched tool calls capable of changing the workspace.
    */
   mutating_actions: number;
