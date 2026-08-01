@@ -46,14 +46,33 @@ use super::CompletionMessage;
 
 /// How many times one turn may continue past a step that ended at the
 /// output-token limit having called no tool (`FinishReason::Length`,
-/// `tool_calls` empty). Two, not one, because the observed failure is a
-/// reasoning model spending a whole output budget on chain-of-thought: the
-/// first continuation often finishes the thinking, and the second lands the
-/// action. Bounded because each continuation is a paid call, and a model that
-/// truncates a third time is not going to stop on its own — the turn falls
-/// through to the existing truncation warning and the verification ladder's
-/// no-op rung takes it from there.
-pub(super) const MAX_LENGTH_CONTINUATIONS: u32 = 2;
+/// `tool_calls` empty).
+///
+/// Four, measured. This was 2, on the argument that the first continuation
+/// finishes the thinking and the second lands the action — which held for the
+/// shape it was tuned against, where an adapter had promoted chain-of-thought
+/// into `text` and part of the reasoning had already landed. It does not
+/// transfer to an all-reasoning step that arrives empty, which is the shape
+/// the Anthropic dialect produces and which now reaches here.
+///
+/// On a ten-task adversarial Terminal-Bench 2.1 set at effort `xhigh`,
+/// `circuit-fibsqrt` hit the cap three times, spent both continuations and
+/// aborted on the third; a one-hit task recovered on its first; and a task
+/// that had previously died at the cap passed outright. Two was one short of
+/// the worst observed case.
+///
+/// Four and not more because the allowance is not independent of the agent
+/// timeout. A capped step at `xhigh` costs roughly 170–280s of wall clock, so
+/// three cap hits is already ~500–840s against a 900s agent timeout: past
+/// about four, a larger allowance stops buying recoveries and starts buying
+/// timeouts, which fail a harness-health bar exactly the way the abort does.
+/// Cap size, this count, and the agent timeout are one budget, not three.
+///
+/// Each continuation is still a paid call, and a turn that exhausts the
+/// allowance falls through to the truncation warning with the verification
+/// ladder's no-op rung behind it — a model truncating a fifth time is saying
+/// the effort tier is mispriced for the task, not that it needs one more retry.
+pub(super) const MAX_LENGTH_CONTINUATIONS: u32 = 4;
 
 /// Prefix of the engine-injected output-limit continuation nudge.
 ///

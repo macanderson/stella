@@ -101,8 +101,8 @@ mod stage_budget;
 mod verify_probes;
 mod witness_stage;
 use raw_usage::{RawCall, RawCallError};
-use run_error::RoleResolveError;
 pub use run_error::{PipelineError, PipelineRunError};
+use run_error::{RoleResolveError, WitnessAuthorIndependence};
 use stage_budget::{PipelineBudgetAbort, budget_abort};
 use witness_stage::{BoundHookRunner, WitnessAuthoring};
 /// Make a diff that verification hands downstream *incapable of lying*.
@@ -327,6 +327,19 @@ pub struct PipelineConfig {
     pub diagnostics_veto_warnings: bool,
     /// Maximum revision turns per candidate when verification fails.
     pub max_revisions: u32,
+    /// Refuse the run when no witness author independent of the worker can
+    /// be resolved, instead of degrading to the unauthored verify ladder.
+    ///
+    /// Off by default, and that default is the one almost every caller wants:
+    /// a missing author costs the run its authored witness, never the task
+    /// (see `Pipeline::can_author_independent_witness`). Turning it on is
+    /// for the host that has already made the independence claim OUTSIDE the
+    /// run — a benchmark arm whose hashed posture names a second model, a
+    /// manifest that will be read as "this number was produced with an
+    /// independent author". There, the silent degradation is worse than no
+    /// number at all: the arm's own digest describes a configuration the run
+    /// did not have (#1147).
+    pub require_independent_witness: bool,
     /// Best-of-N (L-E7). `None` or `Some(1)` is single-shot (the default);
     /// `Some(n)` generates n candidate executions — each in an isolated
     /// snapshot of the current tree state when a
@@ -359,6 +372,7 @@ impl Default for PipelineConfig {
             diff_budget_lines: 400,
             diagnostics_veto_warnings: false,
             max_revisions: 2,
+            require_independent_witness: false,
             candidates: None,
         }
     }
@@ -720,6 +734,20 @@ impl<'a> Pipeline<'a> {
         if let Err(error) = &self.configured_test {
             return Err(PipelineRunError::new(
                 PipelineError::InvalidTestCommand(error.to_string()),
+                total_cost,
+            ));
+        }
+        // Checked HERE — before triage, before recall, before a single paid
+        // call — because the whole point of the refusal is that the run must
+        // not produce a number under a configuration it does not have. A
+        // check further down would still refuse, but only after buying the
+        // very trajectory the caller must now throw away (#1147).
+        if self.config.require_independent_witness
+            && let WitnessAuthorIndependence::Unavailable(reason) =
+                self.witness_author_independence()
+        {
+            return Err(PipelineRunError::new(
+                PipelineError::WitnessAuthorUnavailable(reason),
                 total_cost,
             ));
         }
@@ -2969,40 +2997,57 @@ impl<'a> Pipeline<'a> {
         }
     }
 
+    /// Whether the wiring can supply a witness author independent of the
+    /// worker, and — when it cannot — why.
+    ///
+    /// Split from [`Self::can_author_independent_witness`] because the same
+    /// verdict is read twice with different consequences: the ladder degrades
+    /// on it, `require_independent_witness` refuses on it (#1147). Pure — it
+    /// emits nothing, so asking twice costs nothing and says nothing twice.
+    fn witness_author_independence(&self) -> WitnessAuthorIndependence {
+        let Ok(worker) = self.resolve_provider(Role::Worker) else {
+            return WitnessAuthorIndependence::WorkerUnresolvable;
+        };
+        match self.resolve_provider(Role::Judge) {
+            Ok(judge) if judge.model_ref != worker.model_ref => {
+                WitnessAuthorIndependence::Independent
+            }
+            Ok(_) => WitnessAuthorIndependence::Unavailable(format!(
+                "no author independent of the worker (judge and worker both resolved to `{}`)",
+                worker.model_ref
+            )),
+            Err(_) => WitnessAuthorIndependence::Unavailable(
+                "no author independent of the worker (the judge role is unresolvable)".to_string(),
+            ),
+        }
+    }
+
     /// Whether a witness author independent of the worker can be resolved.
     ///
     /// Losing the author costs the run its authored witness, never the task:
     /// a `false` here routes to the ordinary single-shot path and the
     /// deterministic/judge verify ladder. Announced once, at the one point
     /// that decides it, so the run never pays for isolation it cannot use.
+    ///
+    /// A host that cannot afford that degradation sets
+    /// [`PipelineConfig::require_independent_witness`], which refuses the run
+    /// up front rather than reaching this call at all.
     fn can_author_independent_witness(&self) -> bool {
-        let Ok(worker) = self.resolve_provider(Role::Worker) else {
+        match self.witness_author_independence() {
+            WitnessAuthorIndependence::Independent => true,
+            // Reported through `unproven`, not a bare `warn`. A witness
+            // triage asked for and the wiring cannot supply is precisely
+            // `WitnessUnavailable` — routing it to the warning channel alone
+            // left the rail's witness row with no statement, so it fell
+            // through to the backstop's "not reported" when the real answer
+            // was known all along and worth naming.
+            WitnessAuthorIndependence::Unavailable(reason) => {
+                self.unproven(reason);
+                false
+            }
             // A worker that won't resolve fails later, on its own terms —
             // not here, disguised as a witness-independence verdict.
-            return false;
-        };
-        match self.resolve_provider(Role::Judge) {
-            Ok(judge) if judge.model_ref != worker.model_ref => true,
-            // Both arms report through `unproven`, not a bare `warn`. A
-            // witness triage asked for and the wiring cannot supply is
-            // precisely `WitnessUnavailable` — routing it to the warning
-            // channel alone left the rail's witness row with no statement, so
-            // it fell through to the backstop's "not reported" when the real
-            // answer was known all along and worth naming.
-            Ok(_) => {
-                self.unproven(format!(
-                    "no author independent of the worker (judge and worker both resolved to `{}`)",
-                    worker.model_ref
-                ));
-                false
-            }
-            Err(_) => {
-                self.unproven(
-                    "no author independent of the worker (the judge role is unresolvable)"
-                        .to_string(),
-                );
-                false
-            }
+            WitnessAuthorIndependence::WorkerUnresolvable => false,
         }
     }
 

@@ -23,11 +23,13 @@ formula = "stella"
 
 [dependencies]
 stella-protocol = { path = "../stella-protocol" }
-contextgraph-types = { git = "https://github.com/macanderson/context-graph-protocol", rev = "c5fb2fec5820494ab6921dc088c03d7f43301fa7" }
-contextgraph-host = { git = "https://github.com/macanderson/context-graph-protocol", rev = "c5fb2fec5820494ab6921dc088c03d7f43301fa7" }
+contextgraph-types.workspace = true
+contextgraph-host.workspace = true
 # The host execution-trace journal + replay oracles (sketch stage) — the
-# vocabulary `stella arena` records for the arena-bench runner to judge.
-contextgraph-trace = { git = "https://github.com/macanderson/context-graph-protocol", rev = "c5fb2fec5820494ab6921dc088c03d7f43301fa7" }
+# vocabulary `stella arena` records for the arena-bench runner to judge. Sketch
+# stage means its wire format is exempt from the protocol's stability promise;
+# see the exact-version note in the root manifest.
+contextgraph-trace.workspace = true
 stella-core = { path = "../stella-core" }
 # The construction sequence (provider/registry/store/budget/calibration),
 # extracted so this bin-only crate is no longer its sole owner and
@@ -74,12 +76,12 @@ rpassword.workspace = true
 # dropped intact into freed heap. `stella-model` already zeroizes the `ApiKey`
 # these become; this closes the same hole one layer up, at the terminal.
 zeroize.workspace = true
-# The protocol's own conformance suite (SPEC.md 3.6), pinned to the same rev as
-# the types/host we consume. A RUNTIME dependency, not just a dev one: #453
+# The protocol's own conformance suite (SPEC.md 3.6), held at the same version
+# as the types/host we consume. A RUNTIME dependency, not just a dev one: #453
 # makes conformance an install/enable-time ADMISSION GATE for external
 # stdio/HTTP providers, so a non-conformant source is refused before it can
 # serve a turn. The same suite still audits the in-tree providers in tests.
-contextgraph-conformance = { git = "https://github.com/macanderson/context-graph-protocol", rev = "c5fb2fec5820494ab6921dc088c03d7f43301fa7" }
+contextgraph-conformance.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }

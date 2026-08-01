@@ -217,6 +217,7 @@ mod tests {
             base_url_override: None,
             hooks: None,
             engine_settings: None,
+            engine_settings_trusted: false,
             tool_policy: Default::default(),
             enable_recap: false,
             trace_capture: false,

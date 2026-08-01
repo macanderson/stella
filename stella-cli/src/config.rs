@@ -327,6 +327,19 @@ pub struct Config {
     /// means the section is absent everywhere; consumers treat that as
     /// all-defaults (`crate::engine_config` resolves it per run).
     pub engine_settings: Option<crate::settings::AgentEngineConfig>,
+    /// True when `engine_settings` came from the trusted launcher seam
+    /// (`STELLA_ENGINE_CONFIG_JSON`) rather than from the settings scope
+    /// chain.
+    ///
+    /// The distinction is not cosmetic. That seam replaces the engine config
+    /// ATOMICALLY, and its whole contract is that the object is the frozen,
+    /// disclosed system under test — a benchmark arm publishes its hash and
+    /// then reports numbers against it. So a role the object pins is a
+    /// PUBLISHED claim, and the ordinary "any wiring failure is soft, the
+    /// role just rides the worker" degradation stops being safe: it produces
+    /// a number the posture misdescribes. Hosts consult this to decide which
+    /// failures may degrade and which must refuse (#1147).
+    pub engine_settings_trusted: bool,
     /// Which tools this session withholds, resolved from the `tools` section
     /// of the settings scope chain with the org-managed ceiling already
     /// folded in. Empty — the shipped default — means every tool is on.
@@ -514,6 +527,7 @@ impl Config {
                 &settings.agent_engine_config,
             )
         };
+        cfg.engine_settings_trusted = engine_is_trusted;
         cfg.model_pinned_by_flag = model_pinned_by_flag;
         cfg.authority = settings.authority_policy;
         // The managed ceiling is already folded into `settings.tools` by
@@ -655,6 +669,7 @@ impl Config {
                     base_url_override: Some(base_url),
                     hooks: None,
                     engine_settings: None,
+                    engine_settings_trusted: false,
                     tool_policy: Default::default(),
                     enable_recap: false,
                     trace_capture: false,
@@ -846,6 +861,7 @@ impl Config {
             // `load_with_settings` stamps them after the provider resolves.
             hooks: None,
             engine_settings: None,
+            engine_settings_trusted: false,
             tool_policy: Default::default(),
             enable_recap: false,
             trace_capture: false,

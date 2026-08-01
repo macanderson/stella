@@ -649,14 +649,22 @@ impl OpenAiProvider {
             ));
         }
 
-        let (text, tool_calls, usage) = aggregate_openai_stream(response, observer).await?;
+        let (text, tool_calls, usage, truncated_at_limit) =
+            aggregate_openai_stream(response, observer).await?;
         let cost_usd = self.pricing.map(|p| p.cost_usd(&usage)).unwrap_or(0.0);
         // Map onto the neutral vocabulary like every sibling adapter, so the
-        // engine can tell a tool-calling stop from a natural one. `Length` is
-        // unreachable here: `response.incomplete` (including
-        // `max_output_tokens`) already aborts the turn with a typed error
-        // rather than returning a truncated `Ok`.
-        let finish_reason = if tool_calls.is_empty() {
+        // engine can tell a tool-calling stop from a natural one.
+        //
+        // `Length` wins over `ToolCalls` when the response was cut off at
+        // `max_output_tokens`: a step that hit the cap is not finished just
+        // because some tool call happened to complete before the cut, and the
+        // driver's continuation is what recovers the rest. Every sibling
+        // adapter reports the cap this way, and one adapter disagreeing is how
+        // the same truncation came to mean "continue" on four dialects and
+        // "the turn is dead" on this one.
+        let finish_reason = if truncated_at_limit {
+            FinishReason::Length
+        } else if tool_calls.is_empty() {
             FinishReason::Stop
         } else {
             FinishReason::ToolCalls
@@ -684,12 +692,17 @@ struct ToolCallAccumulator {
 async fn aggregate_openai_stream(
     response: reqwest::Response,
     observer: Option<&dyn ToolCallObserver>,
-) -> Result<(String, Vec<ToolCall>, CompletionUsage), ProviderError> {
+) -> Result<(String, Vec<ToolCall>, CompletionUsage, bool), ProviderError> {
     let mut decoder = SseDecoder::new();
     let mut text = String::new();
     let mut usage = CompletionUsage::default();
     let mut tool_calls: BTreeMap<usize, ToolCallAccumulator> = BTreeMap::new();
     let mut completed_seen = false;
+    // Set when the response stopped at `max_output_tokens`. Carried out as a
+    // normal result rather than an error so the engine sees the same
+    // `FinishReason::Length` every other adapter reports — see the
+    // `Incomplete` arm below.
+    let mut truncated_at_limit = false;
     let mut stream = response.bytes_stream();
 
     while let Some(chunk) = http::next_with_timeout(&mut stream, http::STREAM_IDLE_TIMEOUT).await? {
@@ -783,6 +796,25 @@ async fn aggregate_openai_stream(
                         .incomplete_details
                         .and_then(|d| d.reason)
                         .unwrap_or_else(|| "unspecified".to_string());
+                    // Hitting the output cap is not a provider failure — it is
+                    // the ordinary "cut off mid-work" outcome that zai,
+                    // Anthropic, Gemini/Vertex and Bedrock all surface as
+                    // `FinishReason::Length`, and that the driver answers with
+                    // an in-turn continuation. Returning `Terminal` here made
+                    // this dialect the one place a truncation killed the turn
+                    // outright, and non-retryably at that: the same event, on
+                    // the same model, behaved differently depending on which
+                    // adapter carried it. Break with what accumulated and let
+                    // the engine apply one policy to every provider.
+                    if reason == "max_output_tokens" {
+                        truncated_at_limit = true;
+                        completed_seen = true;
+                        break;
+                    }
+                    // Every other incompletion (content filters, and whatever
+                    // OpenAI adds later) stays terminal: those are not
+                    // "continue and it will finish" conditions, and guessing
+                    // that they are would trade a loud stop for a silent loop.
                     return Err(ProviderError::Terminal(format!(
                         "OpenAI response incomplete: {reason}"
                     )));
@@ -825,7 +857,7 @@ async fn aggregate_openai_stream(
         })
         .collect();
 
-    Ok((text, tool_calls, usage))
+    Ok((text, tool_calls, usage, truncated_at_limit))
 }
 
 #[cfg(test)]
@@ -1565,8 +1597,19 @@ mod tests {
         assert!(err.is_retryable());
     }
 
+    /// Hitting the output cap must arrive as `FinishReason::Length`, not as a
+    /// terminal error.
+    ///
+    /// This test previously asserted the opposite, and that assertion was the
+    /// bug held in place: every sibling adapter (zai, Anthropic, Gemini/Vertex,
+    /// Bedrock) reports a cap hit as `Length`, and the driver answers it with
+    /// an in-turn continuation. Returning `Terminal` made this one dialect the
+    /// place where the same event killed the turn outright — and
+    /// non-retryably — so identical work on an identical model succeeded or
+    /// died depending only on which adapter carried the stream. A provider's
+    /// wire shape must not decide engine policy.
     #[tokio::test]
-    async fn complete_returns_err_on_response_incomplete_not_truncated_ok() {
+    async fn output_cap_arrives_as_length_not_a_terminal_error() {
         let server = MockServer::start().await;
         let sse_body = concat!(
             "event: response.output_text.delta\n",
@@ -1592,9 +1635,48 @@ mod tests {
             params: None,
         };
 
+        let result = provider
+            .complete(req)
+            .await
+            .expect("cap hit is not an error");
+        assert_eq!(result.finish_reason, Some(FinishReason::Length));
+        // The partial survives: it is what the continuation resumes from.
+        assert_eq!(result.text, "partial");
+    }
+
+    /// The other half of the same contract. Only the cap is "keep going" —
+    /// a content filter is a stop, and continuing past one would trade a loud
+    /// refusal for a silent retry loop.
+    #[tokio::test]
+    async fn a_non_cap_incompletion_is_still_terminal() {
+        let server = MockServer::start().await;
+        let sse_body = concat!(
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n",
+            "event: response.incomplete\n",
+            "data: {\"type\":\"response.incomplete\",\"response\":{\"incomplete_details\":{\"reason\":\"content_filter\"}}}\n\n",
+        );
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let provider =
+            OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
+        let req = CompletionRequest {
+            messages: vec![CompletionMessage::user("hi")],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![],
+            reasoning: None,
+            params: None,
+        };
+
         let err = provider.complete(req).await.unwrap_err();
         match err {
-            ProviderError::Terminal(msg) => assert!(msg.contains("max_output_tokens"), "{msg}"),
+            ProviderError::Terminal(msg) => assert!(msg.contains("content_filter"), "{msg}"),
             other => panic!("expected Terminal incomplete error, got {other:?}"),
         }
     }
