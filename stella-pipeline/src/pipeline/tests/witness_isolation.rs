@@ -382,6 +382,7 @@ async fn sealed_witness_identity_survives_git_reclassification_out_of_untracked_
     ]);
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
     let identity = ArtifactIdentity {
+        path: "tests/authority_witness.rs".into(),
         fingerprint: "sha256:test".into(),
         kind: ArtifactKind::Regular,
         mode: 0o100644,
@@ -629,6 +630,7 @@ async fn symlink_witness_artifact_aborts_after_worker_execution() {
         vec![("tests/authority_witness.rs", "sha256:symlink")],
     ])
     .with_artifact_identity(ArtifactIdentity {
+        path: "tests/authority_witness.rs".into(),
         fingerprint: "sha256:symlink".into(),
         kind: ArtifactKind::Symlink,
         mode: 0o120777,
@@ -678,12 +680,14 @@ async fn post_baseline_witness_tamper_is_hard_failure_even_if_judge_would_pass()
     ])
     .with_artifact_identities(vec![
         Some(ArtifactIdentity {
+            path: "tests/witness.rs".into(),
             fingerprint: "w1".into(),
             kind: ArtifactKind::Regular,
             mode: 0o100644,
             link_count: 1,
         }),
         Some(ArtifactIdentity {
+            path: "tests/witness.rs".into(),
             fingerprint: "w2".into(),
             kind: ArtifactKind::Regular,
             mode: 0o100644,
@@ -692,6 +696,7 @@ async fn post_baseline_witness_tamper_is_hard_failure_even_if_judge_would_pass()
     ]);
     let baseline_status = SeqRepoStatus::new(vec![vec![], vec![("tests/witness.rs", "w1")]])
         .with_artifact_identity(ArtifactIdentity {
+            path: "tests/witness.rs".into(),
             fingerprint: "w1".into(),
             kind: ArtifactKind::Regular,
             mode: 0o100644,
@@ -940,12 +945,14 @@ async fn a_tampered_witness_file_hard_fails_before_judge_evaluation() {
     ])
     .with_artifact_identities(vec![
         Some(ArtifactIdentity {
+            path: "tests/witness.rs".into(),
             fingerprint: "w1".into(),
             kind: ArtifactKind::Regular,
             mode: 0o100644,
             link_count: 1,
         }),
         Some(ArtifactIdentity {
+            path: "tests/witness.rs".into(),
             fingerprint: "w2".into(),
             kind: ArtifactKind::Regular,
             mode: 0o100644,
@@ -955,6 +962,7 @@ async fn a_tampered_witness_file_hard_fails_before_judge_evaluation() {
     // The authoring snapshot: the artifact appears (w1) and is accepted there.
     let baseline_status = SeqRepoStatus::new(vec![vec![], vec![("tests/witness.rs", "w1")]])
         .with_artifact_identity(ArtifactIdentity {
+            path: "tests/witness.rs".into(),
             fingerprint: "w1".into(),
             kind: ArtifactKind::Regular,
             mode: 0o100644,
@@ -1016,12 +1024,14 @@ async fn a_renamed_witness_file_hard_fails_before_judge_evaluation() {
     ])
     .with_artifact_identities(vec![
         Some(ArtifactIdentity {
+            path: "tests/witness.rs".into(),
             fingerprint: "w1".into(),
             kind: ArtifactKind::Regular,
             mode: 0o100644,
             link_count: 1,
         }),
         Some(ArtifactIdentity {
+            path: "tests/renamed_witness.rs".into(),
             fingerprint: "w1".into(),
             kind: ArtifactKind::Regular,
             mode: 0o100644,
@@ -1031,6 +1041,7 @@ async fn a_renamed_witness_file_hard_fails_before_judge_evaluation() {
     // The authoring snapshot: the artifact appears (w1) and is accepted there.
     let baseline_status = SeqRepoStatus::new(vec![vec![], vec![("tests/witness.rs", "w1")]])
         .with_artifact_identity(ArtifactIdentity {
+            path: "tests/witness.rs".into(),
             fingerprint: "w1".into(),
             kind: ArtifactKind::Regular,
             mode: 0o100644,
@@ -1096,6 +1107,7 @@ async fn a_grafted_witness_is_not_billed_to_the_workers_diff() {
     ]);
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
     let identity = ArtifactIdentity {
+        path: "tests/authority_witness.rs".into(),
         fingerprint: "sha256:test".into(),
         kind: ArtifactKind::Regular,
         mode: 0o100644,
@@ -1186,18 +1198,21 @@ async fn a_revise_turn_that_edits_the_witness_hard_fails_at_the_next_check() {
     ])
     .with_artifact_identities(vec![
         Some(ArtifactIdentity {
+            path: "tests/witness.rs".into(),
             fingerprint: "w1".into(),
             kind: ArtifactKind::Regular,
             mode: 0o100644,
             link_count: 1,
         }),
         Some(ArtifactIdentity {
+            path: "tests/witness.rs".into(),
             fingerprint: "w1".into(),
             kind: ArtifactKind::Regular,
             mode: 0o100644,
             link_count: 1,
         }),
         Some(ArtifactIdentity {
+            path: "tests/witness.rs".into(),
             fingerprint: "w2".into(),
             kind: ArtifactKind::Regular,
             mode: 0o100644,
@@ -1206,6 +1221,7 @@ async fn a_revise_turn_that_edits_the_witness_hard_fails_at_the_next_check() {
     ]);
     let baseline_status = SeqRepoStatus::new(vec![vec![], vec![("tests/witness.rs", "w1")]])
         .with_artifact_identity(ArtifactIdentity {
+            path: "tests/witness.rs".into(),
             fingerprint: "w1".into(),
             kind: ArtifactKind::Regular,
             mode: 0o100644,
