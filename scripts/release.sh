@@ -180,10 +180,12 @@ ok "release commit $(git rev-parse --short "$release_sha") stamps ${VERSION} on 
 # `sed "0,/re/"` is GNU-only and silently no-ops on macOS — perl is portable.)
 cp Cargo.toml .Cargo.toml.relbak
 cp Cargo.lock .Cargo.lock.relbak   # cargo rewrites workspace-member versions in the lock during the stamped build
-# Restores both files even if the first `mv` fails, and never swallows a
-# failure: this trap is what backs the script's promise never to leave your
-# working tree modified, so a restore that did not happen has to be loud.
-# (A missing .relbak is not a failure — nothing was stamped yet.)
+# `if`s, not `[ -f … ] && mv … || true`: this runs as an EXIT trap under
+# `set -e`, where a bare `&&` chain whose test fails would abort the trap and
+# skip the line below it — leaving the workspace stamped. The `|| true` that
+# used to guard against that also swallowed a genuine `mv` failure, which is
+# the one outcome that must never pass quietly: it means the release version
+# is still stamped on the developer's tree. Same idiom as the `git add` above.
 restore_manifest() {
   if [ -f .Cargo.toml.relbak ]; then mv .Cargo.toml.relbak Cargo.toml; fi
   if [ -f .Cargo.lock.relbak ]; then mv .Cargo.lock.relbak Cargo.lock; fi

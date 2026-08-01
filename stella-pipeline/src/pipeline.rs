@@ -2939,14 +2939,14 @@ impl<'a> Pipeline<'a> {
         // nothing, so without this the count below is blind to the tool that
         // does most of the work on Terminal-Bench. Settling first is what
         // makes `file_changes` an honest answer rather than a CRUD-tool tally.
+        // Settling also re-arms, from the same walk, so a revision's changes
+        // are bracketed exactly the way this one's were without paying for a
+        // second walk of an identical tree.
         self.touches.settle_workspace_probe();
         state.file_changes = self.observed_mutations(state);
         state.diff_lines = probe.lines;
         state.diff_available = probe.available;
         state.diff_text = verification_honest_diff(probe.text, state.file_changes);
-        // Re-arm for the next round, so a revision's changes are bracketed
-        // the same way this one's were.
-        self.touches.begin_workspace_probe();
     }
 
     /// Emit this recall's telemetry. The projection itself lives on
