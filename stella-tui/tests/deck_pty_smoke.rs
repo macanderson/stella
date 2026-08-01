@@ -126,7 +126,11 @@ impl DeckPty {
                 &mut slave,
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                &mut ws,
+                // A raw pointer, not `&mut`: libc's openpty takes `*const
+                // winsize` on Linux but `*mut winsize` on macOS, and `*mut`
+                // coerces to both — `&mut` trips clippy's
+                // unnecessary_mut_passed on the `*const` platforms.
+                &raw mut ws,
             )
         };
         assert_eq!(rc, 0, "openpty: {}", std::io::Error::last_os_error());
