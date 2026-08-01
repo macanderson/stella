@@ -11,8 +11,17 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env.sh"
 
 command -v uv >/dev/null 2>&1 || { echo "FATAL: uv is required"; exit 1; }
 
-uv venv "$VENV" --python 3.13 || exit 1
-uv pip install --python "$VENV/bin/python" "harbor==$FB_HARBOR_VERSION" || exit 1
+# --clear so this is idempotent. Without it the script fails the moment a venv
+# exists, which is precisely when you most want to run it: after changing the
+# Harbor pin or adding the modal extra. The venv is a derived, gitignored
+# artifact rebuilt from two pinned inputs, so replacing it loses nothing.
+uv venv "$VENV" --python 3.13 --clear || exit 1
+# The `modal` extra unconditionally, not only when FB_ENV=modal. Harbor loads
+# vendor SDKs lazily, so a docker-only run never imports it — but installing it
+# up front means switching backends is one variable rather than a rebuild, and
+# the preflight can then tell "modal is not authenticated" apart from "the SDK
+# was never installed". Two different problems deserve two different messages.
+uv pip install --python "$VENV/bin/python" "harbor[modal]==$FB_HARBOR_VERSION" || exit 1
 
 got="$("$VENV/bin/harbor" --version)"
 test "$got" = "$FB_HARBOR_VERSION" || {

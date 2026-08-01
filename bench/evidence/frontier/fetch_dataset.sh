@@ -18,4 +18,5 @@ test "$got" = "$FB_TASK_COUNT" || {
   exit 1; }
 
 python3 "$(dirname "${BASH_SOURCE[0]}")/plan.py" "$DATASET_DIR" \
-  -o "$FB_PLAN" --images-out "$TB_ROOT/frontier-images.txt"
+  -o "$FB_PLAN" --images-out "$TB_ROOT/frontier-images.txt" \
+  --backend "$FB_ENV" ${FB_CONCURRENCY:+--concurrency "$FB_CONCURRENCY"}

@@ -83,6 +83,18 @@ _COMPOSE_IMAGE_RE = re.compile(r"^\s*image:\s*[\"']?([^\s\"']+)", re.MULTILINE)
 _HOST_FORMAT = '{{.MemTotal}}|{{.NCPU}}|{{(index .Runtimes "nvidia").Path}}'
 
 
+def _elastic_capacity() -> dict:
+    """Capacity for a backend that provisions per task rather than sharing a host.
+
+    Modal builds a sandbox per trial from that trial's own declared resources,
+    so there is no fixed pool to divide and nothing to exclude — asking "does
+    this task fit" is the wrong question there. Returning unbounded capacity
+    makes every downstream check trivially true, which is the honest encoding:
+    the constraint genuinely does not exist rather than being ignored.
+    """
+    return {"memory_mb": None, "cpus": None, "gpu": True, "source": "modal (per-task sandbox)"}
+
+
 def _host_capacity() -> dict:
     """What the Docker daemon says it can actually give a container."""
     cap = {"memory_mb": None, "cpus": None, "gpu": False, "source": "unavailable"}
@@ -166,7 +178,14 @@ def _tier(mem_mb: int) -> str:
     return TIERS[-1][0]
 
 
-def build_plan(dataset_dir: Path, *, allow_gpu: bool, memory_headroom_mb: int) -> dict:
+def build_plan(
+    dataset_dir: Path,
+    *,
+    allow_gpu: bool,
+    memory_headroom_mb: int,
+    backend: str = "docker",
+    concurrency: int | None = None,
+) -> dict:
     roots = sorted(p.parent for p in dataset_dir.glob("*/*/task.toml"))
     if not roots:
         roots = sorted(p.parent for p in dataset_dir.glob("*/task.toml"))
@@ -174,7 +193,7 @@ def build_plan(dataset_dir: Path, *, allow_gpu: bool, memory_headroom_mb: int) -
         sys.exit(f"FATAL: no task.toml under {dataset_dir}")
 
     tasks = [_read_task(p) for p in roots]
-    host = _host_capacity()
+    host = _elastic_capacity() if backend == "modal" else _host_capacity()
     host_mem = host.get("memory_mb")
     host_cpus = host.get("cpus")
 
@@ -208,9 +227,16 @@ def build_plan(dataset_dir: Path, *, allow_gpu: bool, memory_headroom_mb: int) -
         members = [t for t in runnable if t["slug"] in set(tier["tasks"])]
         peak_mem = max(t["memory_mb"] for t in members)
         peak_cpus = max(t["cpus"] for t in members)
-        by_mem = (usable_mem // peak_mem) if usable_mem else 1
-        by_cpu = (host_cpus // peak_cpus) if host_cpus else 1
-        tier["concurrency"] = max(1, min(MAX_CONCURRENCY, by_mem, by_cpu))
+        if concurrency is not None:
+            # An explicit ceiling replaces the arithmetic entirely. On a
+            # per-task backend there is no shared pool to divide, so deriving
+            # concurrency from capacity would compute 1 from two unknowns and
+            # serialise a run that has no reason to be serial.
+            tier["concurrency"] = max(1, concurrency)
+        else:
+            by_mem = (usable_mem // peak_mem) if usable_mem else 1
+            by_cpu = (host_cpus // peak_cpus) if host_cpus else 1
+            tier["concurrency"] = max(1, min(MAX_CONCURRENCY, by_mem, by_cpu))
         tier["peak_memory_mb"] = peak_mem
         tier["peak_cpus"] = peak_cpus
         tier["tasks"].sort()
@@ -224,6 +250,7 @@ def build_plan(dataset_dir: Path, *, allow_gpu: bool, memory_headroom_mb: int) -
 
     return {
         "dataset_dir": str(dataset_dir),
+        "backend": backend,
         "host": host,
         "memory_headroom_mb": memory_headroom_mb,
         "allow_gpu": allow_gpu,
@@ -245,8 +272,13 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("dataset_dir", type=Path)
     ap.add_argument("-o", "--output", type=Path, required=True)
-    ap.add_argument("--allow-gpu", action="store_true",
-                    default=os.environ.get("FB_ALLOW_GPU") == "1")
+    # Tri-state on purpose. The default has to depend on the backend — a Modal
+    # run that quietly drops the four GPU tasks is unsubmittable and looks
+    # exactly like a complete one — but an operator saying "no GPUs" must still
+    # win over that. `None` distinguishes "unset" from "explicitly off", which
+    # `store_true` alone cannot.
+    ap.add_argument("--allow-gpu", action="store_true", default=None)
+    ap.add_argument("--no-allow-gpu", dest="allow_gpu", action="store_false")
     # Memory, not storage. The two were one knob in the first draft of this
     # file and a 20 GB *storage* headroom subtracted from a 10 GB Docker VM's
     # *memory* excluded all 74 tasks with a negative budget — the plan was
@@ -254,17 +286,37 @@ def main() -> int:
     ap.add_argument("--memory-headroom-mb", type=int,
                     default=int(os.environ.get("FB_MEMORY_HEADROOM_MB", "2048")))
     ap.add_argument("--images-out", type=Path, default=None)
+    ap.add_argument("--backend", choices=("docker", "modal"),
+                    default=os.environ.get("FB_ENV", "docker"),
+                    help="docker: schedule against this host. modal: per-task "
+                         "sandboxes, so nothing is excluded for capacity.")
+    ap.add_argument("--concurrency", type=int, default=None,
+                    help="Override the derived per-tier concurrency. Required "
+                         "in spirit for modal, where there is no host pool to "
+                         "divide.")
     args = ap.parse_args()
 
-    plan = build_plan(args.dataset_dir, allow_gpu=args.allow_gpu,
-                      memory_headroom_mb=args.memory_headroom_mb)
+    concurrency = args.concurrency
+    if concurrency is None and args.backend == "modal":
+        concurrency = int(os.environ.get("FB_CONCURRENCY", "16"))
+
+    allow_gpu = args.allow_gpu
+    if allow_gpu is None:
+        allow_gpu = args.backend == "modal" or os.environ.get("FB_ALLOW_GPU") == "1"
+
+    plan = build_plan(args.dataset_dir, allow_gpu=allow_gpu,
+                      memory_headroom_mb=args.memory_headroom_mb,
+                      backend=args.backend, concurrency=concurrency)
     args.output.write_text(json.dumps(plan, indent=1) + "\n")
     if args.images_out:
         args.images_out.write_text("\n".join(plan["base_images"]) + "\n")
 
     host = plan["host"]
-    print(f"host: {host.get('memory_mb')} MB / {host.get('cpus')} CPUs "
-          f"/ gpu={host.get('gpu')} ({host.get('source')})")
+    if plan["backend"] == "modal":
+        print(f"backend: modal — {host.get('source')}; host capacity is not a constraint")
+    else:
+        print(f"host: {host.get('memory_mb')} MB / {host.get('cpus')} CPUs "
+              f"/ gpu={host.get('gpu')} ({host.get('source')})")
     for name, tier in plan["tiers"].items():
         print(f"  tier {name:<7} tasks={len(tier['tasks']):<3} "
               f"concurrency={tier['concurrency']} peak={tier['peak_memory_mb']}MB/"
