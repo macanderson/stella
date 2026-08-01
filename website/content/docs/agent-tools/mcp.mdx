@@ -23,6 +23,8 @@ Enabling and disabling a server is deliberately *not* a CLI verb: it is session-
 
 Because the tools are added at session start, connecting a new server takes effect on your next session. Each server gets a **10-second** connect budget, and connects are isolated per server — one that hangs or fails is recorded and skipped, it does not take the session down.
 
+<McpTopologyDiagram />
+
 <Callout type="warn">
 `stella tools` does **not** enumerate MCP tools — it prints a note that MCP servers merge more tools at session start. Confirm a server is wired up with `stella mcp list`, or verify its tools from inside a session (the deck's MCP tab, `/mcp`).
 </Callout>

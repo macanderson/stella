@@ -13,6 +13,10 @@
  *   actually about; everything else is a seam.
  * - One stroke weight, one radius, two type sizes. Boxes are outlines, not
  *   fills, so a diagram reads as line art rather than as a stack of panels.
+ * - Glyphs are line art at the same weight, and only earn their place when the
+ *   *kind* of a node is load-bearing — a subprocess versus a remote endpoint,
+ *   a lock versus a box. A glyph that merely decorates a label is noise, so
+ *   most diagrams here carry none.
  * - Accessible: every diagram carries `role="img"` plus a `<title>` and an
  *   `aria-label` that states the same thing the picture does, so the content
  *   survives with images off.
@@ -97,10 +101,96 @@ function Node({
   );
 }
 
-/** A wire between two nodes. `arrow` off for a leg that only joins, not flows. */
-function Wire({ d, arrow = true }: { d: string; arrow?: boolean }) {
+/**
+ * A wire between two nodes. `arrow` off for a leg that only joins, not flows;
+ * `dashed` for an edge that carries nothing — a failed connect, or a lifeline
+ * that is waiting rather than delivering.
+ */
+function Wire({
+  d,
+  arrow = true,
+  dashed = false,
+}: {
+  d: string;
+  arrow?: boolean;
+  dashed?: boolean;
+}) {
   return (
-    <path className="sdg-wire" d={d} markerEnd={arrow ? "url(#sdg-arrow)" : undefined} />
+    <path
+      className={dashed ? "sdg-wire sdg-wire-dashed" : "sdg-wire"}
+      d={d}
+      markerEnd={arrow ? "url(#sdg-arrow)" : undefined}
+    />
+  );
+}
+
+/**
+ * Line-art glyphs, each drawn in a 20×20 box and placed by its top-left corner.
+ * The set is deliberately small: a glyph is here to say what *kind* of thing a
+ * node is when that distinction is the point of the diagram — a subprocess on
+ * this machine versus an endpoint somewhere else, a lock versus a box.
+ */
+const GLYPHS = {
+  /** A local subprocess: stdio, a shell, something Stella launched. */
+  terminal: (
+    <>
+      <rect x="1.5" y="3.5" width="17" height="13" rx="2" />
+      <path d="M5.2 8.4 L7.8 10.6 L5.2 12.8" />
+      <path d="M10 12.8 H14.4" />
+    </>
+  ),
+  /** A remote endpoint: reached over the network, not launched. */
+  globe: (
+    <>
+      <circle cx="10" cy="10" r="7.5" />
+      <path d="M2.5 10 H17.5" />
+      <path d="M10 2.5 C13.3 5.4 13.3 14.6 10 17.5 C6.7 14.6 6.7 5.4 10 2.5 Z" />
+    </>
+  ),
+  /** A held claim — a path one worker owns for the duration of its attempt. */
+  lock: (
+    <>
+      <rect x="3.5" y="8.5" width="13" height="9" rx="2" />
+      <path d="M6.5 8.5 V6.2 A3.5 3.5 0 0 1 13.5 6.2 V8.5" />
+    </>
+  ),
+  /** A process you run: the engine, a sidecar. */
+  server: (
+    <>
+      <rect x="2.5" y="3" width="15" height="6" rx="1.5" />
+      <rect x="2.5" y="11" width="15" height="6" rx="1.5" />
+      <circle cx="5.6" cy="6" r="0.9" />
+      <circle cx="5.6" cy="14" r="0.9" />
+    </>
+  ),
+  /** Your application — the thing with the users in front of it. */
+  app: (
+    <>
+      <rect x="2.5" y="3.5" width="15" height="13" rx="2" />
+      <path d="M2.5 7.4 H17.5" />
+      <circle cx="5.4" cy="5.5" r="0.7" />
+    </>
+  ),
+} as const;
+
+function Glyph({
+  kind,
+  x,
+  y,
+  accent = false,
+}: {
+  kind: keyof typeof GLYPHS;
+  x: number;
+  y: number;
+  accent?: boolean;
+}) {
+  return (
+    <g
+      className={accent ? "sdg-icon sdg-icon-accent" : "sdg-icon"}
+      transform={`translate(${x} ${y})`}
+    >
+      {GLYPHS[kind]}
+    </g>
   );
 }
 
@@ -301,14 +391,7 @@ export function CredentialChainDiagram() {
         return (
           <g key={text}>
             <circle className="sdg-dot" cx={28} cy={y + 15} r={8} />
-            <text
-              className="sdg-sub"
-              x={28}
-              y={y + 19}
-              textAnchor="middle"
-              fill="var(--color-fd-background)"
-              fontWeight={600}
-            >
+            <text className="sdg-sub sdg-dot-numeral" x={28} y={y + 19} textAnchor="middle">
               {i + 1}
             </text>
             <rect className="sdg-box" x={48} y={y} width={312} height={30} rx={6} />
@@ -568,14 +651,7 @@ export function LoopVerdictDiagram() {
         return (
           <g key={verdict}>
             <circle className="sdg-dot" cx={28} cy={y + 16} r={8} />
-            <text
-              className="sdg-sub"
-              x={28}
-              y={y + 20}
-              textAnchor="middle"
-              fill="var(--color-fd-background)"
-              fontWeight={600}
-            >
+            <text className="sdg-sub sdg-dot-numeral" x={28} y={y + 20} textAnchor="middle">
               {i + 1}
             </text>
             <rect className="sdg-box" x={48} y={y} width={296} height={32} rx={6} />
@@ -628,6 +704,464 @@ export function TelemetryFlowDiagram() {
       <Node x={592} y={120} w={116} h={52} label="observatory" sub="the dashboard" />
       <text className="sdg-sub" x="275" y="184" textAnchor="middle">
         no arrow leaves this picture — there is no endpoint, so there is nothing to opt out of
+      </text>
+    </svg>
+  );
+}
+
+/**
+ * MCP: the connect fan-out at session start. Drawn as a topology rather than a
+ * list because the two facts a reader needs are both about *edges* — a server
+ * is either a subprocess on this machine or an endpoint somewhere else, and a
+ * server that never answers loses its own tools without taking the session
+ * with it. The dashed leg is that second fact; it is the only edge here that
+ * delivers nothing.
+ */
+export function McpTopologyDiagram() {
+  return (
+    <svg
+      className="sdg"
+      viewBox="0 0 720 252"
+      role="img"
+      aria-label="At session start Stella connects to each configured MCP server — stdio servers as local subprocesses, http servers as remote endpoints — and merges their tools into one namespaced tool set. A server that fails to connect within ten seconds is skipped, and the session continues without its tools."
+    >
+      <title>How MCP servers reach the agent</title>
+      <Defs />
+      <Node x={8} y={100} w={152} h={54} label="session start" sub="reads .stella/mcp.toml" />
+
+      {/* stdio — a child process on this machine, with a scrubbed environment */}
+      <rect className="sdg-box" x={210} y={38} width={250} height={46} rx={6} />
+      <Glyph kind="terminal" x={226} y={51} />
+      <text className="sdg-label" x={256} y={59}>
+        filesystem
+      </text>
+      <text className="sdg-sub" x={256} y={73}>
+        stdio — subprocess, scrubbed env
+      </text>
+
+      {/* http — an endpoint somewhere else, reached with static headers */}
+      <rect className="sdg-box" x={210} y={104} width={250} height={46} rx={6} />
+      <Glyph kind="globe" x={226} y={117} />
+      <text className="sdg-label" x={256} y={125}>
+        github
+      </text>
+      <text className="sdg-sub" x={256} y={139}>
+        http — a bearer, replayed
+      </text>
+
+      {/* the one that did not answer */}
+      <rect className="sdg-box" x={210} y={170} width={250} height={46} rx={6} />
+      <Glyph kind="terminal" x={226} y={183} />
+      <text className="sdg-label" x={256} y={191}>
+        linear
+      </text>
+      <text className="sdg-sub" x={256} y={205}>
+        connect timed out — skipped
+      </text>
+
+      <Wire d="M160 127 C186 127 186 61 208 61" />
+      <Wire d="M160 127 H208" />
+      <Wire d="M160 127 C186 127 186 193 208 193" />
+
+      <Wire d="M460 61 C500 61 500 127 534 127" />
+      <Wire d="M460 127 H534" />
+      {/* nothing merges from a server that never connected */}
+      <Wire d="M460 193 H508" arrow={false} dashed />
+      <text className="sdg-sub" x={516} y={197}>
+        nothing merges
+      </text>
+
+      <Node
+        x={536}
+        y={100}
+        w={176}
+        h={54}
+        label="one tool set"
+        sub="mcp__<server>__<tool>"
+        accent
+      />
+      <text className="sdg-sub" x="360" y="240" textAnchor="middle">
+        each connect is isolated, with a ten-second budget — a server that hangs costs you its
+        tools, not your session
+      </text>
+    </svg>
+  );
+}
+
+/**
+ * Hooks: three lifecycle events on one turn, and the asymmetry that decides how
+ * you use them — exactly one of the three can stop anything. Drawn as a spine
+ * with a single downward exit, because a reader who takes only the shape away
+ * has taken away the right thing.
+ */
+export function HookLifecycleDiagram() {
+  return (
+    <svg
+      className="sdg"
+      viewBox="0 0 720 224"
+      role="img"
+      aria-label="Three hooks fire across a turn: SessionStart, whose stdout becomes context; PreToolUse, whose non-zero exit blocks the tool; and PostToolUse, whose exit status is ignored. Only PreToolUse can stop anything."
+    >
+      <title>The three hook points on a turn</title>
+      <Defs />
+      <Wire d="M16 80 H44" />
+      <Node x={46} y={54} w={164} h={52} label="SessionStart" sub="stdout becomes context" />
+      <Wire d="M210 80 H254" />
+      <Node x={256} y={54} w={164} h={52} label="PreToolUse" sub="runs before the tool" accent />
+      <Wire d="M420 80 H464" />
+      <Node x={466} y={54} w={164} h={52} label="PostToolUse" sub="runs after the tool" />
+      <Wire d="M630 80 H702" />
+
+      {/* the only branch that leaves the spine */}
+      <Wire d="M338 106 V144" />
+      <text className="sdg-sub" x={346} y={130}>
+        exit is non-zero
+      </text>
+      <Node
+        x={237}
+        y={146}
+        w={202}
+        h={44}
+        label="refused"
+        sub="the tool never runs"
+      />
+      <text className="sdg-sub" x="360" y="210" textAnchor="middle">
+        only one of the three can stop anything — and it fails closed: a hook that times out also
+        blocks
+      </text>
+    </svg>
+  );
+}
+
+/**
+ * Determinism: the argument this page makes is structural, so it should be
+ * possible to see it. The two panels are drawn to the same scale on purpose —
+ * what differs is the edge count, and edges are exactly what the MAST failure
+ * classes live in. Nothing is labelled a failure; the tangle is the claim.
+ */
+export function SingleThreadDiagram() {
+  return (
+    <svg
+      className="sdg"
+      viewBox="0 0 720 226"
+      role="img"
+      aria-label="A swarm is a coordinator and four agents joined by many edges, every one of them a handoff that summarizes. Stella is one ordered loop — plan, act, observe, compact — with a single return edge and one transcript."
+    >
+      <title>A swarm, and one deterministic loop, at the same scale</title>
+      <Defs />
+
+      <text className="sdg-label" x={16} y={28}>
+        a swarm — N agents and a coordinator
+      </text>
+      <rect className="sdg-box" x={16} y={38} width={328} height={152} rx={6} />
+      {/* every pair that can exchange a summary, drawn */}
+      <Wire d="M180 68 L66 124" arrow={false} />
+      <Wire d="M180 68 L128 150" arrow={false} />
+      <Wire d="M180 68 L232 150" arrow={false} />
+      <Wire d="M180 68 L294 124" arrow={false} />
+      <Wire d="M66 124 L128 150" arrow={false} />
+      <Wire d="M128 150 L232 150" arrow={false} />
+      <Wire d="M232 150 L294 124" arrow={false} />
+      <Wire d="M66 124 L232 150" arrow={false} />
+      <Wire d="M128 150 L294 124" arrow={false} />
+      <Wire d="M66 124 L294 124" arrow={false} />
+      {/* seam-coloured, not gold: the accent belongs to the panel on the right */}
+      <circle className="sdg-dot-muted" cx={180} cy={68} r={5} />
+      <circle className="sdg-dot-muted" cx={66} cy={124} r={5} />
+      <circle className="sdg-dot-muted" cx={128} cy={150} r={5} />
+      <circle className="sdg-dot-muted" cx={232} cy={150} r={5} />
+      <circle className="sdg-dot-muted" cx={294} cy={124} r={5} />
+      <text className="sdg-sub" x={180} y={56} textAnchor="middle">
+        coordinator
+      </text>
+      <text className="sdg-sub" x={180} y={178} textAnchor="middle">
+        every edge is a handoff, and handoffs summarize
+      </text>
+
+      <text className="sdg-label" x={376} y={28}>
+        Stella — one deterministic step loop
+      </text>
+      <rect className="sdg-box-accent" x={376} y={38} width={328} height={152} rx={6} />
+      <text className="sdg-sub" x={420} y={74} textAnchor="middle">
+        plan
+      </text>
+      <text className="sdg-sub" x={500} y={74} textAnchor="middle">
+        act
+      </text>
+      <text className="sdg-sub" x={580} y={74} textAnchor="middle">
+        observe
+      </text>
+      <text className="sdg-sub" x={660} y={74} textAnchor="middle">
+        compact
+      </text>
+      <Wire d="M426 88 H494" />
+      <Wire d="M506 88 H574" />
+      <Wire d="M586 88 H654" />
+      <Wire d="M660 94 C660 132 420 132 420 94" />
+      <circle className="sdg-dot" cx={420} cy={88} r={5} />
+      <circle className="sdg-dot" cx={500} cy={88} r={5} />
+      <circle className="sdg-dot" cx={580} cy={88} r={5} />
+      <circle className="sdg-dot" cx={660} cy={88} r={5} />
+      <text className="sdg-sub" x={540} y={148} textAnchor="middle">
+        repeat
+      </text>
+      <text className="sdg-sub" x={540} y={178} textAnchor="middle">
+        no peer to disagree with, no handoff to lose
+      </text>
+
+      <text className="sdg-sub" x="360" y="214" textAnchor="middle">
+        the swarm failure modes are not mitigated on the right — they are unrepresentable
+      </text>
+    </svg>
+  );
+}
+
+/**
+ * Event stream: the two rules, as the fork a parser actually walks. The page
+ * warns against collapsing them into one try/catch, and a picture is the
+ * cheapest way to show that they are two decisions and not one — an unknown
+ * `type` leaves early, a known `type` with a bad body must not.
+ */
+export function EventContractDiagram() {
+  return (
+    <svg
+      className="sdg"
+      viewBox="0 0 720 232"
+      role="img"
+      aria-label="Each line is parsed alone. An unrecognized event type is inert — skip it and keep reading. A recognized type whose body does not fit is a real error and must fail loudly."
+    >
+      <title>The two rules a conforming client follows</title>
+      <Defs />
+      <Node x={8} y={100} w={140} h={52} label="one line" sub="parsed on its own" />
+      <Wire d="M148 126 H174" />
+      <Node x={176} y={100} w={150} h={52} label="type known?" sub="dispatch on the string" />
+
+      <Wire d="M326 114 C346 114 346 44 366 44" />
+      <text className="sdg-sub" x={356} y={96}>
+        unknown
+      </text>
+      <Node x={368} y={22} w={208} h={44} label="inert" sub="count it, keep reading" />
+
+      <Wire d="M326 138 C346 138 346 126 366 126" />
+      <Node x={368} y={100} w={150} h={52} label="body fits?" sub="against the schema" />
+
+      <Wire d="M518 114 C548 114 548 96 574 96" />
+      <text className="sdg-sub" x={528} y={90}>
+        yes
+      </text>
+      <Node x={576} y={74} w={136} h={44} label="handle it" />
+
+      <Wire d="M518 138 C548 138 548 170 574 170" />
+      <text className="sdg-sub" x={516} y={188}>
+        malformed
+      </text>
+      <Node x={576} y={148} w={136} h={44} label="fail loudly" sub="this is corruption" accent />
+
+      <text className="sdg-sub" x="360" y="220" textAnchor="middle">
+        one try/catch per line collapses these two into the first — a loud failure becomes silent
+        data loss
+      </text>
+    </svg>
+  );
+}
+
+/**
+ * Budget: two ceilings, drawn in the order they fire, because that order is the
+ * guide's thesis. The left one costs nothing when it trips, which is why it is
+ * the accented node — the reader's instinct is to reach for --budget, and the
+ * cheaper stop is the one before it.
+ */
+export function BudgetGuardDiagram() {
+  return (
+    <svg
+      className="sdg"
+      viewBox="0 0 720 220"
+      role="img"
+      aria-label="A plan meets the scope review first, which stops it before the first edit at zero cost. Steps that get past it are metered between steps and stages, never inside a tool call, so a budget abort never leaves a half-applied edit."
+    >
+      <title>The two places a run is stopped</title>
+      <Defs />
+      <Node x={12} y={50} w={110} h={52} label="a plan" sub="nothing written" />
+      <Wire d="M122 76 H164" />
+      <Node x={166} y={50} w={150} h={52} label="scope review" sub="steps · files · cost" accent />
+      <Wire d="M316 76 H378" />
+      <Node x={380} y={50} w={140} h={52} label="the steps" sub="where the money goes" />
+      <Wire d="M520 76 H564" />
+      <Node x={566} y={50} w={138} h={52} label="settled" sub="cost in the receipt" />
+
+      <Wire d="M241 102 V138" />
+      <text className="sdg-sub" x={249} y={126}>
+        over a threshold
+      </text>
+      <Node x={153} y={140} w={176} h={44} label="stopped" sub="$0 — nothing edited" />
+
+      <Wire d="M450 102 V138" />
+      <text className="sdg-sub" x={458} y={126}>
+        over the ceiling
+      </text>
+      <Node x={350} y={140} w={200} h={44} label="abort" sub="exit 1 — work on disk stays" />
+
+      <text className="sdg-sub" x="360" y="206" textAnchor="middle">
+        the meter is read between steps, never inside a tool call — an abort leaves work, not
+        wreckage
+      </text>
+    </svg>
+  );
+}
+
+/**
+ * Cost: five commands, each answering a narrower question than the last. The
+ * boxes shrink because that narrowing *is* the guide — the shape says "keep
+ * going, the question gets smaller" without a sentence having to.
+ */
+export function CostChainDiagram() {
+  const rungs: [string, string][] = [
+    ["stella stats", "which model, and how much"],
+    ["stella observe --open", "which run"],
+    ["stella inspect", "which call inside it"],
+    ["stella inspect 42 --step 3", "what that call was sent"],
+    ["… --diff --only system", "what changed since the last one"],
+  ];
+  return (
+    <svg
+      className="sdg"
+      viewBox="0 0 720 246"
+      role="img"
+      aria-label="Five commands, each narrowing the question: stats for which model and how much, observe for which run, inspect for which call, inspect with a step for what it was sent, and diff for what changed since the previous call."
+    >
+      <title>From a dollar figure down to the exact bytes</title>
+      <Defs />
+      <Wire d="M28 20 V198" />
+      {rungs.map(([cmd, question], i) => {
+        const y = 14 + i * 42;
+        // Each rung is narrower than the last: the shape carries the narrowing,
+        // so no sentence has to say "and now a smaller question".
+        const w = 448 - i * 58;
+        const last = i === rungs.length - 1;
+        return (
+          <g key={cmd}>
+            <circle className="sdg-dot" cx={28} cy={y + 16} r={8} />
+            <text className="sdg-sub sdg-dot-numeral" x={28} y={y + 20} textAnchor="middle">
+              {i + 1}
+            </text>
+            <rect
+              className={last ? "sdg-box-accent" : "sdg-box"}
+              x={48}
+              y={y}
+              width={w}
+              height={32}
+              rx={6}
+            />
+            <text className="sdg-sub" x={62} y={y + 20}>
+              {cmd}
+            </text>
+            <text className="sdg-sub" x={48 + w + 16} y={y + 20}>
+              {question}
+            </text>
+          </g>
+        );
+      })}
+      <text className="sdg-sub" x="345" y="234" textAnchor="middle">
+        every rung reads .stella/private/store.db and never writes it — no network, no API key
+      </text>
+    </svg>
+  );
+}
+
+/**
+ * Fleets: what makes a shared tree safe. The picture is worth drawing because
+ * the outcome people expect — two workers editing one file and sorting it out
+ * later — is not what happens. The second dispatch never starts, and it names
+ * the worker that beat it.
+ */
+export function ClaimLockDiagram() {
+  return (
+    <svg
+      className="sdg"
+      viewBox="0 0 720 218"
+      role="img"
+      aria-label="Two tasks declaring the same path meet a shared claim table. The first holds the path for its attempt and runs; the second fails its dispatch by name, in under a second, with the rival identified."
+    >
+      <title>Claims: one shared tree, one lock table</title>
+      <Defs />
+      <Node x={16} y={34} w={150} h={48} label="task a" sub="claims error.rs" />
+      <Node x={16} y={118} w={150} h={48} label="task b" sub="claims error.rs" />
+
+      <Wire d="M166 58 C208 58 208 88 248 88" />
+      <Wire d="M166 142 C208 142 208 112 248 112" />
+
+      <rect className="sdg-box-accent" x={250} y={56} width={200} height={88} rx={6} />
+      <Glyph kind="lock" x={340} y={68} accent />
+      <text className="sdg-label" x={350} y={110} textAnchor="middle">
+        the claim table
+      </text>
+      <text className="sdg-sub" x={350} y={126} textAnchor="middle">
+        one shared tree · exact paths
+      </text>
+
+      <Wire d="M450 88 C486 88 486 58 526 58" />
+      <Wire d="M450 112 C486 112 486 142 526 142" />
+      <Node x={528} y={34} w={176} h={48} label="runs" sub="holds it for the attempt" />
+      <Node x={528} y={118} w={176} h={48} label="fails by name" sub="under a second, rival named" />
+
+      <text className="sdg-sub" x="360" y="204" textAnchor="middle">
+        the collision surfaces at dispatch, not at integration — and undeclared paths are claimed
+        on first write too
+      </text>
+    </svg>
+  );
+}
+
+/**
+ * The engine's reverse-RPC turn, as a sequence. This replaces an ASCII sketch
+ * that said the same thing: the engine never initiates a call, it emits a
+ * request and parks. Lifelines are dashed because waiting is what they spend
+ * most of a turn doing — the solid horizontals are the only deliveries.
+ */
+export function EngineSequenceDiagram() {
+  const messages: [number, boolean, string][] = [
+    [86, true, "POST /v1/turns — prompt, tools, your history"],
+    [128, false, "provider_request — it needs a completion"],
+    [170, true, "POST …/provider-result — your gateway, your key"],
+    [212, false, "tool_request — the model asked for a tool"],
+    [254, true, "POST …/tool-result — your sandbox, your RBAC"],
+    [296, false, "turn_complete — text, cost, and it is over"],
+  ];
+  return (
+    <svg
+      className="sdg"
+      viewBox="0 0 720 346"
+      role="img"
+      aria-label="Your app starts a turn. The engine asks it to run a model call and waits for the result, then asks it to run a tool and waits again, then reports the turn complete. Every outbound call is made by your app; the engine only asks."
+    >
+      <title>One turn, as a sequence</title>
+      <Defs />
+      <rect className="sdg-box" x={66} y={12} width={148} height={44} rx={6} />
+      <Glyph kind="app" x={96} y={24} />
+      <text className="sdg-label" x={126} y={38}>
+        your app
+      </text>
+      <rect className="sdg-box-accent" x={486} y={12} width={148} height={44} rx={6} />
+      <Glyph kind="server" x={501} y={24} accent />
+      <text className="sdg-label" x={531} y={38}>
+        stella-serve
+      </text>
+
+      {/* lifelines: dashed, because parked is their default state */}
+      <Wire d="M140 56 V310" arrow={false} dashed />
+      <Wire d="M560 56 V310" arrow={false} dashed />
+
+      {messages.map(([y, rightward, label]) => (
+        <g key={label}>
+          <text className="sdg-sub" x={350} y={y - 8} textAnchor="middle">
+            {label}
+          </text>
+          <Wire d={rightward ? `M142 ${y} H558` : `M558 ${y} H142`} />
+        </g>
+      ))}
+
+      <text className="sdg-sub" x="360" y="334" textAnchor="middle">
+        the engine never opens a socket — it emits a request and parks until your app answers
       </text>
     </svg>
   );
