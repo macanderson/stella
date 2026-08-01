@@ -1166,6 +1166,13 @@ pub struct LadderSnapshot {
     /// candidate — so its presence here is the *stated* proof the check ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub witness_intact: Option<bool>,
+    /// The mutation audit's finding (#870): `Some(true)` = the witness
+    /// failed under at least one trivial mutant of the changed lines (it
+    /// constrains the change); `Some(false)` = it stayed green under every
+    /// observed mutant (tautological — the deterministic credit was
+    /// withheld); `None` = the check never ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub witness_mutation: Option<bool>,
 }
 
 /// Which code state a [`ProofStep::Oracle`] observation was made against.
@@ -1970,6 +1977,7 @@ mod tests {
                     new_diag_errors: 0,
                     new_diag_warnings: 0,
                     witness_intact: Some(true),
+                    witness_mutation: None,
                 })),
             },
         };

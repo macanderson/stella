@@ -398,6 +398,7 @@ impl<'a> Pipeline<'a> {
             // The authoring snapshot never fast-submits, so the regression
             // veto has nothing to audit here.
             lint: None,
+            mutation: None,
             repo_status: baseline.repo_status(),
             cwd: Some(baseline.root()),
             // No hooks in the baseline: nothing there is the user's work, and
