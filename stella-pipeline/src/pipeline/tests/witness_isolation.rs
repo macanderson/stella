@@ -1088,12 +1088,23 @@ async fn a_revise_turn_that_edits_the_witness_hard_fails_at_the_next_check() {
     // Iteration 1 sees the witness at its pinned identity (w1) and a red
     // test → revise. Iteration 2 finds the file at w2: the revise turn
     // rewrote the test it was being judged by.
+    //
+    // `artifact_identity` is consumed three times on the candidate: once by
+    // the graft re-pin (w1, accepted), once by iteration 1's tamper check
+    // (w1, still matches → the red test drives the revise turn), and once by
+    // iteration 2's tamper check (w2, mismatch → abort AFTER the revise).
     let candidate_status = SeqRepoStatus::new(vec![
         vec![],
         vec![("tests/witness.rs", "w1")],
         vec![("tests/witness.rs", "w2")],
     ])
     .with_artifact_identities(vec![
+        Some(ArtifactIdentity {
+            fingerprint: "w1".into(),
+            kind: ArtifactKind::Regular,
+            mode: 0o100644,
+            link_count: 1,
+        }),
         Some(ArtifactIdentity {
             fingerprint: "w1".into(),
             kind: ArtifactKind::Regular,
