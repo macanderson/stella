@@ -269,6 +269,7 @@ impl<'a> InteractiveToolSet<'a> {
                 }),
                 // A registry search touches no workspace state.
                 read_only: true,
+                speculation_safe: false,
             },
             ToolSchema {
                 name: "install_skill".into(),
@@ -284,6 +285,7 @@ impl<'a> InteractiveToolSet<'a> {
                 }),
                 // Writes into .stella/skills/ — a workspace mutation.
                 read_only: false,
+                speculation_safe: false,
             },
         ]
     }
@@ -410,6 +412,7 @@ impl<'a> InteractiveToolSet<'a> {
             // so it is marked mutating (the safe direction) to keep the engine
             // from batching it concurrently.
             read_only: false,
+            speculation_safe: false,
         }
     }
 
@@ -597,6 +600,7 @@ mod tests {
                 description: "run".into(),
                 input_schema: serde_json::json!({"type": "object"}),
                 read_only: false,
+                speculation_safe: false,
             }]
         }
         async fn execute(&self, name: &str, _input: &Value) -> ToolOutput {

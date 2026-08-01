@@ -55,6 +55,7 @@ fn echo_tool() -> ToolSchema {
         description: "echo its input".to_string(),
         input_schema: json!({ "type": "object" }),
         read_only: false,
+        speculation_safe: false,
     }
 }
 
@@ -68,6 +69,7 @@ fn spec_for(prompt: &str) -> SessionSpec {
         reverse_request_timeout: SessionSpec::DEFAULT_REVERSE_REQUEST_TIMEOUT,
         turn: TurnRef::new("turn-bridgetest0"),
         observer: stella_serve::observe::null_observer(),
+        on_settled: None,
     }
 }
 

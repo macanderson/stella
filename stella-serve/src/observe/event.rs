@@ -104,6 +104,20 @@ pub enum Route {
     TurnProviderResult,
     #[serde(rename = "/v1/turns/{id}/cancel")]
     TurnCancel,
+    #[serde(rename = "/v1/turns/{id}/steer")]
+    TurnSteer,
+    #[serde(rename = "/v1/turns/{id}/pause")]
+    TurnPause,
+    #[serde(rename = "/v1/turns/{id}/resume")]
+    TurnResume,
+    #[serde(rename = "/v1/sessions")]
+    SessionsCreate,
+    /// `GET` (read) and `DELETE` (end) share the member path — one resource,
+    /// two verbs, one template in the records.
+    #[serde(rename = "/v1/sessions/{id}")]
+    Session,
+    #[serde(rename = "/v1/sessions/{id}/turns")]
+    SessionTurns,
     /// A path that matched no route. The path itself is deliberately dropped:
     /// a 404 probe is attacker-controlled text, and this is a log.
     #[serde(rename = "<unrouted>")]
@@ -122,6 +136,12 @@ impl Route {
             Self::TurnToolResult => "/v1/turns/{id}/tool-result",
             Self::TurnProviderResult => "/v1/turns/{id}/provider-result",
             Self::TurnCancel => "/v1/turns/{id}/cancel",
+            Self::TurnSteer => "/v1/turns/{id}/steer",
+            Self::TurnPause => "/v1/turns/{id}/pause",
+            Self::TurnResume => "/v1/turns/{id}/resume",
+            Self::SessionsCreate => "/v1/sessions",
+            Self::Session => "/v1/sessions/{id}",
+            Self::SessionTurns => "/v1/sessions/{id}/turns",
             Self::Unrouted => "<unrouted>",
         }
     }
@@ -151,6 +171,29 @@ impl TurnRef {
 }
 
 impl std::fmt::Display for TurnRef {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+/// A session id as it appears in a record: truncated, never whole.
+///
+/// Same reasoning as [`TurnRef`] — a session id is a second factor (it names a
+/// retained conversation, and `DELETE` destroys one), minted from the same 128
+/// random bits, so a record carries enough to correlate and not enough to act.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SessionRef(String);
+
+impl SessionRef {
+    /// Truncate a full session id (`session-<32 hex>`) for recording.
+    #[must_use]
+    pub fn new(session_id: &str) -> Self {
+        let hex = session_id.strip_prefix("session-").unwrap_or(session_id);
+        Self(hex.chars().take(TURN_REF_CHARS).collect())
+    }
+}
+
+impl std::fmt::Display for SessionRef {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(&self.0)
     }
@@ -448,6 +491,28 @@ pub enum ServeEvent {
         reason: StreamEndReason,
     },
 
+    // ---- session registry (#931) ----
+    SessionCreated {
+        session: SessionRef,
+        live_sessions: usize,
+    },
+    /// The registry is at `MAX_SESSIONS` and nothing idle had aged out.
+    SessionRefused {
+        live_sessions: usize,
+    },
+    SessionDeleted {
+        session: SessionRef,
+        live_sessions: usize,
+    },
+    /// An idle-expired session evicted to admit a new one. Lossy — the
+    /// conversation is gone and its id answers `404` — which is why it is
+    /// only done under pressure and only past the idle deadline, and why it
+    /// is reported here rather than being a silent `remove`.
+    SessionReclaimed {
+        session: SessionRef,
+        idle_ms: u64,
+    },
+
     // ---- reverse RPC: the wedge axis ----
     ReverseDispatched {
         turn: TurnRef,
@@ -524,7 +589,9 @@ impl ServeEvent {
             | Self::RequestCompleted { .. }
             | Self::TurnCreated { .. }
             | Self::TurnSettled { .. }
-            | Self::StreamEnded { .. } => Level::Info,
+            | Self::StreamEnded { .. }
+            | Self::SessionCreated { .. }
+            | Self::SessionDeleted { .. } => Level::Info,
 
             // Per model/tool call — a few dozen a turn, so off by default.
             Self::ReverseDispatched { .. } | Self::ReverseAnswered { .. } => Level::Debug,
@@ -535,6 +602,8 @@ impl ServeEvent {
             Self::Unauthorized { .. }
             | Self::TurnRefused { .. }
             | Self::TurnReclaimed { .. }
+            | Self::SessionRefused { .. }
+            | Self::SessionReclaimed { .. }
             | Self::ReverseMisrouted { .. }
             | Self::ReverseAbandoned { .. }
             | Self::AcceptBackoff { .. } => Level::Warn,
@@ -684,16 +753,32 @@ mod tests {
             Route::TurnToolResult,
             Route::TurnProviderResult,
             Route::TurnCancel,
+            Route::TurnSteer,
+            Route::TurnPause,
+            Route::TurnResume,
+            Route::SessionsCreate,
+            Route::Session,
+            Route::SessionTurns,
             Route::Unrouted,
         ] {
             let json = serde_json::to_string(&route).expect("serialize");
             assert_eq!(json, format!("\"{}\"", route.template()));
             assert!(
-                !route.template().contains("turn-"),
-                "{} embeds a concrete turn id",
+                !route.template().contains("turn-") && !route.template().contains("session-"),
+                "{} embeds a concrete id",
                 route.template()
             );
         }
+    }
+
+    /// Same second-factor posture as a turn id: a record correlates a
+    /// session, it cannot address one.
+    #[test]
+    fn a_session_ref_is_truncated_not_whole() {
+        let full = "session-0123456789abcdef0123456789abcdef";
+        let reference = SessionRef::new(full);
+        assert_eq!(reference.to_string(), "01234567");
+        assert_eq!(reference.to_string().len(), TURN_REF_CHARS);
     }
 
     /// Log forging: a header that could split or bloat a record is refused

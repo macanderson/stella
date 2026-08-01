@@ -682,6 +682,7 @@ async fn run_goal_pipeline_turn(
                 diagnostics: &ws_ports.diagnostic_runner,
                 tests: &ws_ports.test_runner,
                 lint: Some(&ws_ports.lint_probe),
+                mutation: Some(&ws_ports.mutation_probe),
                 approvals: &HEADLESS_APPROVAL_GATE,
                 sleeper: &TokioSleeper,
                 hooks: cfg

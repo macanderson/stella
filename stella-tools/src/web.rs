@@ -42,7 +42,10 @@
 //! exists so the next reader does not re-derive the retired guarantee from a
 //! stale comment.
 //!
-//! Fetch/extract are `read_only` (they observe the web, not the workspace);
+//! Fetch/extract are `read_only` (they observe the web, not the workspace)
+//! but never `speculation_safe`: every run is real traffic against someone
+//! else's server — and `web_search` spends a metered BYOK key — so a stream
+//! retry must not be able to run one twice (#923);
 //! `web_download` writes through [`crate::resolve_within_root`] and is
 //! classified into the file-touch ledger like `write_file`.
 
@@ -461,6 +464,7 @@ impl Tool for WebSearch {
                 "required": ["query"]
             }),
             read_only: true,
+            speculation_safe: false,
         }
     }
 
@@ -628,6 +632,7 @@ impl Tool for WebFetch {
                 "required": ["url"]
             }),
             read_only: true,
+            speculation_safe: false,
         }
     }
 
@@ -754,6 +759,7 @@ impl Tool for WebExtractAssets {
                 "required": ["url"]
             }),
             read_only: true,
+            speculation_safe: false,
         }
     }
 
@@ -971,6 +977,7 @@ impl Tool for WebDownload {
                 "required": ["url", "path"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 

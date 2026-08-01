@@ -49,6 +49,7 @@ impl Tool for SaveMemory {
                 "required": ["slug", "memory"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 
@@ -156,6 +157,7 @@ impl Tool for CiteMemory {
                 "required": ["memory_id", "useful_score", "truthful", "remark"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 

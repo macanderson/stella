@@ -32,16 +32,19 @@
 //! # Why `read_only: true` despite writing the pack file
 //!
 //! The flag's contract in this codebase is about *scheduling and
-//! authority*: read-only calls may run concurrently with each other, may
-//! run speculatively while the model still streams, and are the only
-//! tools a judging context may use. All three are sound here because the
-//! tool's only write is a content-addressed derived cache under
-//! `.stella/`, outside every source path: re-running it on unchanged
-//! inputs writes the same bytes (idempotent), racing gathers of the same
-//! sweep converge on identical content, and no workspace file any other
-//! tool treats as source of truth is ever touched. A discarded
-//! speculative gather leaves only a cache entry a later call would have
-//! created anyway.
+//! authority*: read-only calls may run concurrently with each other and
+//! are the only tools a judging context may use. Both are sound here
+//! because the tool's only workspace-adjacent write is a
+//! content-addressed derived cache under `.stella/`, outside every source
+//! path: re-running it on unchanged inputs writes the same bytes
+//! (idempotent), racing gathers of the same sweep converge on identical
+//! content, and no workspace file any other tool treats as source of
+//! truth is ever touched.
+//!
+//! It is NOT `speculation_safe`, though (#923): symbol sweeps resolve
+//! through the same code-graph `open_or_build` path as `graph_query`,
+//! which may write codegraph.db catch-up state on the read path — so the
+//! gather runs once, at dispatch, never early.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -375,6 +378,9 @@ impl Tool for GatherContext {
                 }
             }),
             read_only: true,
+            // See the module docs: pack writes are idempotent, but the
+            // code-graph substrate is not speculation-safe (#923).
+            speculation_safe: false,
         }
     }
 

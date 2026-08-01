@@ -67,8 +67,8 @@ use crate::plan::{PlanStep, build_planner_prompt, parse_plan, plan_repair_prompt
 use crate::ports::{
     ApprovalGate, CandidateWorkspace, CandidateWorkspacePort, ContextRecallPort,
     DiagnosticInvocation, DiagnosticRunner, FileTouchPort, LintProbe, LintRecord, McpPrefetchPort,
-    PipelinePorts, ProviderResolver, Recall, RecalledFrame, RepoStatusPort, RepoStructurePort,
-    ScopeDecision, TestInvocation, TestRunner, WorkspaceError,
+    MutantOutcome, MutationProbe, PipelinePorts, ProviderResolver, Recall, RecalledFrame,
+    RepoStatusPort, RepoStructurePort, ScopeDecision, TestInvocation, TestRunner, WorkspaceError,
 };
 use crate::scope::{
     MAX_SCOPE_REVISIONS, PlannedScope, ScopeEstimate, ScopeVerdict, apply_trim, build_proposal,
@@ -559,6 +559,11 @@ struct CandidateState {
     /// from the still-pristine session tree. `None` also covers "probe
     /// unavailable", and the veto degrades open either way.
     lint_baseline: Option<Vec<LintRecord>>,
+    /// The mutation audit's finding (#870): Some(true) = the witness
+    /// failed under at least one mutant (it constrains the change);
+    /// Some(false) = it stayed green under every observed mutant
+    /// (tautological — the fast-submit was withheld); None = never run.
+    witness_mutation: Option<bool>,
     revisions: u32,
     /// Paths of the witness artifact grafted into this candidate, if the
     /// warrant bought one after execution. Empty until then, and empty forever
@@ -617,6 +622,8 @@ impl CandidateState {
 struct CandidateSurface<'c> {
     diagnostics: &'c dyn DiagnosticRunner,
     tests: &'c dyn TestRunner,
+    /// The witness mutation check (#870); rooted per surface via `cwd`.
+    mutation: Option<&'c dyn MutationProbe>,
     /// The lint probe for the regression veto (#861); rooted per surface
     /// via `cwd`.
     lint: Option<&'c dyn LintProbe>,
@@ -642,6 +649,7 @@ pub struct Pipeline<'a> {
     diagnostics: &'a dyn DiagnosticRunner,
     tests: &'a dyn TestRunner,
     lint: Option<&'a dyn LintProbe>,
+    mutation: Option<&'a dyn MutationProbe>,
     approvals: &'a dyn ApprovalGate,
     sleeper: &'a dyn Sleeper,
     hooks: Option<(&'a Hooks, &'a dyn HookRunner)>,
@@ -683,6 +691,7 @@ impl<'a> Pipeline<'a> {
             diagnostics: ports.diagnostics,
             tests: ports.tests,
             lint: ports.lint,
+            mutation: ports.mutation,
             approvals: ports.approvals,
             sleeper: ports.sleeper,
             hooks: ports.hooks,
@@ -1334,6 +1343,7 @@ impl<'a> Pipeline<'a> {
             diagnostics: self.diagnostics,
             tests: self.tests,
             lint: self.lint,
+            mutation: self.mutation,
             repo_status: self.repo_status,
             cwd: None,
             hook_runner: None,
@@ -1530,6 +1540,7 @@ impl<'a> Pipeline<'a> {
                     diagnostics: ws.diagnostics(),
                     tests: ws.tests(),
                     lint: self.lint,
+                    mutation: self.mutation,
                     repo_status: ws.repo_status(),
                     cwd: Some(ws.root()),
                     hook_runner: bound_hook_runner
@@ -1741,6 +1752,7 @@ impl<'a> Pipeline<'a> {
             diff_available: true,
             touch_baseline: self.touches.mutations_recorded(),
             lint_baseline,
+            witness_mutation: None,
             revisions: 0,
             witness_paths: Vec::new(),
             failures: Vec::new(),
@@ -1958,11 +1970,13 @@ impl<'a> Pipeline<'a> {
                 diff_available: state.diff_available,
                 file_change_events: state.file_changes,
                 mutating_actions: state.mutating_actions,
-                // Filled by the pre-submit audit below (#861) — the lint
-                // probe only runs when a fast-submit is imminent.
+                // Filled by the pre-submit audit below (#861, #870) — the
+                // lint and mutation probes only run when a fast-submit is
+                // imminent.
                 new_diag_errors: 0,
                 new_diag_warnings: 0,
                 veto_warnings: self.config.diagnostics_veto_warnings,
+                witness_tautological: false,
             };
 
             // Pre-submit audit (#859, #861): a deterministic pass is about
@@ -2012,6 +2026,59 @@ impl<'a> Pipeline<'a> {
                         None => state.oracle.confirm(false),
                     }
                     inputs.flip_achieved = state.oracle.is_flipped();
+                }
+
+                // Mutation check (#870), last because it is the most
+                // expensive (one witness run per mutant, ≤3) and only for
+                // AUTHORED witnesses — a user-configured suite is not the
+                // artifact whose tautology this audits. Break the changed
+                // lines one at a time; a witness that fails under any mutant
+                // has proven it constrains the change (stop early, credit
+                // stands). One that stays green under every mutant reacts to
+                // the change without constraining it — the flip may not buy
+                // a deterministic pass, and the judge is told why.
+                if matches!(ladder_decision(&inputs), LadderDecision::SubmitFast)
+                    && witness.is_some()
+                    && let Some(probe) = surface.mutation
+                {
+                    let mutants = crate::verify::mutation::mutants_from_diff(
+                        &state.diff_text,
+                        &witness_paths,
+                    );
+                    let mut observed = 0u32;
+                    let mut killed = false;
+                    for mutant in &mutants {
+                        match probe.run_mutant(surface.cwd, mutant, cmd.invocation).await {
+                            MutantOutcome::Witness { passed } => {
+                                observed += 1;
+                                if !passed {
+                                    killed = true;
+                                    break;
+                                }
+                            }
+                            // Neither evidence for nor against — the check
+                            // degrades open on unavailable mutants.
+                            MutantOutcome::Unavailable => {}
+                            // The original bytes could not be restored: the
+                            // tree is no longer the verified candidate.
+                            // Fail closed — shipping a mutated tree is
+                            // strictly worse than losing the candidate.
+                            MutantOutcome::TreePoisoned => {
+                                return CandidateResult::aborted(
+                                    state.messages,
+                                    format!(
+                                        "mutation audit could not restore {} after a mutant \
+                                         run; the candidate tree is no longer verified",
+                                        mutant.path
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    if observed > 0 {
+                        state.witness_mutation = Some(killed);
+                        inputs.witness_tautological = !killed;
+                    }
                 }
             }
 
@@ -2256,6 +2323,15 @@ impl<'a> Pipeline<'a> {
                         // should weigh explicitly.
                         evidence_summary.push_str(
                             "; unstable_flip=true (the flip's confirmation re-run did not pass)",
+                        );
+                    }
+                    if state.witness_mutation == Some(false) {
+                        // #870: the witness reacted to the change without
+                        // constraining it — it stayed green while the
+                        // changed lines were deliberately broken.
+                        evidence_summary.push_str(
+                            "; witness_tautological=true (the witness stayed green under every \
+                             trivial mutation of the changed lines)",
                         );
                     }
                     if state.oracle.refused_different_failure() {
@@ -2942,6 +3018,12 @@ fn best_index(candidates: &[CandidateResult]) -> usize {
             // audit's warning count needs no separate plumbing. Absent
             // snapshot (no verdict, pre-audit path) reads 0, the pre-#869
             // behavior.
+            mutation_survived: c
+                .verdict
+                .as_ref()
+                .and_then(|v| v.ladder.as_deref())
+                .and_then(|s| s.witness_mutation)
+                == Some(true),
             new_diag_warnings: c
                 .verdict
                 .as_ref()

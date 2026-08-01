@@ -516,6 +516,7 @@ impl Tool for RepoStatusTool {
                 .into(),
             input_schema: serde_json::json!({ "type": "object", "properties": {} }),
             read_only: true,
+            speculation_safe: true,
         }
     }
 
@@ -621,6 +622,7 @@ impl Tool for RepoDiffTool {
                 }
             }),
             read_only: true,
+            speculation_safe: true,
         }
     }
 
@@ -690,6 +692,7 @@ impl Tool for RepoCommit {
                 "required": ["message", "paths"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 
@@ -748,6 +751,7 @@ impl Tool for RepoPush {
                 }
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 
@@ -843,6 +847,7 @@ impl Tool for RepoPull {
                 .into(),
             input_schema: serde_json::json!({ "type": "object", "properties": {} }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 
@@ -881,6 +886,7 @@ impl Tool for RepoRollback {
                 "required": ["paths"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 

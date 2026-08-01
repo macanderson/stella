@@ -440,6 +440,10 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         Some(Command::Tune { cmd }) => {
             return tune_cmd::run_tune(cmd);
         }
+        Some(Command::Calibration { format }) => {
+            // Reads the local event journal only — no provider, no API key.
+            return inspect::run_calibration(*format);
+        }
         Some(Command::Inspect {
             execution_id,
             turn,
@@ -800,6 +804,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         | Command::Storage { .. }
         | Command::Commands { .. }
         | Command::Inspect { .. }
+        | Command::Calibration { .. }
         // Phase 3 (#714)
         | Command::Proposals { .. }
         // Epic #897

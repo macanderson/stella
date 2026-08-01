@@ -61,6 +61,7 @@
 //! never feeds a lint/typecheck command to [`FlipOracle::observe`].
 
 pub mod fingerprint;
+pub mod mutation;
 
 use std::collections::BTreeSet;
 
@@ -410,6 +411,12 @@ pub struct LadderInputs {
     /// fast-submit (errors always do). Carried here so the ladder stays a
     /// pure function of one input value.
     pub veto_warnings: bool,
+    /// The witness stayed green under EVERY trivial mutation of the changed
+    /// lines (#870) — it reacts to the change without constraining it, so
+    /// its flip may not buy a deterministic pass. `false` both when the
+    /// check found the witness sound and when it never ran: the downgrade
+    /// requires positive evidence of tautology, never its absence.
+    pub witness_tautological: bool,
 }
 
 impl LadderInputs {
@@ -505,6 +512,7 @@ pub fn ladder_decision(inputs: &LadderInputs) -> LadderDecision {
         && inputs.diff_lines <= inputs.diff_budget
         && inputs.new_diag_errors == 0
         && (!inputs.veto_warnings || inputs.new_diag_warnings == 0)
+        && !inputs.witness_tautological
     {
         return LadderDecision::SubmitFast;
     }

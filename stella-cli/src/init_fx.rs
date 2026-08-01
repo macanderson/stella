@@ -348,27 +348,8 @@ fn terminal_width() -> usize {
 mod tests {
     use super::*;
 
-    /// Drop ANSI SGR/cursor sequences so tests compare visible content.
-    fn strip_ansi(s: &str) -> String {
-        let mut out = String::new();
-        let mut chars = s.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c == '\x1b' {
-                if chars.peek() == Some(&'[') {
-                    chars.next();
-                    // Consume to the final byte of the CSI sequence.
-                    for t in chars.by_ref() {
-                        if t.is_ascii_alphabetic() {
-                            break;
-                        }
-                    }
-                }
-                continue;
-            }
-            out.push(c);
-        }
-        out
-    }
+    // Drops ANSI SGR/cursor sequences so tests compare visible content.
+    use stella_tui::strip_ansi;
 
     #[test]
     fn frames_are_deterministic() {

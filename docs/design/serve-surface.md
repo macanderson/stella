@@ -5,11 +5,12 @@
 Option B, the Rust sidecar. It builds its own binary and nothing in
 `stella-cli` links it, so a change here never reaches a `stella` user.
 **This document describes the target surface, not all of it is built:** the
-code today serves one turn per registered id, with no sessions-over-turns, no
-steering, no pause, no approval gate, no `Host`-header guard, and no SIGTERM
-drain. Turn cancellation, a reverse-request deadline, and — as of #971 phase 2
-— **resumable SSE streams** (`seq`, retained history, `?after=` /
-`Last-Event-ID`) *have* shipped. Sections below flag the gaps individually;
+code today has no approval gate, no `Host`-header guard, and no SIGTERM
+drain. Turn cancellation, a reverse-request deadline, — as of #971 phase 2 —
+**resumable SSE streams** (`seq`, retained history, `?after=` /
+`Last-Event-ID`), — as of #932 — **mid-turn steering and pause/resume**, and —
+as of #931 — **server-owned sessions** (`/v1/sessions`, retained history,
+per-session budget) *have* shipped. Sections below flag the gaps individually;
 treat `stella-serve/src/` as the state and this doc as the destination.
 
 **The two crates this document assumed did not exist now do (#971):**
@@ -34,9 +35,10 @@ Oxagen ADR. That repository is private to Oxagen; this document is the
 
 **Read this table before writing a client.** Everything after it describes the
 *destination*; this is the surface a request actually reaches, verified end to
-end against a running binary by Oxagen's sidecar smoke test (oxagen #1132).
-Every other path in this document — including the whole `/v1/sessions/...`
-family in the diagram below — is a 404.
+end against a running binary by Oxagen's sidecar smoke test (oxagen #1132) —
+the `/v1/sessions` and steer/pause rows landed after that smoke test and are
+verified by `stella-serve/tests/sessions.rs` and `tests/control.rs`. Any path
+not in this table is a 404.
 
 | Method | Path | Notes |
 |---|---|---|
@@ -46,14 +48,32 @@ family in the diagram below — is a 404.
 | `GET` | `/v1/turns/{id}/events` | SSE `id: <seq>` + `data: <ServerFrame>`. Resumable via `?after=<seq>` or `Last-Event-ID`. One concurrent subscriber; a second gets 409 |
 | `POST` | `/v1/turns/{id}/provider-result` | Answers a `provider_request` |
 | `POST` | `/v1/turns/{id}/tool-result` | Answers a `tool_request` |
-| `POST` | `/v1/turns/{id}/cancel` | The only teardown. There is no `DELETE` |
+| `POST` | `/v1/turns/{id}/cancel` | Hard teardown: drops the turn and its transcript. There is no `DELETE` |
+| `POST` | `/v1/turns/{id}/steer` | `{"message": "…"}` — injected at the next step boundary, echoed as a `steered` event (#932) |
+| `POST` | `/v1/turns/{id}/pause` | Hold at the next step boundary. Idempotent; never mid-tool (#932) |
+| `POST` | `/v1/turns/{id}/resume` | Release a held turn. Idempotent (#932) |
+| `POST` | `/v1/sessions` | `{"system_prompt": "…", "budget": …}` → `{"session_id":"session-<32 hex>"}` (#931) |
+| `GET` | `/v1/sessions/{id}` | History, cost to date, live turn id. Always answers from the last settled state |
+| `POST` | `/v1/sessions/{id}/turns` | `TurnRequest` minus `messages`/`budget`, plus `input` (this turn's new messages). Returns `{"turn_id", "session_id"}`; the turn is then an ordinary `/v1/turns/{id}` member. One live turn per session (else 409) |
+| `DELETE` | `/v1/sessions/{id}` | Ends the session and cancels its live turn |
+
+Session semantics a client must know: the transcript lives on the server and
+the host sends only `input` per turn; the system prompt is minted once at
+session create and held byte-identical across turns (the prompt-cache
+contract); an **aborted turn does not write back** — the session history stays
+as it was, while the aborted turn's spend still joins `cost_usd`; sessions are
+capped (64) and one idle past `ServeConfig::session_idle_ttl` (default 1 h)
+may be reclaimed under pressure, so a long-lived host should expect `404` on a
+session it abandoned and `429` when it hoards.
 
 Corrections to prose further down that reads as present tense but describes the
 destination, and which a client written from it gets wrong:
 
-- **The resource is a turn, not a session.** One `POST /v1/turns` drives exactly
-  one turn; no conversation state is retained between turns and there is no
-  session id. `/readyz` does not exist. `/v1/metrics` **does**.
+- **The turn resource remains first-class.** A stateless `POST /v1/turns`
+  drives exactly one turn with host-supplied messages and retains nothing.
+  Sessions are additive (#931), not a replacement — and note the shape is
+  `POST /v1/sessions/{id}/turns` (plural), not the singular `/turn` some
+  diagrams below sketch. `/readyz` does not exist. `/v1/metrics` **does**.
 - **Reverse RPC is keyed by `request_id` on its own frame types**, not by a
   `call_id` on a `tool_start` / `scope_review` / `ask_user` `AgentEvent`. The
   engine emits dedicated `tool_request` / `provider_request` `ServerFrame`
