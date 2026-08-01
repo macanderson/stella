@@ -60,6 +60,7 @@ pub mod palette;
 pub mod progress;
 pub mod proof;
 pub mod resource;
+pub mod role_panel;
 pub mod scenario;
 pub mod splash;
 pub mod syntax;

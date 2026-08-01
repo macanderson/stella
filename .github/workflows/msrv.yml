@@ -51,5 +51,13 @@ jobs:
 
       # rust-toolchain.toml pins a NEWER toolchain for development; override it
       # so the check genuinely runs on the floor.
+      #
+      # `--locked` is load-bearing. The whole failure class this job exists to
+      # catch — a dependency raising its effective MSRV — arrives *through the
+      # lockfile*, so a run that lets cargo resolve fresh can pick a different
+      # graph than the one users build and report green on a tree that does not
+      # exist. It also means this job checks the shipped feature set (`bundled`)
+      # rather than a configuration assembled only for CI: an MSRV promise is
+      # about what someone gets when they build the repo as committed.
       - name: cargo check --workspace
         run: cargo +${{ steps.msrv.outputs.version }} check --workspace --locked

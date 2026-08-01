@@ -114,6 +114,19 @@ Open a tab or run an action:
     List providers and models (the same output as `stella models`). Also accepts
     `refresh [--force]` and `list` — see below.
   </OptionCard>
+  <OptionCard name="/model">
+    Set the persistent default model (`/model zai/glm-5.2`). With no argument,
+    show the current default and the pickable list.
+  </OptionCard>
+  <OptionCard name="/profile">
+    Retune every role at once — `fast`, `balanced`, `pro`, `ultra`, or `auto` to
+    hand the dials back. With no argument, show what is set and what each
+    profile would choose. See below.
+  </OptionCard>
+  <OptionCard name="/theme">
+    Switch and persist the colour theme (`stella-dark`, `stella-light`). With no
+    argument, show the current theme.
+  </OptionCard>
   <OptionCard name="/init">
     Index the workspace: domain taxonomy plus the code graph.
   </OptionCard>
@@ -181,6 +194,36 @@ Press **Ctrl-C** to quit the deck.
 ```
 
 Parsing is deliberately conservative: one recognized token (plus `refresh --force`). A single unrecognized token gets usage back rather than a wasted model call, and anything sentence-like after `/models` stays an ordinary prompt.
+
+#### `/profile` — one word for the whole harness
+
+`/profile` sets a model *and* a reasoning effort for every engine role at once, chosen from the models your API keys can actually reach:
+
+```text
+/profile fast       cheapest models, thinking off, terse replies
+/profile balanced   good enough for daily work without burning the budget
+/profile pro        strong models, real deliberation, priority capacity
+/profile ultra      the most capable models your keys can reach, effort at the ceiling
+/profile auto       no profile — hand the dials back to the engine
+```
+
+Run `/profile` with no argument to see which profile your current settings match, what this session is running, and what each profile would pick right now.
+
+**How the models are chosen.** Stella's catalog carries no capability tier, so a profile ranks the reachable models by list output price — the same proxy `auto_mode` already uses to pick a judge. This means the choice tracks catalog refreshes instead of going stale, but it is a proxy: a cheap frontier model ranks low until its price says otherwise. The confirmation names every model it picked, so you can always see what you got. Models the catalog has no price for (gateway rows like `openrouter/auto`, which bill at whatever they route to) are left out of the ranking rather than treated as free.
+
+The four roles are not tuned identically. Triage stays below the worker in every profile — it is a short classification under a latency ceiling, and spending your best model on it buys nothing.
+
+The judge is the interesting one, because two goals pull against each other: a judge from the worker's own family lets a shared blind spot pass review twice, but a judge well below the worker's tier cannot follow the work it grades and rubber-stamps. Stella resolves it in the order that gives up least. A model that is both independent and at least as capable wins outright. If nothing clears that bar but the strongest independent model is only one rung down the price list, independence is worth the single rung. Only when the best independent option is further down than that does capability take over — and then the confirmation tells you the review is correlated with the work.
+
+**What it writes, and what it leaves alone.** A profile owns the per-role model, effort, thinking switch, verbosity, and service tier, saved to your user settings. It deliberately turns `effort_auto`, `reasoning_auto`, and `auto_mode` **off**: those switches override per-agent effort, so leaving them on would let `/profile ultra` print `max` and run `medium`. Everything else survives untouched — custom per-agent prompts, pinned providers, temperatures, seeds, and your `allowed_models` list.
+
+`/profile auto` is the way back out. It restores all three switches and drops the per-role effort, thinking, verbosity, and service-tier pins a profile wrote, handing those choices to the engine again. Model pins are left alone: one may well predate the profile, and `auto_mode` re-picks the judge on its own.
+
+**Effort, and the providers that cannot express it.** The five-rung ladder is Stella's vocabulary, not every provider's: Gemini and Vertex offer only `low` and `high`, the OpenAI shapes stop at `high`, and Z.ai has no request-level effort control at all (its thinking switch is on/off). A pick whose provider cannot express the level the profile asked for is written at the highest rung it does support.
+
+Clamping alone would flatten the ladder — on a two-rung provider both `fast` and `balanced` land on `low` — so the missing rung is bought back on the axis that can still carry it: among models at the same price, the one whose provider *can* express the requested level wins. That is a tiebreak and nothing more. The search never leaves the price band, so a profile cannot overspend its tier to buy a knob, and it takes the cheapest qualifying model rather than the best. Where nothing at that price can express the level, the clamp stands and the confirmation says which levels moved.
+
+Like `/model`, the change applies to sessions started from now on; the running session keeps its current model.
 
 ### Plain REPL (`--plain`)
 

@@ -466,9 +466,14 @@ fn the_footer_hides_the_steer_marker_when_nothing_is_running() {
 fn statline_shows_labeled_cells_and_the_ethos_chip() {
     // A wide terminal fits every cell plus the (chrome) ethos chip. 160
     // leaves room for the CACHE + PIPELINE cells added to the row.
+    //
+    // Three rows, not two: the pipeline pins moved off the cell row onto their
+    // own (`MODELS`), because three `provider/model` slugs measured 210
+    // columns inline with the chip kept. Freeing that width is also why the
+    // chip still survives here at 160.
     let model = running_model_with_queue();
     let ui = DeckUi::default();
-    let area = Rect::new(0, 0, 160, 2);
+    let area = Rect::new(0, 0, 160, 3);
     let mut buf = Buffer::empty(area);
     render_status_bar(&model, &ui, area, &mut buf);
     let text = buffer_text(&buf);
@@ -478,7 +483,7 @@ fn statline_shows_labeled_cells_and_the_ethos_chip() {
         "lead",
         "STAGE",
         "execute",
-        "MODEL",
+        "MODELS",
         "CPU",
         "CONTEXT",
         "SPEND",

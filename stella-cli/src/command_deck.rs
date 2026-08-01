@@ -111,6 +111,7 @@ use crate::interactive::{AskUserIo, FREE_TEXT_LABEL, InteractiveToolSet, SkillRe
 mod authoring;
 mod forwarder;
 mod model_cmd;
+mod profile_cmd;
 mod scope_gate;
 mod theme_cmd;
 use crate::memory::{SessionMemory, inject_recall_block};
@@ -476,6 +477,13 @@ pub async fn run_deck_session(
         .with_pid(std::process::id());
     lead_meta.model = Some(format!("{}/{}", cfg.provider.id, cfg.model_id));
     let _ = in_tx.send(Inbound::Register(lead_meta));
+    // Name all three pipeline pins before the first turn. Without this the
+    // MODELS row fills in one role at a time as each is first reached, so the
+    // deck cannot answer "what is this session set up to run" until it has
+    // already run it.
+    let _ = in_tx.send(Inbound::ConfiguredRoles(model_cmd::configured_role_pins(
+        cfg,
+    )));
     // Custom definitions that failed to load are reported in the startup
     // dialog — stdout belongs to the alternate screen, and a
     // silently-missing /command is otherwise undiagnosable. Session chrome:
@@ -3273,6 +3281,10 @@ const DECK_BUILTINS: &[(&str, &str)] = &[
     ),
     ("/models", "list providers & models (`refresh` re-syncs)"),
     (
+        "/profile",
+        "retune every role: fast · balanced · pro · ultra · auto",
+    ),
+    (
         "/theme",
         "switch colour theme (stella-dark · stella-light; persists; no arg shows current)",
     ),
@@ -3858,6 +3870,17 @@ async fn run_deck_command(
                             Err(msg) => say(msg),
                         }
                     }
+                }
+                return DeckCommand::Handled;
+            }
+            // `/profile [name]` — retune every role at once. Claimed here,
+            // above the whitespace check below, which would otherwise bill
+            // `/profile ultra` as a model prompt.
+            if let Some(reply) = profile_cmd::handle(cfg, trimmed) {
+                say(reply.message);
+                if reply.settings_changed {
+                    // Refresh an open SETTINGS tab with the merged view.
+                    let _ = in_tx.send(engine_config_inbound(cfg, None));
                 }
                 return DeckCommand::Handled;
             }
