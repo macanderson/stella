@@ -43,6 +43,12 @@ pub struct Metrics {
     /// 401s that were actually delayed by the throttle. A non-zero value here
     /// is the signature of a sustained guess, not a misconfigured client.
     unauthorized_throttled_total: AtomicU64,
+    /// Requests refused by the `Host` guard (#1130). A non-zero value on a
+    /// freshly-deployed container almost always means a missing
+    /// `STELLA_SERVE_ALLOWED_HOSTS` entry; a non-zero value on a loopback
+    /// bind means something is addressing this server by a name it does not
+    /// answer to, which is the rebinding signature.
+    host_rejected_total: AtomicU64,
 
     turns_created_total: AtomicU64,
     turns_refused_capacity_total: AtomicU64,
@@ -102,6 +108,7 @@ pub struct Snapshot {
 
     pub unauthorized_total: u64,
     pub unauthorized_throttled_total: u64,
+    pub host_rejected_total: u64,
 
     pub turns_created_total: u64,
     pub turns_refused_capacity_total: u64,
@@ -167,6 +174,7 @@ impl Metrics {
 
             unauthorized_total: self.unauthorized_total.load(ORDER),
             unauthorized_throttled_total: self.unauthorized_throttled_total.load(ORDER),
+            host_rejected_total: self.host_rejected_total.load(ORDER),
 
             turns_created_total: self.turns_created_total.load(ORDER),
             turns_refused_capacity_total: self.turns_refused_capacity_total.load(ORDER),
@@ -248,6 +256,10 @@ impl Observer for Metrics {
                 if *held_ms > 0 {
                     self.unauthorized_throttled_total.fetch_add(1, ORDER);
                 }
+            }
+
+            ServeEvent::HostRejected { .. } => {
+                self.host_rejected_total.fetch_add(1, ORDER);
             }
 
             ServeEvent::TurnCreated { live_turns, .. } => {

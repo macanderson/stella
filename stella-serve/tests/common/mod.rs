@@ -83,6 +83,12 @@ pub async fn start_observed_server_with(resume_grace: Duration) -> (SocketAddr, 
             metrics,
             resume_grace,
             session_idle_ttl: stella_serve::DEFAULT_SESSION_IDLE_TTL,
+            // Empty on purpose: the bind is loopback, so the `Host` guard
+            // already knows what this server is called and needs no
+            // allow-list. Every helper below dials 127.0.0.1 and announces
+            // `Host: localhost` accordingly — `Host: engine` was a fiction no
+            // real client would send (#1130).
+            allowed_hosts: Vec::new(),
         };
         let _ = serve(config, move |addr| {
             let _ = tx.send(addr);
@@ -106,7 +112,7 @@ pub async fn post_json(
         .map(|t| format!("Authorization: Bearer {t}\r\n"))
         .unwrap_or_default();
     let request = format!(
-        "POST {path} HTTP/1.1\r\nHost: engine\r\n{auth}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "POST {path} HTTP/1.1\r\nHost: localhost\r\n{auth}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len(),
     );
     stream.write_all(request.as_bytes()).await.unwrap();
@@ -120,7 +126,7 @@ pub async fn post_json(
 /// GET a plain endpoint (used for `/healthz`), returning `(status_line, body)`.
 pub async fn get_json(addr: SocketAddr, path: &str) -> (String, String) {
     let mut stream = TcpStream::connect(addr).await.unwrap();
-    let request = format!("GET {path} HTTP/1.1\r\nHost: engine\r\nConnection: close\r\n\r\n");
+    let request = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
     stream.write_all(request.as_bytes()).await.unwrap();
     let mut response = String::new();
     stream.read_to_string(&mut response).await.unwrap();
@@ -131,12 +137,52 @@ pub async fn get_json(addr: SocketAddr, path: &str) -> (String, String) {
     )
 }
 
+/// GET with an explicit `Host` header, for the `Host`-guard tests — every
+/// other helper hardcodes a loopback identity, which is precisely what these
+/// need to vary.
+pub async fn get_with_host(
+    addr: SocketAddr,
+    path: &str,
+    host: &str,
+    token: Option<&str>,
+) -> (String, String) {
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+    let auth = token
+        .map(|t| format!("Authorization: Bearer {t}\r\n"))
+        .unwrap_or_default();
+    let request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\n{auth}Connection: close\r\n\r\n");
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.unwrap();
+    let (head, body) = response.split_once("\r\n\r\n").unwrap_or((&response, ""));
+    (
+        head.lines().next().unwrap_or_default().to_string(),
+        body.to_string(),
+    )
+}
+
+/// GET with no `Host` header at all — the HTTP/1.0-style request the guard
+/// deliberately permits.
+pub async fn get_without_host(addr: SocketAddr, path: &str) -> String {
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+    let request = format!("GET {path} HTTP/1.1\r\nConnection: close\r\n\r\n");
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.unwrap();
+    response
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim_end()
+        .to_string()
+}
+
 /// GET with the bearer token, reading the whole response. Used to probe a
 /// route's status without the side effect a POST would carry.
 pub async fn get_json_authed(addr: SocketAddr, path: &str, token: &str) -> (String, String) {
     let mut stream = TcpStream::connect(addr).await.unwrap();
     let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: engine\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+        "GET {path} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
     );
     stream.write_all(request.as_bytes()).await.unwrap();
     let mut response = String::new();
@@ -153,7 +199,7 @@ pub async fn get_json_authed(addr: SocketAddr, path: &str, token: &str) -> (Stri
 pub async fn open_sse(addr: SocketAddr, path: &str, token: &str) -> BufReader<TcpStream> {
     let mut stream = TcpStream::connect(addr).await.unwrap();
     let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: engine\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+        "GET {path} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
     );
     stream.write_all(request.as_bytes()).await.unwrap();
     let mut reader = BufReader::new(stream);
@@ -287,7 +333,7 @@ pub async fn open_sse_resuming(
 ) -> BufReader<TcpStream> {
     let mut stream = TcpStream::connect(addr).await.unwrap();
     let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: engine\r\nAuthorization: Bearer {token}\r\n\
+        "GET {path} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\n\
          Last-Event-ID: {last_event_id}\r\nConnection: close\r\n\r\n"
     );
     stream.write_all(request.as_bytes()).await.unwrap();

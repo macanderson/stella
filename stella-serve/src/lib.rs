@@ -57,6 +57,7 @@ mod controls;
 mod error;
 mod frame;
 mod history;
+mod hostguard;
 mod http;
 pub mod observe;
 mod pending;
@@ -69,6 +70,7 @@ mod session;
 mod sessions;
 
 pub use error::ServeError;
+pub use hostguard::HostMode;
 pub use frame::{
     ProviderErrorWire, ProviderOutcomeIn, ProviderResultIn, ServerFrame, ToolResultIn,
     TurnOutcomeWire,

@@ -344,7 +344,7 @@ async fn sessions_are_resources_with_honest_edges() {
     let mut delete = tokio::net::TcpStream::connect(addr).await.unwrap();
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let request = format!(
-        "DELETE /v1/sessions/{session_id} HTTP/1.1\r\nHost: engine\r\nAuthorization: Bearer {TOKEN}\r\nConnection: close\r\n\r\n"
+        "DELETE /v1/sessions/{session_id} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {TOKEN}\r\nConnection: close\r\n\r\n"
     );
     delete.write_all(request.as_bytes()).await.unwrap();
     let mut response = String::new();
@@ -376,7 +376,7 @@ async fn the_session_member_route_names_both_its_verbs_on_405() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let request = format!(
-        "POST /v1/sessions/session-abc HTTP/1.1\r\nHost: engine\r\nAuthorization: Bearer {TOKEN}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        "POST /v1/sessions/session-abc HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {TOKEN}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
     );
     stream.write_all(request.as_bytes()).await.unwrap();
     let mut response = String::new();

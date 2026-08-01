@@ -5,8 +5,9 @@
 Option B, the Rust sidecar. It builds its own binary and nothing in
 `stella-cli` links it, so a change here never reaches a `stella` user.
 **This document describes the target surface, not all of it is built:** the
-code today has no approval gate, no `Host`-header guard, and no SIGTERM
-drain. Turn cancellation, a reverse-request deadline, — as of #971 phase 2 —
+code today has no approval gate and no SIGTERM drain. Turn cancellation, a
+reverse-request deadline, — as of #1130 — the **DNS-rebinding `Host` guard**,
+— as of #971 phase 2 —
 **resumable SSE streams** (`seq`, retained history, `?after=` /
 `Last-Event-ID`), — as of #932 — **mid-turn steering and pause/resume**, and —
 as of #931 — **server-owned sessions** (`/v1/sessions`, retained history,
@@ -344,10 +345,24 @@ Oxagen's existing Firecracker/Modal sandbox** (the same isolation
 — the engine does not spawn its own shells server-side. `stella-serve` in server
 mode:
 
-- **binds to a token-gated port only** (no ambient trust). **Not yet built:**
-  reusing the Observatory's DNS-rebinding `Host`-header guard
-  (`stella-observatory/src/lib.rs::host_is_local`) — `stella-serve` performs no
-  `Host` validation today.
+- **binds to a token-gated port only** (no ambient trust), behind a
+  DNS-rebinding `Host`-header guard (`stella-serve/src/hostguard.rs`, #1130)
+  that runs before route dispatch on every route — `/healthz` included, since
+  that is the one route the bearer token does not cover. The policy is derived
+  from the bind rather than hardcoded, because the Observatory's
+  `host_is_local` was written for a loopback-only surface and this one also
+  binds `0.0.0.0` in a container:
+  - **loopback bind** → only loopback names/addresses are accepted;
+  - **non-loopback bind + `STELLA_SERVE_ALLOWED_HOSTS`** → that list, plus
+    loopback (a container's own probe) and the bound literal;
+  - **non-loopback bind, no allow-list** → the guard is *inert*, since nothing
+    can know what the deployment is legitimately called. That arm is named on
+    the `listening` record (`host_guard`) rather than left silent, and refusals
+    are counted (`host_rejected_total`) and reported (`host_rejected`) so a
+    missing allow-list entry is distinguishable from an attack.
+
+  A request with no `Host` at all is permitted, matching the Observatory: a
+  browser `fetch` always sends one, so its absence is not the attack.
 - **disables the local shell/web tool surface by default** (`--tools remote`),
   delegating all execution to the host's `RemoteToolExecutor`.
 - **does not use `stella-store` or `stella-cli` shell hooks server-side** (per

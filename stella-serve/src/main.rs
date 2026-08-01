@@ -10,6 +10,10 @@
 //! STELLA_SERVE_TOKEN       bearer token every request must present
 //! STELLA_SERVE_TOOLS       must be `remote` (the default) — all tool execution is
 //!                          remoted to the host; a local tool surface is never served
+//! STELLA_SERVE_ALLOWED_HOSTS  comma-separated hostnames this deployment answers to,
+//!                          for the DNS-rebinding Host guard. Only consulted on a
+//!                          non-loopback bind; unset there leaves the guard inert,
+//!                          which is reported on the `listening` record
 //! STELLA_SERVE_LOG         off | error | warn | info (default) | debug — verbosity of
 //!                          the JSON-per-line records on stderr. An unrecognised value
 //!                          falls back to `info`: a typo in a log knob must not take a
@@ -69,6 +73,13 @@ ENVIRONMENT:
     STELLA_SERVE_TOKEN       bearer token every request must present
     STELLA_SERVE_TOOLS       must be `remote` (the default) — every tool and
                              model call is remoted to the host
+    STELLA_SERVE_ALLOWED_HOSTS
+                             comma-separated hostnames this deployment answers
+                             to, for the DNS-rebinding Host guard. Consulted
+                             only on a non-loopback bind (a loopback bind
+                             enforces loopback identities on its own); unset
+                             there leaves the guard inert, which the
+                             `listening` record names.
     STELLA_SERVE_LOG         off | error | warn | info (default) | debug —
                              verbosity of the JSON-per-line records on stderr.
                              An unrecognised value falls back to `info`.
@@ -174,7 +185,7 @@ async fn run() -> ExitCode {
     // on stdout because it is the process's readiness contract — the container
     // healthcheck and the dev scripts parse it, and a record on stderr at a
     // configurable level is not something a supervisor can depend on.
-    let config = ServeConfig::new(addr, token);
+    let config = ServeConfig::new(addr, token).with_allowed_hosts(allowed_hosts());
     match serve(config, |bound| {
         println!("stella-serve listening on {bound}")
     })
@@ -186,6 +197,24 @@ async fn run() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// The `Host` values this deployment answers to, from
+/// `STELLA_SERVE_ALLOWED_HOSTS` (comma-separated).
+///
+/// Unset is not an error, and deliberately so: on the default loopback bind
+/// the guard already knows what the server is called, so requiring this would
+/// make every local run configure something it does not need. On a
+/// non-loopback bind, unset leaves the guard inert — which `serve` reports on
+/// its `listening` record instead of leaving an operator to assume.
+fn allowed_hosts() -> Vec<String> {
+    std::env::var("STELLA_SERVE_ALLOWED_HOSTS")
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|h| !h.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 /// Resolve the bearer token from `STELLA_SERVE_TOKEN_FILE` (preferred) or

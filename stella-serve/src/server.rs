@@ -106,7 +106,8 @@ use crate::history::FrameHistory;
 use crate::http::{BodyOutcome, ReadOutcome, discard_body, read_body, read_head};
 use crate::observe::event::StreamEndReason;
 use crate::observe::event::{
-    AcceptKind, RefusalReason, RequestId, Route, ServeEvent, ShutdownReason, TurnRef, millis,
+    AcceptKind, RefusalReason, RequestId, Route, ServeEvent, ShutdownReason, TurnRef,
+    host_for_record, millis,
 };
 use crate::observe::record::{RequestRecord, Responder};
 use crate::observe::{Metrics, SharedObserver};
@@ -156,6 +157,14 @@ pub struct ServeConfig {
     /// bounded by the session cap either way, which is why this dial has no
     /// ceiling: raising it trades `429`s for retention, never boundedness.
     pub session_idle_ttl: Duration,
+    /// Hostnames this deployment answers to, for the `Host` guard (#1130).
+    ///
+    /// Only consulted on a **non-loopback** bind: a loopback bind already
+    /// knows what it is called, and enforces loopback identities regardless.
+    /// Leaving it empty on a `0.0.0.0` bind leaves the guard
+    /// [`crate::HostMode::Inert`] — reported on `Listening` rather than
+    /// silently assumed; see `crate::hostguard` for why that arm exists.
+    pub allowed_hosts: Vec<String>,
 }
 
 /// The default [`ServeConfig::resume_grace`]: thirty seconds.
@@ -192,7 +201,16 @@ impl ServeConfig {
             metrics,
             resume_grace: DEFAULT_RESUME_GRACE,
             session_idle_ttl: DEFAULT_SESSION_IDLE_TTL,
+            allowed_hosts: Vec::new(),
         }
+    }
+
+    /// Name the hostnames this deployment answers to — see
+    /// [`ServeConfig::allowed_hosts`].
+    #[must_use]
+    pub fn with_allowed_hosts(mut self, hosts: Vec<String>) -> Self {
+        self.allowed_hosts = hosts;
+        self
     }
 
     /// Set how long a disconnected turn waits for a reconnect, clamped to
@@ -292,6 +310,8 @@ pub(crate) struct ServerState {
     sessions: crate::sessions::SessionRegistry,
     /// See [`ServeConfig::session_idle_ttl`].
     session_idle_ttl: Duration,
+    /// The compiled `Host` guard, consulted before any route dispatch (#1130).
+    host_policy: crate::hostguard::HostPolicy,
 }
 
 impl ServerState {
@@ -673,6 +693,10 @@ impl TokenBucket {
 pub async fn serve(config: ServeConfig, on_ready: impl FnOnce(SocketAddr)) -> std::io::Result<()> {
     let listener = TcpListener::bind(config.bind).await?;
     let bound = listener.local_addr()?;
+    // Compiled against the address actually bound, not the one requested: a
+    // `127.0.0.1:0` test bind must be judged on the port it got.
+    let host_policy = crate::hostguard::HostPolicy::new(bound, &config.allowed_hosts);
+    let host_guard = host_policy.mode();
     let state = Arc::new(ServerState {
         token: config.token,
         turns: Mutex::new(HashMap::new()),
@@ -683,9 +707,11 @@ pub async fn serve(config: ServeConfig, on_ready: impl FnOnce(SocketAddr)) -> st
         resume_grace: config.resume_grace.min(MAX_RESUME_GRACE),
         sessions: crate::sessions::SessionRegistry::new(),
         session_idle_ttl: config.session_idle_ttl,
+        host_policy,
     });
     state.observer.emit(&ServeEvent::Listening {
         addr: bound.to_string(),
+        host_guard,
     });
     on_ready(bound);
     let mut backoff = AcceptBackoff::new();
@@ -875,6 +901,29 @@ async fn route(
         && route_addresses_a_turn(route)
     {
         record.set_turn(id);
+    }
+
+    // The `Host` guard runs before every dispatch, `/healthz` included. A
+    // rebound request reaching the unauthenticated liveness endpoint leaks
+    // only liveness, but "before any route dispatch" is a rule that stays
+    // true under later edits precisely because it has no exceptions to
+    // remember — and `/healthz` is the one route bearer auth does not cover,
+    // so exempting it would carve the hole in the only place the second
+    // control is absent. Loopback callers are always permitted, so a
+    // container's own probe never needs an allow-list entry (#1130).
+    if !state.host_policy.permits(req.header("host")) {
+        discard_body(res.stream_mut(), &mut req).await;
+        state.observer().emit(&ServeEvent::HostRejected {
+            request_id: record.request_id().clone(),
+            route,
+            host: host_for_record(req.header("host").unwrap_or_default()),
+        });
+        return res
+            .json(
+                "403 Forbidden",
+                &error_body("Host header does not match this server's expected identity"),
+            )
+            .await;
     }
 
     if route == Route::Healthz && req.method == "GET" {
@@ -1204,6 +1253,10 @@ mod tests {
             resume_grace: DEFAULT_RESUME_GRACE,
             sessions: crate::sessions::SessionRegistry::new(),
             session_idle_ttl: DEFAULT_SESSION_IDLE_TTL,
+            host_policy: crate::hostguard::HostPolicy::new(
+                "127.0.0.1:8080".parse().expect("a literal loopback address"),
+                &[],
+            ),
         };
         (state, capture)
     }
