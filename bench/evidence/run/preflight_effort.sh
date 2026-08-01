@@ -48,14 +48,21 @@ A 3x3 grid of switches, each toggling itself and its orthogonal neighbours.
 Prove whether every configuration is solvable, and give the full reasoning.
 PROMPT_END
 
+# Deliberately far above what either tier should need. A probe that hits its
+# own ceiling reports max_tokens for BOTH tiers and the comparison silently
+# measures the cap instead of the effort — which is how the first version of
+# this check "passed" while proving nothing. MAX_TOKENS is asserted against
+# below, not just chosen generously.
+MAX_TOKENS=32000
+
 probe() { # $1=key  $2=effort  -> output_tokens | ERROR:...
-  python3 - "$1" "$2" "$MODEL" "$PROMPT" <<'PY'
+  python3 - "$1" "$2" "$MODEL" "$PROMPT" "$MAX_TOKENS" <<'PY'
 import json, sys, urllib.request, urllib.error
 
-key, effort, model, prompt = sys.argv[1:5]
+key, effort, model, prompt, max_tokens = sys.argv[1:6]
 body = json.dumps({
     "model": model,
-    "max_tokens": 8192,
+    "max_tokens": int(max_tokens),
     "thinking": {"type": "adaptive"},
     "output_config": {"effort": effort},
     "messages": [{"role": "user", "content": prompt}],
@@ -98,6 +105,15 @@ for arm in stella claude; do
   case "$lo$hi" in
     *ERROR*) echo "FAIL: $arm effort probe errored"; FAIL=1; continue ;;
   esac
+  # Saturation invalidates the comparison before it is made: at the ceiling
+  # both tiers report max_tokens and the check would compare the cap to
+  # itself. Fail loudly rather than report a meaningless pass.
+  if [ "$hi" -ge "$MAX_TOKENS" ] || [ "$lo" -ge "$MAX_TOKENS" ] 2>/dev/null; then
+    echo "FAIL: $arm probe saturated at max_tokens=$MAX_TOKENS (low=$lo $TIER=$hi)"
+    echo "      raise MAX_TOKENS — this comparison measures the cap, not effort"
+    FAIL=1
+    continue
+  fi
   # Strictly greater, not >=: identical counts are the signature of a field
   # that was parsed and discarded, which is the exact defect being hunted.
   if ! [ "$hi" -gt "$lo" ] 2>/dev/null; then
@@ -109,10 +125,21 @@ done
 # Assert by digest rather than by reading the constant: the digest is what the
 # trusted launcher delivers and what the manifest registers as the SUT, so a
 # match here proves the run and this check agree on one posture.
-posture=$(cd "$REPO" && PYTHONPATH=bench/harbor_adapter python3 - "$MODEL" <<'PY' 2>&1
-import sys
-from stella_harbor.posture import _benchmark_engine_posture
-p, _, d = _benchmark_engine_posture("anthropic/%s" % sys.argv[1])
+# Loaded by file path, not as `stella_harbor.posture`: the package __init__
+# imports `harbor`, so the package route only works inside the adapter venv and
+# would make this check silently venv-dependent. posture.py is a pure function
+# of the model and arm with no Harbor, Docker, or credential dependency —
+# which is exactly why it was split into its own module — so importing the
+# file directly is honest rather than a workaround.
+posture=$(cd "$REPO" && python3 - "$MODEL" <<'PY' 2>&1
+import importlib.util, sys
+
+spec = importlib.util.spec_from_file_location(
+    "_posture", "bench/harbor_adapter/stella_harbor/posture.py"
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+p, _, d = mod._benchmark_engine_posture("anthropic/%s" % sys.argv[1])
 print("%s %s" % (d[:8], p["agents"]["worker"]["effort"]))
 PY
 )
