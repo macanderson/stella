@@ -9,14 +9,19 @@
 //!   transport decoder. `Converse` returns an identical `CompletionResult`,
 //!   so nothing downstream of the adapter can tell the difference; what the
 //!   scoping does cost is everything that needs the response *while it is
-//!   still arriving*. This is now the only adapter in the crate that does
-//!   not override `Provider::complete_observed`, so a Bedrock turn emits no
-//!   `TextDelta` previews (the deck stays blank until the whole answer
-//!   lands, #612) and its read-only tool calls are never announced, so the
-//!   engine's speculative execution never fires on it. The event-stream
-//!   decoder is what closes both gaps; until then the whole generation has
-//!   to fit inside one read, which is why this adapter takes
-//!   `crate::http::unary_client` rather than the shared streaming client.
+//!   still arriving*. [`BedrockProvider::complete_observed_ref`] recovers
+//!   the half of that which does not need incremental arrival: the answer
+//!   is announced as one terminal `text_delta`, so an observing host
+//!   renders a completed answer instead of nothing at all (#1132). What
+//!   stays out of reach is genuine token-by-token preview (the deck fills
+//!   in one write rather than progressively, #612) and mid-stream tool-call
+//!   announcement, so the engine's speculative execution never fires on
+//!   this adapter — a call announced only once the whole body has landed
+//!   would start speculation microseconds before dispatch asks for it,
+//!   which is overhead wearing a fix's clothing. The event-stream decoder
+//!   is what closes both; until then the whole generation has to fit inside
+//!   one read, which is why this adapter takes `crate::http::unary_client`
+//!   rather than the shared streaming client.
 //! - **Explicit credentials, not the full AWS chain.** The adapter takes
 //!   access key / secret / optional session token directly;
 //!   [`crate::credential::BedrockCredentials`] resolves the secret, session
@@ -38,7 +43,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stella_protocol::{
     CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage, FinishReason,
-    MessageRole, ProviderError, ToolCall,
+    MessageRole, ProviderError, ToolCall, ToolCallObserver,
 };
 
 use crate::catalog::{Catalog, Pricing};
@@ -839,6 +844,38 @@ impl Provider for BedrockProvider {
             finish_reason,
         })
     }
+
+    /// The whole answer as one terminal `text_delta`.
+    ///
+    /// Every sibling adapter threads the observer through an SSE parse loop
+    /// and emits a delta per chunk. Converse is not a stream — it answers
+    /// with one JSON body — so there is no finer-grained emission to make,
+    /// and this is an honest single-chunk announcement rather than a
+    /// masked bug: the `text_delta` contract is explicitly best-effort and
+    /// lossy, with `CompletionResult::text` as the definitive answer.
+    ///
+    /// Emitting *something* matters because the alternative is the trait's
+    /// default, which discards the observer entirely. A host watching the
+    /// observed path — `stella-tui`'s live rendering, `stella-serve`'s
+    /// `RemoteProvider` forwarding deltas to a browser — then sees total
+    /// silence for the whole call and renders as if the process hung
+    /// (#1132).
+    ///
+    /// Empty text is not announced: a tool-call-only turn has no answer
+    /// text, and a zero-length delta would make an observer counting
+    /// deltas believe an answer arrived. Tool calls are deliberately not
+    /// announced either — see the module docs.
+    async fn complete_observed_ref(
+        &self,
+        req: CompletionRequestRef<'_>,
+        observer: &dyn ToolCallObserver,
+    ) -> Result<CompletionResult, ProviderError> {
+        let result = self.complete_ref(req).await?;
+        if !result.text.is_empty() {
+            observer.text_delta(&result.text);
+        }
+        Ok(result)
+    }
 }
 
 /// AWS Signature Version 4 over explicit inputs — no ambient clock, no
@@ -1188,598 +1225,6 @@ pub(crate) mod sigv4 {
     }
 }
 
+
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use stella_protocol::CompletionRequest;
-    use stella_protocol::tool::ToolSchema;
-    use stella_protocol::{ToolOutput, ToolResult};
-    use wiremock::matchers::{body_string_contains, header_regex, method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    /// The audio arm of [`attachment_block`] is out of reach only because
-    /// `BEDROCK_CAPS` switches audio off. Flipping that bool is a routine
-    /// one-line edit, so the arm it lands in has to degrade like every other
-    /// unsupported attachment instead of aborting the process mid-turn.
-    #[test]
-    fn a_caps_flip_degrades_instead_of_aborting_the_turn() {
-        use crate::attachment::{DialectCaps, wire_parts};
-        use stella_protocol::{Attachment, AttachmentSource};
-        let flipped = DialectCaps {
-            images: true,
-            pdfs: true,
-            audio: true,
-            video: true,
-        };
-        let attachment = Attachment {
-            name: "song.mp3".into(),
-            media_type: "audio/mpeg".into(),
-            byte_len: 3,
-            source: AttachmentSource::Data {
-                base64: "YWJj".into(),
-            },
-        };
-        let blocks: Vec<_> = wire_parts(&[attachment], flipped)
-            .into_iter()
-            .map(attachment_block)
-            .collect();
-        let [block] = blocks.as_slice() else {
-            panic!("expected one degrade block, got {blocks:?}");
-        };
-        let note = block
-            .text
-            .as_deref()
-            .unwrap_or_else(|| panic!("expected a text degrade note, got {block:?}"));
-        assert!(
-            note.contains("audio/mpeg"),
-            "the note names what was attached: {note}"
-        );
-    }
-
-    #[test]
-    fn user_attachments_map_to_converse_blocks_with_format_allowlists() {
-        use stella_protocol::{Attachment, AttachmentSource};
-        let att = |name: &str, mime: &str, b64: &str| Attachment {
-            name: name.into(),
-            media_type: mime.into(),
-            byte_len: 3,
-            source: AttachmentSource::Data { base64: b64.into() },
-        };
-        let messages = vec![CompletionMessage::user_with_attachments(
-            "look",
-            vec![
-                att("a.png", "image/png", "aW1n"),
-                att("spec v2.pdf", "application/pdf", "cGRm"),
-                att("d.mov", "video/quicktime", "dmlk"),
-                att("weird.tiff", "image/tiff", "dGlm"),
-            ],
-        )];
-        let (_, mapped) = to_bedrock_messages(&messages);
-        assert_eq!(mapped.len(), 1);
-        let json = serde_json::to_value(&mapped[0]).unwrap();
-        let content = json["content"].as_array().unwrap();
-        assert_eq!(content.len(), 5, "{json}");
-        assert_eq!(content[0]["image"]["format"], "png");
-        assert_eq!(content[0]["image"]["source"]["bytes"], "aW1n");
-        // Document name sanitized to Converse's allowed character set
-        // (the period is not allowed).
-        assert_eq!(content[1]["document"]["format"], "pdf");
-        assert_eq!(content[1]["document"]["name"], "spec v2-pdf");
-        assert_eq!(content[2]["video"]["format"], "mov");
-        // TIFF is outside the Converse image allowlist: degrade note.
-        assert!(
-            content[3]["text"].as_str().unwrap().contains("image/tiff"),
-            "{json}"
-        );
-        assert_eq!(content[4]["text"], "look");
-    }
-
-    #[test]
-    fn cache_points_are_gated_to_supporting_model_families() {
-        assert!(supports_cache_points(
-            "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-        ));
-        assert!(supports_cache_points("us.amazon.nova-pro-v1:0"));
-        assert!(!supports_cache_points("meta.llama4-maverick-17b-v1:0"));
-    }
-
-    fn test_provider(server_uri: &str) -> BedrockProvider {
-        BedrockProvider::new(
-            ApiKey::new("AKIDEXAMPLE"),
-            ApiKey::new("wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"),
-            None,
-            "us-east-1",
-            "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-        )
-        .with_base_url(server_uri.to_string())
-    }
-
-    #[test]
-    fn to_bedrock_messages_hoists_system_and_frames_tool_round_trips() {
-        let messages = vec![
-            CompletionMessage::system("You are a coding agent."),
-            CompletionMessage::user("read a.rs"),
-            CompletionMessage {
-                role: MessageRole::Assistant,
-                content: String::new(),
-                tool_calls: vec![ToolCall {
-                    call_id: "tooluse_abc".into(),
-                    name: "read_file".into(),
-                    input: serde_json::json!({"path": "a.rs"}),
-                }],
-                tool_results: vec![],
-                attachments: Vec::new(),
-            },
-            CompletionMessage {
-                role: MessageRole::Tool,
-                content: String::new(),
-                tool_calls: vec![],
-                tool_results: vec![ToolResult {
-                    call_id: "tooluse_abc".into(),
-                    output: ToolOutput::Ok {
-                        content: "fn main(){}".into(),
-                    },
-                }],
-                attachments: Vec::new(),
-            },
-        ];
-        let (system, mapped) = to_bedrock_messages(&messages);
-        assert_eq!(system.len(), 1);
-        assert_eq!(mapped.len(), 3);
-        assert_eq!(mapped[1].role, "assistant");
-        let tool_use = mapped[1].content[0].tool_use.as_ref().unwrap();
-        assert_eq!(tool_use.tool_use_id, "tooluse_abc");
-        // Converse frames tool results as a user-role message.
-        assert_eq!(mapped[2].role, "user");
-        let tool_result = mapped[2].content[0].tool_result.as_ref().unwrap();
-        assert_eq!(tool_result.tool_use_id, "tooluse_abc");
-        assert_eq!(tool_result.content[0].text, "fn main(){}");
-        assert_eq!(tool_result.status, None);
-    }
-
-    #[test]
-    fn failed_tool_results_carry_error_status_not_a_text_prefix() {
-        let messages = vec![CompletionMessage {
-            role: MessageRole::Tool,
-            content: String::new(),
-            tool_calls: vec![],
-            tool_results: vec![ToolResult {
-                call_id: "tooluse_1".into(),
-                output: ToolOutput::Error {
-                    message: "no such file".into(),
-                },
-            }],
-            attachments: Vec::new(),
-        }];
-        let (_, mapped) = to_bedrock_messages(&messages);
-        let tool_result = mapped[0].content[0].tool_result.as_ref().unwrap();
-        assert_eq!(tool_result.status, Some("error"));
-        assert_eq!(tool_result.content[0].text, "no such file");
-    }
-
-    #[tokio::test]
-    async fn complete_posts_a_signed_converse_request_and_parses_text() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path(
-                "/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse",
-            ))
-            .and(header_regex(
-                "authorization",
-                r"^AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/\d{8}/us-east-1/bedrock/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=[0-9a-f]{64}$",
-            ))
-            .and(header_regex("x-amz-date", r"^\d{8}T\d{6}Z$"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "output": {"message": {"role": "assistant", "content": [{"text": "Hello from Bedrock"}]}},
-                "stopReason": "end_turn",
-                "usage": {"inputTokens": 9, "outputTokens": 5, "cacheReadInputTokens": 3, "cacheWriteInputTokens": 2}
-            })))
-            .mount(&server)
-            .await;
-
-        let provider = test_provider(&server.uri());
-        let req = CompletionRequest {
-            messages: vec![CompletionMessage::user("hi")],
-            max_output_tokens: Some(1024),
-            temperature: Some(0.0),
-            effort: None,
-            tools: vec![],
-            reasoning: None,
-            params: None,
-        };
-
-        let result = provider
-            .complete(req)
-            .await
-            .expect("completion should succeed");
-        assert_eq!(result.text, "Hello from Bedrock");
-        // Converse reports cache reads OUTSIDE `inputTokens`; the adapter
-        // folds them back in so cached stays a subset of input (9 + 3).
-        assert_eq!(result.usage.input_tokens, 12);
-        assert_eq!(result.usage.output_tokens, 5);
-        assert_eq!(result.usage.cached_input_tokens, 3);
-        assert_eq!(result.usage.cache_write_tokens, 2);
-        assert!(result.usage.reported);
-    }
-
-    /// Prompt caching on Converse is opt-in via `cachePoint` blocks: one
-    /// after the system blocks (tools+system tier) and one at the tail of
-    /// the last message (conversation-incremental tier). Without them
-    /// Bedrock caches nothing.
-    #[tokio::test]
-    async fn complete_sends_cache_points_for_claude_models() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(body_string_contains(
-                "\"cachePoint\":{\"type\":\"default\"}",
-            ))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "output": {"message": {"role": "assistant", "content": [{"text": "ok"}]}},
-                "stopReason": "end_turn",
-                "usage": {"inputTokens": 4, "outputTokens": 1}
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let provider = test_provider(&server.uri());
-        let req = CompletionRequest {
-            messages: vec![
-                CompletionMessage::system("You are a coding agent."),
-                CompletionMessage::user("hi"),
-            ],
-            max_output_tokens: None,
-            temperature: None,
-            effort: None,
-            tools: vec![],
-            reasoning: None,
-            params: None,
-        };
-        let result = provider
-            .complete(req)
-            .await
-            .expect("completion should succeed");
-        assert_eq!(result.text, "ok");
-    }
-
-    #[tokio::test]
-    async fn complete_parses_tool_use_blocks_into_tool_calls() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "output": {"message": {"role": "assistant", "content": [
-                    {"text": "Let me read that."},
-                    {"toolUse": {"toolUseId": "tooluse_xyz", "name": "read_file", "input": {"path": "src/lib.rs"}}}
-                ]}},
-                "stopReason": "tool_use",
-                "usage": {"inputTokens": 30, "outputTokens": 12}
-            })))
-            .mount(&server)
-            .await;
-
-        let provider = test_provider(&server.uri());
-        let req = CompletionRequest {
-            messages: vec![CompletionMessage::user("read src/lib.rs")],
-            max_output_tokens: None,
-            temperature: None,
-            effort: None,
-            tools: vec![ToolSchema {
-                name: "read_file".into(),
-                description: "Read a file".into(),
-                input_schema: serde_json::json!({"type":"object"}),
-                read_only: false,
-                speculation_safe: false,
-            }],
-            reasoning: None,
-            params: None,
-        };
-
-        let result = provider.complete(req).await.expect("should succeed");
-        assert_eq!(result.text, "Let me read that.");
-        assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].call_id, "tooluse_xyz");
-        assert_eq!(result.tool_calls[0].name, "read_file");
-        assert_eq!(
-            result.tool_calls[0].input,
-            serde_json::json!({"path": "src/lib.rs"})
-        );
-    }
-
-    /// A no-argument Converse tool call omits `input` entirely, so the
-    /// `#[serde(default)]` field lands as `Value::Null`. It must surface as
-    /// an empty object: `Value::Null` is the malformed-call sentinel
-    /// `driver.rs::execute_with_repair` checks for, and a valid no-arg call
-    /// reported as null would be wrongly "repaired" (the twin of gemini.rs's
-    /// `complete_normalizes_a_no_arg_call_to_an_empty_object_not_null`).
-    #[tokio::test]
-    async fn complete_normalizes_a_no_arg_tool_use_to_an_empty_object_not_null() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "output": {"message": {"role": "assistant", "content": [
-                    {"toolUse": {"toolUseId": "tooluse_now", "name": "now"}}
-                ]}},
-                "stopReason": "tool_use",
-                "usage": {"inputTokens": 5, "outputTokens": 2}
-            })))
-            .mount(&server)
-            .await;
-
-        let provider = test_provider(&server.uri());
-        let result = provider
-            .complete(CompletionRequest {
-                messages: vec![CompletionMessage::user("what time is it")],
-                max_output_tokens: None,
-                temperature: None,
-                effort: None,
-                tools: vec![],
-                reasoning: None,
-                params: None,
-            })
-            .await
-            .expect("should succeed");
-
-        assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].name, "now");
-        assert_eq!(result.tool_calls[0].input, serde_json::json!({}));
-        assert!(!result.tool_calls[0].input.is_null());
-    }
-
-    #[tokio::test]
-    async fn complete_maps_403_to_auth_error() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(403).set_body_string(
-                "{\"message\":\"The security token included in the request is invalid.\"}",
-            ))
-            .mount(&server)
-            .await;
-
-        let provider = test_provider(&server.uri());
-        let req = CompletionRequest {
-            messages: vec![CompletionMessage::user("hi")],
-            max_output_tokens: None,
-            temperature: None,
-            effort: None,
-            tools: vec![],
-            reasoning: None,
-            params: None,
-        };
-
-        let err = provider.complete(req).await.unwrap_err();
-        assert!(matches!(err, ProviderError::Auth(_)));
-        assert!(!err.is_retryable());
-    }
-
-    #[tokio::test]
-    async fn complete_maps_429_throttling_to_rate_limited() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .respond_with(
-                ResponseTemplate::new(429).set_body_string("{\"message\":\"Too many requests\"}"),
-            )
-            .mount(&server)
-            .await;
-
-        let provider = test_provider(&server.uri());
-        let req = CompletionRequest {
-            messages: vec![CompletionMessage::user("hi")],
-            max_output_tokens: None,
-            temperature: None,
-            effort: None,
-            tools: vec![],
-            reasoning: None,
-            params: None,
-        };
-
-        let err = provider.complete(req).await.unwrap_err();
-        assert!(matches!(err, ProviderError::RateLimited { .. }));
-        assert!(err.is_retryable());
-    }
-
-    #[tokio::test]
-    async fn complete_sends_the_session_token_header_when_configured() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(header_regex(
-                "x-amz-security-token",
-                r"^IQoJb3JpZ2luX2VjEXAMPLETOKEN$",
-            ))
-            .and(header_regex(
-                "authorization",
-                r"SignedHeaders=content-type;host;x-amz-date;x-amz-security-token,",
-            ))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "output": {"message": {"role": "assistant", "content": [{"text": "ok"}]}},
-                "usage": {"inputTokens": 1, "outputTokens": 1}
-            })))
-            .mount(&server)
-            .await;
-
-        let provider = BedrockProvider::new(
-            ApiKey::new("AKIDEXAMPLE"),
-            ApiKey::new("wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"),
-            Some(ApiKey::new("IQoJb3JpZ2luX2VjEXAMPLETOKEN")),
-            "us-east-1",
-            "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-        )
-        .with_base_url(server.uri());
-
-        let req = CompletionRequest {
-            messages: vec![CompletionMessage::user("hi")],
-            max_output_tokens: None,
-            temperature: None,
-            effort: None,
-            tools: vec![],
-            reasoning: None,
-            params: None,
-        };
-
-        let result = provider.complete(req).await.expect("should succeed");
-        assert_eq!(result.text, "ok");
-    }
-
-    /// Of the `GenerationParams`, only `top_p` has a Converse
-    /// `inferenceConfig` slot; the rest must be dropped silently (the
-    /// never-fail contract), not guessed into `additionalModelRequestFields`
-    /// this adapter doesn't have.
-    #[tokio::test]
-    async fn generation_params_forward_only_top_p_into_inference_config() {
-        use stella_protocol::GenerationParams;
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "output": {"message": {"role": "assistant", "content": [{"text": "ok"}]}},
-                "usage": {"inputTokens": 1, "outputTokens": 1}
-            })))
-            .mount(&server)
-            .await;
-
-        let provider = test_provider(&server.uri());
-        provider
-            .complete(CompletionRequest {
-                messages: vec![CompletionMessage::user("hi")],
-                max_output_tokens: None,
-                temperature: None,
-                effort: None,
-                tools: vec![],
-                reasoning: None,
-                params: Some(GenerationParams {
-                    top_p: Some(0.9),
-                    top_k: Some(40),
-                    seed: Some(7),
-                    ..Default::default()
-                }),
-            })
-            .await
-            .expect("should succeed");
-
-        let requests = server.received_requests().await.expect("recorded requests");
-        let body = String::from_utf8_lossy(&requests[0].body);
-        assert!(
-            body.contains("\"inferenceConfig\":{\"topP\":0.9}"),
-            "{body}"
-        );
-        assert!(!body.contains("topK"), "{body}");
-        assert!(!body.contains("seed"), "{body}");
-    }
-
-    /// The byte-stability contract: with no overrides at all, no
-    /// `inferenceConfig` key rides — exactly the pre-params request body.
-    #[tokio::test]
-    async fn absent_params_omit_inference_config_entirely() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "output": {"message": {"role": "assistant", "content": [{"text": "ok"}]}},
-                "usage": {"inputTokens": 1, "outputTokens": 1}
-            })))
-            .mount(&server)
-            .await;
-
-        let provider = test_provider(&server.uri());
-        provider
-            .complete(CompletionRequest {
-                messages: vec![CompletionMessage::user("hi")],
-                max_output_tokens: None,
-                temperature: None,
-                effort: None,
-                tools: vec![],
-                reasoning: None,
-                params: None,
-            })
-            .await
-            .expect("should succeed");
-
-        let requests = server.received_requests().await.expect("recorded requests");
-        let body = String::from_utf8_lossy(&requests[0].body);
-        assert!(!body.contains("inferenceConfig"), "{body}");
-        assert!(!body.contains("topP"), "{body}");
-        assert!(!body.contains("additionalModelRequestFields"), "{body}");
-    }
-
-    /// The reasoning switch reaches the wire as `additionalModelRequestFields
-    /// .reasoning_config` in the Anthropic legacy shape, with the same
-    /// effort→budget mapping and budget↔max_tokens coupling as
-    /// `anthropic.rs`'s legacy branch: an uncapped thinking turn raises the
-    /// ceiling to budget + 8192, and temperature is omitted (the API rejects
-    /// it alongside thinking).
-    #[tokio::test]
-    async fn reasoning_true_sends_reasoning_config_and_raises_max_tokens() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "output": {"message": {"role": "assistant", "content": [{"text": "ok"}]}},
-                "usage": {"inputTokens": 1, "outputTokens": 1}
-            })))
-            .mount(&server)
-            .await;
-
-        let provider = test_provider(&server.uri());
-        provider
-            .complete(CompletionRequest {
-                messages: vec![CompletionMessage::user("think hard")],
-                max_output_tokens: None,
-                temperature: Some(0.3),
-                effort: Some(stella_protocol::ReasoningEffort::High),
-                tools: vec![],
-                reasoning: Some(true),
-                params: None,
-            })
-            .await
-            .expect("should succeed");
-
-        let requests = server.received_requests().await.expect("recorded requests");
-        let body = String::from_utf8_lossy(&requests[0].body);
-        assert!(
-            body.contains(
-                "\"additionalModelRequestFields\":{\"reasoning_config\":\
-                 {\"type\":\"enabled\",\"budget_tokens\":16384}}"
-            ),
-            "{body}"
-        );
-        assert!(
-            body.contains("\"inferenceConfig\":{\"maxTokens\":24576}"),
-            "budget + 8192 headroom, temperature omitted with thinking on: {body}"
-        );
-        assert!(!body.contains("temperature"), "{body}");
-    }
-
-    /// A caller cap at or below the 1024-token thinking floor leaves no legal
-    /// budget (`budget < max_tokens` is an API requirement) — thinking is
-    /// omitted rather than sent as a ValidationException, and the request
-    /// falls back to the plain no-thinking shape (temperature honored).
-    #[tokio::test]
-    async fn a_cap_at_the_thinking_floor_omits_reasoning_config_not_a_400() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "output": {"message": {"role": "assistant", "content": [{"text": "ok"}]}},
-                "usage": {"inputTokens": 1, "outputTokens": 1}
-            })))
-            .mount(&server)
-            .await;
-
-        let provider = test_provider(&server.uri());
-        provider
-            .complete(CompletionRequest {
-                messages: vec![CompletionMessage::user("think hard")],
-                max_output_tokens: Some(1024),
-                temperature: Some(0.0),
-                effort: None,
-                tools: vec![],
-                reasoning: Some(true),
-                params: None,
-            })
-            .await
-            .expect("should succeed");
-
-        let requests = server.received_requests().await.expect("recorded requests");
-        let body = String::from_utf8_lossy(&requests[0].body);
-        assert!(!body.contains("additionalModelRequestFields"), "{body}");
-        assert!(
-            body.contains("\"maxTokens\":1024") && body.contains("\"temperature\":0.0"),
-            "{body}"
-        );
-    }
-}
+mod tests;
