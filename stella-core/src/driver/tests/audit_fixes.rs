@@ -256,6 +256,25 @@ fn engine_injected_user_messages_are_not_loop_window_boundaries() {
         "the stuck-loop warning must not truncate the loop window"
     );
 
+    // The output-limit continuation nudge is the third engine-written User
+    // message, and the one where truncating the window is least defensible:
+    // it is pushed *because* the turn is not over, so discarding the calls
+    // the turn already made would blind the detector on exactly the path a
+    // model that both truncates and loops takes.
+    let nudge = CompletionMessage::user(format!(
+        "{CONTINUATION_MARKER_PREFIX}] {LENGTH_CONTINUATION_NUDGE}"
+    ));
+    let continued = history(nudge);
+    let records = recent_call_records(&continued, &Default::default());
+    assert_eq!(
+        records
+            .iter()
+            .map(|r| r.call.call_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["c1", "c2"],
+        "the output-limit continuation nudge must not truncate the loop window"
+    );
+
     // A REAL user message (a steer, a REPL turn) still resets the window.
     let user_turn = history(CompletionMessage::user("also check the tests"));
     let records = recent_call_records(&user_turn, &Default::default());

@@ -371,6 +371,12 @@ const SPECULATION_DISCARD_HARVEST_MISMATCH: &str = "harvest_mismatch";
 /// could harvest it, so it is discarded on the abort unwind instead (#460).
 const SPECULATION_DISCARD_BUDGET_ABORT: &str = "budget_abort";
 
+/// The `ToolOutput::Error` that closes a `tool_use` the budget abort refused
+/// to dispatch. The twin of `step::CANCELLED_TOOL_RESULT`: same repair, same
+/// helper, different reason — the model is told the call did not run, so the
+/// pairing is honest as well as structurally valid.
+const BUDGET_ABORT_TOOL_RESULT: &str = "not executed — turn aborted on budget";
+
 /// How many times one turn may continue past a step that ended at the
 /// output-token limit having called no tool (`FinishReason::Length`,
 /// `tool_calls` empty). Two, not one, because the observed failure is a
@@ -382,7 +388,9 @@ const SPECULATION_DISCARD_BUDGET_ABORT: &str = "budget_abort";
 /// ladder's no-op rung takes it from there.
 const MAX_LENGTH_CONTINUATIONS: u32 = 2;
 
-/// The user message a length-truncated, tool-less step is continued with.
+/// The body of the user message a length-truncated, tool-less step is
+/// continued with. Pushed behind [`CONTINUATION_MARKER_PREFIX`], which is what
+/// marks it as engine-generated — see that constant.
 ///
 /// Written for the two shapes the trigger cannot distinguish and does not
 /// need to: chain-of-thought promoted to text by an adapter's reasoning-only
@@ -1685,40 +1693,13 @@ impl<'a> Engine<'a> {
         // with no matching `tool_result` is a broken history: when a
         // REPL caller reuses this `messages` vec, the next turn's first
         // provider call is hard-rejected ("tool_use must be followed by
-        // tool_result"). Close the pairing with a synthetic error
-        // result per un-run call so resumption stays valid.
-        if !result.tool_calls.is_empty() {
-            let tool_results: Vec<ToolResult> = result
-                .tool_calls
-                .iter()
-                .map(|call| ToolResult {
-                    call_id: call.call_id.clone(),
-                    output: ToolOutput::Error {
-                        message: "not executed — turn aborted on budget".to_string(),
-                    },
-                })
-                .collect();
-            // Mirror the synthetic results onto the event stream: this
-            // step's `StepUsage` already reported `tool_calls: N`, and a
-            // transcript reconstructed from events must resolve every
-            // announced call the same way `messages` does. No `ToolStart`
-            // — these calls never ran.
-            for tool_result in &tool_results {
-                let _ = events.send(AgentEvent::ToolResult {
-                    call_id: tool_result.call_id.clone(),
-                    output: tool_result.output.clone(),
-                    duration_ms: 0,
-                    speculated: false,
-                });
-            }
-            messages.push(CompletionMessage {
-                role: MessageRole::Tool,
-                content: String::new(),
-                tool_calls: Vec::new(),
-                tool_results,
-                attachments: Vec::new(),
-            });
-        }
+        // tool_result"). Close the pairing with a synthetic error result
+        // per un-run call so resumption stays valid — through the same
+        // helper the cancellation path uses, since a second copy of this
+        // repair is a second place for it to rot (the results are likewise
+        // mirrored onto the event stream, with no `ToolStart`, because this
+        // step's `StepUsage` already reported `tool_calls: N`).
+        crate::step::close_open_tool_calls(messages, BUDGET_ABORT_TOOL_RESULT, events);
         // The typed twin of the prose denial (receipts spec §6.3). Mode is
         // `Enforced` by construction — only enforced budgets abort.
         let _ = events.send(AgentEvent::BudgetDenied {
@@ -1857,7 +1838,9 @@ impl<'a> Engine<'a> {
                     tool_results: Vec::new(),
                     attachments: Vec::new(),
                 });
-                messages.push(CompletionMessage::user(LENGTH_CONTINUATION_NUDGE));
+                messages.push(CompletionMessage::user(format!(
+                    "{CONTINUATION_MARKER_PREFIX}] {LENGTH_CONTINUATION_NUDGE}"
+                )));
                 return None;
             }
             // A non-empty answer truncated with the continuation allowance
@@ -2230,6 +2213,18 @@ pub(crate) const SUMMARY_MARKER_PREFIX: &str = "[earlier history summarized";
 /// the abort-on-re-detection would need a whole fresh threshold's worth of
 /// looping instead of one more no-progress call.
 pub(crate) const LOOP_STEER_PREFIX: &str = "[stuck-loop warning";
+/// Prefix of the engine-injected output-limit continuation nudge
+/// ([`Engine::dispatch_completion`], body in [`LENGTH_CONTINUATION_NUDGE`]).
+///
+/// The third engine-written `User`-role message, and it needs the marker for
+/// exactly the two reasons the other two do. [`recent_call_records`] would
+/// otherwise take it as a turn boundary and discard every call the turn had
+/// made so far — on the one path where the turn demonstrably *is* still the
+/// same turn, so a stuck model that also truncates would have its evidence
+/// erased up to twice per turn. And `receipts::user_block_kind` would file it
+/// as [`stella_protocol::BlockKind::UserGoal`], attributing engine text to the
+/// person, which is the misattribution Phase 2 introduced that function to fix.
+pub(crate) const CONTINUATION_MARKER_PREFIX: &str = "[output-limit continuation";
 /// The [`TurnOutcome::Aborted`] reason of a user-requested soft stop —
 /// callers match on this to render "stopped" rather than "failed", and to
 /// keep (never truncate) the turn's completed work.
