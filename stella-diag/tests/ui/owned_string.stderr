@@ -1,0 +1,15 @@
+error[E0277]: the trait bound `String: Loggable` is not satisfied
+  --> tests/ui/owned_string.rs:11:5
+   |
+11 |     diag!(&dx, warn, "tools.write.denied", path = user_path);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |     |
+   |     the trait `Loggable` is not implemented for `String`
+   |     required by a bound introduced by this call
+   |
+help: the trait `Loggable` is implemented for `&str`
+  --> src/field.rs
+   |
+   | impl Loggable for &'static str {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: this error originates in the macro `$crate::diag` which comes from the expansion of the macro `diag` (in Nightly builds, run with -Z macro-backtrace for more info)

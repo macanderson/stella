@@ -1,0 +1,20 @@
+error[E0277]: the trait bound `Value: Loggable` is not satisfied
+ --> tests/ui/json_value.rs:8:5
+  |
+8 |     diag!(&dx, debug, "model.request", body = payload);
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |     |
+  |     the trait `Loggable` is not implemented for `Value`
+  |     required by a bound introduced by this call
+  |
+  = help: the following other types implement trait `Loggable`:
+            &'static str
+            &T
+            ClauseFault
+            Duration
+            Extension
+            Option<T>
+            PathClass
+            PathKind
+          and $N others
+  = note: this error originates in the macro `$crate::diag` which comes from the expansion of the macro `diag` (in Nightly builds, run with -Z macro-backtrace for more info)

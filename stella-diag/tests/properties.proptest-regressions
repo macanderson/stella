@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 079e925de9ac0be2cace6fa4e9a9a5721e257a7d3425040f1d99712801ee33e8 # shrinks to record = Record { ts: 0, level: Error, code: "store.migration.retry", target: "stella_store::migrate", cx: Cx { session: None, execution: None, turn: None, step: None }, fields: Fields([("attempt", Int(0))]) }
+cc c041d1a7064e7895a115d989482ca52a53730c33a0ac7791d08990597f0e8a11 # shrinks to record = Record { ts: 0, level: Error, code: "store.migration.retry", target: "stella_store::migrate", cx: Cx { session: None, execution: None, turn: None, step: None }, fields: Fields([("attempt", Float(2.3434129323714217e-125))]) }

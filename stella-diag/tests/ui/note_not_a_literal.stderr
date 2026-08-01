@@ -1,0 +1,11 @@
+error: no rules expected `reason`
+ --> tests/ui/note_not_a_literal.rs:8:46
+  |
+8 |     let _ = Redacted::reviewed("main", note!(reason));
+  |                                              ^^^^^^ no rules expected this token in macro call
+  |
+note: while trying to match meta-variable `$justification:literal`
+ --> src/redact.rs
+  |
+  |     ($justification:literal) => {
+  |      ^^^^^^^^^^^^^^^^^^^^^^

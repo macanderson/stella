@@ -1,0 +1,12 @@
+error[E0597]: `answer` does not live long enough
+  --> tests/ui/borrowed_str.rs:9:45
+   |
+ 8 |     let answer = String::from("the model said something");
+   |         ------ binding `answer` declared here
+ 9 |     diag!(&dx, info, "model.answer", text = answer.as_str());
+   |     ----------------------------------------^^^^^^----------
+   |     |                                       |
+   |     |                                       borrowed value does not live long enough
+   |     argument requires that `answer` is borrowed for `'static`
+10 | }
+   | - `answer` dropped here while still borrowed

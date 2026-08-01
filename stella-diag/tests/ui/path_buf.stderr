@@ -1,0 +1,20 @@
+error[E0277]: the trait bound `PathBuf: Loggable` is not satisfied
+ --> tests/ui/path_buf.rs:9:5
+  |
+9 |     diag!(&dx, warn, "tools.write.denied", path = target);
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |     |
+  |     the trait `Loggable` is not implemented for `PathBuf`
+  |     required by a bound introduced by this call
+  |
+  = help: the following other types implement trait `Loggable`:
+            &'static str
+            &T
+            ClauseFault
+            Duration
+            Extension
+            Option<T>
+            PathClass
+            PathKind
+          and $N others
+  = note: this error originates in the macro `$crate::diag` which comes from the expansion of the macro `diag` (in Nightly builds, run with -Z macro-backtrace for more info)
