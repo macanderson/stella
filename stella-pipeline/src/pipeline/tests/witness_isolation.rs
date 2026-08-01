@@ -988,6 +988,89 @@ async fn a_tampered_witness_file_hard_fails_before_judge_evaluation() {
     );
 }
 
+/// Tamper exclusion: the worker RENAMED the witness test file after it was
+/// authored. A rename keeps every content facet — bytes, mode, link count —
+/// and an aliased lookup (a case-folding filesystem, a symlinked parent
+/// directory) can still resolve the pinned path to those bytes, so the
+/// observation arrives identical in everything but the location it was
+/// actually made at. The location is part of the pinned identity: the
+/// candidate hard-fails without judge override, exactly like an edit.
+#[tokio::test]
+async fn a_renamed_witness_file_hard_fails_before_judge_evaluation() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"), // worker
+        text_result("TEST_COMMAND: cargo test --test witness witness -- --exact"),
+        text_result("PASS override attempt"), // must remain unused
+    ]);
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    // The candidate's own repo status. `artifact_identity` is asked twice:
+    // once right after the graft, where the artifact sits at its accepted
+    // path (w1 at tests/witness.rs), and once at the tamper check — where the
+    // worker has since moved the file (the untracked delta shows the move):
+    // the very same bytes, observed at tests/renamed_witness.rs.
+    let candidate_status = SeqRepoStatus::new(vec![
+        vec![],
+        vec![("tests/witness.rs", "w1")],
+        vec![("tests/renamed_witness.rs", "w1")],
+    ])
+    .with_artifact_identities(vec![
+        Some(ArtifactIdentity {
+            fingerprint: "w1".into(),
+            kind: ArtifactKind::Regular,
+            mode: 0o100644,
+            link_count: 1,
+        }),
+        Some(ArtifactIdentity {
+            fingerprint: "w1".into(),
+            kind: ArtifactKind::Regular,
+            mode: 0o100644,
+            link_count: 1,
+        }),
+    ]);
+    // The authoring snapshot: the artifact appears (w1) and is accepted there.
+    let baseline_status = SeqRepoStatus::new(vec![vec![], vec![("tests/witness.rs", "w1")]])
+        .with_artifact_identity(ArtifactIdentity {
+            fingerprint: "w1".into(),
+            kind: ArtifactKind::Regular,
+            mode: 0o100644,
+            link_count: 1,
+        });
+    // The post-execute observation PASSES — the renamed file still collects
+    // under the flip command on this run — so the ladder would submit fast.
+    // The rename must override that.
+    let candidate = FakeWorkspace::new(0, vec![true], Ok(vec![]), log.clone())
+        .with_repo_status(candidate_status);
+    let baseline = FakeWorkspace::new(1, vec![false], Ok(vec![]), log.clone())
+        .with_repo_status(baseline_status);
+    let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log.clone());
+    let (outcome, events, _) = run_isolated(
+        &provider,
+        &port,
+        PipelineConfig {
+            max_revisions: 0,
+            ..PipelineConfig::default()
+        },
+        "Fix the retry bug",
+    )
+    .await;
+    let outcome = outcome.expect("a renamed witness is a truthful candidate failure");
+
+    assert_aborted_because(
+        &outcome.status,
+        "witness artifact changed after its accepted baseline: tests/witness.rs",
+    );
+    assert!(
+        !stages(&events).contains(&StageKind::Judge),
+        "a renamed witness is not eligible for judge override"
+    );
+    let log = log.lock().unwrap().clone();
+    assert!(
+        !log.iter().any(|entry| entry.starts_with("adopt:")),
+        "a moved witness must never reach adoption: {log:?}"
+    );
+}
+
 /// The grafted witness is scaffolding, not the worker's work, so it must never
 /// be attributed to the turn's diff.
 ///
