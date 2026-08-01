@@ -181,8 +181,8 @@ ok "release commit $(git rev-parse --short "$release_sha") stamps ${VERSION} on 
 cp Cargo.toml .Cargo.toml.relbak
 cp Cargo.lock .Cargo.lock.relbak   # cargo rewrites workspace-member versions in the lock during the stamped build
 restore_manifest() {
-  [ -f .Cargo.toml.relbak ] && mv .Cargo.toml.relbak Cargo.toml || true
-  [ -f .Cargo.lock.relbak ] && mv .Cargo.lock.relbak Cargo.lock || true
+  if [ -f .Cargo.toml.relbak ]; then mv .Cargo.toml.relbak Cargo.toml; fi
+  if [ -f .Cargo.lock.relbak ]; then mv .Cargo.lock.relbak Cargo.lock; fi
 }
 trap 'restore_manifest' EXIT
 perl -pi -e "s/^version = \"[^\"]*\"/version = \"${VERSION}\"/" Cargo.toml
