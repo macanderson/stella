@@ -30,12 +30,32 @@ function client(): Redis | null {
   return Redis.fromEnv();
 }
 
-/** Add one to a counter. Fire-and-forget semantics; never throws. */
+/**
+ * Add one to a counter. Fire-and-forget semantics; never throws. Each bump
+ * (and each failure) emits one structured line so Vercel's function logs
+ * carry the funnel too — searchable as `install-funnel` in the dashboard.
+ */
 export async function bump(counter: InstallCounter): Promise<void> {
+  const redis = client();
   try {
-    await client()?.incr(`install:${counter}`);
-  } catch {
-    // Counting is best-effort by design.
+    const total = await redis?.incr(`install:${counter}`);
+    console.log(
+      JSON.stringify({
+        event: "install-funnel",
+        counter,
+        total: total ?? null,
+        stored: redis !== null,
+      }),
+    );
+  } catch (error) {
+    // Counting is best-effort by design — log it, never surface it.
+    console.error(
+      JSON.stringify({
+        event: "install-funnel-error",
+        counter,
+        message: error instanceof Error ? error.message : String(error),
+      }),
+    );
   }
 }
 

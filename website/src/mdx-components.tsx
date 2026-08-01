@@ -2,6 +2,7 @@ import defaultMdxComponents from "fumadocs-ui/mdx";
 import type { MDXComponents } from "mdx/types";
 
 import { Badge, CardGrid, OptionCard, SpecCard, ToolCard } from "@/components/cards";
+import { DocsCodeBlock } from "@/components/docs-code-block";
 import {
   CredentialChainDiagram,
   FleetFanoutDiagram,
@@ -28,6 +29,9 @@ import { ProviderLogo, ProviderMark } from "@/components/provider-logos";
 export function getMDXComponents(components?: MDXComponents): MDXComponents {
   return {
     ...defaultMdxComponents,
+    // Code blocks are terminals: always-ink, click-anywhere copy, floating
+    // "copied!" chip — the home page's install-block handling, docs-wide.
+    pre: (props) => <DocsCodeBlock {...props} />,
     // Diagrams
     HeroFlowDiagram,
     PipelineFlowDiagram,

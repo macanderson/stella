@@ -25,7 +25,15 @@ export async function GET(): Promise<Response> {
     const upstream = await fetch(UPSTREAM, { next: { revalidate: 300 } });
     if (!upstream.ok) throw new Error(`upstream ${upstream.status}`);
     script = await upstream.text();
-  } catch {
+  } catch (error) {
+    // The redirect path still installs (the one-liner uses -L); the log line
+    // is what tells us the proxy is degraded before anyone notices.
+    console.error(
+      JSON.stringify({
+        event: "install-sh-fallback",
+        message: error instanceof Error ? error.message : String(error),
+      }),
+    );
     return Response.redirect(UPSTREAM, 302);
   }
 
