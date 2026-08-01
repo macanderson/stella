@@ -32,6 +32,27 @@ homepage = "https://stella.oxagen.sh"
 publish = false
 
 [workspace.dependencies]
+# Context Graph Protocol — the wire types, host runtime, conformance suite, and
+# execution-trace vocabulary stella speaks (#819). Declared ONCE here so a
+# version bump is a one-line edit rather than six scattered across three member
+# manifests, which is how these drifted onto a git rev in the first place.
+#
+# These were `{ git = ..., rev = ... }` until #819. That pin named a commit
+# living on a history line this repository's upstream had since re-rooted away
+# from: it was on no branch and no PR, reachable only by raw SHA, and eligible
+# for garbage collection — a cold cargo cache away from breaking every build.
+# Registry versions get us a reviewable release, a checksum in Cargo.lock, and
+# an audit trail (`cargo audit`/`cargo vet` cannot see a git rev).
+#
+# `contextgraph-trace` is SKETCH STAGE and deliberately exempt from the
+# protocol's stability promise — its journal wire format may change in any 0.x
+# release. Gate behaviour on its `TRACE_FORMAT` constant, not on this version.
+# Hence exact `=` requirements: a silent minor bump here would change a wire
+# format `stella arena` writes to disk.
+contextgraph-types = "=0.1.2"
+contextgraph-host = "=0.1.2"
+contextgraph-trace = "=0.1.2"
+contextgraph-conformance = "=0.1.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # RFC 8785 JSON Canonicalization Scheme — pinned to the SAME version the Context
