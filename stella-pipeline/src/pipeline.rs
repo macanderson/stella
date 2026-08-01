@@ -1750,7 +1750,12 @@ impl<'a> Pipeline<'a> {
             diff_lines: 0,
             diff_text: String::new(),
             diff_available: true,
-            touch_baseline: self.touches.mutations_recorded(),
+            touch_baseline: {
+                // Bracket the turn at the same instant the baseline is taken,
+                // so the before-image and the count describe one moment.
+                self.touches.begin_workspace_probe();
+                self.touches.mutations_recorded()
+            },
             lint_baseline,
             witness_mutation: None,
             revisions: 0,
@@ -2929,6 +2934,15 @@ impl<'a> Pipeline<'a> {
     /// from the touch count, and reading a stale one is how a real change gets
     /// rendered as an empty diff.
     fn absorb_probe(&self, state: &mut CandidateState, probe: DiffProbe) {
+        // Attribute shell-driven changes BEFORE the count is read. The
+        // recorder only sees what a tool's input declared, and `bash` declares
+        // nothing, so without this the count below is blind to the tool that
+        // does most of the work on Terminal-Bench. Settling first is what
+        // makes `file_changes` an honest answer rather than a CRUD-tool tally.
+        // Settling also re-arms, from the same walk, so a revision's changes
+        // are bracketed exactly the way this one's were without paying for a
+        // second walk of an identical tree.
+        self.touches.settle_workspace_probe();
         state.file_changes = self.observed_mutations(state);
         state.diff_lines = probe.lines;
         state.diff_available = probe.available;
