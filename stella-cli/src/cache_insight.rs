@@ -96,11 +96,35 @@ mod tests {
 
     #[test]
     fn matches_the_pricing_witness_from_stella_model() {
-        // Same figures stella-model's own `savings_matches_catalog_pricing_math_by_hand`
-        // witness uses: Claude Fable 5 seed pricing (input $3.00/M, cached
-        // $0.30/M), 400k cached reads and 100k writes on a 1M-input call ->
-        // $1.005 saved net of the 1.25x anthropic write premium.
+        // What this pins is the WIRING — that a `StepUsage` event reaches the
+        // catalog and comes back with that model's real saving. The arithmetic
+        // itself is pinned separately, against a hand-built `Pricing`, by
+        // stella-model's `savings_matches_catalog_pricing_math_by_hand`.
+        //
+        // So the expectation is derived from the catalog rather than copied out
+        // of it. A hardcoded figure here fails the moment a price is corrected
+        // — as it did when `claude-fable-5` was carrying Sonnet's $3/$15
+        // instead of its actual $10/$50 — which frames a fix to real data as a
+        // broken test.
         let event = step_usage("claude-fable-5", 1_000_000, 400_000, 100_000);
+        let pricing = Catalog::current()
+            .resolve_for("anthropic", "claude-fable-5")
+            .expect("the seed catalog carries this model")
+            .pricing;
+        let expected = pricing.cache_savings_usd(
+            &CompletionUsage {
+                reported: true,
+                input_tokens: 1_000_000,
+                output_tokens: 0,
+                cached_input_tokens: 400_000,
+                cache_write_tokens: 100_000,
+            },
+            pricing.input_usd_per_mtok * 0.25,
+        );
+        assert!(
+            expected > 0.0,
+            "the fixture must exercise a model whose cache actually pays"
+        );
         let insight =
             cache_insight_for("anthropic", "lead", &event).expect("StepUsage yields an insight");
         match insight {
@@ -112,8 +136,8 @@ mod tests {
             } => {
                 assert_eq!(agent, "lead");
                 assert!(
-                    (savings_usd_delta - 1.005).abs() < 1e-9,
-                    "got {savings_usd_delta}"
+                    (savings_usd_delta - expected).abs() < 1e-9,
+                    "got {savings_usd_delta}, catalog says {expected}"
                 );
                 // Anthropic's default prompt-cache TTL is 5 minutes.
                 assert_eq!(ttl_secs, 300);
