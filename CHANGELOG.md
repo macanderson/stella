@@ -35,6 +35,15 @@ skip the roll) were re-inserted the same way.
 
 ## [Unreleased]
 
+- The four Context Graph Protocol crates (`contextgraph-types`,
+  `contextgraph-host`, `contextgraph-trace`, `contextgraph-conformance`) are now
+  ordinary crates.io dependencies at `=0.1.2`, declared once in the root
+  manifest, instead of git dependencies pinned by commit rev (#819). Building
+  stella from source no longer reaches out to the protocol repository, the
+  lockfile carries a checksum for each of them, and `cargo audit` / `cargo vet`
+  can see them — none of which was true of a git rev. `deny.toml`'s `allow-git`
+  exemption is removed, so the workspace now has no vetted git sources at all.
+
 ## [0.6.54] — 2026-08-01
 
 ## [0.6.53] — 2026-08-01

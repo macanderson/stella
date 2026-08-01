@@ -121,7 +121,14 @@ wildcards = "warn"
 # unknown registry or an unvetted git source fails the build.
 unknown-registry = "deny"
 unknown-git = "deny"
-# Vetted git sources. The Context Graph Protocol crates (contextgraph-types,
-# contextgraph-host) live in their own repo and are consumed directly at a
-# pinned rev until they are published to crates.io.
-allow-git = ["https://github.com/macanderson/context-graph-protocol"]
+# No vetted git sources. The Context Graph Protocol crates (contextgraph-types,
+# contextgraph-host, contextgraph-trace, contextgraph-conformance) were exempted
+# here while they were consumed at a pinned rev; they are published to crates.io
+# as of 0.1.2 and are now ordinary registry dependencies (#819).
+#
+# Deliberately left EMPTY rather than deleted: an empty allow-list is the
+# statement that no git source is vetted, so re-introducing one is a visible
+# edit to this file and not a silent addition to an existing exemption. That
+# matters because the exemption above is what let the pin drift onto a commit
+# reachable from no branch at all.
+allow-git = []
