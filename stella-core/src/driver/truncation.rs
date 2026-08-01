@@ -42,6 +42,8 @@
 //! ignore. Elided, the resume point sits immediately above the instruction that
 //! names it. The saving and the improvement are the same edit.
 
+use std::time::Duration;
+
 use super::CompletionMessage;
 
 /// How many times one turn may continue past a step that ended at the
@@ -151,12 +153,59 @@ impl Continuation {
 /// `Some` — threaded rather than owned so the bound survives across steps.
 /// Callers establish `FinishReason::Length` and an empty `tool_calls` before
 /// calling; this decides only what happens next.
+/// What one turn has left to spend on continuing, in wall clock.
+///
+/// The count alone cannot see the constraint that actually binds. A harness
+/// kills a trial on elapsed time — Terminal-Bench at 900s — and the engine
+/// continues blind to it, so a turn can spend its whole allowance and be
+/// destroyed externally mid-continuation. That arrives as
+/// `AgentTimeoutError`: a harness death, indistinguishable at the results
+/// layer from the agent failing the task, where an honest truncated answer
+/// would have been an ordinary result.
+///
+/// Measured on a ten-task adversarial Terminal-Bench set at effort `xhigh`:
+/// four of ten trials died on the wall clock, two of them without ever
+/// reaching the output cap. No continuation allowance can fix that, because
+/// more retries is the opposite of the fix.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ContinuationBudget {
+    /// Wall clock left before the turn's deadline.
+    pub(super) remaining: Duration,
+    /// How long the step that just truncated took.
+    pub(super) last_step: Duration,
+}
+
+impl ContinuationBudget {
+    /// Whether there is time to finish a continuation, not merely start one.
+    ///
+    /// A continuation re-runs the work that just truncated — same prompt shape,
+    /// same reasoning, same cap — so it costs at least what its predecessor
+    /// cost. Starting one with less time than that is choosing an external kill
+    /// over a truthful partial: the answer is thrown away and the trial reports
+    /// a timeout instead of a result.
+    ///
+    /// Strictly greater, and no safety margin invented here: the caller owns
+    /// the deadline and can set a conservative one. A margin baked in at this
+    /// level would be a second, invisible policy.
+    fn affords_another(&self) -> bool {
+        self.remaining > self.last_step
+    }
+}
+
 pub(super) fn plan_continuation(
     text: &str,
     output_tokens: u64,
     spent: u32,
+    budget: Option<ContinuationBudget>,
 ) -> Option<Continuation> {
     if spent >= MAX_LENGTH_CONTINUATIONS {
+        return None;
+    }
+    // Checked after the count, so a turn with no deadline configured behaves
+    // exactly as before — the budget is opt-in and absent by default.
+    if let Some(budget) = budget
+        && !budget.affords_another()
+    {
         return None;
     }
     let attempt = spent + 1;
@@ -191,11 +240,57 @@ mod tests {
 
     #[test]
     fn a_spent_allowance_declines_to_continue() {
-        assert!(plan_continuation("cut off", 16_384, MAX_LENGTH_CONTINUATIONS).is_none());
-        assert!(plan_continuation("", 16_384, MAX_LENGTH_CONTINUATIONS).is_none());
+        assert!(plan_continuation("cut off", 16_384, MAX_LENGTH_CONTINUATIONS, None).is_none());
+        assert!(plan_continuation("", 16_384, MAX_LENGTH_CONTINUATIONS, None).is_none());
         // ...and every attempt below it does continue.
         for spent in 0..MAX_LENGTH_CONTINUATIONS {
-            assert!(plan_continuation("cut off", 16_384, spent).is_some());
+            assert!(plan_continuation("cut off", 16_384, spent, None).is_some());
+        }
+    }
+
+    #[test]
+    fn a_continuation_it_cannot_finish_is_declined() {
+        // The continuation costs what its predecessor cost, so 60s of work with
+        // 30s left is a continuation that gets killed mid-flight. Declining
+        // keeps the truthful partial and lets the turn end as an ordinary
+        // result; taking it trades that for an external timeout, which reads at
+        // the results layer exactly like the agent failing the task.
+        let broke = ContinuationBudget {
+            remaining: Duration::from_secs(30),
+            last_step: Duration::from_secs(60),
+        };
+        assert!(plan_continuation("cut off", 16_384, 0, Some(broke)).is_none());
+        assert!(plan_continuation("", 16_384, 0, Some(broke)).is_none());
+    }
+
+    #[test]
+    fn a_continuation_it_can_finish_proceeds() {
+        let flush = ContinuationBudget {
+            remaining: Duration::from_secs(600),
+            last_step: Duration::from_secs(60),
+        };
+        assert!(plan_continuation("cut off", 16_384, 0, Some(flush)).is_some());
+    }
+
+    #[test]
+    fn exactly_enough_time_is_not_enough() {
+        // Equal is refused, not allowed. The forecast is an estimate drawn from
+        // one prior sample, so spending the last of the budget on it lands
+        // exactly on the deadline in the best case and past it in every other.
+        let exact = ContinuationBudget {
+            remaining: Duration::from_secs(60),
+            last_step: Duration::from_secs(60),
+        };
+        assert!(plan_continuation("cut off", 16_384, 0, Some(exact)).is_none());
+    }
+
+    #[test]
+    fn without_a_budget_the_allowance_is_the_only_bound() {
+        // The default path: no deadline configured, so behaviour is the pure
+        // count it was before — a caller that knows nothing about its wall
+        // clock must not have work declined on a guess.
+        for spent in 0..MAX_LENGTH_CONTINUATIONS {
+            assert!(plan_continuation("cut off", 16_384, spent, None).is_some());
         }
     }
 
@@ -204,7 +299,7 @@ mod tests {
         // The shape the zai adapter used to hide by promoting reasoning into
         // `text`: no answer at all. There is nothing to resume from, so the
         // transcript records the fact and none of the deliberation.
-        let plan = plan_continuation("   \n  ", 16_384, 0).expect("continues");
+        let plan = plan_continuation("   \n  ", 16_384, 0, None).expect("continues");
         assert_eq!(plan.retained, REASONING_ONLY_PARTIAL);
         assert!(
             plan.note.contains("spent entirely on reasoning"),
@@ -219,7 +314,7 @@ mod tests {
         // never trimmed, so eliding can never lose an answer small enough to
         // have been worth reading whole.
         let answer = "The fix is to widen the guard in ";
-        let plan = plan_continuation(answer, 16_384, 0).expect("continues");
+        let plan = plan_continuation(answer, 16_384, 0, None).expect("continues");
         assert_eq!(plan.retained, answer);
     }
 
@@ -237,7 +332,7 @@ mod tests {
             "a".repeat(5_000),
             "b".repeat(5_000)
         );
-        let plan = plan_continuation(&partial, 16_384, 0).expect("continues");
+        let plan = plan_continuation(&partial, 16_384, 0, None).expect("continues");
 
         assert!(
             plan.retained.len() < partial.len() / 4,
@@ -274,7 +369,7 @@ mod tests {
 
     #[test]
     fn the_nudge_is_marked_so_it_is_never_mistaken_for_the_user() {
-        let (_note, [assistant, nudge]) = plan_continuation("cut off", 16_384, 0)
+        let (_note, [assistant, nudge]) = plan_continuation("cut off", 16_384, 0, None)
             .expect("continues")
             .into_parts();
         assert_eq!(assistant.role, stella_protocol::MessageRole::Assistant);

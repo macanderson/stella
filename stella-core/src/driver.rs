@@ -92,7 +92,7 @@ mod lifecycle;
 mod loop_evidence;
 mod truncation;
 pub(crate) use truncation::CONTINUATION_MARKER_PREFIX;
-use truncation::{MAX_LENGTH_CONTINUATIONS, plan_continuation};
+use truncation::{ContinuationBudget, MAX_LENGTH_CONTINUATIONS, plan_continuation};
 // Named only by the tests that pin the nudge's exact body; the production path
 // reaches it through `Continuation::into_parts`.
 use crate::estimator::{CalibrationMap, estimate_conversation_tokens};
@@ -203,6 +203,23 @@ pub struct EngineConfig {
     /// `UNARY_READ_TIMEOUT`, the most generous transport bound in the
     /// workspace) while staying finite.
     pub model_timeout: Option<Duration>,
+    /// Wall clock one turn may spend, used to decide whether a length
+    /// continuation is affordable. `None` — the default — leaves the
+    /// continuation allowance a pure count, exactly as before.
+    ///
+    /// This is not a timeout and nothing enforces it: no future is cancelled
+    /// when it elapses. It exists so the engine can decline to *start* work it
+    /// cannot finish. The constraint being modelled is external — a harness
+    /// kills a trial on elapsed time (Terminal-Bench at 900s) — and an engine
+    /// blind to it will spend its whole continuation allowance and be
+    /// destroyed mid-continuation, turning a truthful truncated answer into an
+    /// `AgentTimeoutError` that reads at the results layer exactly like the
+    /// agent failing the task.
+    ///
+    /// Set it slightly below the real deadline: the useful behaviour is
+    /// stopping with an honest partial while time remains, not racing the
+    /// harness to the last second.
+    pub turn_budget: Option<Duration>,
     /// Working directory reported to lifecycle hooks (`crate::hooks`) as the
     /// `cwd` of every [`HookPayload`]. Kept here — rather than sniffed via
     /// `std::env::current_dir()` inside the engine — so `stella-core`
@@ -246,6 +263,10 @@ impl Default for EngineConfig {
             max_steps: 200,
             tool_timeout: Some(Duration::from_secs(15 * 60)),
             model_timeout: Some(Duration::from_secs(10 * 60)),
+            // Off by default: only a caller that knows its own deadline can
+            // supply a true one, and a guessed budget would decline work the
+            // caller had time for.
+            turn_budget: None,
             cwd: ".".to_string(),
             turn_instance: 0,
             lifecycle_enabled: false,
@@ -865,6 +886,10 @@ impl<'a> Engine<'a> {
                 "role": self.call_role,
             })
         });
+        // Wall clock around the whole call including its retries, because that
+        // is what a continuation would actually cost again — not the duration
+        // of the one attempt that happened to succeed.
+        let step_started = std::time::Instant::now();
         let committed = match self
             .run_model_call(
                 state.step,
@@ -903,6 +928,7 @@ impl<'a> Engine<'a> {
                 "tool_calls": committed.result.tool_calls.len(),
             })
         });
+        state.last_step = Some(step_started.elapsed());
         state.calibration_model = Some(committed.result.model.clone());
         state.total_cost_usd += committed.result.cost_usd;
 
@@ -928,12 +954,25 @@ impl<'a> Engine<'a> {
             return aborted.into();
         }
 
+        // Only meaningful once a step has been timed and a budget configured:
+        // the forecast for one more continuation is what the last one cost, and
+        // without a deadline there is nothing to compare it against.
+        let continuation_budget =
+            self.config
+                .turn_budget
+                .zip(state.last_step)
+                .map(|(budget, last_step)| ContinuationBudget {
+                    remaining: budget.saturating_sub(state.started_at.elapsed()),
+                    last_step,
+                });
+
         if let Some(completed) = self
             .dispatch_completion(
                 committed,
                 state.total_cost_usd,
                 &mut state.messages,
                 &mut state.length_continuations,
+                continuation_budget,
                 events,
             )
             .await
@@ -1879,6 +1918,7 @@ impl<'a> Engine<'a> {
         total_cost_usd: f64,
         messages: &mut Vec<CompletionMessage>,
         length_continuations: &mut u32,
+        continuation_budget: Option<ContinuationBudget>,
         events: &EventSender,
     ) -> Option<TurnOutcome> {
         let CommittedStep {
@@ -1917,6 +1957,7 @@ impl<'a> Engine<'a> {
                     &result.text,
                     result.usage.output_tokens,
                     *length_continuations,
+                    continuation_budget,
                 )
             {
                 *length_continuations += 1;
