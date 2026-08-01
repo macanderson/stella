@@ -49,7 +49,32 @@ jobs:
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
 
+      # libsqlite3-sys's `bundled` build path (mod build_bundled, gated on the
+      # `bundled`/`bundled-windows`/`bundled-sqlcipher` features) hits an
+      # unstable `cfg_select!` macro in its build.rs on EVERY stable Rust
+      # tested (1.90 through 1.97, this repo's own dev pin) — not something
+      # a `rust-version` bump can fix, since no stable release has it (#1105).
+      # It's confined to that one module: swapping to system-linked SQLite
+      # (rusqlite's `modern_sqlite` instead of `bundled`) avoids it entirely
+      # while keeping the same libsqlite3-sys 0.38.1 already in Cargo.lock —
+      # `modern_sqlite` pulls in `bundled_bindings` for the same FFI surface
+      # (incl. rusqlite::Error::SqlInputError, used in stella-observatory)
+      # without the vendored-source build path. This only reshapes the
+      # ephemeral checkout for this job; shipped builds keep `bundled` so
+      # binaries don't need a system libsqlite3.
+      - name: Swap bundled SQLite for system-linked (MSRV job only, #1105)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends pkg-config libsqlite3-dev
+          sed -i 's/rusqlite = { version = "0.40", features = \["bundled"\] }/rusqlite = { version = "0.40", features = ["modern_sqlite"] }/' Cargo.toml
+          grep -q 'features = \["modern_sqlite"\]' Cargo.toml || { echo "::error::rusqlite feature swap did not match — Cargo.toml's rusqlite line changed, update this sed"; exit 1; }
+
       # rust-toolchain.toml pins a NEWER toolchain for development; override it
-      # so the check genuinely runs on the floor.
+      # so the check genuinely runs on the floor. No --locked here: the
+      # feature swap above changes libsqlite3-sys's resolved dependency edges
+      # (drops `cc`, since nothing needs to compile SQLite from source), so
+      # the committed Cargo.lock no longer matches by design — we want cargo
+      # to resolve fresh against that swap, not enforce the unmodified graph.
       - name: cargo check --workspace
-        run: cargo +${{ steps.msrv.outputs.version }} check --workspace --locked
+        run: cargo +${{ steps.msrv.outputs.version }} check --workspace
