@@ -249,12 +249,12 @@ async fn a_flaky_flip_fails_its_confirmation_and_escalates() {
 
 /// A scripted lint probe (#861): pops one scripted snapshot per call, and
 /// reports a clean tree once the script runs out.
-struct ScriptedLint {
+pub(super) struct ScriptedLint {
     snapshots: std::sync::Mutex<VecDeque<Option<Vec<LintRecord>>>>,
 }
 
 impl ScriptedLint {
-    fn new(snapshots: Vec<Option<Vec<LintRecord>>>) -> Self {
+    pub(super) fn new(snapshots: Vec<Option<Vec<LintRecord>>>) -> Self {
         Self {
             snapshots: std::sync::Mutex::new(snapshots.into_iter().collect()),
         }
@@ -272,7 +272,7 @@ impl LintProbe for ScriptedLint {
     }
 }
 
-fn lint_error(file: &str, message: &str) -> LintRecord {
+pub(super) fn lint_error(file: &str, message: &str) -> LintRecord {
     LintRecord {
         file: file.to_string(),
         error: true,
