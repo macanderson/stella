@@ -1,26 +1,22 @@
 import type { MetadataRoute } from "next";
 
 /**
- * PWA manifest for the Stella docs site. Next auto-links this at
- * `/manifest.webmanifest` and adds the corresponding <link rel="manifest">.
- * Icons live under public/icons and are hand-maintained alongside the mark
- * (the docs/brand/build.py generator no longer exists — see website/README.md);
- * update them together when the mark changes. They are the gold mark on
- * `void`, per BRAND.md § Gold — gold is the mark, and at 11.9:1 on deep space
- * it survives being 16px wide in a browser tab.
+ * PWA manifest. Next auto-links this at `/manifest.webmanifest`. The values
+ * mirror docs/brand/pwa/manifest.webmanifest (the kit is normative); the icon
+ * files under public/icons are byte-for-byte copies of docs/brand/pwa/ — when
+ * the kit regenerates, re-copy them rather than editing either side.
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Stella CLI — Docs",
-    short_name: "Stella",
-    description:
-      "A fast, BYOK, model-agnostic terminal coding agent.",
+    name: "stella",
+    short_name: "stella",
+    description: "the terminal agent — faster · cheaper · more accurate",
     id: "/",
     start_url: "/",
     scope: "/",
     display: "standalone",
-    background_color: "#05070c", // --stella-void
-    theme_color: "#080a0f", // --stella-ground
+    background_color: "#0b0b0c", // --stella-ink
+    theme_color: "#0b0b0c",
     icons: [
       { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
       { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },

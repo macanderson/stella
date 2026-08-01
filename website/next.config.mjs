@@ -39,6 +39,42 @@ const CONSOLIDATED = {
   "/docs/examples/zai-coding-plan": "/docs/examples",
 };
 
+/**
+ * script-src and style-src both need 'unsafe-inline': Next's App Router
+ * streams RSC hydration payloads as inline <script> tags on every request
+ * (unavoidable on a fully static export — there's no per-request server step
+ * to hand out a nonce), and Radix/shiki/the TOC indentation all render via
+ * inline `style` attributes. A nonce-based CSP needs dynamic rendering, which
+ * would give up the static generation this site's performance depends on.
+ * Everything else is locked to same-origin: no third-party script, style,
+ * font, or connect target exists anywhere in this codebase (Vercel Analytics
+ * and Speed Insights are both served same-origin via /_vercel/*).
+ */
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "font-src 'self'",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join("; ");
+
+const SECURITY_HEADERS = [
+  { key: "Content-Security-Policy", value: CSP },
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "X-Frame-Options", value: "DENY" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  {
+    key: "Permissions-Policy",
+    value: "camera=(), microphone=(), geolocation=(), interest-cohort=(), payment=(), usb=()",
+  },
+  { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
+];
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -46,6 +82,22 @@ const nextConfig = {
   // optimization server is needed.
   images: {
     unoptimized: true,
+  },
+  async headers() {
+    return [
+      { source: "/(.*)", headers: SECURITY_HEADERS },
+      // Brand/icon assets under public/ have stable, un-hashed URLs (unlike
+      // /_next/static/*, which is already immutable-cached) but don't change
+      // between deploys either — give them the same long-lived cache.
+      {
+        source: "/brand/:path*",
+        headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
+      },
+      {
+        source: "/icons/:path*",
+        headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
+      },
+    ];
   },
   async redirects() {
     return [

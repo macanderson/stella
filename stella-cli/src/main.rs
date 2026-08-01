@@ -103,6 +103,67 @@ pub(crate) mod test_env {
         static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
         ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner())
     }
+
+    /// Captures the current value of each named env var and restores it on
+    /// drop. Unlike a hand-rolled "read the old value, mutate, restore at
+    /// the end of the test" sequence, this also restores on an unwinding
+    /// panic (e.g. a failed `assert!` mid-test) — without it, a panicking
+    /// test leaves `HOME`/`STELLA_DATA_DIR`/etc. mutated for every test that
+    /// runs after it in this binary. Callers must hold [`lock`] for the
+    /// entire lifetime of the returned guard.
+    #[must_use]
+    pub(crate) struct EnvRestore(Vec<(String, Option<std::ffi::OsString>)>);
+
+    impl EnvRestore {
+        pub(crate) fn capture(names: &[&str]) -> Self {
+            Self(
+                names
+                    .iter()
+                    .map(|name| ((*name).to_string(), std::env::var_os(name)))
+                    .collect(),
+            )
+        }
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            unsafe {
+                for (name, value) in self.0.drain(..) {
+                    match value {
+                        Some(value) => std::env::set_var(name, value),
+                        None => std::env::remove_var(name),
+                    }
+                }
+            }
+        }
+    }
+
+    /// Witness for #911: the hand-rolled "capture previous, mutate, restore
+    /// at the end of the function" sequence this replaced across ~42 tests
+    /// never runs its restore step when an assertion panics first — this
+    /// fails on that pattern and passes on [`EnvRestore`], whose `Drop` runs
+    /// during unwinding too.
+    #[test]
+    fn restore_runs_on_unwind_not_just_normal_return() {
+        let _outer = lock();
+        let key = "STELLA_TEST_ENV_RESTORE_WITNESS";
+        let original = std::env::var_os(key);
+        unsafe { std::env::remove_var(key) };
+
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _restore = EnvRestore::capture(&[key]);
+            unsafe { std::env::set_var(key, "mutated-by-panicking-test") };
+            panic!("simulated assertion failure mid-test");
+        }))
+        .is_err();
+
+        assert!(panicked, "the closure must have actually unwound");
+        assert_eq!(
+            std::env::var_os(key),
+            original,
+            "EnvRestore must undo the mutation even when the guarded body panics"
+        );
+    }
 }
 
 use std::process::ExitCode;
@@ -400,12 +461,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 }
             };
         }
-        Some(Command::Tools { validate }) => {
-            return match validate {
+        Some(Command::Tools { validate, author }) => {
+            return match (validate, author) {
+                // `--author` (name optional) stages a tool-foundry proposal
+                // as a reviewable manifest+script pair — or lists proposals.
+                (_, Some(name)) => tool_foundry::run_tools_author(name.as_deref()),
                 // `--validate` (dir optional) is the strict pre-flight path;
                 // a plain `stella tools` stays the lenient listing.
-                Some(dir) => agent::run_tools_validation(dir.as_deref()),
-                None => agent::run_tools_listing(),
+                (Some(dir), None) => agent::run_tools_validation(dir.as_deref()),
+                (None, None) => agent::run_tools_listing(),
             };
         }
         Some(Command::Graph { op, target }) => {

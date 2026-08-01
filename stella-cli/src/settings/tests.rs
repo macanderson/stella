@@ -601,6 +601,12 @@ fn workspace_with_malicious_project(dir: &Path) -> PathBuf {
 #[test]
 fn untrusted_project_cannot_redirect_a_builtin_credential() {
     let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&[
+        "HOME",
+        "STELLA_MANAGED_SETTINGS",
+        "STELLA_TRUST_PROJECT",
+        "STELLA_PROJECT_HOOKS",
+    ]);
     let dir = tempfile::tempdir().unwrap();
     let ws = workspace_with_malicious_project(dir.path());
     // SAFETY: env lock held for the whole mutate-read-cleanup window.
@@ -623,16 +629,17 @@ fn untrusted_project_cannot_redirect_a_builtin_credential() {
     );
     // And the MCP registry stays the official default, not the repo's.
     assert_eq!(merged.mcp_registry_url(), stella_mcp::DEFAULT_REGISTRY_URL);
-
-    unsafe {
-        std::env::remove_var("HOME");
-        std::env::remove_var("STELLA_MANAGED_SETTINGS");
-    }
 }
 
 #[test]
 fn trusted_project_may_redirect_when_explicitly_opted_in() {
     let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&[
+        "HOME",
+        "STELLA_MANAGED_SETTINGS",
+        "STELLA_TRUST_PROJECT",
+        "STELLA_PROJECT_HOOKS",
+    ]);
     let dir = tempfile::tempdir().unwrap();
     let ws = workspace_with_malicious_project(dir.path());
     // SAFETY: env lock held for the whole mutate-read-cleanup window.
@@ -650,17 +657,17 @@ fn trusted_project_may_redirect_when_explicitly_opted_in() {
     assert_eq!(merged.mcp_registry_url(), "https://evil.registry/");
     assert!(merged.authority_policy.project_prompts_allowed);
     assert!(merged.authority_policy.project_custom_tools_allowed);
-
-    unsafe {
-        std::env::remove_var("STELLA_TRUST_PROJECT");
-        std::env::remove_var("HOME");
-        std::env::remove_var("STELLA_MANAGED_SETTINGS");
-    }
 }
 
 #[test]
 fn no_settings_skips_user_managed_and_project_files() {
     let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&[
+        "HOME",
+        "STELLA_MANAGED_SETTINGS",
+        "STELLA_TRUST_PROJECT",
+        "STELLA_PROJECT_HOOKS",
+    ]);
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     let user_dir = home.join(".stella");
@@ -700,18 +707,17 @@ fn no_settings_skips_user_managed_and_project_files() {
         Settings::default(),
         "no filesystem settings scope may alter a frozen benchmark"
     );
-
-    unsafe {
-        std::env::remove_var("HOME");
-        std::env::remove_var("STELLA_MANAGED_SETTINGS");
-        std::env::remove_var("STELLA_TRUST_PROJECT");
-        std::env::remove_var("STELLA_PROJECT_HOOKS");
-    }
 }
 
 #[test]
 fn untrusted_project_cannot_enable_tools_or_replace_an_agent_prompt() {
     let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&[
+        "HOME",
+        "STELLA_MANAGED_SETTINGS",
+        "STELLA_TRUST_PROJECT",
+        "STELLA_PROJECT_HOOKS",
+    ]);
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     let workspace = dir.path().join("repo");
@@ -750,10 +756,6 @@ fn untrusted_project_cannot_enable_tools_or_replace_an_agent_prompt() {
 
     let merged = Settings::load(&workspace).unwrap();
 
-    unsafe {
-        std::env::remove_var("HOME");
-        std::env::remove_var("STELLA_MANAGED_SETTINGS");
-    }
     let policy = merged.tool_policy();
     assert!(!policy.allows("bash"), "untrusted project enabled bash");
     assert!(!policy.allows("web_fetch"), "untrusted project enabled web");
@@ -773,6 +775,12 @@ fn untrusted_project_cannot_enable_tools_or_replace_an_agent_prompt() {
 #[test]
 fn untrusted_project_may_narrow_trusted_tool_grants() {
     let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&[
+        "HOME",
+        "STELLA_MANAGED_SETTINGS",
+        "STELLA_TRUST_PROJECT",
+        "STELLA_PROJECT_HOOKS",
+    ]);
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     let workspace = dir.path().join("repo");
@@ -801,10 +809,6 @@ fn untrusted_project_may_narrow_trusted_tool_grants() {
 
     let merged = Settings::load(&workspace).unwrap();
 
-    unsafe {
-        std::env::remove_var("HOME");
-        std::env::remove_var("STELLA_MANAGED_SETTINGS");
-    }
     let policy = merged.tool_policy();
     assert!(!policy.allows("bash"), "project off must narrow bash");
     assert!(!policy.allows("web_fetch"), "project off must narrow web");
@@ -813,6 +817,12 @@ fn untrusted_project_may_narrow_trusted_tool_grants() {
 #[test]
 fn managed_tool_denial_survives_explicit_project_trust() {
     let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&[
+        "HOME",
+        "STELLA_MANAGED_SETTINGS",
+        "STELLA_TRUST_PROJECT",
+        "STELLA_PROJECT_HOOKS",
+    ]);
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     let managed = dir.path().join("managed.json");
@@ -850,11 +860,6 @@ fn managed_tool_denial_survives_explicit_project_trust() {
 
     let merged = Settings::load(&workspace).unwrap();
 
-    unsafe {
-        std::env::remove_var("HOME");
-        std::env::remove_var("STELLA_MANAGED_SETTINGS");
-        std::env::remove_var("STELLA_TRUST_PROJECT");
-    }
     let policy = merged.tool_policy();
     assert!(
         !policy.allows("bash"),
@@ -888,6 +893,12 @@ fn managed_tool_denial_survives_explicit_project_trust() {
 #[test]
 fn a_managed_denial_of_any_key_survives_a_project_grant() {
     let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&[
+        "HOME",
+        "STELLA_MANAGED_SETTINGS",
+        "STELLA_TRUST_PROJECT",
+        "STELLA_PROJECT_HOOKS",
+    ]);
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     let managed = dir.path().join("managed.json");
@@ -918,11 +929,6 @@ fn a_managed_denial_of_any_key_survives_a_project_grant() {
 
     let merged = Settings::load(&workspace);
 
-    unsafe {
-        std::env::remove_var("HOME");
-        std::env::remove_var("STELLA_MANAGED_SETTINGS");
-        std::env::remove_var("STELLA_TRUST_PROJECT");
-    }
     let policy = merged.unwrap().tool_policy();
     for name in stella_tools::catalog::names_in_group("process") {
         assert!(

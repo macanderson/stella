@@ -162,6 +162,7 @@ mod tests {
             turn_instance: 0,
             attempts: 4,
             reasons: vec!["a".into(), "b".into(), "c".into(), "d".into()],
+            retryable: true,
         });
         // Four dispatched attempts is one initial call plus three retries.
         assert_eq!(fold.finish().retries, 3);

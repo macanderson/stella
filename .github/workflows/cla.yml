@@ -26,6 +26,15 @@ on:
     types: [opened, synchronize, reopened]
 
 permissions:
+  # Genuinely required, not copy-pasted from the upstream README (#918):
+  # signing happens via an `issue_comment` on the PR, which has no commit SHA
+  # of its own to attach a passing status to. `contributor-assistant`'s
+  # `setupClaCheck.ts` reacts to "all contributors now signed" by calling
+  # `reRunLastWorkFlowIfRequired()` (src/pullRerunRunner.ts), which calls
+  # `octokit.actions.reRunWorkflow()` on the ORIGINAL `pull_request_target`
+  # run that failed before the signature existed — that's what flips the
+  # PR's check to green without waiting for a new push. Without `actions:
+  # write` a contributor could sign and the PR would stay red forever.
   actions: write
   contents: read
   pull-requests: write

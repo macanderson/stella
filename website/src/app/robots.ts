@@ -1,6 +1,5 @@
 import type { MetadataRoute } from "next";
-
-const SITE_URL = "https://stella.oxagen.sh";
+import { SITE_URL } from "@/lib/site";
 
 /**
  * Everything on this site is meant to be crawled except `/api/search`, which is

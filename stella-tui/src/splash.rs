@@ -10,11 +10,11 @@
 //! done — even mid-fade. If there is no init to cover, it is gone in well
 //! under a second.
 //!
-//! What it draws is the lockup from `docs/brand/BRAND.md`: the chevron, the
-//! `stella` wordmark, and the block cursor — plus the build version and the
-//! resolved model once one is known. Colours come from [`crate::theme`]'s
-//! semantic roles, never from raw palette constants, so the mark follows the
-//! identity rather than pinning a copy of it.
+//! What it draws is the comet identity's lockup (`docs/brand/BRAND.md`): the
+//! chevron, the `stella` wordmark, and the gold block cursor — plus the build
+//! version and the resolved model once one is known. Colours come from
+//! [`crate::theme`]'s semantic roles, never from raw palette constants, so
+//! the mark follows the identity rather than pinning a copy of it.
 //!
 //! The one presentational concession is a **single** fade step: for the first
 //! [`REVEAL`] the mark renders muted, then in its real colours. One step, not

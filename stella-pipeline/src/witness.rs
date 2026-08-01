@@ -482,7 +482,10 @@ fn dotnet_invocation_is_exact(path: &str, args: &[String]) -> bool {
     })
 }
 
-/// Pin the accepted delta entry to a no-follow filesystem identity.
+/// Pin the accepted delta entry to a no-follow filesystem identity. The
+/// identity must have been observed at the accepted path itself — an
+/// observation the adapter attests was resolved elsewhere (or could not
+/// locate at all) is not the accepted artifact.
 pub fn validate_witness_identity(
     path: &str,
     expected_fingerprint: &str,
@@ -491,6 +494,7 @@ pub fn validate_witness_identity(
     match identity {
         Some(identity)
             if identity.is_regular_single_link()
+                && identity.path == path
                 && identity.fingerprint == expected_fingerprint =>
         {
             Ok(())
@@ -558,7 +562,10 @@ pub struct Witness {
 }
 
 /// Whether the current no-follow filesystem observation is exactly the
-/// regular, single-link artifact accepted at witness authoring time.
+/// regular, single-link artifact accepted at witness authoring time —
+/// including the location the observation was made at, so a witness that was
+/// renamed to a different path never matches even when an aliased lookup
+/// still resolves the pinned path to its unchanged bytes.
 pub fn witness_identity_matches(
     expected: &ArtifactIdentity,
     current: Option<&ArtifactIdentity>,
@@ -1027,6 +1034,7 @@ mod tests {
 
     fn identity(fingerprint: &str) -> ArtifactIdentity {
         ArtifactIdentity {
+            path: "tests/authority_witness.rs".to_string(),
             fingerprint: fingerprint.to_string(),
             kind: ArtifactKind::Regular,
             mode: 0o100_644,
@@ -1052,6 +1060,50 @@ mod tests {
         assert!(
             !witness_identity_matches(&expected, None),
             "an artifact that no longer exists can never match"
+        );
+    }
+
+    #[test]
+    fn a_witness_artifact_renamed_to_a_different_path_is_tampered() {
+        // A rename keeps every content facet — bytes, mode, link count — and
+        // an aliased lookup (a case-folding filesystem, a symlinked parent
+        // directory) can still resolve the pinned path to the moved bytes.
+        // The location the observation was made at is part of the identity,
+        // so the moved artifact must not match.
+        let expected = identity("w1");
+        let renamed = ArtifactIdentity {
+            path: "tests/renamed_witness.rs".to_string(),
+            ..identity("w1")
+        };
+        assert!(
+            !witness_identity_matches(&expected, Some(&renamed)),
+            "the path is part of the identity — a content comparison misses a rename"
+        );
+    }
+
+    #[test]
+    fn witness_acceptance_requires_the_identity_observed_at_the_accepted_path() {
+        let observed_at_accepted_path = identity("w1");
+        assert!(
+            validate_witness_identity(
+                "tests/authority_witness.rs",
+                "w1",
+                Some(&observed_at_accepted_path)
+            )
+            .is_ok()
+        );
+        let observed_elsewhere = ArtifactIdentity {
+            path: "tests/renamed_witness.rs".to_string(),
+            ..identity("w1")
+        };
+        assert!(
+            validate_witness_identity(
+                "tests/authority_witness.rs",
+                "w1",
+                Some(&observed_elsewhere)
+            )
+            .is_err(),
+            "an identity the adapter attests was resolved elsewhere is not the accepted artifact"
         );
     }
 

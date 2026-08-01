@@ -106,6 +106,20 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-action-pins.sh
 
+      # Also toolchain-free. `--locked` pins a tool's own dependency graph,
+      # not the tool itself — this catches a `cargo install` that floats on
+      # whatever version is newest at run time (#915).
+      - name: every workflow cargo install is pinned to a version
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-cargo-install-pins.sh
+
+      # Also toolchain-free. deny.toml and dependency-review.yml enforce the
+      # same license allow-list at two different points; nothing else keeps
+      # them in sync (#920).
+      - name: deny.toml and dependency-review.yml license lists agree
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-license-allowlist-parity.sh
+
       # Also toolchain-free. Three fleet plans asserted a 1500-line file ratchet
       # that nothing enforced, so it decayed into decoration while the worst
       # offender grew past 4x the limit (#629). Existing offenders are
@@ -114,6 +128,15 @@ jobs:
       - name: no new .rs file over the 1500-line ratchet
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-file-size.sh
+
+      # Also toolchain-free (shellcheck ships preinstalled on ubuntu-latest).
+      # install.sh is fetched over the network and piped into `sh` by
+      # strangers before Stella is installed; the guard scripts are what the
+      # rest of this gate's credibility rests on, and a quoting bug in one of
+      # them fails open (#916).
+      - name: shellcheck
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: shellcheck install.sh scripts/*.sh .githooks/*
 
       # NOTE: despite the action's name, this job does not build on `stable`.
       # rust-toolchain.toml pins the repo to a concrete toolchain (1.97.0), and
@@ -191,6 +214,16 @@ jobs:
         run: cargo build --workspace --release --config 'profile.release.lto="thin"' --config 'profile.release.codegen-units=16'
 
   supply-chain:
+    # NOTE: name is pinned to main's branch-protection required-status-check
+    # list (`cargo deny + cargo audit`) even though this job no longer runs
+    # cargo-audit (#919 — cargo-deny with unmaintained="all"/yanked="deny" is
+    # a strict superset of what cargo-audit contributed here, and two tools
+    # reading advisory-suppression policy from two different files meant a
+    # suppression added to deny.toml's `[advisories] ignore` never applied to
+    # cargo-audit). Renaming it would make GitHub wait forever on a context
+    # that never reports again — see bench/READINESS.md for the same failure
+    # mode with a different check. Do not rename without updating branch
+    # protection (repo admin, out of band) in the same change.
     name: cargo deny + cargo audit
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -202,8 +235,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
-      - name: Install cargo-deny + cargo-audit
-        run: cargo install --locked cargo-deny cargo-audit
+      # Pinned by exact version, not just `--locked`: `--locked` fixes the
+      # tool's own transitive graph but not the tool itself, so an unpinned
+      # `cargo install` here resolves whatever cargo-deny is newest at run
+      # time — the one job whose purpose is keeping untrusted code out is
+      # also the only one fetching an unversioned executable from the
+      # network (#915). Bump this deliberately, like the toolchain pin.
+      - name: Install cargo-deny
+        run: cargo install --locked cargo-deny@0.20.2
 
       # Real gate (no `|| true`): advisories + dependency bans + source
       # provenance + licenses, configured in deny.toml. The license check is a
@@ -212,6 +251,3 @@ jobs:
       # and the commercial track (see deny.toml and LICENSING.md).
       - name: cargo deny check
         run: cargo deny check advisories bans sources licenses
-
-      - name: cargo audit
-        run: cargo audit

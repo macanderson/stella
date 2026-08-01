@@ -1074,9 +1074,21 @@ fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
             TraceKind::Other,
             format!("budget denied ${spent_usd:.4}/${limit_usd:.2}"),
         ),
-        AgentEvent::RetriesExhausted { attempts, .. } => {
-            (TraceKind::Other, format!("retries exhausted ({attempts})"))
-        }
+        AgentEvent::RetriesExhausted {
+            attempts,
+            retryable,
+            ..
+        } => (
+            TraceKind::Other,
+            if *retryable {
+                format!("retries exhausted ({attempts})")
+            } else {
+                format!(
+                    "terminal failure, not retryable ({attempts} attempt{})",
+                    if *attempts == 1 { "" } else { "s" }
+                )
+            },
+        ),
         AgentEvent::PolicyDecision { kind, subject, .. } => {
             (TraceKind::Other, format!("policy {kind:?}: {subject}"))
         }

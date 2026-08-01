@@ -328,9 +328,19 @@ pub enum ArtifactKind {
 
 /// Complete witness artifact identity. Accepted identities are regular,
 /// single-link files whose fingerprint commits to bytes, type, mode, and link
-/// count from one no-follow file handle.
+/// count from one no-follow file handle — plus the workspace-relative path the
+/// observation was actually made at, so a renamed artifact can never equal its
+/// accepted baseline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactIdentity {
+    /// The workspace-relative location the artifact was actually observed at,
+    /// not the path the caller asked about. The two differ exactly when the
+    /// lookup was aliased — a case-folding filesystem or a symlinked parent
+    /// directory resolving a pinned path to a file that has since been moved —
+    /// which is a rename, and a rename is tampering. Adapters that cannot
+    /// attest a location must leave this empty: an empty path can never match
+    /// an accepted one, so the identity fails closed.
+    pub path: String,
     pub fingerprint: String,
     pub kind: ArtifactKind,
     pub mode: u32,

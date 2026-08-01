@@ -404,8 +404,7 @@ mod tests {
         std::fs::create_dir_all(workspace.join(".stella")).unwrap();
         let managed = tmp.path().join("managed.json");
         std::fs::write(&managed, r#"{"tools": {"web": "off"}}"#).unwrap();
-        let previous_home = std::env::var_os("HOME");
-        let previous_managed = std::env::var_os("STELLA_MANAGED_SETTINGS");
+        let _restore = crate::test_env::EnvRestore::capture(&["HOME", "STELLA_MANAGED_SETTINGS"]);
         // SAFETY: serialized behind the binary-wide environment lock.
         unsafe {
             std::env::set_var("HOME", &home);
@@ -469,17 +468,6 @@ mod tests {
         let root: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&user_path).unwrap()).unwrap();
         assert_eq!(root["enable_recap"], "on");
-
-        unsafe {
-            match previous_home {
-                Some(previous) => std::env::set_var("HOME", previous),
-                None => std::env::remove_var("HOME"),
-            }
-            match previous_managed {
-                Some(previous) => std::env::set_var("STELLA_MANAGED_SETTINGS", previous),
-                None => std::env::remove_var("STELLA_MANAGED_SETTINGS"),
-            }
-        }
     }
 
     fn snapshot_ceiling(workspace: &Path) -> ToolPolicy {

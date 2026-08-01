@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import { defineDocs, defineConfig } from "fumadocs-mdx/config";
 import lastModified from "fumadocs-mdx/plugins/last-modified";
 
@@ -5,13 +6,24 @@ export const docs = defineDocs({
   dir: "content/docs",
 });
 
+/**
+ * A shallow clone still has one commit, so `git log -1 -- <file>` succeeds
+ * for every file and returns that single commit's date — not "unavailable"
+ * (which the plugin would turn into `undefined`), but a real date that is
+ * wrong and identical across every page. Detecting the shallow clone here,
+ * before the plugin runs, is what actually gets the "omit rather than lie"
+ * behavior documented in src/app/sitemap.ts; the plugin's own fallback never
+ * triggers on Vercel's default (shallow) checkout. Set VERCEL_DEEP_CLONE=1 on
+ * Vercel to get real per-file dates instead of an omitted field.
+ */
+function isShallowClone(): boolean {
+  try {
+    return execSync("git rev-parse --is-shallow-repository").toString().trim() !== "false";
+  } catch {
+    return true;
+  }
+}
+
 export default defineConfig({
-  // Stamps every page with `lastModified` = the git commit date of its MDX file,
-  // so the sitemap can report when a page actually changed instead of when the
-  // site was last built. A build timestamp claims all ~76 URLs changed on every
-  // deploy, which is precisely the signal that trains crawlers to ignore
-  // lastModified entirely. The plugin yields `undefined` when git history for a
-  // file is unavailable (a shallow clone) — set VERCEL_DEEP_CLONE=1 on Vercel so
-  // it isn't. See src/app/sitemap.ts for what an absent date means there.
-  plugins: [lastModified()],
+  plugins: isShallowClone() ? [] : [lastModified()],
 });

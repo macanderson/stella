@@ -452,11 +452,13 @@ mod tests {
             Some(crate::tui::token_rgb(theme::TEXT_TERTIARY))
         );
         assert_eq!(Ink::Shell.rgb(), Some(crate::tui::token_rgb(theme::VIOLET)));
-        // And the star/flame pair stays cool — blue-dominant — so the cinematic
-        // can never drift back to the retired warm accent while still passing.
+        // And the star/flame pair stays warm — the comet's Phosphor Gold is
+        // r > g > b — so the cinematic can never drift back to the retired
+        // electric blue while still passing. (This clause read "cool, not
+        // warm" under the blue identity; the comet inverts it.)
         for ink in [Ink::Flame, Ink::StarBright] {
             let (r, g, b) = ink.rgb().expect("colored inks carry rgb");
-            assert!(b > r && b > g, "{ink:?} must read cool, not warm");
+            assert!(r > g && g > b, "{ink:?} must read warm gold, not cool");
         }
     }
 

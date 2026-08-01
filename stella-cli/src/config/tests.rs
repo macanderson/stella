@@ -350,6 +350,7 @@ fn trusted_engine_json_replaces_adversarial_project_engine_settings() {
 #[test]
 fn benchmark_mode_skips_malformed_filesystem_credentials_but_keeps_engine_override() {
     let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&["HOME", TRUSTED_ENGINE_CONFIG_ENV]);
     let dir = tempfile::tempdir().unwrap();
     let credential_dir = dir.path().join(".stella");
     std::fs::create_dir_all(&credential_dir).unwrap();
@@ -365,7 +366,6 @@ fn benchmark_mode_skips_malformed_filesystem_credentials_but_keeps_engine_overri
         "effort_auto":"off",
         "reasoning_auto":"off"
     }"#;
-    let old_home = std::env::var_os("HOME");
 
     // SAFETY: the binary-wide environment lock covers mutation, resolution,
     // and restoration. STELLA_NO_SETTINGS is the adapter-pinned benchmark
@@ -383,13 +383,6 @@ fn benchmark_mode_skips_malformed_filesystem_credentials_but_keeps_engine_overri
         dir.path().join("workspace"),
     )
     .expect("benchmark mode must never parse the hostile credential file");
-    unsafe {
-        match old_home {
-            Some(value) => std::env::set_var("HOME", value),
-            None => std::env::remove_var("HOME"),
-        }
-        std::env::remove_var(TRUSTED_ENGINE_CONFIG_ENV);
-    }
 
     assert_eq!(cfg.provider.id, "openrouter");
     assert_eq!(
