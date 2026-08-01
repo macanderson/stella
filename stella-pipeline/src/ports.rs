@@ -295,12 +295,22 @@ pub trait FileTouchPort: Send + Sync {
     /// hundreds of shell calls, and a trial is killed at 900s — per-call
     /// probing would spend the whole budget observing.
     ///
+    /// Calling this commits the host to turn granularity: an implementation
+    /// that also probes per call must turn that off, so the tree is never
+    /// walked twice to learn one fact.
+    ///
     /// Default no-op, so a host with no recorder (and every test double)
     /// keeps working: an unprobed turn simply reports what its other channels
     /// saw, which is the pre-existing behaviour.
     fn begin_workspace_probe(&self) {}
 
-    /// Attribute anything the turn changed that no tool schema described.
+    /// Attribute anything the turn changed that no tool schema described,
+    /// then re-arm for the next turn.
+    ///
+    /// Re-arming is part of settling rather than a second call, because the
+    /// after-image of one turn is the before-image of the next and both are
+    /// only true at the same instant. Callers bracket a run of turns with one
+    /// [`Self::begin_workspace_probe`] and a settle per turn.
     ///
     /// Records through the same emitter as every other touch, so the ledger
     /// keeps exactly one birthplace for a `FileChange`.
