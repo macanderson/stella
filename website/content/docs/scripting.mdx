@@ -288,7 +288,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Stella
         run: |
-          curl -fsSL https://raw.githubusercontent.com/macanderson/stella/main/install.sh | sh
+          curl -fsSL https://stella.oxagen.sh/install.sh | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run the task
