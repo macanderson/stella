@@ -134,6 +134,47 @@ pub(crate) fn approval_capability_for(
     }
 }
 
+/// Whether a TRUSTED engine posture explicitly names a witness/judge author
+/// other than the worker's model — i.e. the posture's own hash claims the
+/// authored-witness arm, so a run that silently loses that author reports a
+/// number the posture misdescribes (#1147).
+///
+/// Three deliberate narrowings:
+///
+/// * **Trusted postures only.** The settings scope chain keeps its soft
+///   degradation (a judge whose provider has no credential leaves a notice and
+///   rides the worker, exactly as [`EngineWiring`] documents). Nothing is
+///   published about an ordinary session's wiring, so nothing about it can be
+///   misdescribed.
+/// * **An EXPLICIT judge key only** — `agents.judge.model` or the flat
+///   `pipeline_judge_model`, never [`crate::settings::AgentEngineConfig::model_for`]'s
+///   fallback to `default_model`. The control arm reaches the judge role
+///   through that fallback, and reading it here would arm the refusal on the
+///   very arm that is *supposed* to run one model for every role.
+/// * **Compared as the caller wrote it.** The posture writes fully-qualified
+///   `provider/slug` specs (the benchmark adapter and the TUI both do), which
+///   is the same shape as [`ModelRef`]'s `Display`. A bare slug that happens
+///   to name the worker's model would arm the refusal spuriously — and that is
+///   the safe direction: the run stops loudly instead of scoring quietly.
+pub(crate) fn trusted_posture_requires_independent_witness(
+    cfg: &Config,
+    worker_model: &ModelRef,
+) -> bool {
+    if !cfg.engine_settings_trusted {
+        return false;
+    }
+    let Some(engine) = cfg.engine_settings.as_ref() else {
+        return false;
+    };
+    engine
+        .agent(crate::settings::EngineAgentKind::Judge)
+        .and_then(|agent| agent.model.as_deref())
+        .or(engine.pipeline_judge_model.as_deref())
+        .map(str::trim)
+        .filter(|judge| !judge.is_empty())
+        .is_some_and(|judge| judge != worker_model.to_string())
+}
+
 /// Build the one-shot pipeline config from the host's approval capability.
 /// Rendering remains a separate concern owned by the event renderer.
 /// `worker_model` is [`EngineWiring::worker_model`], threaded through to
@@ -156,6 +197,12 @@ pub(crate) fn pipeline_config_for_approval_capability(
             .is_some_and(|engine| engine.headless_scope_bypass_on())
             || HEADLESS_SCOPE_REVIEW_BYPASS,
         test_command: test_command.map(str::to_string),
+        // A posture that PUBLISHED an independent witness author must not
+        // quietly run without one — see the predicate's doc comment.
+        require_independent_witness: trusted_posture_requires_independent_witness(
+            cfg,
+            worker_model,
+        ),
         ..Default::default()
     }
 }

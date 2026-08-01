@@ -366,3 +366,181 @@ fn worker_override_shifts_the_judges_cross_family_comparison() {
          session default"
     );
 }
+
+/// #1147's acceptance criterion, at the layer that decides it: a posture
+/// carrying ONLY the flat `pipeline_judge_model` — no `agents.judge.model`,
+/// no `agents.judge.provider` — must make `Role::Judge` resolve to that model
+/// through the real router, so `Pipeline::can_author_independent_witness`
+/// sees a judge distinct from the worker.
+///
+/// The benchmark's witness arm is exactly this shape, and the bug report
+/// suspected the flat key never reached role resolution. It does: what the
+/// live run actually lost was the *pin*, dropped by `pin_role` when the
+/// author's adapter could not be built (see
+/// `a_trusted_posture_whose_judge_pin_cannot_be_built_refuses_the_run`). This
+/// test pins the half that works so a future refactor cannot quietly break
+/// the half that was never broken.
+#[test]
+fn the_flat_pipeline_judge_model_alone_resolves_role_judge_to_the_witness_author() {
+    // The benchmark posture verbatim in shape: one `--model`-pinned worker,
+    // per-agent tuning WITHOUT a model, and the author expressed only as the
+    // flat root key.
+    let mut cfg = cfg_with_engine(
+        "anthropic",
+        r#"{ "default_model": "anthropic/claude-sonnet-5",
+             "pipeline_judge_model": "anthropic/claude-fable-5",
+             "allowed_models": ["anthropic/claude-sonnet-5",
+                                "anthropic/claude-fable-5"],
+             "auto_mode": "off", "effort_auto": "off", "reasoning_auto": "off",
+             "agents": { "judge": { "effort": "xhigh", "reasoning": "on" } } }"#,
+    );
+    // `--model anthropic/claude-sonnet-5`, as the adapter passes it. The flag
+    // suppresses the WORKER spec only; the judge key must survive it.
+    cfg.model_id = "claude-sonnet-5".to_string();
+    cfg.model_pinned_by_flag = true;
+    let worker_ref = ModelRef::new("anthropic", "claude-sonnet-5");
+    let configured = vec![configured_provider("anthropic")];
+
+    let wiring = resolve_engine_wiring(&cfg, &worker_ref, &configured);
+
+    let author = ModelRef::new("anthropic", "claude-fable-5");
+    assert_eq!(
+        wiring.pins.get(Role::Judge),
+        Some(&author),
+        "the flat key alone must pin the judge; notices: {:?}",
+        wiring.notices
+    );
+
+    // The round trip through the real router is the claim that matters —
+    // `Pipeline::resolve_provider(Role::Judge)` calls exactly this.
+    let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
+    let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
+    assert_eq!(
+        router.resolve(Role::Judge).unwrap().model_ref,
+        author,
+        "Role::Judge must route to the flat-key author"
+    );
+    assert_ne!(
+        router.resolve(Role::Judge).unwrap().model_ref,
+        router.resolve(Role::Worker).unwrap().model_ref,
+        "worker and judge must differ, or the authored witness has no author"
+    );
+    assert!(
+        wiring
+            .extra_providers
+            .iter()
+            .any(|(model_ref, _)| *model_ref == author),
+        "the author needs its own adapter, or the pin routes to nothing"
+    );
+}
+
+/// The failure #1147 actually observed, and the guard that now stops it.
+///
+/// `pin_role` degrades softly on *any* pin failure — a missing credential, an
+/// adapter that will not build. That is right for the settings scope chain and
+/// wrong for a trusted posture, whose hash has already published which models
+/// the run used. A benchmark container runs with the catalog frozen
+/// (`STELLA_CATALOG_AUTO_REFRESH=0`), so an author outside the offline seed
+/// fails `validate_model_slug`, the pin is dropped with a stderr notice, and
+/// the judge silently rides the worker: the witness arm becomes the control
+/// arm at witness-arm cost, under a digest that says otherwise.
+///
+/// The pin stays soft (nothing here should abort on a credential problem).
+/// What changes is that the wired `PipelineConfig` now REFUSES such a run.
+#[test]
+fn a_trusted_posture_whose_judge_pin_cannot_be_built_refuses_the_run() {
+    let posture = r#"{ "default_model": "anthropic/claude-sonnet-5",
+             "pipeline_judge_model": "anthropic/model-the-offline-catalog-has-never-heard-of",
+             "auto_mode": "off" }"#;
+    let mut cfg = cfg_with_engine("anthropic", posture);
+    cfg.model_id = "claude-sonnet-5".to_string();
+    cfg.model_pinned_by_flag = true;
+    cfg.engine_settings_trusted = true;
+    let worker_ref = ModelRef::new("anthropic", "claude-sonnet-5");
+    let configured = vec![configured_provider("anthropic")];
+
+    let wiring = resolve_engine_wiring(&cfg, &worker_ref, &configured);
+
+    // The soft degradation itself is unchanged — and this is the exact state
+    // that produced the misdescribed benchmark numbers.
+    assert_eq!(
+        wiring.pins.get(Role::Judge),
+        None,
+        "an unbuildable author must still degrade softly at the wiring layer"
+    );
+    assert!(
+        wiring.notices.iter().any(|notice| notice.contains("judge")),
+        "the dropped pin must say so: {:?}",
+        wiring.notices
+    );
+
+    // ...but the run must not proceed as though the posture were the control
+    // arm, because the posture's own hash says it is not.
+    let config = pipeline_config_for_approval_capability(
+        &cfg,
+        PipelineApprovalCapability::Unavailable,
+        None,
+        &wiring.worker_model,
+    );
+    assert!(
+        config.require_independent_witness,
+        "a trusted posture that names an author must refuse a run without one"
+    );
+}
+
+/// The same posture through the ordinary settings chain must keep degrading.
+/// Nothing is published about a user's session wiring, so a judge that cannot
+/// be reached costs them the authored witness — never the task. Arming the
+/// refusal here would turn a stray settings key into a broken CLI.
+#[test]
+fn an_untrusted_judge_setting_never_arms_the_witness_refusal() {
+    let mut cfg = cfg_with_engine(
+        "anthropic",
+        r#"{ "default_model": "anthropic/claude-sonnet-5",
+             "pipeline_judge_model": "anthropic/claude-fable-5" }"#,
+    );
+    cfg.model_id = "claude-sonnet-5".to_string();
+    assert!(!cfg.engine_settings_trusted, "settings chain, not the seam");
+    let worker_ref = ModelRef::new("anthropic", "claude-sonnet-5");
+
+    assert!(
+        !pipeline_config_for_approval_capability(
+            &cfg,
+            PipelineApprovalCapability::Unavailable,
+            None,
+            &worker_ref,
+        )
+        .require_independent_witness,
+        "an ordinary session must keep degrading, never refuse"
+    );
+}
+
+/// The control arm must not trip the guard. Its posture names no judge at all
+/// — every role reaches `Role::Judge` through `model_for`'s fallback to
+/// `default_model` — and it is the published baseline, so arming the refusal
+/// on it would refuse every trial of the arm that is *supposed* to run one
+/// model for every role.
+#[test]
+fn the_trusted_control_arm_posture_does_not_arm_the_witness_refusal() {
+    let mut cfg = cfg_with_engine(
+        "anthropic",
+        r#"{ "default_model": "anthropic/claude-sonnet-5",
+             "allowed_models": ["anthropic/claude-sonnet-5"],
+             "auto_mode": "off",
+             "agents": { "judge": { "effort": "xhigh", "reasoning": "on" } } }"#,
+    );
+    cfg.model_id = "claude-sonnet-5".to_string();
+    cfg.engine_settings_trusted = true;
+    let worker_ref = ModelRef::new("anthropic", "claude-sonnet-5");
+
+    assert!(
+        !pipeline_config_for_approval_capability(
+            &cfg,
+            PipelineApprovalCapability::Unavailable,
+            None,
+            &worker_ref,
+        )
+        .require_independent_witness,
+        "the control arm claims no independent author and must keep running"
+    );
+}

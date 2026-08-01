@@ -446,8 +446,18 @@ Constraints, each enforced fail-closed by `_validated_witness_author`:
 - The author reaches Stella only as `pipeline_judge_model` inside the hashed
   posture. It is never forwarded into the task container, so there is exactly
   one channel and exactly one thing that can disagree.
+- The author must be a slug Stella's **offline seed catalog** carries for that
+  provider. A trial runs with `STELLA_CATALOG_AUTO_REFRESH=0`, so an unlisted
+  slug fails model validation and the judge pin is dropped — which is how the
+  first witness-arm run executed the control arm under a witness-arm digest
+  (#1147). The posture is unchanged; what changed is that such a run now
+  refuses instead of scoring.
 
 Guarded by `config::tests::the_benchmark_witness_arm_posture_survives_the_trusted_launcher_seam`
-(the arm passes the fail-closed launcher seam) and
+(the arm passes the fail-closed launcher seam),
 `agent::tests::engine_wiring::the_benchmark_posture_splits_worker_and_judge_only_on_the_witness_arm`
-(the arm actually separates the two roles the witness check compares).
+(the arm actually separates the two roles the witness check compares),
+`agent::tests::engine_wiring::the_flat_pipeline_judge_model_alone_resolves_role_judge_to_the_witness_author`
+(the flat root key alone reaches `Role::Judge`), and
+`pipeline::tests::witness_isolation::requiring_an_independent_witness_refuses_before_spending_anything`
+(a witness arm without an independent author produces no number at all).

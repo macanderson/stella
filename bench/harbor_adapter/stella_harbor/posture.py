@@ -195,10 +195,28 @@ def _benchmark_engine_posture(
     }
     if witness_author is not None:
         author = _validated_witness_author(selected_model, witness_author)
-        # The flat root key, never `agents.judge.model`. Both resolve, but the
-        # flat key is what `settings_check` and `stella config` report as the
-        # judge's origin, so the disclosed posture and the engine's own account
-        # of its wiring name the same field.
+        # The flat root key, never `agents.judge.model`. Both resolve — the
+        # engine reads `agents.<role>.model` first and falls through to the
+        # flat key (`AgentEngineConfig::model_for`), and
+        # `the_flat_pipeline_judge_model_alone_resolves_role_judge_to_the_witness_author`
+        # pins that the flat key alone reaches `Role::Judge` — but the flat key
+        # is what `settings_check` and `stella config` report as the judge's
+        # origin, so the disclosed posture and the engine's own account of its
+        # wiring name the same field.
+        #
+        # Naming the author is not the same as reaching it. A trial runs with
+        # the catalog frozen (`STELLA_CATALOG_AUTO_REFRESH=0`), so the author
+        # must be a slug Stella's OFFLINE seed catalog carries for that
+        # provider; an unlisted one fails slug validation, the judge pin is
+        # dropped, and the judge falls back to the worker. That used to make
+        # the treatment arm run as the control arm under a treatment-arm digest
+        # (#1147). It now refuses the run instead: a posture delivered through
+        # the trusted launcher seam that names a judge other than the worker
+        # arms `PipelineConfig::require_independent_witness`, and a run that
+        # cannot resolve an independent author fails before it spends anything.
+        # A witness arm whose author is outside the seed therefore produces no
+        # number at all, which is the intended outcome — the alternative is a
+        # number this digest misdescribes.
         posture["pipeline_judge_model"] = author
         posture["allowed_models"] = [selected_model, author]
     normalized = json.dumps(
