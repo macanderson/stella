@@ -83,6 +83,26 @@ pub struct ToolRegistry {
     /// mid-execution, so [`ToolRegistry::classify_file_op`] cannot see it in
     /// the input the way it sees `read_file`'s `path`.
     span_reads: crate::read_symbol::SpanReadLedger,
+    /// The workspace before-image for the turn in flight, when one was taken
+    /// ([`ToolRegistry::begin_workspace_probe`]). `None` before the first
+    /// bracket, and `None` for every host that never brackets one — which is
+    /// why an unbracketed session behaves exactly as it did before this
+    /// existed.
+    workspace_probe: std::sync::Mutex<Option<crate::shell_touch::WorkspaceProbe>>,
+    /// Whether this session brackets turns at all, latched by the first
+    /// [`ToolRegistry::begin_workspace_probe`] and never cleared.
+    ///
+    /// This is the switch between the two probe granularities, and only ever
+    /// one of them runs. A bracketing host (the pipeline) probes once per
+    /// turn; a host that never brackets keeps the per-call probe in
+    /// [`Self::execute`]. Running both would walk the tree twice per shell
+    /// call *and* twice per turn to learn the same fact.
+    ///
+    /// Latched rather than tracking arm/disarm because it answers "does this
+    /// host bracket?", not "is a bracket open?" — during the window between
+    /// settling one turn and arming the next, the per-call probe must stay
+    /// off or it would re-attribute what the turn probe just recorded.
+    turn_bracketing: std::sync::atomic::AtomicBool,
     /// The session's memory-citation ledger, shared with the registered
     /// `cite_memory` tool instance and drained per execution by
     /// [`ToolRegistry::take_memory_citations`].
@@ -441,6 +461,8 @@ impl ToolRegistry {
             root,
             touched: std::sync::Mutex::new(FileTouchLedger::default()),
             span_reads,
+            workspace_probe: std::sync::Mutex::new(None),
+            turn_bracketing: std::sync::atomic::AtomicBool::new(false),
             citations,
             agent_uses: std::sync::Mutex::new(crate::agent_use::AgentUseLedger::default()),
             mcp_usage,
@@ -918,7 +940,17 @@ impl ToolRegistry {
         // reason the ladder counts it so — on Terminal-Bench the shell is how
         // nearly all real work lands, and a name we fail to recognize must
         // never be the reason a change goes unattributed.
+        //
+        // Skipped entirely when the host brackets turns: the turn probe covers
+        // the same ground for one pair of walks instead of one pair per call.
+        // The measurement that forces the choice — 757 of 1,063 calls were
+        // shell calls against a 900s trial kill — makes per-call probing cost
+        // more than the trial it is meant to observe. Hosts that never bracket
+        // keep this path, so nothing regresses for them.
         let shell_probe = (pending_ops.is_empty()
+            && !self
+                .turn_bracketing
+                .load(std::sync::atomic::Ordering::Relaxed)
             && !tool.as_ref().map(|t| t.schema().read_only).unwrap_or(false))
         .then(|| crate::shell_touch::WorkspaceProbe::capture(&self.root));
 
@@ -1690,6 +1722,95 @@ impl ToolRegistry {
         self.mutations.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Take a before-image of the workspace for the turn about to run.
+    ///
+    /// Paired with [`Self::settle_workspace_probe`]. `classify_file_op` reads
+    /// a tool's *input*, which cannot describe what `bash` will touch, so the
+    /// tree is asked instead — see [`crate::shell_touch`] for the measurement
+    /// that motivated it (757 of 1,063 Terminal-Bench tool calls were shell
+    /// calls, and the ledger recorded none of them).
+    ///
+    /// Bracketing the TURN rather than each call is deliberate and measured:
+    /// one walk of a 20,000-entry tree costs ~1s, a turn issues hundreds of
+    /// shell calls, and the harness kills a trial at 900s. Per-call probing
+    /// would have spent the entire trial budget watching itself work. The
+    /// cost is that a change is attributed to the turn rather than to the
+    /// exact call within it — which is all the ledger and the ladder ever
+    /// read.
+    /// Latches this session as turn-bracketing, which is what turns the
+    /// per-call probe in [`Self::execute`] off. Calling this once commits the
+    /// session to turn granularity; the two never run together.
+    pub fn begin_workspace_probe(&self) {
+        self.turn_bracketing
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let probe = crate::shell_touch::WorkspaceProbe::capture(&self.root);
+        *self
+            .workspace_probe
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some(probe);
+    }
+
+    /// Attribute anything this turn changed that no tool schema described,
+    /// then re-arm for the next turn from the same walk.
+    ///
+    /// Re-arming here rather than making the caller call
+    /// [`Self::begin_workspace_probe`] again is what keeps the cost at one
+    /// walk per settle: the after-image of this turn *is* the before-image of
+    /// the next one, taken at the only instant where both are true. Walking
+    /// twice in a row to produce two snapshots of the same tree would double
+    /// the probe's cost to re-learn what it just measured.
+    ///
+    /// Routed through `record_touch` so a `FileChange` keeps exactly
+    /// one birthplace. Paths the CRUD tools already recorded are re-recorded
+    /// here as the same op on the same path — the ledger is keyed by path and
+    /// folds repeats, so an edit that a tool declared and the tree confirms
+    /// stays one entry rather than becoming two.
+    pub fn settle_workspace_probe(&self) {
+        let Some(before) = self
+            .workspace_probe
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+        else {
+            return;
+        };
+        let after = crate::shell_touch::WorkspaceProbe::capture(&self.root);
+        for touch in before.diff(&after) {
+            let Some(full) = crate::resolve_within_root(&self.root, &touch.path) else {
+                continue;
+            };
+            // Identical to the per-call path above, and deliberately so: the
+            // probe captured a real pre-image for every file it could hold
+            // within budget, and that is what makes the line counts honest.
+            // An *unmeasurable* update falls back to its own post-image,
+            // yielding 0 added / 0 removed — because the alternative, an
+            // empty pre-image, would render a same-file rewrite as a
+            // whole-file insertion, which is a louder lie than silence.
+            let pre_content = match (touch.counts_measurable, touch.op) {
+                (true, _) => touch.pre_content,
+                (false, FileOp::Update | FileOp::Delete) => std::fs::read(&full)
+                    .ok()
+                    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()),
+                (false, _) => None,
+            };
+            self.record_touch(
+                PendingTouch {
+                    path: touch.path,
+                    full,
+                    op: touch.op,
+                },
+                pre_content,
+                "workspace_probe",
+                &serde_json::json!({ "reason": "observed in the workspace" }),
+                None,
+            );
+        }
+        *self
+            .workspace_probe
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some(after);
+    }
+
     /// Snapshot of every file touched this session, insertion-ordered,
     /// with its ops as a compact CRUD string (e.g. `"RU"`).
     pub fn files_touched(&self) -> Vec<(String, String)> {
@@ -1954,6 +2075,7 @@ mod tests {
         let (root, reg) = bare_registry(None);
         assert_eq!(reg.mutations_recorded(), 0, "clean before");
 
+        reg.begin_workspace_probe();
         let out = reg
             .execute(
                 "bash",
@@ -1962,6 +2084,12 @@ mod tests {
             .await;
         assert!(!out.is_error(), "{out:?}");
         assert!(root.path().join("made_by_shell.txt").exists());
+        assert_eq!(
+            reg.mutations_recorded(),
+            0,
+            "nothing is attributed until the turn settles"
+        );
+        reg.settle_workspace_probe();
 
         let touched = reg.files_touched();
         assert!(
@@ -1980,6 +2108,7 @@ mod tests {
     async fn a_failing_shell_command_still_reports_what_it_wrote() {
         let (root, reg) = bare_registry(None);
 
+        reg.begin_workspace_probe();
         let out = reg
             .execute(
                 "bash",
@@ -1988,6 +2117,7 @@ mod tests {
             .await;
         // Whatever the tool reports, the tree changed and the ledger says so.
         let _ = out;
+        reg.settle_workspace_probe();
         assert!(root.path().join("half_done.txt").exists());
         assert!(
             reg.files_touched()
@@ -2004,15 +2134,111 @@ mod tests {
         let (root, reg) = bare_registry(None);
         std::fs::write(root.path().join("existing.txt"), "unchanged\n").unwrap();
 
+        reg.begin_workspace_probe();
         let out = reg
             .execute("bash", &serde_json::json!({"command": "cat existing.txt"}))
             .await;
         assert!(!out.is_error(), "{out:?}");
+        reg.settle_workspace_probe();
         assert_eq!(
             reg.mutations_recorded(),
             0,
             "inspecting the tree is not changing it: {:?}",
             reg.files_touched()
+        );
+    }
+
+    /// The per-call probe is a fallback, not dead code. A host that never
+    /// brackets a turn — every embedder predating the pair, and every test
+    /// double — must keep exactly the attribution it already had, or gating
+    /// the fast path would have silently deleted the slow one.
+    #[tokio::test]
+    async fn an_unbracketed_session_still_attributes_the_shell_per_call() {
+        let (root, reg) = bare_registry(None);
+        // Deliberately no begin_workspace_probe(): this host does not bracket.
+        let out = reg
+            .execute(
+                "bash",
+                &serde_json::json!({"command": "echo hi > unbracketed.txt"}),
+            )
+            .await;
+        assert!(!out.is_error(), "{out:?}");
+        assert!(root.path().join("unbracketed.txt").exists());
+        assert!(
+            reg.files_touched()
+                .iter()
+                .any(|(path, _)| path == "unbracketed.txt"),
+            "gating the turn probe cost an unbracketed host its attribution"
+        );
+    }
+
+    /// The two granularities are mutually exclusive, and this is the property
+    /// that says so. Running both walks the tree twice per shell call *and*
+    /// twice per turn to learn one fact — which on a 900s trial with 757 shell
+    /// calls costs more than the trial it exists to observe.
+    #[tokio::test]
+    async fn a_bracketed_session_attributes_each_shell_write_exactly_once() {
+        let (_root, reg) = bare_registry(None);
+
+        reg.begin_workspace_probe();
+        for i in 0..3 {
+            let out = reg
+                .execute(
+                    "bash",
+                    &serde_json::json!({"command": format!("echo {i} > f{i}.txt")}),
+                )
+                .await;
+            assert!(!out.is_error(), "{out:?}");
+        }
+        assert_eq!(
+            reg.mutations_recorded(),
+            0,
+            "the per-call probe fired inside a bracket: {:?}",
+            reg.files_touched()
+        );
+
+        reg.settle_workspace_probe();
+        assert_eq!(
+            reg.mutations_recorded(),
+            3,
+            "expected one mutation per created file, no double-attribution: {:?}",
+            reg.files_touched()
+        );
+    }
+
+    /// The probe holds a real pre-image for every file it can fit in budget,
+    /// and the counts must come from *that*. Re-reading the file at settle
+    /// time yields its POST-image, which renders every shell rewrite as
+    /// 0 added / 0 removed — the same blindness this module exists to remove,
+    /// one level further down.
+    #[tokio::test]
+    async fn a_shell_rewrite_reports_the_line_counts_it_measured() {
+        let (root, reg) = bare_registry(None);
+        std::fs::write(root.path().join("rewritten.txt"), "one\ntwo\nthree\n").unwrap();
+
+        reg.begin_workspace_probe();
+        let out = reg
+            .execute(
+                "bash",
+                &serde_json::json!({
+                    "command": "printf 'one\\ntwo\\nthree\\nfour\\n' > rewritten.txt"
+                }),
+            )
+            .await;
+        assert!(!out.is_error(), "{out:?}");
+        reg.settle_workspace_probe();
+
+        let telemetry = reg.file_touch_telemetry();
+        let record = telemetry
+            .files_touched
+            .iter()
+            .find(|r| r.path == "rewritten.txt")
+            .expect("the rewritten file never reached the ledger");
+        // One line appended: LCS trims the shared prefix, leaving 1 added.
+        assert_eq!(
+            (record.lines_added, record.lines_removed),
+            (1, 0),
+            "counts came from the post-image, not the captured pre-image"
         );
     }
 

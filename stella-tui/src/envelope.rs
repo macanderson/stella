@@ -182,6 +182,20 @@ pub enum Inbound {
     /// raw engine loop. Folded into [`crate::deck::WorkspaceModel::pipeline`]
     /// so the `PIPELINE` stat box flips live.
     Pipeline(bool),
+    /// The session's resolved triage / worker / judge pins, sent once at
+    /// startup by the driver — which is the only side that can call
+    /// `resolve_provider` — so the `MODELS` row can name all three before any
+    /// turn has run.
+    ///
+    /// Without this the row stays empty until each role's first
+    /// `AgentEvent::StepUsage`, because that is the only event carrying a
+    /// role/provider/model triple. A judge that has not been reached yet
+    /// would then read as unconfigured rather than unused.
+    ///
+    /// Folded as *configured* (`RolePin::served == false`) and drawn dim; a
+    /// later `StepUsage` replaces it with what actually served. Sending it is
+    /// optional — a driver that never does behaves exactly as before.
+    ConfiguredRoles(Vec<(crate::deck::PipelineRole, crate::deck::RolePin)>),
     /// Derived prompt-cache economics for one agent's latest model call —
     /// dollars saved and the provider's cache TTL — computed by the
     /// pricing-aware producer (the CLI has the model catalog; the deck does

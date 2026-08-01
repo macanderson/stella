@@ -313,17 +313,24 @@ pub const RECALL_MARKER: &str = "[auto-recalled context]";
 
 /// Which block kind a `User`-role message actually is.
 ///
-/// Not every `User` message is the user's goal. The driver injects two of its
-/// own — the overflow summary and the stuck-loop steer, both
-/// `CompletionMessage::user` — and the CLI injects the recalled-context block.
-/// Before Phase 2 all four collapsed onto [`BlockKind::UserGoal`], so a receipt
-/// attributed engine-generated text to the person. The three markers are
-/// prefixes on content the engine and CLI both write, which is why this is a
-/// prefix match and not a heuristic.
+/// Not every `User` message is the user's goal. The driver injects three of its
+/// own — the overflow summary, the stuck-loop steer and the output-limit
+/// continuation nudge, all `CompletionMessage::user` — and the CLI injects the
+/// recalled-context block. Before Phase 2 they all collapsed onto
+/// [`BlockKind::UserGoal`], so a receipt attributed engine-generated text to the
+/// person. The four markers are prefixes on content the engine and CLI both
+/// write, which is why this is a prefix match and not a heuristic.
+///
+/// The continuation nudge files as [`BlockKind::Steered`] rather than earning a
+/// kind of its own: it is a mid-turn injected instruction that redirects the
+/// model, which is exactly what that kind means, and reusing it keeps the wire
+/// enum (and every reader of it) unchanged.
 fn user_block_kind(content: &str) -> BlockKind {
     if content.starts_with(crate::driver::SUMMARY_MARKER_PREFIX) {
         BlockKind::Summary
-    } else if content.starts_with(crate::driver::LOOP_STEER_PREFIX) {
+    } else if content.starts_with(crate::driver::LOOP_STEER_PREFIX)
+        || content.starts_with(crate::driver::CONTINUATION_MARKER_PREFIX)
+    {
         BlockKind::Steered
     } else if content.starts_with(RECALL_MARKER) {
         BlockKind::RecalledFrame

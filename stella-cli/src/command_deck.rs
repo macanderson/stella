@@ -477,6 +477,13 @@ pub async fn run_deck_session(
         .with_pid(std::process::id());
     lead_meta.model = Some(format!("{}/{}", cfg.provider.id, cfg.model_id));
     let _ = in_tx.send(Inbound::Register(lead_meta));
+    // Name all three pipeline pins before the first turn. Without this the
+    // MODELS row fills in one role at a time as each is first reached, so the
+    // deck cannot answer "what is this session set up to run" until it has
+    // already run it.
+    let _ = in_tx.send(Inbound::ConfiguredRoles(model_cmd::configured_role_pins(
+        cfg,
+    )));
     // Custom definitions that failed to load are reported in the startup
     // dialog — stdout belongs to the alternate screen, and a
     // silently-missing /command is otherwise undiagnosable. Session chrome:
