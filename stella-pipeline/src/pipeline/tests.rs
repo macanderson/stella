@@ -194,6 +194,7 @@ impl RepoStatusPort for SeqRepoStatus {
                 .unwrap()
                 .get(path)
                 .map(|fingerprint| ArtifactIdentity {
+                    path: path.to_string(),
                     fingerprint: fingerprint.clone(),
                     kind: ArtifactKind::Regular,
                     mode: 0o100644,

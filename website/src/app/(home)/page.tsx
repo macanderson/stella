@@ -1,30 +1,33 @@
 import Link from "next/link";
 import { HeroTerminal } from "@/components/command-deck";
+import { AnimatedLockup } from "@/components/animated-lockup";
 import { Mark } from "@/components/brand";
+import { InstallBlock } from "@/components/install-block";
 import { PROVIDER_CATALOG } from "@/components/provider-cards";
 
 /**
  * The landing page.
  *
- * It used to carry six feature cards, three "split" cards, a provider pill
- * cloud, a looping animated fleet demo, and two hero background layers — five
- * sections that between them made the same claim ("it is fast, it is BYOK, it
- * proves its work") three times over. Repeating a claim does not make it more
- * believable; it makes the page longer.
+ * One sentence saying what stella is, the command that installs it, a
+ * transcript of a real run, the list of providers it speaks to, and the four
+ * doors into the docs. Everything else is one click away and better written
+ * there.
  *
- * What is left is what a reader who has never heard of Stella actually needs:
- * one sentence saying what it is, the command that installs it, a transcript of
- * a real run, the list of providers it speaks to, and the four doors into the
- * docs. Everything else is one click away and better written there.
+ * Brand notes (docs/brand): the name is lowercase always; the comet flies
+ * left→right into the wordmark; gold is the signal (the lockup, the prompt,
+ * the CTA) and never the surface.
  */
 
 /**
  * Copied from content/docs/getting-started/installation.mdx. If that page's
  * command changes, this one has to change with it — a landing page that
  * installs a different thing than the docs say is worse than no landing page.
+ *
+ * The URL is the site's own /install.sh, which serves the canonical script
+ * from the repo (src/app/install.sh/route.ts) and counts the download — the
+ * copy beacon in InstallBlock counts the other half of the funnel.
  */
-const INSTALL =
-  "curl -fsSL https://raw.githubusercontent.com/macanderson/stella/main/install.sh | sh";
+const INSTALL = "curl -fsSL https://stella.oxagen.sh/install.sh | sh";
 
 /** The four entry points, in the order a new reader needs them. */
 const DOORS = [
@@ -54,42 +57,45 @@ export default function HomePage() {
   return (
     <div id="content" tabIndex={-1} className="flex flex-1 flex-col">
       {/* ── What it is ─────────────────────────────────────────────────── */}
-      <section className="mx-auto w-full max-w-3xl px-4 py-20 sm:py-28">
-        <Mark className="lp-mark mb-10 h-10 w-auto" cursor label="Stella" />
-        <h1 className="lp-h1">
-          <span className="lp-brand-face">stella</span> is a terminal coding
-          agent that proves its work finished.
-        </h1>
-        <p className="lp-lead mt-6">
-          It runs on the API keys you already have, speaks ten providers&apos; own
-          protocols, and ends a run only when a second model has confirmed the goal
-          from evidence. Nothing is proxied through a hosted service, and telemetry
-          never leaves your disk.
-        </p>
+      <section className="lp-hero">
+        <div className="mx-auto w-full max-w-3xl px-4 py-20 sm:py-28">
+          <h1 className="lp-h1">
+            <span className="lp-brand-face">stella</span> is a terminal coding
+            agent that proves its work finished.
+          </h1>
+          <p className="lp-lead mt-6">
+            It runs on the API keys you already have, speaks ten providers&apos;
+            own protocols, and ends a run only when a second model has confirmed
+            the goal from evidence. Nothing is proxied through a hosted service,
+            and telemetry never leaves your disk.
+          </p>
 
-        <div className="mt-10">
-          <p className="mb-2 text-sm text-fd-muted-foreground">Install it:</p>
-          <div className="term">
-            <pre className="term-body">
-              <span className="term-prompt">$ </span>
-              {INSTALL}
-            </pre>
+          {/* The lockup assembles once, front and center, and hands the eye
+              straight down to the one action this page wants: install. The
+              hero's old static lockup above the h1 is gone — one mark, where
+              it points at something. */}
+          <div className="mt-12">
+            <div className="mb-8 flex justify-center">
+              <AnimatedLockup className="h-16 w-auto text-fd-foreground sm:h-20" />
+            </div>
+            <p className="mb-2 text-sm text-fd-muted-foreground">Install it:</p>
+            <InstallBlock command={INSTALL} />
           </div>
-        </div>
 
-        <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
-          <Link
-            href="/docs"
-            className="lp-cta inline-flex items-center rounded-md px-4 py-2 text-sm font-medium transition-colors"
-          >
-            Read the docs
-          </Link>
-          <a
-            href="https://github.com/macanderson/stella"
-            className="text-sm text-fd-muted-foreground underline underline-offset-4 hover:text-fd-foreground"
-          >
-            Source on GitHub
-          </a>
+          <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
+            <Link
+              href="/docs"
+              className="lp-cta inline-flex items-center rounded-md px-4 py-2 text-sm"
+            >
+              Read the docs
+            </Link>
+            <a
+              href="https://github.com/macanderson/stella"
+              className="text-sm text-fd-muted-foreground underline underline-offset-4 hover:text-fd-foreground"
+            >
+              Source on GitHub
+            </a>
+          </div>
         </div>
       </section>
 
@@ -99,8 +105,9 @@ export default function HomePage() {
           <h2 className="lp-eyebrow mb-5">One run, start to finish</h2>
           <HeroTerminal />
           <p className="mt-4 max-w-prose text-sm text-fd-muted-foreground">
-            The stages, the metering, and the verification step are Stella&apos;s
-            own; the figures illustrate a run rather than a benchmark.{" "}
+            The stages, the metering, and the verification step are
+            <span className="lp-brand-face"> stella</span>&apos;s own; the
+            figures illustrate a run rather than a benchmark.{" "}
             <Link
               href="/docs/agent-modes#outcome-driven-goal-mode"
               className="underline underline-offset-4 hover:text-fd-foreground"
@@ -127,10 +134,11 @@ export default function HomePage() {
             ))}
           </p>
           <p className="mt-4 max-w-prose text-sm text-fd-muted-foreground">
-            Stella speaks each vendor&apos;s own wire protocol rather than
-            normalising everything through one OpenAI-shaped adapter, so thinking
-            blocks, cache control, and tool-call shapes are native rather than
-            emulated. Override any base URL, key, or model in{" "}
+            <span className="lp-brand-face">stella</span> speaks each
+            vendor&apos;s own wire protocol rather than normalising everything
+            through one OpenAI-shaped adapter, so thinking blocks, cache
+            control, and tool-call shapes are native rather than emulated.
+            Override any base URL, key, or model in{" "}
             <Link
               href="/docs/configuration/settings"
               className="font-mono text-[0.9em] underline underline-offset-4"
@@ -167,7 +175,7 @@ export default function HomePage() {
       <footer className="lp-section">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-10 text-sm text-fd-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           <span className="inline-flex items-center gap-2">
-            <Mark className="lp-mark h-4 w-auto" cursor />
+            <Mark className="h-4 w-auto" />
             <span className="lp-brand-face text-fd-foreground">stella</span>
             <span>— AGPL 3.0</span>
           </span>

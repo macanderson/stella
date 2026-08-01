@@ -179,7 +179,7 @@ impl RepoStatusPort for GitRepoStatus {
     }
 
     async fn artifact_identity(&self, path: &str) -> Option<stella_pipeline::ArtifactIdentity> {
-        fs_artifact_identity(&self.root.join(path))
+        fs_artifact_identity(&self.root, path)
     }
 }
 
@@ -188,13 +188,47 @@ impl RepoStatusPort for GitRepoStatus {
 /// restored after a same-length edit and would incorrectly credit a tampered
 /// witness. One definition is shared with candidate snapshots.
 pub(crate) fn fs_fingerprint(path: &std::path::Path) -> Option<String> {
-    fs_artifact_identity(path).map(|identity| identity.fingerprint)
+    Some(
+        OpenedWitnessArtifact::open(path)?
+            .identity_for_path(path)?
+            .fingerprint,
+    )
 }
 
+/// Identity for the workspace-relative `rel` under `root`, attesting the
+/// location the artifact was actually observed at: `path` carries the opened
+/// file's canonical position relative to the canonical root. A witness that
+/// was renamed and is still reachable through an aliased lookup (a
+/// case-folding filesystem, a symlinked parent directory) therefore reports
+/// its real location, which the pipeline's pinned-path equality rejects as
+/// tampering. A file whose canonical position cannot be stated inside `root`
+/// has no identity at all — fail closed, exactly like a symlink.
 pub(crate) fn fs_artifact_identity(
-    path: &std::path::Path,
+    root: &std::path::Path,
+    rel: &str,
 ) -> Option<stella_pipeline::ArtifactIdentity> {
-    OpenedWitnessArtifact::open(path)?.identity_for_path(path)
+    let full = root.join(rel);
+    let identity = OpenedWitnessArtifact::open(&full)?.identity_for_path(&full)?;
+    Some(ArtifactIdentity {
+        path: observed_relative_path(root, &full)?,
+        ..identity
+    })
+}
+
+/// The canonical position of `full` relative to the canonical `root`, in the
+/// repo-relative `/`-separated form the pipeline pins witness paths in.
+fn observed_relative_path(root: &std::path::Path, full: &std::path::Path) -> Option<String> {
+    let canonical_root = std::fs::canonicalize(root).ok()?;
+    let observed = std::fs::canonicalize(full).ok()?;
+    let rel = observed.strip_prefix(&canonical_root).ok()?;
+    let mut out = String::new();
+    for component in rel.components() {
+        if !out.is_empty() {
+            out.push('/');
+        }
+        out.push_str(component.as_os_str().to_str()?);
+    }
+    (!out.is_empty()).then_some(out)
 }
 
 struct OpenedWitnessArtifact {
@@ -255,6 +289,10 @@ impl OpenedWitnessArtifact {
             write!(&mut fingerprint, "{byte:02x}").ok()?;
         }
         Some(ArtifactIdentity {
+            // The observed location is attested by `fs_artifact_identity`,
+            // which knows the workspace root. Left empty here, a bare content
+            // identity can never satisfy the pipeline's pinned-path equality.
+            path: String::new(),
             fingerprint,
             kind: ArtifactKind::Regular,
             mode,
@@ -811,19 +849,23 @@ mod tests {
         let symlink = dir.path().join("symlink.rs");
         std::fs::write(&file, "test bytes\n").unwrap();
 
-        let before = fs_artifact_identity(&file).unwrap();
+        let before = fs_artifact_identity(dir.path(), "witness.rs").unwrap();
         assert_eq!(before.kind, ArtifactKind::Regular);
         assert!(before.is_regular_single_link());
+        assert_eq!(
+            before.path, "witness.rs",
+            "the identity attests the location it was observed at"
+        );
 
         std::fs::hard_link(&file, &hardlink).unwrap();
         assert!(
-            fs_artifact_identity(&file).is_none(),
+            fs_artifact_identity(dir.path(), "witness.rs").is_none(),
             "multi-link files fail closed at the identity boundary"
         );
 
         std::os::unix::fs::symlink(&file, &symlink).unwrap();
         assert!(
-            fs_artifact_identity(&symlink).is_none(),
+            fs_artifact_identity(dir.path(), "symlink.rs").is_none(),
             "no-follow identity must never open a symlink target"
         );
 
@@ -831,7 +873,7 @@ mod tests {
         let mut permissions = std::fs::metadata(&file).unwrap().permissions();
         permissions.set_mode(0o755);
         std::fs::set_permissions(&file, permissions).unwrap();
-        let executable = fs_artifact_identity(&file).unwrap();
+        let executable = fs_artifact_identity(dir.path(), "witness.rs").unwrap();
         assert_ne!(before.fingerprint, executable.fingerprint);
     }
 
@@ -853,12 +895,42 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn witness_identity_attests_the_observed_location_through_an_aliased_lookup() {
+        // A renamed witness can stay reachable at its pinned path when the
+        // lookup is aliased — here a symlinked parent directory, the same
+        // shape a case-folding filesystem produces. The identity must report
+        // where the bytes actually live, so the pipeline's pinned-path
+        // equality rejects the move as tampering.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("moved")).unwrap();
+        std::fs::write(dir.path().join("moved/witness.rs"), "test bytes\n").unwrap();
+        std::os::unix::fs::symlink(dir.path().join("moved"), dir.path().join("tests")).unwrap();
+
+        let identity = fs_artifact_identity(dir.path(), "tests/witness.rs")
+            .expect("the aliased lookup still opens a regular file");
+        assert_eq!(
+            identity.path, "moved/witness.rs",
+            "the attested path is the canonical location, not the asked-for one"
+        );
+        assert!(
+            !stella_pipeline::witness_identity_matches(
+                &stella_pipeline::ArtifactIdentity {
+                    path: "tests/witness.rs".into(),
+                    ..identity.clone()
+                },
+                Some(&identity)
+            ),
+            "an identity pinned at the asked-for path must reject the moved artifact"
+        );
+    }
+
     #[test]
     fn witness_identity_requires_established_platform_link_count() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("witness.rs");
-        std::fs::write(&path, "test bytes\n").unwrap();
-        let identity = fs_artifact_identity(&path);
+        std::fs::write(dir.path().join("witness.rs"), "test bytes\n").unwrap();
+        let identity = fs_artifact_identity(dir.path(), "witness.rs");
         #[cfg(unix)]
         assert!(
             identity.is_some(),

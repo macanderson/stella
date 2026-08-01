@@ -29,7 +29,7 @@ back to `cargo install` on platforms without a prebuilt binary (unsupported targ
 musl-libc Linux even on supported architectures):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/macanderson/stella/main/install.sh | sh
+curl -fsSL https://stella.oxagen.sh/install.sh | sh
 stella --version
 ```
 
@@ -50,7 +50,7 @@ script says so and prints the `export` line to add. Two env vars tune it:
 
 ```bash
 STELLA_INSTALL_DIR=/usr/local/bin STELLA_VERSION=v0.6.10 \
-  sh -c "$(curl -fsSL https://raw.githubusercontent.com/macanderson/stella/main/install.sh)"
+  sh -c "$(curl -fsSL https://stella.oxagen.sh/install.sh)"
 ```
 
 Pick the tag from the
