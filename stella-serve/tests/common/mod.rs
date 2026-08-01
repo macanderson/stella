@@ -82,6 +82,7 @@ pub async fn start_observed_server_with(resume_grace: Duration) -> (SocketAddr, 
             observer: fanout,
             metrics,
             resume_grace,
+            session_idle_ttl: stella_serve::DEFAULT_SESSION_IDLE_TTL,
         };
         let _ = serve(config, move |addr| {
             let _ = tx.send(addr);
