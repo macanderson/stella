@@ -66,6 +66,8 @@ mod memory_index;
 mod memory_retire_cmd;
 mod model_catalog;
 mod scoreboard_cmd;
+// The `/profile` posture planner (fast · balanced · pro · ultra).
+mod profile;
 // Phase 3 (#714): the adaptive-context proposal review surface.
 mod proposals_cmd;
 mod rules;
