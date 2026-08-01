@@ -47,7 +47,7 @@ fn the_edit_reader_returns_one_files_engine_block_not_the_merge() {
         "the merge should carry the project's pin"
     );
 
-    let scoped = user_engine_config_at(&user);
+    let scoped = user_engine_config_at(&user).unwrap();
     assert_eq!(
         scoped.default_model.as_deref(),
         Some("anthropic/claude-fable-5")
@@ -59,16 +59,41 @@ fn the_edit_reader_returns_one_files_engine_block_not_the_merge() {
 }
 
 #[test]
-fn the_edit_reader_treats_a_missing_or_broken_file_as_empty() {
-    // The caller is about to overwrite this block; refusing because of an
-    // unrelated malformed key would leave no way out through the UI.
+fn the_edit_reader_treats_a_missing_file_as_empty() {
+    // Nothing to preserve, and the caller is about to create it.
     assert_eq!(
         user_engine_config_at(&PathBuf::from("/nonexistent/settings.json")),
-        AgentEngineConfig::default()
+        Ok(AgentEngineConfig::default())
     );
+}
+
+#[test]
+fn the_edit_reader_refuses_a_file_it_cannot_parse() {
+    // Degrading to empty here would be destructive, not forgiving: the caller
+    // writes the whole `agent_engine_config` block back, so one malformed key
+    // ELSEWHERE in the file would silently discard a perfectly good engine
+    // config. A named error the user can act on beats losing their settings.
     let dir = tempfile::tempdir().unwrap();
     let broken = write(dir.path(), "broken.json", "{ this is not json");
-    assert_eq!(user_engine_config_at(&broken), AgentEngineConfig::default());
+    let err = user_engine_config_at(&broken).expect_err("a malformed file must not read as empty");
+    assert!(
+        err.contains("broken.json"),
+        "the error must name the file: {err}"
+    );
+
+    // The realistic shape: valid JSON, one key of the wrong type, and an
+    // `agent_engine_config` that must survive rather than be overwritten.
+    let wrong_type = write(
+        dir.path(),
+        "wrong-type.json",
+        r#"{"enable_recap": true,
+            "agent_engine_config": {"default_model": "zai/glm-5.2"}}"#,
+    );
+    assert!(
+        user_engine_config_at(&wrong_type).is_err(),
+        "`enable_recap` is a Toggle, not a bool — the read must refuse rather \
+         than hand back an empty config the caller would then persist"
+    );
 }
 
 #[test]
@@ -1037,12 +1062,26 @@ fn enable_recap_survives_the_scope_merge() {
 
 /// The complement: an absent key must not reset a lower scope's value, and the
 /// default stays off.
+///
+/// Asserting a DEFAULT means asserting that no scope set it — including the
+/// user scope under `$HOME`, which this process does not own. Without the env
+/// lock and a redirected `$HOME` the assertion depends on the developer's real
+/// `~/.stella/settings.json`, and races any test that legitimately points
+/// `HOME` somewhere else. Both were true: it passed only because no such test
+/// had yet written `enable_recap` into its scratch home.
 #[test]
 fn enable_recap_defaults_off_when_no_scope_sets_it() {
+    let _lock = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&["HOME"]);
     let dir = tempfile::tempdir().expect("tempdir");
     let workspace = dir.path();
     std::fs::create_dir_all(workspace.join(".stella")).expect("mkdir .stella");
     std::fs::write(workspace.join(".stella/settings.json"), r#"{}"#).expect("write settings");
+    // SAFETY: the env lock above serializes every HOME-mutating test in this
+    // binary, and `_restore` puts the real value back on the way out.
+    unsafe {
+        std::env::set_var("HOME", workspace.join("empty-home"));
+    }
 
     let merged = Settings::load(workspace).expect("settings load");
     assert!(!merged.recap_enabled(), "recap defaults off");
