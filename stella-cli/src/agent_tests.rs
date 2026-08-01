@@ -825,6 +825,7 @@ fn cfg_for(provider_id: &str) -> Config {
         engine_settings: None,
         tool_policy: Default::default(),
         enable_recap: false,
+        trace_capture: false,
         authority: crate::settings::AuthorityPolicy::default(),
         credential_advisories: Vec::new(),
     }

@@ -21,6 +21,8 @@
 # DESIGN.md §6.3 proposes retiring bare root keys entirely; under that
 # proposal this line becomes `[run] recap = "on"` and the footgun disappears.
 enable_recap = "off"
+# trace_capture (#1042) is NOT here: it shipped straight into its §6.3 table
+# home (`[run] trace_capture`), so no bare-root form ever existed to retire.
 
 
 # ── UNCHANGED ────────────────────────────────────────────────────────────────

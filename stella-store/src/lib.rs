@@ -204,7 +204,8 @@ pub(crate) use private::{
 };
 pub use prune::{DEPENDENT_TABLES, StorePrunePolicy, StorePruneReport};
 pub use receipts::{
-    ContextBlockRow, InspectableExecution, ManifestBlockRow, RecordedCall, StepManifestRow,
+    ContextBlockRow, ExecutionSummary, InspectableExecution, ManifestBlockRow, RecordedCall,
+    StepManifestRow,
 };
 pub use reconstruct::Reconstruction;
 pub use sessions::{SessionRecord, SessionRegistry, SessionStatus};

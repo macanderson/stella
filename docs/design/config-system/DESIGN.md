@@ -404,6 +404,7 @@ release:
 | `agent_engine_config.allowed_models` | `[models].allowed` |
 | `.stella/mcp.toml` `[servers.*]` | `[mcp.servers.*]` |
 | `enable_recap` | `[run].recap` (see §6.3) |
+| `trace_capture` | `[run].trace_capture` (#1042; same name, table home per §6.3) |
 
 Deprecation window: **two minor releases** reading both, then JSON support is
 removed. `schema_version` is what makes the removal safe — a file that

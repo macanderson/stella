@@ -455,8 +455,18 @@ async fn run_pipeline_one_shot(
             Ok(outcome) => pipeline_episode_outcome(&outcome.status),
             Err(_) => EpisodeOutcome::Failure,
         };
-        m.record_episode(prompt, episode_outcome, &files, started_unix)
-            .await;
+        // With trace capture (#1042) on, the episode carries the pointer to
+        // its full trajectory (`crate::trace::episode_tag`).
+        let tag =
+            crate::trace::episode_tag(cfg.trace_capture, execution.as_ref().map(|(_, id)| *id));
+        m.record_episode(
+            prompt,
+            episode_outcome,
+            &files,
+            started_unix,
+            tag.as_deref(),
+        )
+        .await;
     }
 
     // Reflect on turns that did real work — success AND failure. A failed
@@ -558,6 +568,11 @@ async fn run_pipeline_one_shot(
             warn_store_write_failed(
                 "the audit record (files touched / memory citations / outcome)",
             );
+        }
+        // Trajectory trace (#1042, `trace_capture`, off by default): one
+        // training-ready record folded from what the closeout just settled.
+        if cfg.trace_capture {
+            crate::trace::capture_or_warn(store, *id, &files, &cfg.workspace_root);
         }
     }
 
@@ -1156,6 +1171,7 @@ pub(crate) async fn record_turn_episode(
         episode_outcome,
         &turn_files,
         started_unix,
+        None,
     )
     .await;
 }
