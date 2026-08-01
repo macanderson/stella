@@ -106,7 +106,8 @@ pub fn set_auto() -> Result<String, String> {
     let path = crate::settings::user_config_path().ok_or_else(|| {
         "could not save: the user settings path is unavailable (is $HOME set?)".to_string()
     })?;
-    let mut engine = crate::settings::user_engine_config_at(&path);
+    let mut engine = crate::settings::user_engine_config_at(&path)
+        .map_err(|e| format!("could not save: {e}"))?;
     profile::restore_auto(&mut engine);
     engine
         .save_to(&path)
@@ -282,7 +283,8 @@ pub fn set_profile(cfg: &Config, name: &str) -> Result<String, String> {
     // Read the file being written, NOT the merged view: the merged config also
     // carries the project's and the org's opinions, and saving that to user
     // scope would promote this repo's pins to a machine-wide default.
-    let mut engine = crate::settings::user_engine_config_at(&path);
+    let mut engine = crate::settings::user_engine_config_at(&path)
+        .map_err(|e| format!("could not save the profile: {e}"))?;
     profile::apply(&plan, &mut engine);
     engine
         .save_to(&path)
