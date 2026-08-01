@@ -17,8 +17,24 @@ import { REPO_URL, SPONSOR_URL } from "@/lib/site";
  * mark 28px, wordmark 24px. The header's own height clamps it, so growing
  * these numbers never grows the chrome; past ~h-8 the mark starts touching
  * the header padding, which is the real ceiling.
+ *
+ * `docsLink` exists because fumadocs routes one `links` array to two very
+ * different places. A link with no `on` field lands in both `navItems` and
+ * `menuItems`, and the docs sidebar renders every non-icon `menuItem` as a
+ * flat pill *above* the page tree — so the home page's "Docs" nav link
+ * reappears on docs pages looking like a sibling of the tree's top-level
+ * entries. It is also permanently highlighted there: `active: "nested-url"`
+ * matches any `/docs/**` path, and every page on this site is under `/docs`,
+ * so it can never be inactive. Two lit pills at once, one of them the parent
+ * of the whole tree. The docs layout passes `false`; the home layout, where
+ * "Docs" is a real destination in both the bar and the mobile menu, keeps it.
+ *
+ * Setting `on: "nav"` instead would clear the sidebar too, but it would also
+ * drop "Docs" from the home page's mobile menu, which reads from `menuItems`.
  */
-export function baseOptions(): BaseLayoutProps {
+export function baseOptions({
+  docsLink = true,
+}: { docsLink?: boolean } = {}): BaseLayoutProps {
   return {
     nav: {
       title: (
@@ -30,11 +46,15 @@ export function baseOptions(): BaseLayoutProps {
       ),
     },
     links: [
-      {
-        text: "Docs",
-        url: "/docs",
-        active: "nested-url",
-      },
+      ...(docsLink
+        ? [
+            {
+              text: "Docs",
+              url: "/docs",
+              active: "nested-url" as const,
+            },
+          ]
+        : []),
       {
         type: "icon",
         text: "Sponsor",
