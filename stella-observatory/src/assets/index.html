@@ -3,58 +3,62 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Stella — Observatory</title>
+<title>stella — observatory</title>
 <link rel="icon" href="/assets/mark.svg" type="image/svg+xml">
 <style>
 /* ── Brand tokens ────────────────────────────────────────────────────────────
-   Mirrors docs/brand/BRAND.md, the normative source. The same values live in
-   stella-tui/src/palette.rs, docs/brand/tokens/*, and website/src/app/tokens.css;
-   the four surfaces move together. Inlined rather than imported because this
-   page is served as one self-contained document — see the
-   `dashboard_html_has_no_external_references` test in ../../lib_tests.rs.       */
+   Comet kit v1.0 — Phosphor Gold on Ink. Mirrors docs/brand/ (css/tokens.css
+   is the normative token source; BRAND.md explains it). The same values live
+   in website/src/app/tokens.css; the surfaces move together. Inlined rather
+   than imported because this page is served as one self-contained document —
+   see the `dashboard_html_has_no_external_references` test in ../../lib_tests.rs. */
 :root{
-  /* BEGIN brand palette — electric blue + gold on deep space.
-     This block is one of the four mirrors BRAND.md requires to move together,
-     so it carries the full token set even where this page uses only part of
-     it. Do not prune it to the tokens currently referenced. */
-  --void:#05070C; --ground:#080A0F; --surface:#0B0F17; --raised:#101623;
-  --hairline:#182031; --hairline-strong:#232D42;
-  --brand:#2E7BFF; --brand-bright:#5AA0FF; --brand-deep:#1A5FE0;
-  --gold:#F5C145; --gold-bright:#FFD873; --gold-deep:#C99420;
-  --text:#F2F5FA; --text-2:#8E97A8; --text-3:#737D92;
+  /* BEGIN brand palette — comet kit v1.0: Phosphor Gold #FFB000 on Ink
+     #0B0B0C, warm neutrals, one face. This block mirrors the kit's dark
+     aliases, so it carries the full core set even where this page uses only
+     part of it. Do not prune it to the tokens currently referenced. */
+  --void:#050506; --ground:#0B0B0C; --surface:#131315; --raised:#1B1B1E;
+  --hairline:#232327; --hairline-strong:#333338;
+  --gold:#FFB000; --gold-bright:#FDC154; --gold-deep:#A37200;
+  --text:#F4F1EA; --text-2:#9B9890; --text-3:#8D8A82;
   --ok:#4ADE80; --warn:#EAB308; --bad:#FF5C7A;
-  /* Categorical data marks — deliberately NOT the brand hue: a data mark must
-     never read as "active".
-     --c1 is mirrored from BRAND.md for completeness but is used on no plotted
-     surface in this document. #E3B341 and gold #F5C145 are hue 42 and hue 42:
-     they measure 1.17:1 against each other, so nothing distinguishes them but
-     size. Gold is the identity and keeps the masthead cursor block, therefore
-     the amber mark stands down. Charts here pair --c4 (hue 175) with --c2
-     (hue 256): 81° apart at 1.99:1, and both clear the brand blue.
+  /* Categorical data marks — deliberately NOT the accent hue: a data mark
+     must never read as "active", and gold is the signal, never a series.
+     --c1 is mirrored for completeness but is used on no plotted surface in
+     this document. #E3B341 and gold #FFB000 are hue 42 and hue 41: they
+     measure 1.06:1 against each other, so nothing distinguishes them but
+     size — the amber mark stands down. Charts here pair --c4 (hue 175) with
+     --c2 (hue 256): 81° apart at 1.99:1, and both clear the gold accent.
      Two further collisions the pairing avoids, both measured:
        --c3 vs --bad     Δhue  18, 1.30:1 — never in the tool-error chart
-       --c2 vs --neutral Δhue  35, 1.11:1 — never in the stacked runs chart  */
+       --c2 vs --neutral Δhue 148, 1.08:1 — never in the stacked runs chart */
   --c1:#E3B341; --c2:#8F70E8; --c3:#E4408F; --c4:#2FD3C6;
-  --neutral-mark:#737D92;          /* the "everything else" mark — --text-3 */
+  --neutral-mark:#8D8A82;          /* the "everything else" mark — --text-3 */
   /* END brand palette */
 
   /* Semantic alias. The dashboard is dark-only, so this resolves once. Only
-     ONE alias, and only for brand/active/focus: the page's quiet structural
-     labels take --text-3, and gold — identity, never status — has no alias. */
-  --accent:var(--brand);
-  --brand-wash:rgba(46,123,255,.10);   /* --brand @10% — hover / selected fill */
-  --brand-edge:rgba(46,123,255,.40);   /* --brand @40% — chip + badge edges    */
-  --sunken:rgba(5,7,12,.55);           /* --void @55% — inset wells            */
+     ONE alias, and only for accent/active/focus. Gold is the signal, never
+     the surface: it marks what is active, selected or focused, and it never
+     carries status — --ok/--warn/--bad stay functional and glyph-paired
+     (--warn sits in gold's region at 1.05:1, which is exactly why the glyph,
+     never the hue, is the status carrier). */
+  --accent:var(--gold);
+  --accent-wash:rgba(255,176,0,.09);   /* gold @9% — hover / selected fill    */
+  --accent-edge:rgba(255,176,0,.42);   /* gold @42% — chip + badge edges      */
+  --sunken:rgba(5,5,6,.55);            /* --void @55% — inset wells           */
   /* Control outlines. WCAG 1.4.11 wants 3:1 for the boundary that identifies
      an interactive component; no token in the ground ramp reaches it —
-     --hairline-strong measures 1.39:1 on --surface. --text-3 does (4.64:1),
+     --hairline-strong measures 1.48:1 on --surface. --text-3 does (5.38:1),
      so every control that is operable takes it, while purely decorative
      grouping seams (card edges, table rules) keep the hairlines. */
   --control-edge:var(--text-3);
 
-  /* Type. Two families, six sizes, three weights. Nothing else. */
-  --mono:"SFMono-Regular",Menlo,Consolas,"Liberation Mono",monospace;
-  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Arial,sans-serif;
+  /* Type. One face — JetBrains Mono is the brand voice; the product lives in
+     a terminal, so the brand speaks in monospace. Six sizes, three weights.
+     The page is served self-contained (no outbound fetch, no @font-face), so
+     the face is named, not embedded: local JetBrains Mono when installed,
+     the platform mono stack otherwise — the same stack tokens.css ships. */
+  --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
   --fs-micro:11px; --fs-sm:12px; --fs-base:13px; --fs-md:15px; --fs-xl:28px;
 
   /* Rhythm. One 8px unit; every gutter, gap and pad is a multiple. */
@@ -66,15 +70,17 @@
 *{margin:0;box-sizing:border-box}
 html{color-scheme:dark}
 body{
-  font-family:var(--sans); font-size:var(--fs-base); line-height:1.55;
+  font-family:var(--mono); font-size:var(--fs-base); line-height:1.55;
   color:var(--text); background:var(--ground);
-  /* A single faint wash at the top edge so the masthead sits on ground rather
-     than on a flat fill. The starfield is gone: it read as decoration, and
-     decoration that carries no information is noise on an instrument. */
-  background-image:radial-gradient(72% 36% at 50% -14%,rgba(46,123,255,.07),rgba(5,7,12,0) 70%);
+  /* A single faint phosphor wash at the top edge so the masthead sits on
+     ground rather than on a flat fill. The starfield is gone: it read as
+     decoration, and decoration that carries no information is noise on an
+     instrument. */
+  background-image:radial-gradient(72% 36% at 50% -14%,rgba(255,176,0,.05),rgba(11,11,12,0) 70%);
   background-repeat:no-repeat; background-attachment:fixed;
   min-height:100vh; -webkit-font-smoothing:antialiased;
 }
+::selection{background:rgba(255,176,0,.30)}
 .wrap{max-width:1360px;margin:0 auto;padding:0 var(--sp3) 80px}
 
 /* Every number on the page is tabular, everywhere, without exception. */
@@ -83,10 +89,10 @@ body{
 
 /* ── Focus ────────────────────────────────────────────────────────────── */
 :focus{outline:none}
-:focus-visible{outline:2px solid var(--brand-bright);outline-offset:2px;border-radius:var(--radius-sm)}
+:focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-radius:var(--radius-sm)}
 .skip{position:absolute;left:var(--sp2);top:-48px;z-index:60;background:var(--raised);
       color:var(--text);border:1px solid var(--hairline-strong);border-radius:var(--radius);
-      padding:8px 14px;font:var(--fs-sm)/1 var(--sans);text-decoration:none;transition:top .12s}
+      padding:8px 14px;font:var(--fs-sm)/1 var(--mono);text-decoration:none;transition:top .12s}
 .skip:focus{top:var(--sp1)}
 
 /* ── Motion ───────────────────────────────────────────────────────────── */
@@ -123,9 +129,9 @@ nav.bar{position:sticky;top:0;z-index:20;display:flex;align-items:center;
         background:var(--ground);border-bottom:1px solid var(--hairline-strong)}
 .tabs{display:flex;gap:0;flex-wrap:wrap}
 .tabs button{background:none;border:0;border-bottom:2px solid transparent;
-  color:var(--text-2);cursor:pointer;font:var(--fs-sm)/1 var(--sans);
+  color:var(--text-2);cursor:pointer;font:var(--fs-sm)/1 var(--mono);
   letter-spacing:.005em;padding:11px 13px;margin-bottom:-1px}
-.tabs button:hover{color:var(--text);background:var(--brand-wash)}
+.tabs button:hover{color:var(--text);background:var(--accent-wash)}
 .tabs button[aria-selected="true"]{color:var(--text);border-bottom-color:var(--accent)}
 .tf-wrap{margin-left:auto;display:flex;align-items:center;gap:var(--sp1);padding:6px 0}
 .tf-label{font:var(--fs-micro)/1 var(--mono);color:var(--text-3)}
@@ -134,7 +140,7 @@ nav.bar{position:sticky;top:0;z-index:20;display:flex;align-items:center;
 .tf button{background:none;border:0;border-left:1px solid var(--hairline-strong);
   color:var(--text-2);cursor:pointer;font:var(--fs-micro)/1 var(--mono);padding:6px 11px}
 .tf button:first-child{border-left:0}
-.tf button:hover{color:var(--text);background:var(--brand-wash)}
+.tf button:hover{color:var(--text);background:var(--accent-wash)}
 .tf button[aria-checked="true"]{color:var(--ground);background:var(--accent);font-weight:600}
 .tf button:focus-visible{outline-offset:-2px}
 section[data-tab]{display:none}
@@ -162,7 +168,7 @@ section[data-tab].on{display:block}
 .card{background:var(--surface);border:1px solid var(--hairline-strong);
       border-radius:var(--radius);padding:var(--sp2) var(--sp2) 18px;min-width:0}
 .card > .kick{margin-bottom:2px}
-.card h2{font:600 var(--fs-md)/1.3 var(--sans);letter-spacing:-.005em;margin-bottom:var(--sp2)}
+.card h2{font:600 var(--fs-md)/1.3 var(--mono);letter-spacing:-.005em;margin-bottom:var(--sp2)}
 .card h2 .badge{vertical-align:2px;margin-left:6px}
 .kick{font:var(--fs-micro)/1.4 var(--mono);color:var(--text-3)}
 .subhead{font:var(--fs-micro)/1.4 var(--mono);color:var(--text-3);
@@ -174,7 +180,7 @@ section[data-tab].on{display:block}
 .tile .v{font:600 var(--fs-xl)/1.15 var(--mono);letter-spacing:-.02em;margin-top:2px}
 .tile .v small{font-size:var(--fs-md);color:var(--text-3);font-weight:400}
 .tile .sub{font:var(--fs-micro)/1.4 var(--mono);color:var(--text-2);margin-top:2px}
-.tile .v.accent{color:var(--brand-bright)}
+.tile .v.accent{color:var(--gold)}
 
 /* ── Tables ───────────────────────────────────────────────────────────── */
 table{width:100%;border-collapse:collapse;font:var(--fs-sm)/1.5 var(--mono)}
@@ -188,7 +194,7 @@ td.num,th.num{text-align:right}
 td.main{color:var(--text)}
 td.wrap-txt{white-space:normal}
 tr.click,tr.drill{cursor:pointer}
-tr.click:hover td,tr.drill:hover td,tr.click:focus-visible td,tr.drill:focus-visible td{background:var(--brand-wash)}
+tr.click:hover td,tr.drill:hover td,tr.click:focus-visible td,tr.drill:focus-visible td{background:var(--accent-wash)}
 .scroll-x{overflow-x:auto}
 .scroll-y{max-height:340px;overflow-y:auto}
 .scroll-y-tall{max-height:520px;overflow-y:auto}
@@ -201,8 +207,8 @@ tr.click:hover td,tr.drill:hover td,tr.click:focus-visible td,tr.drill:focus-vis
 .badge.bad{color:var(--bad);border-color:rgba(255,92,122,.42)}
 .badge.warn{color:var(--warn);border-color:rgba(234,179,8,.42)}
 .badge.dim{color:var(--text-3);border-color:var(--hairline-strong)}
-.badge.accent{color:var(--brand-bright);border-color:var(--brand-edge)}
-.rowbtn{background:none;border:0;padding:0;font:inherit;color:var(--brand-bright);
+.badge.accent{color:var(--gold);border-color:var(--accent-edge)}
+.rowbtn{background:none;border:0;padding:0;font:inherit;color:var(--gold);
         cursor:pointer;text-align:left;font-variant-numeric:tabular-nums}
 .rowbtn:hover{text-decoration:underline}
 .chip{display:inline-block;font:var(--fs-micro)/1.7 var(--mono);color:var(--text-3);
@@ -262,7 +268,7 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
 #tip{position:fixed;pointer-events:none;z-index:50;display:none;background:var(--raised);
      border:1px solid var(--hairline-strong);border-radius:var(--radius);padding:8px 11px;
      font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);max-width:340px;
-     box-shadow:0 6px 20px rgba(5,7,12,.6)}
+     box-shadow:0 6px 20px rgba(5,5,6,.6)}
 #tip b{color:var(--text);display:block;margin-bottom:2px;white-space:normal;word-break:break-all}
 
 /* ── Drawer ───────────────────────────────────────────────────────────── */
@@ -271,14 +277,14 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
         transition:transform .24s cubic-bezier(.2,.8,.2,1);z-index:40;overflow-y:auto;
         padding:var(--sp3);visibility:hidden}
 #drawer.open{transform:none;visibility:visible}
-#scrim{position:fixed;inset:0;background:rgba(5,7,12,.66);opacity:0;pointer-events:none;
+#scrim{position:fixed;inset:0;background:rgba(5,5,6,.66);opacity:0;pointer-events:none;
        transition:opacity .24s;z-index:30}
 #scrim.open{opacity:1;pointer-events:auto}
 #drawer .close{position:absolute;top:18px;right:18px;background:none;
                border:1px solid var(--control-edge);border-radius:var(--radius-sm);
                color:var(--text-2);font:var(--fs-micro)/1.4 var(--mono);padding:5px 10px;cursor:pointer}
 #drawer .close:hover{color:var(--text);border-color:var(--accent)}
-#drawer h2{font:600 var(--fs-md)/1.4 var(--sans);margin:6px 0 2px;max-width:85%}
+#drawer h2{font:600 var(--fs-md)/1.4 var(--mono);margin:6px 0 2px;max-width:85%}
 #drawer .sect{margin-top:var(--sp3)}
 .step-row{display:grid;grid-template-columns:34px minmax(0,1fr) 160px;gap:var(--sp2);
           align-items:center;font:var(--fs-micro)/1.6 var(--mono);color:var(--text-3);padding:3px 0}
@@ -312,9 +318,9 @@ footer b{color:var(--text-2);font-weight:600}
 <a class="skip" href="#main">Skip to dashboard</a>
 <div class="wrap">
   <header>
-    <img class="bword" src="/assets/wordmark.svg" alt="Stella" width="99" height="20">
+    <img class="bword" src="/assets/wordmark.svg" alt="stella" width="55" height="20">
     <div class="title">
-      <h1>Observatory</h1>
+      <h1>observatory</h1>
       <p>Local telemetry. Reads .stella only. Nothing leaves this machine.</p>
     </div>
     <div class="headmeta">
@@ -1510,19 +1516,21 @@ function renderConfig(cfg) {
 }
 
 /* ── code graph ──────────────────────────────────────────────────────── */
-/* Crate colours come from BRAND.md's categorical set, minus --c1: gold lives
-   in the masthead of this same page and #E3B341 is the same hue at 1.17:1.
-   The previous eight slots were invented — two of them were blues that read
-   as "active", and #008300 measured 2.4:1 on this surface. Three legible
-   marks plus a neutral tail is a smaller ramp but an honest one; extending
-   BRAND to eight validated slots is filed as a ticket.
+/* Crate colours come from the palette's categorical set, minus --c1: gold is
+   this page's accent and #E3B341 is the same hue at 1.06:1 against #FFB000.
+   The set predates the comet kit (which owns one color and defines no data
+   marks) and survives as this page's functional ramp — the previous eight
+   slots were invented, two of them read as "active", and #008300 measured
+   2.4:1 on this surface. Three legible marks plus a neutral tail is a
+   smaller ramp but an honest one; extending the kit to eight validated
+   slots is filed as a ticket.
    Assigned to crates in fixed file-count order; the long tail is neutral. */
 /* Canvas needs concrete colours, so the tokens are resolved once from the
    stylesheet rather than restated as hexes that could drift out of sync. */
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const GP = [cssVar("--c4"), cssVar("--c2"), cssVar("--c3")];
 const G_OTHER = cssVar("--neutral-mark");
-const G_EDGE = cssVar("--neutral-mark"), G_EDGE_LIT = cssVar("--brand-bright");
+const G_EDGE = cssVar("--neutral-mark"), G_EDGE_LIT = cssVar("--gold");
 const G_LABEL = cssVar("--text"), G_LABEL_DIM = cssVar("--text-2"), G_HALO = cssVar("--ground");
 const graph = {
   nodes: [], edges: [], groupColor: Object.create(null), adj: [],
@@ -1682,7 +1690,7 @@ function drawGraph() {
     }
   }
   // Labels: hubs, the focused neighborhood, search hits when zoomed.
-  ctx.font = `${10 / k}px SFMono-Regular,Menlo,monospace`;
+  ctx.font = `${10 / k}px "JetBrains Mono",SFMono-Regular,Menlo,monospace`;
   ctx.textAlign = "center";
   for (const n of graph.nodes) {
     const deg = n.in + n.out;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The Stella Observatory — a local, loopback-only dashboard over the
+//! The stella Observatory — a local, loopback-only dashboard over the
 //! workspace's own telemetry (`.stella/private/store.db`, `.stella/private/fleet.db`).
 //!
 //! Design constraints, in order:
@@ -59,9 +59,9 @@ pub use db::{DbError, Observatory};
 
 /// The dashboard page, embedded so the binary is self-contained.
 const INDEX_HTML: &str = include_str!("assets/index.html");
-/// The Stella mark, served for the favicon.
+/// The stella comet logomark, served for the favicon.
 const MARK_SVG: &str = include_str!("assets/mark.svg");
-/// The Stella wordmark, served for the header lockup.
+/// The stella wordmark, served for the header lockup.
 const WORDMARK_SVG: &str = include_str!("assets/wordmark.svg");
 
 /// How long a peer has to deliver a complete request head.
