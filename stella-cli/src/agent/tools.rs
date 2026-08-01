@@ -1075,16 +1075,18 @@ mod tests {
     #[test]
     fn host_journal_rejects_workspace_paths_symlinks_and_dot_fallback() {
         let _env = crate::test_env::lock();
+        let _restore = crate::test_env::EnvRestore::capture(&[
+            "STELLA_DATA_DIR",
+            "HOME",
+            "XDG_DATA_HOME",
+            "APPDATA",
+        ]);
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
         let outside = dir.path().join("outside");
         std::fs::create_dir_all(&workspace).unwrap();
         std::fs::create_dir_all(&outside).unwrap();
         let original_dir = std::env::current_dir().unwrap();
-        let saved: Vec<_> = ["STELLA_DATA_DIR", "HOME", "XDG_DATA_HOME", "APPDATA"]
-            .into_iter()
-            .map(|name| (name, std::env::var_os(name)))
-            .collect();
 
         unsafe { std::env::set_var("STELLA_DATA_DIR", workspace.join(".stella")) };
         assert!(host_media_operation_journal(&workspace).is_none());
@@ -1116,14 +1118,6 @@ mod tests {
         assert!(host_media_operation_journal(&workspace).is_none());
 
         std::env::set_current_dir(original_dir).unwrap();
-        unsafe {
-            for (name, value) in saved {
-                match value {
-                    Some(value) => std::env::set_var(name, value),
-                    None => std::env::remove_var(name),
-                }
-            }
-        }
     }
 
     struct CountingImageProvider(AtomicUsize);
@@ -1174,10 +1168,12 @@ mod tests {
         stella_tools::RegistryOptions,
     ) {
         let _env = crate::test_env::lock();
+        let _restore = crate::test_env::EnvRestore::capture(&[
+            "HOME",
+            "STELLA_MANAGED_SETTINGS",
+            "STELLA_DATA_DIR",
+        ]);
         let original_dir = std::env::current_dir().unwrap();
-        let original_home = std::env::var_os("HOME");
-        let original_managed = std::env::var_os("STELLA_MANAGED_SETTINGS");
-        let original_data = std::env::var_os("STELLA_DATA_DIR");
         let data_dir = home.join(format!(
             "data-{}",
             workspace.file_name().unwrap().to_string_lossy()
@@ -1196,20 +1192,6 @@ mod tests {
         );
         let options = registry_options(cfg.as_ref().unwrap());
         std::env::set_current_dir(original_dir).unwrap();
-        unsafe {
-            match original_home {
-                Some(value) => std::env::set_var("HOME", value),
-                None => std::env::remove_var("HOME"),
-            }
-            match original_managed {
-                Some(value) => std::env::set_var("STELLA_MANAGED_SETTINGS", value),
-                None => std::env::remove_var("STELLA_MANAGED_SETTINGS"),
-            }
-            match original_data {
-                Some(value) => std::env::set_var("STELLA_DATA_DIR", value),
-                None => std::env::remove_var("STELLA_DATA_DIR"),
-            }
-        }
         assert!(data_dir.join("media-operations.db").exists());
         assert!(!data_dir.starts_with(workspace));
         (settings.unwrap(), cfg.unwrap(), options)

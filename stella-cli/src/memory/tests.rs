@@ -551,17 +551,13 @@ fn untrusted_project_skill_bodies_are_absent_while_recalled_context_still_render
     )
     .unwrap();
     // SAFETY: serialized behind the binary-wide environment lock.
-    let previous_home = std::env::var_os("HOME");
+    let _restore = crate::test_env::EnvRestore::capture(&["HOME"]);
     unsafe { std::env::set_var("HOME", &home) };
     let _test_home = crate::settings::test_user_home(home.clone());
 
     let skills = load_workspace_skills_with_authority(&workspace, false).skills;
     let trusted = load_workspace_skills_with_authority(&workspace, true).skills;
 
-    match previous_home {
-        Some(previous) => unsafe { std::env::set_var("HOME", previous) },
-        None => unsafe { std::env::remove_var("HOME") },
-    }
     let names: Vec<&str> = skills.iter().map(|skill| skill.name.as_str()).collect();
     assert_eq!(names, vec!["user"], "loaded skills: {names:?}");
     let trusted_names: Vec<&str> = trusted.iter().map(|skill| skill.name.as_str()).collect();

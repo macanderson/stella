@@ -599,7 +599,7 @@ mod tests {
         let registry = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
         {
             let _env = crate::test_env::lock();
-            let previous_home = std::env::var_os("HOME");
+            let _restore = crate::test_env::EnvRestore::capture(&["HOME"]);
             // SAFETY: serialized behind the binary-wide environment lock.
             unsafe { std::env::set_var("HOME", home.path()) };
             enforce_workspace_rules(
@@ -607,10 +607,6 @@ mod tests {
                 root.path(),
                 &crate::settings::AuthorityPolicy::default(),
             );
-            match previous_home {
-                Some(previous) => unsafe { std::env::set_var("HOME", previous) },
-                None => unsafe { std::env::remove_var("HOME") },
-            }
         }
 
         let result = registry
