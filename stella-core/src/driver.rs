@@ -83,9 +83,12 @@ use stella_protocol::{
 };
 
 use crate::budget::{BudgetAxis, BudgetGuard, BudgetOutcome};
+use crate::bus;
 use crate::compaction::compact_measured;
 use crate::receipts::TranscriptRevision;
+use lifecycle::{step_outcome_label, turn_outcome_payload};
 
+mod lifecycle;
 mod loop_evidence;
 mod truncation;
 pub(crate) use truncation::CONTINUATION_MARKER_PREFIX;
@@ -358,6 +361,17 @@ pub struct Engine<'a> {
     /// become the model's next observation, and a latched soft stop ends
     /// the turn keeping every completed step. `None` adds zero work.
     pub(crate) steering: Option<&'a dyn crate::ports::TurnSteering>,
+    /// Extension hook bus ([`crate::bus::HookBus`]), off by default.
+    /// Attached via [`Engine::with_bus`]; receives the turn/step/model-call
+    /// lifecycle events an out-of-process host uses to observe and, per
+    /// ADR-033, apply policy at (#1133). `None` adds zero work — every emit
+    /// site is behind the same `if let Some(bus)`.
+    ///
+    /// Strictly **observer-only**. These names are not on the blocking
+    /// allowlist, so `emit_named` dispatches them without a policy chain: an
+    /// extension can watch a step begin, it cannot veto one. The interception
+    /// points stay where they already are, on the tool-call path.
+    pub(crate) bus: Option<&'a crate::bus::HookBus>,
 }
 
 /// Upper bound on tool calls from one step executing concurrently. Tools
@@ -423,6 +437,7 @@ impl<'a> Engine<'a> {
             calibration: None,
             gate: None,
             steering: None,
+            bus: None,
         }
     }
 
@@ -457,6 +472,7 @@ impl<'a> Engine<'a> {
             calibration: self.calibration,
             gate: self.gate,
             steering: self.steering,
+            bus: self.bus,
         }
     }
 
@@ -494,6 +510,33 @@ impl<'a> Engine<'a> {
     pub fn with_steering(mut self, steering: &'a dyn crate::ports::TurnSteering) -> Self {
         self.steering = Some(steering);
         self
+    }
+
+    /// Attach an extension hook bus, so the turn, step and model-call
+    /// boundaries this engine already crosses become observable (#1133).
+    ///
+    /// Before this, the only production emitter on the bus was the tool
+    /// registry: an extension could see every tool call and nothing about the
+    /// turn that made them — not that a turn started, not that a model call
+    /// began or what it cost. The catalog and `emit_named` both already
+    /// existed; what was missing was the call sites, which are here because
+    /// this is where the boundaries are.
+    ///
+    /// Observer-only, by construction: see the `bus` field.
+    pub fn with_bus(mut self, bus: &'a crate::bus::HookBus) -> Self {
+        self.bus = Some(bus);
+        self
+    }
+
+    /// Emit one lifecycle event, if a bus is attached.
+    ///
+    /// The payload closure is only called when there *is* a bus, so a
+    /// bus-less engine — every CLI turn today — does not pay to build a
+    /// `Value` nobody will read.
+    pub(crate) fn emit_lifecycle(&self, name: &str, payload: impl FnOnce() -> serde_json::Value) {
+        if let Some(bus) = self.bus {
+            bus.emit_named(name, payload());
+        }
     }
 
     /// Fire `SessionStart` hooks once and return any stdout they produced —
@@ -562,6 +605,13 @@ impl<'a> Engine<'a> {
         let _ = events.send(AgentEvent::Stage {
             name: StageKind::Execute,
         });
+        self.emit_lifecycle(bus::names::AGENT_TURN_STARTED, || {
+            serde_json::json!({
+                "message_count": messages.len(),
+                "max_steps": self.config.max_steps,
+                "role": self.call_role,
+            })
+        });
         // The turn's state is OWNED for the duration and written back to the
         // caller's borrows when it drops — including on the hard-cancel path,
         // where the future is dropped mid-step and there is no exit to copy
@@ -573,6 +623,9 @@ impl<'a> Engine<'a> {
                 .await
                 .into_turn_outcome()
             {
+                self.emit_lifecycle(bus::names::AGENT_TURN_COMPLETED, || {
+                    turn_outcome_payload(&outcome, turn.state.step)
+                });
                 return outcome;
             }
         }
@@ -586,10 +639,17 @@ impl<'a> Engine<'a> {
             message: reason.clone(),
             retryable: false,
         });
-        TurnOutcome::Aborted {
+        let outcome = TurnOutcome::Aborted {
             reason,
             cost_usd: turn.state.total_cost_usd,
-        }
+        };
+        // The step-cap exit is a turn ending like any other. Emitting only
+        // from the loop above would leave an observer's `turn.started`
+        // unpaired on precisely the runaway turn it most wants to see.
+        self.emit_lifecycle(bus::names::AGENT_TURN_COMPLETED, || {
+            turn_outcome_payload(&outcome, turn.state.step)
+        });
+        outcome
     }
 
     /// Run exactly ONE committed step against `state`, the unit a durable host
@@ -633,6 +693,47 @@ impl<'a> Engine<'a> {
     /// serving many sessions gives each its own OS thread with its own
     /// current-thread runtime and bridges with `Send` channels.
     pub async fn run_step(&self, state: &mut TurnState, events: &EventSender) -> StepOutcome {
+        // No bus, no wrapper: a CLI turn must not pay for a boundary nobody
+        // observes, and the `step` copy plus two closures below are exactly
+        // that cost.
+        let Some(_) = self.bus else {
+            return self.run_step_inner(state, events).await;
+        };
+        // Read before the step runs, because a committed step advances it —
+        // `started` and `completed` have to name the same step or an observer
+        // cannot pair them.
+        let step = state.step;
+        self.emit_lifecycle(
+            bus::names::AGENT_STEP_STARTED,
+            || serde_json::json!({ "step": step }),
+        );
+        let outcome = self.run_step_inner(state, events).await;
+        // Emitted here rather than at each of the step's exits, and that is
+        // the whole reason this wrapper exists: `run_step_inner` returns from
+        // roughly a dozen places (cancel, soft stop, four budget checks, loop
+        // detection, model failure, dispatch), and a `completed` emit
+        // distributed across all of them is one added early-return away from
+        // being silently unpaired.
+        self.emit_lifecycle(bus::names::AGENT_STEP_COMPLETED, || {
+            serde_json::json!({
+                "step": step,
+                "outcome": step_outcome_label(&outcome),
+                "cost_usd": state.total_cost_usd,
+            })
+        });
+        outcome
+    }
+
+    /// The step itself. See [`Engine::run_step`] for why the lifecycle
+    /// emission wraps this rather than living inside it.
+    ///
+    /// One honest gap: a caller that **drops** the turn future mid-step gets
+    /// no `agent.step.completed`, because there is no return to emit it from.
+    /// That is the same loss a hard drop already inflicts on usage accounting
+    /// and speculation (see `crate::step::CancelToken`), and the reason the
+    /// engine's docs tell hosts to cancel rather than drop. A *cancel*
+    /// returns normally and does emit.
+    async fn run_step_inner(&self, state: &mut TurnState, events: &EventSender) -> StepOutcome {
         // Before the gate, not after: a turn that is both paused and cancelled
         // must not park waiting for a resume that is never coming.
         if let Some(cancelled) = state.cancel_outcome(events) {
@@ -727,6 +828,23 @@ impl<'a> Engine<'a> {
             return aborted.into();
         }
 
+        // The model-call boundary. `run_model_call` spans the whole retry
+        // ladder, so `started`/`completed` bracket the *logical* call rather
+        // than each attempt — a retried call is one request from an
+        // observer's point of view, and the retries are already reported as
+        // their own `AgentEvent`s.
+        //
+        // Payload hygiene: counts and identifiers, never transcript content.
+        // A message count says how large the request was without saying what
+        // was in it, which is what an observer applying policy at this
+        // boundary actually needs.
+        self.emit_lifecycle(bus::names::MODEL_REQUEST_STARTED, || {
+            serde_json::json!({
+                "step": state.step,
+                "message_count": state.messages.len(),
+                "role": self.call_role,
+            })
+        });
         let committed = match self
             .run_model_call(
                 state.step,
@@ -740,12 +858,31 @@ impl<'a> Engine<'a> {
         {
             Ok(committed) => committed,
             Err(reason) => {
+                // `reason` is the engine's own summary of why the call could
+                // not commit (retries exhausted, an unretryable provider
+                // error). It is the same string that reaches the transcript
+                // and `AgentEvent::Error`, so emitting it here adds no
+                // exposure that the turn does not already have.
+                self.emit_lifecycle(
+                    bus::names::MODEL_REQUEST_FAILED,
+                    || serde_json::json!({ "step": state.step, "reason": reason }),
+                );
                 return StepOutcome::Aborted {
                     reason,
                     cost_usd: state.total_cost_usd,
                 };
             }
         };
+        self.emit_lifecycle(bus::names::MODEL_REQUEST_COMPLETED, || {
+            serde_json::json!({
+                "step": state.step,
+                "model": committed.result.model,
+                "cost_usd": committed.result.cost_usd,
+                "input_tokens": committed.result.usage.input_tokens,
+                "output_tokens": committed.result.usage.output_tokens,
+                "tool_calls": committed.result.tool_calls.len(),
+            })
+        });
         state.calibration_model = Some(committed.result.model.clone());
         state.total_cost_usd += committed.result.cost_usd;
 

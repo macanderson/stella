@@ -415,8 +415,26 @@ ADR-033 §7 names).
    deliberate corruptions.
    **Correction:** `validate_stream` lives in `stella-pipeline/src/replay.rs`,
    not `stella-protocol` as earlier editions of this document said.
-5. ⬜ Host-emitted bus lifecycle events (`emit_named` helpers) — closes "the bus
-   is only emitted from the tool registry."
+5. ✅ **DONE (#1133).** Bus lifecycle events at the turn, step and model-call
+   boundaries — closes "the bus is only emitted from the tool registry."
+   `Engine::with_bus` attaches a `HookBus`; the engine then emits
+   `agent.turn.started`/`.completed`, `agent.step.started`/`.completed`, and
+   `model.request.started`/`.completed`/`.failed`. `HookBus::session_started`
+   emits `session.started` and is called by whoever *mints* the bus (today
+   `stella-cli`'s rule guards), because construction is the only place the
+   session boundary actually is — and it fires after subscribing, or the one
+   event that opens the stream would be the one nobody sees.
+   **Correction:** earlier editions implied the catalog already declared step
+   names. It did not — `agent.step.started`/`.completed` were added with the
+   emitters, since a catalog name nothing emits is a promise rather than a
+   contract. Turn-level `agent.turn.*` did already exist.
+   These are **observer-only**: none is on the blocking allowlist, so an
+   extension can watch a step begin but not veto one. Payloads carry counts
+   and identifiers (message count, tokens, cost, model id, step index) and
+   never transcript content — the one free-text field is an abort `reason`,
+   which already reaches `AgentEvent::Error`. An engine with no bus attached
+   pays nothing: every emit site is behind one `if let Some(bus)`, and the
+   payload closure is not called without one.
 6. ✅ **DONE (#971 phase 1).** A real `CancelToken` threaded through `run_step`,
    read at the step boundary, closing any open `tool_use` with synthetic error
    `tool_result`s so the transcript stays valid; hard-drop semantics documented

@@ -98,6 +98,18 @@ pub mod names {
     pub const AGENT_MESSAGE_DELTA: &str = "agent.message.delta";
     pub const AGENT_MESSAGE_COMPLETED: &str = "agent.message.completed";
     pub const AGENT_TURN_COMPLETED: &str = "agent.turn.completed";
+    /// One committed engine step began. The unit between `agent.turn.*` and
+    /// `model.request.*`: a turn is a sequence of steps, and a step is at most
+    /// one model call plus the tool dispatch that answers it.
+    ///
+    /// Added with the emitters (#1133) rather than pre-declared, because the
+    /// catalog is the contract for what the host emits and a name nothing
+    /// emits is a promise, not a contract.
+    pub const AGENT_STEP_STARTED: &str = "agent.step.started";
+    /// One engine step ended, carrying whether the turn continues. Emitted on
+    /// every exit from a step — including the abort paths — so an observer
+    /// counting starts against completions never leaks.
+    pub const AGENT_STEP_COMPLETED: &str = "agent.step.completed";
     pub const AGENT_ERROR: &str = "agent.error";
     pub const TRANSCRIPT_ENTRY_CREATED: &str = "transcript.entry.created";
     pub const TRANSCRIPT_ENTRY_UPDATED: &str = "transcript.entry.updated";
@@ -199,6 +211,8 @@ pub mod names {
         AGENT_MESSAGE_CREATED,
         AGENT_MESSAGE_DELTA,
         AGENT_MESSAGE_COMPLETED,
+        AGENT_STEP_STARTED,
+        AGENT_STEP_COMPLETED,
         AGENT_TURN_COMPLETED,
         AGENT_ERROR,
         TRANSCRIPT_ENTRY_CREATED,
@@ -661,6 +675,25 @@ impl HookBus {
     /// [`HookBus::emit`] sugar without draft-building noise.
     pub fn emit_named(&self, name: &str, payload: Value) -> HookEvent {
         self.emit(HookEventDraft::new(name, payload))
+    }
+
+    /// Announce that this bus's session has begun (#1133).
+    ///
+    /// Called by whoever *mints* the bus, because that is the only place the
+    /// session boundary actually is. It deliberately does not live in
+    /// [`HookBus::new`]: an observer registered after construction would miss
+    /// an event emitted during it, and the whole point of this one is that it
+    /// is the first thing a subscriber sees. Construct, subscribe, then call
+    /// this.
+    ///
+    /// The payload carries the session id — already on every sealed event —
+    /// so a consumer folding the stream into per-session state has the key on
+    /// the event that opens the fold, without special-casing the envelope.
+    pub fn session_started(&self) -> HookEvent {
+        self.emit_named(
+            names::SESSION_STARTED,
+            serde_json::json!({ "session_id": self.inner.session_id }),
+        )
     }
 
     /// Seal the event and run its blocking policy chain: matching handlers
@@ -1376,7 +1409,8 @@ mod tests {
 
     #[test]
     fn catalog_has_every_documented_name_without_duplicates() {
-        assert_eq!(names::ALL.len(), 88);
+        // 88 + `agent.step.started` / `agent.step.completed` (#1133).
+        assert_eq!(names::ALL.len(), 90);
         let unique: std::collections::HashSet<&str> = names::ALL.iter().copied().collect();
         assert_eq!(unique.len(), names::ALL.len(), "duplicate catalog name");
         for name in names::ALL {

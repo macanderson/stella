@@ -433,6 +433,10 @@ pub(crate) fn attach_rule_guards(registry: &ToolRegistry, rules: &ResolvedRules)
         HookDecision::Allow
     })
     .detach();
+    // After every subscriber is registered, never inside `HookBus::new` — an
+    // observer attached later would miss the one event whose whole job is to
+    // open the stream (#1133).
+    bus.session_started();
     registry.attach_bus(bus);
 }
 
