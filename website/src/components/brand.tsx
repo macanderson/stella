@@ -5,7 +5,7 @@
  * docs/brand/logo/svg/ (the normative source) and the SVG copies in
  * public/brand/ are the same files — the two must move together.
  *
- * Colour rules (docs/brand/README.md):
+ * Colour rules (docs/brand/BRAND.md):
  *  - The comet is ALWAYS Phosphor Gold, on every ground — it is a shape, not
  *    small text, so it never drops to gold-deep. The kit's color-light lockup
  *    keeps #FFB000 verbatim; so do we, via `--stella-gold`.
