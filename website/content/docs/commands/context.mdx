@@ -173,6 +173,32 @@ This exists because steering that changes how an agent behaves for a whole team
 deserves the same review as code that does — and a single-concern diff is what
 makes that review possible.
 
+### `stella context promote <rule> --to <level> --reason <why>`
+
+Change a record's enforcement **accountably**. Every transition — `advisory` →
+`blocking` and back — is appended as an immutable, hash-chained event to the
+repository-visible ledger (`.stella/rules/promotions.jsonl`), naming the
+approver (defaults to `git config user.email`, override with `--approver`),
+the record's author when known, the stated reason, and the policy version the
+event creates. The ledger — not a private per-machine approval — is what arms
+a repository record's guard, so the grant travels with the repository and is
+reviewed through the same pull requests as the rule it governs.
+
+Promotion to `blocking` requires the record to declare evaluable guard keys —
+a natural-language statement never silently becomes blocking behavior. An
+edited, dropped, or reordered ledger line breaks the chain, `stella context
+validate` fails on it, and a broken ledger grants nothing.
+
+### `stella context govern [solo|team|regulated] [--separation] [--yes]`
+
+Show or change the governance mode. With no argument it prints the mode, the
+current policy version, and every ledger enforcement grant with its approver
+and reason. A mode change always asks first (`--yes` confirms
+non-interactively); personal records stay private across the transition. In
+regulated mode with `--separation`, the identity that authored a record
+cannot approve its own enforcement grant — and an author that cannot be
+established fails closed.
+
 ## Two proposal substrates, deliberately separate
 
 <Callout type="warn">

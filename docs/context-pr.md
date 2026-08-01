@@ -179,6 +179,25 @@ promotion history, policy versioning, retained evidence, optional separation
 of proposer and approver, and no automatic archival of published policy. A
 system or critical constraint is never changed by trace mining alone.
 
+Implemented (#994) as the repository-visible promotion ledger
+(`.stella/rules/promotions.jsonl`, hash-chained JSONL — see ADR 0007) plus
+`.stella/rules/governance.toml` for the mode itself:
+
+- `stella context promote <rule> --to blocking --reason …` appends an
+  immutable event naming approver, proposer, reason, and the policy version
+  it creates; the ledger — not a private per-machine approval — is what arms
+  a project record's guard.
+- `stella context govern [solo|team|regulated] [--separation]` shows or
+  changes the mode; a change always asks first (`--yes` non-interactively).
+  With separation on, a record's author cannot approve its own enforcement,
+  and an author that cannot be established fails closed.
+- The chain makes rewrites self-evident: an edited, dropped, or reordered
+  event breaks verification at the divergence, `stella context validate`
+  fails on it, and a broken ledger grants nothing. The head line's anchor is
+  git history itself — which is why the ledger is committed, never private.
+- The policy version is the ledger length: an auditor citing "policy v12"
+  means the verified 12-event prefix, reproducible from any checkout.
+
 ### 5.4 Solo-to-team transition
 
 When multiple active repository identities are detected: ask before changing
@@ -464,6 +483,29 @@ Resolution: add an explicit exclusion or a supersession relationship.
 Conflicts at equal precedence are never silently resolved: the compiled frame
 carries a conflict record and enforcement falls back to the less restrictive
 behavior until an owner resolves it.
+
+### Running the checks as a PR check
+
+`stella context validate` computes the findings above locally and exits
+non-zero on anything that must not steer — including a promotion ledger whose
+hash chain fails verification, and (in regulated mode) an armed blocking
+record holding no ledger grant. Wiring it into CI is one guarded step; this
+repository's own `ci.yml` carries it:
+
+```yaml
+- name: stella context validate
+  run: |
+    if [ -d .stella/rules ] || [ -d .claude/rules ]; then
+      cargo run -p stella-cli --quiet -- context validate
+    else
+      echo "no published context records — nothing to validate"
+    fi
+```
+
+A repository consuming a released binary substitutes `stella context
+validate` for the `cargo run` invocation. Because the promotion ledger and
+the governance settings live under `.stella/rules/`, the check re-verifies
+every enforcement grant on every pull request that could have touched one.
 
 ## 13. Compilation, selection, and explainability
 

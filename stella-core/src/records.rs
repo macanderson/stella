@@ -46,6 +46,7 @@ pub mod bridge;
 pub mod clock;
 pub mod decision;
 pub mod handle;
+pub mod promotion;
 pub mod registry;
 pub mod render;
 pub mod sweep;

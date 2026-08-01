@@ -41,6 +41,7 @@ use colored::Colorize;
 use stella_core::ingest::record::{ContextFile, Proposal};
 
 mod explain;
+mod govern;
 mod propose;
 mod review;
 mod validate;
@@ -129,6 +130,41 @@ pub enum ContextCmd {
         #[arg(long)]
         commit: bool,
     },
+
+    /// Change a record's enforcement accountably: an immutable, hash-chained
+    /// ledger event naming the approver, the reason, and the policy version it
+    /// creates (`.stella/rules/promotions.jsonl`). In regulated mode with
+    /// separation on, a record's author cannot approve its own enforcement.
+    Promote {
+        /// The record's `^handle` or lineage id.
+        rule: String,
+        /// Target enforcement — advisory or blocking (ADR 0007's two values;
+        /// the four review-ladder labels are UI over them).
+        #[arg(long)]
+        to: String,
+        /// Why this grant is justified — required; a grant with no reason is
+        /// evidence nobody can audit.
+        #[arg(long)]
+        reason: String,
+        /// Approver identity. Defaults to `git config user.email`.
+        #[arg(long)]
+        approver: Option<String>,
+    },
+
+    /// Show or change the governance mode: solo, team, or regulated. A change
+    /// always asks first (or requires --yes non-interactively); personal
+    /// records stay private across the transition (§5.4).
+    Govern {
+        /// New mode; omit to show current governance, policy version, and
+        /// every ledger enforcement grant.
+        mode: Option<String>,
+        /// Enable proposer/approver separation (regulated mode).
+        #[arg(long)]
+        separation: bool,
+        /// Confirm a mode change without asking interactively.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 /// Entry point for `stella context`.
@@ -153,6 +189,17 @@ pub fn run_context(cmd: &ContextCmd) -> Result<(), String> {
         ContextCmd::Validate { json } => validate::run_validate(&root, *json),
         ContextCmd::Explain { rule } => explain::run_explain(&root, rule),
         ContextCmd::Propose { rule, commit } => propose::run_propose(&root, rule, *commit),
+        ContextCmd::Promote {
+            rule,
+            to,
+            reason,
+            approver,
+        } => govern::run_promote(&root, rule, to, reason, approver.as_deref()),
+        ContextCmd::Govern {
+            mode,
+            separation,
+            yes,
+        } => govern::run_govern(&root, mode.as_deref(), *separation, *yes),
     }
 }
 
