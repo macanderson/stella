@@ -348,6 +348,30 @@ figure.shiki ::selection,
   border-radius: 0.375rem;
 }
 
+/* Section headings in the tree — the `---Start---` style entries in meta.json.
+ *
+ * Fumadocs renders a separator as a bare `<p>` with no class or data attribute
+ * of its own, and a separator is the only `<p>` the sidebar ever emits, so the
+ * element selector IS the hook. If a future fumadocs adds prose to the aside,
+ * this is the rule that needs a narrower selector.
+ *
+ * These are labels for the structure, not destinations, so they take the
+ * opposite treatment from the links below them: full-strength foreground and
+ * semibold, where an item is muted and regular. That inverts the usual "heading
+ * is quiet" instinct on purpose — the items recede as a field, and the thing
+ * that has to survive that recession is the label telling you which part of the
+ * tree you are in. Uppercase at 14.4px reads as a category rather than as a
+ * page, and the tracking is what keeps uppercase from setting tight. The gold
+ * active pill still outranks all of it, which is the intended order:
+ * item < category < where you are. */
+#nd-sidebar p {
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.075em;
+  font-weight: 600;
+  color: var(--color-fd-foreground);
+}
+
 /* The active page is a solid gold pill with ink text — the one gold surface
  * in the tree, because the current location IS the signal (same law as the
  * CTA). Identical in both modes: gold on white chrome, gold on ink. */
