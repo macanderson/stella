@@ -642,6 +642,43 @@ pub fn project_config_path(workspace_root: &Path) -> PathBuf {
     project_settings_path(workspace_root)
 }
 
+/// The `agent_engine_config` recorded in ONE user-scope file, ignoring every
+/// other scope.
+///
+/// [`Settings::load`] returns the MERGED view of user + managed + project. That
+/// is the right input for *running* the engine and the wrong input for
+/// *editing* one file: [`AgentEngineConfig::save_to`] replaces the whole block,
+/// so a caller that loads the merged config, changes one field, and saves to
+/// user scope also copies the project's and the org's opinions into the user
+/// file — silently promoting a per-repo model pin to a machine-wide default.
+/// An editor reads the scope it is about to write.
+///
+/// A missing or unreadable file is an empty config rather than an error: the
+/// caller is about to overwrite this block anyway, and refusing to edit because
+/// of an unrelated malformed key would leave no way out through the UI.
+/// (`Config::load` is where a bad settings file is loud.)
+///
+/// User scope specifically, because it is the only scope a slash command
+/// writes; a project-scope sibling would need to pass its own
+/// [`toml_config::ConfigScope`] so a TOML file's declared scope still validates.
+pub fn user_engine_config_at(path: &Path) -> AgentEngineConfig {
+    let settings = if toml_config::path_is_toml(path) {
+        // A closure, not `std::fs::read_to_string` by name: the free function
+        // is generic over `AsRef<Path>`, so inference pins it to one concrete
+        // lifetime and it stops satisfying the reader's for-any-lifetime bound.
+        toml_config::load_toml_scope(path, toml_config::ConfigScope::User, |p: &Path| {
+            std::fs::read_to_string(p)
+        })
+        .ok()
+        .map(|loaded| loaded.settings)
+    } else {
+        Settings::load_scope(path).ok()
+    };
+    settings
+        .and_then(|s| s.agent_engine_config)
+        .unwrap_or_default()
+}
+
 /// The `tools` section of settings.json — the one place a tool is switched
 /// off, whether it is a built-in, an MCP server's, or one the customer wrote.
 ///
