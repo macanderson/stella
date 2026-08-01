@@ -8,17 +8,22 @@ import { Mark, Wordmark } from "@/components/brand";
  * Branding: the lockup — gold comet flying left→right into the outlined
  * wordmark — followed by a quiet "docs" qualifier. The wordmark's own sparkle
  * is dropped here because the comet already carries the gold; two stars in a
- * 16px-tall nav is one star too many. Everything renders inline from the same
- * geometry the rest of the site uses, so the letters paint with
+ * nav-sized lockup is one star too many. Everything renders inline from the
+ * same geometry the rest of the site uses, so the letters paint with
  * `currentColor` and invert with the theme.
+ *
+ * Size: the lockup fills the fixed-height header instead of floating in it —
+ * mark 28px, wordmark 24px. The header's own height clamps it, so growing
+ * these numbers never grows the chrome; past ~h-8 the mark starts touching
+ * the header padding, which is the real ceiling.
  */
 export function baseOptions(): BaseLayoutProps {
   return {
     nav: {
       title: (
-        <span className="inline-flex items-center gap-2">
-          <Mark className="h-5 w-auto" />
-          <Wordmark className="h-4 w-auto text-fd-foreground" sparkle={false} />
+        <span className="inline-flex items-center gap-2.5">
+          <Mark className="h-7 w-auto" />
+          <Wordmark className="h-6 w-auto text-fd-foreground" sparkle={false} />
           <span className="text-sm text-fd-muted-foreground">docs</span>
         </span>
       ),
