@@ -172,6 +172,20 @@ jobs:
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo test --workspace
 
+      # Context governance as a PR check (docs/context-pr.md section 12, #994):
+      # when this repository publishes context records, every PR re-validates
+      # them — truth probes, conflicts, and the promotion ledger's hash chain —
+      # and fails on anything that must not steer. A workspace without records
+      # skips in one stat call.
+      - name: stella context validate
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        run: |
+          if [ -d .stella/rules ] || [ -d .claude/rules ]; then
+            cargo run -p stella-cli --quiet -- context validate
+          else
+            echo "no published context records — nothing to validate"
+          fi
+
       - name: cargo build (release smoke, thin LTO)
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo build --workspace --release --config 'profile.release.lto="thin"' --config 'profile.release.codegen-units=16'

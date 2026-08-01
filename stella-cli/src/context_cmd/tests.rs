@@ -628,3 +628,209 @@ fn verdict_labels_do_not_dress_up_a_refutation() {
         "an unrecognized verdict must read as unverified, never as supported"
     );
 }
+
+// ── The regulated governance tier (#994) ─────────────────────────────────
+
+/// A project record that declares a hard guard — the shape that needs a
+/// ledger grant to arm anywhere outside `~/.stella/rules`.
+fn write_guarded_project_record(root: &Path, lineage: &str) {
+    let dir = root.join(RULES_DIR);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join(format!("{lineage}.toml")),
+        format!(
+            r#"
+schema = "context-record/v0.1"
+set_id = "acme.web"
+
+[[record]]
+lineage_id = "{lineage}"
+kind = "constraint"
+statement = "Never force-push to a shared branch."
+origin = "user"
+status = "active"
+
+[record.steering]
+force = "must"
+precedence = 50
+
+[record.truth]
+basis = "decree"
+verified_by = "mac"
+
+[record.enforcement]
+mode = "hard"
+guard_tool = "Bash"
+guard_deny_command = "git push --force*"
+"#
+        ),
+    )
+    .unwrap();
+}
+
+/// The #994 acceptance, end to end: a promotion to blocking in regulated
+/// mode carries approver + reason, is replayable from the hash-chained
+/// ledger, and ARMS the guard on the next registry load.
+#[test]
+fn a_ledger_promotion_is_replayable_and_arms_the_guard() {
+    let root = tempfile::tempdir().unwrap();
+    let lineage = "ctx.acme.web.no-force-push";
+    write_guarded_project_record(root.path(), lineage);
+    crate::context_records::write_governance(
+        root.path(),
+        &stella_core::records::promotion::Governance {
+            mode: stella_core::records::promotion::GovernanceMode::Regulated,
+            separation: false,
+        },
+    )
+    .unwrap();
+
+    // Before the grant: the guard must not be armed.
+    let before = load_registry(root.path());
+    assert!(
+        !before.entries[0].is_enforced(),
+        "a project guard must not arm without a grant"
+    );
+
+    govern::run_promote(
+        root.path(),
+        lineage,
+        "blocking",
+        "measured advisory precision over 30 days",
+        Some("lead@example.test"),
+    )
+    .unwrap();
+
+    let events = crate::context_records::read_promotions(root.path()).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].approver, "lead@example.test");
+    assert_eq!(events[0].reason, "measured advisory precision over 30 days");
+    assert_eq!(events[0].mode, "regulated");
+    assert_eq!(
+        stella_core::records::promotion::policy_version(&events),
+        1,
+        "the promotion created policy version 1"
+    );
+
+    let after = load_registry(root.path());
+    assert!(
+        after.entries[0].is_enforced(),
+        "the ledger grant arms the guard on the next load"
+    );
+}
+
+/// Separation (#994 acceptance b): the record's author cannot approve its
+/// own enforcement grant; a different identity can.
+#[test]
+fn separation_refuses_the_authors_own_grant() {
+    let root = tempfile::tempdir().unwrap();
+    let lineage = "ctx.acme.web.no-force-push";
+    write_guarded_project_record(root.path(), lineage);
+    // Record authorship in the decision ledger, as `stella context keep`
+    // would have on the author's machine.
+    let event = stella_core::records::decision::DecisionEvent::keep(
+        "no-force-push-1234abcd",
+        lineage,
+        "author@example.test",
+        "2026-08-01T00:00:00Z",
+        format!("{RULES_DIR}/{lineage}.toml"),
+    );
+    crate::context_records::append_decision(root.path(), &event).unwrap();
+    crate::context_records::write_governance(
+        root.path(),
+        &stella_core::records::promotion::Governance {
+            mode: stella_core::records::promotion::GovernanceMode::Regulated,
+            separation: true,
+        },
+    )
+    .unwrap();
+
+    let refused = govern::run_promote(
+        root.path(),
+        lineage,
+        "blocking",
+        "trying to self-approve",
+        Some("author@example.test"),
+    )
+    .unwrap_err();
+    assert!(
+        refused.contains("cannot approve its own enforcement"),
+        "got: {refused}"
+    );
+
+    govern::run_promote(
+        root.path(),
+        lineage,
+        "blocking",
+        "reviewed by a second pair of eyes",
+        Some("lead@example.test"),
+    )
+    .unwrap();
+    let events = crate::context_records::read_promotions(root.path()).unwrap();
+    assert_eq!(
+        events[0].proposer.as_deref(),
+        Some("author@example.test"),
+        "the ledger records who authored what was granted"
+    );
+}
+
+/// #994 acceptance (c): validate fails on a hash mismatch — an edited grant
+/// is a governance failure regardless of what the records say.
+#[test]
+fn a_tampered_promotion_ledger_fails_validate() {
+    let root = tempfile::tempdir().unwrap();
+    let lineage = "ctx.acme.web.no-force-push";
+    write_guarded_project_record(root.path(), lineage);
+    govern::run_promote(
+        root.path(),
+        lineage,
+        "blocking",
+        "measured advisory precision",
+        Some("lead@example.test"),
+    )
+    .unwrap();
+
+    // A second event, so the first has a successor whose `prev` pins it — a
+    // single-line ledger's head is only anchored by git history, which is
+    // exactly why the ledger is committed rather than private.
+    govern::run_promote(
+        root.path(),
+        lineage,
+        "advisory",
+        "demoting while we investigate",
+        Some("lead@example.test"),
+    )
+    .unwrap();
+    let path = root.path().join(crate::context_records::PROMOTION_LEDGER);
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, text.replace("measured advisory precision", "edited")).unwrap();
+
+    let err = validate::run_validate(root.path(), false).unwrap_err();
+    assert!(
+        err.contains("promotion ledger failed verification"),
+        "got: {err}"
+    );
+    // And the tampered ledger grants NOTHING: enforcement fails closed.
+    let registry = load_registry(root.path());
+    assert!(
+        !registry.entries[0].is_enforced(),
+        "a tampered ledger must not arm anything"
+    );
+}
+
+/// §11: blocking needs a real enforcer — a record with no guard keys cannot
+/// be promoted to blocking, whatever the approvals say.
+#[test]
+fn blocking_without_guard_keys_is_refused() {
+    let root = workspace();
+    review::run_keep(root.path(), "pkg-manager", None, false).unwrap();
+    let refused = govern::run_promote(
+        root.path(),
+        "ctx.acme.web.pkg-manager",
+        "blocking",
+        "no guard exists though",
+        Some("lead@example.test"),
+    )
+    .unwrap_err();
+    assert!(refused.contains("no guard keys"), "got: {refused}");
+}

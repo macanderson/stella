@@ -55,6 +55,93 @@ pub(crate) const PROPOSALS_DIR: &str = ".stella/proposals";
 /// Where kept repository-scoped records are published, relative to the root.
 pub(crate) const RULES_DIR: &str = ".stella/rules";
 
+/// The repository-visible, hash-chained promotion ledger (#994, ADR 0007).
+/// Under `RULES_DIR` — NOT `.stella/private/` — because a team's enforcement
+/// grants must travel with the repository and be reviewed through the same
+/// pull requests as the rules they govern.
+pub(crate) const PROMOTION_LEDGER: &str = ".stella/rules/promotions.jsonl";
+
+/// The repository's governance settings, beside the ledger for the same
+/// reason: which tier applies is itself reviewed policy.
+pub(crate) const GOVERNANCE_FILE: &str = ".stella/rules/governance.toml";
+
+/// Read the governance settings; absent file = solo defaults (§5.1).
+pub(crate) fn read_governance(root: &Path) -> stella_core::records::promotion::Governance {
+    let path = root.join(GOVERNANCE_FILE);
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| toml::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// Write the governance settings. Callers ask the user first (§5.4) — this
+/// only persists an already-confirmed change.
+pub(crate) fn write_governance(
+    root: &Path,
+    governance: &stella_core::records::promotion::Governance,
+) -> Result<(), String> {
+    let path = root.join(GOVERNANCE_FILE);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    }
+    let text = toml::to_string_pretty(governance)
+        .map_err(|e| format!("cannot serialize governance settings: {e}"))?;
+    std::fs::write(&path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))
+}
+
+/// The promotion ledger's raw text (empty when absent) and its path.
+pub(crate) fn promotion_ledger_text(root: &Path) -> (std::path::PathBuf, String) {
+    let path = root.join(PROMOTION_LEDGER);
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    (path, text)
+}
+
+/// Verify and parse the promotion ledger. A chain violation is an error the
+/// caller must surface — never silently treated as an empty ledger, which
+/// would read tampering as "no grants" and drop enforcement without a trace.
+pub(crate) fn read_promotions(
+    root: &Path,
+) -> Result<Vec<stella_core::records::promotion::PromotionEvent>, String> {
+    let (path, text) = promotion_ledger_text(root);
+    stella_core::records::promotion::parse_and_verify(&text).map_err(|violation| {
+        format!(
+            "{} line {}: {}",
+            path.display(),
+            violation.line,
+            violation.reason
+        )
+    })
+}
+
+/// Append one promotion event, stamping seq + prev from the verified tail.
+pub(crate) fn append_promotion(
+    root: &Path,
+    event: stella_core::records::promotion::PromotionEvent,
+) -> Result<u64, String> {
+    let (path, text) = promotion_ledger_text(root);
+    let line = stella_core::records::promotion::next_line(&text, event).map_err(|violation| {
+        format!(
+            "{} line {}: {}",
+            path.display(),
+            violation.line,
+            violation.reason
+        )
+    })?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    }
+    let mut appended = text;
+    appended.push_str(&line);
+    appended.push('\n');
+    std::fs::write(&path, &appended)
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    let events = stella_core::records::promotion::parse_and_verify(&appended)
+        .map_err(|violation| format!("ledger invalid after append: {}", violation.reason))?;
+    Ok(stella_core::records::promotion::policy_version(&events))
+}
+
 /// Now, as every ledger here stores it.
 pub(crate) fn now_rfc3339() -> String {
     stella_context::format_rfc3339(
@@ -269,7 +356,7 @@ fn registry_from(root: &Path, files: &TieredFiles, cache: &SweepCache, now: &str
         }
         last_checked.insert(lineage.clone(), entry.checked_at.clone());
     }
-    let approved_blocking: BTreeSet<(Trust, String)> = states
+    let mut approved_blocking: BTreeSet<(Trust, String)> = states
         .values()
         .filter(|state| state.approved_blocking && state.decision.publishes())
         .filter_map(|state| state.published_to.clone())
@@ -280,6 +367,17 @@ fn registry_from(root: &Path, files: &TieredFiles, cache: &SweepCache, now: &str
             ))
         })
         .collect();
+    // The repository-visible promotion ledger (#994) arms project-tier
+    // records exactly like a private approval — but accountably: every grant
+    // in it names its approver and reason and is hash-chain verified. A
+    // ledger that fails verification grants NOTHING (fail closed for
+    // enforcement) — the validator, not this load path, is where the
+    // violation is surfaced loudly.
+    if let Ok(events) = read_promotions(root) {
+        for lineage in stella_core::records::promotion::blocking_grants(&events).into_keys() {
+            approved_blocking.insert((Trust::Project, lineage));
+        }
+    }
 
     records::registry::load(
         &files.user,
