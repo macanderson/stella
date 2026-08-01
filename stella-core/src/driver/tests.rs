@@ -1360,7 +1360,9 @@ async fn a_length_truncated_tool_less_step_continues_the_turn_instead_of_complet
     );
     let nudges = messages
         .iter()
-        .filter(|m| m.role == MessageRole::User && m.content == LENGTH_CONTINUATION_NUDGE)
+        .filter(|m| {
+            m.role == MessageRole::User && m.content.starts_with(CONTINUATION_MARKER_PREFIX)
+        })
         .count();
     assert_eq!(nudges, 1, "exactly one continuation nudge in history");
     assert!(
@@ -1414,7 +1416,9 @@ async fn length_continuations_are_bounded_per_turn() {
     );
     let nudges = messages
         .iter()
-        .filter(|m| m.role == MessageRole::User && m.content == LENGTH_CONTINUATION_NUDGE)
+        .filter(|m| {
+            m.role == MessageRole::User && m.content.starts_with(CONTINUATION_MARKER_PREFIX)
+        })
         .count();
     assert_eq!(nudges, MAX_LENGTH_CONTINUATIONS as usize);
     let events = drain_events(&mut rx);

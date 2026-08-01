@@ -382,7 +382,9 @@ const SPECULATION_DISCARD_BUDGET_ABORT: &str = "budget_abort";
 /// ladder's no-op rung takes it from there.
 const MAX_LENGTH_CONTINUATIONS: u32 = 2;
 
-/// The user message a length-truncated, tool-less step is continued with.
+/// The body of the user message a length-truncated, tool-less step is
+/// continued with. Pushed behind [`CONTINUATION_MARKER_PREFIX`], which is what
+/// marks it as engine-generated — see that constant.
 ///
 /// Written for the two shapes the trigger cannot distinguish and does not
 /// need to: chain-of-thought promoted to text by an adapter's reasoning-only
@@ -1857,7 +1859,9 @@ impl<'a> Engine<'a> {
                     tool_results: Vec::new(),
                     attachments: Vec::new(),
                 });
-                messages.push(CompletionMessage::user(LENGTH_CONTINUATION_NUDGE));
+                messages.push(CompletionMessage::user(format!(
+                    "{CONTINUATION_MARKER_PREFIX}] {LENGTH_CONTINUATION_NUDGE}"
+                )));
                 return None;
             }
             // A non-empty answer truncated with the continuation allowance
@@ -2230,6 +2234,18 @@ pub(crate) const SUMMARY_MARKER_PREFIX: &str = "[earlier history summarized";
 /// the abort-on-re-detection would need a whole fresh threshold's worth of
 /// looping instead of one more no-progress call.
 pub(crate) const LOOP_STEER_PREFIX: &str = "[stuck-loop warning";
+/// Prefix of the engine-injected output-limit continuation nudge
+/// ([`Engine::dispatch_completion`], body in [`LENGTH_CONTINUATION_NUDGE`]).
+///
+/// The third engine-written `User`-role message, and it needs the marker for
+/// exactly the two reasons the other two do. [`recent_call_records`] would
+/// otherwise take it as a turn boundary and discard every call the turn had
+/// made so far — on the one path where the turn demonstrably *is* still the
+/// same turn, so a stuck model that also truncates would have its evidence
+/// erased up to twice per turn. And `receipts::user_block_kind` would file it
+/// as [`stella_protocol::BlockKind::UserGoal`], attributing engine text to the
+/// person, which is the misattribution Phase 2 introduced that function to fix.
+pub(crate) const CONTINUATION_MARKER_PREFIX: &str = "[output-limit continuation";
 /// The [`TurnOutcome::Aborted`] reason of a user-requested soft stop —
 /// callers match on this to render "stopped" rather than "failed", and to
 /// keep (never truncate) the turn's completed work.
