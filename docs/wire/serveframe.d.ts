@@ -1439,6 +1439,21 @@ export interface ToolSchema {
    * are treated as mutating, the safe direction.
    */
   read_only?: boolean;
+  /**
+   * True when one announced call may safely EXECUTE TWICE — the claim
+   * speculative execution needs (#923). A stream attempt that fails
+   * after announcing its read-only prefix re-announces it on retry, so
+   * every speculated call must tolerate a duplicate run. That is a
+   * stronger claim than [`read_only`](Self::read_only): a web search
+   * mutates no workspace state yet burns a metered API call each run,
+   * and a graph query writes catch-up state to its own database on the
+   * way to answering. Only a tool that is BOTH `read_only` and
+   * `speculation_safe` is ever run before its step commits. Defaults to
+   * false so external tools (MCP servers foremost) are never speculated
+   * unless they opt in — the failure mode of the opposite default is
+   * invisible and lands on the user's bill.
+   */
+  speculation_safe?: boolean;
 }
 
 /**

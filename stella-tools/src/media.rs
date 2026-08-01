@@ -115,6 +115,7 @@ impl Tool for GenerateImage {
                 "required": ["prompt"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 
@@ -300,6 +301,7 @@ impl Tool for GenerateVideo {
                 "required": ["prompt"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 
@@ -440,6 +442,7 @@ impl Tool for GenerateSvg {
                 "required": ["svg"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 

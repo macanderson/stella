@@ -1468,6 +1468,7 @@ mod tests {
                 description: "Read a file".into(),
                 input_schema: serde_json::json!({"type":"object"}),
                 read_only: false,
+                speculation_safe: false,
             }],
             reasoning: None,
             params: None,

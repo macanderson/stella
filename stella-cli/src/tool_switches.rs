@@ -187,6 +187,7 @@ mod tests {
                     description: String::new(),
                     input_schema: serde_json::json!({}),
                     read_only: false,
+                    speculation_safe: false,
                 })
                 .collect()
         }

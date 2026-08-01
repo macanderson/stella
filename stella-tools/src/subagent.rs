@@ -193,6 +193,7 @@ impl Tool for SpawnSubAgent {
             // makes nesting structural — children run behind `ReadOnlyTools`,
             // so they never see this tool. See the module docs.
             read_only: false,
+            speculation_safe: false,
         }
     }
 

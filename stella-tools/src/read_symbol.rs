@@ -66,6 +66,9 @@ impl Tool for ReadSymbol {
                 "required": ["name"]
             }),
             read_only: true,
+            // Resolves through the same code-graph open_or_build path as
+            // graph_query, so it inherits its speculation opt-out (#923).
+            speculation_safe: false,
         }
     }
 

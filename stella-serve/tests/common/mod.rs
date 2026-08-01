@@ -39,6 +39,7 @@ pub fn echo_tool() -> serde_json::Value {
         description: "echo".to_string(),
         input_schema: json!({ "type": "object" }),
         read_only: false,
+        speculation_safe: false,
     })
     .unwrap()
 }

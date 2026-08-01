@@ -1270,6 +1270,7 @@ impl Tool for ListScripts {
                 }
             }),
             read_only: true,
+            speculation_safe: true,
         }
     }
 
@@ -1305,6 +1306,7 @@ impl Tool for RunScript {
                 }
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 
