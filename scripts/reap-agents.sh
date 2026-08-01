@@ -166,6 +166,8 @@ checked=0
 # stock /bin/bash (3.2, no `mapfile`/`readarray` builtin), not just bash 4+.
 while IFS= read -r row; do
   [[ -z "$row" ]] && continue
+  # Unquoted on purpose: $row is one whitespace-separated `ps` output line and
+  # must word-split into positional fields.
   # shellcheck disable=SC2206
   fields=($row)
   pid="${fields[0]:-}"
