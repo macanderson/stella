@@ -374,6 +374,21 @@ pub struct Engine<'a> {
     pub(crate) bus: Option<&'a crate::bus::HookBus>,
 }
 
+/// Why a turn that never produced a terminal step ends.
+///
+/// A function rather than an inline `format!` because it is now written by
+/// two loops: [`Engine::run_turn_with_sender`] and any host driving
+/// [`Engine::run_step`] itself (`stella-serve`, #1129). This string reaches a
+/// transcript, a log, and a user's terminal — two copies of it would drift,
+/// and the drift would read as two different failures.
+#[must_use]
+pub fn step_cap_reason(max_steps: usize) -> String {
+    format!(
+        "reached the step cap ({max_steps}) without completing — this is the belt-and-suspenders \
+         backstop; loop detection should normally catch a stuck turn first"
+    )
+}
+
 /// Upper bound on tool calls from one step executing concurrently. Tools
 /// are I/O-bound (process spawns, file reads), so this caps descriptor and
 /// process pressure, not CPU.
@@ -512,6 +527,15 @@ impl<'a> Engine<'a> {
         self
     }
 
+    /// The step cap this engine enforces — the loop bound a host driving
+    /// [`Engine::run_step`] itself must apply, since the cap belongs to the
+    /// engine's config and a host tracking its own copy is a second source of
+    /// truth for the same number (#1129).
+    #[must_use]
+    pub fn max_steps(&self) -> usize {
+        self.config.max_steps
+    }
+
     /// Attach an extension hook bus, so the turn, step and model-call
     /// boundaries this engine already crosses become observable (#1133).
     ///
@@ -630,11 +654,7 @@ impl<'a> Engine<'a> {
             }
         }
 
-        let reason = format!(
-            "reached the step cap ({}) without completing — this is the belt-and-suspenders \
-             backstop; loop detection should normally catch a stuck turn first",
-            self.config.max_steps
-        );
+        let reason = step_cap_reason(self.config.max_steps);
         let _ = events.send(AgentEvent::Error {
             message: reason.clone(),
             retryable: false,

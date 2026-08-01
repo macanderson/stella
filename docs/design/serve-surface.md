@@ -19,8 +19,17 @@ treat `stella-serve/src/` as the state and this doc as the destination.
 `stella-cli` so a server can assemble the same stack without linking a binary)
 and `stella-engine` (phase 1 — `run_step`, a serde `Checkpoint`, and a
 step-boundary `CancelToken`, with `run_turn` re-implemented as a loop over
-`run_step` so there is one code path). `stella-serve` does **not** yet drive
-`run_step`; it still calls `Engine::run_turn`, which is the next increment.
+`run_step` so there is one code path). As of #1129 `stella-serve` **does**
+drive `run_step`: `session.rs` owns a `TurnState` carrying a `CancelToken`
+and loops over steps, so `POST /v1/turns/{id}/cancel` unwinds at the next
+step boundary — interrupting CPU-bound work *between* reverse requests
+(compaction, loop detection), which the previous cancel could not reach. The
+difference is visible in the abort reason: it now names a step-boundary
+cancel rather than a failed model call, because the turn ends by being asked
+to rather than by having its transport pulled. `StepOutcome::Continue` is
+also now the seam where a durable runner would persist
+`state.to_checkpoint()`; nothing is persisted yet, since this server has
+nowhere to put it.
 
 **Date:** 2026-07-20, revised 2026-07-30. **Owner:** Mac Anderson.
 **Companion:** `oxagen-platform/docs/specs/agent-engine-v2/` (ADR-033 + spec) —
@@ -50,7 +59,7 @@ not in this table is a 404.
 | `GET` | `/v1/turns/{id}/events` | SSE `id: <seq>` + `data: <ServerFrame>`. Resumable via `?after=<seq>` or `Last-Event-ID`. One concurrent subscriber; a second gets 409 |
 | `POST` | `/v1/turns/{id}/provider-result` | Answers a `provider_request` |
 | `POST` | `/v1/turns/{id}/tool-result` | Answers a `tool_request` |
-| `POST` | `/v1/turns/{id}/cancel` | Hard teardown: drops the turn and its transcript. There is no `DELETE` |
+| `POST` | `/v1/turns/{id}/cancel` | Step-boundary stop (#1129): the turn unwinds at its next step, keeping completed steps, and still emits `turn_complete`. Deregistered immediately, so a second cancel is a 404. There is no `DELETE` |
 | `POST` | `/v1/turns/{id}/steer` | `{"message": "…"}` — injected at the next step boundary, echoed as a `steered` event (#932) |
 | `POST` | `/v1/turns/{id}/pause` | Hold at the next step boundary. Idempotent; never mid-tool (#932) |
 | `POST` | `/v1/turns/{id}/resume` | Release a held turn. Idempotent (#932) |

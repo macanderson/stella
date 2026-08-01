@@ -314,6 +314,11 @@ pub(crate) struct Entry {
     /// always-available handle: the session itself is exclusively owned by
     /// whichever stream is running, so control POSTs go through this instead.
     pub(crate) controls: crate::controls::Controls,
+    /// The turn's step-boundary stop signal (#1129). Held here for the same
+    /// reason as `pending` and `controls`: `handle_cancel` cannot reach the
+    /// session object while a stream has it checked out, and this is the
+    /// signal that interrupts a step which is computing rather than waiting.
+    pub(crate) cancel: stella_engine::CancelToken,
     pub(crate) session: Mutex<Option<Session>>,
     /// This turn's retained frame tail, shared with the [`Session`].
     ///
@@ -456,6 +461,7 @@ impl ServerState {
                             seq: self.counter.fetch_add(1, Ordering::Relaxed),
                             pending: session.pending(),
                             controls: session.controls(),
+                            cancel: session.cancel_token(),
                             history: session.history(),
                             stream_generation: AtomicU64::new(0),
                             session: Mutex::new(Some(session)),

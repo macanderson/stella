@@ -623,6 +623,13 @@ pub(crate) async fn handle_cancel(
     let Some(entry) = removed else {
         return res.json("404 Not Found", &error_body("unknown turn")).await;
     };
+    // The step-boundary stop (#1129). Before this existed, cancelling a turn
+    // that was mid-compaction or mid-loop-detection did nothing until it next
+    // parked on a reverse request — the turn ended because the *host* stopped
+    // answering, not because the engine was asked to stop. Now the engine
+    // reads this latch at the top of every step and unwinds there, keeping
+    // every completed step and leaving a transcript valid to hand back.
+    entry.cancel.cancel();
     entry.pending.cancel();
     // A paused turn is parked on its gate, not on a reverse request, so the
     // cancel alone cannot wake it — and while a stream holds this entry alive,

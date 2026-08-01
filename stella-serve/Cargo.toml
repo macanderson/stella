@@ -27,6 +27,10 @@ schema = ["dep:schemars", "stella-protocol/schema"]
 schemars = { workspace = true, optional = true }
 stella-protocol = { path = "../stella-protocol" }
 stella-core = { path = "../stella-core" }
+# The step-scoped facade (#971 phase 1). `stella-serve` drives `run_step`
+# rather than `Engine::run_turn` so a turn can be cancelled at a step
+# boundary and checkpointed between steps (#1129).
+stella-engine = { path = "../stella-engine" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -4,22 +4,28 @@
 //! and the retry-jitter RNG across awaits — `stella-cli::fleet_cmd`), so it
 //! cannot be `tokio::spawn`ed onto the server's multi-thread runtime. Instead
 //! each session gets its own OS thread running a **current-thread** runtime that
-//! `block_on`s `run_turn`; the server side communicates with it purely through
+//! `block_on`s a loop over `stella_engine::run_step`; the server side
+//! communicates with it purely through
 //! `Send` channels — an outbound [`ServerFrame`] stream and the shared
 //! [`Pending`] one-shot registry. This is the fleet's bridge, reused for a
 //! long-lived server instead of a batch worker.
 //!
 //! Scope note: one [`Session`] drives one turn. Multi-turn sessions (retaining
-//! the message history across turns) and per-step checkpointing layer on top of
-//! this without changing the transport.
+//! the message history across turns) layer on top of this without changing the
+//! transport; per-step checkpointing now has its seam here (see
+//! [`drive_turn`]) but nothing is persisted yet.
 
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use stella_core::{BudgetGuard, Engine, EngineConfig};
+use stella_core::EngineConfig;
+use stella_engine::{
+    BudgetGuard, CancelToken, Engine, EventSender, StepOutcome, TurnOutcome, step_cap_reason,
+};
 use stella_protocol::{
-    AgentEvent, CompletionMessage, CompletionResult, ProviderError, ToolOutput, ToolSchema,
+    AgentEvent, CompletionMessage, CompletionResult, ProviderError, StageKind, ToolOutput,
+    ToolSchema,
 };
 use tokio::runtime::Builder;
 use tokio::sync::mpsc;
@@ -114,6 +120,11 @@ pub struct Session {
     /// reason: the session object itself is exclusively owned by whichever
     /// stream is running, so control POSTs need a handle that is not it.
     controls: Controls,
+    /// This turn's step-boundary stop signal (#1129), shared with the registry
+    /// entry exactly like [`Pending`] and [`Controls`] and for the same
+    /// reason: a cancel POST cannot reach the session object, which whichever
+    /// `/events` stream is running has checked out.
+    cancel: CancelToken,
     thread: Option<JoinHandle<()>>,
     /// This turn's sequenced, bounded frame tail.
     ///
@@ -135,6 +146,8 @@ impl Session {
         let (frame_tx, frame_rx) = mpsc::unbounded_channel::<ServerFrame>();
         let pending = Pending::new(spec.observer.clone(), spec.turn.clone());
         let (controls, control_ports) = Controls::new();
+        let cancel = CancelToken::new();
+        let thread_cancel = cancel.clone();
         // Fallible spawn on purpose: a host that opens more turns than the OS
         // will grant threads must see a cleanly aborted turn on the wire, not
         // the panic bare `std::thread::spawn` raises when creation fails.
@@ -144,8 +157,9 @@ impl Session {
         let abort_turn = spec.turn.clone();
         let thread_pending = pending.clone();
         let builder = std::thread::Builder::new().name("stella-serve-session".to_string());
-        let spawned =
-            builder.spawn(move || run_session(spec, frame_tx, thread_pending, control_ports));
+        let spawned = builder.spawn(move || {
+            run_session(spec, frame_tx, thread_pending, control_ports, thread_cancel)
+        });
         let thread = match spawned {
             Ok(thread) => Some(thread),
             Err(err) => {
@@ -171,6 +185,7 @@ impl Session {
             frames: frame_rx,
             pending,
             controls,
+            cancel,
             thread,
             history: Arc::new(FrameHistory::new()),
         }
@@ -233,6 +248,12 @@ impl Session {
         self.controls.clone()
     }
 
+    /// A handle to this turn's step-boundary cancel token, cloneable and
+    /// `Send` — same contract as [`Session::pending`], for `handle_cancel`.
+    pub(crate) fn cancel_token(&self) -> CancelToken {
+        self.cancel.clone()
+    }
+
     /// Answer a [`ServerFrame::ToolRequest`] with the host-run tool output.
     pub fn resolve_tool(&self, request_id: &str, output: ToolOutput) -> Result<(), ServeError> {
         self.pending.resolve_tool(request_id, output)
@@ -266,7 +287,20 @@ impl Session {
     /// latch once `wait_if_paused` returns, so a cancel that leaves a paused
     /// turn parked would hold its OS thread for a resume that is never coming
     /// (see `crate::controls`).
+    ///
+    /// Three signals, because they stop three different waits (#1129):
+    ///
+    /// - The [`CancelToken`] is read at the top of every engine step, so a
+    ///   turn doing CPU-bound work *between* reverse requests — compaction,
+    ///   loop detection — stops at the next boundary. Without it, such a turn
+    ///   observed the cancel only when it next happened to ask the host
+    ///   something, which for a long compaction pass is an unbounded wait.
+    /// - `Pending::cancel` wakes a turn already parked on a reverse request
+    ///   and refuses new ones, so nothing parks after the fact.
+    /// - `Controls::resume` releases a turn parked on the pause gate, which
+    ///   neither of the others can reach.
     pub fn cancel(&self) {
+        self.cancel.cancel();
         self.pending.cancel();
         self.controls.resume();
     }
@@ -303,12 +337,113 @@ impl Drop for Session {
         // than leaking a thread wedged on a host that will never answer. We do
         // not join (a still-running turn could take arbitrarily long) — the
         // thread detaches and drains itself.
+        // Same three signals as `Session::cancel`, and for the same reasons:
+        // the token stops a step that is computing, `Pending` wakes one that
+        // is parked on the host, and the gate release wakes one that is
+        // paused.
+        self.cancel.cancel();
         self.pending.cancel();
         // A paused turn is parked on the gate, not on a reverse request, so the
         // cancel above cannot wake it — the release here is what lets the
         // detached thread observe the latch and unwind (see `crate::controls`).
         self.controls.resume();
         drop(self.thread.take());
+    }
+}
+
+/// What a driven turn hands back: the outcome, plus the state the engine
+/// mutated on the way there.
+///
+/// `Engine::run_turn` writes those back through `&mut` borrows. Driving steps
+/// means owning a [`TurnState`] instead, so they come back as values — which
+/// is also what makes the transcript available to checkpoint *between* steps
+/// rather than only after the turn.
+struct DrivenTurn {
+    outcome: TurnOutcome,
+    messages: Vec<CompletionMessage>,
+    budget: BudgetGuard,
+}
+
+/// Drive one turn as a loop over [`Engine::run_step`], the step-scoped facade
+/// `stella-engine` exists to expose (#1129).
+///
+/// This is deliberately the same loop as `Engine::run_turn_with_sender` —
+/// which is itself a loop over `run_step`, so there is one implementation of
+/// a step and no second engine here. What driving it from this side buys is
+/// the two things a whole-turn call cannot give a durable host:
+///
+/// - **A step-boundary cancel.** [`CancelToken`] is read at the top of every
+///   step, so `POST /v1/turns/{id}/cancel` interrupts CPU-bound work
+///   *between* reverse requests — compaction, loop detection — instead of
+///   only at the next time the engine happens to ask the host something.
+///   Before this, a turn that was mid-compaction observed a cancel only once
+///   it next parked on a reverse request.
+/// - **A checkpoint seam.** `StepOutcome::Continue` is the one moment the
+///   transcript is guaranteed well-paired (no `tool_use` without its
+///   `tool_result`), which is exactly where a durable runner would persist
+///   `state.to_checkpoint()`. This server does not persist one yet — there is
+///   nowhere to put it — but the seam is now here rather than one refactor
+///   away.
+async fn drive_turn(
+    engine: &Engine<'_>,
+    messages: Vec<CompletionMessage>,
+    budget: BudgetGuard,
+    events: &mpsc::UnboundedSender<AgentEvent>,
+    cancel: CancelToken,
+) -> DrivenTurn {
+    let events = EventSender::new(events.clone());
+    // The stage marker `run_turn` opens with. Emitted here for the same
+    // reason the loop is here: a host driving steps must produce the identical
+    // event sequence, or a client cannot tell the two drivers apart — which is
+    // the whole promise of `run_turn` being a loop over `run_step`.
+    let _ = events.send(AgentEvent::Stage {
+        name: StageKind::Execute,
+    });
+    let max_steps = engine.max_steps();
+    let mut state = engine.new_turn(messages, budget).with_cancel_token(cancel);
+
+    let outcome = loop {
+        if state.step() >= max_steps {
+            // The belt-and-suspenders backstop, reported exactly as
+            // `run_turn` reports it — the string is shared rather than
+            // copied, because two spellings of one failure read as two
+            // failures.
+            let reason = step_cap_reason(max_steps);
+            let _ = events.send(AgentEvent::Error {
+                message: reason.clone(),
+                retryable: false,
+            });
+            break TurnOutcome::Aborted {
+                reason,
+                cost_usd: state.total_cost_usd(),
+            };
+        }
+        match engine.run_step(&mut state, &events).await {
+            // The checkpoint seam. Nothing is persisted yet; the comment is
+            // here so the next person looking for where a checkpoint would go
+            // finds the answer rather than the question.
+            StepOutcome::Continue => continue,
+            terminal => {
+                if let Some(outcome) = terminal.into_turn_outcome() {
+                    break outcome;
+                }
+                // Unreachable: `into_turn_outcome` is `None` only for
+                // `Continue`, which the arm above already took. Breaking
+                // rather than panicking keeps a future variant from taking
+                // down a session thread.
+                break TurnOutcome::Aborted {
+                    reason: "engine step returned no outcome".to_string(),
+                    cost_usd: state.total_cost_usd(),
+                };
+            }
+        }
+    };
+
+    let budget = *state.budget();
+    DrivenTurn {
+        outcome,
+        messages: state.into_messages(),
+        budget,
     }
 }
 
@@ -319,6 +454,7 @@ fn run_session(
     frame_tx: mpsc::UnboundedSender<ServerFrame>,
     pending: Pending,
     control_ports: ControlPorts,
+    cancel: CancelToken,
 ) {
     let observer = spec.observer.clone();
     let turn = spec.turn.clone();
@@ -390,9 +526,10 @@ fn run_session(
             fold.finish()
         });
 
-        let mut messages = spec.messages;
-        let mut budget = spec.budget;
-        let outcome = engine.run_turn(&mut messages, &mut budget, &event_tx).await;
+        let outcome = drive_turn(&engine, spec.messages, spec.budget, &event_tx, cancel).await;
+        let messages = outcome.messages;
+        let budget = outcome.budget;
+        let outcome = outcome.outcome;
 
         // Close the event channel so the forwarder drains and exits before the
         // terminal frame — a well-behaved host thus sees every event first.

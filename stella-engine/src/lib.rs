@@ -101,7 +101,9 @@ pub use stella_core::step::{
 };
 
 // ── the engine those steps run on ─────────────────────────────────────────
-pub use stella_core::driver::{Engine, EngineConfig, SOFT_STOP_REASON, TurnOutcome};
+pub use stella_core::driver::{
+    Engine, EngineConfig, SOFT_STOP_REASON, TurnOutcome, step_cap_reason,
+};
 pub use stella_core::estimator::CalibrationMap;
 pub use stella_core::event_sender::{EventSendError, EventSender};
 
