@@ -142,6 +142,39 @@ export default function HomePage() {
               Source on GitHub
             </a>
           </div>
+          
+          {/* The byline rides directly under the install decision — above the
+              fold, after the ask, before the scroll. One line: who made it,
+              and the two follow-ups that keep a reader connected (the star,
+              the follow). "star stella on GitHub" doubles as the source link
+              the old "Source on GitHub" line carried. */}
+          <p className="mt-6 flex flex-wrap items-center gap-x-2 text-sm text-fd-muted-foreground">
+            <Mark className="h-3.5 w-auto shrink-0" />
+            <span>
+              created by{" "}
+              <a
+                href="https://github.com/macanderson"
+                className="underline underline-offset-4 hover:text-fd-foreground"
+              >
+                @macanderson
+              </a>{" "}
+              —{" "}
+              <a
+                href="https://github.com/macanderson/stella"
+                className="underline underline-offset-4 hover:text-fd-foreground"
+              >
+                star <span className="lp-brand-face">stella</span> on GitHub
+              </a>{" "}
+              and follow for{" "}
+              <a
+                href="https://github.com/macanderson/stella-examples"
+                className="underline underline-offset-4 hover:text-fd-foreground"
+              >
+                examples
+              </a>{" "}
+              and updates.
+            </span>
+          </p>
         </div>
       </section>
 

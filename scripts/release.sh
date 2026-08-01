@@ -219,7 +219,7 @@ restore_manifest; trap - EXIT   # manifest back to pristine now that builds are 
 ok "built + packaged 4 targets"
 
 # ── Checksums + version sanity check on the native binary ───────────────────
-( cd "$DIST" && shasum -a 256 ${BIN}-${VERSION}-*.tar.gz > SHA256SUMS )
+( cd "$DIST" && shasum -a 256 "${BIN}"-"${VERSION}"-*.tar.gz > SHA256SUMS )
 native="${TARGET_ROOT}/$(rustc -vV | sed -n 's/host: //p')/release/${BIN}"
 if [ -x "$native" ]; then
   "$native" --version 2>/dev/null | grep -q "${VERSION}" || die "built binary reports the wrong version (expected ${VERSION}) — aborting before publish"
@@ -257,7 +257,7 @@ git push --no-verify origin "refs/tags/${TAG}" \
 info "creating GitHub Release ${TAG}"
 gh release create "$TAG" --repo "$REPO" --verify-tag \
   --title "$TAG" --notes-file "$notes" \
-  "$DIST"/${BIN}-${VERSION}-*.tar.gz "$DIST/SHA256SUMS"
+  "$DIST"/"${BIN}"-"${VERSION}"-*.tar.gz "$DIST/SHA256SUMS"
 ok "release: https://github.com/${REPO}/releases/tag/${TAG}"
 
 # ── Render + push the Homebrew formula ──────────────────────────────────────

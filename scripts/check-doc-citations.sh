@@ -57,6 +57,8 @@ fi
 # permalink) must not be read as a repo-relative path — but plenty of doc
 # comments carry a URL *and* a real citation on the same line, and discarding
 # those lines wholesale silently skipped 28 of the 46 citations.
+# Unquoted on purpose: $rust_files is a newline/space-separated file list from
+# `git ls-files` and must word-split into separate grep arguments.
 # shellcheck disable=SC2086
 hits="$(grep -nE '^[[:space:]]*(///|//!|//|\*)' $rust_files 2>/dev/null \
   | sed 's#https\{0,1\}://[^[:space:]"`)]*##g' \
@@ -134,6 +136,8 @@ fi
 # prose document has neither property.
 md_files="$(git ls-files '*.md' || true)"
 if [ -n "$md_files" ]; then
+  # Unquoted on purpose: $md_files is a newline/space-separated file list from
+  # `git ls-files` and must word-split into separate grep arguments.
   # shellcheck disable=SC2086
   linerefs="$(grep -nE '[A-Za-z0-9._/-]+\.md:[0-9]+' $md_files 2>/dev/null || true)"
 

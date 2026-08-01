@@ -32,3 +32,6 @@ next-env.d.ts
 # vercel
 .vercel
 .env*
+
+# vercel marketplace agent-skills lockfile (machine-local)
+skills-lock.json

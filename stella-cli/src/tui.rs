@@ -49,19 +49,19 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
 // only — `/color` exists so several terminal windows running stella can be told
 // apart at a glance, which needs hues that are *distinct* rather than on-brand.
 // `colored`'s named ANSI colors are the portable stand-ins, and the nearest one
-// to the brand's electric blue (`theme::ACCENT`, `#5AA0FF`) is bright-blue.
+// to the brand's Phosphor Gold (`theme::ACCENT`, `#FFB000`) is bright-yellow.
 //
-// It used to be bright-CYAN, from back when the identity was the pale "sky"
-// blue: the default accent stayed a cyan through two recolours while every
-// other surface moved to electric blue. The slug is deliberately NOT renamed —
-// `sky` is a name a user types at `/color`, not a brand token, and retiring it
-// would break muscle memory and any saved habit for no benefit. What was wrong
-// was the hue behind it, and that is what changed.
+// The default used to be bright-blue (and bright-cyan before that): the
+// accent trailed the identity through recolour after recolour because
+// nothing asserted which hue the default resolves to. The comet kit ends
+// that — the brand slot is `gold` now, and the test below pins it.
 //
-// `sky` and `azure` therefore land on the same ANSI code, exactly as `sky` and
-// `cyan` used to: the named set holds no second distinct blue. Both are kept so
-// an existing `/color azure` still resolves.
-const PALETTE: [(&str, Color); 6] = [
+// The old slugs are all kept as personalisation: `sky` and `azure` still
+// land on bright-blue (the named set holds no second distinct blue), and
+// `/color sky` keeps working for anyone whose muscle memory types it — it
+// just no longer claims to be the brand.
+const PALETTE: [(&str, Color); 7] = [
+    ("gold", Color::BrightYellow),
     ("sky", Color::BrightBlue),
     ("cyan", Color::BrightCyan),
     ("azure", Color::BrightBlue),
@@ -72,7 +72,7 @@ const PALETTE: [(&str, Color); 6] = [
 
 static ACCENT: AtomicUsize = AtomicUsize::new(0);
 
-/// The session accent color (defaults to the brand sky, `PALETTE[0]`).
+/// The session accent color (defaults to the brand gold, `PALETTE[0]`).
 pub fn accent() -> Color {
     PALETTE[ACCENT.load(Ordering::Relaxed) % PALETTE.len()].1
 }
@@ -636,21 +636,25 @@ mod tests {
         );
     }
 
-    /// Sky is the brand, so it is the default accent -- `/color` with no
+    /// Gold is the brand, so it is the default accent -- `/color` with no
     /// argument, and a fresh session, must land on it.
     #[test]
-    fn default_accent_is_sky() {
-        assert_eq!(PALETTE[0].0, "sky");
+    fn default_accent_is_gold() {
+        assert_eq!(PALETTE[0].0, "gold");
         assert_eq!(ACCENT.load(Ordering::Relaxed) % PALETTE.len(), 0);
+        // …and it must be the BRAND hue, not merely first in the list. The
+        // default trailed the identity through recolour after recolour
+        // because nothing asserted which colour the default slug actually
+        // resolves to. Bright-yellow is the nearest named ANSI stand-in for
+        // `theme::ACCENT` (Phosphor Gold `#FFB000`).
+        assert_eq!(PALETTE[0].1, Color::BrightYellow);
+        assert_eq!(accent(), Color::BrightYellow);
+        // The old brand slug survives as personalisation, then the process
+        // global returns to the brand default for any test that reads it.
         assert!(set_accent("sky"));
         assert_eq!(PALETTE[ACCENT.load(Ordering::Relaxed)].0, "sky");
-        // …and it must be the BRAND hue, not merely first in the list. The
-        // default sat on bright-cyan through two recolours because nothing
-        // asserted which colour the default slug actually resolves to — only
-        // that it was called `sky`. Bright-blue is the nearest named ANSI
-        // stand-in for `theme::ACCENT` (`#5AA0FF`).
-        assert_eq!(PALETTE[0].1, Color::BrightBlue);
-        assert_eq!(accent(), Color::BrightBlue);
+        assert!(set_accent("gold"));
+        assert_eq!(accent(), Color::BrightYellow);
     }
 
     #[test]

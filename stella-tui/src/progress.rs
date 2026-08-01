@@ -18,9 +18,9 @@
 //!   the **pulsing head** are the *only* indeterminate cues, and they signal
 //!   liveness (`AgentStatus::Running`) — never progress. They ride *on top of*
 //!   the determinate fill and never advance it.
-//! - The fill rides the brand **sky** gradient (deep sky → sky)
-//!   — the deck's one deliberately warm run, so its sole activity indicator
-//!   is unmistakable against the cool aurora chrome everywhere else.
+//! - The fill rides the brand **gold** gradient (deep gold → Phosphor Gold)
+//!   — activity is the accent, so the deck's sole activity indicator is
+//!   unmistakable against the quiet warm-neutral chrome everywhere else.
 //! - **tok/s** is the focused agent's *live turn* rate — output tokens since
 //!   the turn began over the turn's own elapsed; it is omitted (not guessed)
 //!   whenever there's nothing real to divide, including a running lane with
@@ -233,7 +233,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
 }
 
 /// The label chunk (`✓ plan · ▸ execute · verify`) as styled spans, plus its
-/// display width. Done = success green, Active = sky (matches the fill),
+/// display width. Done = success green, Active = gold (matches the fill),
 /// Pending = dim.
 fn label_line(state: &ProgressState) -> (Vec<Span<'static>>, usize) {
     let mut spans = Vec::new();

@@ -373,16 +373,18 @@ fn strip_numbered(lead: &str) -> Option<(&str, &str)> {
 
 /// Build a heading line with level-appropriate styling.
 ///
-/// The hierarchy is sky → sky → white, all bold:
-/// * **H1** is a filled brand-sky pill — near-black [`theme::GROUND`] text on
-///   an [`theme::ACCENT`] background, with a space of padding each side so
-///   it reads as a solid title bar. This is the deliberate high-contrast
-///   replacement for the old washed-out heading.
-/// * **H2** is bold brand-sky text (no fill).
+/// The hierarchy is gold → gold → paper, all bold:
+/// * **H1** is a filled gold pill — ink-dark [`theme::GROUND`] text on an
+///   [`theme::ACCENT`] background, with a space of padding each side so it
+///   reads as a solid title bar. This is the kit's one sanctioned gold
+///   *fill* (the website's sidebar pill and CTA do the same), and the text
+///   on it must stay ink: ink-on-gold is 10.74:1 where white-on-gold is
+///   1.83:1.
+/// * **H2** is bold gold text (no fill).
 /// * **H3+** is bold primary-ink text.
 fn heading_line(content: &str, level: usize) -> Line<'static> {
     if level == 1 {
-        // One span so the sky fill is a single unbroken pill behind the text.
+        // One span so the gold fill is a single unbroken pill behind the text.
         let pill = Style::new()
             .bg(theme::ACCENT)
             .fg(theme::GROUND)
@@ -615,14 +617,15 @@ mod tests {
     }
 
     #[test]
-    fn h1_is_a_high_contrast_sky_pill() {
+    fn h1_is_a_high_contrast_gold_pill() {
         // The exact fix the user asked for: the H1 must be a bold, filled,
-        // high-contrast bar — near-black ink on brand sky — never washed-out
-        // or a light-text-on-pale-background combination.
+        // high-contrast bar — ink on Phosphor Gold — never washed-out or a
+        // light-text-on-pale-background combination (white on gold is
+        // 1.83:1; ink on gold is 10.74:1).
         let lines = render("# Rust Async Patterns");
         let span = &lines[0].spans[0];
-        assert_eq!(span.style.bg, Some(theme::ACCENT), "sky fill");
-        assert_eq!(span.style.fg, Some(theme::GROUND), "near-black text");
+        assert_eq!(span.style.bg, Some(theme::ACCENT), "gold fill");
+        assert_eq!(span.style.fg, Some(theme::GROUND), "ink text");
         assert!(span.style.add_modifier.contains(Modifier::BOLD), "bold");
     }
 
