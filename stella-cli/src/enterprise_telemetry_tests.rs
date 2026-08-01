@@ -18,10 +18,9 @@ use crate::enterprise_telemetry::{
     reset_process_free_authority_for_test, validate_response_status, verify_managed_enrollment,
 };
 use crate::settings::Settings;
+use crate::test_env::EnvRestore;
 use crate::{Cli, Command, TelemetryCmd};
 use clap::Parser;
-
-struct EnvRestore(Vec<(String, Option<std::ffi::OsString>)>);
 
 struct AuthorityReset;
 
@@ -35,17 +34,6 @@ impl AuthorityReset {
 impl Drop for AuthorityReset {
     fn drop(&mut self) {
         reset_process_free_authority_for_test();
-    }
-}
-
-impl EnvRestore {
-    fn capture(names: &[&str]) -> Self {
-        Self(
-            names
-                .iter()
-                .map(|name| ((*name).to_string(), std::env::var_os(name)))
-                .collect(),
-        )
     }
 }
 
@@ -162,19 +150,6 @@ fn production_process_free_surface_matrix_enumerates_every_constructor() {
     );
     for surface in ExecutionSurface::ALL {
         assert!(authorize_execution_surface_with(surface, false).is_ok());
-    }
-}
-
-impl Drop for EnvRestore {
-    fn drop(&mut self) {
-        unsafe {
-            for (name, value) in self.0.drain(..) {
-                match value {
-                    Some(value) => std::env::set_var(name, value),
-                    None => std::env::remove_var(name),
-                }
-            }
-        }
     }
 }
 

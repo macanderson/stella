@@ -1319,6 +1319,7 @@ pub fn ingest_inbound(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut De
             }
             _ => {}
         }
+        dispatch::release_if_settled(ui, agent, event);
     }
     model.apply_inbound(inbound);
     clamp(model, ui);

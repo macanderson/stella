@@ -1,6 +1,6 @@
 ---
 title: stella tune
-description: Eval-driven self-tuning of Stella's own policy — A/B one knob over two loop-bench runs, promote the winner only when it confidently wins, and roll it back on the record.
+description: Eval-driven self-tuning of Stella's own policy — A/B one knob over two loop-bench runs, promote the winner only when it confidently wins, or roll it back.
 ---
 
 `stella tune` is how Stella's own policy gets tuned by evidence instead of taste. It A/B tests one knob over two [loop-bench](https://github.com/macanderson/stella/tree/main/bench/loop-bench) runs, scores each arm from the per-trial rewards, and promotes the candidate **only** when it confidently beats the baseline — with a reversible rollback record either way.

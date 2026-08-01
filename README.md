@@ -1,11 +1,11 @@
 <p align="center">
   <picture>
-    <source srcset="docs/brand/logos/svg/stella-lockup-adaptive.svg">
-    <img src="docs/brand/logos/svg/stella-lockup-adaptive.svg" alt="Stella" width="300">
+    <source srcset="docs/brand/logo/svg/lockup-color-light.svg">
+    <img src="docs/brand/logo/svg/lockup-color-light.svg" alt="Stella" width="300">
   </picture>
 </p>
 
-<p align="center"><strong>Fully Autonomous Software Delivery with Deterministic Verification Ladder</strong></p>
+<p align="center"><strong>A coding agent that doesn't lie to you</strong></p>
 <p align="center">Open Source · Rust · BYOK · No Phone Home</p>
 
 <p align="center">

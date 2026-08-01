@@ -203,17 +203,48 @@ impl Catalog {
                     },
                 )
                 .with_reasoning(Some(true)),
+                // Anthropic's mainstream model, and the one a head-to-head is
+                // most likely to be run on. Its absence was not a gap in
+                // coverage so much as a hard stop: the seed is the OFFLINE
+                // floor, `stella models refresh` is the only way to grow the
+                // runtime catalog, and a sandboxed benchmark container runs
+                // with `STELLA_CATALOG_AUTO_REFRESH=0` — so an unlisted model
+                // there is unreachable, not merely unpriced.
                 CatalogEntry::new(
-                    "claude-fable-5",
+                    "claude-sonnet-5",
                     "anthropic",
                     "claude",
-                    200_000,
+                    1_000_000,
                     ToolDialect::AnthropicTools,
+                    // List price. An introductory rate runs to 2026-08-31
+                    // ($2.00/$10.00); the seed carries the durable number, so
+                    // cost telemetry over-states slightly until then. That is
+                    // the safe direction for a spend guard and it corrects
+                    // itself without an edit.
                     Pricing {
                         input_usd_per_mtok: 3.00,
                         output_usd_per_mtok: 15.00,
                         cached_input_usd_per_mtok: 0.30,
                         cache_write_usd_per_mtok: 3.75,
+                    },
+                )
+                .with_reasoning(Some(true)),
+                CatalogEntry::new(
+                    "claude-fable-5",
+                    "anthropic",
+                    "claude",
+                    // Was 200_000 with Sonnet's prices — wrong on both counts.
+                    // A catalog entry is not documentation: `cost_usd` is
+                    // computed from it, so a stale row silently under-reports
+                    // spend by 3.3x on every Fable turn, and the context
+                    // figure decides when compaction fires.
+                    1_000_000,
+                    ToolDialect::AnthropicTools,
+                    Pricing {
+                        input_usd_per_mtok: 10.00,
+                        output_usd_per_mtok: 50.00,
+                        cached_input_usd_per_mtok: 1.00,
+                        cache_write_usd_per_mtok: 12.50,
                     },
                 )
                 .with_reasoning(Some(true)),
@@ -624,11 +655,18 @@ mod tests {
             cached_input_tokens: 0,
             cache_write_tokens: 100_000,
         };
-        // 100_000 / 1e6 * 3.75 = 0.375 — the figure that went unreported.
+        // Derived from the entry's OWN rate rather than a copied constant: a
+        // hardcoded figure re-fails this test every time a price is corrected,
+        // which teaches the reader that the correction was the mistake. The
+        // property under test is that the cache-write counter is READ at all —
+        // before the `cache_write_usd_per_mtok` column, `cost_usd` consulted
+        // three of the four counters and returned exactly zero here.
+        let expected = 100_000.0 / 1e6 * pricing.cache_write_usd_per_mtok;
         let cost = pricing.cost_usd(&write_only);
+        assert!(expected > 0.0, "the fixture must exercise a priced rate");
         assert!(
-            (cost - 0.375).abs() < 1e-12,
-            "expected a 100k-token cache write to cost $0.375, got {cost}"
+            (cost - expected).abs() < 1e-12,
+            "expected a 100k-token cache write to cost ${expected}, got {cost}"
         );
     }
 

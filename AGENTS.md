@@ -99,8 +99,11 @@ happened before — see RELEASING.md's local-release path), it is the only gate
 running at all.
 
 Supply-chain checks run as a separate CI job: `make supply-chain` (or
-`cargo deny check advisories bans sources licenses` + `cargo audit`). All four
-are real gates. The license gate matters more than it looks: the workspace is
+`cargo deny check advisories bans sources licenses`). All four are real
+gates. (The CI job is still named "cargo deny + cargo audit" to match main's
+branch-protection required check, even though cargo-audit itself was dropped
+in #919 — cargo-deny's `unmaintained`/`yanked` settings are a strict superset
+of what it added.) The license gate matters more than it looks: the workspace is
 AGPL-3.0-only and dual-licensed, so a dependency carrying any further
 restriction (non-commercial clause, field-of-use limit, or no license at all)
 breaks both AGPL redistribution and the commercial track. **If `cargo deny`

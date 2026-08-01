@@ -1,6 +1,6 @@
 ---
 title: stella doctor
-description: Check the local state stella owns, report each named check's verdict, and exit non-zero if any fails — with an opt-in repair that moves a corrupt session store aside without ever deleting it.
+description: Check the local state stella owns, report each check's verdict, exit non-zero on failure — with opt-in repair for a corrupt session store, not deletion.
 ---
 
 Answer "is my local state sound?" before you go looking for a bug that isn't yours. `stella doctor` runs each check it knows how to run, prints a verdict per check, and exits non-zero if any failed — so it can gate a script. It reads local state only: no provider, no API key, no network.

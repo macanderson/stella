@@ -55,8 +55,10 @@ pub fn run_observe(port: u16, open: bool) -> Result<(), String> {
     rt.block_on(stella_observatory::serve(root, port, move |addr| {
         let url = format!("http://{addr}/");
         println!();
-        println!("  {} {}", "◆".bright_magenta(), "Stella Observatory".bold());
-        println!("  {} {}", "→".bright_cyan(), url);
+        // Comet kit v1.0: gold accent (ANSI yellow is the terminal's phosphor
+        // gold), lowercase always.
+        println!("  {} {}", "◆".yellow(), "stella observatory".bold());
+        println!("  {} {}", "→".yellow(), url);
         println!(
             "  {}",
             "reads .stella (read-only) · binds 127.0.0.1 only · Ctrl+C to stop".dimmed()

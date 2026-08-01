@@ -2,10 +2,24 @@ name: msrv
 
 # The declared MSRV (`rust-version` in Cargo.toml, 1.90) was never exercised
 # by CI, so MSRV breakage shipped silently (#787). This checks the workspace
-# compiles on exactly that toolchain. Weekly + manual rather than per-PR: an
-# MSRV break is rare and never urgent, and the required-check budget belongs
-# to ci.yml — a red run here is a scheduled nudge, not a merge blocker.
+# compiles on exactly that toolchain.
+#
+# Originally weekly + manual only, on the theory that an MSRV break is rare
+# and never urgent. In practice that meant a PR using a 1.91+ API merged
+# green and the break was discovered up to 7 days and an unknown number of
+# commits later, at which point bisecting it is someone's afternoon instead
+# of a review comment (#917). Now also runs on `pull_request`, mirroring
+# ci.yml's `paths-ignore` so a docs-only PR doesn't pay for it. It is not
+# marked as a required status check in branch protection — that's a repo
+# Settings change outside this file — so until it is, treat a red run here
+# the same as any other non-required check: fix before merging, don't ignore.
 on:
+  pull_request:
+    paths-ignore:
+      - "website/**"
+      - "docs/**"
+      - "*.md"
+      - ".github/ISSUE_TEMPLATE/**"
   schedule:
     - cron: "17 5 * * 1"
   workflow_dispatch:

@@ -916,6 +916,18 @@ impl ToolRegistry {
             );
         }
 
+        // Opaque calls get a before-image. A tool whose input named no file
+        // op but which is allowed to mutate is precisely `bash` and its
+        // relatives: the schema cannot say what they will touch, so the tree
+        // is asked instead (see [`crate::shell_touch`]). Read-only tools are
+        // skipped, and an *unknown* tool counts as mutating for the same
+        // reason the ladder counts it so — on Terminal-Bench the shell is how
+        // nearly all real work lands, and a name we fail to recognize must
+        // never be the reason a change goes unattributed.
+        let shell_probe = (pending_ops.is_empty()
+            && !tool.as_ref().map(|t| t.schema().read_only).unwrap_or(false))
+        .then(|| crate::shell_touch::WorkspaceProbe::capture(&self.root));
+
         let mut output = match tool {
             Some(tool) => tool.execute(input, &self.root).await,
             None => ToolOutput::Error {
@@ -959,6 +971,41 @@ impl ToolRegistry {
                         );
                     }
                 }
+            }
+        }
+        // Attribute what the opaque call actually did. Deliberately OUTSIDE
+        // the success gate below: a shell command that exits non-zero has
+        // very often still written something (a build that failed halfway, a
+        // patch that applied two hunks of three), and the ledger's job is to
+        // describe the tree as it is, not as the exit code implies.
+        if let Some(before) = shell_probe {
+            let after = crate::shell_touch::WorkspaceProbe::capture(&self.root);
+            for touch in before.diff(&after) {
+                let Some(full) = crate::resolve_within_root(&self.root, &touch.path) else {
+                    continue;
+                };
+                // An unmeasurable update carries its own post-image as the
+                // pre-image, yielding 0/0. The alternative — an empty
+                // pre-image — would render a same-file rewrite as a
+                // whole-file insertion, which is a louder lie than silence.
+                let pre_content = match (touch.counts_measurable, touch.op) {
+                    (true, _) => touch.pre_content,
+                    (false, FileOp::Update | FileOp::Delete) => std::fs::read(&full)
+                        .ok()
+                        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()),
+                    (false, _) => None,
+                };
+                self.record_touch(
+                    PendingTouch {
+                        path: touch.path,
+                        full,
+                        op: touch.op,
+                    },
+                    pre_content,
+                    name,
+                    &serde_json::json!({ "reason": format!("attributed to `{name}`") }),
+                    bus.as_ref(),
+                );
             }
         }
         if !output.is_error() {

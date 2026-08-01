@@ -1119,7 +1119,7 @@ mod tests {
             "---\nname: project-agent\ndescription: project agent\n---\nPROJECT_AGENT_BODY",
         );
         // SAFETY: serialized behind the binary-wide environment lock.
-        let previous_home = std::env::var_os("HOME");
+        let _restore = crate::test_env::EnvRestore::capture(&["HOME"]);
         unsafe { std::env::set_var("HOME", &home) };
 
         let custom = CustomExtensions::load_with_authority(
@@ -1134,10 +1134,6 @@ mod tests {
             },
         );
 
-        match previous_home {
-            Some(previous) => unsafe { std::env::set_var("HOME", previous) },
-            None => unsafe { std::env::remove_var("HOME") },
-        }
         let names: Vec<&str> = custom
             .commands
             .iter()

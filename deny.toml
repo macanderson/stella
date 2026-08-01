@@ -15,8 +15,10 @@
 # precisely because nothing gated on licenses.
 #
 # Only version-stable lint-level keys are set here so the config parses across
-# cargo-deny releases; `cargo audit` (a separate CI step) is the primary
-# advisory gate, and defaults already fail the build on a known vulnerability.
+# cargo-deny releases; cargo-deny is the sole advisory gate (#919 dropped the
+# separate cargo-audit step — two tools reading suppression policy from two
+# files meant an entry added here never reached the other one), and defaults
+# already fail the build on a known vulnerability.
 
 [licenses]
 # Every license here is compatible with distributing the combined work under

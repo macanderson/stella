@@ -43,18 +43,22 @@ Manual version bumps are therefore only needed for the hand-cut flows below.
 
 Two things, and they are not the same thing:
 
-- **[`CHANGELOG.md`](CHANGELOG.md)** — written by contributors, in the PR that
-  makes the change. This is the durable, curated record. Add a bullet under
-  `## [Unreleased]` whenever a user would notice the change; skip it for
-  internal refactors, tests, and CI.
+- **[`CHANGELOG.md`](CHANGELOG.md)** — the durable record, one section per
+  version. Contributors still write the best entries: add a bullet under
+  `## [Unreleased]` in the PR whenever a user would notice the change, and
+  the release rolls your words verbatim. When a release arrives with
+  `[Unreleased]` empty — most releases, at one release per merge —
+  `auto-tag.yml` drafts the section from the **released diff** instead
+  ([`scripts/changelog-ai.sh`](scripts/changelog-ai.sh), the same AI Gateway
+  key and model as the release notes) and injects it before the roll, at both
+  roll sites (the tagged release commit and the version-sync PR), so the tag
+  and main record identical text. A release whose diff has nothing
+  user-facing gets a one-line `_Internal: …_` note. If the key is unset or
+  the call fails, the roll proceeds with an empty section exactly as before —
+  drafting is best-effort, never release-blocking.
 - **GitHub Release notes** — generated at publish time by `release.yml` from
-  the commit range. A summary of commits, not a curated record, and not
+  the commit range. Release-note prose, not a curated record, and not
   something to edit by hand.
-
-Because every merge releases, most individual releases are small and some have
-no user-facing change at all. Those get a version heading with no bullets. That
-is the correct output, not a gap to fill in: it says the release happened and
-changed nothing a user would notice.
 
 The changelog roll is deliberately non-fatal. If `CHANGELOG.md` is missing or
 has no `## [Unreleased]` heading, `auto-tag.yml` logs a warning and continues —

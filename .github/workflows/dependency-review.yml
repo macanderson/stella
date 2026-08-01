@@ -1,5 +1,17 @@
 # Block PRs that introduce dependencies with known vulnerabilities or
 # disallowed licenses. Free on public repos (uses the dependency graph).
+#
+# `allow-licenses` mirrors deny.toml's `[licenses] allow` list — a curated
+# allow-list, not a deny-list, because AGENTS.md is explicit that the license
+# gate matters most here: the workspace is AGPL-3.0-only and dual-licensed, so
+# any dependency carrying a further restriction breaks both tracks, and
+# "unrecognized license" must fail closed rather than pass by default. This
+# runs earlier and against the PR diff specifically, which is where a license
+# problem is cheapest to act on — `cargo deny` (the supply-chain job) catches
+# the same problem later, against the whole lockfile (#920).
+#
+# The two lists must not drift: scripts/check-license-allowlist-parity.sh
+# (wired into `make gate`) fails if this list and deny.toml's disagree.
 name: dependency-review
 
 on:
@@ -18,3 +30,8 @@ jobs:
         with:
           fail-on-severity: high
           comment-summary-in-pr: on-failure
+          allow-licenses: >-
+            AGPL-3.0-only, Apache-2.0, Apache-2.0 WITH LLVM-exception, MIT,
+            BSD-2-Clause, BSD-3-Clause, ISC, Zlib, BSL-1.0, MPL-2.0, Unlicense,
+            CC0-1.0, 0BSD, WTFPL, Unicode-3.0, Unicode-DFS-2016,
+            CDLA-Permissive-2.0

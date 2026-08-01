@@ -277,6 +277,14 @@ pub(crate) enum Command {
         /// ~/.stella/tools/).
         #[arg(long, value_name = "DIR")]
         validate: Option<Option<std::path::PathBuf>>,
+
+        /// Author a tool-foundry proposal into a staged custom tool:
+        /// writes `<name>.toml` + `<name>.sh` under .stella/tools/proposed/
+        /// (inert until a human moves the manifest into .stella/tools/).
+        /// Omit the value to list the current proposals mined from recent
+        /// bash receipts.
+        #[arg(long, value_name = "NAME", conflicts_with = "validate")]
+        author: Option<Option<String>>,
     },
 
     /// Fan tasks out to a fleet of worker agents in one tree

@@ -273,3 +273,144 @@ fn subcommand_help_keeps_claps_own_layout() {
         "the root footer leaked into a subcommand page:\n{help}"
     );
 }
+
+/// The website's commands section, relative to the repository root. The site
+/// mirrors this module rather than curating its own order
+/// (docs/design/website-information-architecture.md § Commands), and the two
+/// tests below are the site twins of `every_command_is_grouped_exactly_once`:
+/// they run against the same GROUPS const, so the grouping cannot drift
+/// between the terminal and the site without a red test.
+const SITE_COMMANDS_DIR: &str = "website/content/docs/commands";
+
+fn site_commands_file(file: &str) -> (std::path::PathBuf, String) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("stella-cli sits inside the repository")
+        .join(SITE_COMMANDS_DIR)
+        .join(file);
+    let raw = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    (path, raw)
+}
+
+/// The docs sidebar renders exactly the groups this module renders: one
+/// `---Heading---` separator per group, each command under its own heading,
+/// in help order. Strict equality on the whole `pages` array means a
+/// regrouped GROUPS, a new command, or a hand-reordered sidebar all land
+/// here instead of shipping as silent drift.
+#[test]
+fn the_docs_nav_mirrors_these_groups() {
+    let (path, raw) = site_commands_file("meta.json");
+    let meta: serde_json::Value = serde_json::from_str(&raw)
+        .unwrap_or_else(|e| panic!("{} is not valid JSON: {e}", path.display()));
+    let actual: Vec<String> = meta["pages"]
+        .as_array()
+        .expect("meta.json must carry a `pages` array")
+        .iter()
+        .filter_map(|page| page.as_str().map(str::to_owned))
+        .collect();
+
+    let mut expected = vec!["index".to_owned()];
+    for (heading, names) in GROUPS {
+        expected.push(format!("---{heading}---"));
+        expected.extend(names.iter().map(|name| (*name).to_owned()));
+    }
+
+    assert_eq!(
+        actual,
+        expected,
+        "{} does not mirror cli/help.rs GROUPS — the sidebar must list \
+         `index`, then each group as a `---Heading---` separator followed by \
+         that group's commands, all in help order",
+        path.display()
+    );
+}
+
+/// Help-text parity: the one-line summary beside each command on the site's
+/// index page is the same string `stella --help` prints — equality, not
+/// paraphrase — and the page's `###` sections are the help groups in help
+/// order. Rewording an `about` here in cli.rs therefore rewrites the site
+/// index too, or fails until someone does.
+#[test]
+fn the_docs_index_summaries_are_the_clis_own() {
+    let (path, raw) = site_commands_file("index.mdx");
+
+    // A deliberately dumb parse — `### ` headings and
+    // `<SpecCard title="stella <name>">…</SpecCard>` blocks in document
+    // order. The page is hand-written MDX; anything fancier would be testing
+    // the parser instead of the page.
+    let mut sections: Vec<(String, Vec<(String, String)>)> = Vec::new();
+    let mut lines = raw.lines();
+    while let Some(line) = lines.next() {
+        let line = line.trim();
+        if let Some(heading) = line.strip_prefix("### ") {
+            sections.push((heading.trim().to_owned(), Vec::new()));
+        } else if let Some(rest) = line.strip_prefix("<SpecCard title=\"stella ") {
+            let name = rest.split('"').next().unwrap_or_default().to_owned();
+            let mut summary = String::new();
+            for body in lines.by_ref() {
+                let body = body.trim();
+                if body == "</SpecCard>" {
+                    break;
+                }
+                if !summary.is_empty() {
+                    summary.push(' ');
+                }
+                summary.push_str(body);
+            }
+            sections
+                .last_mut()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "`stella {name}`'s card sits above the first `###` group heading in {}",
+                        path.display()
+                    )
+                })
+                .1
+                .push((name, summary));
+        }
+    }
+
+    // Headings that carry no command card (`--budget` modes and the like)
+    // are page furniture, not groups.
+    let groups: Vec<(String, Vec<(String, String)>)> = sections
+        .into_iter()
+        .filter(|(_, cards)| !cards.is_empty())
+        .collect();
+
+    assert_eq!(
+        groups.iter().map(|(h, _)| h.as_str()).collect::<Vec<_>>(),
+        GROUPS.iter().map(|(h, _)| *h).collect::<Vec<_>>(),
+        "the `###` group headings in {} are not the help groups in help order",
+        path.display()
+    );
+
+    let cmd = command();
+    for ((heading, cards), (_, names)) in groups.iter().zip(GROUPS) {
+        assert_eq!(
+            cards.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+            names.to_vec(),
+            "the cards under {heading:?} in {} are not that group's commands in help order",
+            path.display()
+        );
+        for (name, summary) in cards {
+            let about = cmd
+                .get_subcommands()
+                .find(|c| c.get_name() == name)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{} lists `stella {name}`, which is not a command",
+                        path.display()
+                    )
+                })
+                .get_about()
+                .map(|a| a.to_string())
+                .unwrap_or_default();
+            assert_eq!(
+                summary, &about,
+                "`stella {name}`'s summary on the site index is not the CLI's own about \
+                 string — the two surfaces must print the same sentence"
+            );
+        }
+    }
+}

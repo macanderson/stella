@@ -54,20 +54,12 @@ const SKIP_DIRS: &[&str] = &[
 const MAX_ENTRIES: usize = 20_000;
 /// Depth ceiling, so a symlink cycle or a pathological tree cannot hang a turn.
 const MAX_DEPTH: usize = 24;
+/// Largest single file whose content is held for a line diff.
+const MAX_CONTENT_BYTES: u64 = 256 * 1024;
+/// Total content budget across one snapshot.
+const MAX_TOTAL_CONTENT: u64 = 16 * 1024 * 1024;
 
 /// What one snapshot recorded about one file.
-///
-/// Metadata only, and that is a measured decision rather than a minimal
-/// first cut. An earlier version also held each file's content so line counts
-/// could be computed for shell-attributed updates. Walking a 20,000-entry tree
-/// that way cost **1.49 seconds**, twice per mutating call — against a harness
-/// that kills a trial at 900 seconds and a workload that issues hundreds of
-/// shell calls. The nicety would have cost more trials than the attribution
-/// saved.
-///
-/// So counts are given up and identity is kept. `Modified` on a path is the
-/// claim that matters; "and it grew by 12 lines" was never what the ladder
-/// read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Fingerprint {
     len: u64,
@@ -76,6 +68,10 @@ struct Fingerprint {
     /// same-length in-place rewrite then reads as unchanged, which is a miss
     /// rather than a false report.
     mtime_nanos: Option<u128>,
+    /// Pre-call content, when the file was small enough to hold within budget.
+    /// `None` means the line counts for this path are not measurable, and is
+    /// reported as such rather than being rendered as a whole-file rewrite.
+    content: Option<String>,
 }
 
 /// A mutation the probe attributed to an opaque call.
@@ -84,6 +80,12 @@ pub struct ShellTouch {
     /// Workspace-normalized path, the same key the ledger uses.
     pub path: String,
     pub op: FileOp,
+    /// Pre-call content for a line diff, when it was captured within budget.
+    pub pre_content: Option<String>,
+    /// Whether line counts for this touch can be computed honestly. `false`
+    /// when the file was too large (or arrived too late) to hold a
+    /// pre-image — the touch still records *that* the file changed.
+    pub counts_measurable: bool,
 }
 
 /// A bounded fingerprint of the workspace, taken either side of a call whose
@@ -104,6 +106,7 @@ impl WorkspaceProbe {
     /// would turn a partially-visible workspace into no workspace at all.
     pub fn capture(root: &Path) -> Self {
         let mut probe = Self::default();
+        let mut budget = MAX_TOTAL_CONTENT;
         let mut stack = vec![(root.to_path_buf(), 0usize)];
         while let Some((dir, depth)) = stack.pop() {
             if depth > MAX_DEPTH {
@@ -140,15 +143,31 @@ impl WorkspaceProbe {
                 else {
                     continue;
                 };
+                let len = meta.len();
+                let content = if len <= MAX_CONTENT_BYTES && len <= budget {
+                    match std::fs::read(&path) {
+                        // Lossy so a binary still yields a deterministic
+                        // (if approximate) line count, matching how the
+                        // CRUD path reads pre-images.
+                        Ok(bytes) => {
+                            budget = budget.saturating_sub(len);
+                            Some(String::from_utf8_lossy(&bytes).into_owned())
+                        }
+                        Err(_) => None,
+                    }
+                } else {
+                    None
+                };
                 probe.entries.insert(
                     normalized,
                     Fingerprint {
-                        len: meta.len(),
+                        len,
                         mtime_nanos: meta.modified().ok().and_then(|t| {
                             t.duration_since(std::time::UNIX_EPOCH)
                                 .ok()
                                 .map(|d| d.as_nanos())
                         }),
+                        content,
                     },
                 );
             }
@@ -176,6 +195,8 @@ impl WorkspaceProbe {
                 None => touches.push(ShellTouch {
                     path: path.clone(),
                     op: FileOp::Create,
+                    pre_content: None,
+                    counts_measurable: true,
                 }),
                 Some(before)
                     if before.len != after.len || before.mtime_nanos != after.mtime_nanos =>
@@ -183,17 +204,21 @@ impl WorkspaceProbe {
                     touches.push(ShellTouch {
                         path: path.clone(),
                         op: FileOp::Update,
+                        pre_content: before.content.clone(),
+                        counts_measurable: before.content.is_some(),
                     })
                 }
                 Some(_) => {}
             }
         }
         if !self.saturated && !post.saturated {
-            for path in self.entries.keys() {
+            for (path, before) in &self.entries {
                 if !post.entries.contains_key(path) {
                     touches.push(ShellTouch {
                         path: path.clone(),
                         op: FileOp::Delete,
+                        pre_content: before.content.clone(),
+                        counts_measurable: before.content.is_some(),
                     });
                 }
             }
@@ -229,7 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn an_in_place_rewrite_is_an_update() {
+    fn an_in_place_rewrite_is_an_update_and_carries_its_pre_image() {
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "main.c", "int main(){return 1;}\n");
         let pre = WorkspaceProbe::capture(dir.path());
@@ -241,7 +266,11 @@ mod tests {
         let touches = pre.diff(&post);
         assert_eq!(touches.len(), 1, "{touches:?}");
         assert_eq!(touches[0].op, FileOp::Update);
-        assert_eq!(touches[0].path, "main.c");
+        assert!(touches[0].counts_measurable);
+        assert_eq!(
+            touches[0].pre_content.as_deref(),
+            Some("int main(){return 1;}\n")
+        );
     }
 
     #[test]
@@ -294,29 +323,5 @@ mod tests {
 
         let paths: Vec<_> = pre.diff(&post).into_iter().map(|t| t.path).collect();
         assert_eq!(paths, vec!["target/release/app".to_string()]);
-    }
-}
-
-#[cfg(test)]
-mod cost {
-    use super::*;
-
-    /// The probe runs on every mutating call, so its cost is paid hundreds of
-    /// times a trial. Measured rather than assumed.
-    #[test]
-    #[ignore = "timing measurement, not a correctness assertion"]
-    fn measure_walk_cost_on_a_realistic_tree() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap();
-        let start = std::time::Instant::now();
-        let probe = WorkspaceProbe::capture(root);
-        let elapsed = start.elapsed();
-        eprintln!(
-            "walked {} entries in {:?} (saturated={})",
-            probe.entries.len(),
-            elapsed,
-            probe.saturated
-        );
     }
 }

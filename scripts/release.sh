@@ -19,7 +19,8 @@
 #
 # Safety: refuses to run unless your checkout is clean and exactly matches
 # origin/main, and it never leaves your working tree modified (the version
-# stamp is reverted on exit).
+# stamp is reverted on exit; the tagged release commit is cut in a throwaway
+# worktree).
 #
 # ⚠ THIS IS THE DEGRADED RELEASE PATH — see the ALLOW_UNATTESTED gate below.
 # A release cut here is NOT byte-equivalent to one cut by release.yml and
@@ -113,7 +114,9 @@ ok "tooling ready"
 # hatches for releasing from a prepared branch (e.g. release infra that isn't
 # on main yet, provably not touching crate code):
 #   ALLOW_NONMAIN=1     skip the "HEAD == origin/main" check (clean tree still required)
-#   RELEASE_TARGET=ref  commit-ish the release tag points at (default: HEAD)
+#   RELEASE_TARGET=ref  commit-ish the stamped release commit goes on top of
+#                       (default: HEAD) — the tag points at the stamp, whose
+#                       parent is this ref
 info "checking git state"
 [ -z "$(git status --porcelain)" ] || die "working tree is dirty — commit or stash first"
 git fetch origin main --tags --quiet
@@ -124,7 +127,7 @@ if [ "$head_sha" != "$main_sha" ]; then
   info "ALLOW_NONMAIN=1 — releasing from $(git rev-parse --short HEAD) (not origin/main)"
 fi
 target_sha="$(git rev-parse "${RELEASE_TARGET:-HEAD}")"
-ok "checkout clean; tagging at $(git rev-parse --short "$target_sha")"
+ok "checkout clean; releasing on top of $(git rev-parse --short "$target_sha")"
 
 # ── Compute next version from the newest v-tag ──────────────────────────────
 last="$(git tag -l 'v*' --sort=-v:refname | head -n1 || true)"
@@ -141,6 +144,36 @@ gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 && die "release ${TAG} alr
 bold ""
 bold "Releasing ${TAG}  (${BUMP} bump from ${last:-<none>})"
 bold ""
+
+# ── Create the release commit the tag will point at (#786 / #822) ───────────
+# Mirrors auto-tag.yml: the tag must point at a tree that carries its own
+# version, or every from-tag SOURCE build — install.sh's cargo fallback
+# (`cargo install --git … --tag`), packaging/homebrew/stella.rb, a distro
+# packager — produces a binary whose --version reports the PREVIOUS release
+# (only the prebuilt tarballs below get the stamp). The stamp is one commit on
+# top of target_sha, cut in a throwaway worktree so this checkout is never
+# touched, and reachable only through the tag — exactly like auto-tag's, it is
+# never pushed to a branch. Created before the long builds so a stamp failure
+# costs seconds, not an hour of LTO; tagged + pushed only after they succeed.
+info "creating the stamped release commit (scripts/sync-versions.sh)"
+relwt="$(mktemp -d)/release-commit"
+cleanup_relwt() { git worktree remove --force "$relwt" >/dev/null 2>&1 || true; }
+trap 'cleanup_relwt' EXIT
+git worktree add --quiet --detach "$relwt" "$target_sha"
+(
+  cd "$relwt"
+  NEW_VERSION="$VERSION" ./scripts/sync-versions.sh
+  git add Cargo.toml Cargo.lock packaging/homebrew/stella.rb
+  # An `if`, not `[ -f … ] && git add …`: under `set -e` a false test in a
+  # bare `&&` chain aborts the whole release (same hazard auto-tag.yml notes).
+  if [ -f CHANGELOG.md ]; then git add CHANGELOG.md; fi
+  git commit --quiet --no-verify -m "${BIN} ${VERSION}"
+)
+# The commit lives in the shared object store, so it survives the worktree.
+release_sha="$(git -C "$relwt" rev-parse HEAD)"
+cleanup_relwt
+trap - EXIT
+ok "release commit $(git rev-parse --short "$release_sha") stamps ${VERSION} on top of $(git rev-parse --short "$target_sha")"
 
 # ── Stamp the workspace version, guaranteed reverted on exit ────────────────
 # The one `^version = ` line is [workspace.package].version. (The CI workflow's
@@ -186,7 +219,7 @@ restore_manifest; trap - EXIT   # manifest back to pristine now that builds are 
 ok "built + packaged 4 targets"
 
 # ── Checksums + version sanity check on the native binary ───────────────────
-( cd "$DIST" && shasum -a 256 ${BIN}-${VERSION}-*.tar.gz > SHA256SUMS )
+( cd "$DIST" && shasum -a 256 "${BIN}"-"${VERSION}"-*.tar.gz > SHA256SUMS )
 native="${TARGET_ROOT}/$(rustc -vV | sed -n 's/host: //p')/release/${BIN}"
 if [ -x "$native" ]; then
   "$native" --version 2>/dev/null | grep -q "${VERSION}" || die "built binary reports the wrong version (expected ${VERSION}) — aborting before publish"
@@ -202,11 +235,29 @@ notes="$(mktemp)"
   [ -n "$last" ] && printf '\n**Full changelog**: https://github.com/%s/compare/%s...%s\n' "$REPO" "$last" "$TAG"
 } > "$notes"
 
-# ── Publish the GitHub Release (all assets in ONE call → immutable-safe) ─────
+# ── Tag the stamped release commit, then publish the GitHub Release ─────────
+# The tag is pushed BEFORE `gh release create`, which then attaches to it via
+# `--verify-tag`. The old `--target "$target_sha"` form minted the tag at a
+# tree still carrying the previous version stamp (#822) — the stamped commit
+# created above is what the tag must point at.
+#
+# `--no-verify` on the push: the pre-push hook runs the full local gate, but
+# everything reachable from this tag is either already on origin (target_sha
+# arrived through that same gate) or the mechanical stamp commit — the same
+# trust model as auto-tag.yml, which tags CI-validated commits without
+# re-gating. Note a tag pushed with user credentials (unlike auto-tag's
+# GITHUB_TOKEN push) does trigger release.yml's `on: push: tags` — harmless
+# here, since this path exists for when Actions cannot run.
+info "pushing tag ${TAG} (stamped release commit)"
+git tag -a "$TAG" "$release_sha" -m "${BIN} ${VERSION}"
+git push --no-verify origin "refs/tags/${TAG}" \
+  || { git tag -d "$TAG" >/dev/null 2>&1; die "tag push failed — nothing published (local tag removed)"; }
+
+# All assets in ONE call → immutable-safe.
 info "creating GitHub Release ${TAG}"
-gh release create "$TAG" --repo "$REPO" --target "$target_sha" \
+gh release create "$TAG" --repo "$REPO" --verify-tag \
   --title "$TAG" --notes-file "$notes" \
-  "$DIST"/${BIN}-${VERSION}-*.tar.gz "$DIST/SHA256SUMS"
+  "$DIST"/"${BIN}"-"${VERSION}"-*.tar.gz "$DIST/SHA256SUMS"
 ok "release: https://github.com/${REPO}/releases/tag/${TAG}"
 
 # ── Render + push the Homebrew formula ──────────────────────────────────────
@@ -249,3 +300,8 @@ bold ""
 ok "Released ${TAG}"
 printf '   install:  brew install %s/%s\n' "$TAP" "$BIN"
 printf '   upgrade:  brew upgrade %s\n' "$BIN"
+printf '   note:     main still carries the previous version stamp. auto-tag.yml\n'
+printf '             normally writes it back via the bot/version-sync PR; while\n'
+printf '             Actions is down, sync manually when convenient:\n'
+printf '               git checkout -b version-sync && NEW_VERSION=%s scripts/sync-versions.sh\n' "$VERSION"
+printf '               then commit with "[skip release]" in the title and open a PR.\n'

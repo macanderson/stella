@@ -569,7 +569,7 @@ impl RepoStatusPort for SnapshotRepoStatus {
     }
 
     async fn artifact_identity(&self, path: &str) -> Option<stella_pipeline::ArtifactIdentity> {
-        fs_artifact_identity(&self.ws_root.join(path))
+        fs_artifact_identity(&self.ws_root, path)
     }
 }
 
