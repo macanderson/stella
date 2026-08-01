@@ -7,8 +7,10 @@
 //! default; `stella-light` is the same blue on paper. Both were described here
 //! — and to users, through [`blurb`] — in the vocabulary of two retired
 //! identities: a terminal-green dark theme and an ember red-orange light one,
-//! neither of which any surface has rendered for two recolours. See
-//! `docs/brand/BRAND.md`. The switch itself is a per-frame buffer remap in
+//! neither of which any surface has rendered for two recolours. The palette's
+//! own spec (BRAND.md) has since been retired in favour of the brand kit at
+//! `docs/brand/README.md`; the terminal has not yet been repainted to it.
+//! The switch itself is a per-frame buffer remap in
 //! [`stella_tui::theme`], so it takes effect on the next frame with nothing to
 //! re-lay-out — this module only flips the global and writes `ui.theme`.
 

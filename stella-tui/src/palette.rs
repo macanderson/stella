@@ -1,5 +1,7 @@
-//! Raw palette values -- the single normative colour source for the terminal,
-//! cut from `docs/brand/BRAND.md`. Nothing here is semantic: for role names
+//! Raw palette values -- the single normative colour source for the terminal.
+//! Cut from the since-retired BRAND.md; the brand kit now lives at
+//! `docs/brand/README.md`, and the terminal has not yet been repainted to it.
+//! Nothing here is semantic: for role names
 //! (accent, ink, rule, status) see [`crate::theme`], which is the only module
 //! that should reference these directly.
 //!
@@ -199,7 +201,8 @@ pub const DATA_4: Color = Color::Rgb(0x2F, 0xD3, 0xC6);
 ///
 /// Lets a test walk the whole palette -- see theme.rs's
 /// `every_dark_palette_value_has_a_fallback` -- without a hand-maintained
-/// second list. Names match the token column of `docs/brand/BRAND.md`.
+/// second list. Names match the token column of the retired BRAND.md (the
+/// current kit lives at `docs/brand/README.md`).
 pub const ALL: [(&str, Color); 35] = [
     ("void", VOID),
     ("ground", GROUND),
