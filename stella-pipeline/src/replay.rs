@@ -43,6 +43,145 @@ pub mod reference_adapter;
 
 use stella_protocol::{AgentEvent, JudgeEvidence, OracleObservation, ProofTree, StageKind};
 
+/// Judge-calibration tallies folded from recorded event streams (#871).
+///
+/// The event store already persists every verdict (with its ladder snapshot,
+/// #865) and every PR/CI observation — so calibration is a *reading* of what
+/// exists, not a new write path. A `JudgeVerdict` with `deterministic: false,
+/// passed: true` is a model judge's PASS; the next **terminal** CI verdict in
+/// the same stream (`Pr { ci: Some(Passing | Failing) }`) reconciles every
+/// unreconciled pass before it. Deterministic passes are tallied identically,
+/// because a false-positive *rate* means nothing without the cohort it should
+/// be compared against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CalibrationReport {
+    /// Model-judge PASS verdicts observed.
+    pub judge_passes: u32,
+    /// …of which a later terminal CI verdict reconciled.
+    pub judge_reconciled: u32,
+    /// …reconciled as CI-FAILING: the judge approved work CI rejected.
+    pub judge_false_positives: u32,
+    /// Deterministic (ladder) passes observed — the comparison cohort.
+    pub deterministic_passes: u32,
+    pub deterministic_reconciled: u32,
+    pub deterministic_false_positives: u32,
+}
+
+impl CalibrationReport {
+    /// Combine per-session reports into a workspace total.
+    pub fn merge(mut self, other: Self) -> Self {
+        self.judge_passes += other.judge_passes;
+        self.judge_reconciled += other.judge_reconciled;
+        self.judge_false_positives += other.judge_false_positives;
+        self.deterministic_passes += other.deterministic_passes;
+        self.deterministic_reconciled += other.deterministic_reconciled;
+        self.deterministic_false_positives += other.deterministic_false_positives;
+        self
+    }
+
+    /// The measured false-positive rate over RECONCILED judge passes, or
+    /// `None` when nothing was reconciled — an unmeasured rate is reported
+    /// as unmeasured, never as zero.
+    pub fn judge_false_positive_rate(&self) -> Option<f64> {
+        (self.judge_reconciled > 0)
+            .then(|| f64::from(self.judge_false_positives) / f64::from(self.judge_reconciled))
+    }
+
+    /// Same rate for the deterministic cohort.
+    pub fn deterministic_false_positive_rate(&self) -> Option<f64> {
+        (self.deterministic_reconciled > 0).then(|| {
+            f64::from(self.deterministic_false_positives) / f64::from(self.deterministic_reconciled)
+        })
+    }
+}
+
+/// Render a [`CalibrationReport`] for a human — the `stella calibration`
+/// body. States unmeasured rates as unmeasured and names the cohort sizes,
+/// so a rate is never read without its denominator.
+pub fn render_calibration(report: &CalibrationReport) -> String {
+    fn cohort(label: &str, passes: u32, reconciled: u32, false_positives: u32) -> String {
+        let rate = if reconciled > 0 {
+            format!(
+                "{:.0}% false-positive rate",
+                100.0 * f64::from(false_positives) / f64::from(reconciled)
+            )
+        } else {
+            "rate unmeasured (no CI ground truth recorded yet)".to_string()
+        };
+        format!(
+            "{label}: {passes} pass(es), {reconciled} reconciled against CI, \
+             {false_positives} CI-failed — {rate}"
+        )
+    }
+    format!(
+        "judge calibration (#871) — passes reconciled against later CI verdicts\n\
+         {}\n{}\n\
+         note: reconciliation is stream-local; passes after a session's last\n\
+         terminal CI verdict stay unreconciled, and reverts are not yet a\n\
+         ground-truth source.",
+        cohort(
+            "  model judge  ",
+            report.judge_passes,
+            report.judge_reconciled,
+            report.judge_false_positives
+        ),
+        cohort(
+            "  deterministic",
+            report.deterministic_passes,
+            report.deterministic_reconciled,
+            report.deterministic_false_positives
+        ),
+    )
+}
+
+/// Fold one event stream into a [`CalibrationReport`] (#871).
+///
+/// Reconciliation is stream-local and forward-only: a terminal CI verdict
+/// covers the passes that PRECEDED it (the PR carries the session's adopted
+/// work), and passes after the last terminal CI observation stay
+/// unreconciled. `Pending`/`Running` reconcile nothing — absence of a
+/// verdict is not a verdict.
+pub fn calibration(events: &[AgentEvent]) -> CalibrationReport {
+    use stella_protocol::CiStatus;
+    let mut report = CalibrationReport::default();
+    // (judge?, still unreconciled) verdicts awaiting a terminal CI result.
+    let mut pending: Vec<bool> = Vec::new();
+    for event in events {
+        match event {
+            AgentEvent::JudgeVerdict {
+                passed: true,
+                evidence,
+            } => {
+                if evidence.deterministic {
+                    report.deterministic_passes += 1;
+                    pending.push(false);
+                } else {
+                    report.judge_passes += 1;
+                    pending.push(true);
+                }
+            }
+            AgentEvent::Pr { ci: Some(ci), .. } => {
+                let failing = match ci {
+                    CiStatus::Passing => false,
+                    CiStatus::Failing => true,
+                    CiStatus::Pending | CiStatus::Running => continue,
+                };
+                for is_judge in pending.drain(..) {
+                    if is_judge {
+                        report.judge_reconciled += 1;
+                        report.judge_false_positives += u32::from(failing);
+                    } else {
+                        report.deterministic_reconciled += 1;
+                        report.deterministic_false_positives += u32::from(failing);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    report
+}
+
 /// Render an oracle trace compactly — `baseline:fail → candidate:pass` —
 /// the canonical rendering shared by the judge prompt (#864) and verdict
 /// provenance (#865). A trailing candidate entry after a flip is the
@@ -890,5 +1029,93 @@ mod tests {
         );
         let parsed = parse_jsonl(&jsonl).unwrap();
         assert_eq!(parsed.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod calibration_tests {
+    use super::*;
+    use stella_protocol::{CiStatus, JudgeEvidence, PrStatus};
+
+    fn verdict(passed: bool, deterministic: bool) -> AgentEvent {
+        AgentEvent::JudgeVerdict {
+            passed,
+            evidence: JudgeEvidence {
+                summary: String::new(),
+                deterministic,
+                evidence_refs: vec![],
+                ladder: None,
+            },
+        }
+    }
+
+    fn ci(status: CiStatus) -> AgentEvent {
+        AgentEvent::Pr {
+            url: "https://example.test/pr/1".into(),
+            status: PrStatus::Open,
+            number: Some(1),
+            ci: Some(status),
+        }
+    }
+
+    /// The #871 acceptance: a JudgePass that later fails CI is recorded as a
+    /// false positive; the deterministic cohort reconciles beside it.
+    #[test]
+    fn a_judge_pass_that_fails_ci_is_a_false_positive() {
+        let events = vec![
+            verdict(true, false), // judge PASS
+            verdict(true, true),  // deterministic pass
+            ci(CiStatus::Failing),
+        ];
+        let report = calibration(&events);
+        assert_eq!(report.judge_passes, 1);
+        assert_eq!(report.judge_reconciled, 1);
+        assert_eq!(report.judge_false_positives, 1);
+        assert_eq!(report.judge_false_positive_rate(), Some(1.0));
+        assert_eq!(report.deterministic_false_positives, 1);
+    }
+
+    /// Pending/Running reconcile nothing, and passes after the last terminal
+    /// CI verdict stay unreconciled — an unmeasured rate reads None.
+    #[test]
+    fn non_terminal_ci_and_trailing_passes_stay_unreconciled() {
+        let events = vec![
+            verdict(true, false),
+            ci(CiStatus::Running),
+            ci(CiStatus::Passing),
+            verdict(true, false), // after the last terminal verdict
+        ];
+        let report = calibration(&events);
+        assert_eq!(report.judge_passes, 2);
+        assert_eq!(report.judge_reconciled, 1);
+        assert_eq!(report.judge_false_positives, 0);
+        assert_eq!(report.judge_false_positive_rate(), Some(0.0));
+
+        let unmeasured = calibration(&[verdict(true, false)]);
+        assert_eq!(unmeasured.judge_false_positive_rate(), None);
+    }
+
+    /// Failed verdicts and revise-loop reds never enter the tallies — the
+    /// question is the false-POSITIVE rate of passes.
+    #[test]
+    fn failed_verdicts_are_not_tallied() {
+        let events = vec![
+            verdict(false, true),
+            verdict(false, false),
+            ci(CiStatus::Passing),
+        ];
+        let report = calibration(&events);
+        assert_eq!(report.judge_passes, 0);
+        assert_eq!(report.deterministic_passes, 0);
+    }
+
+    #[test]
+    fn merge_adds_componentwise() {
+        let a = calibration(&[verdict(true, false), ci(CiStatus::Failing)]);
+        let b = calibration(&[verdict(true, false), ci(CiStatus::Passing)]);
+        let merged = a.merge(b);
+        assert_eq!(merged.judge_passes, 2);
+        assert_eq!(merged.judge_reconciled, 2);
+        assert_eq!(merged.judge_false_positives, 1);
     }
 }

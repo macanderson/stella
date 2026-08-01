@@ -45,7 +45,15 @@ const GROUPS: &[(&str, &[&str])] = &[
     ),
     (
         "What it cost, what happened",
-        &["stats", "scoreboard", "observe", "inspect", "usage", "tune"],
+        &[
+            "stats",
+            "scoreboard",
+            "observe",
+            "inspect",
+            "calibration",
+            "usage",
+            "tune",
+        ],
     ),
     (
         "Set up",
