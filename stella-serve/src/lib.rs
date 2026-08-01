@@ -70,11 +70,11 @@ mod session;
 mod sessions;
 
 pub use error::ServeError;
-pub use hostguard::HostMode;
 pub use frame::{
     ProviderErrorWire, ProviderOutcomeIn, ProviderResultIn, ServerFrame, ToolResultIn,
     TurnOutcomeWire,
 };
+pub use hostguard::HostMode;
 pub use observe::{Metrics, Observer, ServeEvent, SharedObserver};
 pub use pending::Pending;
 pub use server::{

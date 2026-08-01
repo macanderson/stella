@@ -481,10 +481,10 @@ pub enum ServeEvent {
     /// rebinding attempt, and their own missing allow-list entry — are one
     /// grep rather than a scan of every 403.
     ///
-    /// `host` is attacker-controlled, so it is truncated by
-    /// [`HOST_LOG_LIMIT`]: it is worth recording because it is exactly what
-    /// tells a misconfiguration apart from an attack, and worth bounding
-    /// because a 64 KiB header would otherwise become a log-flooding lever.
+    /// `host` is attacker-controlled, so `host_for_record` truncates it: it is
+    /// worth recording because it is exactly what tells a misconfiguration
+    /// apart from an attack, and worth bounding because a 64 KiB header would
+    /// otherwise become a log-flooding lever.
     HostRejected {
         request_id: RequestId,
         route: Route,

@@ -684,7 +684,11 @@ async fn a_tool_only_turn_announces_neither_empty_text_nor_tool_calls() {
         .await
         .expect("completion should succeed");
 
-    assert_eq!(result.tool_calls.len(), 1, "the call still reaches dispatch");
+    assert_eq!(
+        result.tool_calls.len(),
+        1,
+        "the call still reaches dispatch"
+    );
     assert!(
         observer.deltas.lock().unwrap().is_empty(),
         "empty answer text must not be announced as a delta"

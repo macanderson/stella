@@ -1254,7 +1254,9 @@ mod tests {
             sessions: crate::sessions::SessionRegistry::new(),
             session_idle_ttl: DEFAULT_SESSION_IDLE_TTL,
             host_policy: crate::hostguard::HostPolicy::new(
-                "127.0.0.1:8080".parse().expect("a literal loopback address"),
+                "127.0.0.1:8080"
+                    .parse()
+                    .expect("a literal loopback address"),
                 &[],
             ),
         };

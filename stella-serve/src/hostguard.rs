@@ -57,7 +57,7 @@ use std::net::{IpAddr, SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
-/// What a [`HostPolicy`] is enforcing, reported at startup so an operator can
+/// What the `Host` guard is enforcing, reported at startup so an operator can
 /// see which arm their configuration landed in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -169,10 +169,7 @@ fn normalize(host: &str) -> String {
         // fail to parse as an address — which refuses it, the safe direction.
         host.rsplit_once(':').map_or(host, |(name, _)| name)
     };
-    hostname
-        .trim_end_matches('.')
-        .trim()
-        .to_ascii_lowercase()
+    hostname.trim_end_matches('.').trim().to_ascii_lowercase()
 }
 
 #[cfg(test)]

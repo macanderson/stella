@@ -1225,6 +1225,5 @@ pub(crate) mod sigv4 {
     }
 }
 
-
 #[cfg(test)]
 mod tests;
