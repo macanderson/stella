@@ -35,6 +35,8 @@ skip the roll) were re-inserted the same way.
 
 ## [Unreleased]
 
+## [0.6.57] — 2026-08-01
+
 ### Added
 
 - **`/profile fast|balanced|pro|ultra` retunes every engine role from one
