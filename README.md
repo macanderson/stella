@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source srcset="docs/brand/logos/svg/lockup-color-light.svg">
-    <img src="docs/brand/logos/svg/stella-lockup-adaptive.svg" alt="Stella" width="300">
+    <img src="docs/brand/logos/svg/lockup-color-light.svg" alt="Stella" width="300">
   </picture>
 </p>
 
