@@ -910,10 +910,12 @@ fn index_and_mark_are_embedded() {
     let ws = TempDir::new().unwrap();
     let index = respond(ws.path(), "/");
     assert_eq!(index.content_type, "text/html; charset=utf-8");
+    // Lowercase deliberately: the comet brand kit writes "stella — observatory"
+    // (docs/brand/BRAND.md — lowercase always), and this pins the masthead to it.
     assert!(
         String::from_utf8(index.body)
             .unwrap()
-            .contains("Observatory")
+            .contains("stella — observatory")
     );
     let mark = respond(ws.path(), "/assets/mark.svg");
     assert_eq!(mark.content_type, "image/svg+xml");
