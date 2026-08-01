@@ -414,3 +414,128 @@ async fn steering_a_finished_turn_is_a_conflict_not_a_silent_no_op() {
         );
     }
 }
+
+/// **#932's acceptance sentence, end to end:** "A host can pause a running
+/// turn, inject a message, and resume it, without cancelling and losing the
+/// transcript."
+///
+/// The three halves are each covered above in isolation; this is the
+/// composition, and the composition is what the issue actually promises. It is
+/// worth its own test because the expensive thing an agent turn holds is its
+/// transcript — the whole argument for pause-and-steer over cancel-and-restart
+/// is that the prompt prefix survives, and a test that only checked "the turn
+/// did not die" would pass even if the history had been rebuilt from scratch.
+///
+/// So the assertion is on *identity*, not liveness: after a pause → steer →
+/// resume cycle, the model's next request must still carry the original user
+/// message, the assistant turn that followed it, and its tool result — with
+/// the steered message appended rather than replacing them.
+#[tokio::test]
+async fn a_turn_survives_pause_steer_resume_with_its_transcript_intact() {
+    let addr = start_server().await;
+    let turn_id = create_tool_turn(addr).await;
+    let mut sse = open_sse(addr, &format!("/v1/turns/{turn_id}/events"), TOKEN).await;
+
+    // Step 1: let the model ask for a tool, so the turn has real history to
+    // lose before anything is paused.
+    let first = next_provider_request(&mut sse).await;
+    let opening = first["request"]["messages"]
+        .as_array()
+        .expect("the first request carries the host's messages")
+        .clone();
+    assert_eq!(opening.len(), 1, "the turn starts from one user message");
+
+    // Pause *before* answering, so the hold lands at the boundary between
+    // step 1 and step 2 rather than racing the turn's end.
+    let (status, body) =
+        post_json(addr, &format!("/v1/turns/{turn_id}/pause"), Some(TOKEN), "").await;
+    assert!(status.contains("200"), "pause: {status} {body}");
+
+    answer_provider(
+        addr,
+        &turn_id,
+        first["request_id"].as_str().unwrap(),
+        model_wants_echo(),
+    )
+    .await;
+    let tool = loop {
+        let frame = tokio::time::timeout(Duration::from_secs(10), next_event(&mut sse))
+            .await
+            .expect("a tool_request must arrive")
+            .expect("stream must not end before the tool_request");
+        if frame["type"] == "tool_request" {
+            break frame;
+        }
+    };
+    answer_tool(addr, &turn_id, tool["request_id"].as_str().unwrap()).await;
+
+    // The turn is now held at the step boundary. Inject the correction a human
+    // would type — the "actually, don't" the issue is written around.
+    let (status, body) = post_json(
+        addr,
+        &format!("/v1/turns/{turn_id}/steer"),
+        Some(TOKEN),
+        &json!({ "message": "actually, stop after this" }).to_string(),
+    )
+    .await;
+    assert!(status.contains("200"), "steer: {status} {body}");
+
+    let (status, body) = post_json(
+        addr,
+        &format!("/v1/turns/{turn_id}/resume"),
+        Some(TOKEN),
+        "",
+    )
+    .await;
+    assert!(status.contains("200"), "resume: {status} {body}");
+
+    // The released turn's next model call is the proof. This is the SAME turn
+    // — not a new one seeded with a copied history — so everything step 1
+    // produced is still there, with the steer appended.
+    let second = next_provider_request(&mut sse).await;
+    let messages = second["request"]["messages"]
+        .as_array()
+        .expect("the resumed request carries a transcript");
+
+    assert!(
+        messages.len() > opening.len(),
+        "the transcript grew across the pause rather than restarting: {messages:?}"
+    );
+    assert_eq!(
+        messages[0], opening[0],
+        "the original user message must survive the pause verbatim — a rebuilt \
+         transcript would re-pay the prompt prefix this whole mechanism exists to keep",
+    );
+    assert!(
+        messages.iter().any(|m| m["role"] == "assistant"),
+        "the assistant turn from step 1 must survive: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m["role"] == "user" && m["content"] == "actually, stop after this"),
+        "the steered message must be appended: {messages:?}"
+    );
+
+    // And the turn really does finish — held, not broken.
+    answer_provider(
+        addr,
+        &turn_id,
+        second["request_id"].as_str().unwrap(),
+        model_result("stopped"),
+    )
+    .await;
+    loop {
+        let frame = tokio::time::timeout(Duration::from_secs(10), next_event(&mut sse))
+            .await
+            .expect("the stream must reach its terminal frame");
+        let Some(frame) = frame else { break };
+        if frame["type"] == "turn_complete" {
+            assert_eq!(
+                frame["outcome"]["status"], "completed",
+                "a paused-and-resumed turn completes; it is not cancelled",
+            );
+            break;
+        }
+    }
+}

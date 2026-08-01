@@ -167,6 +167,25 @@ the engine is structured as a headless library, not a terminal program:
    error `ScopeReviewRequiredHeadless` — **never a silent auto-approve**.
    `AutoApproveGate` / `AlwaysAbortGate` are the headless approval ports.
 
+   **Correction (#932 approval half).** This paragraph is the premise behind
+   "surface `ScopeReviewRequiredHeadless` to the host as a decision", and the
+   premise does not hold for `stella-serve` as built: **a served turn never
+   reaches a scope review at all.** `ApprovalGate::review` has exactly one
+   call site — `stella-pipeline/src/pipeline/scope_stage.rs` — and
+   `stella-serve` does not depend on `stella-pipeline`. It drives the
+   *engine* (`stella_engine::run_step`), which has no plan or scope stage.
+   Only `stella-cli` and `stella-runtime` link the pipeline.
+
+   So `POST /v1/turns/{id}/approve` is not merely unbuilt, it is currently
+   **unreachable**: a route no turn could trigger, and a row in the table
+   above that a client could code against and never exercise. Building it
+   is blocked on a prior decision — whether `stella-serve` grows a
+   pipeline-driving surface (`POST /v1/runs`, distinct from `/v1/turns`)
+   or whether the approval boundary moves down into the engine. That is a
+   design question, not an increment, which is why the steering and
+   pause/resume halves of #932 shipped on their own (#1056) and this one
+   did not.
+
 4. **Multi-workspace in one process already works.** `stella-fleet` runs N
    workers concurrently in one process, each with `cfg.workspace_root` overridden
    per task; nothing below `Config::load` reads `current_dir()`. The three
