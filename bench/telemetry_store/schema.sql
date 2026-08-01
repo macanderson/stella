@@ -68,8 +68,20 @@ CREATE TABLE IF NOT EXISTS trials (
     -- reconcilable against that arm's own invoice.
     cost_usd_self     REAL,
     -- Recomputed from token counts and one price table applied to both arms.
-    -- This is the comparable one.
+    -- This is the comparable one. Populated AT INGEST, not deferred: the
+    -- ingester holds every input the computation needs (token counts, the
+    -- model the trial ran, the day it ran on), and when this column was
+    -- inserted as a placeholder NULL "for the analysis step" nothing ever
+    -- filled it -- so a reader who summed it got 0.00 and published that as
+    -- the normalized cost.
     cost_usd_norm     REAL,
+    -- Why cost_usd_norm is or is not populated, so an absent figure can never
+    -- be mistaken for a computed zero. One of: 'priced' (the ONLY state in
+    -- which cost_usd_norm means anything -- and in it, a genuine $0.00 is a
+    -- real measurement), 'no_model', 'unpriced_model', 'no_tokens',
+    -- 'no_run_date', or 'unmigrated' for rows written before this column
+    -- existed. Any query that aggregates cost_usd_norm must filter on this.
+    cost_norm_status  TEXT NOT NULL DEFAULT 'unmigrated',
     wall_seconds      REAL,
     started_at        TEXT,
     finished_at       TEXT
