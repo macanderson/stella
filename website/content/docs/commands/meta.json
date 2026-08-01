@@ -1,7 +1,6 @@
 {
   "title": "Commands",
   "pages": [
-    "index",
     "---Run the agent---",
     "run",
     "chat",

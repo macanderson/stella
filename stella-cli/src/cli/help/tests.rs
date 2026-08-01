@@ -298,6 +298,14 @@ fn site_commands_file(file: &str) -> (std::path::PathBuf, String) {
 /// in help order. Strict equality on the whole `pages` array means a
 /// regrouped GROUPS, a new command, or a hand-reordered sidebar all land
 /// here instead of shipping as silent drift.
+///
+/// `index` is deliberately absent from `pages`. Fumadocs attaches a folder's
+/// `index.mdx` as the folder's own link — the section header navigates to it —
+/// but only while the file is *not* also listed as a child; listing it moves
+/// the page into `children` and the header degrades to a plain toggle, so the
+/// section renders as two rows pointing at one URL. `index.mdx` must still
+/// exist, which `the_docs_index_summaries_are_the_clis_own` covers by reading
+/// the file directly.
 #[test]
 fn the_docs_nav_mirrors_these_groups() {
     let (path, raw) = site_commands_file("meta.json");
@@ -310,7 +318,7 @@ fn the_docs_nav_mirrors_these_groups() {
         .filter_map(|page| page.as_str().map(str::to_owned))
         .collect();
 
-    let mut expected = vec!["index".to_owned()];
+    let mut expected: Vec<String> = Vec::new();
     for (heading, names) in GROUPS {
         expected.push(format!("---{heading}---"));
         expected.extend(names.iter().map(|name| (*name).to_owned()));
@@ -319,9 +327,10 @@ fn the_docs_nav_mirrors_these_groups() {
     assert_eq!(
         actual,
         expected,
-        "{} does not mirror cli/help.rs GROUPS — the sidebar must list \
-         `index`, then each group as a `---Heading---` separator followed by \
-         that group's commands, all in help order",
+        "{} does not mirror cli/help.rs GROUPS — the sidebar must list each \
+         group as a `---Heading---` separator followed by that group's \
+         commands, all in help order, and must not list `index` (see this \
+         test's doc comment)",
         path.display()
     );
 }
