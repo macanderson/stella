@@ -25,8 +25,14 @@ import {
 /** viewBox of the kit's typing lockup (`spin adap` variant). */
 const VIEW_BOX = "0 0 352 96";
 
-/** One path per letter: s, t, e, l, l, a. */
-const LETTERS = WORDMARK_LETTERS_PATH.split(/(?=M)/).filter(Boolean);
+/**
+ * One path per letter: s, t, e, l, l, a. Split on whitespace before `M` —
+ * letter boundaries in the path string are `"Z M"`, while the counter
+ * subpaths inside `e` and `a` are `"ZM"` with no gap and must stay in their
+ * letter's path (a counter separated into its own path stops punching its
+ * hole, and the extra pieces would fall outside the six animation slots).
+ */
+const LETTERS = WORDMARK_LETTERS_PATH.split(/\s+(?=M)/).filter(Boolean);
 
 export function AnimatedLockup({ className }: { className?: string }) {
   return (
