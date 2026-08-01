@@ -35,7 +35,15 @@ skip the roll) were re-inserted the same way.
 
 ## [Unreleased]
 
-### Added
+## [0.6.51] — 2026-08-01
+
+## [0.6.50] — 2026-08-01
+
+## [0.6.49] — 2026-08-01
+
+## [0.6.48] — 2026-08-01
+
+## [0.6.47] — 2026-08-01
 
 - **`/profile fast|balanced|pro|ultra` retunes every engine role from one
   word.** The deck now has a posture command that picks a model *and* a
