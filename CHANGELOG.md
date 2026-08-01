@@ -37,9 +37,32 @@ skip the roll) were re-inserted the same way.
 
 ## [0.6.44] — 2026-08-01
 
+### Fixed
+
+- **A renamed witness test file now counts as tampering.** Witness artifact
+  identity used to be computed from whatever path the lookup happened to
+  reach, so a witness test renamed after sealing — but still reachable
+  through an aliased lookup — fingerprinted as the same file and kept its
+  verified standing. Identity now records the canonical location the artifact
+  was actually observed at inside the workspace, and the pinned-path equality
+  rejects a moved file as tampering. (#1077)
+
 ## [0.6.43] — 2026-08-01
 
-## [0.6.42] — 2026-08-01
+### Changed
+
+- **Changelog entries are now drafted from the released diff.** A release
+  arriving with `[Unreleased]` empty gets its section written by
+  `scripts/changelog-ai.sh` from the diff it ships (same AI Gateway key and
+  model as the GitHub-release notes; degrade-open, hand-written entries
+  always win), and the 86 empty or missing version sections from 0.5.28
+  through 0.6.42 were reconstructed the same way. (#1076)
+- **`stella observe` wears brand kit v1.0 ("the comet").** The Observatory
+  dashboard moves to Phosphor Gold on Ink with JetBrains Mono, matching the
+  docs site's rebrand. (#1078)
+- **The docs site's front page centers on installing.** White sidebar, a
+  hero focused on the install command, and install paths that are actually
+  counted — the letter counters stay inside their glyphs. (#1074, #1075)
 
 ### Fixed
 
@@ -49,7 +72,7 @@ skip the roll) were re-inserted the same way.
   and any other from-tag source build produced a binary whose `--version`
   reported the *previous* release — only the prebuilt tarballs were stamped
   right. The script now cuts a release commit with `scripts/sync-versions.sh`
-  and tags that, exactly like `auto-tag.yml` (#822).
+  and tags that, exactly like `auto-tag.yml` (#822, #1072).
 
 ## [0.6.42] — 2026-08-01
 
