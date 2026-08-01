@@ -53,7 +53,7 @@ PROMPT_END
 # measures the cap instead of the effort — which is how the first version of
 # this check "passed" while proving nothing. MAX_TOKENS is asserted against
 # below, not just chosen generously.
-MAX_TOKENS=32000
+MAX_TOKENS=64000
 
 probe() { # $1=key  $2=effort  -> output_tokens | ERROR:...
   python3 - "$1" "$2" "$MODEL" "$PROMPT" "$MAX_TOKENS" <<'PY'
@@ -99,9 +99,13 @@ for arm in stella claude; do
     stella) key="$STELLA_ANTHROPIC_API_KEY" ;;
     claude) key="$CLAUDE_CODE_ANTHROPIC_API_KEY" ;;
   esac
-  lo=$(probe "$key" low)
-  hi=$(probe "$key" "$TIER")
-  echo "  $arm: low=$lo $TIER=$hi"
+  # Wall-clock is reported alongside tokens because an xhigh turn's duration is
+  # the direct input to the truncation risk: Harbor kills a trial at its agent
+  # timeout, and a tier that reasons for minutes per step is the most likely
+  # way this run degrades. Free to measure here, expensive to discover at 89x2.
+  t0=$(date +%s); lo=$(probe "$key" low);     t1=$(date +%s)
+  hi=$(probe "$key" "$TIER");                 t2=$(date +%s)
+  echo "  $arm: low=$lo ($((t1 - t0))s)  $TIER=$hi ($((t2 - t1))s)"
   case "$lo$hi" in
     *ERROR*) echo "FAIL: $arm effort probe errored"; FAIL=1; continue ;;
   esac
