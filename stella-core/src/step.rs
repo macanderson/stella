@@ -248,6 +248,19 @@ pub struct TurnState {
     /// spend; deliberately NOT checkpointed — a resumed turn starts the
     /// allowance over, which only re-permits a bounded amount of work.
     pub(crate) length_continuations: u32,
+    /// When this turn began, for deciding whether a length continuation is
+    /// affordable against `EngineConfig::turn_budget`.
+    ///
+    /// Deliberately NOT checkpointed, and set fresh by `from_checkpoint`: a
+    /// resumed turn is resumed by a caller with its own deadline, so carrying
+    /// the original start would make the budget read as long spent before any
+    /// work happened. Same reasoning as `length_continuations` starting over.
+    pub(crate) started_at: std::time::Instant,
+    /// How long the most recent model call took, as the estimate of what one
+    /// more continuation would cost. A continuation re-runs the work that just
+    /// truncated, so its predecessor's duration is the honest forecast — and
+    /// the only one available without predicting the model.
+    pub(crate) last_step: Option<std::time::Duration>,
     /// The host's stop signal, checked at the top of every step.
     pub(crate) cancel: CancelToken,
 }
@@ -273,6 +286,8 @@ impl TurnState {
             step: 0,
             memos: TurnMemos::new(config.turn_instance, config.lifecycle_enabled),
             length_continuations: 0,
+            started_at: std::time::Instant::now(),
+            last_step: None,
             cancel: CancelToken::new(),
         }
     }
@@ -292,6 +307,8 @@ impl TurnState {
             step: checkpoint.step,
             memos: TurnMemos::new(config.turn_instance, config.lifecycle_enabled),
             length_continuations: 0,
+            started_at: std::time::Instant::now(),
+            last_step: None,
             cancel: CancelToken::new(),
         }
     }
