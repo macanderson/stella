@@ -18,6 +18,8 @@ Each hook receives the event payload as **JSON on stdin**, so your command can r
 
 Stella fires hooks on three lifecycle events. Each behaves differently, and each has its own rules for matching and blocking.
 
+<HookLifecycleDiagram />
+
 <CardGrid size="md">
   <OptionCard name="SessionStart">
     Runs once before the turn. **Never blocks** — its stdout is used as context instead.

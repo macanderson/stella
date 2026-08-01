@@ -31,24 +31,7 @@ Stella's engine does not call your tools. It **asks you to call them**, then
 waits. Same for the model: it does not hold an API key and it does not make an
 HTTP request. It emits a request and parks until your app answers.
 
-```
-your app                          stella engine
-   |                                    |
-   |  POST /v1/turns  (prompt, tools)   |
-   |----------------------------------->|
-   |                                    |
-   |  <-- "run this model call"         |  it needs a completion
-   |  your gateway, your key, your log  |
-   |  POST /v1/turns/{id}/provider-result
-   |----------------------------------->|
-   |                                    |
-   |  <-- "run get_weather(Paris)"      |  the model asked for a tool
-   |  your sandbox, your RBAC           |
-   |  POST /v1/turns/{id}/tool-result   |
-   |----------------------------------->|
-   |                                    |
-   |  <-- turn_complete { text, cost }  |
-```
+<EngineSequenceDiagram />
 
 Two consequences matter for a real product:
 

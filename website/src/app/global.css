@@ -1223,6 +1223,31 @@ figure.shiki > div:has(figcaption) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ * Callouts — the accent edge is the card's own border.
+ *
+ * Fumadocs draws the coloured edge as a 2px flex child inside the padding box.
+ * That leaves it floating: inset from the left edge by `ps-1`, inset from top
+ * and bottom by `p-3`, and — because it is a separate rounded rect — running
+ * straight past a card corner that is curving. Three seams where there should
+ * be one edge.
+ *
+ * Making it `border-inline-start` instead fixes all three at once: a border is
+ * part of the box, so it sits flush and follows `rounded-xl` around both left
+ * corners for free, mitring into the 1px top and bottom borders along the arc.
+ * The spacer div is then redundant and is hidden.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+.stella-callout {
+  border-inline-start-width: 3px;
+  border-inline-start-color: var(--callout-color);
+  /* restore the symmetric p-3 the component gives up to `ps-1` */
+  padding-inline-start: 0.75rem;
+}
+.stella-callout > [role="none"] {
+  display: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
  * Diagrams — shared stylesheet for src/components/diagrams.tsx.
  *
  * Boxes and wires, one stroke weight, no animation, no fills except the
@@ -1263,6 +1288,36 @@ figure.shiki > div:has(figcaption) {
   stroke-width: 1;
   fill: none;
 }
+/* A wire that did not carry anything — a connect that failed, a lifeline that
+ * is waiting rather than flowing. Dashed means "this edge is not a delivery". */
+.sdg .sdg-wire-dashed {
+  stroke-dasharray: 3 4;
+}
 .sdg .sdg-dot {
   fill: var(--stella-accent-text);
+}
+/* A node in a structure the page is arguing *against*. Same mark, seam colour,
+ * so the gold stays on the thing the reader is meant to look at. */
+.sdg .sdg-dot-muted {
+  fill: var(--stella-rule);
+}
+/* The numeral inside a step circle. White in both themes, not the page ground:
+ * on paper the ground is warm cream, which reads as a muted smudge on the gold
+ * rather than as a legible number. */
+.sdg .sdg-dot-numeral {
+  fill: #ffffff;
+  font-weight: 600;
+}
+/* Line-art glyphs, drawn in a 20×20 local box and placed with a transform.
+ * Same weight as the boxes so an icon reads as part of the drawing rather
+ * than as an illustration dropped into it. */
+.sdg .sdg-icon {
+  fill: none;
+  stroke: var(--stella-rule);
+  stroke-width: 1.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.sdg .sdg-icon-accent {
+  stroke: var(--stella-accent-text);
 }

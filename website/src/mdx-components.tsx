@@ -1,21 +1,31 @@
+import { Callout as FumadocsCallout } from "fumadocs-ui/components/callout";
 import defaultMdxComponents from "fumadocs-ui/mdx";
 import type { MDXComponents } from "mdx/types";
+import type { ComponentProps } from "react";
 
 import { Badge, CardGrid, OptionCard, SpecCard, ToolCard } from "@/components/cards";
 import { DocsCodeBlock } from "@/components/docs-code-block";
 import {
+  BudgetGuardDiagram,
+  ClaimLockDiagram,
+  CostChainDiagram,
   CredentialChainDiagram,
   EngineGateDiagram,
   EngineOwnershipDiagram,
+  EngineSequenceDiagram,
   EngineTestHarnessDiagram,
+  EventContractDiagram,
   FleetFanoutDiagram,
   HeroFlowDiagram,
+  HookLifecycleDiagram,
   LoopVerdictDiagram,
+  McpTopologyDiagram,
   PermissionGateDiagram,
   PipelineFlowDiagram,
   QuickstartDiagram,
   RecallLoopDiagram,
   SettingsCascadeDiagram,
+  SingleThreadDiagram,
   TelemetryFlowDiagram,
 } from "@/components/diagrams";
 import { ProviderGrid } from "@/components/provider-cards";
@@ -36,6 +46,15 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     // Code blocks are terminals: always-ink, click-anywhere copy, floating
     // "copied!" chip — the home page's install-block handling, docs-wide.
     pre: (props) => <DocsCodeBlock {...props} />,
+    // Callouts carry their accent as the card's own left border rather than as
+    // an inset spacer div, so the coloured edge sits flush and follows the
+    // corner radius. The class is the hook; the rule lives in global.css.
+    Callout: ({ className, ...props }: ComponentProps<typeof FumadocsCallout>) => (
+      <FumadocsCallout
+        className={className ? `stella-callout ${className}` : "stella-callout"}
+        {...props}
+      />
+    ),
     // Diagrams
     HeroFlowDiagram,
     PipelineFlowDiagram,
@@ -49,7 +68,15 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     EngineOwnershipDiagram,
     EngineTestHarnessDiagram,
     EngineGateDiagram,
+    EngineSequenceDiagram,
     LoopVerdictDiagram,
+    McpTopologyDiagram,
+    HookLifecycleDiagram,
+    SingleThreadDiagram,
+    EventContractDiagram,
+    BudgetGuardDiagram,
+    CostChainDiagram,
+    ClaimLockDiagram,
     // Cards — the mobile-first replacement for reference tables
     CardGrid,
     SpecCard,
