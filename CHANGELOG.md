@@ -26,6 +26,8 @@ record of *changes*, curated by the person who made them.
 
 ## [Unreleased]
 
+## [0.6.42] — 2026-08-01
+
 ### Fixed
 
 - **A locally-cut release's tag now points at a tree stamped with its own
