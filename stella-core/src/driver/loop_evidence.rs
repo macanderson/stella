@@ -20,7 +20,7 @@ use stella_protocol::{CompletionMessage, MessageRole, ToolCall, ToolOutput};
 use crate::loop_detect::CallRecord;
 use crate::receipts::TranscriptRevision;
 
-use super::{LOOP_STEER_PREFIX, SUMMARY_MARKER_PREFIX};
+use super::{CONTINUATION_MARKER_PREFIX, LOOP_STEER_PREFIX, SUMMARY_MARKER_PREFIX};
 
 /// Pair the tool calls of the CURRENT turn — assistant messages after the
 /// last user message — with the outputs they produced, in chronological
@@ -29,10 +29,12 @@ use super::{LOOP_STEER_PREFIX, SUMMARY_MARKER_PREFIX};
 /// question, not a stuck loop (a REPL session asking the same thing three
 /// times would otherwise trip the exact-repeat detector), and it keeps
 /// this per-step scan O(turn) instead of O(entire history). The overflow
-/// summary and the stuck-loop warning are also User-role but are not real
-/// user turns — treating either as a boundary would truncate the loop
-/// window (on every summarization pass, or right when re-detection needs
-/// the evidence), so both are skipped when locating the boundary.
+/// summary, the stuck-loop warning and the output-limit continuation nudge
+/// are also User-role but are not real user turns — treating any of them as a
+/// boundary would truncate the loop window (on every summarization pass, right
+/// when re-detection needs the evidence, or on the one path that exists
+/// precisely because the turn is *not* over), so all three are skipped when
+/// locating the boundary.
 ///
 /// Results attach to the most recent still-unresolved call with a matching
 /// `call_id` — providers only guarantee ids unique within one step, and a
@@ -57,6 +59,7 @@ pub(super) fn recent_call_records<'a>(
             m.role == MessageRole::User
                 && !m.content.starts_with(SUMMARY_MARKER_PREFIX)
                 && !m.content.starts_with(LOOP_STEER_PREFIX)
+                && !m.content.starts_with(CONTINUATION_MARKER_PREFIX)
         })
         .map(|i| i + 1)
         .unwrap_or(0);
