@@ -144,10 +144,30 @@ pub struct TraceToolUse {
     pub duration_ms: Option<u64>,
 }
 
+/// The `[trace:exec-N]` episode tag — the join key recall carries back to
+/// the full trajectory — when capture is on and an execution row exists.
+pub fn episode_tag(enabled: bool, execution_id: Option<i64>) -> Option<String> {
+    match execution_id {
+        Some(id) if enabled => Some(format!(" [trace:exec-{id}]")),
+        _ => None,
+    }
+}
+
+/// [`capture`], demoting failure to a warning: a trace failure must never
+/// fail the turn it describes.
+pub fn capture_or_warn(
+    store: &Store,
+    execution_id: i64,
+    files_touched: &[(String, String)],
+    workspace_root: &Path,
+) {
+    if let Err(error) = capture(store, execution_id, files_touched, workspace_root) {
+        eprintln!("  ⚠ trace capture failed: {error}");
+    }
+}
+
 /// Assemble one execution's trace from the store, then append it to
-/// `.stella/private/traces.jsonl`. Returns the file written. Best-effort by
-/// contract: the one caller warns and moves on, because a trace failure must
-/// never fail the turn it describes.
+/// `.stella/private/traces.jsonl`. Returns the file written.
 pub fn capture(
     store: &Store,
     execution_id: i64,

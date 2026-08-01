@@ -454,19 +454,16 @@ async fn run_pipeline_one_shot(
             Ok(outcome) => pipeline_episode_outcome(&outcome.status),
             Err(_) => EpisodeOutcome::Failure,
         };
-        // When trace capture (#1042) is on, the episode carries the pointer
-        // to its full trajectory, so recall's "we did something like this
-        // before" comes with the key to the exact record of how.
-        let trace_tag = match &execution {
-            Some((_, id)) if cfg.trace_capture => Some(format!(" [trace:exec-{id}]")),
-            _ => None,
-        };
+        // With trace capture (#1042) on, the episode carries the pointer to
+        // its full trajectory (`crate::trace::episode_tag`).
+        let tag =
+            crate::trace::episode_tag(cfg.trace_capture, execution.as_ref().map(|(_, id)| *id));
         m.record_episode(
             prompt,
             episode_outcome,
             &files,
             started_unix,
-            trace_tag.as_deref(),
+            tag.as_deref(),
         )
         .await;
     }
@@ -571,15 +568,10 @@ async fn run_pipeline_one_shot(
                 "the audit record (files touched / memory citations / outcome)",
             );
         }
-        // Trajectory trace (#1042, `trace_capture`, off by default): assemble
-        // one training-ready record from what the closeout just settled —
-        // receipts, journal, cost. Assembly, not capture: the journal is
-        // already the append-only record. Best-effort — a trace failure must
-        // never fail the turn it describes.
-        if cfg.trace_capture
-            && let Err(error) = crate::trace::capture(store, *id, &files, &cfg.workspace_root)
-        {
-            eprintln!("  ⚠ trace capture failed: {error}");
+        // Trajectory trace (#1042, `trace_capture`, off by default): one
+        // training-ready record folded from what the closeout just settled.
+        if cfg.trace_capture {
+            crate::trace::capture_or_warn(store, *id, &files, &cfg.workspace_root);
         }
     }
 

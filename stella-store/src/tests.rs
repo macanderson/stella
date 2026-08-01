@@ -940,58 +940,6 @@ fn session_events_keeps_unknown_variants_and_skips_only_corrupt_payloads() {
 }
 
 #[test]
-fn execution_events_replays_one_execution_without_needing_a_session() {
-    let store = Store::in_memory().unwrap();
-    // No set_execution_session — the one-shot `stella run` shape.
-    let solo = store
-        .begin_execution("run", "solo", "zai", "glm-5.2")
-        .unwrap();
-    store
-        .record_event(
-            solo,
-            0,
-            &AgentEvent::Reasoning {
-                delta: "think".into(),
-            },
-        )
-        .unwrap();
-    store
-        .record_event(solo, 1, &AgentEvent::Text { delta: "a".into() })
-        .unwrap();
-    // A neighbouring execution's rows stay out of this journal.
-    let other = store.begin_execution("run", "x", "zai", "glm-5.2").unwrap();
-    store
-        .record_event(other, 0, &AgentEvent::Text { delta: "z".into() })
-        .unwrap();
-    // Genuine damage on the target execution is counted, not fatal.
-    {
-        let conn = store.lock();
-        conn.execute(
-            "INSERT INTO events (execution_id, seq, event_type, payload) \
-             VALUES (?, 2, 'text', '{ this is not json')",
-            params![solo],
-        )
-        .unwrap();
-    }
-
-    let journal = store.execution_events(solo).unwrap();
-    assert_eq!(journal.skipped, 1);
-    assert_eq!(
-        journal
-            .events
-            .iter()
-            .map(|r| (r.execution_id, r.seq))
-            .collect::<Vec<_>>(),
-        vec![(solo, 0), (solo, 1)],
-        "stream order, this execution only"
-    );
-    match &journal.events[0].event {
-        AgentEvent::Reasoning { delta } => assert_eq!(delta, "think"),
-        other => panic!("unexpected first event: {other:?}"),
-    }
-}
-
-#[test]
 fn v2_migration_rebuilds_files_touched_with_dedupe_and_backfill() {
     let root = temp_root("v2_files_touched");
     {

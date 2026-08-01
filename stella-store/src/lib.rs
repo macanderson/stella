@@ -1524,34 +1524,6 @@ impl Store {
         Ok(journal)
     }
 
-    /// One execution's COMPLETE event journal in stream order — the
-    /// per-execution counterpart of [`Store::session_events`]. A one-shot
-    /// `stella run` never stamps a session id (`executions.session_id`
-    /// stays NULL), so session replay cannot reach it; this reader can.
-    /// Same tolerance as the session reader: a payload that no longer
-    /// parses as an [`AgentEvent`] is skipped and counted, never fatal.
-    pub fn execution_events(&self, execution_id: i64) -> Result<SessionJournal> {
-        let conn = self.lock();
-        let mut stmt = conn
-            .prepare("SELECT seq, payload FROM events WHERE execution_id = ? ORDER BY seq ASC")?;
-        let rows = stmt.query_map(params![execution_id], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-        })?;
-        let mut journal = SessionJournal::default();
-        for row in rows {
-            let (seq, payload) = row?;
-            match serde_json::from_str::<AgentEvent>(&payload) {
-                Ok(event) => journal.events.push(SessionEventRecord {
-                    execution_id,
-                    seq,
-                    event,
-                }),
-                Err(_) => journal.skipped += 1,
-            }
-        }
-        Ok(journal)
-    }
-
     /// Cooperative file lock: succeeds only if `path` is unclaimed or
     /// already held by `holder` (re-entrant). Returns whether the lock is
     /// now held.
