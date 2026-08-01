@@ -168,6 +168,30 @@ jobs:
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
+      # Draft CHANGELOG entries from the diff this tag is about to release,
+      # once, into a file both sync-versions.sh call sites read (the tagged
+      # release commit below and the bot/version-sync PR after it), so the tag
+      # and main roll identical text. The script prints nothing when it can't
+      # draft (no key, API failure) and sync-versions.sh skips injection when
+      # a contributor already wrote [Unreleased] entries by hand — either way
+      # the release proceeds exactly as it did before this step existed.
+      - name: Draft changelog entries from the release diff
+        if: steps.ver.outputs.skip != 'true'
+        env:
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+          CHANGELOG_AI_MODEL: ${{ vars.RELEASE_NOTES_MODEL || 'anthropic/claude-sonnet-5' }}
+        run: |
+          set -euo pipefail
+          last="$(git tag -l 'v*' --sort=-v:refname | head -n1 || true)"
+          entries="${RUNNER_TEMP}/changelog-entries.md"
+          ./scripts/changelog-ai.sh ${last:+"${last}..HEAD"} > "${entries}" || true
+          if [ -s "${entries}" ]; then
+            echo "CHANGELOG_ENTRIES_FILE=${entries}" >> "$GITHUB_ENV"
+            echo "----- drafted entries -----"; cat "${entries}"
+          else
+            echo "::warning::no changelog entries drafted; the roll will proceed without them."
+          fi
+
       # Needed before the tag now: the release commit syncs Cargo.lock.
       - name: Install Rust (Cargo.lock sync)
         if: steps.ver.outputs.skip != 'true'

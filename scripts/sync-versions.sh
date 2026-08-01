@@ -38,6 +38,32 @@ perl -pi -e 's/tag: "v[^"]*"/tag: "v$ENV{NEW_VERSION}"/; s/^  version "[^"]*"/  
   packaging/homebrew/stella.rb
 
 if [ -f CHANGELOG.md ] && grep -q '^## \[Unreleased\]' CHANGELOG.md; then
+  # If the release arrived with an empty [Unreleased] and auto-tag.yml drafted
+  # entries from the release diff (scripts/changelog-ai.sh), inject them under
+  # the heading before rolling — so the roll below carries them down instead
+  # of minting yet another blank version heading. Hand-written entries always
+  # win: a non-empty section is left exactly as the contributor wrote it.
+  # Injection lives here, not in the workflow, because this script runs at two
+  # call sites (the tagged release commit and the bot/version-sync PR) and the
+  # tag and main must roll identical text — one script, two call sites, no
+  # drift (#786).
+  if [ -n "${CHANGELOG_ENTRIES_FILE:-}" ] && [ -s "${CHANGELOG_ENTRIES_FILE}" ]; then
+    if awk '/^## \[Unreleased\]/{inside=1; next}
+            inside && /^## \[/{exit}
+            inside && NF{found=1; exit}
+            END{exit found ? 1 : 0}' CHANGELOG.md; then
+      ENTRIES_FILE="${CHANGELOG_ENTRIES_FILE}" perl -pi -e '
+        if (/^## \[Unreleased\]$/) {
+          open my $fh, "<", $ENV{ENTRIES_FILE} or next;
+          my $e = do { local $/; <$fh> };
+          $e =~ s/\s+\z//;
+          $_ .= "\n" . $e . "\n";
+        }' CHANGELOG.md
+      echo "sync-versions: injected drafted changelog entries for ${version}."
+    else
+      echo "sync-versions: [Unreleased] already has entries; drafted entries not injected."
+    fi
+  fi
   # Inserting *after* the heading (rather than renaming it) is what carries
   # the existing bullets down into the new version's section.
   RELEASE_DATE="${RELEASE_DATE:-$(date -u +%F)}" \
