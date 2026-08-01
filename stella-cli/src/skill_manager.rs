@@ -577,16 +577,23 @@ mod tests {
         .unwrap();
     }
 
+    /// Bundles the process-wide env lock with the `HOME` restore guard so a
+    /// single returned value keeps both alive for the caller's whole test.
+    /// Field order matters: struct fields drop in declaration order, so
+    /// `restore` (which puts the real `HOME` back) runs before `lock` is
+    /// released — no other test can observe an unrestored `HOME`.
+    struct ScratchGuard {
+        _restore: crate::test_env::EnvRestore,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
     /// A tempdir workspace with `HOME` pointed inside it so the user scope is
     /// isolated. Holds the process-wide env lock for the whole test (returned
     /// as the third element) — `setenv`/`getenv` races are UB and the harness
-    /// runs these on parallel threads. Returns (workspace_root, home, lock).
-    fn scratch() -> (
-        tempfile::TempDir,
-        PathBuf,
-        std::sync::MutexGuard<'static, ()>,
-    ) {
+    /// runs these on parallel threads. Returns (workspace_root, home, guard).
+    fn scratch() -> (tempfile::TempDir, PathBuf, ScratchGuard) {
         let lock = crate::test_env::lock();
+        let restore = crate::test_env::EnvRestore::capture(&["HOME"]);
         let td = tempfile::tempdir().unwrap();
         let home = td.path().join("home");
         std::fs::create_dir_all(&home).unwrap();
@@ -595,7 +602,14 @@ mod tests {
         unsafe {
             std::env::set_var("HOME", &home);
         }
-        (td, home, lock)
+        (
+            td,
+            home,
+            ScratchGuard {
+                _restore: restore,
+                _lock: lock,
+            },
+        )
     }
 
     #[test]

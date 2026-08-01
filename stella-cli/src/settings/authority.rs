@@ -378,6 +378,12 @@ mod tests {
     #[test]
     fn managed_authority_rejects_unknown_keys_through_settings_load() {
         let _env = crate::test_env::lock();
+        let _restore = crate::test_env::EnvRestore::capture(&[
+            "HOME",
+            "STELLA_MANAGED_SETTINGS",
+            "STELLA_TRUST_PROJECT",
+            "STELLA_PROJECT_HOOKS",
+        ]);
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
         let workspace = dir.path().join("repo");
@@ -395,10 +401,6 @@ mod tests {
 
         let result = Settings::load(&workspace);
 
-        unsafe {
-            std::env::remove_var("HOME");
-            std::env::remove_var("STELLA_MANAGED_SETTINGS");
-        }
         let error = result.expect_err("authority typos must fail closed");
         assert!(error.contains("project_promtps"), "{error}");
         assert!(error.contains("unknown field"), "{error}");

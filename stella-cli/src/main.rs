@@ -103,6 +103,40 @@ pub(crate) mod test_env {
         static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
         ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner())
     }
+
+    /// Captures the current value of each named env var and restores it on
+    /// drop. Unlike a hand-rolled "read the old value, mutate, restore at
+    /// the end of the test" sequence, this also restores on an unwinding
+    /// panic (e.g. a failed `assert!` mid-test) — without it, a panicking
+    /// test leaves `HOME`/`STELLA_DATA_DIR`/etc. mutated for every test that
+    /// runs after it in this binary. Callers must hold [`lock`] for the
+    /// entire lifetime of the returned guard.
+    #[must_use]
+    pub(crate) struct EnvRestore(Vec<(String, Option<std::ffi::OsString>)>);
+
+    impl EnvRestore {
+        pub(crate) fn capture(names: &[&str]) -> Self {
+            Self(
+                names
+                    .iter()
+                    .map(|name| ((*name).to_string(), std::env::var_os(name)))
+                    .collect(),
+            )
+        }
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            unsafe {
+                for (name, value) in self.0.drain(..) {
+                    match value {
+                        Some(value) => std::env::set_var(name, value),
+                        None => std::env::remove_var(name),
+                    }
+                }
+            }
+        }
+    }
 }
 
 use std::process::ExitCode;

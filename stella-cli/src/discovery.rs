@@ -1077,8 +1077,8 @@ mod tests {
     /// runs on a local runtime inside the sync scope instead.
     fn skill_search_with_isolated_home(ws: &std::path::Path, input: Value) -> String {
         let _lock = crate::test_env::lock();
+        let _restore = crate::test_env::EnvRestore::capture(&["HOME"]);
         let home = tempfile::tempdir().expect("home");
-        let prev_home = std::env::var_os("HOME");
         unsafe { std::env::set_var("HOME", home.path()) };
 
         let inner = FakeInner;
@@ -1087,10 +1087,6 @@ mod tests {
             .expect("runtime")
             .block_on(set.execute(SKILL_SEARCH, &input));
 
-        match prev_home {
-            Some(home) => unsafe { std::env::set_var("HOME", home) },
-            None => unsafe { std::env::remove_var("HOME") },
-        }
         content(out)
     }
 
