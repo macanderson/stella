@@ -468,6 +468,20 @@ pub(crate) enum Command {
         only: inspect::RoleFilter,
     },
 
+    /// Judge calibration: false-positive rate vs CI ground truth
+    ///
+    /// Fold every recorded session's pass verdicts against the CI verdicts
+    /// observed after them (#871): how often did a model-judge PASS — and,
+    /// as the comparison cohort, a deterministic ladder pass — later fail
+    /// CI? Rates are reported as unmeasured until CI ground truth exists.
+    /// Reads .stella/private/store.db only; needs no API key and never
+    /// writes.
+    Calibration {
+        /// Output format
+        #[arg(long, value_enum, default_value = "text")]
+        format: inspect::InspectFormat,
+    },
+
     /// Cost, tokens, and resolve rate per provider and model
     ///
     /// Summarize cost, tokens, and resolve rate per provider/model from

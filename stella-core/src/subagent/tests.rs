@@ -85,12 +85,14 @@ impl ToolExecutor for MixedTools {
                 description: "read a file".into(),
                 input_schema: json!({"type": "object"}),
                 read_only: true,
+                speculation_safe: false,
             },
             ToolSchema {
                 name: "write_file".into(),
                 description: "write a file".into(),
                 input_schema: json!({"type": "object"}),
                 read_only: false,
+                speculation_safe: false,
             },
         ]
     }
@@ -1014,6 +1016,7 @@ impl ToolExecutor for SpendingTools {
             // execute it speculatively, and this test is about the ordinary
             // dispatch path.
             read_only: false,
+            speculation_safe: false,
         }]
     }
 

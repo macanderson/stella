@@ -52,6 +52,7 @@ fn a_toml_config_and_its_json_equivalent_produce_identical_settings() {
           },
           "tools": {"bash": "off", "process": "off"},
           "enable_recap": "off",
+          "trace_capture": "on",
           "ui": {"theme": "stella-dark"},
           "mcp": {"registry_url": "https://registry.example"}
         }"#,
@@ -66,6 +67,7 @@ schema_version = 1
 
 [run]
 recap = "off"
+trace_capture = "on"
 
 [providers.anthropic]
 api_key_env = "ANTHROPIC_API_KEY"
@@ -121,6 +123,14 @@ registry_url = "https://registry.example"
     );
     assert_eq!(from_json.tools, from_toml.tools, "tools");
     assert_eq!(from_json.enable_recap, from_toml.enable_recap, "recap");
+    assert_eq!(
+        from_json.trace_capture, from_toml.trace_capture,
+        "trace_capture"
+    );
+    assert!(
+        from_toml.trace_capture_enabled(),
+        "[run].trace_capture lowers into the flag"
+    );
     assert_eq!(from_json.ui, from_toml.ui, "ui");
     assert_eq!(from_json.mcp, from_toml.mcp, "mcp");
 }

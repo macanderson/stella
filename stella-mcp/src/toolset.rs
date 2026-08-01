@@ -504,8 +504,11 @@ impl ToolExecutor for McpToolSet {
                         description: tool.description.clone(),
                         input_schema: tool.input_schema.clone(),
                         // External MCP tools are unknown — treat as mutating,
-                        // the safe direction (never auto-parallelized).
+                        // the safe direction (never auto-parallelized). And
+                        // never speculated: the server's request count and
+                        // rate limit are not ours to spend twice (#923).
                         read_only: false,
+                        speculation_safe: false,
                     });
                 }
             }
@@ -652,6 +655,7 @@ mod tests {
                 description: "run a command".into(),
                 input_schema: serde_json::json!({ "type": "object" }),
                 read_only: false,
+                speculation_safe: false,
             }]
         }
         async fn execute(&self, name: &str, _input: &Value) -> ToolOutput {

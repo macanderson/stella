@@ -450,6 +450,7 @@ impl Tool for Explorations {
                 }
             }),
             read_only: true,
+            speculation_safe: true,
         }
     }
 
@@ -640,6 +641,7 @@ impl Tool for SaveExploration {
                 "required": ["slice", "title", "summary", "content"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 

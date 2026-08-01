@@ -254,6 +254,25 @@ fn index_read_only_prose_matches_the_catalog() {
     );
 }
 
+/// The speculated set is the catalog's second partition (#923): read-only
+/// AND speculation-safe. Prose drift here is worse than for read_only —
+/// a name wrongly listed tells a reader their metered tool may be billed
+/// twice per step, and a name wrongly missing hides real overlap.
+#[test]
+fn index_speculation_safe_prose_matches_the_catalog() {
+    let Some(index) = read_doc(INDEX) else { return };
+
+    let documented = names_in_sentence(&index, "The speculation-safe subset is exactly:");
+    let expected: BTreeSet<String> = catalog::speculation_safe()
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(
+        documented, expected,
+        "the speculation-safe prose in {INDEX} disagrees with catalog::speculation_safe()"
+    );
+}
+
 /// `permissions.mdx` scopes its list to the built-in catalog — the native
 /// registry, without the CLI's session layer.
 #[test]

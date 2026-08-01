@@ -27,6 +27,20 @@ pub struct ToolSchema {
     /// are treated as mutating, the safe direction.
     #[serde(default)]
     pub read_only: bool,
+    /// True when one announced call may safely EXECUTE TWICE — the claim
+    /// speculative execution needs (#923). A stream attempt that fails
+    /// after announcing its read-only prefix re-announces it on retry, so
+    /// every speculated call must tolerate a duplicate run. That is a
+    /// stronger claim than [`read_only`](Self::read_only): a web search
+    /// mutates no workspace state yet burns a metered API call each run,
+    /// and a graph query writes catch-up state to its own database on the
+    /// way to answering. Only a tool that is BOTH `read_only` and
+    /// `speculation_safe` is ever run before its step commits. Defaults to
+    /// false so external tools (MCP servers foremost) are never speculated
+    /// unless they opt in — the failure mode of the opposite default is
+    /// invisible and lands on the user's bill.
+    #[serde(default)]
+    pub speculation_safe: bool,
 }
 
 /// One tool invocation the model requested.
@@ -123,6 +137,24 @@ mod tests {
         let json = r#"{"name":"t","description":"d","input_schema":{}}"#;
         let schema: ToolSchema = serde_json::from_str(json).unwrap();
         assert!(!schema.read_only);
+        assert!(
+            !schema.speculation_safe,
+            "an external tool that never heard of speculation must not be \
+             speculated — its duplicate-run cost is invisible from here (#923)"
+        );
+    }
+
+    #[test]
+    fn speculation_safe_is_independent_of_read_only_on_the_wire() {
+        // The two claims travel separately: a read-only tool that costs
+        // quota per call (web search) declares read_only without
+        // speculation_safe, and each side survives a round trip.
+        let json = r#"{"name":"t","description":"d","input_schema":{},"read_only":true}"#;
+        let schema: ToolSchema = serde_json::from_str(json).unwrap();
+        assert!(schema.read_only && !schema.speculation_safe);
+        let back: ToolSchema =
+            serde_json::from_str(&serde_json::to_string(&schema).unwrap()).unwrap();
+        assert_eq!(back, schema);
     }
 
     #[test]

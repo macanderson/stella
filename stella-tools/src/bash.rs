@@ -200,6 +200,7 @@ impl Tool for Bash {
                 "required": ["command"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 

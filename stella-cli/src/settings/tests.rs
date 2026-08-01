@@ -365,6 +365,40 @@ fn recap_defaults_off_and_takes_the_toggle_vocabulary_only() {
     assert!(serde_json::from_str::<Settings>(r#"{"enable_recap":true}"#).is_err());
 }
 
+/// The #1042 trace flag: defaults off, Toggle vocabulary only, and — the
+/// `enable_recap` lesson — it must survive the SCOPE MERGE, not just direct
+/// deserialization. The merge half fails on a build whose `overlay_scope`
+/// forgets the field: every scope parses it and the merged value reads
+/// `None` no matter what any file said.
+#[test]
+fn trace_capture_defaults_off_and_survives_the_scope_merge() {
+    assert!(
+        !Settings::default().trace_capture_enabled(),
+        "trace capture defaults off"
+    );
+    assert!(
+        serde_json::from_str::<Settings>(r#"{"trace_capture":"on"}"#)
+            .unwrap()
+            .trace_capture_enabled()
+    );
+    // Toggle discipline: a bool is a loud parse error, not a silent false.
+    assert!(serde_json::from_str::<Settings>(r#"{"trace_capture":true}"#).is_err());
+
+    let dir = tempfile::tempdir().unwrap();
+    let user = write(dir.path(), "user.json", r#"{"trace_capture": "on"}"#);
+    // A later scope that says nothing must not reset the lower scope's "on"…
+    let silent = write(dir.path(), "silent.json", r#"{"providers": {}}"#);
+    let merged = Settings::load_from(&[user.clone(), silent]).unwrap();
+    assert!(
+        merged.trace_capture_enabled(),
+        "the merge must carry the flag (the enable_recap lesson)"
+    );
+    // …and a later explicit "off" wins.
+    let off = write(dir.path(), "off.json", r#"{"trace_capture": "off"}"#);
+    let merged = Settings::load_from(&[user, off]).unwrap();
+    assert!(!merged.trace_capture_enabled());
+}
+
 /// **Witness: `{"bash": "off"}` is the only thing that withholds the
 /// shell**, and scopes merge per key with the later (project) scope
 /// winning in both directions.

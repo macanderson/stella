@@ -35,6 +35,7 @@ impl ToolExecutor for CountingTools {
             description: "run a command".into(),
             input_schema: serde_json::json!({"type": "object"}),
             read_only: false,
+            speculation_safe: false,
         }]
     }
     async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
@@ -197,6 +198,35 @@ impl ToolExecutor for NotifyingReadTools {
             description: "read a file".into(),
             input_schema: serde_json::json!({"type": "object"}),
             read_only: true,
+            // The speculation fixtures assert reads DO run early, so the
+            // fixture states both claims (#923).
+            speculation_safe: true,
+        }]
+    }
+    async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.executed.notify_one();
+        ToolOutput::Ok {
+            content: "contents".into(),
+        }
+    }
+}
+
+/// Read-only WITHOUT `speculation_safe` — a stand-in for `web_search` or
+/// an MCP tool: workspace-pure, but every run bills someone (#923).
+struct MeteredReadTools {
+    calls: Arc<AtomicU32>,
+    executed: Arc<tokio::sync::Notify>,
+}
+#[async_trait]
+impl ToolExecutor for MeteredReadTools {
+    fn schemas(&self) -> Vec<ToolSchema> {
+        vec![ToolSchema {
+            name: "read_file".into(),
+            description: "read a file".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+            read_only: true,
+            speculation_safe: false,
         }]
     }
     async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
@@ -269,6 +299,55 @@ async fn read_only_calls_execute_during_the_stream_and_are_harvested_not_rerun()
             AgentEvent::ToolResult { call_id, speculated: true, .. } if call_id == "c1"
         )),
         "the harvested result must be marked speculated: {events:?}"
+    );
+}
+
+/// The #923 acceptance: a tool can be read-only (workspace-pure) yet opt
+/// out of speculation, with no hook attached. Its announced call must not
+/// run during the stream — it executes exactly once, at dispatch, so a
+/// retried attempt could never have billed it twice.
+#[tokio::test]
+async fn a_read_only_but_speculation_unsafe_call_runs_once_at_dispatch() {
+    let executed = Arc::new(tokio::sync::Notify::new());
+    let calls = Arc::new(AtomicU32::new(0));
+    let input = serde_json::json!({"path": "a.rs"});
+    let provider = SpeculatingProvider {
+        announce: read_call(input.clone()),
+        commit: read_call(input),
+        executed: executed.clone(),
+        // Must NOT wait: nothing is speculated, so waiting for an early
+        // execution would deadlock the stream by construction.
+        wait_for_execution: false,
+        step: AtomicU32::new(0),
+    };
+    let tools = MeteredReadTools {
+        calls: calls.clone(),
+        executed,
+    };
+
+    let (outcome, events) = run_speculation_turn(&provider, &tools).await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { ref text, .. } if text == "done"),
+        "turn must complete: {outcome:?}"
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "a speculation-unsafe read runs exactly once, on the committed \
+         dispatch path"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::ToolResult { call_id, speculated: false, .. } if call_id == "c1"
+        )),
+        "the result must come from dispatch, not a harvest: {events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::SpeculationDiscarded { .. })),
+        "nothing was speculated, so nothing may be discarded: {events:?}"
     );
 }
 
@@ -1641,6 +1720,7 @@ impl ToolExecutor for PollingTools {
             description: "run a command".into(),
             input_schema: serde_json::json!({"type": "object"}),
             read_only: false,
+            speculation_safe: false,
         }]
     }
     async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
@@ -1880,6 +1960,7 @@ async fn run_synthetic_survival_turn(dialect: &str, id_style: fn(u32) -> String)
                 description: "run a command".into(),
                 input_schema: serde_json::json!({"type": "object"}),
                 read_only: false,
+                speculation_safe: false,
             }]
         }
         async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
@@ -1953,6 +2034,9 @@ fn read_only_schema(name: &str) -> ToolSchema {
         description: "read".into(),
         input_schema: serde_json::json!({"type": "object"}),
         read_only: true,
+        // Both claims: these fixtures cover parallel dispatch AND the
+        // speculative overlap, which needs the narrower flag too (#923).
+        speculation_safe: true,
     }
 }
 
@@ -2054,6 +2138,7 @@ impl ToolExecutor for RecordingTools {
                 description: "edit".into(),
                 input_schema: serde_json::json!({"type": "object"}),
                 read_only: false,
+                speculation_safe: false,
             },
         ]
     }
@@ -2850,6 +2935,7 @@ impl ToolExecutor for WedgedTools {
             description: "run a command".into(),
             input_schema: serde_json::json!({"type": "object"}),
             read_only: false,
+            speculation_safe: false,
         }]
     }
     async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {

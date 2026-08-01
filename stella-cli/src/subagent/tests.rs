@@ -23,6 +23,7 @@ impl ToolExecutor for LedgerBase {
             description: "read".into(),
             input_schema: json!({"type": "object"}),
             read_only: true,
+            speculation_safe: false,
         }]
     }
     async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {

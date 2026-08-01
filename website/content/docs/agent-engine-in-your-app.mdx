@@ -238,6 +238,11 @@ const created = await fetch(`${BASE}/v1/turns`, {
           properties: { city: { type: "string" } },
           required: ["city"],
         },
+        // read_only lets the engine run this concurrently with other
+        // reads. Do NOT also claim speculation_safe here: a speculated
+        // call can run twice per step, and a metered lookup like weather
+        // is not free to bill twice. Leave it unset (false) for anything
+        // network-backed.
         read_only: true,
       },
     ],
