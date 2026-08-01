@@ -1,6 +1,6 @@
 ---
 title: stella storage
-description: Inspect the storage map — every storage layer, namespace, relation, and field, with intent and boundaries from stella.storage.toml — and bound the session store's growth.
+description: Inspect the storage map — every layer, namespace, relation, and field, with intent and boundaries from stella.storage.toml — and bound the store's growth.
 ---
 
 `stella storage` inspects the **storage map**: every storage layer, namespace, relation, and field in your workspace, annotated with intent and boundaries from `stella.storage.toml`. It reads the local index built by [`stella init`](/docs/commands/init) (`.stella/private/codegraph.db`) plus the manifest, so it is fully offline and needs no API key. One verb — `prune` — also does the store's retention housekeeping.
