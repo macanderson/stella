@@ -48,12 +48,12 @@ A 3x3 grid of switches, each toggling itself and its orthogonal neighbours.
 Prove whether every configuration is solvable, and give the full reasoning.
 PROMPT_END
 
-# Deliberately far above what either tier should need. A probe that hits its
-# own ceiling reports max_tokens for BOTH tiers and the comparison silently
-# measures the cap instead of the effort — which is how the first version of
-# this check "passed" while proving nothing. MAX_TOKENS is asserted against
-# below, not just chosen generously.
-MAX_TOKENS=64000
+# Bounded by the request being non-streaming, not by generosity. Anthropic
+# documents that a large `max_tokens` without streaming exceeds HTTP timeouts
+# as idle connections drop, and that is not theoretical here: at 64000 both
+# xhigh probes died on the 300s read timeout while 32000 completed. Raising
+# this further requires switching the probe to streaming first.
+MAX_TOKENS=32000
 
 probe() { # $1=key  $2=effort  -> output_tokens | ERROR:...
   # The key goes through the environment, never argv. A process's command line
@@ -115,14 +115,26 @@ for arm in stella claude; do
   case "$lo$hi" in
     *ERROR*) echo "FAIL: $arm effort probe errored"; FAIL=1; continue ;;
   esac
-  # Saturation invalidates the comparison before it is made: at the ceiling
-  # both tiers report max_tokens and the check would compare the cap to
-  # itself. Fail loudly rather than report a meaningless pass.
-  if [ "$hi" -ge "$MAX_TOKENS" ] || [ "$lo" -ge "$MAX_TOKENS" ] 2>/dev/null; then
-    echo "FAIL: $arm probe saturated at max_tokens=$MAX_TOKENS (low=$lo $TIER=$hi)"
-    echo "      raise MAX_TOKENS — this comparison measures the cap, not effort"
+  # Only the LOW tier pinning at the ceiling destroys the comparison. If low
+  # pins, both tiers report max_tokens and the check compares the cap to
+  # itself — which is how the first version of this script "passed" while
+  # proving nothing.
+  #
+  # The high tier pinning is not the same failure. With low strictly under the
+  # ceiling and high at it, low < MAX = high, so `high > low` is established;
+  # the tier's true spend is merely unmeasured, not unproven. Failing that
+  # case would demand a ceiling high enough to contain xhigh, and this request
+  # is non-streaming, so raising the ceiling reintroduces the read timeout.
+  # Being unable to measure a bound is not the same as being unable to prove
+  # an inequality, and only the inequality is what this check claims.
+  if [ "$lo" -ge "$MAX_TOKENS" ] 2>/dev/null; then
+    echo "FAIL: $arm low tier pinned at max_tokens=$MAX_TOKENS — both tiers are"
+    echo "      at the ceiling, so this compares the cap to itself, not effort"
     FAIL=1
     continue
+  fi
+  if [ "$hi" -ge "$MAX_TOKENS" ] 2>/dev/null; then
+    echo "       note: $TIER clipped at $MAX_TOKENS — spend is >= that, exact value unmeasured"
   fi
   # Strictly greater, not >=: identical counts are the signature of a field
   # that was parsed and discarded, which is the exact defect being hunted.
