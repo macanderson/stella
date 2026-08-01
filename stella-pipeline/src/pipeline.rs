@@ -2413,6 +2413,23 @@ impl<'a> Pipeline<'a> {
                         // `Unverified` score keeps it from tying a genuinely
                         // verified sibling in best-of-N.
                         if inputs.judge_pass_stands_alone() {
+                            // Deliberately relabels rather than sending the
+                            // turn back for evidence. Sending back was built
+                            // and measured, and the measurement is the reason
+                            // it is not wired: this condition holds on MOST
+                            // Terminal-Bench turns, because those tasks
+                            // frequently expose no suite the agent can point
+                            // at — so the request costs a turn nearly
+                            // everywhere rather than on the bad ones. Stella
+                            // already loses 7 trials in 20 to the harness's
+                            // 900-second wall, and buying turns when
+                            // wall-clock is the binding constraint would cost
+                            // more tasks than it recovers.
+                            //
+                            // The cheaper route to the same end is upstream:
+                            // with shell writes now reaching the ledger,
+                            // `file_change_events` carries real evidence on
+                            // turns that used to arrive here blind.
                             let mut abstained = evidence.clone();
                             abstained.summary = format!(
                                 "UNVERIFIED: judge passed with no deterministic \
