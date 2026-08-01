@@ -15,137 +15,148 @@ stella chat
 
 ## Subcommands
 
+The six groups below are `stella --help`'s own — same headings, same order, and
+each one-line summary is the exact string the CLI prints, so the index you read
+here and the index your terminal shows can never drift apart.
+
+### Run the agent
+
 <CardGrid size="sm">
   <SpecCard title="stella run" href="/docs/commands/run">
-    `<prompt>` — send a one-shot prompt, non-interactive. The staged pipeline by default.
+    Send a one-shot prompt (non-interactive)
   </SpecCard>
   <SpecCard title="stella chat" href="/docs/commands/chat">
-    Interactive session in the Command Deck TUI. The default when no subcommand is given.
-  </SpecCard>
-  <SpecCard title="stella resume" href="/docs/commands/resume">
-    `[id]` — reopen a previous deck session exactly where it stood; `--list` shows every
-    session on this machine.
+    Start an interactive session (the Command Deck)
   </SpecCard>
   <SpecCard title="stella goal" href="/docs/commands/goal">
-    `<goal>` — work in judged rounds until a judge model confirms the goal is met.
+    Work in judged rounds until a judge says the goal is met
   </SpecCard>
-  <SpecCard title="stella monitor" href="/docs/commands/monitor">
-    `[target]` — watch CI for a branch or PR and fix failures until it is fully green.
+  <SpecCard title="stella resume" href="/docs/commands/resume">
+    Reopen a previous session exactly where it stood
   </SpecCard>
   <SpecCard title="stella init" href="/docs/commands/init">
-    Analyze the workspace, infer its domain taxonomy, and build the code-graph index.
+    Analyze this workspace: domain taxonomy and code graph
   </SpecCard>
+</CardGrid>
+
+### Run many at once
+
+<CardGrid size="sm">
   <SpecCard title="stella fleet" href="/docs/commands/fleet">
-    `<tasks...>` — fan tasks out to worker agents in one shared tree, coordinated by
-    cooperative file claims.
+    Fan tasks out to a fleet of worker agents in one tree
   </SpecCard>
-  <SpecCard title="stella graph" href="/docs/commands/graph">
-    `<op> <target>` — query the code graph built by `stella init`. Offline, no API key.
-  </SpecCard>
-  <SpecCard title="stella storage" href="/docs/commands/storage">
-    `<tree|show|grep|drift|prune>` — inspect the storage map (layers, relations, and
-    fields with intent), and bound the session store's growth. Offline, no API key.
-  </SpecCard>
-  <SpecCard title="stella scripts" href="/docs/commands/scripts">
-    `<list|run>` — list and run the project's package-manager scripts via canonical verbs.
-    Offline, no API key.
-  </SpecCard>
-  <SpecCard title="stella commands" href="/docs/commands/commands">
-    `<list|convert>` — list the custom slash commands this workspace offers, or convert
-    markdown definitions to TOML. Offline, no API key.
-  </SpecCard>
-  <SpecCard title="stella models" href="/docs/commands/models">
-    `[refresh|list]` — list configured providers and available models, and manage the live
-    model catalog.
-  </SpecCard>
-  <SpecCard title="stella ingest" href="/docs/commands/ingest">
-    `[paths...]` — scan the workspace for markdown steering, or extract named documents into
-    reviewable context-record proposals.
-  </SpecCard>
-  <SpecCard title="stella context" href="/docs/commands/context">
-    `<review|keep|edit|ignore|list|validate|explain|propose>` — decide on the context
-    records `stella ingest` extracted, and ask a live one why it applied. Offline, no
-    API key.
-  </SpecCard>
-  <SpecCard title="stella proposals" href="/docs/commands/proposals">
-    `<list|keep|edit|ignore|refresh>` — review what the adaptive-context loop wants to make
-    durable, before it lands. Offline, no API key.
-  </SpecCard>
-  <SpecCard title="stella tune" href="/docs/commands/tune">
-    `<effort|rollback|status>` — A/B one policy knob over two loop-bench runs and promote the
-    winner reversibly. Offline, no API key.
-  </SpecCard>
-  <SpecCard title="stella scoreboard" href="/docs/commands/scoreboard">
-    What the work cost, and whether anyone said it was good — read from merged and closed pull
-    requests, never from a model.
+  <SpecCard title="stella monitor" href="/docs/commands/monitor">
+    Watch CI for a branch or PR and fix it until green
   </SpecCard>
   <SpecCard title="stella arena" href="/docs/commands/arena">
-    The [arena-bench](https://github.com/macanderson/arena-bench) harness adapter — run one
-    benchmark episode and record the trace journal the arena runner judges. For benchmarking
-    Stella, not for using it.
+    arena-bench adapter, invoked by the benchmark runner
   </SpecCard>
-  <SpecCard title="stella stats" href="/docs/commands/stats">
-    `[prune]` — cost, tokens, and resolve rate per provider and model from this
-    workspace's telemetry. `prune` bounds that store's growth, and never destroys
-    telemetry that has not reached the hub unless `--force`.
+</CardGrid>
+
+### Ask about this workspace
+
+<CardGrid size="sm">
+  <SpecCard title="stella graph" href="/docs/commands/graph">
+    Query the code graph — definitions, references, imports
   </SpecCard>
-  <SpecCard title="stella usage" href="/docs/commands/usage">
-    `<report|sync|prune>` — the same numbers across *every* project on this machine, via
-    the local hub at `~/.stella/usage.db`. Local-only; nothing is uploaded.
+  <SpecCard title="stella storage" href="/docs/commands/storage">
+    Inspect the storage map — layers, namespaces, relations
   </SpecCard>
-  <SpecCard title="stella cloud" href="/docs/commands/cloud">
-    `<status|register>` — show or set the org and workspace identity that scopes hub rows.
-    A stub today: it persists ids locally, and the OAuth login lands later.
-  </SpecCard>
-  <SpecCard title="stella telemetry" href="/docs/commands/telemetry">
-    `<status|flush|rollover-discard>` — inspect, flush, or explicitly discard the managed
-    enterprise operational spool. Disabled by default; needs a signed org-managed enrollment.
-  </SpecCard>
-  <SpecCard title="stella inspect" href="/docs/commands/inspect">
-    Show the exact context a past model call was sent, verified against the digests
-    recorded at emission.
-  </SpecCard>
-  <SpecCard title="stella observe" href="/docs/commands/observe">
-    Serve the Observatory dashboard — your local telemetry in the browser, loopback-only.
-  </SpecCard>
-  <SpecCard title="stella memory" href="/docs/commands/memory">
-    `<list|promote|validate|forget|restore|forgotten>` — inspect memories through the
-    citation loop, and promote a proven one to a project rule.
-  </SpecCard>
-  <SpecCard title="stella mcp" href="/docs/commands/mcp">
-    `<list|search|install|remove|login|logout|usage>` — manage MCP servers, including
-    OAuth login and tool-usage telemetry.
-  </SpecCard>
-  <SpecCard title="stella connect" href="/docs/commands/connect">
-    `<github|linear|status|remove>` — connect a tracker via OAuth so the agent gains the
-    issue toolset.
-  </SpecCard>
-  <SpecCard title="stella auth" href="/docs/commands/auth">
-    `<set|remove|list>` — manage BYOK provider keys in `credentials.toml`. Never prints a
-    secret.
+  <SpecCard title="stella scripts" href="/docs/commands/scripts">
+    List or run the project's package-manager scripts
   </SpecCard>
   <SpecCard title="stella tools" href="/docs/commands/tools">
-    List every tool available to the agent this session.
+    List every tool available to the agent this session
+  </SpecCard>
+  <SpecCard title="stella commands" href="/docs/commands/commands">
+    List or convert this workspace's custom slash commands
+  </SpecCard>
+</CardGrid>
+
+### Steer what the agent knows
+
+<CardGrid size="sm">
+  <SpecCard title="stella ingest" href="/docs/commands/ingest">
+    Turn markdown you already wrote into checkable steering
+  </SpecCard>
+  <SpecCard title="stella context" href="/docs/commands/context">
+    Review, publish, and explain context records
+  </SpecCard>
+  <SpecCard title="stella proposals" href="/docs/commands/proposals">
+    Review what the adaptive-context loop wants to keep
+  </SpecCard>
+  <SpecCard title="stella memory" href="/docs/commands/memory">
+    Inspect and promote the project's memories
+  </SpecCard>
+</CardGrid>
+
+### What it cost, what happened
+
+<CardGrid size="sm">
+  <SpecCard title="stella stats" href="/docs/commands/stats">
+    Cost, tokens, and resolve rate per provider and model
+  </SpecCard>
+  <SpecCard title="stella scoreboard" href="/docs/commands/scoreboard">
+    What the work cost, and whether anyone called it good
+  </SpecCard>
+  <SpecCard title="stella observe" href="/docs/commands/observe">
+    Open the Observatory, a local telemetry dashboard
+  </SpecCard>
+  <SpecCard title="stella inspect" href="/docs/commands/inspect">
+    Show the exact context a past model call was sent
+  </SpecCard>
+  <SpecCard title="stella calibration" href="/docs/commands/calibration">
+    Judge calibration: false-positive rate vs CI ground truth
+  </SpecCard>
+  <SpecCard title="stella usage" href="/docs/commands/usage">
+    Cross-project telemetry hub (~/.stella/usage.db)
+  </SpecCard>
+  <SpecCard title="stella tune" href="/docs/commands/tune">
+    A/B one policy knob over two loop-bench result files
+  </SpecCard>
+</CardGrid>
+
+### Set up
+
+<CardGrid size="sm">
+  <SpecCard title="stella auth" href="/docs/commands/auth">
+    Manage BYOK provider keys in ~/.stella/credentials.toml
+  </SpecCard>
+  <SpecCard title="stella models" href="/docs/commands/models">
+    List configured providers and available models
+  </SpecCard>
+  <SpecCard title="stella connect" href="/docs/commands/connect">
+    Connect an issue tracker (GitHub or Linear)
+  </SpecCard>
+  <SpecCard title="stella mcp" href="/docs/commands/mcp">
+    Manage MCP servers: search, install, list, telemetry
   </SpecCard>
   <SpecCard title="stella config" href="/docs/commands/config">
-    Show the fully resolved configuration for the current session.
+    Show current configuration
+  </SpecCard>
+  <SpecCard title="stella migrate" href="/docs/commands/migrate">
+    Move settings.json to stella.toml
   </SpecCard>
   <SpecCard title="stella doctor" href="/docs/commands/doctor">
-    Check the local state stella owns and exit non-zero if any check fails. `--repair`
-    moves a corrupt `store.db` aside — renamed, never deleted.
+    Check the local state stella owns, and report each verdict
   </SpecCard>
   <SpecCard title="stella completions" href="/docs/commands/completions">
-    `<shell>` — print a shell completion script to stdout. bash, zsh, fish, PowerShell,
-    or elvish.
+    Print a shell completion script for stella to stdout
+  </SpecCard>
+  <SpecCard title="stella cloud" href="/docs/commands/cloud">
+    Cloud account registration (stub)
+  </SpecCard>
+  <SpecCard title="stella telemetry" href="/docs/commands/telemetry">
+    Inspect or flush the managed enterprise telemetry spool
   </SpecCard>
   <SpecCard title="stella version" href="/docs/commands/version">
-    Print the version and exit.
+    Print the version and exit
   </SpecCard>
 </CardGrid>
 
 Each command page in this section documents its usage synopsis, behavior, relevant flags, and realistic examples.
 
-Every subcommand `stella --help` lists has a page here, and a test asserts it: `every_subcommand_has_a_reference_page` in `stella-cli` diffs the live clap command tree against this section's `meta.json`, so a new subcommand cannot land undocumented.
+Three tests in `stella-cli` keep this page honest. `every_subcommand_has_a_reference_page` diffs the live clap command tree against this section's `meta.json`, so a new subcommand cannot land undocumented. `the_docs_nav_mirrors_these_groups` fails if the sidebar grouping drifts from the one `--help` renders, and `the_docs_index_summaries_are_the_clis_own` fails if any summary above differs from the CLI's own string.
 
 Two of them are specialized rather than day-to-day. `stella arena` is a benchmark-harness adapter for measuring Stella, not for doing work with it; `stella telemetry` operates the managed enterprise spool and is disabled without a signed org-managed enrollment.
 

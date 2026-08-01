@@ -35,6 +35,9 @@ record of *changes*, curated by the person who made them.
   reported the *previous* release — only the prebuilt tarballs were stamped
   right. The script now cuts a release commit with `scripts/sync-versions.sh`
   and tags that, exactly like `auto-tag.yml` (#822).
+## [0.6.41] — 2026-08-01
+
+## [0.6.40] — 2026-08-01
 
 ## [0.6.39] — 2026-08-01
 
