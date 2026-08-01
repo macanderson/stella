@@ -1737,9 +1737,9 @@ impl ToolRegistry {
     /// cost is that a change is attributed to the turn rather than to the
     /// exact call within it — which is all the ledger and the ladder ever
     /// read.
-    /// Latches [`Self::turn_bracketing`], which is what turns the per-call
-    /// probe in [`Self::execute`] off. Calling this once commits the session
-    /// to turn granularity; the two never run together.
+    /// Latches this session as turn-bracketing, which is what turns the
+    /// per-call probe in [`Self::execute`] off. Calling this once commits the
+    /// session to turn granularity; the two never run together.
     pub fn begin_workspace_probe(&self) {
         self.turn_bracketing
             .store(true, std::sync::atomic::Ordering::Relaxed);
