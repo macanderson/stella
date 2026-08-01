@@ -67,7 +67,22 @@ impl AgentEntry {
         if hit_rate >= threshold {
             return None;
         }
-        if self.cache_is_opt_in_provider && self.cache_write_tokens == 0 {
+        // A READ is proof the cache engaged: nothing can be read that was
+        // never written. Writes and reads land on different turns — once a
+        // prefix is cached, every later turn reads it and writes nothing — so
+        // `cache_write_tokens == 0` is the NORMAL shape of a warm cache, not
+        // evidence of a missing marker.
+        //
+        // Diagnosing off writes alone put "opt-in never engaged — likely a
+        // bug" on a statline that was simultaneously reporting 9.6K read
+        // tokens and real savings. A warning that contradicts the number
+        // printed beside it is worse than silence: it sends the reader
+        // hunting for a defect that is not there, and teaches them to
+        // disregard the next one.
+        if self.cache_is_opt_in_provider
+            && self.cache_write_tokens == 0
+            && self.cache_read_tokens == 0
+        {
             return Some(CacheCause::OptInNeverEngaged);
         }
         Some(CacheCause::PrefixInstability)
@@ -275,6 +290,18 @@ mod tests {
         assert_eq!(
             entry(30_000, 0, 0, 5, false).cache_diagnosis(0.20),
             Some(CacheCause::PrefixInstability)
+        );
+        // Reported from a live session: 9.6K read against 0 written, and the
+        // statline said "opt-in never engaged — likely a bug" beside its own
+        // evidence that the cache was working. A read cannot come from a
+        // cache that was never written; writes and reads simply land on
+        // different turns, so zero writes is the ordinary shape of a warm
+        // prefix. Low-but-nonzero hits are instability, never an absent
+        // marker.
+        assert_eq!(
+            entry(96_000, 9_600, 0, 5, true).cache_diagnosis(0.20),
+            Some(CacheCause::PrefixInstability),
+            "a cache read is proof the cache engaged"
         );
     }
 
