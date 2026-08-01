@@ -7,6 +7,11 @@
 //!
 //! The operations themselves live in [`crate::issue_ops`] (shared with the
 //! Command Deck); this module is detection + the model-facing tool layer.
+//!
+//! The read tools (`search_issues`/`get_issue`/`list_labels`/`list_members`)
+//! are `read_only` but never `speculation_safe`: every one is a call
+//! against Linear's or GitHub's rate-limited API, so a stream retry must
+//! not be able to bill it twice (#923).
 
 use std::sync::Arc;
 
@@ -230,6 +235,7 @@ impl Tool for CreateIssue {
                 "required": ["title"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
@@ -287,6 +293,7 @@ impl Tool for UpdateIssue {
                 "required": ["issue"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
@@ -340,6 +347,7 @@ impl Tool for CloseIssue {
                 "required": ["issue"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
@@ -381,6 +389,7 @@ impl Tool for SearchIssues {
                 }
             }),
             read_only: true,
+            speculation_safe: false,
         }
     }
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
@@ -437,6 +446,7 @@ impl Tool for GetIssue {
                 "required": ["issue"]
             }),
             read_only: true,
+            speculation_safe: false,
         }
     }
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
@@ -480,6 +490,7 @@ impl Tool for ListLabels {
                 }
             }),
             read_only: true,
+            speculation_safe: false,
         }
     }
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
@@ -521,6 +532,7 @@ impl Tool for ListMembers {
                 }
             }),
             read_only: true,
+            speculation_safe: false,
         }
     }
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
@@ -561,6 +573,7 @@ impl Tool for StartWorkOnIssue {
                 "required": ["issue"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {

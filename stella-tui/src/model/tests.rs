@@ -401,6 +401,33 @@ fn tool_result_summary_is_middle_out_truncated() {
 }
 
 #[test]
+fn colourised_tool_output_folds_to_clean_text() {
+    // A `cargo build` failure as a colour-detecting child process emits it.
+    // The escapes must be gone from BOTH the summary and the expanded full
+    // text — the fold cache means anything kept here is kept forever (#934).
+    let mut model = SessionModel::new();
+    model.apply(&AgentEvent::ToolResult {
+        call_id: "c1".into(),
+        output: ToolOutput::Error {
+            message: "\u{1b}[0m\u{1b}[1m\u{1b}[38;5;9merror[E0308]\u{1b}[0m\u{1b}[1m: \
+                      mismatched types in [u8; 4]\u{1b}[0m"
+                .into(),
+        },
+        duration_ms: 5,
+        speculated: false,
+    });
+    match model.transcript.last() {
+        Some(TranscriptEntry::ToolResult { summary, full, .. }) => {
+            // The escape residue is gone, but legitimate bracket text — the
+            // error code and the array type — survives untouched.
+            assert_eq!(summary, "error[E0308]: mismatched types in [u8; 4]");
+            assert_eq!(full, "error[E0308]: mismatched types in [u8; 4]");
+        }
+        other => panic!("expected a tool result entry, got {other:?}"),
+    }
+}
+
+#[test]
 fn oversized_tool_args_stay_valid_pretty_printable_json() {
     let mut model = SessionModel::new();
     let big = "x".repeat(INPUT_BUDGET * 2);

@@ -475,7 +475,11 @@ impl ToolRegistry {
         for schema in schemas {
             bus.emit_named(
                 hook_names::TOOL_REGISTERED,
-                serde_json::json!({ "tool": schema.name, "read_only": schema.read_only }),
+                serde_json::json!({
+                    "tool": schema.name,
+                    "read_only": schema.read_only,
+                    "speculation_safe": schema.speculation_safe,
+                }),
             );
         }
         *self.bus.write().unwrap_or_else(|p| p.into_inner()) = Some(bus);
@@ -2385,6 +2389,14 @@ mod tests {
             assert_eq!(
                 schema.read_only, entry.read_only,
                 "read_only flag wrong for {}",
+                schema.name
+            );
+            assert_eq!(
+                schema.speculation_safe, entry.speculation_safe,
+                "speculation_safe flag wrong for {} — the engine runs \
+                 exactly this partition before a step commits, so a schema \
+                 drifting from the catalog either double-bills a metered \
+                 read or silently stops speculating a pure one (#923)",
                 schema.name
             );
         }

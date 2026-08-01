@@ -59,6 +59,7 @@ impl ToolExecutor for ForeverRead {
             description: "a deterministic blocked read".into(),
             input_schema: serde_json::json!({"type": "object"}),
             read_only: true,
+            speculation_safe: false,
         }]
     }
 

@@ -152,6 +152,7 @@ impl Tool for VerifyDone {
                 "required": ["test_cmd", "test_files"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 

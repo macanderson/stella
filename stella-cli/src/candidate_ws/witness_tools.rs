@@ -152,6 +152,7 @@ impl ToolExecutor for WitnessToolExecutor {
                 "required": ["path", "content"]
             }),
             read_only: false,
+            speculation_safe: false,
         });
         schemas
     }

@@ -156,6 +156,7 @@ impl Tool for EditFile {
                 "required": ["path", "old_string", "new_string"]
             }),
             read_only: false,
+            speculation_safe: false,
         }
     }
 

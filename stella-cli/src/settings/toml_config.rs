@@ -96,6 +96,10 @@ pub struct RunSection {
     /// `on` = print an end-of-run recap in text mode. Was `enable_recap`.
     #[serde(default)]
     pub recap: Option<Toggle>,
+    /// `on` = assemble a trajectory trace after each finished execution
+    /// (#1042). Same name in JSON (`trace_capture`).
+    #[serde(default)]
+    pub trace_capture: Option<Toggle>,
 }
 
 /// `[models]` — policy over the model catalog, not a model table.
@@ -335,6 +339,7 @@ impl TomlConfig {
             agent_engine_config,
             tools,
             enable_recap: run.recap,
+            trace_capture: run.trace_capture,
             ui,
             context,
             context_providers,

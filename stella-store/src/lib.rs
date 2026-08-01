@@ -204,7 +204,8 @@ pub(crate) use private::{
 };
 pub use prune::{DEPENDENT_TABLES, StorePrunePolicy, StorePruneReport};
 pub use receipts::{
-    ContextBlockRow, InspectableExecution, ManifestBlockRow, RecordedCall, StepManifestRow,
+    ContextBlockRow, ExecutionSummary, InspectableExecution, ManifestBlockRow, RecordedCall,
+    StepManifestRow,
 };
 pub use reconstruct::Reconstruction;
 pub use sessions::{SessionRecord, SessionRegistry, SessionStatus};
@@ -1478,6 +1479,24 @@ impl Store {
                 session_id: row.get(5)?,
             })
         })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// Session ids with at least one persisted event, newest execution
+    /// first — the enumeration `stella calibration` folds over (#871).
+    pub fn event_session_ids(&self) -> Result<Vec<String>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT x.session_id, MAX(x.id) AS latest FROM executions x \
+             JOIN events e ON e.execution_id = x.id \
+             WHERE x.session_id IS NOT NULL \
+             GROUP BY x.session_id ORDER BY latest DESC",
+        )?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row?);

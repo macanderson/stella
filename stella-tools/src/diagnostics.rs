@@ -548,6 +548,10 @@ impl Tool for Diagnostics {
                 }
             }),
             read_only: true,
+            // Runs the project's own manifest-resolved checker — nobody
+            // can promise an arbitrary project command is free to run
+            // twice, so it only executes at dispatch (#923).
+            speculation_safe: false,
         }
     }
 

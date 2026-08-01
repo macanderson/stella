@@ -563,24 +563,9 @@ mod tests {
 
     // ── shared event lines ─────────────────────────────────────────────────
 
-    /// Drop ANSI SGR sequences so assertions pin visible text regardless of
-    /// whether `colored` detects a tty in the test harness.
-    fn strip_ansi(s: &str) -> String {
-        let mut out = String::with_capacity(s.len());
-        let mut chars = s.chars();
-        while let Some(c) = chars.next() {
-            if c == '\u{1b}' {
-                for e in chars.by_ref() {
-                    if e == 'm' {
-                        break;
-                    }
-                }
-            } else {
-                out.push(c);
-            }
-        }
-        out
-    }
+    // Strips ANSI so assertions pin visible text regardless of whether
+    // `colored` detects a tty in the test harness.
+    use stella_tui::strip_ansi;
 
     #[test]
     fn styled_event_line_composes_glyph_body_detail_with_single_spaces() {

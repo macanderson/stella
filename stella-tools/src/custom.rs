@@ -139,6 +139,7 @@ impl CustomTool {
             description: self.description.clone(),
             input_schema: self.input_schema.clone(),
             read_only: false,
+            speculation_safe: false,
         }
     }
 }
@@ -1279,6 +1280,7 @@ command = []"#;
                 description: "run".into(),
                 input_schema: serde_json::json!({ "type": "object" }),
                 read_only: false,
+                speculation_safe: false,
             }]
         }
         async fn execute(&self, name: &str, _input: &Value) -> ToolOutput {

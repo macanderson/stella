@@ -133,7 +133,7 @@ pub(crate) async fn run_raw_one_shot(
             } else {
                 EpisodeOutcome::Failure
             };
-            m.record_episode(prompt, episode_outcome, &files, started_unix)
+            m.record_episode(prompt, episode_outcome, &files, started_unix, None)
                 .await;
         }
     }
@@ -315,7 +315,7 @@ pub async fn run_goal_cmd(
             } else {
                 EpisodeOutcome::Failure
             };
-            m.record_episode(goal, episode_outcome, &files, started_unix)
+            m.record_episode(goal, episode_outcome, &files, started_unix, None)
                 .await;
         }
     }
@@ -682,6 +682,7 @@ async fn run_goal_pipeline_turn(
                 diagnostics: &ws_ports.diagnostic_runner,
                 tests: &ws_ports.test_runner,
                 lint: Some(&ws_ports.lint_probe),
+                mutation: Some(&ws_ports.mutation_probe),
                 approvals: &HEADLESS_APPROVAL_GATE,
                 sleeper: &TokioSleeper,
                 hooks: cfg

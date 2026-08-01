@@ -1948,6 +1948,13 @@
             "boolean",
             "null"
           ]
+        },
+        "witness_mutation": {
+          "description": "The mutation audit's finding (#870): `Some(true)` = the witness\nfailed under at least one trivial mutant of the changed lines (it\nconstrains the change); `Some(false)` = it stayed green under every\nobserved mutant (tautological — the deterministic credit was\nwithheld); `None` = the check never ran.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "required": [
@@ -2912,6 +2919,11 @@
         "read_only": {
           "default": false,
           "description": "True when the tool cannot mutate any state (filesystem, processes,\nenvironment) — the engine may run consecutive read-only calls from\none step concurrently. Defaults to false so unknown/external tools\nare treated as mutating, the safe direction.",
+          "type": "boolean"
+        },
+        "speculation_safe": {
+          "default": false,
+          "description": "True when one announced call may safely EXECUTE TWICE — the claim\nspeculative execution needs (#923). A stream attempt that fails\nafter announcing its read-only prefix re-announces it on retry, so\nevery speculated call must tolerate a duplicate run. That is a\nstronger claim than [`read_only`](Self::read_only): a web search\nmutates no workspace state yet burns a metered API call each run,\nand a graph query writes catch-up state to its own database on the\nway to answering. Only a tool that is BOTH `read_only` and\n`speculation_safe` is ever run before its step commits. Defaults to\nfalse so external tools (MCP servers foremost) are never speculated\nunless they opt in — the failure mode of the opposite default is\ninvisible and lands on the user's bill.",
           "type": "boolean"
         }
       },

@@ -5,6 +5,7 @@
 //! decision the ladder must reach.
 
 use super::*;
+use crate::LineMutation;
 
 /// #860 acceptance: a baseline that TIMES OUT observed no failing assertion,
 /// so a candidate whose suite then passes has no fail→pass flip — the run
@@ -51,6 +52,7 @@ async fn a_timed_out_baseline_never_manufactures_a_flip() {
             diagnostics: &runner,
             tests: &runner,
             lint: None,
+            mutation: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -125,6 +127,7 @@ async fn a_timed_out_candidate_suite_escalates_instead_of_revising() {
             diagnostics: &runner,
             tests: &runner,
             lint: None,
+            mutation: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -207,6 +210,7 @@ async fn a_flaky_flip_fails_its_confirmation_and_escalates() {
             diagnostics: &runner,
             tests: &runner,
             lint: None,
+            mutation: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -326,6 +330,7 @@ async fn a_fresh_diagnostic_error_vetoes_the_fast_submit() {
             diagnostics: &runner,
             tests: &runner,
             lint: Some(&lint),
+            mutation: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -400,6 +405,7 @@ async fn without_a_lint_probe_the_flip_still_fast_submits() {
             diagnostics: &runner,
             tests: &runner,
             lint: None,
+            mutation: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
@@ -447,4 +453,157 @@ async fn without_a_lint_probe_the_flip_still_fast_submits() {
     assert!(why.contains("baseline:fail → candidate:pass"), "got: {why}");
     let events = drain(&mut rx);
     assert!(!stages(&events).contains(&StageKind::Judge));
+}
+
+/// A scripted mutation probe (#870): every mutant gets the same outcome,
+/// and calls are counted so scenarios can pin the early-exit discipline.
+pub(super) struct ScriptedMutation {
+    outcome: MutantOutcome,
+    calls: std::sync::atomic::AtomicU32,
+}
+
+impl ScriptedMutation {
+    pub(super) fn new(outcome: MutantOutcome) -> Self {
+        Self {
+            outcome,
+            calls: std::sync::atomic::AtomicU32::new(0),
+        }
+    }
+    pub(super) fn calls(&self) -> u32 {
+        self.calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl MutationProbe for ScriptedMutation {
+    async fn run_mutant(
+        &self,
+        _root: Option<&str>,
+        _mutation: &LineMutation,
+        _invocation: &TestInvocation,
+    ) -> MutantOutcome {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.outcome
+    }
+}
+
+/// A diff whose added lines carry two mutable tokens, so the #870 generator
+/// proposes two mutants.
+const MUTABLE_DIFF: &str = "--- a/src/fix.rs\n\
+                            +++ b/src/fix.rs\n\
+                            @@ -1,2 +1,2 @@\n\
+                            -    if x > hi { hi } else { x }\n\
+                            +    if x >= hi { hi } else { x }\n\
+                            +    let ready = true;\n";
+
+/// #870 acceptance: an authored witness that stays green under EVERY trivial
+/// mutation of the changed lines is tautological — it reacts to the change
+/// without constraining it. The flip stands as an observation, but the
+/// deterministic credit is withheld and the judge decides with
+/// `witness_tautological=true` in evidence.
+#[tokio::test]
+async fn a_tautological_witness_is_downgraded_to_the_judge() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),
+        text_result("wrote the test.\nTEST_COMMAND: cargo test --test witness witness -- --exact"),
+        text_result("PASS — the change is sound even though the witness is weak"),
+    ]);
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let candidate = FakeWorkspace::new(0, vec![true, true], Ok(vec![]), log.clone())
+        .with_diff(MUTABLE_DIFF)
+        .with_repo_status(SeqRepoStatus::new(vec![
+            vec![],
+            vec![("tests/witness.rs", "w1")],
+        ]));
+    let baseline = FakeWorkspace::new(1, vec![false], Ok(vec![]), log.clone()).with_repo_status(
+        SeqRepoStatus::new(vec![vec![], vec![("tests/witness.rs", "w1")]]),
+    );
+    let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log);
+    // The witness stays green while the changed lines are broken.
+    let probe = ScriptedMutation::new(MutantOutcome::Witness { passed: true });
+    let (outcome, events, _) = run_isolated_full(
+        &provider,
+        &port,
+        PipelineConfig::default(),
+        "Fix the retry bug",
+        router(),
+        Some(&probe),
+    )
+    .await;
+    let outcome = outcome.expect("run succeeds");
+
+    let verdict = outcome.verdict.expect("verified");
+    assert!(
+        !verdict.deterministic,
+        "a tautological witness must not buy a deterministic pass: {}",
+        verdict.summary
+    );
+    assert_eq!(
+        probe.calls(),
+        2,
+        "both proposed mutants ran (none was killed, so no early exit)"
+    );
+    assert!(
+        stages(&events).contains(&StageKind::Judge),
+        "the downgrade escalates to the judge"
+    );
+    let snapshot = verdict
+        .ladder
+        .as_deref()
+        .expect("the verdict carries its snapshot");
+    assert_eq!(
+        snapshot.witness_mutation,
+        Some(false),
+        "provenance records that the witness survived no mutant"
+    );
+}
+
+/// The sound-witness path: the first mutant kills the witness, the check
+/// stops early (no second mutant is paid for), and the deterministic pass
+/// stands with the finding in provenance.
+#[tokio::test]
+async fn a_witness_that_kills_a_mutant_keeps_its_deterministic_pass() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),
+        text_result("wrote the test.\nTEST_COMMAND: cargo test --test witness witness -- --exact"),
+    ]);
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let candidate = FakeWorkspace::new(0, vec![true, true], Ok(vec![]), log.clone())
+        .with_diff(MUTABLE_DIFF)
+        .with_repo_status(SeqRepoStatus::new(vec![
+            vec![],
+            vec![("tests/witness.rs", "w1")],
+        ]));
+    let baseline = FakeWorkspace::new(1, vec![false], Ok(vec![]), log.clone()).with_repo_status(
+        SeqRepoStatus::new(vec![vec![], vec![("tests/witness.rs", "w1")]]),
+    );
+    let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log);
+    let probe = ScriptedMutation::new(MutantOutcome::Witness { passed: false });
+    let (outcome, events, _) = run_isolated_full(
+        &provider,
+        &port,
+        PipelineConfig::default(),
+        "Fix the retry bug",
+        router(),
+        Some(&probe),
+    )
+    .await;
+    let outcome = outcome.expect("run succeeds");
+
+    let verdict = outcome.verdict.expect("verified");
+    assert!(verdict.passed);
+    assert!(verdict.deterministic, "the sound witness keeps its credit");
+    assert_eq!(
+        probe.calls(),
+        1,
+        "the first killed mutant proves the witness; the second is never paid for"
+    );
+    assert!(!stages(&events).contains(&StageKind::Judge));
+    let snapshot = verdict
+        .ladder
+        .as_deref()
+        .expect("the verdict carries its snapshot");
+    assert_eq!(snapshot.witness_mutation, Some(true));
 }

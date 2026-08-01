@@ -79,6 +79,7 @@ async fn run_scenario(s: Scenario) {
             diagnostics: &runner,
             tests: &runner,
             lint: lint.as_ref().map(|l| l as &dyn LintProbe),
+            mutation: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,

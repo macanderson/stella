@@ -193,6 +193,11 @@ impl Settings {
         if let Some(recap) = scope.enable_recap {
             self.enable_recap = Some(recap);
         }
+        // Same explicit-listing rule as `enable_recap` above: omit this and
+        // the flag parses everywhere yet merges to `None`.
+        if let Some(trace) = scope.trace_capture {
+            self.trace_capture = Some(trace);
+        }
         // Appearance (`ui.theme`): whole-block last-wins — a higher-precedence
         // scope that declares `ui` replaces the lower one's. Personal
         // preference, no credential/egress authority, so no trust restoration.

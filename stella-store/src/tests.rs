@@ -2202,3 +2202,33 @@ fn a_failing_file_touch_row_rolls_its_whole_batch_back() {
         "the row written before the failure must roll back with it"
     );
 }
+
+/// #871: the calibration enumeration — sessions with events, newest first,
+/// sessionless executions excluded.
+#[test]
+fn event_session_ids_lists_sessions_with_events_newest_first() {
+    let store = Store::in_memory().unwrap();
+    let older = store.begin_execution("run", "a", "zai", "glm-5.2").unwrap();
+    store.set_execution_session(older, "ses-old").unwrap();
+    store
+        .record_event(older, 0, &AgentEvent::Text { delta: "a".into() })
+        .unwrap();
+    let newer = store.begin_execution("run", "b", "zai", "glm-5.2").unwrap();
+    store.set_execution_session(newer, "ses-new").unwrap();
+    store
+        .record_event(newer, 0, &AgentEvent::Text { delta: "b".into() })
+        .unwrap();
+    // An execution with events but NO session id must not appear.
+    let orphan = store.begin_execution("run", "c", "zai", "glm-5.2").unwrap();
+    store
+        .record_event(orphan, 0, &AgentEvent::Text { delta: "c".into() })
+        .unwrap();
+    // A session with an execution but no events must not appear either.
+    let silent = store.begin_execution("run", "d", "zai", "glm-5.2").unwrap();
+    store.set_execution_session(silent, "ses-silent").unwrap();
+
+    assert_eq!(
+        store.event_session_ids().unwrap(),
+        vec!["ses-new".to_string(), "ses-old".to_string()]
+    );
+}

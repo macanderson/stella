@@ -5,8 +5,9 @@
 //! it that makes any past step reconstructable and auditable.
 
 use rusqlite::params;
+use stella_protocol::AgentEvent;
 
-use crate::{Result, Store, sqlite_i64};
+use crate::{Result, SessionEventRecord, SessionJournal, Store, sqlite_i64};
 
 /// One context block as registered at birth (`context_blocks`, spec §4).
 /// `kind`/`cache_zone` are the wire enums already serialized to their
@@ -293,6 +294,62 @@ impl Store {
         }
     }
 
+    /// One execution's closeout header — the fields trace assembly (#1042)
+    /// stamps onto a trajectory record. `None` when the id does not exist.
+    /// Read AFTER `finish_execution_accounted` if `outcome`/`finished_at`
+    /// must be settled; earlier reads honestly return them as `None`.
+    pub fn execution_summary(&self, execution_id: i64) -> Result<Option<ExecutionSummary>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT kind, prompt, provider, model, started_at, finished_at, outcome, cost_usd
+             FROM executions WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![execution_id], |r| {
+            Ok(ExecutionSummary {
+                kind: r.get(0)?,
+                prompt: r.get(1)?,
+                provider: r.get(2)?,
+                model: r.get(3)?,
+                started_at: r.get(4)?,
+                finished_at: r.get(5)?,
+                outcome: r.get(6)?,
+                cost_usd: r.get(7)?,
+            })
+        })?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    /// One execution's COMPLETE event journal in stream order — the
+    /// per-execution counterpart of [`Store::session_events`]. A one-shot
+    /// `stella run` never stamps a session id (`executions.session_id`
+    /// stays NULL), so session replay cannot reach it; this reader can.
+    /// Same tolerance as the session reader: a payload that no longer
+    /// parses as an [`AgentEvent`] is skipped and counted, never fatal.
+    pub fn execution_events(&self, execution_id: i64) -> Result<SessionJournal> {
+        let conn = self.lock();
+        let mut stmt = conn
+            .prepare("SELECT seq, payload FROM events WHERE execution_id = ? ORDER BY seq ASC")?;
+        let rows = stmt.query_map(params![execution_id], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut journal = SessionJournal::default();
+        for row in rows {
+            let (seq, payload) = row?;
+            match serde_json::from_str::<AgentEvent>(&payload) {
+                Ok(event) => journal.events.push(SessionEventRecord {
+                    execution_id,
+                    seq,
+                    event,
+                }),
+                Err(_) => journal.skipped += 1,
+            }
+        }
+        Ok(journal)
+    }
+
     /// Every execution of the same chat session as `execution_id`, oldest
     /// first — the *turns* of one conversation.
     ///
@@ -387,6 +444,21 @@ pub struct InspectableExecution {
     pub calls: u64,
 }
 
+/// One execution's closeout header ([`Store::execution_summary`]): what ran,
+/// how it ended, and what it cost in total. `outcome`/`finished_at` are `None`
+/// until `finish_execution_accounted` settles the row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExecutionSummary {
+    pub kind: String,
+    pub prompt: String,
+    pub provider: String,
+    pub model: String,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub outcome: Option<String>,
+    pub cost_usd: f64,
+}
+
 /// One recorded model call — the header of a receipt, without its blocks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordedCall {
@@ -421,6 +493,58 @@ mod tests {
             content_digest: format!("sha256:{id}"),
             citation_label: None,
             content: None,
+        }
+    }
+
+    #[test]
+    fn execution_events_replays_one_execution_without_needing_a_session() {
+        let store = Store::in_memory().unwrap();
+        // No set_execution_session — the one-shot `stella run` shape.
+        let solo = store
+            .begin_execution("run", "solo", "zai", "glm-5.2")
+            .unwrap();
+        store
+            .record_event(
+                solo,
+                0,
+                &AgentEvent::Reasoning {
+                    delta: "think".into(),
+                },
+            )
+            .unwrap();
+        store
+            .record_event(solo, 1, &AgentEvent::Text { delta: "a".into() })
+            .unwrap();
+        // A neighbouring execution's rows stay out of this journal.
+        let other = store.begin_execution("run", "x", "zai", "glm-5.2").unwrap();
+        store
+            .record_event(other, 0, &AgentEvent::Text { delta: "z".into() })
+            .unwrap();
+        // Genuine damage on the target execution is counted, not fatal.
+        {
+            let conn = store.lock();
+            conn.execute(
+                "INSERT INTO events (execution_id, seq, event_type, payload) \
+                 VALUES (?, 2, 'text', '{ this is not json')",
+                params![solo],
+            )
+            .unwrap();
+        }
+
+        let journal = store.execution_events(solo).unwrap();
+        assert_eq!(journal.skipped, 1);
+        assert_eq!(
+            journal
+                .events
+                .iter()
+                .map(|r| (r.execution_id, r.seq))
+                .collect::<Vec<_>>(),
+            vec![(solo, 0), (solo, 1)],
+            "stream order, this execution only"
+        );
+        match &journal.events[0].event {
+            AgentEvent::Reasoning { delta } => assert_eq!(delta, "think"),
+            other => panic!("unexpected first event: {other:?}"),
         }
     }
 
