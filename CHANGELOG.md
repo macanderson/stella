@@ -35,6 +35,10 @@ skip the roll) were re-inserted the same way.
 
 ## [Unreleased]
 
+## [0.6.54] — 2026-08-01
+
+## [0.6.53] — 2026-08-01
+
 ## [0.6.52] — 2026-08-01
 
 ## [0.6.51] — 2026-08-01
@@ -76,6 +80,23 @@ skip the roll) were re-inserted the same way.
   per-agent prompts, providers, temperatures, model pins and your
   `allowed_models` list are left untouched throughout. Bare `/profile` shows
   what is set and what each profile would choose right now.
+
+### Fixed
+
+- **`/model` no longer copies your project's settings into your user file.**
+  Setting the default model read the *merged* view of user + org + project
+  settings and saved the whole `agent_engine_config` block to user scope, so a
+  repo-local judge pin — or an org-managed effort ceiling — was promoted to a
+  machine-wide default that outlived the repo it came from. Both `/model` and
+  `/profile` now read the file they are about to rewrite, matching the rule
+  the tool switches already followed.
+
+- **A malformed settings file no longer costs you your engine config.** The
+  same edit path treated an unparseable file as an empty one, and then wrote
+  the whole block back — so a single key of the wrong type anywhere in
+  `settings.json` (`"enable_recap": true`, where a `Toggle` was expected)
+  silently discarded every model pin and per-agent prompt in it. A file that
+  exists but cannot be parsed is now a named error, and nothing is written.
 
 ## [0.6.45] — 2026-08-01
 

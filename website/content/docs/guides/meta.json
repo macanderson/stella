@@ -3,11 +3,13 @@
   "pages": [
     "index",
     "fix-failing-ci",
+    "parallel-fixes",
     "unfamiliar-codebase",
     "budget",
     "what-a-run-cost",
     "embed-the-engine",
     "ci-engine-gate",
+    "terminal-bench-head-to-head",
     "troubleshooting"
   ]
 }

@@ -653,30 +653,29 @@ pub fn project_config_path(workspace_root: &Path) -> PathBuf {
 /// file — silently promoting a per-repo model pin to a machine-wide default.
 /// An editor reads the scope it is about to write.
 ///
-/// A missing or unreadable file is an empty config rather than an error: the
-/// caller is about to overwrite this block anyway, and refusing to edit because
-/// of an unrelated malformed key would leave no way out through the UI.
-/// (`Config::load` is where a bad settings file is loud.)
+/// A **missing** file is an empty config — there is nothing to preserve, and
+/// the caller is about to create it. A file that exists but cannot be parsed is
+/// an **error**, and deliberately not a fallback to empty: because the caller
+/// then writes the whole block back, degrading here would let one malformed key
+/// somewhere else in the file destroy an engine config this editor never owned.
+/// A named error the user can act on beats silently discarding their settings.
 ///
 /// User scope specifically, because it is the only scope a slash command
 /// writes; a project-scope sibling would need to pass its own
 /// [`toml_config::ConfigScope`] so a TOML file's declared scope still validates.
-pub fn user_engine_config_at(path: &Path) -> AgentEngineConfig {
+pub fn user_engine_config_at(path: &Path) -> Result<AgentEngineConfig, String> {
     let settings = if toml_config::path_is_toml(path) {
         // A closure, not `std::fs::read_to_string` by name: the free function
         // is generic over `AsRef<Path>`, so inference pins it to one concrete
         // lifetime and it stops satisfying the reader's for-any-lifetime bound.
         toml_config::load_toml_scope(path, toml_config::ConfigScope::User, |p: &Path| {
             std::fs::read_to_string(p)
-        })
-        .ok()
-        .map(|loaded| loaded.settings)
+        })?
+        .settings
     } else {
-        Settings::load_scope(path).ok()
+        Settings::load_scope(path)?
     };
-    settings
-        .and_then(|s| s.agent_engine_config)
-        .unwrap_or_default()
+    Ok(settings.agent_engine_config.unwrap_or_default())
 }
 
 /// The `tools` section of settings.json — the one place a tool is switched

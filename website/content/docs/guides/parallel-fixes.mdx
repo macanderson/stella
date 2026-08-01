@@ -1,0 +1,260 @@
+---
+title: Fix a backlog in parallel
+description: A list of independent fixes and one afternoon. Decompose it into a fleet plan, run the workers concurrently under file claims, and review what actually landed.
+---
+
+You have a list. Eleven clippy warnings across four crates, a dozen modules with
+no test coverage, every `TODO(deprecate)` left over from a migration. Each item
+is small, none of them depend on each other, and doing them one at a time is an
+afternoon of watching a progress bar.
+
+This is what [`stella fleet`](/docs/commands/fleet) is for: many tasks at once,
+each handled by a full Stella worker, coordinated so they don't overwrite each
+other.
+
+## The whole thing, first
+
+```bash
+stella --budget 6 fleet \
+  "Fix the clippy warnings in stella-store" \
+  "Fix the clippy warnings in stella-graph" \
+  "Add unit tests for the plan parser in stella-fleet"
+```
+
+Three workers, running together in your repository root, committing to your
+current branch as they finish. That is the guide for a short list. The rest of
+this page is how to make a *long* list work, and how to tell what you got.
+
+<Callout type="warn">
+Workers commit to the branch you are on. Start from a branch you are willing to
+have committed to — not `main` — and start from a **clean tree**, so
+`git log` afterwards separates their work from yours.
+</Callout>
+
+## Decide this first: does the list share files?
+
+Everything downstream follows from one question, and it is worth thirty seconds
+before you type anything.
+
+<CardGrid size="md">
+  <OptionCard name="Disjoint files → inline prompts">
+    Each item touches its own crate, module or directory. Nothing to declare. Pass
+    the prompts on the command line and let claim-on-first-write handle the rest.
+  </OptionCard>
+  <OptionCard name="Overlapping files → a plan with claims">
+    Two items might both edit `src/store/schema.rs`. Declare the paths up front so
+    the second dispatch fails *by name* instead of racing. This is the common case
+    for anything over about five items.
+  </OptionCard>
+  <OptionCard name="Ordered work → depends_on">
+    Item B only makes sense after item A lands — a migration before its read path.
+    Dependencies order the waves; they are not a performance hint.
+  </OptionCard>
+  <OptionCard name="Competing answers → isolation">
+    Two attempts at the *same* file, and you want to compare them. This is the one
+    case for `isolation = "isolated"`; see [when to isolate](#when-to-isolate-instead).
+  </OptionCard>
+</CardGrid>
+
+## Turning a backlog into a plan
+
+For anything beyond a handful of prompts, write the list down. A plan file is a
+`.toml` (or `.json`) with one `[[tasks]]` entry per item:
+
+```toml title="cleanup.toml"
+[[tasks]]
+id = "store-clippy"
+title = "Clippy: stella-store"
+prompt = "Fix every clippy warning in stella-store. Do not silence with #[allow]."
+claims = ["stella-store/src/lib.rs", "stella-store/src/write.rs"]
+
+[[tasks]]
+id = "graph-clippy"
+title = "Clippy: stella-graph"
+prompt = "Fix every clippy warning in stella-graph. Do not silence with #[allow]."
+claims = ["stella-graph/src/lib.rs"]
+
+[[tasks]]
+id = "workspace-lints"
+title = "Promote the shared lints"
+prompt = "Move the now-common lint config into [workspace.lints] and drop the per-crate duplicates"
+depends_on = ["store-clippy", "graph-clippy"]
+claims = ["Cargo.toml"]
+```
+
+```bash
+stella --budget 6 fleet --plan cleanup.toml --max-concurrency 3
+```
+
+Two crates get cleaned concurrently in wave one; the workspace-wide tidy runs
+alone in wave two, once both have actually succeeded. The
+[full plan schema](/docs/agent-fleets#plan-files) has every field.
+
+<Callout type="info">
+Plans are validated **before** anything runs. A duplicate `id`, a self-dependency,
+an unknown dependency, or a cycle is rejected up front with the offending task
+named — so a typo costs you a message, not half a run.
+</Callout>
+
+### Writing prompts that survive being run alone
+
+The failure mode specific to fleets is the prompt that reads fine in a list and
+is ambiguous in isolation. Each worker sees **only its own prompt** — not the
+other tasks, not your intent, not the conversation you would have had.
+
+Three habits that pay for themselves:
+
+- **Name the scope in the prompt itself.** "Fix the clippy warnings in
+  `stella-store`" — not "fix the clippy warnings", which invites a worker into
+  the whole workspace and straight into another worker's claims.
+- **Say what a fix is not.** "Do not silence with `#[allow]`", "do not delete the
+  test". Left unsaid, the cheapest path to a green build is sometimes the wrong
+  one.
+- **Give it something deterministic to check.** A prompt that names a test
+  command lets the worker's [verify stage](/docs/inference-pipeline#6-verify--the-deterministic-ladder)
+  finish on evidence rather than on a judge's opinion. It is the single biggest
+  lever on both cost and trustworthiness.
+
+### Claims are the thing that makes it safe
+
+By default every worker runs in **one shared tree** — your repository root. That
+is a deliberate trade: the build cache stays warm and commits interleave on one
+branch, but two workers editing one file would be a silent race.
+
+`claims` is what removes the race. A declared path is held as a cooperative lock
+for the attempt's duration; a second task claiming a held path fails that
+dispatch *by name*, in under a second, with the rival identified. Undeclared
+paths are claimed on first write at the tool layer, so you get the protection
+even for files you did not anticipate.
+
+<Callout type="warn">
+Claims are matched as **exact strings** — they are not path prefixes. Claiming
+`src/store/` does not protect `src/store/write.rs`. Name files, and spell each
+one the same way throughout the plan.
+</Callout>
+
+The locks live in `.stella/private/store.db`, separate from the fleet ledger, so
+they coordinate across *concurrent fleet runs* too — a second `stella fleet` in
+another terminal cannot walk into the first one's files.
+
+### When to isolate instead
+
+`isolation = "isolated"` gives a task its own git worktree under
+`.stella/worktrees/<slug>`, on a `fleet/<slug>-<hash>` branch. Reach for it when
+the work is genuinely **divergent** — two attempts at the same rewrite, where
+you want both and will pick one — or when a task mutates checkout state.
+
+It is not the safer default. Isolation costs a cold build cache per tree and
+defers every conflict to integration time. For a backlog of independent fixes,
+claims are cheaper and catch the collision an hour earlier.
+
+## What the budget actually does here
+
+`--budget` is a [global flag](/docs/commands#global-flags), and in a fleet it is
+divided, not shared: each child worker is guarded by
+`budget ÷ max-concurrency`. The fleet stops launching new waves once total
+metered spend crosses the cap.
+
+The practical consequence is that **concurrency and per-task headroom trade off
+against each other**. `--budget 6 --max-concurrency 3` gives each worker $2;
+raising concurrency to 6 halves that, and a task that needed $1.50 now aborts
+partway. If tasks are dying early, lower the concurrency before raising the
+budget.
+
+## Reading the result
+
+This is the part that distinguishes a fleet from a script, and it is where the
+time you save gets spent if you skip it.
+
+Nothing is retried automatically. A failed task does **not** unblock its
+dependents — they end the run as `skipped`, which is a distinct outcome from
+"failed" and means the work was never attempted.
+
+Start with the ledger, `.stella/private/fleet.db` — local SQLite, like all
+[Stella telemetry](/docs/telemetry):
+
+```bash
+# What failed in the most recent run, and what the worker said about it.
+sqlite3 .stella/private/fleet.db \
+  "SELECT a.task_id, a.branch, a.summary
+     FROM attempts a
+    WHERE a.run_id = (SELECT id FROM runs ORDER BY created_at_ms DESC LIMIT 1)
+      AND a.success = 0;"
+```
+
+Then read the diff, because eleven workers producing eleven small commits on one
+branch is exactly the shape that hides a bad one:
+
+```bash
+git log --oneline main..HEAD
+git diff main...HEAD --stat
+```
+
+Past runs also surface on the **Fleet runs** card of the
+[Observatory dashboard](/docs/telemetry/dashboard) if you would rather not write
+SQL.
+
+<Callout type="info">
+Isolated tasks' worktrees and `fleet/*` branches are deliberately **left in
+place** — those branches *are* the work product. `git worktree list` shows them
+all. Nothing is merged for you.
+</Callout>
+
+## When it doesn't go cleanly
+
+### A task failed and took its dependents with it
+
+Expected, and the design is deliberate: a dependent that ran anyway would be
+building on work that isn't there. Fix the cause, then re-run — either the whole
+plan (completed work is cheap to redo and the claims still protect you) or a
+trimmed plan containing just the failed subtree.
+
+### A dispatch failed naming another task
+
+Your claims overlap. That is the system working — it caught at dispatch what
+would otherwise have been a corrupted file. Either widen the split so the two
+tasks own disjoint files, or add a `depends_on` edge so they run in different
+waves.
+
+### Everything is fighting over one file
+
+If three tasks all need `Cargo.toml`, they are not three tasks. Collapse them
+into one prompt, or sequence them with `depends_on`. A fleet parallelizes work
+that is *already* parallel; it cannot make a serial dependency concurrent.
+
+### The workers went wider than you meant
+
+Almost always an under-scoped prompt. Re-read the item as if you knew nothing
+else about the repository — that is the worker's position. Naming the crate,
+directory or file in the prompt fixes it more reliably than any flag.
+
+## Following it through to CI
+
+If your task prompts push their branches and open PRs, `--watch` keeps the run
+alive afterwards to watch each branch's CI to completion and reconcile PR status
+through `gh`. It exits non-zero if any watched branch ends red.
+
+```bash
+stella --budget 8 fleet --plan cleanup.toml --watch
+```
+
+It needs `gh` installed and authenticated, and it only does something once the
+branches are actually pushed — watching an unpushed branch has nothing to watch.
+
+## Next
+
+<CardGrid size="sm">
+  <SpecCard title="Agent Fleets" href="/docs/agent-fleets">
+    The concept page: wave scheduling, the full plan schema, and how file claims
+    work underneath.
+  </SpecCard>
+  <SpecCard title="stella fleet" href="/docs/commands/fleet">
+    The reference — every flag, the ledger layout, exit behavior.
+  </SpecCard>
+  <SpecCard title="Fix a failing CI run" href="/docs/guides/fix-failing-ci">
+    One branch instead of many, driven to green by `stella monitor`.
+  </SpecCard>
+  <SpecCard title="Work within a budget" href="/docs/guides/budget">
+    Why per-worker headroom is the number that matters, and where an abort lands.
+  </SpecCard>
+</CardGrid>

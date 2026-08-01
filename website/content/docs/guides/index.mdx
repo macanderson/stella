@@ -19,6 +19,11 @@ stop and read the whole flag surface at the moment you need it and not before.
     causes, pushes, and re-checks — and stops only on a green run somebody else can
     see. Includes what to do when the fix doesn't hold.
   </SpecCard>
+  <SpecCard title="Fix a backlog in parallel" href="/docs/guides/parallel-fixes">
+    A list of independent fixes and one afternoon. `stella fleet` runs them
+    concurrently in one tree, with file claims keeping the workers off each other —
+    including how to decompose the list and how to review what landed.
+  </SpecCard>
   <SpecCard title="Change an unfamiliar codebase" href="/docs/guides/unfamiliar-codebase">
     A repository you have never read, and a change that has to land in it. `stella
     init` builds the code graph, `stella graph` answers the blast-radius question
@@ -42,6 +47,10 @@ stop and read the whole flag surface at the moment you need it and not before.
     Run Stella and Claude Code side by side on the same committed task set on every
     pull request. Block the merge on loop correctness, which is deterministic; report
     the quality delta, which is not.
+  <SpecCard title="Benchmark against Claude Code" href="/docs/guides/terminal-bench-head-to-head">
+    Terminal-Bench 2.1 with Stella in one arm and Claude Code in the other. The
+    setup, the parity checks that make the comparison mean something, and the traps
+    that quietly void a result.
   </SpecCard>
   <SpecCard title="When something isn't working" href="/docs/guides/troubleshooting">
     Config that isn't applying, a key that won't resolve, a hook that never fires, a
