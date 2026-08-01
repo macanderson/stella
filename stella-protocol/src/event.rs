@@ -1132,6 +1132,13 @@ pub struct LadderSnapshot {
     pub flip_achieved: bool,
     /// A flip was observed but its confirmation re-run did not pass (#859).
     pub unstable_flip: bool,
+    /// A would-be flip was refused because the passing run named its tests
+    /// and none of the baseline's failing tests were among them — the pass
+    /// demonstrably fixed a *different* failure (#867), most concretely a
+    /// deleted or renamed failing test. `serde(default)` so pre-#867
+    /// snapshots keep parsing.
+    #[serde(default)]
+    pub flip_refused_different_failure: bool,
     /// Touched-tests result: `None` is "could not be observed", not a pass.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub touched_tests_passed: Option<bool>,
@@ -1952,6 +1959,7 @@ mod tests {
                     ],
                     flip_achieved: true,
                     unstable_flip: false,
+                    flip_refused_different_failure: false,
                     touched_tests_passed: Some(true),
                     test_infra: None,
                     diff_lines: 12,

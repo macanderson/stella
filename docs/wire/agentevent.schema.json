@@ -420,6 +420,11 @@
           "description": "Whether the oracle's flip was achieved — after the confirmation run,\nso an unconfirmed flip reads `false` here with `unstable_flip: true`.",
           "type": "boolean"
         },
+        "flip_refused_different_failure": {
+          "default": false,
+          "description": "A would-be flip was refused because the passing run named its tests\nand none of the baseline's failing tests were among them — the pass\ndemonstrably fixed a *different* failure (#867), most concretely a\ndeleted or renamed failing test. `serde(default)` so pre-#867\nsnapshots keep parsing.",
+          "type": "boolean"
+        },
         "mutating_actions": {
           "description": "Dispatched tool calls capable of changing the workspace.",
           "format": "uint32",

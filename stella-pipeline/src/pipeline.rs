@@ -1684,7 +1684,11 @@ impl<'a> Pipeline<'a> {
             // infra noise plus a merely-faster candidate used to read as a
             // verified fail→pass flip.
             if let Some(passed) = pre.assertion_result() {
-                oracle.observe(cmd.command, passed);
+                // Output rides along for the same-failure rule (#867): a
+                // failing baseline contributes the test names a later flip
+                // must actually fix.
+                let output = format!("{}\n{}", pre.stdout_tail, pre.stderr_tail);
+                oracle.observe_run(cmd.command, passed, &output);
                 oracle_trace.push(OracleObservation {
                     tree: ProofTree::Baseline,
                     passed,
@@ -2252,6 +2256,18 @@ impl<'a> Pipeline<'a> {
                         // should weigh explicitly.
                         evidence_summary.push_str(
                             "; unstable_flip=true (the flip's confirmation re-run did not pass)",
+                        );
+                    }
+                    if state.oracle.refused_different_failure() {
+                        // #867: the suite passed, but its own complete test
+                        // listing did not contain the baseline's failing
+                        // tests — the observed failure was not fixed, it
+                        // disappeared. The judge should treat the passing
+                        // exit code accordingly.
+                        evidence_summary.push_str(
+                            "; flip_refused=the passing run's test listing does not contain \
+                             the test(s) that failed on the baseline (fixed a different \
+                             failure, or the failing test was removed)",
                         );
                     }
                     if inputs.new_diag_errors > 0 || inputs.new_diag_warnings > 0 {
@@ -2922,6 +2938,15 @@ fn best_index(candidates: &[CandidateResult]) -> usize {
         .iter()
         .map(|c| CandidateSummary {
             score: c.score,
+            // Read off the verdict's own provenance snapshot (#865) — the
+            // audit's warning count needs no separate plumbing. Absent
+            // snapshot (no verdict, pre-audit path) reads 0, the pre-#869
+            // behavior.
+            new_diag_warnings: c
+                .verdict
+                .as_ref()
+                .and_then(|v| v.ladder.as_deref())
+                .map_or(0, |s| s.new_diag_warnings),
             diff_lines: c.diff_lines,
         })
         .collect();

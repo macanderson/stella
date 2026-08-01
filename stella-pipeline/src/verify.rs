@@ -60,6 +60,10 @@
 //! oracle (L-E11): only a real test command's fail→pass counts. The pipeline
 //! never feeds a lint/typecheck command to [`FlipOracle::observe`].
 
+pub mod fingerprint;
+
+use std::collections::BTreeSet;
+
 use stella_protocol::JudgeEvidence;
 
 /// The flip oracle's state. `None` = no failing observation yet; `Failing` =
@@ -122,6 +126,16 @@ pub struct FlipOracle {
     /// The normalized command the oracle locked onto (set on first failure).
     tracked: Option<String>,
     state: FlipState,
+    /// The failing test names the tracked command's most recent failing
+    /// observation reported (#867), when its output named any. Empty when
+    /// the runner dialect parsed to nothing — and then the fingerprint guard
+    /// stands down entirely.
+    baseline_failures: BTreeSet<String>,
+    /// A flip credit was refused because the passing run named its tests and
+    /// none of the baseline's failures were among them — the pass
+    /// demonstrably fixed a *different* failure (#867). Sticky until a pass
+    /// earns the credit, so judge evidence can say why the flip is absent.
+    refused_different_failure: bool,
 }
 
 impl FlipOracle {
@@ -215,6 +229,70 @@ impl FlipOracle {
                 ObserveOutcome::Advanced
             }
         }
+    }
+
+    /// [`Self::observe`] with the run's output tail attached — the entry
+    /// point the pipeline uses, and the home of the same-*failure* rule
+    /// (#867). Two additions over the plain observation:
+    ///
+    /// - A **failing** run of the tracked command refreshes
+    ///   `baseline_failures` with the test names its output reports (the
+    ///   latest failure is the one a flip must fix).
+    /// - A **passing** run that would earn a flip is first checked against
+    ///   them: if the pass names its tests and NONE of the baseline's
+    ///   failures appear among them, the pass demonstrably fixed a
+    ///   *different* failure — most concretely, the failing test was deleted
+    ///   or renamed and the suite exits 0 around its absence. That pass is
+    ///   `NoEvidence`: no state change, no deterministic credit, and
+    ///   [`Self::refused_different_failure`] turns on for the judge
+    ///   evidence.
+    ///
+    /// Degrades open on every dark input: no baseline names, an unparseable
+    /// passing tail, or a passing tail that names nothing all leave the
+    /// exit-code behavior exactly as it was. The refusal needs positive
+    /// evidence of a different fix; absence of evidence never withholds.
+    pub fn observe_run(&mut self, command: &str, passed: bool, output: &str) -> ObserveOutcome {
+        let norm = normalize_command(command);
+        let tracked = self.tracked.as_deref() == Some(norm.as_str());
+        if passed
+            && tracked
+            && !self.is_flipped()
+            && !self.baseline_failures.is_empty()
+            && let Some(results) = fingerprint::parse_test_results(output)
+            // The listing must be demonstrably COMPLETE (the runner's own
+            // summary count matches the names parsed) — a truncated tail
+            // that dropped the one `ok` line that mattered must not fail an
+            // honest fix.
+            && results.pass_listing_complete()
+            && !results.passed.is_empty()
+            && self.baseline_failures.is_disjoint(&results.passed)
+        {
+            self.refused_different_failure = true;
+            return ObserveOutcome::NoEvidence;
+        }
+        let outcome = self.observe(command, passed);
+        if passed {
+            if self.is_flipped() {
+                // The credit was earned (or the fingerprint guard had
+                // nothing to say) — a stale refusal must not haunt the
+                // evidence.
+                self.refused_different_failure = false;
+            }
+        } else if self.tracked.as_deref() == Some(norm.as_str())
+            && let Some(results) = fingerprint::parse_test_results(output)
+            && !results.failed.is_empty()
+        {
+            // Recorded after `observe` so the very first failure — which is
+            // what locks `tracked` — contributes its names too.
+            self.baseline_failures = results.failed;
+        }
+        outcome
+    }
+
+    /// Whether the last would-be flip was refused for fixing a different
+    /// failure than the one observed (#867) — surfaced in judge evidence.
+    pub fn refused_different_failure(&self) -> bool {
+        self.refused_different_failure
     }
 
     /// The confirmation verdict (#859), fed by the pipeline's pre-submit

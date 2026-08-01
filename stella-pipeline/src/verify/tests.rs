@@ -892,3 +892,114 @@ proptest! {
         prop_assert_ne!(ladder_decision(&inputs), LadderDecision::NothingAttempted);
     }
 }
+
+// ── Same-failure rule (#867) ─────────────────────────────────────────────
+
+/// Output shapes for the fingerprint tests: a complete libtest listing
+/// (names + a summary whose count matches).
+const BASELINE_A_FAILS: &str = "test suite::test_a ... FAILED\n\
+                                test suite::test_b ... ok\n\
+                                test result: FAILED. 1 passed; 1 failed";
+const PASS_LISTS_A: &str = "test suite::test_a ... ok\n\
+                            test suite::test_b ... ok\n\
+                            test result: ok. 2 passed; 0 failed";
+const PASS_WITHOUT_A: &str = "test suite::test_b ... ok\n\
+                              test result: ok. 1 passed; 0 failed";
+const PASS_TRUNCATED: &str = "test suite::test_b ... ok\n\
+                              test result: ok. 2 passed; 0 failed";
+
+#[test]
+fn a_pass_that_fixed_a_different_failure_earns_no_flip() {
+    // Fix-by-disappearance: test_a failed on the baseline; the candidate's
+    // suite passes with a COMPLETE listing that does not contain test_a
+    // (deleted/renamed). The exit code says flip; the listing says no.
+    let mut oracle = FlipOracle::new();
+    oracle.observe_run("cargo test", false, BASELINE_A_FAILS);
+    assert_eq!(oracle.state(), FlipState::Failing);
+    let outcome = oracle.observe_run("cargo test", true, PASS_WITHOUT_A);
+    assert_eq!(outcome, ObserveOutcome::NoEvidence);
+    assert!(
+        !oracle.is_flipped(),
+        "a vanished failure is not a fixed one"
+    );
+    assert_eq!(oracle.state(), FlipState::Failing);
+    assert!(oracle.refused_different_failure());
+}
+
+#[test]
+fn a_pass_that_names_the_fixed_test_flips() {
+    let mut oracle = FlipOracle::new();
+    oracle.observe_run("cargo test", false, BASELINE_A_FAILS);
+    let outcome = oracle.observe_run("cargo test", true, PASS_LISTS_A);
+    assert_eq!(outcome, ObserveOutcome::Advanced);
+    assert!(oracle.is_flipped());
+    assert!(!oracle.refused_different_failure());
+}
+
+#[test]
+fn an_unparseable_pass_degrades_to_the_exit_code() {
+    // The guard needs positive evidence; a tail naming no tests proves
+    // nothing and must not withhold the flip the exit code earned.
+    let mut oracle = FlipOracle::new();
+    oracle.observe_run("cargo test", false, BASELINE_A_FAILS);
+    oracle.observe_run("cargo test", true, "");
+    assert!(oracle.is_flipped());
+}
+
+#[test]
+fn an_incomplete_pass_listing_never_refuses() {
+    // The summary says 2 passed but only 1 name survived the tail — the
+    // listing has a hole exactly where test_a's `ok` line could have been.
+    // Refusing here would fail honest fixes on truncation.
+    let mut oracle = FlipOracle::new();
+    oracle.observe_run("cargo test", false, BASELINE_A_FAILS);
+    oracle.observe_run("cargo test", true, PASS_TRUNCATED);
+    assert!(
+        oracle.is_flipped(),
+        "an incomplete listing proves no absence"
+    );
+}
+
+#[test]
+fn an_unfingerprinted_baseline_keeps_the_plain_flip() {
+    // The baseline output named nothing (unknown runner dialect): the
+    // same-failure rule has no baseline to hold a pass against.
+    let mut oracle = FlipOracle::new();
+    oracle.observe_run("make check", false, "make: *** [check] Error 2");
+    oracle.observe_run("make check", true, "");
+    assert!(oracle.is_flipped());
+}
+
+#[test]
+fn a_refusal_clears_when_a_later_pass_earns_the_credit() {
+    let mut oracle = FlipOracle::new();
+    oracle.observe_run("cargo test", false, BASELINE_A_FAILS);
+    oracle.observe_run("cargo test", true, PASS_WITHOUT_A);
+    assert!(oracle.refused_different_failure());
+    // The next candidate genuinely fixes test_a.
+    let outcome = oracle.observe_run("cargo test", true, PASS_LISTS_A);
+    assert_eq!(outcome, ObserveOutcome::Advanced);
+    assert!(oracle.is_flipped());
+    assert!(
+        !oracle.refused_different_failure(),
+        "the stale refusal must not haunt the evidence"
+    );
+}
+
+#[test]
+fn a_newer_failure_replaces_the_tracked_fingerprint() {
+    // Revisions change what fails; the flip must fix the LATEST failure.
+    const NOW_B_FAILS: &str = "test suite::test_a ... ok\n\
+                               test suite::test_b ... FAILED\n\
+                               test result: FAILED. 1 passed; 1 failed";
+    const PASS_ONLY_A: &str = "test suite::test_a ... ok\n\
+                               test result: ok. 1 passed; 0 failed";
+    let mut oracle = FlipOracle::new();
+    oracle.observe_run("cargo test", false, BASELINE_A_FAILS);
+    oracle.observe_run("cargo test", false, NOW_B_FAILS);
+    // A pass whose complete listing names only test_a cannot flip a
+    // failure that is now test_b's.
+    let outcome = oracle.observe_run("cargo test", true, PASS_ONLY_A);
+    assert_eq!(outcome, ObserveOutcome::NoEvidence);
+    assert!(!oracle.is_flipped());
+}
