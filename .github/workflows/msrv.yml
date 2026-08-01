@@ -52,18 +52,12 @@ jobs:
       # rust-toolchain.toml pins a NEWER toolchain for development; override it
       # so the check genuinely runs on the floor.
       #
-      # This step once rewrote Cargo.toml in the checkout to dodge the
-      # `cfg_select!` build failure (#1112). #1113 removed the need by holding
-      # rusqlite at 0.39, and left the rewrite behind actively broken: its
-      # `sed` matched `version = "0.40"`, so against the 0.39 pin it changed
-      # nothing and its own guard failed the job on every PR. The dependency
-      # is the right place to carry an MSRV constraint — see the rusqlite pin
-      # in Cargo.toml. Keep this job a plain check of what actually ships.
-      #
-      # `--locked` is the point of the gate, not an extra: it proves the
-      # COMMITTED lockfile builds on the floor. Without it cargo may resolve a
-      # different graph than any contributor or release ever uses, which is
-      # how a patch release of a transitive build script (libsqlite3-sys
-      # 0.38.1) reached every open branch at once and went unnoticed.
+      # `--locked` is load-bearing. The whole failure class this job exists to
+      # catch — a dependency raising its effective MSRV — arrives *through the
+      # lockfile*, so a run that lets cargo resolve fresh can pick a different
+      # graph than the one users build and report green on a tree that does not
+      # exist. It also means this job checks the shipped feature set (`bundled`)
+      # rather than a configuration assembled only for CI: an MSRV promise is
+      # about what someone gets when they build the repo as committed.
       - name: cargo check --workspace
         run: cargo +${{ steps.msrv.outputs.version }} check --workspace --locked
