@@ -1,4 +1,4 @@
 {
   "title": "Agent Tools",
-  "pages": ["index", "skills", "commands", "custom-agents", "mcp", "custom-tools", "hooks", "permissions"]
+  "pages": ["skills", "commands", "custom-agents", "mcp", "custom-tools", "hooks", "permissions"]
 }
