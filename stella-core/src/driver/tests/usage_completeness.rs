@@ -109,6 +109,65 @@ async fn exhausted_retries_emit_typed_reasons_before_the_error() {
 }
 
 #[tokio::test]
+async fn auth_failure_on_first_attempt_reports_not_retryable() {
+    // #926: a terminal `ProviderError::Auth` on attempt 1 was previously
+    // indistinguishable, at the typed level, from a genuine retry-budget
+    // exhaustion — both emitted `RetriesExhausted`, and only `attempts == 1`
+    // (an implicit contract) hinted that no retry was ever attempted. This
+    // is the acceptance case: attempts is 1, and `retryable` says so
+    // explicitly.
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![Err(ProviderError::Auth("bad api key".into()))]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("work"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+    assert!(matches!(outcome, TurnOutcome::Aborted { .. }));
+    let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+    let exhausted: Vec<_> = events
+        .iter()
+        .filter(|event| matches!(event, AgentEvent::RetriesExhausted { .. }))
+        .collect();
+    assert_eq!(exhausted.len(), 1, "{events:?}");
+    match exhausted[0] {
+        AgentEvent::RetriesExhausted {
+            attempts,
+            retryable,
+            ..
+        } => {
+            assert_eq!(*attempts, 1, "no retry was ever attempted");
+            assert!(!*retryable, "auth errors are never retryable");
+        }
+        other => panic!("filtered above: {other:?}"),
+    }
+    let error = events
+        .iter()
+        .find(|event| matches!(event, AgentEvent::Error { .. }));
+    assert!(
+        matches!(
+            error,
+            Some(AgentEvent::Error {
+                retryable: false,
+                ..
+            })
+        ),
+        "{error:?}"
+    );
+}
+
+#[tokio::test]
 async fn successful_retry_keeps_the_failed_attempt_usage_incomplete() {
     let provider = ScriptedProvider {
         id: "scripted".into(),

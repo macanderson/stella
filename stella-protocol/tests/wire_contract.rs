@@ -506,6 +506,7 @@ fn sample_events() -> Vec<AgentEvent> {
             turn_instance: 3,
             attempts: 2,
             reasons: vec!["timeout".into(), "timeout".into()],
+            retryable: true,
         },
         AgentEvent::Compaction {
             before_tokens: 10_000,

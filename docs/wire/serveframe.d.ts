@@ -114,6 +114,23 @@ export type AgentEvent = {
    * Per-attempt failure reasons, oldest first.
    */
   reasons: string[];
+  /**
+   * Whether the LAST attempt's error was of a retryable class —
+   * mirrors the paired [`AgentEvent::Error`]'s `retryable` field,
+   * computed from the same `ProviderError::is_retryable()` call.
+   * `false` means retrying again could never have helped: the
+   * clearest case is `ProviderError::Auth` failing on attempt 1,
+   * where `attempts` is 1 and no retry was ever attempted despite
+   * this event's name (#926) — a receipts/telemetry consumer that
+   * only sees `RetriesExhausted` would otherwise record a
+   * reliability incident for what is really a bad credential.
+   * `#[serde(default = "retries_exhausted_retryable_default")]`:
+   * event logs recorded before this field existed predate the
+   * distinction, so on replay they read as "genuinely retryable"
+   * — the pre-#926 behavior — rather than being silently
+   * reclassified as terminal.
+   */
+  retryable?: boolean;
   turn_instance: number;
   type: "retries_exhausted";
 } | {

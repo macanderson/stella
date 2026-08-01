@@ -1457,15 +1457,23 @@ impl<'a> Engine<'a> {
                 cancel_guard.disarm();
                 let reasons =
                     std::mem::take(&mut *attempt_reasons.lock().unwrap_or_else(|p| p.into_inner()));
+                // Shared with the paired `Error` event below: whether the
+                // FINAL attempt's error is of a retryable class. `false`
+                // means every attempt (typically just one — see
+                // `retry_with_backoff_observed`, which bails on the first
+                // non-retryable error) was doomed from the start, not
+                // exhausted by an actual retry loop (#926).
+                let retryable = error.is_retryable();
                 let _ = events.send(AgentEvent::RetriesExhausted {
                     turn_instance: self.config.turn_instance,
                     attempts: reasons.len() as u32,
                     reasons,
+                    retryable,
                 });
                 let message = error.to_string();
                 let _ = events.send(AgentEvent::Error {
                     message: message.clone(),
-                    retryable: error.is_retryable(),
+                    retryable,
                 });
                 return Err(format!("model call failed: {message}"));
             }
