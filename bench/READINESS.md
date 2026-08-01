@@ -345,15 +345,45 @@ Stella compute the comparator never receives. Anthropic separately documents
 `xhigh` — not `max` — as the setting for coding and agentic work, and warns
 `max` is prone to overthinking, so parity and the model's own guidance agree.
 
-Digests move again, recomputed the same way. These supersede the table above:
+### 8.3.2 The output cap moves with the effort tier
+
+Raising the tier alone was not enough, and the smoke run said so before the
+scored run could. Two of three Stella trials at xhigh died with:
+
+```
+output_tokens=16384, tool_calls=0
+"reached its output-token limit before producing any visible response —
+ its budget was likely spent on reasoning"
+```
+
+Effort and the output cap are coupled. The engine's 16384 default carries a
+comment recording that it was itself raised from 8192 for this same failure on
+glm-5.2, and naming per-model caps as the real fix. Raising the tier without
+raising the cap buys reasoning with no room for an answer beside it, and the
+step ends emitting no tool call at all — which Harbor records as
+`NonZeroAgentExitCodeError`, indistinguishable at the results layer from the
+agent simply failing the task.
+
+The posture now sets `agents.<role>.params.max_tokens = 32000` for the three
+roles the outcome depends on. 32000 rather than more is bounded by
+`model_timeout` (600s): the effort preflight spent ~280s reaching 32000 output
+tokens, so ~64000 would sit close enough to that timeout to trade one
+truncation mode for another. Sonnet 5's own 128000 ceiling is not the binding
+constraint. `triage` keeps the default — at low effort it emits a three-line
+classification, so 16384 was never near binding.
+
+This is not compute handed to one side: Claude Code does not cap itself at 16k,
+so the cap was a Stella-side handicap and removing it restores parity.
+
+Digests move again, recomputed the same way. These supersede both tables above:
 
 | model | now |
 |---|---|
-| deepseek-v4-pro | `c19251f5…` |
-| z-ai/glm-5.2 | `29c1f162…` |
-| x-ai/grok-4.5 | `5402c38c…` |
-| z-ai/glm-5.1 | `641e98fd…` |
-| anthropic/claude-sonnet-5 | `5759a7ad…` |
+| deepseek-v4-pro | `4249a1f9…` |
+| z-ai/glm-5.2 | `b906090c…` |
+| x-ai/grok-4.5 | `a1b0df58…` |
+| z-ai/glm-5.1 | `b80a9d06…` |
+| anthropic/claude-sonnet-5 | `55c6ef4c…` |
 
 The GLM and deepseek rows are listed because the constant is shared, not
 because those arms were re-run. Runs published under the `max` posture remain

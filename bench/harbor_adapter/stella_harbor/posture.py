@@ -150,10 +150,46 @@ def _benchmark_engine_posture(
         # exception to it: it emits a three-line classification and never edits
         # the workspace, so raising it would change what Stella *is* rather than
         # what it was allowed to spend.
+        # `params.max_tokens` raises the engine's 16384 output cap, and at
+        # xhigh it is load-bearing rather than a tuning knob. Measured, not
+        # assumed: in the first xhigh smoke, 2 of 3 Stella trials died with
+        #
+        #   output_tokens=16384, tool_calls=0
+        #   "reached its output-token limit before producing any visible
+        #    response — its budget was likely spent on reasoning"
+        #
+        # The engine default carries a comment saying 16k was itself a raise
+        # from 8k for exactly this failure on glm-5.2, and names per-model caps
+        # as the real fix. Effort and the output cap are coupled: raising the
+        # tier without raising the cap buys reasoning that cannot fit an answer
+        # beside it, and the step ends with no tool call at all.
+        #
+        # 32000 rather than more, bounded by `model_timeout` (600s): the effort
+        # preflight spent ~280s reaching 32000 output tokens, so ~64000 would
+        # sit close enough to the model timeout to trade one truncation mode
+        # for another. Sonnet 5's own ceiling (128000) is not the constraint.
+        #
+        # This is not compute handed to one side. Claude Code does not cap
+        # itself at 16k, so the cap was a Stella-side handicap and removing it
+        # restores parity rather than breaking it. `triage` keeps the default:
+        # it runs at low effort and emits a three-line classification, so 16384
+        # was never near binding for it.
         "agents": {
-            "default": {"effort": "xhigh", "reasoning": "on"},
-            "worker": {"effort": "xhigh", "reasoning": "on"},
-            "judge": {"effort": "xhigh", "reasoning": "on"},
+            "default": {
+                "effort": "xhigh",
+                "reasoning": "on",
+                "params": {"max_tokens": 32000},
+            },
+            "worker": {
+                "effort": "xhigh",
+                "reasoning": "on",
+                "params": {"max_tokens": 32000},
+            },
+            "judge": {
+                "effort": "xhigh",
+                "reasoning": "on",
+                "params": {"max_tokens": 32000},
+            },
             "triage": {"effort": "low", "reasoning": "off"},
         },
     }

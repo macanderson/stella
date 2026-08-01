@@ -26,7 +26,7 @@ set -uo pipefail
 
 MODEL="${1:-claude-sonnet-5}"
 TIER="${2:-xhigh}"
-EXPECT_DIGEST="${3:-5759a7ad}"
+EXPECT_DIGEST="${3:-55c6ef4c}"
 ENV_FILE="${TB_ANTHROPIC_ENV_FILE:-$HOME/.env.harbor-anthropic.local}"
 REPO="${TB_REPO:-$HOME/stella}"
 
