@@ -5,8 +5,12 @@ import { Badge, CardGrid, OptionCard, SpecCard, ToolCard } from "@/components/ca
 import { DocsCodeBlock } from "@/components/docs-code-block";
 import {
   CredentialChainDiagram,
+  EngineGateDiagram,
+  EngineOwnershipDiagram,
+  EngineTestHarnessDiagram,
   FleetFanoutDiagram,
   HeroFlowDiagram,
+  LoopVerdictDiagram,
   PermissionGateDiagram,
   PipelineFlowDiagram,
   QuickstartDiagram,
@@ -42,6 +46,10 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     SettingsCascadeDiagram,
     PermissionGateDiagram,
     TelemetryFlowDiagram,
+    EngineOwnershipDiagram,
+    EngineTestHarnessDiagram,
+    EngineGateDiagram,
+    LoopVerdictDiagram,
     // Cards — the mobile-first replacement for reference tables
     CardGrid,
     SpecCard,

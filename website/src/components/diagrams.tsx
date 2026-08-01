@@ -403,6 +403,206 @@ export function PermissionGateDiagram() {
 }
 
 /**
+ * Embedding guide: the ownership split. The reference page draws the *sequence*
+ * (ask, answer, ask, answer); this draws the *boundary*, which is the thing a
+ * reader is actually deciding about — what of theirs has to cross it. Nothing
+ * does. The caption names the absence, the way the telemetry diagram does.
+ */
+export function EngineOwnershipDiagram() {
+  const yours = [
+    "provider keys · gateway · routing",
+    "tools · sandbox · RBAC",
+    "history · billing · your data",
+  ];
+  const engine: [string, boolean][] = [
+    ["step loop · tool dispatch", true],
+    ["compaction · token budget", false],
+    ["retry class · loop detect · caps", false],
+  ];
+  return (
+    <svg
+      className="sdg"
+      viewBox="0 0 720 232"
+      role="img"
+      aria-label="Your app keeps keys, tools, and data; the engine keeps the loop, compaction, and retries. Only requests and results cross between them."
+    >
+      <title>What the engine owns, and what never leaves your app</title>
+      <Defs />
+      <text className="sdg-label" x={16} y={30}>
+        your app
+      </text>
+      <rect className="sdg-box" x={16} y={40} width={300} height={144} rx={6} />
+      {yours.map((text, i) => (
+        <g key={text}>
+          <rect className="sdg-box" x={32} y={52 + i * 42} width={268} height={34} rx={6} />
+          <text className="sdg-sub" x={46} y={73 + i * 42}>
+            {text}
+          </text>
+        </g>
+      ))}
+      <text className="sdg-label" x={404} y={30}>
+        stella-serve
+      </text>
+      <rect className="sdg-box" x={404} y={40} width={300} height={144} rx={6} />
+      {engine.map(([text, accent], i) => (
+        <g key={text}>
+          <rect
+            className={accent ? "sdg-box-accent" : "sdg-box"}
+            x={420}
+            y={52 + i * 42}
+            width={268}
+            height={34}
+            rx={6}
+          />
+          <text className="sdg-sub" x={434} y={73 + i * 42}>
+            {text}
+          </text>
+        </g>
+      ))}
+      {/* the engine asks; your app answers. Nothing else crosses. */}
+      <Wire d="M402 86 H318" />
+      <text className="sdg-sub" x={360} y={78} textAnchor="middle">
+        asks
+      </text>
+      <Wire d="M318 140 H402" />
+      <text className="sdg-sub" x={360} y={132} textAnchor="middle">
+        answers
+      </text>
+      <text className="sdg-sub" x="360" y="212" textAnchor="middle">
+        no HTTP client, no TLS stack, no provider adapter — it cannot leak a key it never holds
+      </text>
+    </svg>
+  );
+}
+
+/**
+ * Embedding guide, second half: because your app *is* the model, one host runs
+ * against a gateway or against a scripted reply, and the loop cannot tell. That
+ * is the whole argument for testing an agent loop in CI, so it gets a picture.
+ */
+export function EngineTestHarnessDiagram() {
+  return (
+    <svg
+      className="sdg"
+      viewBox="0 0 720 196"
+      role="img"
+      aria-label="One host drives either your real gateway or a scripted reply function; both exercise the identical agent loop, but only one of them spends money."
+    >
+      <title>The same host, with and without a model</title>
+      <Defs />
+      <Node x={16} y={62} w={162} h={56} label="one host" sub="the code you just wrote" />
+      <Wire d="M178 78 C226 78 226 44 264 44" />
+      <Node x={266} y={18} w={186} h={52} label="your gateway" sub="real models · real spend" />
+      <Wire d="M178 102 C226 102 226 142 264 142" />
+      <Node x={266} y={116} w={186} h={52} label="scripted replies" sub="a function returning JSON" />
+      <Wire d="M452 44 C500 44 500 82 522 90" />
+      <Wire d="M452 142 C500 142 500 104 522 98" />
+      <Node x={524} y={68} w={180} h={52} label="the identical loop" sub="same frames · same steps" accent />
+      <text className="sdg-sub" x="360" y="186" textAnchor="middle">
+        one of those two paths costs nothing and finishes in milliseconds — that is the one CI runs
+      </text>
+    </svg>
+  );
+}
+
+/**
+ * CI guide: two engines, one task set, and — the asymmetry that is the whole
+ * point — two different kinds of exit. Loop correctness is deterministic and
+ * therefore allowed to block; a quality delta is a model-quality measurement
+ * and is only ever allowed to inform.
+ */
+export function EngineGateDiagram() {
+  return (
+    <svg
+      className="sdg"
+      viewBox="0 0 720 244"
+      role="img"
+      aria-label="One committed task set runs through both Stella and Claude Code; the comparison produces a blocking loop-correctness verdict and an advisory quality delta."
+    >
+      <title>Two engines, one task set, two kinds of exit</title>
+      <Defs />
+      <Node x={8} y={86} w={126} h={52} label="one task set" sub="in your repo" />
+      <Wire d="M134 112 C156 112 156 54 174 54" />
+      <Wire d="M134 112 C156 112 156 170 174 170" />
+      <Node x={176} y={28} w={168} h={52} label="stella" sub="--output-format json" />
+      <Node x={176} y={144} w={168} h={52} label="claude code" sub="-p --output-format json" />
+      <Wire d="M344 54 C366 54 366 112 388 112" />
+      <Wire d="M344 170 C366 170 366 112 388 112" />
+      <Node x={390} y={86} w={124} h={52} label="compare" sub="two receipts" />
+      <Wire d="M514 100 C534 100 534 46 554 46" />
+      <Wire d="M514 124 C534 124 534 178 554 178" />
+      <Node x={556} y={20} w={156} h={52} label="loop correctness" sub="exit 1 — blocks" accent />
+      <Node x={556} y={152} w={156} h={52} label="quality delta" sub="a comment, not a gate" />
+      <text className="sdg-sub" x="360" y="230" textAnchor="middle">
+        the deterministic half is allowed to block; the model-quality half is only allowed to inform
+      </text>
+    </svg>
+  );
+}
+
+/**
+ * CI guide: loop-bench's verdict ladder, in its real precedence order. Drawn as
+ * rungs because the *order* is load-bearing — reward outranks everything, so a
+ * solved task is never called silent no matter what its event stream lost.
+ */
+export function LoopVerdictDiagram() {
+  const rungs: [string, string, boolean][] = [
+    ["reward is 1.0 — the task was solved", "solved", false],
+    ["zero tool calls, and no terminal event", "SILENT-DEATH", true],
+    ["zero tool calls, but it said why", "ZERO-WORK", true],
+    ["tool calls happened; the verifier said no", "ran (unsolved)", false],
+  ];
+  return (
+    <svg
+      className="sdg"
+      viewBox="0 0 720 224"
+      role="img"
+      aria-label="Four verdicts checked in order: solved, silent death, zero work, ran but unsolved. The middle two — a turn that did nothing — are the ones that fail the gate."
+    >
+      <title>The loop-correctness verdict ladder</title>
+      <Defs />
+      {/* checked top to bottom; the first match wins */}
+      <Wire d="M28 24 V170" />
+      {rungs.map(([test, verdict, fails], i) => {
+        const y = 16 + i * 44;
+        return (
+          <g key={verdict}>
+            <circle className="sdg-dot" cx={28} cy={y + 16} r={8} />
+            <text
+              className="sdg-sub"
+              x={28}
+              y={y + 20}
+              textAnchor="middle"
+              fill="var(--color-fd-background)"
+              fontWeight={600}
+            >
+              {i + 1}
+            </text>
+            <rect className="sdg-box" x={48} y={y} width={296} height={32} rx={6} />
+            <text className="sdg-sub" x={62} y={y + 20}>
+              {test}
+            </text>
+            <Wire d={`M344 ${y + 16} H392`} />
+            <Node x={394} y={y} w={150} h={32} label={verdict} accent={fails} />
+          </g>
+        );
+      })}
+      {/* the bracket spans exactly the two verdicts that exit non-zero */}
+      <Wire d="M556 60 H570 V136 H556" arrow={false} />
+      <text className="sdg-label" x={582} y={94}>
+        exit 1
+      </text>
+      <text className="sdg-sub" x={582} y={110}>
+        the gate trips
+      </text>
+      <text className="sdg-sub" x="296" y="212" textAnchor="middle">
+        loop health, not pass rate — a task nobody solves still passes, provided the loop ran
+      </text>
+    </svg>
+  );
+}
+
+/**
  * Telemetry: where a run's numbers go. The point of the picture is the absent
  * arrow — there is no edge leaving the machine, so there is nothing to opt out
  * of.
