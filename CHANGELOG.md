@@ -35,6 +35,8 @@ skip the roll) were re-inserted the same way.
 
 ## [Unreleased]
 
+## [0.6.54] — 2026-08-01
+
 ## [0.6.53] — 2026-08-01
 
 ## [0.6.52] — 2026-08-01
