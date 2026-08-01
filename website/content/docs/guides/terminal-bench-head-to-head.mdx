@@ -83,8 +83,14 @@ off the pin, check the help text before spending anything —
 scrub ANSI before searching it:
 
 ```bash
-harbor run --help 2>&1 | LC_ALL=C sed $'s/\033\[[0-9;?]*[a-zA-Z]//g' | rg -- '--agent'
+harbor run --help 2>&1 | LC_ALL=C sed $'s/\033\[[0-9;?]*[a-zA-Z]//g' \
+  | rg -- '--agent|--ak'
 ```
+
+Check `--ak` (the agent-kwargs flag, used below to pass Claude Code its effort
+tier) at the same time — it is the other spelling that has moved. Asserting the
+flags a script passes still appear in the help text costs one subprocess and
+turns a mid-run `No such option` into one message before launch.
 
 ## 2. Build a binary that can actually run in the containers
 
