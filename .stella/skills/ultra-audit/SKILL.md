@@ -196,10 +196,3 @@ python3 tests/make_fixture.py --out /tmp/r.json   # a realistic result, with hos
 `node --check <file>.js` is **not** a usable syntax gate for the harness — the generated script
 mixes an ESM `export` with a top-level `return`, and that combination exits 0 even when the file
 is unbalanced. `check_template.py` wraps the body and checks it as `.mjs`, which does catch it.
-
-## Relationship to `/reaudit`
-
-`reaudit` is the Rust-specific predecessor. It shares the same 17 dimensions and the same
-weights, so its recorded history continues here without a break. Prefer `ultra-audit`: it is
-language-agnostic, mixes models, proves its coverage, and writes an HTML file rather than
-publishing an artifact.

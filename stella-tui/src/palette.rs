@@ -6,7 +6,7 @@
 //! that should reference these directly.
 //!
 //! The identity is **Phosphor Gold on Ink**: one colour, owned. Gold
-//! `#FFB000` is the signal -- the mark, the prompt, active/selected, focus --
+//! `#FFB81A` is the signal -- the mark, the prompt, active/selected, focus --
 //! and never the surface; Ink `#0B0B0C` is the ground; text is warm Paper
 //! with the kit's warm neutral ramp beneath it. The old electric-blue/gold
 //! split is gone: brand and gold are one family now, so `BRAND` and `GOLD`
@@ -61,14 +61,14 @@ pub const HAIRLINE_STRONG: Color = Color::Rgb(0x33, 0x33, 0x38);
 // The one owned colour. Brand marks, the prompt, active/running, focus,
 // selection, primary action -- and nothing else: gold is the signal, never
 // the surface. Reserved exactly as the blue before it was, but unlike the
-// blue it needs no separate text tone: `#FFB000` measures 10.74:1 on ground,
+// blue it needs no separate text tone: `#FFB81A` measures 11.36:1 on ground,
 // so the same value is safe on a glyph, a one-cell rule, and a fill. A gold
 // fill (a pill, a selected tab) always carries INK text -- white on gold is
 // 1.83:1 and illegible.
 
-/// Phosphor Gold `#FFB000` -- CRT amber, the gold star. 10.74:1 on ground.
-/// This is the exact kit value; it may not drift.
-pub const BRAND: Color = Color::Rgb(0xFF, 0xB0, 0x00);
+/// Phosphor Gold `#FFB81A` -- CRT amber, the gold star. 11.36:1 on ground.
+/// The kit's `#FFB000` lifted 10% in lightness; it may not drift.
+pub const BRAND: Color = Color::Rgb(0xFF, 0xB8, 0x1A);
 
 /// The bright stop of the brand sweep (kit `gold-400`, the observatory's
 /// `--gold-bright`). 12.12:1 on ground. Gradients and hover lifts only --
@@ -76,8 +76,9 @@ pub const BRAND: Color = Color::Rgb(0xFF, 0xB0, 0x00);
 pub const BRAND_BRIGHT: Color = Color::Rgb(0xFD, 0xC1, 0x54);
 
 /// Pressed / gradient-deep stop, and the leading stop of the progress fill
-/// (kit `gold-600`). 7.24:1 on ground, so even the fill's tail clears AA.
-pub const BRAND_DEEP: Color = Color::Rgb(0xD0, 0x91, 0x00);
+/// (kit `gold-600` lifted 10% with the brand). 8.77:1 on ground, so even the
+/// fill's tail clears AA.
+pub const BRAND_DEEP: Color = Color::Rgb(0xE5, 0xA0, 0x00);
 
 // ── Brand (light: gold on paper) ────────────────────────────────
 //
@@ -86,17 +87,19 @@ pub const BRAND_DEEP: Color = Color::Rgb(0xD0, 0x91, 0x00);
 // clears AA on [`PAPER`]. Applied by the per-frame theme remap in
 // [`crate::theme`], truecolor only.
 
-/// The light-theme brand hue (kit `gold-800`) -- 6.04:1 on [`PAPER`].
+/// The light-theme brand hue (kit `gold-800` lifted 10% with the brand) --
+/// 5.22:1 on [`PAPER`].
 ///
 /// Deliberately one step *below* the kit's `gold-deep` `#A37200`: that tone
 /// is the web kit's light-ground gold for UI-sized text and measures 3.79:1
 /// on the painted paper ground -- fine for chrome, under the 4.5:1 floor for
 /// terminal-cell text. `gold-deep` stays in the family as [`GOLD_INK`], the
 /// light theme's *chrome* gold.
-pub const BRAND_INK: Color = Color::Rgb(0x79, 0x55, 0x00);
+pub const BRAND_INK: Color = Color::Rgb(0x85, 0x5E, 0x00);
 
-/// Pressed stop / leading progress stop on paper (kit `gold-900`, 9.67:1).
-pub const BRAND_INK_DEEP: Color = Color::Rgb(0x52, 0x39, 0x00);
+/// Pressed stop / leading progress stop on paper (kit `gold-900` lifted 10%,
+/// 8.76:1).
+pub const BRAND_INK_DEEP: Color = Color::Rgb(0x5A, 0x3F, 0x00);
 
 // ── Gold ────────────────────────────────────────────────────────
 //
@@ -113,7 +116,7 @@ pub const BRAND_INK_DEEP: Color = Color::Rgb(0x52, 0x39, 0x00);
 // IS the accent, by kit rule.
 
 /// The mark's gold -- the same Phosphor Gold as [`BRAND`].
-pub const GOLD: Color = Color::Rgb(0xFF, 0xB0, 0x00);
+pub const GOLD: Color = Color::Rgb(0xFF, 0xB8, 0x1A);
 
 /// Headline gradient stop -- the bright end of the gold sweep (== kit
 /// `gold-400`, [`BRAND_BRIGHT`]).

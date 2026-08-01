@@ -123,23 +123,73 @@ def _benchmark_engine_posture(
         # so scope review has nothing to protect here and nobody to ask. Left
         # off, any plan over the thresholds (more than 5 steps) ends the run.
         "headless_scope_bypass": "on",
-        # `max`, not `high`, for every role the outcome depends on. The
-        # comparator this benchmark is scored against is "Claude Code using
-        # GLM-5.1 at **max effort**" (protocol, §Comparator and thresholds), and
-        # the public leaderboard carries `high`, `xhigh` and `max` as distinct
-        # values — so `high` was not a naming variation on the comparator's
-        # setting, it was less compute applied to one side only. Every
-        # Terminal-Bench number published before this change was produced under
-        # that handicap.
+        # `xhigh` for every role the outcome depends on, and the rule that
+        # picks it has not changed — only the comparator has. The rule is:
+        # spend what the other side spends, because the leaderboard carries
+        # `high`, `xhigh` and `max` as distinct values, so a mismatch is less
+        # compute applied to one side rather than a naming variation. Against
+        # "Claude Code using GLM-5.1 at **max effort**" that rule said `max`,
+        # and every Terminal-Bench number published before then was produced
+        # at `high` — under that handicap.
+        #
+        # The Sonnet-5 comparator is Claude Code on the first-party Anthropic
+        # API, which runs `xhigh` by default, so the same rule now says
+        # `xhigh`. Reading `max` as "more is safer" would invert it: `max`
+        # here would hand Stella compute the comparator never gets, and
+        # Anthropic documents `xhigh` — not `max` — as the setting for coding
+        # and agentic work, with `max` prone to overthinking. Parity and the
+        # model's own guidance agree.
+        #
+        # Changing this constant changes the posture digest, and therefore the
+        # registered SUT. That is the intended way to make the change — a run
+        # states which frozen posture it used in its manifest — but it does
+        # mean digests recorded against the `max` posture (bench/READINESS.md)
+        # describe the earlier arm, not this one.
         #
         # `triage` deliberately stays low/off, and that is parity rather than an
         # exception to it: it emits a three-line classification and never edits
         # the workspace, so raising it would change what Stella *is* rather than
         # what it was allowed to spend.
+        # `params.max_tokens` raises the engine's 16384 output cap, and at
+        # xhigh it is load-bearing rather than a tuning knob. Measured, not
+        # assumed: in the first xhigh smoke, 2 of 3 Stella trials died with
+        #
+        #   output_tokens=16384, tool_calls=0
+        #   "reached its output-token limit before producing any visible
+        #    response — its budget was likely spent on reasoning"
+        #
+        # The engine default carries a comment saying 16k was itself a raise
+        # from 8k for exactly this failure on glm-5.2, and names per-model caps
+        # as the real fix. Effort and the output cap are coupled: raising the
+        # tier without raising the cap buys reasoning that cannot fit an answer
+        # beside it, and the step ends with no tool call at all.
+        #
+        # 32000 rather than more, bounded by `model_timeout` (600s): the effort
+        # preflight spent ~280s reaching 32000 output tokens, so ~64000 would
+        # sit close enough to the model timeout to trade one truncation mode
+        # for another. Sonnet 5's own ceiling (128000) is not the constraint.
+        #
+        # This is not compute handed to one side. Claude Code does not cap
+        # itself at 16k, so the cap was a Stella-side handicap and removing it
+        # restores parity rather than breaking it. `triage` keeps the default:
+        # it runs at low effort and emits a three-line classification, so 16384
+        # was never near binding for it.
         "agents": {
-            "default": {"effort": "max", "reasoning": "on"},
-            "worker": {"effort": "max", "reasoning": "on"},
-            "judge": {"effort": "max", "reasoning": "on"},
+            "default": {
+                "effort": "xhigh",
+                "reasoning": "on",
+                "params": {"max_tokens": 32000},
+            },
+            "worker": {
+                "effort": "xhigh",
+                "reasoning": "on",
+                "params": {"max_tokens": 32000},
+            },
+            "judge": {
+                "effort": "xhigh",
+                "reasoning": "on",
+                "params": {"max_tokens": 32000},
+            },
             "triage": {"effort": "low", "reasoning": "off"},
         },
     }

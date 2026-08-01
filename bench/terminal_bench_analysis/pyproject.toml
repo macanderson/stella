@@ -23,6 +23,7 @@ py-modules = [
     "artifact_secret_scan",
     "freeze_tb21_study_seed",
     "github_public_timing",
+    "normalized_cost",
     "tb21_analysis",
     "tb21_evidence_contract",
     "tb21_hybrid_analysis",

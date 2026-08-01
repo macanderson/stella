@@ -589,21 +589,21 @@ class TestForwardedEnv:
             "model" not in role and "provider" not in role
             for role in posture["agents"].values()
         )
+        # `xhigh` matches the comparator and the raised cap travels with the
+        # tier: at `xhigh` the 16384 default is spent before any tool call.
         for role in ("default", "worker", "judge"):
             assert posture["agents"][role] == {
-                "effort": "max",
+                "effort": "xhigh",
                 "reasoning": "on",
+                "params": {"max_tokens": 32000},
             }
-        assert posture["agents"]["triage"] == {
-            "effort": "low",
-            "reasoning": "off",
-        }
+        assert posture["agents"]["triage"] == {"effort": "low", "reasoning": "off"}
         assert json.loads(normalized) == posture
-        # 0.5.1 SUT posture: includes `headless_scope_bypass: "on"` (added in
-        # #322, after the #301 freeze). See bench/terminal-bench-2.1-protocol.md
-        # "Engine posture" prose + calibration table for the recomputed hashes.
+        # The digest is the registered SUT, so pinning it is the point: posture
+        # edits land here deliberately. Keep it in step with the superseding
+        # table in bench/READINESS.md, not the protocol's earlier `max` table.
         assert digest == (
-            "0de2116f1773a81a1ab5590313efba49120ac119149ee21c0b13271a5f469bb2"
+            "4249a1f95976f388cc8c5177a8c085ff0152fe5e6884d3dbfaada349d989b725"
         )
 
     def test_excludes_all_provider_keys_and_selects_only_effective_provider(

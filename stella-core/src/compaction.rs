@@ -108,24 +108,86 @@ pub(crate) fn is_compacted_output(output: &ToolOutput) -> bool {
         || payload.contains(AGE_ELISION_MARKER)
 }
 
+/// Middle-out truncate `content` on char boundaries, keeping `head` bytes from
+/// the start and `tail` bytes from the end with `marker` spliced between.
+/// Caller guarantees the two keep windows do not overlap.
+///
+/// The windows are separate parameters rather than one symmetric size because
+/// the two callers want opposite shapes. Aged tool output keeps both ends
+/// evenly — the head carries the runner's framing (the PASSED/FAILED line, file
+/// headers) and the tail carries the errors. A truncated assistant partial has
+/// no framing worth keeping and exactly one thing that matters: where the model
+/// was when it was cut off, which is the very end.
+fn elide_middle(content: &str, head: usize, tail: usize, marker: &str) -> String {
+    let mut head_end = head.min(content.len());
+    while !content.is_char_boundary(head_end) {
+        head_end -= 1;
+    }
+    let mut tail_start = content.len() - tail.min(content.len());
+    while !content.is_char_boundary(tail_start) {
+        tail_start += 1;
+    }
+    format!(
+        "{}\n{marker}\n{}",
+        &content[..head_end],
+        &content[tail_start..]
+    )
+}
+
 /// Middle-out truncate `content` on char boundaries, keeping
 /// [`AGE_KEEP_CHARS`] from each end. Caller guarantees
 /// `content.len() > AGE_THRESHOLD_CHARS`, which the keep windows never
 /// overlap.
 fn age_content(content: &str) -> String {
-    let mut head_end = AGE_KEEP_CHARS.min(content.len());
-    while !content.is_char_boundary(head_end) {
-        head_end -= 1;
-    }
-    let mut tail_start = content.len() - AGE_KEEP_CHARS.min(content.len());
-    while !content.is_char_boundary(tail_start) {
-        tail_start += 1;
-    }
-    format!(
-        "{}\n{AGE_ELISION_MARKER}\n{}",
-        &content[..head_end],
-        &content[tail_start..]
-    )
+    elide_middle(content, AGE_KEEP_CHARS, AGE_KEEP_CHARS, AGE_ELISION_MARKER)
+}
+
+/// What [`elide_truncated_partial`] splices in place of the middle it drops.
+/// Addressed to the model, because the model is who reads it: it says what is
+/// missing and that the missing part is not worth asking for.
+const PARTIAL_ELISION_MARKER: &str = "[… middle of this cut-off message elided — it was working-out you were already \
+     told not to repeat; resume from where it stops below …]";
+
+/// Bytes of a truncated assistant partial kept from the start — enough to
+/// orient ("what was I doing"), no more. Deliberately small: unlike tool
+/// output, the head of a cut-off message carries no framing a reader needs.
+const PARTIAL_KEEP_HEAD: usize = 200;
+
+/// Bytes of a truncated assistant partial kept from the end. This is the whole
+/// point of retaining the partial at all — the cut-off sentence the
+/// continuation resumes from — so it gets the large share of the budget.
+const PARTIAL_KEEP_TAIL: usize = 1_200;
+
+/// Shrink a length-truncated assistant partial to its orientation and its
+/// resume point, or `None` when it is small enough to keep verbatim.
+///
+/// The driver retains such a partial so the model can continue from where it
+/// stopped ([`crate::driver`]'s continuation path). Retained whole, it is the
+/// most expensive content in the transcript: up to a full `max_output_tokens`
+/// of it, and — unlike a tool result — assistant text is protected content that
+/// no pass in this module may touch, so it rides every remaining step of the
+/// turn.
+///
+/// Eliding the middle is cheaper *and* a better prompt, which is why it is
+/// worth doing rather than merely affordable. The continuation nudge tells the
+/// model to resume from exactly where it stopped and not to restate its
+/// reasoning; whole, those two referents are the last handful of tokens of the
+/// block and the ~16k before them, so the instruction points at something
+/// buried under the noise it is telling the model to ignore. Elided, the resume
+/// point sits immediately above the instruction that names it.
+///
+/// `None` below [`AGE_THRESHOLD_CHARS`] is the guard that keeps this honest: a
+/// short answer genuinely cut mid-sentence is never touched, and a long one
+/// keeps its end, which is where mid-sentence lives.
+pub(crate) fn elide_truncated_partial(content: &str) -> Option<String> {
+    (content.len() > AGE_THRESHOLD_CHARS).then(|| {
+        elide_middle(
+            content,
+            PARTIAL_KEEP_HEAD,
+            PARTIAL_KEEP_TAIL,
+            PARTIAL_ELISION_MARKER,
+        )
+    })
 }
 
 /// Evict + dedup until the conversation fits `budget_tokens`, or until

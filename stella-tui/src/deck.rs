@@ -19,7 +19,7 @@
 //! the only exceptions; naming them is what keeps the boundary honest instead
 //! of quietly eroded.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
 use stella_protocol::{AgentEvent, CiStatus, FileChangeKind, PrStatus};
 
@@ -284,6 +284,106 @@ pub struct WorkspaceModel {
     /// fleet PR/CI monitor) — the statline's PR cell. Latest event wins;
     /// `None` until a PR has been seen this session.
     pub pr: Option<PrInfo>,
+    /// Last pin observed serving each of the three pipeline roles — the
+    /// statline's `MODELS` cell. Folded from `AgentEvent::StepUsage`, which
+    /// carries the provider that actually served the call rather than the
+    /// session's configured default, so this names what ran and not what was
+    /// asked for.
+    ///
+    /// A role is absent until it has served once. That is honest rather than
+    /// convenient: a judge that never ran is not a judge pinned to nothing,
+    /// and showing a configured-but-unused pin as if it were live is how the
+    /// triage/worker/judge split gets misread in a head-to-head run.
+    pub role_pins: BTreeMap<PipelineRole, RolePin>,
+    /// The role that most recently served a call. Highlighted in the `MODELS`
+    /// cell while any agent is active, which includes a lead that is only
+    /// monitoring subagents its own session spawned.
+    pub active_role: Option<PipelineRole>,
+}
+
+/// The three roles the statline surfaces.
+///
+/// Deliberately not every [`stella_protocol::ModelCallRole`]: reflection,
+/// summarization and the authoring roles are real calls with real cost, but
+/// they are not the pipeline a head-to-head bench run compares, and a cell
+/// that listed all fourteen would stop answering the question it exists for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PipelineRole {
+    Triage,
+    Worker,
+    Judge,
+}
+
+impl PipelineRole {
+    /// Which slot a call role belongs to, or `None` for one that belongs to
+    /// no slot.
+    pub fn of(role: stella_protocol::ModelCallRole) -> Option<Self> {
+        use stella_protocol::ModelCallRole as R;
+        match role {
+            R::Triage => Some(Self::Triage),
+            // The whole main line of work reads as the worker. Planning,
+            // witness authoring and the distress path all run on the worker
+            // pin, so splitting them would print the same model three times
+            // and imply three configured models where there is one.
+            R::Plan
+            | R::PlanRepair
+            | R::WitnessAuthor
+            | R::WitnessRepair
+            | R::Worker
+            | R::DistressGuidance => Some(Self::Worker),
+            R::Judge => Some(Self::Judge),
+            R::Unknown
+            | R::AgentAuthor
+            | R::SkillAuthor
+            | R::DomainInference
+            | R::Reflection
+            | R::Summarization => None,
+        }
+    }
+
+    /// Single-character label for the statline cell, where horizontal space
+    /// is the binding constraint.
+    pub fn initial(self) -> char {
+        match self {
+            Self::Triage => 'T',
+            Self::Worker => 'W',
+            Self::Judge => 'J',
+        }
+    }
+
+    /// Display order: the order the pipeline actually runs them.
+    pub const ORDER: [Self; 3] = [Self::Triage, Self::Worker, Self::Judge];
+}
+
+/// One role's pin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RolePin {
+    /// The provider that served the call, not the configured default — the
+    /// same distinction `StepUsage::provider` draws, and the one that matters
+    /// when the same model slug is reachable through more than one upstream.
+    pub provider: String,
+    pub model: String,
+    /// `false` while this is only what the session was *configured* to use,
+    /// `true` once a call has actually been served on it.
+    ///
+    /// The deck draws the two differently on purpose. A configured pin is a
+    /// claim about intent and a served pin is evidence, and a scored run is
+    /// read against the second. Collapsing them would let a judge that never
+    /// ran look identical to one that did — the same "unverified reads as
+    /// verified" failure the ladder exists to prevent, moved into the UI.
+    pub served: bool,
+}
+
+impl RolePin {
+    /// `provider/model`, or just the model when the provider is unknown
+    /// (legacy events carry an empty provider).
+    pub fn slug(&self) -> String {
+        if self.provider.is_empty() {
+            self.model.clone()
+        } else {
+            format!("{}/{}", self.provider, self.model)
+        }
+    }
 }
 
 impl WorkspaceModel {
@@ -463,6 +563,17 @@ impl WorkspaceModel {
             // The driver flipped staged-pipeline routing (`/pipeline`) — the
             // PIPELINE stat box tracks it live.
             Inbound::Pipeline(on) => self.pipeline = *on,
+            // The driver's resolved role pins, sent once at startup. Never
+            // overwrites a pin that has already served: this says what the
+            // session intends to use, and a role that has run has already
+            // answered that question with evidence.
+            Inbound::ConfiguredRoles(pins) => {
+                for (role, pin) in pins {
+                    self.role_pins
+                        .entry(*role)
+                        .or_insert_with(|| pin.clone());
+                }
+            }
             // Derived cache economics for the agent's latest call: accumulate
             // the signed savings and adopt the provider's TTL. Follows the
             // paired `StepUsage` (which auto-registers the lane), so an unknown
@@ -629,8 +740,33 @@ impl WorkspaceModel {
                 ci: *ci,
             });
         }
-        if let AgentEvent::StepUsage { model, .. } = event {
+        if let AgentEvent::StepUsage {
+            model,
+            provider,
+            role,
+            ..
+        } = event
+        {
             self.routes.record(now, agent.clone(), model.clone());
+            // `StepUsage` already carries the provider that actually served
+            // the call and the role it served — the route log kept only the
+            // model, which is why the statline could name one model and never
+            // say which of the three pipeline roles it belonged to.
+            if let Some(slot) = PipelineRole::of(*role) {
+                // Overwrites a configured pin rather than merging with it: the
+                // provider that served may differ from the one configured
+                // (a gateway falling through to a different upstream), and the
+                // one that ran is the true answer.
+                self.role_pins.insert(
+                    slot,
+                    RolePin {
+                        provider: provider.clone(),
+                        model: model.clone(),
+                        served: true,
+                    },
+                );
+                self.active_role = Some(slot);
+            }
         }
         // Streaming previews never reach the trace: one row per token would
         // churn the whole capped ring during a single answer, and the

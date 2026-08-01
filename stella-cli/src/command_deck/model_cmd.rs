@@ -51,6 +51,63 @@ pub fn current_summary(cfg: &Config) -> String {
     )
 }
 
+/// The pins this session is configured to run for triage / worker / judge,
+/// for the deck's `MODELS` row.
+///
+/// The deck otherwise learns a role's pin only from that role's first
+/// `AgentEvent::StepUsage`, so before any turn it can say nothing, and a role
+/// that is never reached (a judge on a run with no inconclusive evidence)
+/// stays blank for the whole session. Sending this at startup separates "not
+/// configured" from "not yet used" — the driver is the only side that can,
+/// because settings precedence lives here.
+///
+/// Marked `served: false`: this is intent, not evidence. The deck draws it dim
+/// and replaces it with whatever actually served.
+pub fn configured_role_pins(
+    cfg: &Config,
+) -> Vec<(stella_tui::deck::PipelineRole, stella_tui::deck::RolePin)> {
+    use crate::settings::EngineAgentKind;
+    use stella_tui::deck::{PipelineRole, RolePin};
+
+    let engine = crate::settings::Settings::load(&cfg.workspace_root)
+        .ok()
+        .and_then(|s| s.agent_engine_config);
+
+    [
+        (PipelineRole::Triage, EngineAgentKind::Triage),
+        (PipelineRole::Worker, EngineAgentKind::Worker),
+        (PipelineRole::Judge, EngineAgentKind::Judge),
+    ]
+    .into_iter()
+    .map(|(slot, kind)| {
+        // `model_for` already applies the full precedence chain
+        // (`agents.<kind>.model` > flat per-role > `default_model`), so this
+        // agrees with what the router will actually pick rather than
+        // re-deriving it and drifting.
+        let (provider, model) = match engine.as_ref().and_then(|e| e.model_for(kind)) {
+            // Split on the FIRST slash only: `openrouter/openai/gpt-5.5` is
+            // one provider and a two-segment model, not three segments.
+            Some(spec) => match spec.split_once('/') {
+                Some((p, m)) => (p.to_string(), m.to_string()),
+                // A bare slug names no provider, so it resolves through
+                // whichever one this session is on.
+                None => (cfg.provider.id.to_string(), spec.to_string()),
+            },
+            // No opinion configured — the role rides the session's own pin.
+            None => (cfg.provider.id.to_string(), cfg.model_id.to_string()),
+        };
+        (
+            slot,
+            RolePin {
+                provider,
+                model,
+                served: false,
+            },
+        )
+    })
+    .collect()
+}
+
 /// Validate `id` against the catalog (exactly as the settings tab's default
 /// resolves, via [`crate::engine_config::parse_model_spec`]) and persist it
 /// as `default_model` in user-scope settings through the same `save_to` the

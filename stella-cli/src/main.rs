@@ -816,21 +816,38 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // The Command Deck (tabbed TUI) is the default chat surface on a
             // real terminal; `--plain` / STELLA_PLAIN=1 / a non-TTY stream
             // falls back to the line-based REPL.
-            if term_policy::use_deck(cli.globals.plain) {
-                signals::block_on_interruptible(
-                    rt()?,
-                    command_deck::run_deck_session(
-                        &cfg,
-                        cli.globals.budget,
-                        term_policy::animation_disabled(cli.globals.no_anim),
-                        None,
-                    ),
-                )?;
-            } else {
-                signals::block_on_interruptible(
-                    rt()?,
-                    agent::run_interactive(&cfg, cli.globals.budget),
-                )?;
+            match term_policy::plain_fallback(cli.globals.plain) {
+                None => {
+                    signals::block_on_interruptible(
+                        rt()?,
+                        command_deck::run_deck_session(
+                            &cfg,
+                            cli.globals.budget,
+                            term_policy::animation_disabled(cli.globals.no_anim),
+                            None,
+                        ),
+                    )?;
+                }
+                Some(reason) => {
+                    // Say which surface this is and why, BEFORE the REPL's
+                    // banner — which otherwise looks enough like a normal
+                    // start that the missing features read as breakage. The
+                    // REPL has no prompt queue and no mid-turn steering, and
+                    // it exits at stdin EOF, so a silent downgrade presents
+                    // as "stella dies when a turn completes" with nothing to
+                    // point at. To stderr: stdout may be the pipe that caused
+                    // the fallback in the first place.
+                    eprintln!(
+                        "▸ plain REPL ({}) — no prompt queue, no mid-turn steering; \
+                         exits at end of input.",
+                        reason.explain()
+                    );
+                    eprintln!("  The Command Deck needs both stdin and stdout on a terminal.");
+                    signals::block_on_interruptible(
+                        rt()?,
+                        agent::run_interactive(&cfg, cli.globals.budget),
+                    )?;
+                }
             }
         }
         Command::Resume { id, list } => {

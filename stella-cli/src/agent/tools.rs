@@ -373,6 +373,14 @@ impl stella_pipeline::FileTouchPort for RegistryTouches<'_> {
     fn mutations_recorded(&self) -> u64 {
         self.0.mutations_recorded()
     }
+
+    fn begin_workspace_probe(&self) {
+        self.0.begin_workspace_probe();
+    }
+
+    fn settle_workspace_probe(&self) {
+        self.0.settle_workspace_probe();
+    }
 }
 
 /// Build the [`WorkspacePorts`] bundle rooted at `root` (the session

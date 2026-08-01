@@ -19,6 +19,7 @@ use crate::composer::{ComposerLayout, layout as composer_layout, split_row_at};
 use crate::deck::{DeckTab, PrInfo, WorkspaceModel};
 use crate::deck_ui::{DeckUi, InstalledMode, IssuesMode};
 use crate::render::{render_slash_popup, scroll_window_start, slash_popup_area};
+use crate::role_panel;
 use crate::textline::{self, pr_status_label, stage_label};
 use crate::{notice, splash, theme, views};
 
@@ -71,7 +72,11 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         .get(ui.focused)
         .and_then(|a| a.cache_diagnosis(cache_panel::LOW_HIT_RATE_THRESHOLD))
         .is_some();
-    let statline_h = if has_diagnosis { 3 } else { 2 };
+    // 2 rows (labels over values) + the always-on MODELS row + the diagnosis
+    // row when one is earned. MODELS is permanent by design: which pins are
+    // serving triage, worker and judge is the thing a scored run is read
+    // against, so it must never be the row that got dropped.
+    let statline_h = if has_diagnosis { 4 } else { 3 };
     let bands = Layout::vertical([
         Constraint::Length(3),          // tab bar
         Constraint::Min(1),             // active view
@@ -1305,14 +1310,12 @@ pub(crate) fn render_status_bar(model: &WorkspaceModel, ui: &DeckUi, area: Rect,
             ],
             MUST_KEEP,
         ),
-        (
-            "MODEL",
-            vec![Span::styled(
-                model.latest_model().unwrap_or("—").to_string(),
-                val,
-            )],
-            6,
-        ),
+        // No MODEL cell: the three pipeline pins moved to their own row below
+        // (`role_panel`). Three `provider/model` slugs measured 210 columns
+        // inside this row with the ethos chip kept, against the 160 the row is
+        // designed around — and the chip is dropped before any data cell, so
+        // no cell priority could have saved it. A dedicated row is what makes
+        // all three visible at every width instead of none of them.
         (
             "CPU",
             vec![
@@ -1504,14 +1507,32 @@ pub(crate) fn render_status_bar(model: &WorkspaceModel, ui: &DeckUi, area: Rect,
     // agent) AND the area actually has it (a caller that hands this function
     // a bare 2-row area, as every pre-#267 snapshot fixture still does, gets
     // no diagnosis row rather than a clipped one).
-    if area.height >= 3
+    // MODELS row: the three pipeline pins, full `provider/model`, with the
+    // active one in the accent. Its own row because the cell row cannot hold
+    // it (see the note where the MODEL cell used to be). Guarded on height so
+    // a bare 2-row area — every pre-existing snapshot fixture — renders
+    // exactly as it did before.
+    if area.height >= 3 {
+        let mut spans = vec![Span::styled(" MODELS  ", dim)];
+        spans.extend(role_panel::models_cell(model, model.active_count() > 0));
+        Paragraph::new(Line::from(spans)).render(
+            Rect {
+                x: area.x,
+                y: top_y + 2,
+                width: area.width,
+                height: 1,
+            },
+            buf,
+        );
+    }
+    if area.height >= 4
         && let Some(cause) =
             focused.and_then(|a| a.cache_diagnosis(cache_panel::LOW_HIT_RATE_THRESHOLD))
     {
         Paragraph::new(Line::from(cache_panel::diagnosis_spans(cause))).render(
             Rect {
                 x: area.x,
-                y: top_y + 2,
+                y: top_y + 3,
                 width: area.width,
                 height: 1,
             },
