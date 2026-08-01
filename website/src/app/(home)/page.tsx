@@ -100,7 +100,7 @@ export default function HomePage() {
       </section>
 
       {/* ── Proof ──────────────────────────────────────────────────────── */}
-      <section className="lp-section">
+      <section className="lp-section lp-band">
         <div className="mx-auto w-full max-w-3xl px-4 py-16">
           <h2 className="lp-eyebrow mb-5">One run, start to finish</h2>
           <HeroTerminal />
@@ -151,7 +151,7 @@ export default function HomePage() {
       </section>
 
       {/* ── Doors into the docs ────────────────────────────────────────── */}
-      <section className="lp-section">
+      <section className="lp-section lp-band">
         <div className="mx-auto w-full max-w-3xl px-4 py-16">
           <h2 className="lp-eyebrow mb-5">Start here</h2>
           <ul className="border-t border-fd-border">
@@ -172,7 +172,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      <footer className="lp-section">
+      <footer className="lp-section lp-footer">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-10 text-sm text-fd-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           <span className="inline-flex items-center gap-2">
             <Mark className="h-4 w-auto" />

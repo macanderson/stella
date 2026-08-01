@@ -128,9 +128,23 @@
   --color-fd-ring: var(--stella-gold);
 }
 
-/* Selection carries the brand: a gold wash under whatever is selected. */
+/* Selection swaps worlds: highlighting in light mode paints the dark mode
+ * (paper text on ink), highlighting in dark mode paints the light mode (ink
+ * text on paper) — each mode carries the other's feel under the cursor.
+ * Always-ink surfaces (terminals, code blocks, the dark footer) take the
+ * paper selection in BOTH modes, because an ink selection on an ink ground
+ * would vanish. */
 ::selection {
-  background: color-mix(in oklab, var(--stella-gold) 32%, transparent);
+  background: var(--stella-ink);
+  color: var(--stella-paper);
+}
+.dark ::selection,
+.term ::selection,
+.term::selection,
+figure.shiki ::selection,
+.lp-footer ::selection {
+  background: var(--stella-paper-bg);
+  color: var(--stella-ink);
 }
 
 /* Skip link — first thing in the tab order on every page, invisible until it
@@ -334,10 +348,17 @@
   border-radius: 0.375rem;
 }
 
+/* The active page is a solid gold pill with ink text — the one gold surface
+ * in the tree, because the current location IS the signal (same law as the
+ * CTA). Identical in both modes: gold on white chrome, gold on ink. */
 #nd-sidebar a[data-active="true"] {
-  color: var(--color-fd-primary);
-  font-weight: 500;
-  background: transparent;
+  background: var(--stella-gold);
+  color: var(--stella-ink);
+  font-weight: 600;
+}
+#nd-sidebar a[data-active="true"]:hover {
+  background: var(--stella-gold-400);
+  color: var(--stella-ink);
 }
 
 #nd-sidebar [data-radix-scroll-area-viewport] {
@@ -547,6 +568,24 @@
 
 .lp-section {
   border-top: 1px solid var(--color-fd-border);
+}
+
+/* Alternating band: sections that carry evidence (the run, the doors) sit on
+ * the muted ground so the page reads as panels rather than one long scroll —
+ * warm cream on paper, lifted surface on ink. */
+.lp-band {
+  background: var(--color-fd-muted);
+}
+
+/* The footer ships dark in BOTH modes: a shade below the dark ground, the
+ * page bottoming out into the terminal. The fd text tokens are re-scoped so
+ * the light mode's ink text doesn't land on a near-black ground. */
+.lp-footer {
+  background: #070708;
+  border-top-color: #232327;
+  --color-fd-foreground: var(--stella-paper);
+  --color-fd-muted-foreground: #9b9890;
+  color: var(--stella-paper);
 }
 
 /* The hero carries the kit's terminal-grid texture: faint grid lines at the
@@ -1032,6 +1071,132 @@
   }
   .lp-lk-cur {
     opacity: 0;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Docs code blocks — terminals, in both modes.
+ *
+ * The docs' fenced blocks take the home page's `.term` treatment: the ground
+ * is ALWAYS ink, because the product lives in a dark terminal and a code
+ * block is a window into it, not a panel of the page. That means the dark
+ * shiki theme renders in light mode too — the `--shiki-dark` override below
+ * beats fumadocs' light-mode rule by source order (same selector, later
+ * import). Inline code is untouched: it sits in running prose and stays
+ * theme-aware.
+ *
+ * The fd tokens are re-scoped inside the figure so line numbers, highlighted
+ * lines, and focus rings resolve against ink in both modes.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+.shiki:not(.not-fumadocs-codeblock *) code span {
+  color: var(--shiki-dark);
+  font-style: var(--shiki-dark-font-style);
+}
+
+figure.shiki {
+  background: var(--stella-ink);
+  border-color: #232327;
+  border-radius: 0.5rem;
+  box-shadow: var(--stella-shadow-card);
+  color: var(--stella-paper);
+  cursor: copy;
+  --color-fd-primary: var(--stella-gold);
+  --color-fd-muted-foreground: #9b9890;
+  --color-fd-ring: var(--stella-gold);
+}
+
+/* The title bar, when a block has one — the `.term-head` look. */
+figure.shiki > div:has(figcaption) {
+  border-bottom-color: #232327;
+  color: #9b9890;
+}
+
+/* The floating copy chip — bottom-right, over the code, anchored to the
+ * figure so it does not scroll away with long blocks. Idle it whispers
+ * "copy"; on success it pops ("copied!" with the check drawing in) on the
+ * kit's pop easing, then settles back. */
+.lp-code-copy {
+  position: absolute;
+  bottom: 0.6rem;
+  inset-inline-end: 0.6rem;
+  z-index: 2;
+  border: 1px solid #232327;
+  border-radius: 0.375rem;
+  background: #1a1a1d;
+  color: #9b9890;
+  font-family: var(--font-mono);
+  font-size: var(--stella-type-2xs);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+  transition:
+    color var(--stella-duration-base) var(--stella-ease-arrive),
+    border-color var(--stella-duration-base) var(--stella-ease-arrive),
+    background-color var(--stella-duration-base) var(--stella-ease-arrive);
+}
+.lp-code-copy:hover {
+  color: var(--stella-paper);
+  border-color: var(--stella-neutral-600);
+}
+.lp-code-copy:focus-visible {
+  outline: 2px solid var(--stella-gold);
+  outline-offset: 2px;
+}
+.lp-code-copy[data-copied] {
+  color: var(--stella-success); /* 11.4:1 on ink; word + glyph carry it */
+  border-color: color-mix(in oklab, var(--stella-success) 40%, #232327);
+}
+
+.lp-code-copy-face {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  animation: lp-code-pop var(--stella-duration-slow) var(--stella-ease-pop);
+}
+
+@keyframes lp-code-pop {
+  0% {
+    transform: scale(0.9);
+  }
+  60% {
+    transform: scale(1.06);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.lp-code-copy-check {
+  width: 0.85em;
+  height: 0.85em;
+}
+.lp-code-copy-check path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 12;
+  stroke-dashoffset: 12;
+  animation: lp-code-check 240ms var(--stella-ease-arrive) 80ms forwards;
+}
+
+@keyframes lp-code-check {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-code-copy-face {
+    animation: none;
+  }
+  .lp-code-copy-check path {
+    animation: none;
+    stroke-dashoffset: 0;
   }
 }
 

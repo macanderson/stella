@@ -3,6 +3,8 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import localFont from "next/font/local";
 import { RootProvider } from "fumadocs-ui/provider/next";
+import { Analytics } from "@vercel/analytics/next";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 
 /**
  * One face: JetBrains Mono, self-hosted from the brand kit's own woff2 files
@@ -77,6 +79,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           Skip to content
         </a>
         <RootProvider>{children}</RootProvider>
+        {/* Vercel Web Analytics + Core Web Vitals. Both are cookie-less,
+            no-op outside Vercel deployments, and served same-origin from
+            /_vercel/* — nothing third-party enters the page. */}
+        <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );
