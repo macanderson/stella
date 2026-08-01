@@ -44,13 +44,15 @@ presence.
 A fail→pass flip proves the test *reacted* to the change; it does not prove
 the test *constrains* the change well.
 
-- **Mutation-check the witness (cheap variant).** After a flip, apply 1–3
-  trivial mutations to the changed lines (negate a condition, off-by-one a
-  bound) in a scratch candidate workspace and re-run the witness. If the
-  witness stays green under every mutant, downgrade the evidence from
-  `DeterministicPass` toward the judge path — the witness is likely
-  tautological. Bounded cost: one extra test run per mutant, only on the
-  winning candidate.
+- **Mutation-check the witness (cheap variant).** *Done (#870).* The
+  pre-submit audit breaks the candidate's changed lines one at a time
+  (`verify::mutation`, ≤3 single-line mutants from the diff, witness files
+  excluded) and re-runs the witness per mutant — in place with a byte-exact
+  restore (`FsMutationProbe`; a failed restore fails the candidate closed).
+  A witness that fails under any mutant keeps its credit (early exit at the
+  first kill); one that stays green under every observed mutant is
+  tautological: the fast-submit is withheld and the judge decides with
+  `witness_tautological=true` in evidence. Authored witnesses only.
 - **Assertion-density heuristic on authored witnesses.** *Done (#863).*
   `witness::density::screen_witness_source` is the static "test must be able
   to fail *meaningfully*" check beside "test must fail first": it refuses a
@@ -71,94 +73,115 @@ the test *constrains* the change well.
 The oracle's `Flipped → Failing` regression edge is honest, but a flaky test
 can produce a *false flip* (fails for an unrelated reason, then passes).
 
-- **Confirmation run on flip.** On the transition to `Flipped`, re-run the
-  tracked command once. Pass again → confirmed flip. Fail → mark the command
-  *unstable* and route to the judge with that fact in evidence instead of
-  crediting a deterministic pass.
-- **Failure-fingerprint matching.** Record a fingerprint of the failing
-  observation (failed test names / panic message extracted from runner
-  output). At flip time, verify the *same tests* that failed are now passing.
-  A pass that "fixes" a different failure than the one observed should score
-  as `NoEvidence`, mirroring the existing same-command rule at the level of
-  same-*failure*.
-- **Typed timeout/infra outcomes.** Distinguish "test failed" from "runner
-  timed out / OOM / toolchain missing" in `TestRunner`'s outcome. Today an
-  infra failure can lock the oracle onto a command that never had a real
-  failing assertion.
+- **Confirmation run on flip.** *Done (#859).* Gated on the *decision*
+  rather than the flip transition: only a run about to claim `SubmitFast`
+  pays the one extra suite run. A failed (or infra, #860) confirmation moves
+  the oracle to `Unstable` — not `Flipped`, not `Failing` — and the judge is
+  told `unstable_flip=true`.
+- **Failure-fingerprint matching.** *Done (#867).* `FlipOracle::observe_run`
+  records the failing test names each failing observation reports
+  (`verify::fingerprint`: libtest + pytest, both orders); a pass that names
+  its tests without naming the baseline's failures is `NoEvidence` — the
+  fix-by-disappearance case (delete the failing test, suite exits 0). The
+  refusal requires a demonstrably COMPLETE pass listing (the runner's own
+  summary count must equal the names parsed), so a truncated tail can never
+  fail an honest fix; every dark input degrades to the exit code.
+- **Typed timeout/infra outcomes.** *Done (#860).* `CmdOutcome` carries
+  `CmdKind {Completed, TimedOut, Infra}`; verification consumes
+  `assertion_result()`, so an infra "failure" can neither lock the oracle
+  nor read as a deterministic red (it escalates with `test_run=<label>` in
+  evidence), and the witness fail-first gate degrades honestly. Signal-killed
+  stays `Completed` (a segfaulting test is a real failure); OOM-kill is the
+  documented residual ambiguity.
 
 ## 3. Secondary deterministic evidence (without weakening L-E11)
 
 Lint/typecheck are rightly excluded from the flip oracle. But they can still
 *veto* and *inform*:
 
-- **Regression veto.** Diff `DiagnosticRunner` results before/after the
-  candidate: new errors (or new warnings, configurable) block fast-submit
-  even when the flip holds. A flipped witness plus a fresh type error in an
-  untested module is exactly the inconclusive case the judge exists for.
+- **Regression veto.** *Done (#861).* A `LintProbe` port runs the
+  workspace's own diagnostics plan; a set-difference against the
+  pre-execution baseline (identity excludes line/col) vetoes fast-submit on
+  new errors, warnings opt-in via `diagnostics_veto_warnings`. Runs only in
+  the pre-submit audit — lint before the confirmation run, since a veto
+  makes the confirmation moot — and degrades open on every unavailable
+  path.
 - **Impacted-test scope for Rust.** *Done at the tool level (#443, #862).*
   `run_tests scope=impacted` resolves Rust `use`/`mod` edges through the
   workspace module tree — including cross-crate paths — and narrows to the
   owning cargo packages; an unrelated crate is left out, and a missing or
   stale index still stands down loudly. What remains is **using** it as
-  ladder evidence: `observe_touched_tests` runs exactly one typed invocation
-  (the configured `--test-command`, else the witness command), so the ladder
-  still chooses between one witness command and a full workspace run. Feeding
-  it the impacted selection means composing a *typed* `cargo test -p …`
-  invocation for the ladder, not shelling the tool.
-- **Touched-tests set widening.** After revise turns, re-derive the
-  touched-tests set from the *final* diff, not the first one — revisions can
-  touch files whose tests were never consulted.
+  ladder evidence, and the constraint that shapes it: the oracle's identity
+  is the *normalized command*, and the impacted selection is derived from
+  the diff — which does not exist when the baseline pre-run fires. A
+  per-turn narrowed command would differ between baseline and candidate and
+  the oracle would rightly ignore the pass. The viable route is the
+  isolated-candidate path, where the session tree stays pristine through
+  execution: both halves of the flip can be observed at verify time with
+  the *same* diff-derived `cargo test -p …` invocation. That is a
+  restructuring of when the baseline is observed, not a bolt-on — design
+  first, then build.
+- **Touched-tests set widening.** *Superseded.* The ladder runs exactly one
+  typed invocation per iteration (the configured `--test-command`, else the
+  witness command) and re-runs it after every revise turn, so there is no
+  per-file "touched set" left to widen — the concern this item named is
+  covered by the per-iteration re-observation.
 
 ## 4. Judge escalation — make the inconclusive path richer
 
-- **Structured judge evidence.** Extend `JudgeEvidence` with the oracle
-  trace (observations in order, normalized commands, outcomes), the
-  diagnostics delta, and the witness-tamper check result — not just the diff
-  and a summary. A judge that sees *why* the ladder was inconclusive makes a
-  better call than one shown a diff cold.
-- **Judge verdict calibration telemetry.** Persist (locally) each
-  `JudgePass` verdict alongside later ground truth when it arrives (CI
-  results via `ci_status`, subsequent user revert/rollback of the adopted
-  change). Over time this measures the judge's false-positive rate and can
-  auto-tune when the ladder escalates vs. revises.
-- **Distress guidance earlier for repeated identical failures.** Guidance
-  currently triggers on the second consecutive red verification. If two
-  consecutive failures have the *same* failure fingerprint, the worker is
-  looping — trigger guidance immediately rather than spending another
-  identical revise turn.
+- **Structured judge evidence.** *Done (#864).* `JudgeEvidence` carries the
+  full `LadderSnapshot` (oracle trace in observation order, diagnostics
+  delta, tamper-check result, and every later audit finding), and the judge
+  prompt renders it compactly — one `oracle_trace=[…]` fragment and a ≤3-line
+  lint sample, never a log dump.
+- **Judge verdict calibration telemetry.** *Done (#871), first slice.*
+  Everything needed was already persisted (verdicts with snapshots, PR/CI
+  observations in the same stream), so `replay::calibration` folds it and
+  `stella calibration` reports the judge's measured false-positive rate
+  beside the deterministic cohort's — unmeasured stays unmeasured, never 0%.
+  Revert detection and threshold auto-tuning wait on real measured data.
+- **Distress guidance earlier for repeated identical failures.** *Already
+  satisfied (#868, closed).* The trigger fires on the second consecutive
+  deterministic failure unconditionally — the timing this item asked for —
+  and cannot fire earlier, since there is no repetition to detect before a
+  second failure exists. The oracle-level fingerprints (#867) are available
+  if a future change relaxes the base timing.
 
 ## 5. Best-of-N scoring — refine within `DeterministicPass`
 
-`CandidateScore` ties within a rank break on diff size alone. Within
-`DeterministicPass`, prefer:
-
-1. survived the mutation check (§1) over not-run/not-survived,
-2. no new diagnostics over new warnings,
-3. smaller diff (current tie-break).
-
-This keeps the existing coarse ordering intact while making the winner among
-several verified candidates the *best-verified* one, not merely the smallest.
+*Done (#869, completed by #870).* Within a rank, selection prefers
+mutation-survived, then fewer new diagnostics, then the smaller diff — all
+read off the verdict's own provenance snapshot, so selection needed no new
+plumbing. The coarse ordering is untouched and pinned by test: a warning-free
+judge-pass never beats a warned deterministic pass.
 
 ## 6. Verification honesty & replay
 
-- **Verdict provenance in `PipelineOutcome`.** Attach the full ladder input
-  snapshot (flip state + tracked command, touched-tests status, diff size,
-  diagnostics delta) to `Verdict`, so `replay` can answer "why did this run
-  fast-submit?" without re-deriving it.
-- **Seal-check coverage.** The post-verification seal check (worktree changed
-  after verification → abort) exists for candidates; extend the same
-  fingerprint discipline to the *witness file itself* between the revise
-  turns of a single candidate, closing the window where a worker edits the
-  witness mid-loop.
+- **Verdict provenance in `PipelineOutcome`.** *Done (#865).* Every verdict
+  (and every emitted `JudgeVerdict` event) carries the `LadderSnapshot`
+  frozen at decision time; `replay::verdict_provenance` renders "why?" from
+  the recording alone, and a pre-snapshot stream reads as *not recorded*,
+  never reconstructed.
+- **Seal-check coverage.** *Already satisfied, now pinned.* The witness
+  tamper exclusion runs every verify-loop iteration, so a revise turn that
+  edits the witness is caught at the next iteration's check and hard-fails
+  the candidate — pinned by
+  `a_revise_turn_that_edits_the_witness_hard_fails_at_the_next_check`.
 
 ## Suggested sequencing
 
-| Phase | Items | Rationale |
-|-------|-------|-----------|
-| 1 | §2 confirmation run, §2 typed infra outcomes, §3 regression veto | Small, pure-logic changes in `verify.rs`/ports; directly reduce false `DeterministicPass` |
-| 2 | ~~§1 assertion-density check~~ (done, #863), §4 structured judge evidence, §6 verdict provenance | Improves authored-witness quality and judge inputs with no new tooling deps |
-| 3 | §2 failure fingerprints, §4 early distress guidance, §5 score refinement | Builds on the fingerprint machinery from phase 1–2 |
-| 4 | §1 mutation check, §1 diff-coverage, ~~§3 Rust impacted selection~~ (done at the tool level, #443/#862 — the ladder wiring remains), §4 calibration telemetry | Larger investments; each degrades gracefully when unavailable |
+| Phase | Items | Status |
+|-------|-------|--------|
+| 1 | §2 confirmation run (#859), §2 typed infra outcomes (#860), §3 regression veto (#861) | **Done** — PR #1033 |
+| 2 | §1 assertion-density check (#863), §4 structured judge evidence (#864), §6 verdict provenance (#865) | **Done** — #863 earlier; PR #1035 |
+| 3 | §2 failure fingerprints (#867), §4 early distress guidance (#868, already satisfied), §5 score refinement (#869) | **Done** — PR #1049 |
+| 4 | §1 mutation check (#870), §4 calibration telemetry (#871) | **Done** — PRs #1052, #1055 |
+| — | §1 diff-coverage (needs a coverage-tooling decision), §3 impacted selection as ladder evidence (see the design constraint above) | Remaining |
+
+The per-PR degradation gate (`pipeline/tests/degradation_gate.rs`, PR #1038,
+`docs/verification-gate.md`) now pins every decision and its spend, so each
+later change to this pipeline lands against a matrix that fails loudly on
+drift.
 
 Each phase preserves the two core invariants: `Flipped` is reachable only
 through `Failing` of the same normalized command, and the judge never
