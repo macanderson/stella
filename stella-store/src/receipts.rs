@@ -293,6 +293,34 @@ impl Store {
         }
     }
 
+    /// One execution's closeout header — the fields trace assembly (#1042)
+    /// stamps onto a trajectory record. `None` when the id does not exist.
+    /// Read AFTER `finish_execution_accounted` if `outcome`/`finished_at`
+    /// must be settled; earlier reads honestly return them as `None`.
+    pub fn execution_summary(&self, execution_id: i64) -> Result<Option<ExecutionSummary>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT kind, prompt, provider, model, started_at, finished_at, outcome, cost_usd
+             FROM executions WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![execution_id], |r| {
+            Ok(ExecutionSummary {
+                kind: r.get(0)?,
+                prompt: r.get(1)?,
+                provider: r.get(2)?,
+                model: r.get(3)?,
+                started_at: r.get(4)?,
+                finished_at: r.get(5)?,
+                outcome: r.get(6)?,
+                cost_usd: r.get(7)?,
+            })
+        })?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
     /// Every execution of the same chat session as `execution_id`, oldest
     /// first — the *turns* of one conversation.
     ///
@@ -385,6 +413,21 @@ pub struct InspectableExecution {
     pub prompt: String,
     pub started_at: String,
     pub calls: u64,
+}
+
+/// One execution's closeout header ([`Store::execution_summary`]): what ran,
+/// how it ended, and what it cost in total. `outcome`/`finished_at` are `None`
+/// until `finish_execution_accounted` settles the row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExecutionSummary {
+    pub kind: String,
+    pub prompt: String,
+    pub provider: String,
+    pub model: String,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub outcome: Option<String>,
+    pub cost_usd: f64,
 }
 
 /// One recorded model call — the header of a receipt, without its blocks.

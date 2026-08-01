@@ -340,6 +340,9 @@ pub struct Config {
     pub tool_policy: stella_tools::policy::ToolPolicy,
     /// End-of-run recap in text mode (settings `enable_recap`).
     pub enable_recap: bool,
+    /// Trajectory trace capture after each finished execution (settings
+    /// `trace_capture`, #1042). Default off.
+    pub trace_capture: bool,
     /// Monotonic authority computed while loading the scope chain. Runtime
     /// adapters consume this instead of reinterpreting trust environment
     /// variables or repository settings independently.
@@ -519,6 +522,7 @@ impl Config {
         // `&& cfg.authority.bash_allowed` conjunctions here used to be).
         cfg.tool_policy = settings.tool_policy();
         cfg.enable_recap = settings.recap_enabled();
+        cfg.trace_capture = settings.trace_capture_enabled();
         Ok(cfg)
     }
 
@@ -653,6 +657,7 @@ impl Config {
                     engine_settings: None,
                     tool_policy: Default::default(),
                     enable_recap: false,
+                    trace_capture: false,
                     authority: crate::settings::AuthorityPolicy::default(),
                     credential_source,
                     credential_advisories: credentials_file.advisories().to_vec(),
@@ -843,6 +848,7 @@ impl Config {
             engine_settings: None,
             tool_policy: Default::default(),
             enable_recap: false,
+            trace_capture: false,
             authority: crate::settings::AuthorityPolicy::default(),
             credential_source: Some(source),
             credential_advisories: credentials_file.advisories().to_vec(),

@@ -84,6 +84,7 @@ mod term_policy;
 mod tool_foundry;
 mod tool_policy;
 mod tool_switches;
+mod trace;
 mod tui;
 mod tune_cmd;
 mod usage_cmd;

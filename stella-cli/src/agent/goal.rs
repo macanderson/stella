@@ -133,7 +133,7 @@ pub(crate) async fn run_raw_one_shot(
             } else {
                 EpisodeOutcome::Failure
             };
-            m.record_episode(prompt, episode_outcome, &files, started_unix)
+            m.record_episode(prompt, episode_outcome, &files, started_unix, None)
                 .await;
         }
     }
@@ -315,7 +315,7 @@ pub async fn run_goal_cmd(
             } else {
                 EpisodeOutcome::Failure
             };
-            m.record_episode(goal, episode_outcome, &files, started_unix)
+            m.record_episode(goal, episode_outcome, &files, started_unix, None)
                 .await;
         }
     }

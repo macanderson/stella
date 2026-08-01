@@ -454,8 +454,21 @@ async fn run_pipeline_one_shot(
             Ok(outcome) => pipeline_episode_outcome(&outcome.status),
             Err(_) => EpisodeOutcome::Failure,
         };
-        m.record_episode(prompt, episode_outcome, &files, started_unix)
-            .await;
+        // When trace capture (#1042) is on, the episode carries the pointer
+        // to its full trajectory, so recall's "we did something like this
+        // before" comes with the key to the exact record of how.
+        let trace_tag = match &execution {
+            Some((_, id)) if cfg.trace_capture => Some(format!(" [trace:exec-{id}]")),
+            _ => None,
+        };
+        m.record_episode(
+            prompt,
+            episode_outcome,
+            &files,
+            started_unix,
+            trace_tag.as_deref(),
+        )
+        .await;
     }
 
     // Reflect on turns that did real work — success AND failure. A failed
@@ -557,6 +570,16 @@ async fn run_pipeline_one_shot(
             warn_store_write_failed(
                 "the audit record (files touched / memory citations / outcome)",
             );
+        }
+        // Trajectory trace (#1042, `trace_capture`, off by default): assemble
+        // one training-ready record from what the closeout just settled —
+        // receipts, journal, cost. Assembly, not capture: the journal is
+        // already the append-only record. Best-effort — a trace failure must
+        // never fail the turn it describes.
+        if cfg.trace_capture
+            && let Err(error) = crate::trace::capture(store, *id, &files, &cfg.workspace_root)
+        {
+            eprintln!("  ⚠ trace capture failed: {error}");
         }
     }
 
@@ -1155,6 +1178,7 @@ pub(crate) async fn record_turn_episode(
         episode_outcome,
         &turn_files,
         started_unix,
+        None,
     )
     .await;
 }
