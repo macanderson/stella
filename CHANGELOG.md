@@ -35,6 +35,8 @@ skip the roll) were re-inserted the same way.
 
 ## [Unreleased]
 
+## [0.6.59] — 2026-08-01
+
 ## [0.6.58] — 2026-08-01
 - The four Context Graph Protocol crates (`contextgraph-types`,
   `contextgraph-host`, `contextgraph-trace`, `contextgraph-conformance`) are now
