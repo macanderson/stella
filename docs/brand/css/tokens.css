@@ -1,0 +1,126 @@
+/* ==========================================================================
+   stella — design tokens
+   One color, owned: Phosphor Gold on Ink. Everything else is restraint.
+   Drop this file in before any component styles. Pure CSS custom properties;
+   no build step required. Pair with globals.css for shadcn/ui + Tailwind v4.
+   ========================================================================== */
+
+:root {
+  /* ---- brand core ------------------------------------------------------ */
+  --stella-gold: #FFB000;        /* Phosphor Gold — CRT amber, gold star */
+  --stella-gold-deep: #A37200;   /* small gold text on light surfaces */
+  --stella-ink: #0B0B0C;         /* Ink — the terminal, not pure black */
+  --stella-paper: #F4F1EA;       /* Paper — warm text on dark */
+  --stella-paper-bg: #F6F2E9;    /* Paper — light-mode surface */
+
+  /* ---- gold ramp ------------------------------------------------------- */
+  --stella-gold-50: #FFF8E4;
+  --stella-gold-100: #FDECC3;
+  --stella-gold-200: #FCDFA1;
+  --stella-gold-300: #FCD07D;
+  --stella-gold-400: #FDC154;
+  --stella-gold-500: #FFB000;   /* oklch(0.812 0.17 76.39) */
+  --stella-gold-600: #D09100;
+  --stella-gold-700: #A37200;
+  --stella-gold-800: #795500;
+  --stella-gold-900: #523900;
+  --stella-gold-950: #2E1F00;
+
+  /* ---- warm neutrals --------------------------------------------------- */
+  --stella-neutral-50: #FBF9F4;
+  --stella-neutral-100: #E4E2DC;
+  --stella-neutral-200: #CECBC5;
+  --stella-neutral-300: #B8B5AE;
+  --stella-neutral-400: #A29F98;
+  --stella-neutral-500: #8D8A82;
+  --stella-neutral-600: #736C68;
+  --stella-neutral-700: #575150;
+  --stella-neutral-800: #3C3839;
+  --stella-neutral-900: #222022;
+  --stella-neutral-950: #0B0B0C;
+
+  /* ---- typography ------------------------------------------------------ */
+  /* JetBrains Mono is the brand voice — the product lives in a terminal,
+     so the brand speaks in monospace. 800 for display, 700 for headings,
+     500 for UI, 400 for body & code. */
+  --stella-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo,
+      Consolas, "Liberation Mono", monospace;
+  --stella-font-display-weight: 800;
+  --stella-font-heading-weight: 700;
+  --stella-font-ui-weight: 500;
+  --stella-font-body-weight: 400;
+
+  --stella-text-xs: 0.75rem;     /* 12 */
+  --stella-text-sm: 0.8125rem;   /* 13 */
+  --stella-text-base: 0.875rem;  /* 14 — terminal-native default */
+  --stella-text-md: 1rem;        /* 16 */
+  --stella-text-lg: 1.25rem;     /* 20 */
+  --stella-text-xl: 1.5rem;      /* 24 */
+  --stella-text-2xl: 1.875rem;   /* 30 */
+  --stella-text-3xl: 2.375rem;   /* 38 */
+  --stella-text-4xl: 3rem;       /* 48 */
+  --stella-tracking-tight: -0.02em;   /* display & wordmark */
+  --stella-tracking-wide: 0.14em;     /* overlines, tags */
+  --stella-leading-tight: 1.15;
+  --stella-leading-body: 1.65;
+
+  /* ---- radius ---------------------------------------------------------- */
+  --stella-radius-xs: 4px;
+  --stella-radius-sm: 6px;
+  --stella-radius-md: 10px;
+  --stella-radius-lg: 14px;
+  --stella-radius-xl: 18px;      /* cards, tiles */
+  --stella-radius-full: 999px;
+
+  /* ---- motion — assemble, don't spin ----------------------------------- */
+  --stella-ease-arrive: cubic-bezier(0.22, 0.9, 0.35, 1);   /* trails in */
+  --stella-ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);     /* star lands */
+  --stella-ease-exit: cubic-bezier(0.55, 0, 0.85, 0.25);    /* comet leaves */
+  --stella-duration-fast: 120ms;
+  --stella-duration-base: 180ms;
+  --stella-duration-slow: 280ms;
+  --stella-duration-spinner: 2400ms;
+  --stella-duration-spinner-lockup: 3600ms;
+
+  /* ---- texture --------------------------------------------------------- */
+  --stella-grid-opacity: 0.05;       /* terminal grid lines */
+  --stella-starfield-opacity: 0.16;  /* max star opacity */
+  --stella-grain-opacity: 0.045;     /* film grain overlay */
+
+  /* ---- elevation / glow ------------------------------------------------ */
+  --stella-glow-gold: 0 0 24px rgb(255 176 0 / 0.28),
+      0 0 96px rgb(255 176 0 / 0.12);
+  --stella-shadow-card: 0 1px 2px rgb(0 0 0 / 0.25),
+      0 8px 28px rgb(0 0 0 / 0.35);
+}
+
+/* ---- semantic aliases: light is default, dark by class/attr or system -- */
+:root {
+  --stella-bg: var(--stella-paper-bg);
+  --stella-fg: var(--stella-ink);
+  --stella-surface: #FCFAF4;
+  --stella-border: #E4DECF;
+  --stella-muted-fg: #6E6A5F;
+  --stella-accent: var(--stella-gold);
+  --stella-accent-text: var(--stella-gold-deep); /* gold that passes on light */
+}
+.dark, [data-theme="dark"] {
+  --stella-bg: var(--stella-ink);
+  --stella-fg: var(--stella-paper);
+  --stella-surface: #131315;
+  --stella-border: #232327;
+  --stella-muted-fg: #9B9890;
+  --stella-accent: var(--stella-gold);
+  --stella-accent-text: var(--stella-gold);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --stella-bg: var(--stella-ink);
+    --stella-fg: var(--stella-paper);
+    --stella-surface: #131315;
+    --stella-border: #232327;
+    --stella-muted-fg: #9B9890;
+    --stella-accent: var(--stella-gold);
+    --stella-accent-text: var(--stella-gold);
+  }
+}
