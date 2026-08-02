@@ -3418,3 +3418,126 @@ async fn a_call_only_stream_outlives_the_deadline_because_it_is_not_stalled() {
     );
     drain_events(&mut rx);
 }
+
+/// A [`CheckpointSink`] that records what a turn wrote and how often it
+/// cleared, so a test can assert both halves of the durability contract.
+#[derive(Debug, Default)]
+struct RecordingSink {
+    persisted: std::sync::Mutex<Vec<String>>,
+    discards: AtomicU32,
+}
+
+impl crate::step::CheckpointSink for RecordingSink {
+    fn persist(&self, json: &str) {
+        self.persisted
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(json.to_string());
+    }
+    fn discard(&self) {
+        self.discards.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[tokio::test]
+async fn a_turn_checkpoints_at_every_step_boundary_and_clears_when_it_ends() {
+    // The durability contract in one test. Script: a tool call (step 0
+    // continues) then text (step 1 completes), so the turn crosses exactly
+    // one step boundary.
+    //
+    // What must hold:
+    //   * exactly one checkpoint, written at the one `Continue`;
+    //   * it decodes, so what a resume would read is what this build writes;
+    //   * `step` is 1 — the index that runs NEXT, not the one that just ran,
+    //     because a resume that replayed the finished step would re-execute
+    //     its tool call;
+    //   * exactly one discard, so a completed turn leaves nothing behind for
+    //     a later resume to replay.
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![
+            Ok(tool_call_result("call_1", "bash")),
+            Ok(text_result("done")),
+        ]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let sink = Arc::new(RecordingSink::default());
+    let config = EngineConfig {
+        checkpoint_sink: Some(sink.clone() as Arc<dyn crate::step::CheckpointSink>),
+        ..EngineConfig::default()
+    };
+    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("go"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "the scripted turn completes: {outcome:?}"
+    );
+
+    let persisted = sink.persisted.lock().unwrap_or_else(|p| p.into_inner());
+    assert_eq!(
+        persisted.len(),
+        1,
+        "one step boundary means one checkpoint, not one per model call"
+    );
+    let checkpoint =
+        crate::step::Checkpoint::from_json(&persisted[0]).expect("a written checkpoint decodes");
+    assert_eq!(
+        checkpoint.step, 1,
+        "the checkpoint names the step that runs next, so a resume does not \
+         re-execute the tool call the snapshotted step already ran"
+    );
+    assert!(
+        checkpoint.messages.len() > 2,
+        "the transcript rides along and has grown past the seed system+user \
+         pair — the assistant's tool call and its result are exactly what a \
+         resumed turn must not have to re-derive: {} messages",
+        checkpoint.messages.len()
+    );
+    assert_eq!(
+        sink.discards.load(Ordering::SeqCst),
+        1,
+        "a turn that ended clears its resume point exactly once"
+    );
+    drain_events(&mut rx);
+}
+
+#[tokio::test]
+async fn a_turn_without_a_sink_is_unchanged() {
+    // The default config attaches no sink, and that path must stay entirely
+    // free of checkpoint work — this is what keeps durability opt-in for
+    // embedders that own their own persistence.
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![Ok(text_result("done"))]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    assert!(
+        EngineConfig::default().checkpoint_sink.is_none(),
+        "durability is opt-in: a default engine writes no checkpoints"
+    );
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("go"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+    drain_events(&mut rx);
+}

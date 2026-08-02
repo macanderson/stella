@@ -19,6 +19,10 @@
 //! - **`queue.json`** — the pending prompt backlog, rewritten atomically on
 //!   every queue mutation. A prompt the user queued is durable the moment it
 //!   is queued.
+//! - **`checkpoint.json`** — the in-flight turn's resume point, rewritten
+//!   atomically at every step boundary and removed when the turn ends. Unlike
+//!   the three above it describes work that is *still happening*, so its mere
+//!   presence after a restart means a turn was interrupted mid-flight.
 //!
 //! ## Crash-safety contract
 //!
@@ -48,6 +52,12 @@ pub const JOURNAL_FILE: &str = "journal.jsonl";
 pub const HISTORY_FILE: &str = "history.json";
 /// The pending prompt backlog snapshot inside a session's sidecar dir.
 pub const QUEUE_FILE: &str = "queue.json";
+/// The in-flight turn's resume point inside a session's sidecar dir.
+///
+/// Present only while a turn is actually running: written at every step
+/// boundary and removed when the turn reaches a terminal outcome. Its presence
+/// after a restart therefore *means* "a turn was interrupted here".
+pub const CHECKPOINT_FILE: &str = "checkpoint.json";
 
 /// Flush the coalescing buffer once it holds this many bytes even if the
 /// delta run hasn't ended — bounds journal-write latency on very long
@@ -318,6 +328,42 @@ pub fn read_queue(dir: &Path) -> Vec<String> {
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_default()
+}
+
+/// Atomically record the in-flight turn's resume point (`checkpoint.json`).
+///
+/// `json` is written verbatim rather than through this module's private
+/// `write_snapshot` helper: it is
+/// already `stella_core::step::Checkpoint::to_json` output, and re-serializing
+/// a `String` would store a JSON *string literal* containing escaped JSON.
+/// Storing the bytes as given also keeps this crate free of any dependency on
+/// the engine's types — the checkpoint is opaque here, and the version gate
+/// that decides whether these bytes are usable lives with the type that wrote
+/// them.
+pub fn write_checkpoint(dir: &Path, json: &str) -> Result<()> {
+    crate::ensure_private_dir(dir)?;
+    crate::private::write_private_atomic(&dir.join(CHECKPOINT_FILE), json.as_bytes())
+}
+
+/// The in-flight turn's resume point, verbatim; `None` when no turn was
+/// interrupted (or the file is unreadable, which is the same recovery path:
+/// fall back to re-dispatching the prompt).
+pub fn read_checkpoint(dir: &Path) -> Option<String> {
+    crate::read_private_to_string(&dir.join(CHECKPOINT_FILE)).ok()
+}
+
+/// Drop the resume point — the turn it described reached a terminal outcome.
+///
+/// Idempotent: a turn that ended before its first step boundary never wrote
+/// one, and clearing an absent checkpoint is success, not an error. Any other
+/// I/O failure IS reported, because a checkpoint that survives its own turn
+/// would offer to resume work the caller already watched finish.
+pub fn clear_checkpoint(dir: &Path) -> Result<()> {
+    match std::fs::remove_file(dir.join(CHECKPOINT_FILE)) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(StoreError(format!("cannot clear {CHECKPOINT_FILE}: {e}"))),
+    }
 }
 
 /// Whether a sidecar dir holds anything to restore — the resumability test.
@@ -680,6 +726,45 @@ mod tests {
             unsettled_prompts(&worker_done),
             vec![(lead.clone(), "refactor the fold".to_string())]
         );
+    }
+
+    #[test]
+    fn a_checkpoint_survives_verbatim_and_clearing_is_idempotent() {
+        // The bytes must come back EXACTLY as written: they are a
+        // `Checkpoint::to_json` payload whose version gate lives in
+        // stella-core, and any re-encoding here (storing the `String` through
+        // a serializer, say) would hand that gate an escaped JSON string
+        // literal instead of a checkpoint.
+        let dir = temp_dir("checkpoint");
+        assert_eq!(
+            read_checkpoint(&dir),
+            None,
+            "no interrupted turn means no resume point"
+        );
+        // Clearing before anything was ever written is success: a turn that
+        // ended on its first step discards without having persisted.
+        clear_checkpoint(&dir).expect("clearing an absent checkpoint is not an error");
+
+        let json = r#"{"version":1,"step":3,"messages":[],"nested":{"quote":"\"x\""}}"#;
+        write_checkpoint(&dir, json).unwrap();
+        assert_eq!(
+            read_checkpoint(&dir).as_deref(),
+            Some(json),
+            "stored verbatim — not re-serialized"
+        );
+
+        // Rewriting replaces rather than appends: one live turn, one point.
+        let second = r#"{"version":1,"step":4}"#;
+        write_checkpoint(&dir, second).unwrap();
+        assert_eq!(read_checkpoint(&dir).as_deref(), Some(second));
+
+        clear_checkpoint(&dir).unwrap();
+        assert_eq!(
+            read_checkpoint(&dir),
+            None,
+            "a finished turn leaves nothing for a later resume to replay"
+        );
+        clear_checkpoint(&dir).expect("clearing twice is still success");
     }
 
     #[test]

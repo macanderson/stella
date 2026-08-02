@@ -573,6 +573,43 @@ pub enum CheckpointError {
     },
 }
 
+/// Where a durable host puts the [`Checkpoint`] a turn writes at each step
+/// boundary.
+///
+/// The engine owns *when*: a checkpoint is written at the one moment the
+/// transcript is guaranteed well-paired (no `tool_use` without its
+/// `tool_result`), and discarded the moment the turn reaches a terminal
+/// outcome, because resuming a turn that already ended would replay it. The
+/// host owns *where* — this crate does no file I/O, and a sink can just as
+/// well be a database row or an HTTP call.
+///
+/// # Failures are the sink's to absorb
+///
+/// Neither method returns a `Result`, and that is deliberate. A checkpoint
+/// that cannot be written must never fail the turn that produced it: without
+/// one the turn is exactly as durable as it was before (its prompt is
+/// re-queued and the work is re-run), so a full disk would be trading a
+/// recoverable turn for a dead one. Sinks that want the failure seen should
+/// report it out of band — once, not per step, since this is called on every
+/// step of every turn.
+///
+/// Implementations are invoked on the turn's own task and block it, so
+/// `persist` must be cheap. The file-backed sink is one temp+fsync+rename.
+pub trait CheckpointSink: Send + Sync + std::fmt::Debug {
+    /// Record `json` as the resume point for this turn, replacing any earlier
+    /// one. `json` is [`Checkpoint::to_json`] output and is a complete
+    /// snapshot, never a delta.
+    fn persist(&self, json: &str);
+
+    /// Drop the resume point — the turn reached a terminal outcome.
+    ///
+    /// Must be idempotent: a turn that never checkpointed (it ended on its
+    /// first step) still discards on the way out, and a crash between
+    /// `persist` and `discard` leaves a stale point that the next `discard`
+    /// clears.
+    fn discard(&self);
+}
+
 /// [`BudgetGuard`]'s state as data.
 ///
 /// The guard keeps its fields private (it is a meter, not a record) and is not
