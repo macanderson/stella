@@ -11,7 +11,11 @@
 # permits.
 #
 # Uses portable POSIX tools so it runs on a bare CI runner (no ripgrep, no
-# yq — neither is a dependency of this repo).
+# yq — neither is a dependency of this repo). "Portable" includes mawk,
+# Debian's default awk: mawk's brace intervals are broken (`{2,}` matches
+# exactly two, not two-or-more), which once made this script parse an empty
+# allow-licenses list on any mawk machine — green in CI (gawk), red locally —
+# so no regex here may use `{n,}`/`{n,m}` repetition.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -46,7 +50,7 @@ fi
 review_list="$(
   awk '
     /^[[:space:]]*allow-licenses:/{flag=1; sub(/^[[:space:]]*allow-licenses:[[:space:]]*>-?[[:space:]]*$/, ""); if (length($0)) print; next}
-    flag && /^[[:space:]]{2,}[A-Za-z0-9]/{print; next}
+    flag && /^[[:space:]][[:space:]]+[A-Za-z0-9]/{print; next}
     flag {flag=0}
   ' "$workflow" \
     | tr ',' '\n' \

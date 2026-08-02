@@ -1453,21 +1453,41 @@ mod tests {
     }
 
     /// Every routable path must name a verb in its `Allow` header, or a 405 is
-    /// half an answer.
+    /// half an answer. Iterates [`Route::ALL`], not a hand-listed subset —
+    /// the previous list covered 7 of 14 routes, which is exactly the rot an
+    /// enumerable registry exists to end.
     #[test]
     fn every_known_route_names_an_allowed_method() {
-        for route in [
-            Route::Healthz,
-            Route::Metrics,
-            Route::TurnsCreate,
-            Route::TurnEvents,
-            Route::TurnToolResult,
-            Route::TurnProviderResult,
-            Route::TurnCancel,
-        ] {
+        for route in Route::ALL {
             assert!(
-                matches!(allowed(route), "GET" | "POST"),
+                !allowed(route).is_empty(),
                 "{} has no allowed method",
+                route.template()
+            );
+        }
+        assert!(allowed(Route::Unrouted).is_empty(), "404s carry no Allow");
+    }
+
+    /// Every real route's template classifies back to the same variant — the
+    /// structural guard against adding a `Route` variant whose path the
+    /// dispatcher never learned (both dispatch matches carry catch-alls, so
+    /// that mistake compiles).
+    #[test]
+    fn every_real_routes_template_classifies_back_to_itself() {
+        for route in Route::ALL {
+            let path = route.template().replace("{id}", "member-x");
+            let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+            let (classified, member) = classify(&segs);
+            assert_eq!(
+                classified,
+                route,
+                "template {} did not classify to its own route",
+                route.template()
+            );
+            assert_eq!(
+                member.is_some(),
+                route.template().contains("{id}"),
+                "member-id capture must match the template shape for {}",
                 route.template()
             );
         }

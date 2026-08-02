@@ -17,6 +17,7 @@ members = [
   "stella-fleet",
   "stella-observatory",
   "stella-serve",
+  "stella-parity",
   "stella-tui",
   "stella-cli",
   "bench/loop-bench",
@@ -24,7 +25,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.6.68"
+version = "0.6.69"
 edition = "2024"
 rust-version = "1.90"
 license = "AGPL-3.0-only"

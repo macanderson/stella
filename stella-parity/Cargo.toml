@@ -1,0 +1,15 @@
+[package]
+name = "stella-parity"
+description = "The cross-surface capability matrix: every engine capability declares how it ships on the CLI and the API, with witness tests checked for existence — so a feature landing on one surface without the other is a red test, not a roadmap footnote."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# For `Route::ALL` — the enumerable API surface this matrix sweeps. Nothing
+# else: the CLI is a binary crate, so its surface is checked against source
+# text (the same discipline provider_parity.rs uses for adapter witnesses).
+stella-serve = { path = "../stella-serve" }
