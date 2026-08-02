@@ -1,4 +1,4 @@
 {
   "title": "Engineering Principles",
-  "pages": ["determinism", "no-clobber"]
+  "pages": ["determinism", "no-clobber", "session-artifacts"]
 }

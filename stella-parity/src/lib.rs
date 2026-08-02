@@ -144,10 +144,16 @@ pub static CAPABILITIES: &[Capability] = &[
         // dependency, and no workspace root or session id in `SessionSpec`).
         // `SessionSpec::config` is `pub`, so an embedder that owns a workspace
         // supplies its own sink today.
+        //
+        // ADR 0013 settles the boundary this was waiting on and does NOT
+        // promote this row: it decides that the workspace stays the host's, so
+        // a server-side sink is not the destination. What it unblocks is the
+        // artifact an embedder's sink produces and the contract it must meet.
         api: SurfacePosture::Deferred {
-            waiting_on: "who owns the workspace for a served session — the host supplies a sink \
-                         through the public EngineConfig today; a server-side one needs the \
-                         portable-session design (transportable state between machines) first",
+            waiting_on: "ADR 0013 (docs/adr/0013-session-artifact-boundary.md) — the workspace \
+                         stays the host's, so serve gets no server-side sink; what is deferred is \
+                         the artifact contract an embedder's own sink writes (bundle shape, \
+                         provenance fingerprint, Checkpoint as a versioned wire contract)",
         },
     },
     Capability {
@@ -240,15 +246,19 @@ pub static CAPABILITIES: &[Capability] = &[
         engine_home: "stella-engine Checkpoint — versioned serde snapshot at a step boundary, resumable in another process",
         engine_entries: &["resume_turn"],
         cli: SurfacePosture::Deferred {
-            waiting_on: "converging the deck's session_persist journal with the engine Checkpoint: \
-                         the CLI replays its own journal format and never calls \
-                         to_checkpoint/resume_turn, so the one durable-resume format the engine \
-                         exports has zero production writers",
+            waiting_on: "ADR 0013 (docs/adr/0013-session-artifact-boundary.md) §1, which names \
+                         this the precondition for a CLI-originated artifact: the deck replays its \
+                         own session_persist journal and never calls to_checkpoint/resume_turn, so \
+                         the one durable-resume format the engine exports has zero production \
+                         writers, and the artifact deliberately excludes the sidecar rather than \
+                         carry two transcripts that can disagree",
         },
         api: SurfacePosture::Deferred {
-            waiting_on: "a checkpoint store behind serve: session.rs marks StepOutcome::Continue \
-                         as the persistence seam but nothing persists, so a served turn does not \
-                         survive the process",
+            waiting_on: "ADR 0013 (docs/adr/0013-session-artifact-boundary.md) — session.rs marks \
+                         StepOutcome::Continue as the persistence seam but nothing persists; the \
+                         ADR keeps the workspace on the host side, so this needs the replay API \
+                         (mode chosen in the signature, fingerprint verified, refusal by default) \
+                         rather than a store behind serve",
         },
     },
     Capability {
