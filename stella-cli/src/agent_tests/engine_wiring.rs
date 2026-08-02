@@ -78,7 +78,13 @@ fn a_bound_session_checkpoints_from_every_role() {
         "ses-engine-wiring",
     )
     .unwrap();
-    cfg.durability.bind(record.clone());
+    cfg.durability.bind(
+        record.clone(),
+        std::sync::Arc::new(stella_tools::ToolRegistry::new(
+            ws.path().to_path_buf(),
+            stella_tools::RegistryOptions::default(),
+        )),
+    );
 
     let worker = ModelRef::new("zai", "glm-5.2".to_string());
     for (role, engine) in [

@@ -1649,6 +1649,53 @@ impl ToolRegistry {
         }
     }
 
+    /// This session's staleness map as JSON, for a durable host to persist.
+    ///
+    /// `BTreeMap`, so the bytes are a pure function of the contents: this is
+    /// written into a content-addressed store on every step boundary, and a
+    /// `HashMap`'s iteration order would mint a fresh object each time for a
+    /// map that had not changed.
+    ///
+    /// `None` when nothing has been observed yet — there is no state to write,
+    /// and an empty object would still cost a commit.
+    #[must_use]
+    pub fn observed_snapshot(&self) -> Option<String> {
+        let observed = self.observed.lock().unwrap_or_else(|p| p.into_inner());
+        if observed.is_empty() {
+            return None;
+        }
+        let ordered: std::collections::BTreeMap<&str, &str> = observed
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        serde_json::to_string(&ordered).ok()
+    }
+
+    /// Restore a staleness map persisted by [`Self::observed_snapshot`],
+    /// returning how many paths came back.
+    ///
+    /// Restoring is what makes the no-clobber guarantee survive a crash. Without
+    /// it a resumed session is *less* safe than a fresh one is honest: the
+    /// restored transcript still says the agent read a file, so the model acts
+    /// on content it believes it knows, while the guard — having forgotten it
+    /// was ever read — waves the overwrite through. That is the one combination
+    /// the guard exists to prevent.
+    ///
+    /// Merges rather than replaces. Anything this session has already seen is
+    /// newer than the snapshot by construction, so it wins.
+    pub fn restore_observed(&self, json: &str) -> usize {
+        let Ok(restored) = serde_json::from_str::<HashMap<String, String>>(json) else {
+            return 0;
+        };
+        let mut observed = self.observed.lock().unwrap_or_else(|p| p.into_inner());
+        let mut count = 0;
+        for (path, digest) in restored {
+            observed.entry(path).or_insert(digest);
+            count += 1;
+        }
+        count
+    }
+
     /// The paths in `pending` this call would clobber — ones this session has
     /// seen before whose bytes on disk no longer match what it saw.
     ///

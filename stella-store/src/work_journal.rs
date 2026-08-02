@@ -77,6 +77,17 @@ fn journal_blob_path(name: &str) -> String {
 /// they disagree — and they will, because nothing can update both atomically.
 pub const CHECKPOINT_BLOB: &str = "checkpoint.json";
 
+/// The reserved blob holding the session's staleness map — `path → digest this
+/// session last saw`, the state behind the no-clobber guarantee.
+///
+/// Written in the same commit as [`CHECKPOINT_BLOB`] and **not** retracted with
+/// it. The two have different lifetimes, and confusing them would quietly
+/// disarm the guard: a checkpoint describes one turn and must not outlive it,
+/// while the staleness map describes what this *session* has seen and has to
+/// outlive every turn in it. A session's second turn is exactly as entitled to
+/// the guarantee as its first.
+pub const OBSERVED_BLOB: &str = "observed.json";
+
 impl WorkJournal {
     /// Open (creating on first use) the durable history for `workspace_root`.
     ///
@@ -291,7 +302,8 @@ impl WorkJournal {
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
 
-    /// Write the in-flight turn's resume point, replacing any earlier one.
+    /// Write the in-flight turn's resume point, replacing any earlier one, and
+    /// the staleness map that belongs with it.
     ///
     /// One commit per step boundary. Measurably dearer than an atomic file
     /// write — about 27ms against 8ms for a transcript-sized snapshot — and
@@ -299,12 +311,27 @@ impl WorkJournal {
     /// noise beside it, and what it buys is that the resume point and the file
     /// changes it describes share one commit graph instead of needing to be
     /// reconciled across two stores.
-    pub fn record_checkpoint(&self, json: &str) -> Result<String> {
-        self.record(
-            &[],
-            &[(CHECKPOINT_BLOB, Some(json))],
-            "stella: turn checkpoint",
-        )
+    ///
+    /// `observed` rides along rather than getting a commit of its own, which is
+    /// what makes persisting it free. A step boundary is also the *right*
+    /// moment for it: the map is updated by reads as well as writes, and a
+    /// scheme that saved it only when a file changed would drop every read
+    /// since the last mutation — the exact loss that leaves a resumed session
+    /// acting on content it believes it knows with the guard no longer watching
+    /// (see `ToolRegistry::restore_observed`). `None` leaves whatever was last
+    /// written in place.
+    pub fn record_checkpoint(&self, json: &str, observed: Option<&str>) -> Result<String> {
+        let mut blobs: Vec<(&str, Option<&str>)> = vec![(CHECKPOINT_BLOB, Some(json))];
+        if let Some(observed) = observed {
+            blobs.push((OBSERVED_BLOB, Some(observed)));
+        }
+        self.record(&[], &blobs, "stella: turn checkpoint")
+    }
+
+    /// The session's staleness map as of this session's tip, or `None` when
+    /// this session never observed a file.
+    pub fn observed(&self) -> Option<String> {
+        self.blob_at_tip(OBSERVED_BLOB)
     }
 
     /// Retract the resume point — the turn it described reached a terminal
@@ -334,12 +361,14 @@ impl WorkJournal {
     /// does: both mean "nothing to resume from", and the recovery path is
     /// identical — re-run the prompt.
     pub fn checkpoint(&self) -> Option<String> {
+        self.blob_at_tip(CHECKPOINT_BLOB)
+    }
+
+    /// One reserved blob as of this session's tip.
+    fn blob_at_tip(&self, name: &str) -> Option<String> {
         let tip = self.session_tip()?;
-        self.git(&[
-            "show",
-            &format!("{tip}:{}", journal_blob_path(CHECKPOINT_BLOB)),
-        ])
-        .ok()
+        self.git(&["show", &format!("{tip}:{}", journal_blob_path(name))])
+            .ok()
     }
 
     /// Mark `commit` as the state at the end of `turn`, so it can be replayed
@@ -471,7 +500,7 @@ mod tests {
             .expect("clearing an absent checkpoint is not an error");
 
         let json = r#"{"version":1,"step":3,"messages":[],"nested":{"quote":"\"x\""}}"#;
-        journal.record_checkpoint(json).unwrap();
+        journal.record_checkpoint(json, None).unwrap();
         assert_eq!(
             journal.checkpoint().as_deref(),
             Some(json),
@@ -480,7 +509,7 @@ mod tests {
 
         // Rewriting replaces rather than appends: one live turn, one point.
         let second = r#"{"version":1,"step":4}"#;
-        journal.record_checkpoint(second).unwrap();
+        journal.record_checkpoint(second, None).unwrap();
         assert_eq!(journal.checkpoint().as_deref(), Some(second));
 
         journal.clear_checkpoint().unwrap();
@@ -506,7 +535,7 @@ mod tests {
         journal
             .record(&["kept.txt".into()], &[], "the agent's write")
             .unwrap();
-        journal.record_checkpoint(r#"{"step":2}"#).unwrap();
+        journal.record_checkpoint(r#"{"step":2}"#, None).unwrap();
 
         journal.clear_checkpoint().unwrap();
 

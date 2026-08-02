@@ -2016,7 +2016,7 @@ impl SessionPresence {
     /// session whose turns checkpoint nowhere — and the failure would be
     /// silent, because an unbound sink is indistinguishable from a session
     /// that simply never crashed.
-    pub(crate) fn announce(cfg: &Config, prompt: &str, tools: &ToolRegistry) -> Self {
+    pub(crate) fn announce(cfg: &Config, prompt: &str, tools: &Arc<ToolRegistry>) -> Self {
         let name = cfg
             .workspace_root
             .file_name()
