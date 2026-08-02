@@ -83,6 +83,7 @@
 mod crash;
 mod cx;
 mod dx;
+mod error;
 mod field;
 mod filter;
 mod level;
@@ -95,6 +96,7 @@ mod sink;
 pub use crash::{dump, dump_after_panic, install_panic_hook};
 pub use cx::{Cx, ShortId};
 pub use dx::{CounterSnapshot, Counters, Dx, Facet};
+pub use error::error_field;
 pub use field::{FieldValue, Fields, Loggable, ReviewedValue, StaticStr};
 pub use filter::{BadClause, ClauseFault, Filter, Parsed};
 pub use level::{Level, LevelFilter};
