@@ -571,3 +571,62 @@ fn the_trusted_control_arm_posture_does_not_arm_the_witness_refusal() {
         "the control arm claims no independent author and must keep running"
     );
 }
+
+#[test]
+fn the_models_own_output_ceiling_replaces_the_global_default() {
+    // `EngineConfig::default()` carries one `max_output_tokens` (16384) for
+    // every model on every provider, and its own comment named per-model caps
+    // as "the eventual refinement". The data was already on the model card —
+    // models.dev publishes `limit.output`, the store has the column — and was
+    // dropped when the runtime catalog was assembled, so nothing could read it.
+    //
+    // The cost was measured, not theoretical. On the Terminal-Bench 2.1 gate
+    // four trials ended on a step that emitted the cap exactly and made no
+    // tool call, while the comparator — same model, same API, same effort —
+    // spent 45,001-64,000 output tokens on those same four tasks and finished
+    // each one, reward 1.0. Two of its winning steps landed on precisely
+    // 64,000, its own ceiling. The model fills whatever budget it is given;
+    // the only question is whose number stops it first.
+    //
+    // Superset of the seed, matching `stella-model`'s own runtime-catalog test:
+    // the catalog is a process-global, so a test that installed less than the
+    // seed would perturb whatever runs beside it.
+    let mut entries = stella_model::catalog::Catalog::seed().entries().to_vec();
+    entries.push(
+        stella_model::catalog::CatalogEntry::new(
+            "test-only-wiring-model",
+            "anthropic",
+            "claude",
+            200_000,
+            stella_model::catalog::ToolDialect::AnthropicTools,
+            stella_model::catalog::Pricing {
+                input_usd_per_mtok: 3.0,
+                output_usd_per_mtok: 15.0,
+                cached_input_usd_per_mtok: 0.3,
+                cache_write_usd_per_mtok: 3.75,
+            },
+        )
+        .with_max_output_tokens(Some(64_000)),
+    );
+    stella_model::catalog::Catalog::install_runtime(stella_model::catalog::Catalog::with_entries(
+        entries,
+    ));
+
+    let mut cfg = cfg_for("anthropic");
+    cfg.model_id = "test-only-wiring-model".to_string();
+
+    assert_eq!(
+        crate::agent::engine_config_for(&cfg).max_output_tokens,
+        Some(64_000),
+        "the engine must ask for what the model can actually emit, not 16384",
+    );
+
+    // A model the catalog has no ceiling for keeps the default, so this
+    // widens nothing it does not have data for.
+    let mut unknown = cfg_for("anthropic");
+    unknown.model_id = "definitely-not-in-any-catalog".to_string();
+    assert_eq!(
+        crate::agent::engine_config_for(&unknown).max_output_tokens,
+        stella_core::driver::EngineConfig::default().max_output_tokens,
+    );
+}

@@ -92,7 +92,10 @@ mod lifecycle;
 mod loop_evidence;
 mod truncation;
 pub(crate) use truncation::CONTINUATION_MARKER_PREFIX;
-use truncation::{ContinuationBudget, MAX_LENGTH_CONTINUATIONS, plan_continuation};
+use truncation::{
+    ContinuationBudget, ContinuationPlan, MAX_LENGTH_CONTINUATIONS, TIME_EXHAUSTED_PARTIAL,
+    plan_continuation,
+};
 // Named only by the tests that pin the nudge's exact body; the production path
 // reaches it through `Continuation::into_parts`.
 use crate::estimator::{CalibrationMap, estimate_conversation_tokens};
@@ -199,9 +202,27 @@ pub struct EngineConfig {
     /// once per retry, which would multiply the very window the deadline
     /// exists to close.
     ///
-    /// 10 minutes: above any generation a caller would still want (it matches
-    /// `UNARY_READ_TIMEOUT`, the most generous transport bound in the
-    /// workspace) while staying finite.
+    /// 13.6 minutes, and the number is measured rather than chosen. It was 10
+    /// (matching `UNARY_READ_TIMEOUT`) on the reasoning that no generation a
+    /// caller still wants runs longer. That premise is false at high effort
+    /// against a large output ceiling: on the Terminal-Bench 2.1 gate a
+    /// comparator on the same model, same API and same effort earned reward
+    /// `1.0` on single steps of 624s and 756s. A 600s bound kills exactly
+    /// those steps — and kills them *after* paying for them.
+    ///
+    /// The rule fixing the constant is "never be the side that stops first":
+    /// 60s above the longest single step the comparator was ever rewarded for
+    /// (756s). Raising it is what makes a raised output ceiling reachable —
+    /// the two are one budget, and moving either alone provably does nothing,
+    /// which is why the earlier 16384 → 32000 → 64000 attempts each traded
+    /// one truncation mode for another instead of clearing it.
+    ///
+    /// This bounds the *streaming* path, which is the real request path:
+    /// adapters bound their streams by `STREAM_IDLE_TIMEOUT` (120s between
+    /// chunks, not a total), so nothing under this cuts a generation that
+    /// keeps producing. A non-streaming adapter still carries its own
+    /// `UNARY_READ_TIMEOUT` (600s) and will bind before this does — that
+    /// ceiling is untouched here and remains a per-adapter transport concern.
     pub model_timeout: Option<Duration>,
     /// Wall clock one turn may spend, used to decide whether a length
     /// continuation is affordable. `None` — the default — leaves the
@@ -262,7 +283,7 @@ impl Default for EngineConfig {
             summarize_keep_recent: 8,
             max_steps: 200,
             tool_timeout: Some(Duration::from_secs(15 * 60)),
-            model_timeout: Some(Duration::from_secs(10 * 60)),
+            model_timeout: Some(Duration::from_secs(816)),
             // Off by default: only a caller that knows its own deadline can
             // supply a true one, and a guessed budget would decline work the
             // caller had time for.
@@ -1952,19 +1973,31 @@ impl<'a> Engine<'a> {
             // owns what happens next and what history keeps (see
             // `driver::truncation`); `None` means the turn's allowance is
             // spent and the terminal handling below applies.
-            if result.finish_reason == Some(FinishReason::Length)
-                && let Some(plan) = plan_continuation(
+            let mut out_of_time = false;
+            if result.finish_reason == Some(FinishReason::Length) {
+                match plan_continuation(
                     &result.text,
                     result.usage.output_tokens,
                     *length_continuations,
                     continuation_budget,
-                )
-            {
-                *length_continuations += 1;
-                let (note, appended) = plan.into_parts();
-                let _ = events.send(AgentEvent::Text { delta: note });
-                messages.extend(appended);
-                return None;
+                ) {
+                    ContinuationPlan::Continue(plan) => {
+                        *length_continuations += 1;
+                        let (note, appended) = plan.into_parts();
+                        let _ = events.send(AgentEvent::Text { delta: note });
+                        messages.extend(appended);
+                        return None;
+                    }
+                    // Declined because the turn is nearly out of wall clock,
+                    // not because it ran out of tries. The abort below is the
+                    // wrong ending for that: it exits nonzero, which a harness
+                    // records as the agent dying — the exact outcome the
+                    // deadline exists to avoid. Stopping early is only worth
+                    // anything if stopping produces a result, so this path
+                    // completes the turn with whatever it has.
+                    ContinuationPlan::OutOfTime => out_of_time = true,
+                    ContinuationPlan::AllowanceSpent => {}
+                }
             }
             // A turn that produced neither a tool call NOR any visible text is
             // never a real completion: the model was cut off at its output
@@ -1972,7 +2005,11 @@ impl<'a> Engine<'a> {
             // Recording it as `Completed` shows the user a silent, blank turn
             // (the "turn ends with no feedback" defect). Surface why and abort
             // cleanly so the caller can retry instead of swallowing it.
-            if result.text.trim().is_empty() {
+            //
+            // Except out of time, which is a deliberate stop rather than a
+            // failure to produce anything: it substitutes a truthful stand-in
+            // below and ends as an ordinary result.
+            if result.text.trim().is_empty() && !out_of_time {
                 let reason = match result.finish_reason {
                     // Advised `/compact` until #712; no such command exists,
                     // and compaction is automatic every step anyway.
@@ -2006,16 +2043,38 @@ impl<'a> Engine<'a> {
             // success past this point.
             if result.finish_reason == Some(FinishReason::Length) {
                 let _ = events.send(AgentEvent::Text {
-                    delta: format!(
-                        "\n\n⚠ Response was truncated at the output-token limit ({} tokens); \
-                         ask to continue if it was cut off mid-thought.",
-                        result.usage.output_tokens
-                    ),
+                    delta: if out_of_time {
+                        // Names the deadline, not the token limit, because the
+                        // token limit is what happened and the deadline is why
+                        // nothing followed it. A reader who sees only "output
+                        // limit" concludes the cap is mispriced and raises it,
+                        // which is the one change that cannot help here.
+                        format!(
+                            "\n\n⚠ Stopped at the output-token limit ({} tokens) with too little \
+                             time left in this turn to finish another continuation — ending here \
+                             with what the turn has already done.",
+                            result.usage.output_tokens
+                        )
+                    } else {
+                        format!(
+                            "\n\n⚠ Response was truncated at the output-token limit ({} tokens); \
+                             ask to continue if it was cut off mid-thought.",
+                            result.usage.output_tokens
+                        )
+                    },
                 });
             }
+            // Empty only on the out-of-time path — every other empty-text route
+            // aborted above — where the transcript and the turn's final text
+            // still owe an honest account of why nothing came back.
+            let text = if result.text.trim().is_empty() {
+                TIME_EXHAUSTED_PARTIAL.to_string()
+            } else {
+                result.text
+            };
             messages.push(CompletionMessage {
                 role: MessageRole::Assistant,
-                content: result.text.clone(),
+                content: text.clone(),
                 tool_calls: Vec::new(),
                 tool_results: Vec::new(),
                 attachments: Vec::new(),
@@ -2028,7 +2087,7 @@ impl<'a> Engine<'a> {
                 cost_usd: total_cost_usd,
             });
             return Some(TurnOutcome::Completed {
-                text: result.text,
+                text,
                 cost_usd: total_cost_usd,
             });
         }

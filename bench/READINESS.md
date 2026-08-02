@@ -390,6 +390,61 @@ because those arms were re-run. Runs published under the `max` posture remain
 described by the 8.3 table; a run states which posture it used in its own
 manifest, which is the point of hashing it.
 
+### 8.3.2 The output cap moves to the model's ceiling, and the two ceilings behind it
+
+The `xhigh` posture above kept `params.max_tokens` at 32000. Arm B telemetry
+from the gate3c head-to-head falsified that number directly. Claude Code passed
+all four of the tasks Stella aborted on — same model, same first-party API,
+same effort — and its winning steps on those tasks spent this much output:
+
+| task | Arm B's largest step | that step took | Stella's cap | Stella's outcome |
+|---|---|---|---|---|
+| `circuit-fibsqrt` | 45,001 tok | 527s | 32,000 | truncated, 0 tool calls, abort |
+| `regex-chess` | 64,000 tok | 756s | 32,000 | truncated, 0 tool calls, abort |
+| `schemelike-metacircular-eval` | 64,000 tok | 624s | 32,000 | truncated, 0 tool calls, abort |
+| `write-compressor` | 25,965 tok | — | 32,000 | truncated, 0 tool calls, abort |
+
+Two of those steps landed on exactly 64,000 — the comparator's own ceiling —
+and still had room to emit the tool call. Sonnet fills whatever budget it is
+given in either agent, so the only variable is whose number stops it first.
+Ours did, at half the height. On `circuit-fibsqrt` Stella spent *more* output
+than the comparator (~117k vs 97.6k) and scored 0, because 32k of it was
+truncated reasoning that was then thrown away — $2.02 for a failure against
+$2.52 for a pass.
+
+**Three ceilings, and they are one budget.** Each previous attempt moved one
+and left the others, which is why every one of them relocated the cliff rather
+than clearing it — 16384 → 32000 changed which trials truncated, and 64000
+"merely traded truncation for a `model_timeout`" because `model_timeout` was
+600s while the steps that earn rewards take 624–756s.
+
+| ceiling | was | now | fixed by |
+|---|---|---|---|
+| `params.max_tokens` | 32,000 | **64,000** (the model's ceiling) | this posture |
+| `EngineConfig::model_timeout` | 600s | **816s** | 60s above the longest rewarded Arm B step (756s) |
+| `--turn-budget` | unwired; 840s by hand on the box | **per-trial, from Harbor's own agent timeout −60s** | the adapter, which previously had no way to learn the deadline |
+
+The rule setting all three is the same, and it is the only one that makes a
+head-to-head mean anything: **never be the side that stops first.** A ceiling
+below what the comparator is allowed is not a tuning choice, it is a handicap
+that the score then reports as a capability difference.
+
+Recomputed digests, via the adapter's own `_benchmark_engine_posture`:
+
+| model | was (`xhigh`, 32000) | now (`xhigh`, 64000) |
+|---|---|---|
+| deepseek-v4-pro | `4249a1f9…` / `0de2116f…` | `9d7ad135…` |
+| z-ai/glm-5.2 | `a0ab8a75…` | `7e9da633…` |
+| x-ai/grok-4.5 | `ff61cb06…` | `19c4d345…` |
+| z-ai/glm-5.1 | `f15536e5…` | `8530a36f…` |
+| anthropic/claude-sonnet-5 | `55c6ef4c…` | `3c428a22…` |
+
+Runs published under the 32000 posture remain described by the 8.3.1 table.
+The registered tables in the protocol and the analyzer README carry the new
+values, because those describe the posture the launcher will actually emit —
+a document that disagrees with the code is the `harbor==0.6.1` failure again,
+in a different file.
+
 ### 8.4 The measured baseline
 
 See `bench/evidence/` for the run manifest, per-trial rows, per-task results and

@@ -1291,6 +1291,77 @@ async fn empty_completion_aborts_with_a_visible_message_not_a_silent_success() {
     );
 }
 
+#[tokio::test]
+async fn a_step_out_of_time_completes_with_a_truthful_partial_instead_of_aborting() {
+    // The same empty length-truncated shape as the test above, and the opposite
+    // ending, because the reason for stopping is opposite. Above, the model
+    // burned every continuation and still produced nothing — a failure, and the
+    // abort says so. Here the turn simply ran out of wall clock on its FIRST cap
+    // hit, with its whole allowance untouched.
+    //
+    // Both used to return `None` from `plan_continuation` and land on the same
+    // abort. That made `--turn-budget` self-defeating: it exists to stop a turn
+    // before a harness kills it, and a nonzero exit is scored as the agent dying
+    // just as a kill is. Four of the five nonzero exits on a ten-task
+    // Terminal-Bench 2.1 gate were this, each with zero continuations spent.
+    //
+    // A zero budget makes `remaining` zero however fast the step ran, so the
+    // decline is deterministic rather than a race against the test's own clock.
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![Ok(empty_result(Some(FinishReason::Length)))]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(
+        &provider,
+        &tools,
+        EngineConfig {
+            turn_budget: Some(Duration::ZERO),
+            ..EngineConfig::default()
+        },
+        &sleeper,
+    );
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("build the feature"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+    match outcome {
+        TurnOutcome::Completed { text, .. } => assert!(
+            text.contains("too little of the turn's time remained"),
+            "a turn that stops early still owes an account of why, and it is the \
+             turn's own text that carries it downstream: {text}"
+        ),
+        other => panic!("out of time must end as an ordinary result, not an abort: {other:?}"),
+    }
+    assert_eq!(
+        provider.calls.load(Ordering::SeqCst),
+        1,
+        "no continuation is paid for when there is no time to finish one"
+    );
+
+    let events = drain_events(&mut rx);
+    assert!(
+        !events.iter().any(|e| matches!(e, AgentEvent::Error { .. })),
+        "stopping on purpose is not an error"
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::Complete { .. }))
+            .count(),
+        1,
+        "exactly one Complete, so the turn reads as finished rather than killed"
+    );
+}
+
 /// A `finish_reason: length` result that still carries text — the shape the
 /// zai adapter produces when a reasoning model spends its whole output budget
 /// on chain-of-thought and the reasoning-only fallback promotes it to text.
