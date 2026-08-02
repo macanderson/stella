@@ -1753,6 +1753,25 @@ impl<'a> Pipeline<'a> {
                     // conflicting files; the winning work stays recoverable.
                     Err(e) => adopt_failure = Some(e),
                 }
+            } else if n == 1 {
+                // A SINGLE candidate that did not pass. Discarding it is right
+                // for best-of-N — the operator asked for the best of several
+                // and none was good, and the losers were never meant to
+                // survive. It is wrong here, and this branch has a third caller
+                // now that `create_worktrees` routes a plain single-shot run
+                // through isolation: that operator asked where the work should
+                // *happen*, not that it be thrown away unless it verified.
+                //
+                // Without this they would be strictly worse off than with
+                // isolation off, where a failed run at least leaves its changes
+                // in the tree to look at. So keep the snapshot and name it —
+                // the same posture as the adopt-failure arm just above, and for
+                // the same reason: unverified is not worthless.
+                self.warn(format!(
+                    "this run's changes did not verify, so they were not adopted into your \
+                     working tree — they are kept at {} for you to inspect or salvage",
+                    ws.root()
+                ));
             } else {
                 ws.remove().await;
             }

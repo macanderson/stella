@@ -2003,6 +2003,11 @@ pub(crate) struct SessionPresence {
     registry: stella_store::SessionRegistry,
     record: stella_store::SessionRecord,
     name: String,
+    /// This session's durable record, carried so [`Self::finish`] can compact
+    /// it. Cloning the handle rather than re-opening the record keeps the
+    /// compaction pointed at the session that was actually bound, whatever the
+    /// driver did in between.
+    durability: crate::durability::SessionDurability,
 }
 
 impl SessionPresence {
@@ -2042,6 +2047,7 @@ impl SessionPresence {
             registry,
             record,
             name,
+            durability: cfg.durability.clone(),
         }
     }
 
@@ -2085,6 +2091,11 @@ impl SessionPresence {
             stella_store::SessionStatus::Error
         };
         let _ = self.registry.upsert(&self.record);
+        // The headless counterpart of the deck's exit compaction. A one-shot
+        // run writes fewer objects than a long deck session, but it is also the
+        // shape that runs a hundred times in a loop from a script — which is
+        // exactly how a workspace accumulates loose objects nobody is watching.
+        self.durability.compact();
         if let Some((title, body)) = notify {
             let _ = stella_store::NotificationStore::open_default().push(
                 &stella_store::Notification::new(title, body, self.record.id.clone())
