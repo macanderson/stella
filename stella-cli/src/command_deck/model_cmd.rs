@@ -214,6 +214,7 @@ mod tests {
             turn_budget: None,
             model_pinned_by_flag: false,
             durability: Default::default(),
+            create_worktrees: Default::default(),
             api_key: stella_model::ApiKey::new("dummy-key-unused-offline"),
             workspace_root,
             base_url_override: None,

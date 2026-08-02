@@ -396,6 +396,10 @@ pub struct Config {
     /// Trajectory trace capture after each finished execution (settings
     /// `trace_capture`, #1042). Default off.
     pub trace_capture: bool,
+    /// Whether a run does its work in a throwaway git worktree instead of this
+    /// checkout (settings `create_worktrees`). Default `ask`, put once at
+    /// triage and only when the run is going to change files.
+    pub create_worktrees: crate::settings::CreateWorktrees,
     /// Monotonic authority computed while loading the scope chain. Runtime
     /// adapters consume this instead of reinterpreting trust environment
     /// variables or repository settings independently.
@@ -577,6 +581,7 @@ impl Config {
         cfg.tool_policy = settings.tool_policy();
         cfg.enable_recap = settings.recap_enabled();
         cfg.trace_capture = settings.trace_capture_enabled();
+        cfg.create_worktrees = settings.create_worktrees();
         Ok(cfg)
     }
 
@@ -720,6 +725,7 @@ impl Config {
                     tool_policy: Default::default(),
                     enable_recap: false,
                     trace_capture: false,
+                    create_worktrees: Default::default(),
                     authority: crate::settings::AuthorityPolicy::default(),
                     credential_source,
                     credential_advisories: credentials_file.advisories().to_vec(),
@@ -917,6 +923,7 @@ impl Config {
             tool_policy: Default::default(),
             enable_recap: false,
             trace_capture: false,
+            create_worktrees: Default::default(),
             authority: crate::settings::AuthorityPolicy::default(),
             credential_source: Some(source),
             credential_advisories: credentials_file.advisories().to_vec(),

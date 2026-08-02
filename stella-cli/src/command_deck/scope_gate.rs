@@ -32,6 +32,14 @@ pub(crate) struct DeckApprovalGate {
     /// picker, so "trim" means "keep the largest prefix that would not have
     /// tripped review in the first place".
     pub(crate) max_steps: usize,
+    /// How [`ApprovalGate::confirm`] reaches the human.
+    ///
+    /// A separate surface from `decisions` because the two are different
+    /// questions. The decision channel is fed by the scope card's keys, and
+    /// that card is raised by the pipeline's own `ScopeReview` event — so a
+    /// plain yes/no parked on it would wait for a card nobody was going to
+    /// draw. `ask_user`'s io raises its own.
+    pub(crate) ask: Arc<dyn crate::interactive::AskUserIo>,
 }
 
 impl DeckApprovalGate {
@@ -44,6 +52,7 @@ impl DeckApprovalGate {
         agent: String,
         inbound: UnboundedSender<Inbound>,
         decisions: UnboundedReceiver<DeckScopeDecision>,
+        ask: Arc<dyn crate::interactive::AskUserIo>,
     ) -> Self {
         Self {
             agent,
@@ -52,6 +61,7 @@ impl DeckApprovalGate {
             max_steps: stella_pipeline::scope::ScopeThresholds::default()
                 .max_steps
                 .unwrap_or(5),
+            ask,
         }
     }
 
@@ -109,6 +119,20 @@ impl ApprovalGate for DeckApprovalGate {
         }
         resolved
     }
+
+    /// Yes/no through `ask_user`'s card. Fail-closed: a closed deck, an io
+    /// error, or anything that is not an affirmative leaves the run doing what
+    /// it would have done unasked.
+    async fn confirm(&self, question: &str) -> bool {
+        let options = ["yes".to_string(), "no".to_string()];
+        match self.ask.prompt(question, &options).await {
+            Ok(answer) => matches!(
+                answer.trim().to_ascii_lowercase().as_str(),
+                "1" | "y" | "yes"
+            ),
+            Err(_) => false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -124,6 +148,7 @@ mod tests {
             inbound: tx,
             decisions: Arc::new(tokio::sync::Mutex::new(drx)),
             max_steps,
+            ask: Arc::new(crate::interactive::HeadlessAskUserIo),
         }
     }
 
@@ -191,6 +216,7 @@ mod tests {
             inbound: tx,
             decisions: Arc::new(tokio::sync::Mutex::new(drx)),
             max_steps: 5,
+            ask: Arc::new(crate::interactive::HeadlessAskUserIo),
         };
         let proposal = ScopeProposal {
             summary: "big".into(),

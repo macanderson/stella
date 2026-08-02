@@ -162,6 +162,12 @@ pub struct Settings {
     /// run's episode. Local-only by construction. Default off.
     #[serde(default)]
     pub trace_capture: Option<Toggle>,
+    /// `always` / `ask` / `never` — whether a run does its work in a throwaway
+    /// git worktree instead of the working tree. Absent, null, or empty means
+    /// `ask`, and the question is put once, at triage, only when the run is
+    /// actually going to change files. See [`CreateWorktrees`].
+    #[serde(default)]
+    pub create_worktrees: Option<CreateWorktrees>,
     /// Appearance preferences — currently just the TUI colour theme
     /// (`/theme`). Whole-block last-wins across scopes; carries no authority.
     #[serde(default)]
@@ -198,6 +204,63 @@ pub struct Settings {
     /// when parsing individual scopes so repository text cannot supply it.
     #[serde(skip)]
     pub authority_policy: AuthorityPolicy,
+}
+
+/// `create_worktrees`: whether a run does its work in a throwaway git worktree
+/// instead of the user's checkout.
+///
+/// `"always"`, `"ask"`, `"never"` — and `""`, null, or the key being absent all
+/// mean `"ask"`, so a scope that wants to say "no opinion" can write the key
+/// empty rather than having to delete it. Anything else is a loud parse error;
+/// a typo here would otherwise silently pick a side on where somebody's work
+/// happens.
+///
+/// The policy is consumed at triage (`Pipeline::isolate_in_worktree`), which is
+/// the first moment it is both answerable and worth asking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CreateWorktrees {
+    Always,
+    #[default]
+    Ask,
+    Never,
+}
+
+impl CreateWorktrees {
+    /// The pipeline's spelling of the same decision.
+    pub fn policy(self) -> stella_pipeline::ports::WorktreePolicy {
+        match self {
+            Self::Always => stella_pipeline::ports::WorktreePolicy::Always,
+            Self::Ask => stella_pipeline::ports::WorktreePolicy::Ask,
+            Self::Never => stella_pipeline::ports::WorktreePolicy::Never,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for CreateWorktrees {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Through `Option<String>` so an explicit `null` lands here rather than
+        // being rejected before this function sees it.
+        let raw = Option::<String>::deserialize(deserializer)?;
+        match raw.as_deref().map(str::trim).unwrap_or("") {
+            "" | "ask" => Ok(Self::Ask),
+            "always" => Ok(Self::Always),
+            "never" => Ok(Self::Never),
+            other => Err(serde::de::Error::custom(format!(
+                "\"create_worktrees\": {other:?} is not one of \"always\", \"ask\", \"never\" \
+                 (empty or absent means \"ask\")"
+            ))),
+        }
+    }
+}
+
+impl Serialize for CreateWorktrees {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(match self {
+            Self::Always => "always",
+            Self::Ask => "ask",
+            Self::Never => "never",
+        })
+    }
 }
 
 /// An `on`/`off` switch. A dedicated enum rather than `bool` because the
@@ -905,6 +968,12 @@ impl Settings {
     /// on (a later `"off"` turns it back off — project wins per field).
     pub fn trace_capture_enabled(&self) -> bool {
         self.trace_capture.is_some_and(Toggle::is_on)
+    }
+
+    /// The resolved `create_worktrees` policy. An absent key means `ask`, the
+    /// same as an empty or null one — see [`CreateWorktrees`].
+    pub fn create_worktrees(&self) -> CreateWorktrees {
+        self.create_worktrees.unwrap_or_default()
     }
 
     /// The persisted TUI colour-theme slug (`ui.theme`), if any. `None` means

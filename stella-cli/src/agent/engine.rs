@@ -236,6 +236,9 @@ pub(crate) fn pipeline_config_for_approval_capability(
             cfg,
             worker_model,
         ),
+        // Where this run's work happens. Resolved from settings here and asked
+        // at triage, once the class says whether anything is going to change.
+        create_worktrees: cfg.create_worktrees.policy(),
         ..Default::default()
     }
 }

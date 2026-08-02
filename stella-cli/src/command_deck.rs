@@ -592,7 +592,12 @@ pub async fn run_deck_session(
         inbound: in_tx.clone(),
         answers: Arc::new(tokio::sync::Mutex::new(ask_rx)),
     };
-    let scope_gate = DeckApprovalGate::new(LEAD.to_string(), in_tx.clone(), scope_rx);
+    let scope_gate = DeckApprovalGate::new(
+        LEAD.to_string(),
+        in_tx.clone(),
+        scope_rx,
+        Arc::new(ask_io.clone()),
+    );
 
     // The deck drives turns through the staged pipeline by default (triage →
     // recall → plan → scope → witness → execute → verify → judge); `/pipeline`

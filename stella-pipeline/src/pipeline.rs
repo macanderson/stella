@@ -347,6 +347,14 @@ pub struct PipelineConfig {
     /// best, adopting only the winner's changes into the real tree. Paid for
     /// with n× the execution cost — opt-in only.
     pub candidates: Option<u32>,
+    /// Whether this run does its work in a throwaway worktree rather than the
+    /// user's checkout. Consulted once, at triage, and only when the run is
+    /// going to change files.
+    ///
+    /// The precedence is: a run that changes nothing is never isolated; a
+    /// workspace with no candidate isolation cannot offer it (and an `Always`
+    /// that cannot be honoured says so); only then does this policy decide.
+    pub create_worktrees: crate::ports::WorktreePolicy,
 }
 
 impl Default for PipelineConfig {
@@ -374,6 +382,7 @@ impl Default for PipelineConfig {
             max_revisions: 2,
             require_independent_witness: false,
             candidates: None,
+            create_worktrees: crate::ports::WorktreePolicy::default(),
         }
     }
 }
@@ -382,6 +391,65 @@ impl PipelineConfig {
     /// The effective candidate count (`candidates`, floored at 1).
     fn candidate_count(&self) -> u32 {
         self.candidates.unwrap_or(1).max(1)
+    }
+}
+
+/// What the operator is asked under [`crate::ports::WorktreePolicy::Ask`].
+///
+/// Phrased as what changes for *them*, not as what the implementation does:
+/// the cost of isolation is that `git status` stays quiet while the run works,
+/// and the benefit is that an abandoned run leaves nothing behind.
+const WORKTREE_QUESTION: &str = "Do this run's work in a throwaway git worktree? Nothing reaches your checkout until the run \
+     finishes and adopts it.";
+
+/// The worktree decision, before anyone is asked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Decided {
+    Yes,
+    No,
+    /// No, and the operator configured something they are not getting.
+    NoAndSayWhy(&'static str),
+    /// The policy defers to the human.
+    MustAsk,
+}
+
+/// The half of the worktree decision that needs no gate — split out so the
+/// precedence is testable without a live approval port, exactly as
+/// `DeckApprovalGate::decide` splits the keypress mapping out of its channel.
+///
+/// Order matters and is not arbitrary:
+///
+/// 1. A run that changes nothing is never isolated, whatever the policy says.
+///    There is nothing to protect, and asking would put a prompt in front of
+///    the commonest thing anyone does — a question about relocating work that
+///    is not going to happen.
+/// 2. Without isolation available there is nothing to offer. Silent under
+///    `ask`/`never` (neither wanted it), but `always` is told, because that
+///    operator configured something this workspace cannot give them.
+/// 3. Only then does the policy speak.
+fn worktree_decision_without_asking(
+    policy: crate::ports::WorktreePolicy,
+    run_changes_files: bool,
+    isolation_available: bool,
+) -> Decided {
+    use crate::ports::WorktreePolicy;
+    if !run_changes_files {
+        return Decided::No;
+    }
+    if !isolation_available {
+        return match policy {
+            WorktreePolicy::Always => Decided::NoAndSayWhy(
+                "\"create_worktrees\": \"always\" is configured, but this workspace offers no \
+                 candidate isolation (it is not a git working tree) — this run's changes will \
+                 land in the working tree",
+            ),
+            _ => Decided::No,
+        };
+    }
+    match policy {
+        WorktreePolicy::Always => Decided::Yes,
+        WorktreePolicy::Never => Decided::No,
+        WorktreePolicy::Ask => Decided::MustAsk,
     }
 }
 
@@ -847,6 +915,11 @@ impl<'a> Pipeline<'a> {
             && assessment.wants_witness()
             && task_class.verifies_unconditionally()
             && self.can_author_independent_witness();
+        // The third reason a single candidate needs isolation: the operator
+        // asked for this run's work to happen in a worktree rather than in
+        // their checkout. Resolved here, beside the other two, so all three
+        // reach the same one decision.
+        let isolate = self.isolate_in_worktree(task_class).await;
         // Single-shot (the default) runs directly over the session ports —
         // zero snapshot/adoption machinery only when the user supplied the
         // test invocation (or witness authoring is otherwise disabled).
@@ -854,7 +927,8 @@ impl<'a> Pipeline<'a> {
         // N=1, so authoring can never mutate the session tree.
         // Best-of-N runs every candidate in an isolated snapshot of the
         // current tree state and adopts only the winner's changes (L-E7).
-        let (best, worker_model_label, candidates_run) = if n == 1 && !authored_witness {
+        let (best, worker_model_label, candidates_run) = if n == 1 && !authored_witness && !isolate
+        {
             let worker = match self.resolve_provider(Role::Worker) {
                 Ok(worker) => worker,
                 Err(error) => {
@@ -3048,6 +3122,44 @@ impl<'a> Pipeline<'a> {
             // A worker that won't resolve fails later, on its own terms —
             // not here, disguised as a witness-independence verdict.
             WitnessAuthorIndependence::WorkerUnresolvable => false,
+        }
+    }
+
+    /// Whether this run does its work in a throwaway worktree, per
+    /// [`PipelineConfig::create_worktrees`].
+    ///
+    /// Asked at triage and nowhere else, because triage is the first moment the
+    /// question is answerable *and* worth asking. Earlier — at launch, say —
+    /// every `stella "what does this do"` would raise a prompt about relocating
+    /// work it is never going to do. Later, the run has already started
+    /// changing the checkout, and the answer could not be honoured.
+    ///
+    /// Three conditions come before the policy, in order of how little they owe
+    /// the user an explanation:
+    ///
+    /// - A class that does not change files is never isolated. There is nothing
+    ///   to protect, and the prompt would be pure noise on the commonest path.
+    /// - Without a [`crate::ports::CandidateWorkspacePort`] there is no
+    ///   isolation to offer — a plain directory, or a caller that wired none.
+    ///   Under `Always` that IS worth saying, because the operator configured
+    ///   something they are not getting.
+    /// - `Never` and `Always` answer without asking. Only `Ask` reaches the
+    ///   gate, and a gate with nobody behind it declines (see
+    ///   [`crate::ports::ApprovalGate::confirm`]).
+    async fn isolate_in_worktree(&self, task_class: TaskClass) -> bool {
+        let isolation_available = self.candidate_workspaces.is_some();
+        match worktree_decision_without_asking(
+            self.config.create_worktrees,
+            task_class.verifies_unconditionally(),
+            isolation_available,
+        ) {
+            Decided::Yes => true,
+            Decided::No => false,
+            Decided::NoAndSayWhy(reason) => {
+                self.warn(reason.to_string());
+                false
+            }
+            Decided::MustAsk => self.approvals.confirm(WORKTREE_QUESTION).await,
         }
     }
 
