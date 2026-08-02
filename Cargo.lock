@@ -3274,7 +3274,7 @@ dependencies = [
 
 [[package]]
 name = "stella-parity"
-version = "0.6.67"
+version = "0.6.69"
 dependencies = [
  "stella-serve",
 ]
