@@ -12,9 +12,9 @@ error[E0277]: the trait bound `PathBuf: Loggable` is not satisfied
             &T
             ClauseFault
             Duration
+            ErrorKind
             Extension
             Option<T>
             PathClass
-            PathKind
           and $N others
   = note: this error originates in the macro `$crate::diag` which comes from the expansion of the macro `diag` (in Nightly builds, run with -Z macro-backtrace for more info)
