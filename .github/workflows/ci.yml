@@ -184,6 +184,18 @@ jobs:
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # docs/wire/ is generated from the types and committed, so it drifts the
+      # moment `AgentEvent` changes — including its doc comments, which the
+      # exporters carry into the schema verbatim (#971). This guard was the one
+      # check-*.sh that no workflow ran: it lived only in `make gate`, so it
+      # was enforced by the local pre-push hook and nothing else. A branch
+      # pushed server-side never met it, which is how #1185 merged with a
+      # rewritten `estimated_input_tokens` comment and stale artifacts. Needs
+      # the toolchain — it runs the two exporters under `--features schema`.
+      - name: docs/wire/ still matches the types
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        run: ./scripts/check-wire-schema.sh
+
       # Nothing gated rustdoc, so its warning count only grew — one crate's doc
       # link to a private fn had made `cargo doc` a hard failure, unnoticed
       # (#634). Gating is what stops it regrowing.
