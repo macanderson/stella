@@ -3273,6 +3273,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "stella-parity"
+version = "0.6.67"
+dependencies = [
+ "stella-serve",
+]
+
+[[package]]
 name = "stella-pipeline"
 version = "0.6.68"
 dependencies = [

@@ -17,6 +17,7 @@ members = [
   "stella-fleet",
   "stella-observatory",
   "stella-serve",
+  "stella-parity",
   "stella-tui",
   "stella-cli",
   "bench/loop-bench",
