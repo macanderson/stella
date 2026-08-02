@@ -148,6 +148,60 @@ impl Route {
             Self::Unrouted => "<unrouted>",
         }
     }
+
+    /// Every real route, for exhaustive iteration — the server's own route
+    /// tests walk this instead of hand-listed subsets that rot (they covered
+    /// 7 of 14 before this existed), and the cross-surface capability matrix
+    /// (`stella-parity`) sweeps it so a route added here without a matrix row
+    /// fails the workspace tests. [`Route::Unrouted`] is the 404 sentinel,
+    /// not a route, and is deliberately absent.
+    ///
+    /// Kept honest by [`Route::is_real`]: adding a `Route` variant fails that
+    /// method's exhaustive match until the author classifies it, and the
+    /// tests assert `ALL` contains exactly the `is_real` variants it names —
+    /// so the array cannot silently lag the enum.
+    pub const ALL: [Route; 14] = [
+        Route::Healthz,
+        Route::Readyz,
+        Route::Metrics,
+        Route::TurnsCreate,
+        Route::TurnEvents,
+        Route::TurnToolResult,
+        Route::TurnProviderResult,
+        Route::TurnCancel,
+        Route::TurnSteer,
+        Route::TurnPause,
+        Route::TurnResume,
+        Route::SessionsCreate,
+        Route::Session,
+        Route::SessionTurns,
+    ];
+
+    /// Whether this is a real, dispatchable route rather than the 404
+    /// sentinel. Deliberately an exhaustive match with no wildcard: adding a
+    /// `Route` variant is a compile error here until the author classifies
+    /// it — and classifying it real without adding it to [`Route::ALL`]
+    /// fails `all_lists_every_real_route_exactly_once`.
+    #[must_use]
+    pub fn is_real(self) -> bool {
+        match self {
+            Route::Healthz
+            | Route::Readyz
+            | Route::Metrics
+            | Route::TurnsCreate
+            | Route::TurnEvents
+            | Route::TurnToolResult
+            | Route::TurnProviderResult
+            | Route::TurnCancel
+            | Route::TurnSteer
+            | Route::TurnPause
+            | Route::TurnResume
+            | Route::SessionsCreate
+            | Route::Session
+            | Route::SessionTurns => true,
+            Route::Unrouted => false,
+        }
+    }
 }
 
 /// How many characters of a turn id reach a record.
@@ -685,6 +739,30 @@ pub fn host_for_record(host: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The registry is honest in both directions: `ALL` names exactly the
+    /// `is_real` routes (adding a variant trips `is_real`'s exhaustive match,
+    /// and classifying it real without joining `ALL` fails here), with no
+    /// duplicates. The dispatch-side half — every template classifies back to
+    /// its own variant — lives beside `classify` in `server.rs`.
+    #[test]
+    fn all_lists_every_real_route_exactly_once() {
+        let mut seen = std::collections::BTreeSet::new();
+        for route in Route::ALL {
+            assert!(
+                route.is_real(),
+                "{} is in ALL but not real",
+                route.template()
+            );
+            assert!(
+                seen.insert(route.template()),
+                "duplicate ALL entry: {}",
+                route.template()
+            );
+        }
+        assert!(!Route::Unrouted.is_real());
+        assert_eq!(seen.len(), Route::ALL.len());
+    }
 
     /// Invariant 4: every type crossing a crate boundary round-trips through
     /// `serde_json` byte-for-byte.
