@@ -1,0 +1,31 @@
+# Workspace clippy configuration.
+#
+# `disallowed-methods` here backs a type-system guarantee that would otherwise
+# have a one-token hole in it. `stella-diag` makes runtime content in a log a
+# COMPILE error (docs/design/diagnostics.md §5.2): a field value is buildable
+# only from things that cannot carry content, and `&'static str` is on that
+# list because a string that lives in the binary cannot hold a user's path or a
+# model's output.
+#
+# `Box::leak` turns a `String` into a `&'static str`, which would defeat that
+# entirely — and silently, since the resulting call site looks exactly like a
+# legitimate one. The design says so out loud rather than overclaiming:
+#
+#   The claim is not "impossible"; it is "impossible by accident, and loud on
+#   purpose".
+#
+# This is the "loud" half. Leaking is still available — some of it is
+# load-bearing, notably the provider-config interner in stella-cli/src/config.rs
+# — but every site must now carry an `#[allow]` naming its reason, so the act
+# shows up in the diff that introduces it and a reviewer is asked the question.
+#
+# If you are here because clippy rejected your `Box::leak`: the answer is
+# usually not an `#[allow]`. If you are leaking to get a value into a log,
+# reach for `Redacted::reviewed` with a written justification (§5.5) — that is
+# the sanctioned escape hatch, it is counted, and it records WHY in the log
+# itself.
+disallowed-methods = [
+  { path = "std::boxed::Box::leak", reason = "leaking turns runtime data into &'static str, defeating stella-diag's compile-time content guarantee (docs/design/diagnostics.md §5.2). To log a runtime string, use Redacted::reviewed with a justification (§5.5). If the leak is genuinely an interner, #[allow] it with a comment saying so." },
+  { path = "std::string::String::leak", reason = "same as Box::leak: it manufactures a &'static str from runtime data. See docs/design/diagnostics.md §5.2." },
+  { path = "std::vec::Vec::leak", reason = "same as Box::leak: it manufactures a &'static slice from runtime data. See docs/design/diagnostics.md §5.2." },
+]

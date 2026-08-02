@@ -100,7 +100,10 @@ pub use filter::{BadClause, ClauseFault, Filter, Parsed};
 pub use level::{Level, LevelFilter};
 pub use path::{Extension, PathClass, PathContext, PathKind};
 pub use record::{Record, now_millis};
-pub use ring::{CRASH_PREFIX, MAX_BYTES, MAX_RECORDS, Ring, RingStats, latest_crash_file};
+pub use ring::{
+    CRASH_KEEP, CRASH_PREFIX, MAX_BYTES, MAX_RECORDS, Ring, RingStats, latest_crash_file,
+    prune_crash_files,
+};
 pub use sink::{Bound, Capture, FailingSink, JsonlSink, NullSink, Sink, SinkError, TextSink};
 
 mod redact;

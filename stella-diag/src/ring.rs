@@ -200,6 +200,55 @@ impl Ring {
     }
 }
 
+/// How many crash dumps a workspace keeps. See [`prune_crash_files`].
+pub const CRASH_KEEP: usize = 5;
+
+/// Delete all but the `keep` newest `crash-*.jsonl` files in `dir`, returning
+/// how many were removed.
+///
+/// A dump is written on **every** non-zero exit, and most non-zero exits are
+/// ordinary user errors — a typo'd model id, a missing key. Without a bound,
+/// `.stella/private/` would accumulate one file per failed run forever, and
+/// nothing else in the workspace would ever clean them up (`stella stats
+/// prune` covers the store, not this). A handful is all any bug report needs:
+/// the interesting dump is the last one, and the four before it cover "it
+/// started happening after…".
+///
+/// Best-effort, like everything else on the failure path: a file that will not
+/// delete is left alone rather than turned into a second failure.
+pub fn prune_crash_files(dir: &Path, keep: usize) -> usize {
+    let mut stamped: Vec<(u64, PathBuf)> = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if let Some(stamp) = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(crash_stamp)
+        {
+            stamped.push((stamp, path));
+        }
+    }
+    if stamped.len() <= keep {
+        return 0;
+    }
+    // Newest first, then drop everything past the keep window.
+    stamped.sort_by_key(|(stamp, _)| std::cmp::Reverse(*stamp));
+    stamped
+        .drain(keep..)
+        .filter(|(_, path)| std::fs::remove_file(path).is_ok())
+        .count()
+}
+
+/// The timestamp in a `crash-<ts>.jsonl` filename, if it is one.
+fn crash_stamp(name: &str) -> Option<u64> {
+    name.strip_prefix(CRASH_PREFIX)
+        .and_then(|rest| rest.strip_suffix(".jsonl"))
+        .and_then(|stamp| stamp.parse::<u64>().ok())
+}
+
 /// The most recent `crash-*.jsonl` in `dir`, if any.
 ///
 /// Ordered by the timestamp in the filename rather than by mtime: the name is
@@ -213,11 +262,7 @@ pub fn latest_crash_file(dir: &Path) -> Option<PathBuf> {
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
-        let Some(stamp) = name
-            .strip_prefix(CRASH_PREFIX)
-            .and_then(|rest| rest.strip_suffix(".jsonl"))
-            .and_then(|stamp| stamp.parse::<u64>().ok())
-        else {
+        let Some(stamp) = crash_stamp(name) else {
             continue;
         };
         if newest.as_ref().is_none_or(|(best, _)| stamp > *best) {
@@ -336,6 +381,48 @@ mod tests {
 
         let latest = latest_crash_file(dir.path()).expect("a crash file");
         assert_eq!(latest.file_name().expect("name"), "crash-9000.jsonl");
+    }
+
+    /// A dump per failed run, forever, would be an unbounded write to a
+    /// directory nothing else prunes. The newest survive, because the newest
+    /// are the ones a bug report is about.
+    #[test]
+    fn pruning_keeps_the_newest_dumps_and_nothing_else() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for stamp in [10_u64, 30, 20, 50, 40, 60, 5] {
+            std::fs::write(dir.path().join(format!("crash-{stamp}.jsonl")), "{}\n").expect("write");
+        }
+        // Files this does not own must survive pruning untouched.
+        std::fs::write(dir.path().join("traces.jsonl"), "{}\n").expect("write");
+        std::fs::write(dir.path().join("store.db"), "x").expect("write");
+
+        assert_eq!(prune_crash_files(dir.path(), 3), 4);
+
+        let mut left: Vec<String> = std::fs::read_dir(dir.path())
+            .expect("read")
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            vec![
+                "crash-40.jsonl",
+                "crash-50.jsonl",
+                "crash-60.jsonl",
+                "store.db",
+                "traces.jsonl",
+            ]
+        );
+    }
+
+    #[test]
+    fn pruning_under_the_limit_deletes_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("crash-1.jsonl"), "{}\n").expect("write");
+        assert_eq!(prune_crash_files(dir.path(), CRASH_KEEP), 0);
+        assert_eq!(prune_crash_files(Path::new("/nonexistent/stella"), 1), 0);
+        assert!(dir.path().join("crash-1.jsonl").exists());
     }
 
     #[test]

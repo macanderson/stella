@@ -167,6 +167,16 @@ pub(crate) fn leak(s: &str) -> &'static str {
     if let Some(&existing) = interned.get(s) {
         return existing;
     }
+    // The interner this whole function exists to be. `ProviderConfig` holds
+    // `&'static str`, so a config-defined provider's id has to become one
+    // somewhere, and doing it here — behind a set, once per distinct string —
+    // is what bounds the leak. See clippy.toml for why the method is otherwise
+    // disallowed: this is the sanctioned interner it names, NOT a way to get a
+    // runtime string into a diagnostic record.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the bounded provider-config interner; see clippy.toml"
+    )]
     let leaked: &'static str = Box::leak(s.to_owned().into_boxed_str());
     interned.insert(leaked);
     leaked
@@ -217,7 +227,16 @@ pub(crate) fn effective_builtin(
         let mut aliases = vec![provider.env_var];
         aliases.extend_from_slice(provider.env_var_aliases);
         effective.env_var = leak(api_key_env);
-        effective.env_var_aliases = Box::leak(aliases.into_boxed_slice());
+        // Not interned, because a *slice* has no natural key to intern on —
+        // bounded instead by the number of configured providers, which is a
+        // startup-shaped quantity. Same justification as `leak` above; see
+        // clippy.toml.
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "per-provider alias list, bounded by configured providers; see clippy.toml"
+        )]
+        let aliases: &'static [&'static str] = Box::leak(aliases.into_boxed_slice());
+        effective.env_var_aliases = aliases;
     }
     effective
 }

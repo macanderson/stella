@@ -57,17 +57,19 @@ fn field_value() -> impl Strategy<Value = FieldValue> {
         // Int/Uint normalisation that makes the round trip exact happens.
         any::<i64>().prop_map(FieldValue::int),
         any::<u64>().prop_map(FieldValue::Uint),
-        // Floats a diagnostic actually carries: a duration, a ratio, a rate —
-        // three decimal places over a wide range, not an arbitrary bit
-        // pattern. That restriction is deliberate and is NOT the property
-        // getting weaker to fit: `serde_json`'s float *parser* is lossy by one
-        // ULP for a large fraction of full-precision doubles (its formatter is
-        // exact), so a strategy over `any::<f64>()` would be measuring a
-        // dependency's rounding rather than this crate's envelope.
-        // `a_full_precision_float_is_the_documented_exception` below pins that
-        // limitation down so it is recorded rather than quietly avoided.
-        (-1_000_000_000_i64..1_000_000_000)
-            .prop_map(|scaled| FieldValue::Float(scaled as f64 / 1000.0)),
+        // Arbitrary bit patterns, not a tidy decimal grid. This works only
+        // because the manifest enables serde_json's `float_roundtrip`; without
+        // it roughly a third of full-precision doubles come back one ULP off
+        // and this strategy fails within a few hundred cases. That is the
+        // point of generating them — the feature is easy to drop by accident,
+        // and this is what notices.
+        //
+        // Finite only: a non-finite float is normalised to `Null` by the
+        // `Loggable` impl, so no emit site can produce one and the strategy
+        // must not either.
+        any::<f64>()
+            .prop_filter("finite", |value| value.is_finite())
+            .prop_map(FieldValue::Float),
         any::<bool>().prop_map(FieldValue::Bool),
         prop::sample::select(vec!["locked", "busy", "bash", "read_file"])
             .prop_map(|text| FieldValue::Str(StaticStr::new(text))),
@@ -135,49 +137,6 @@ fn spec() -> impl Strategy<Value = String> {
         0..4,
     )
     .prop_map(|clauses| clauses.join(","))
-}
-
-/// The one documented exception to property 8, stated plainly because
-/// overclaiming is worse than the gap (§5.2 takes the same posture about
-/// `Box::leak`).
-///
-/// `serde_json` writes every `f64` exactly and reads a large fraction of
-/// full-precision doubles back one ULP off. Nothing in this crate can fix
-/// that, and the alternative — quantising floats on the way in — would trade a
-/// visible limitation for a silent one.
-///
-/// It costs nothing in practice: a diagnostic float is a duration, a ratio, or
-/// a rate, and every such value round-trips exactly. This test exists so the
-/// next person to widen the float strategy learns that from a failing name
-/// rather than from a flake.
-#[test]
-fn a_full_precision_float_is_the_documented_exception() {
-    let exact = 0.25_f64;
-    let round_trip = |value: f64| -> f64 {
-        let fields = Fields::new().with("value", value);
-        let json = serde_json::to_string(&fields).expect("serialize");
-        match serde_json::from_str::<Fields>(&json)
-            .expect("parse")
-            .get("value")
-        {
-            Some(&FieldValue::Float(parsed)) => parsed,
-            other => panic!("expected a float, got {other:?}"),
-        }
-    };
-    assert_eq!(round_trip(exact), exact, "a realistic value is exact");
-
-    let awkward = 2.343_412_932_371_421_7e-125_f64;
-    assert_eq!(
-        serde_json::to_string(&awkward).expect("serialize"),
-        "2.3434129323714217e-125",
-        "the formatter is exact; it is the parser that rounds"
-    );
-    assert_ne!(
-        round_trip(awkward),
-        awkward,
-        "if serde_json's parser has been fixed, widen the float strategy above \
-         and delete this test"
-    );
 }
 
 proptest! {

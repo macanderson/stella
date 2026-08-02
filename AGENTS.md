@@ -235,7 +235,7 @@ loop, and the `/pipeline` deck toggle.
 
 ## Workspace layout — where a change goes
 
-Fifteen crates. The one-sentence rule of thumb below routes you to the right
+Eighteen crates. The one-sentence rule of thumb below routes you to the right
 one; **each crate's own `README.md`** (linked from the table) then covers its
 layout, invariants, gotchas, and extension recipe in depth. Read that before
 changing code inside a crate you don't already know.
@@ -248,6 +248,7 @@ changing code inside a crate you don't already know.
 | Change CLI commands, flags, or agent wiring | [`stella-cli`](stella-cli/README.md) | This is the shipping binary. |
 | Change REPL rendering / panels / keybindings | [`stella-tui`](stella-tui/README.md) | Pure-fold ratatui REPL — the Command Deck, the default interactive shell on a TTY. |
 | Touch shared types crossing a crate boundary | [`stella-protocol`](stella-protocol/README.md) | **Zero logic, zero I/O — types only.** |
+| Emit a diagnostic — a record explaining *why* the program did something | [`stella-diag`](stella-diag/README.md) | **A leaf: `serde` only, so anything may depend on it.** Field values cannot hold a `String`, a `Path`, or model output — that is a compile error, not a review question. Design: [`docs/design/diagnostics.md`](docs/design/diagnostics.md). |
 | Persistence: executions, events, telemetry (SQLite) | [`stella-store`](stella-store/README.md) | |
 | Retrieval: graph, embeddings, episodic memory | [`stella-context`](stella-context/README.md) | |
 | Tree-sitter code indexing | [`stella-graph`](stella-graph/README.md) | |

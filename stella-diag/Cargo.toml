@@ -15,7 +15,19 @@ publish.workspace = true
 # `stella-*` path dependency here forecloses that for whichever crate it names.
 [dependencies]
 serde.workspace = true
-serde_json.workspace = true
+# `float_roundtrip` is declared HERE rather than inherited, and it is load-bearing
+# rather than tidy. serde_json's default parser is lossy by one ULP for a large
+# fraction of full-precision doubles (its writer is exact), so without it a `f64`
+# field does not survive a round trip and invariant 4 is false for any record
+# carrying one — property 8 in tests/properties.rs catches it immediately.
+#
+# The feature was already on in a workspace build, switched on by a transitive
+# dependency, which is the actual reason to name it: a guarantee that holds only
+# because some *sibling* crate happens to be in the build is not a guarantee. It
+# held under `cargo test --workspace` and failed under `cargo test -p
+# stella-diag`, and the crate that makes the promise is the one that has to pay
+# for it.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 
 [dev-dependencies]
 proptest.workspace = true

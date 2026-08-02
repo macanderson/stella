@@ -35,6 +35,23 @@ skip the roll) were re-inserted the same way.
 
 ## [Unreleased]
 
+### Added
+
+- **`stella` writes a log you can attach to a bug report.** When a run panics or
+  exits non-zero, diagnostics land in `.stella/private/crash-*.jsonl` (owner-only)
+  and the path is printed. `stella doctor --last-failure` prints the newest one.
+  The file is safe to send as-is: the record type physically cannot hold a
+  prompt, a path, or model output, so there is nothing in it to review first.
+- **`-v` / `-vv` / `-vvv`** turn on diagnostics at `info` / `debug` / `trace`.
+  Default is `warn`, human-readable on a terminal and JSONL when redirected.
+- **`--log-level <spec>`** filters per crate — `warn,stella_store=debug` is quiet
+  everywhere except where you are looking. Also settable as `STELLA_LOG`; the
+  flag wins over the variable, and both win over nothing. An unrecognised clause
+  is reported and skipped rather than being fatal. `STELLA_SERVE_LOG` keeps
+  working and now accepts the same richer grammar.
+- **`--log-file <path>`** writes JSONL to a file, created `0600`, defaulting to
+  `info`. An unwritable path is reported and the run continues.
+
 ## [0.6.62] — 2026-08-01
 
 ## [0.6.61] — 2026-08-01

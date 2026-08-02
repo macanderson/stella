@@ -367,11 +367,11 @@ impl Loggable for f32 {
 }
 
 impl Loggable for f64 {
-    /// One caveat, recorded rather than hidden: `serde_json` writes every
-    /// `f64` exactly and reads a large fraction of *full-precision* doubles
-    /// back one ULP off, so such a value does not survive a round trip.
-    /// Diagnostic floats — a duration, a ratio, a rate — are unaffected, and
-    /// `tests/properties.rs` pins the limitation down by name.
+    /// Exact across a round trip for every finite `f64`, including
+    /// full-precision ones — but only because this crate's manifest enables
+    /// serde_json's `float_roundtrip`. Its default parser is lossy by one ULP
+    /// for a large fraction of doubles, which would make invariant 4 false for
+    /// any record carrying a float. See `Cargo.toml`.
     fn to_field(&self) -> FieldValue {
         if self.is_finite() {
             FieldValue::Float(*self)

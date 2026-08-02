@@ -43,6 +43,7 @@ mod contextgraph;
 mod credential_handoff;
 mod credential_status;
 mod deck_mcp;
+mod diag_boot;
 mod discovery;
 mod doctor;
 mod domains;
@@ -412,6 +413,15 @@ fn main() -> ExitCode {
         config::forbid_interactive_credentials();
     }
 
+    // The diagnostic plane, before anything that can fail interestingly. From
+    // here on a record explains a decision instead of being discarded, and the
+    // panic hook is armed — so a crash after this line leaves an artifact a
+    // user can attach (docs/design/diagnostics.md §7.4). It is installed after
+    // clap so `-v`/`--log-level`/`--log-file` are known, and after env-file
+    // loading so `STELLA_LOG` from a project `.env` is honoured.
+    let diag_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let dx = diag_boot::install(&cli.globals, &diag_root);
+
     enterprise_telemetry::start_best_effort_flush();
     loaded_env
         .names
@@ -430,6 +440,19 @@ fn main() -> ExitCode {
         Err(e) => {
             eprintln!("{} {}", "stella:".red().bold(), e);
             emit_error_summary(output_format, &e);
+            // §7.4's second trigger, and the one that fires more often: most
+            // failures are a returned `Err`, not a panic, and those are exactly
+            // the runs a user is about to open an issue about. Naming the file
+            // is what makes "attach the log" a sentence stella can say.
+            let interrupted = signals::interrupted_exit_code().is_some();
+            if let Some(path) = diag_boot::dump_on_failure(&dx, &diag_root, interrupted) {
+                eprintln!(
+                    "{} diagnostics: {} ({})",
+                    "stella:".dimmed(),
+                    path.display(),
+                    "safe to attach — no prompts, paths, or model output".dimmed()
+                );
+            }
             // A turn cut short by SIGINT/SIGTERM exits 128 + the signal
             // number, the shell convention, so a script wrapping `stella
             // run` can tell "the user stopped this" from "this failed".
@@ -646,12 +669,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             println!("Migrating settings.json -> stella.toml\n");
             return settings::migrate::run(&root, *dry_run);
         }
-        Some(Command::Doctor { repair }) => {
+        Some(Command::Doctor {
+            repair,
+            last_failure,
+        }) => {
             // Reads local state only — and with --repair renames files inside
             // .stella/private/. No provider, no API key, and deliberately
             // before `Config::load`: a workspace whose store is corrupt must be
             // diagnosable without a working model configuration.
-            return doctor::run_doctor(*repair);
+            return doctor::run_doctor(*repair, *last_failure);
         }
         Some(Command::Completions { shell }) => {
             // Generated from the live `Command` tree, so a new subcommand or

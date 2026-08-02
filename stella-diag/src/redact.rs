@@ -35,12 +35,13 @@ use crate::field::{FieldValue, Loggable, ReviewedValue, StaticStr};
 
 /// Why an author judged a runtime string safe to record.
 ///
-/// Constructible only through [`note!`], and therefore only from a literal.
+/// Constructible only through [`note!`](crate::note), and therefore only from
+/// a literal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Note(&'static str);
 
 impl Note {
-    /// Not for direct use — call [`note!`], which is what constrains the
+    /// Not for direct use — call [`note!`](crate::note), which is what constrains the
     /// argument to a literal. Calling this with a `Box::leak`ed string would
     /// defeat the constraint, which is exactly why the workspace `clippy.toml`
     /// disallows that method.

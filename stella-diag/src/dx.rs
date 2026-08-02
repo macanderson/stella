@@ -282,7 +282,8 @@ macro_rules! diag {
     };
 }
 
-/// Fields for a record built outside [`diag!`] — the facet-rendering path.
+/// Fields for a record built outside [`diag!`](crate::diag) — the
+/// facet-rendering path.
 ///
 /// A per-crate facet enum (§5.1) implements this to turn itself into a record's
 /// worth of fields, so the crate that owns the vocabulary owns the rendering
