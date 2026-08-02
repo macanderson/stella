@@ -129,23 +129,18 @@ pub struct CatalogEntry {
     /// The model's own maximum completion length, from `limit.output` on the
     /// model card. `None` is "unknown" and leaves the engine default standing.
     ///
-    /// This exists because the engine had no way to ask. `EngineConfig`
-    /// carried one global `max_output_tokens` (16384) for every model on
-    /// every provider, and its comment named per-model caps as "the eventual
-    /// refinement" — while the value was already being parsed from
-    /// models.dev, written to the `max_output_tokens` column of the model
-    /// card, read back out, and then dropped at the runtime-catalog assembly
-    /// in `stella-cli`. Exactly the shape of the cache-write rate before #97,
-    /// at exactly the same site.
+    /// This exists because the engine had no way to ask: `EngineConfig`
+    /// carried one global `max_output_tokens` for every model on every
+    /// provider, and its comment named per-model caps as "the eventual
+    /// refinement" — while the value was already parsed from models.dev,
+    /// stored on the model card, read back, and then dropped at the
+    /// runtime-catalog assembly in `stella-cli`. The same shape as the
+    /// cache-write rate before #97, at the same site.
     ///
-    /// The cost was not theoretical. On the Terminal-Bench 2.1 gate, four
-    /// trials ended on a step that emitted the cap exactly and made no tool
-    /// call, against a comparator that spent 45,001–64,000 output tokens on
-    /// those same four tasks and finished each with its tool call, reward
-    /// `1.0`. Two of the comparator's winning steps landed on precisely
-    /// 64,000 — its own ceiling — so the model fills whatever budget it is
-    /// given and the only question is whose number stops it first. Ours did,
-    /// at half the height, on data we already had.
+    /// A model spends whatever budget it is given, so a cap below the
+    /// model's own ceiling decides where work stops rather than the model
+    /// doing so — and a step cut off mid-reasoning emits no tool call and
+    /// does no work. `bench/READINESS.md` §8.3.2 carries the measurement.
     pub max_output_tokens: Option<u32>,
 }
 

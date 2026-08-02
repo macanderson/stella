@@ -742,12 +742,15 @@ fn install_runtime_catalog(store: &CatalogStore) {
                 // consequence: the engine fell back to one global 16384 for
                 // every model, and truncated steps that the model had room to
                 // finish. Saturating rather than wrapping, so an absurd card
-                // value cannot silently become a small one.
+                // value cannot silently become a plausible one: `try_from`
+                // fails to `None` ("no ceiling known", keep the default)
+                // rather than clamping to `u32::MAX`, which would read as a
+                // real 4-billion-token ceiling and be asked for on the wire.
                 .with_max_output_tokens(
                     listing
                         .pricing
                         .max_output_tokens
-                        .map(|v| v.min(u32::MAX as u64) as u32),
+                        .and_then(|v| u32::try_from(v).ok()),
                 ),
             );
             known.insert(key);
