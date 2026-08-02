@@ -818,6 +818,8 @@ fn cfg_for(provider_id: &str) -> Config {
         // settings-driven wiring under test is the thing exercised. The
         // flag-pinned case sets this explicitly.
         model_pinned_by_flag: false,
+        durability: Default::default(),
+        create_worktrees: Default::default(),
         api_key: ApiKey::new("dummy-key-unused-offline"),
         credential_source: None,
         workspace_root: std::path::PathBuf::from("/tmp"),

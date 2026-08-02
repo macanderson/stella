@@ -1086,3 +1086,41 @@ fn enable_recap_defaults_off_when_no_scope_sets_it() {
     let merged = Settings::load(workspace).expect("settings load");
     assert!(!merged.recap_enabled(), "recap defaults off");
 }
+
+/// Every spelling of "no opinion" resolves to `ask`, and a typo is loud.
+///
+/// The three quiet spellings matter because they are how a scope says "I have
+/// nothing to say about this": absent, explicitly null, and present-but-empty.
+/// A parser that accepted only the first would make `"create_worktrees": ""`
+/// either an error or — far worse — a silent `always`, deciding on its own
+/// where somebody's work happens.
+#[test]
+fn create_worktrees_reads_every_spelling_of_no_opinion_as_ask() {
+    for json in [
+        r#"{}"#,
+        r#"{"create_worktrees": null}"#,
+        r#"{"create_worktrees": ""}"#,
+        r#"{"create_worktrees": "  "}"#,
+        r#"{"create_worktrees": "ask"}"#,
+    ] {
+        let parsed: Settings = serde_json::from_str(json).unwrap_or_else(|e| panic!("{json}: {e}"));
+        assert_eq!(
+            parsed.create_worktrees(),
+            CreateWorktrees::Ask,
+            "{json} must mean ask"
+        );
+    }
+
+    let always: Settings = serde_json::from_str(r#"{"create_worktrees": "always"}"#).unwrap();
+    assert_eq!(always.create_worktrees(), CreateWorktrees::Always);
+    let never: Settings = serde_json::from_str(r#"{"create_worktrees": "never"}"#).unwrap();
+    assert_eq!(never.create_worktrees(), CreateWorktrees::Never);
+
+    // A typo must not silently pick a side.
+    let err = serde_json::from_str::<Settings>(r#"{"create_worktrees": "alwyas"}"#)
+        .expect_err("a misspelling is a parse error");
+    assert!(
+        err.to_string().contains("always"),
+        "the error should name the accepted values: {err}"
+    );
+}

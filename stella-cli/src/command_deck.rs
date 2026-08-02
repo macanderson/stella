@@ -436,6 +436,19 @@ pub async fn run_deck_session(
             }
         },
     );
+    // The other two halves of the same promise, bound beside the journal
+    // because all three name the session and all three must name the SAME one:
+    // every turn from here checkpoints into this record's sidecar, and every
+    // file the agent touches commits to this session's ref in stella's own git
+    // store. Re-bound on an in-deck session switch, below.
+    if let Some(warning) = crate::durability::bind_session(
+        &cfg.durability,
+        &registry,
+        &cfg.workspace_root,
+        &session_record.id,
+    ) {
+        let _ = deck_tx.send(system_notice(warning));
+    }
     // A release-build panic aborts before any `Drop` or `catch_unwind` runs
     // (the workers' panic catch included), so this hook is the journal's
     // only flush point on that path — the terminal is restored by
@@ -579,7 +592,12 @@ pub async fn run_deck_session(
         inbound: in_tx.clone(),
         answers: Arc::new(tokio::sync::Mutex::new(ask_rx)),
     };
-    let scope_gate = DeckApprovalGate::new(LEAD.to_string(), in_tx.clone(), scope_rx);
+    let scope_gate = DeckApprovalGate::new(
+        LEAD.to_string(),
+        in_tx.clone(),
+        scope_rx,
+        Arc::new(ask_io.clone()),
+    );
 
     // The deck drives turns through the staged pipeline by default (triage →
     // recall → plan → scope → witness → execute → verify → judge); `/pipeline`
@@ -1018,6 +1036,20 @@ pub async fn run_deck_session(
                                             )));
                                         }
                                     }
+                                }
+                                // Durability re-keys with everything else. The
+                                // next turn's engine reads the sink afresh, so
+                                // the checkpoint lands in the session the user
+                                // just switched TO; the departing session's
+                                // resume point and commits are left as they
+                                // stood.
+                                if let Some(warning) = crate::durability::bind_session(
+                                    &cfg.durability,
+                                    &registry,
+                                    &cfg.workspace_root,
+                                    &session_record.id,
+                                ) {
+                                    let _ = deck_tx.send(chrome_note(warning));
                                 }
 
                                 // Blank the lead pane, replay the adopted

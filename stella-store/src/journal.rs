@@ -19,6 +19,10 @@
 //! - **`queue.json`** — the pending prompt backlog, rewritten atomically on
 //!   every queue mutation. A prompt the user queued is durable the moment it
 //!   is queued.
+//! - **`checkpoint.json`** — the in-flight turn's resume point, rewritten
+//!   atomically at every step boundary and removed when the turn ends. Unlike
+//!   the three above it describes work that is *still happening*, so its mere
+//!   presence after a restart means a turn was interrupted mid-flight.
 //!
 //! ## Crash-safety contract
 //!
@@ -48,7 +52,6 @@ pub const JOURNAL_FILE: &str = "journal.jsonl";
 pub const HISTORY_FILE: &str = "history.json";
 /// The pending prompt backlog snapshot inside a session's sidecar dir.
 pub const QUEUE_FILE: &str = "queue.json";
-
 /// Flush the coalescing buffer once it holds this many bytes even if the
 /// delta run hasn't ended — bounds journal-write latency on very long
 /// uninterrupted streams without fsyncing per token.
@@ -319,6 +322,15 @@ pub fn read_queue(dir: &Path) -> Vec<String> {
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_default()
 }
+
+// The in-flight turn's resume point used to live here, as a `checkpoint.json`
+// beside the history and the queue. It now lives in the work journal's
+// `CHECKPOINT_BLOB` (`crate::work_journal`), for one reason: a resume point and
+// the file changes it is a resume point *for* are one fact, and keeping them in
+// two stores means a recovery path has to decide which to believe when they
+// disagree. Nothing can update both atomically, so they eventually would — and
+// a crash between the two writes is precisely the case the feature exists to
+// survive.
 
 /// Whether a sidecar dir holds anything to restore — the resumability test.
 pub fn has_state(dir: &Path) -> bool {
@@ -681,6 +693,9 @@ mod tests {
             vec![(lead.clone(), "refactor the fold".to_string())]
         );
     }
+
+    // The checkpoint round-trip moved with the checkpoint itself — see
+    // `crate::work_journal::tests::a_checkpoint_survives_verbatim_and_clearing_is_idempotent`.
 
     #[test]
     fn history_and_queue_snapshots_roundtrip_and_default_empty() {

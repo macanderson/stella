@@ -126,6 +126,31 @@ pub static CAPABILITIES: &[Capability] = &[
         },
     },
     Capability {
+        id: "turn.checkpoint",
+        engine_home: "stella-core step: the CheckpointSink seam, written at the one step boundary \
+                      where the transcript is guaranteed well-paired",
+        engine_entries: &["persist_checkpoint", "discard_checkpoint"],
+        cli: SurfacePosture::Shipped {
+            mechanism: "Config's SessionDurability handle, attached at agent::tuned_engine_config \
+                        so every role gets it; the sink writes the work journal's CHECKPOINT_BLOB",
+            witness: "a_bound_session_checkpoints_from_every_role",
+        },
+        // The plumbing is present and correct on this surface — `drive_turn`
+        // calls both entry points at the same seams the CLI driver does — but
+        // nothing sets `checkpoint_sink`, so a served turn is not durable.
+        // That is a design decision, not an omission: in the reverse-RPC model
+        // the workspace lives on the HOST side, so serve has no filesystem
+        // location it could honestly checkpoint against (and no `stella-store`
+        // dependency, and no workspace root or session id in `SessionSpec`).
+        // `SessionSpec::config` is `pub`, so an embedder that owns a workspace
+        // supplies its own sink today.
+        api: SurfacePosture::Deferred {
+            waiting_on: "who owns the workspace for a served session — the host supplies a sink \
+                         through the public EngineConfig today; a server-side one needs the \
+                         portable-session design (transportable state between machines) first",
+        },
+    },
+    Capability {
         id: "turn.stream_events",
         engine_home: "stella-protocol AgentEvent over the engine's EventSender",
         engine_entries: &[],
@@ -394,9 +419,14 @@ mod tests {
     /// the same trade `provider_parity` documents: a witness that moves to a
     /// file outside this list fails loudly (a false alarm to fix by extending
     /// the list), never silently (the rotted proof this exists to catch).
-    fn cli_sources() -> [&'static str; 7] {
+    fn cli_sources() -> [&'static str; 8] {
         [
             include_str!("../../stella-cli/src/agent_tests.rs"),
+            // `agent_tests.rs` is split into submodules by the file-size
+            // ratchet, so its children have to be listed too — a witness that
+            // moved into one of them is not missing, it is one `include_str!`
+            // away from being invisible to this sweep.
+            include_str!("../../stella-cli/src/agent_tests/engine_wiring.rs"),
             include_str!("../../stella-cli/src/subagent/tests.rs"),
             include_str!("../../stella-cli/src/subsession.rs"),
             include_str!("../../stella-cli/src/command_deck/tests.rs"),

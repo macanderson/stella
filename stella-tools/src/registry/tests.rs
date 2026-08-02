@@ -807,3 +807,229 @@ async fn exec_ok(reg: &ToolRegistry, name: &str, input: serde_json::Value) {
 mod chain;
 mod schema_gate;
 mod touch;
+
+/// The no-clobber guarantee, end to end and across two independent sessions.
+///
+/// Two registries over one workspace stand in for two agents: they share no
+/// state, no lock and no channel, exactly as two processes would. The claim is
+/// that A cannot silently overwrite B's edit — not that A is made to wait for
+/// it.
+#[tokio::test]
+async fn one_agent_cannot_clobber_another_agents_edit() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("shared.txt");
+    std::fs::write(&file, "original\n").unwrap();
+
+    let agent_a = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+    let agent_b = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+
+    // A reads the file — this is the belief its later write will act on.
+    let read = agent_a
+        .execute(
+            "read_file",
+            &serde_json::json!({ "path": "shared.txt", "reason": "planning an edit" }),
+        )
+        .await;
+    assert!(!read.is_error(), "A can read the file: {read:?}");
+
+    // B edits it. B has never heard of A and takes no lock.
+    let b_wrote = agent_b
+        .execute(
+            "write_file",
+            &serde_json::json!({
+                "path": "shared.txt",
+                "content": "B's careful work\n",
+                "reason": "B does its job",
+            }),
+        )
+        .await;
+    assert!(!b_wrote.is_error(), "B's write lands: {b_wrote:?}");
+
+    // A now writes against content that no longer exists. This is the exact
+    // moment work gets destroyed in a lock-based design — B has released, so
+    // A proceeds and B's edit is gone.
+    let a_wrote = agent_a
+        .execute(
+            "write_file",
+            &serde_json::json!({
+                "path": "shared.txt",
+                "content": "A's stale work\n",
+                "reason": "A does its job",
+            }),
+        )
+        .await;
+    match &a_wrote {
+        ToolOutput::Error { message } => {
+            assert!(
+                message.contains("shared.txt"),
+                "the refusal names the file so the model can act on it: {message}"
+            );
+            assert!(
+                message.contains("nothing was written"),
+                "the refusal says the edit was not half-applied: {message}"
+            );
+        }
+        other => panic!("A's stale write must be refused, got {other:?}"),
+    }
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "B's careful work\n",
+        "B's work survives untouched — this is the whole guarantee"
+    );
+
+    // And the recovery is one cheap step, not a failed turn: re-read, then
+    // write. This is why staleness beats a lock for an agent — being told to
+    // look again costs a step; blocking costs a turn.
+    let reread = agent_a
+        .execute(
+            "read_file",
+            &serde_json::json!({ "path": "shared.txt", "reason": "re-reading after the refusal" }),
+        )
+        .await;
+    assert!(!reread.is_error(), "A re-reads: {reread:?}");
+    let retry = agent_a
+        .execute(
+            "write_file",
+            &serde_json::json!({
+                "path": "shared.txt",
+                "content": "A's work, rebased on B's\n",
+                "reason": "redone against current content",
+            }),
+        )
+        .await;
+    assert!(
+        !retry.is_error(),
+        "after re-reading, A writes normally: {retry:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "A's work, rebased on B's\n"
+    );
+}
+
+/// A session writing its own file repeatedly must never trip the guard — the
+/// digest it remembers after each write is the one it finds on the next.
+/// Without this, the guarantee would make ordinary single-agent work fail.
+#[tokio::test]
+async fn a_session_never_conflicts_with_itself() {
+    let root = tempfile::tempdir().unwrap();
+    let agent = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+    for i in 0..3 {
+        let out = agent
+            .execute(
+                "write_file",
+                &serde_json::json!({
+                    "path": "mine.txt",
+                    "content": format!("revision {i}\n"),
+                    "reason": "iterating",
+                }),
+            )
+            .await;
+        assert!(!out.is_error(), "write {i} succeeds: {out:?}");
+    }
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("mine.txt")).unwrap(),
+        "revision 2\n"
+    );
+}
+
+/// Every mutation is durably recorded without the agent deciding to commit.
+///
+/// This is the answer to work lost when a turn dies before its commit: the
+/// hook is the tool, not the model's judgement, so there is no window in which
+/// a write exists only in the working tree.
+#[tokio::test]
+async fn every_mutation_is_committed_without_the_agent_choosing_to() {
+    let root = tempfile::tempdir().unwrap();
+    let store = tempfile::tempdir().unwrap();
+    let reg = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+    let journal = stella_store::work_journal::WorkJournal::open_in(
+        store.path(),
+        root.path(),
+        "ses-autocommit",
+    )
+    .unwrap();
+    reg.attach_work_journal(journal.clone(), "lead");
+
+    // One ordinary write. The agent never asks for a commit.
+    let out = reg
+        .execute(
+            "write_file",
+            &serde_json::json!({
+                "path": "work.txt",
+                "content": "the work\n",
+                "reason": "doing the job",
+            }),
+        )
+        .await;
+    assert!(!out.is_error(), "the write succeeds: {out:?}");
+
+    journal.mark_turn(1, &journal_tip(&journal)).unwrap();
+    assert_eq!(
+        journal.read_at_turn(1, "work.txt").unwrap(),
+        "the work\n",
+        "the mutation is durable the instant it lands, with no commit step"
+    );
+
+    // A second write supersedes it in the record rather than appending noise.
+    let out = reg
+        .execute(
+            "write_file",
+            &serde_json::json!({
+                "path": "work.txt",
+                "content": "revised\n",
+                "reason": "revising",
+            }),
+        )
+        .await;
+    assert!(!out.is_error(), "{out:?}");
+    journal.mark_turn(2, &journal_tip(&journal)).unwrap();
+    assert_eq!(journal.read_at_turn(2, "work.txt").unwrap(), "revised\n");
+    assert_eq!(
+        journal.read_at_turn(1, "work.txt").unwrap(),
+        "the work\n",
+        "and turn 1 still replays its own version — history, not a snapshot"
+    );
+}
+
+/// The session ref's current commit. A test affordance: production callers
+/// mark turns from the commit `record` returns.
+fn journal_tip(journal: &stella_store::work_journal::WorkJournal) -> String {
+    journal.session_tip().expect("a mutation was recorded")
+}
+
+/// Switching sessions must not inherit the previous session's beliefs.
+///
+/// The deck reuses one registry across a session switch, so a merging restore
+/// left the departing session's observations in place — and the arriving
+/// session was then refused writes to files it had never read. A guard built
+/// to have no false positives cannot carry another session's memory.
+#[test]
+fn restoring_a_session_replaces_rather_than_inherits() {
+    let root = tempfile::tempdir().unwrap();
+    let reg = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+
+    // Session A saw two files, one of which B never touches.
+    let a = serde_json::json!({ "shared.rs": "aaa", "only-a-saw-this.rs": "bbb" }).to_string();
+    assert_eq!(reg.restore_observed(&a), 2);
+
+    // Session B's record disagrees about the shared file and never mentions
+    // the other one at all.
+    let b = serde_json::json!({ "shared.rs": "ccc" }).to_string();
+    assert_eq!(reg.restore_observed(&b), 1);
+
+    let json = reg
+        .observed_snapshot()
+        .expect("a restored session has a snapshot");
+    let observed: std::collections::HashMap<String, String> =
+        serde_json::from_str(&json).expect("the snapshot round-trips");
+    assert_eq!(
+        observed.get("shared.rs").map(String::as_str),
+        Some("ccc"),
+        "the arriving session's digest wins — `or_insert` used to keep the stale one"
+    );
+    assert!(
+        !observed.contains_key("only-a-saw-this.rs"),
+        "a file only the departing session read must not guard the arriving one"
+    );
+}

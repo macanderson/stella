@@ -763,6 +763,40 @@ pub enum ScopeDecision {
 pub trait ApprovalGate: Send + Sync {
     /// Present `proposal` and await the user's decision.
     async fn review(&self, proposal: &ScopeProposal) -> ScopeDecision;
+
+    /// Ask a plain yes/no question and await the answer — today, whether to
+    /// isolate this run in a worktree ([`WorktreePolicy::Ask`]).
+    ///
+    /// Defaulted to `false` rather than left abstract, and that default is the
+    /// answer, not a placeholder: a gate that cannot ask has nobody to ask, and
+    /// declining leaves the run doing exactly what it did before the question
+    /// existed. Silently answering *yes* would relocate somebody's work on the
+    /// strength of an unwired port.
+    async fn confirm(&self, _question: &str) -> bool {
+        false
+    }
+}
+
+/// Whether a run does its work in a throwaway git worktree instead of the
+/// user's own checkout.
+///
+/// The two are not equivalent, which is why this is a policy and not a
+/// preference. Working in the tree is what the user sees happening and can
+/// interrupt; working in a worktree means nothing lands until the run adopts
+/// it, so a half-finished run leaves the checkout untouched — at the cost that
+/// `git status` shows nothing while it runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WorktreePolicy {
+    /// Isolate whenever the run is going to change files and isolation is
+    /// available.
+    Always,
+    /// Ask, once, at triage — after the class is known, so a lookup that will
+    /// not touch anything never raises the question. The default, and what an
+    /// absent, null, or empty setting means.
+    #[default]
+    Ask,
+    /// Never isolate; work in the checkout.
+    Never,
 }
 
 // No-op / default port implementations
@@ -874,6 +908,24 @@ impl ApprovalGate for StdioApprovalGate {
                 note: answer.to_string(),
             },
         }
+    }
+
+    /// `[y/N]` on stdin. Fail-closed on EOF and read errors, and on a bare
+    /// Enter, matching [`Self::review`] — an unanswered question must not
+    /// relocate where somebody's work happens.
+    async fn confirm(&self, question: &str) -> bool {
+        use std::io::{self, BufRead, Write};
+
+        println!();
+        println!("  {question}");
+        print!("  [y/N]: ");
+        let _ = io::stdout().flush();
+
+        let mut line = String::new();
+        if io::stdin().lock().read_line(&mut line).is_err() {
+            return false;
+        }
+        matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
     }
 }
 

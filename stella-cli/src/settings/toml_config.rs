@@ -100,6 +100,10 @@ pub struct RunSection {
     /// (#1042). Same name in JSON (`trace_capture`).
     #[serde(default)]
     pub trace_capture: Option<Toggle>,
+    /// `always` / `ask` / `never` — whether a run works in a throwaway git
+    /// worktree instead of the checkout. Same name in JSON.
+    #[serde(default)]
+    pub create_worktrees: Option<super::CreateWorktrees>,
 }
 
 /// `[models]` — policy over the model catalog, not a model table.
@@ -340,6 +344,7 @@ impl TomlConfig {
             tools,
             enable_recap: run.recap,
             trace_capture: run.trace_capture,
+            create_worktrees: run.create_worktrees,
             ui,
             context,
             context_providers,

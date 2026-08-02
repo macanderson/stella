@@ -276,7 +276,7 @@ async fn run_pipeline_one_shot(
     let started_unix = crate::memory::unix_now_secs();
     // Machine-wide presence: the deck's SESSIONS overlay sees this run live
     // and can replay its journal after it ends.
-    let mut presence = SessionPresence::announce(cfg, prompt);
+    let mut presence = SessionPresence::announce(cfg, prompt, &registry);
     let execution = begin_execution(&store, "pipeline", prompt, cfg, Some(presence.id()));
     let files_before = registry.files_touched().len();
 
@@ -788,7 +788,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     // Machine-wide presence: the plain REPL registers like the deck does,
     // so its sessions are findable in every SESSIONS overlay and replayable
     // from their journals. No inbox notifications — the user is right here.
-    let mut presence = SessionPresence::announce(cfg, "interactive session");
+    let mut presence = SessionPresence::announce(cfg, "interactive session", &registry);
 
     // Session-scoped lean-mode activation state: the tool stack is rebuilt
     // every turn, but a tool the model surfaced via tool_search must stay
@@ -2007,8 +2007,16 @@ pub(crate) struct SessionPresence {
 
 impl SessionPresence {
     /// Announce the session (status In Progress), titled from the workspace
-    /// and the prompt/goal that started it.
-    pub(crate) fn announce(cfg: &Config, prompt: &str) -> Self {
+    /// and the prompt/goal that started it, and bind this session's durability
+    /// to `tools`.
+    ///
+    /// The binding is done HERE, rather than left to each headless driver,
+    /// because this is the moment the session acquires the identity durability
+    /// is keyed on. A driver that announced without binding would run a whole
+    /// session whose turns checkpoint nowhere — and the failure would be
+    /// silent, because an unbound sink is indistinguishable from a session
+    /// that simply never crashed.
+    pub(crate) fn announce(cfg: &Config, prompt: &str, tools: &Arc<ToolRegistry>) -> Self {
         let name = cfg
             .workspace_root
             .file_name()
@@ -2022,6 +2030,14 @@ impl SessionPresence {
         record.summary = crate::command_deck::prompt_line(prompt, 240);
         let registry = stella_store::SessionRegistry::open_default();
         let _ = registry.upsert(&record);
+        // stderr, not stdout: `--output-format json` owns stdout, and a
+        // durability advisory must never land inside a machine-readable
+        // document.
+        if let Some(warning) =
+            crate::durability::bind_session(&cfg.durability, tools, &cfg.workspace_root, &record.id)
+        {
+            eprintln!("  {warning}");
+        }
         Self {
             registry,
             record,

@@ -77,6 +77,43 @@ pub struct ToolRegistry {
     late_tools: std::sync::RwLock<HashMap<String, Arc<dyn Tool>>>,
     root: PathBuf,
     touched: std::sync::Mutex<FileTouchLedger>,
+    /// `normalized workspace path → sha256 of the content THIS session last
+    /// observed`, and the whole of the no-clobber guarantee.
+    ///
+    /// Every successful touch records what the file looked like when this
+    /// agent was done with it — a read records what it read, a write records
+    /// what it wrote. Before a later mutation of the same path, the on-disk
+    /// content is re-hashed and compared: a mismatch means something outside
+    /// this session changed the file since this agent last looked, so the
+    /// mutation would silently overwrite work the agent never saw.
+    ///
+    /// # Why this needs no shared state
+    ///
+    /// It is deliberately NOT a lock, and there is no registry, daemon, or
+    /// lease anywhere. Each agent remembers only what it saw itself, which is
+    /// exactly enough: agent B's write is what makes agent A's memory stale,
+    /// so A detects it locally with no channel to B and no knowledge that B
+    /// exists. Two processes, two containers, or a human editing in an editor
+    /// are all the same case.
+    ///
+    /// A lock would be strictly weaker. It serializes writers but does nothing
+    /// about staleness: B waits, takes the lock, and overwrites the file A
+    /// just changed using a plan A's content no longer justifies. Waiting is
+    /// also the wrong cost model for an agent — being told "that moved, read
+    /// it again" is a cheap retry, where blocking burns a turn.
+    observed: std::sync::Mutex<HashMap<String, String>>,
+    /// The session's durable record, once a host attaches one. Absent — the
+    /// default — leaves every existing caller behaving exactly as before.
+    ///
+    /// `RwLock`, not `OnceLock`, because a registry can outlive the session it
+    /// was built for. The deck builds one registry and then lets the user
+    /// switch sessions under it, re-keying everything that names the session —
+    /// claim holder, notification attribution, journal sidecar. The durable
+    /// record has to follow, or work done after the switch commits to the ref
+    /// of the session the user left. Splitting one *registry's* history across
+    /// two stores is not the hazard it first looks like: they are two
+    /// sessions, and two histories is the correct answer.
+    work_journal: std::sync::RwLock<Option<(stella_store::work_journal::WorkJournal, String)>>,
     /// Paths `read_symbol` resolved and read, shared with the registered
     /// tool instance and drained once per execution into the file-touch
     /// ledger — the symbol's file is resolved through the code graph
@@ -460,6 +497,8 @@ impl ToolRegistry {
             late_tools: std::sync::RwLock::new(HashMap::new()),
             root,
             touched: std::sync::Mutex::new(FileTouchLedger::default()),
+            observed: std::sync::Mutex::new(HashMap::new()),
+            work_journal: std::sync::RwLock::new(None),
             span_reads,
             workspace_probe: std::sync::Mutex::new(None),
             turn_bracketing: std::sync::atomic::AtomicBool::new(false),
@@ -767,6 +806,32 @@ impl ToolRegistry {
         // tools yield zero or one op; `apply_edits` yields one Update per
         // distinct file in its batch.
         let pending_ops = self.classify_file_ops(name, input);
+        // The no-clobber guard. Refuse BEFORE executing: once a write lands,
+        // the other agent's work is already gone and the best this could do is
+        // narrate the loss. Returned as a tool `Error` rather than a turn
+        // abort because it is a recoverable, model-actionable condition — the
+        // message names the file and the fix, and re-reading is one cheap step
+        // where a failed turn would be a whole one.
+        let clobbered = self.clobbered_paths(&pending_ops);
+        if !clobbered.is_empty() {
+            return ToolOutput::Error {
+                message: format!(
+                    "refusing to write: {} changed since you last read {}. Another \
+                     agent (or a person) edited it after you looked, and this call \
+                     would overwrite their work with a plan formed against content \
+                     that no longer exists.\n\nRe-read {} and redo the change \
+                     against what is there now. Your edit is not lost — nothing was \
+                     written.",
+                    clobbered.join(", "),
+                    if clobbered.len() == 1 { "it" } else { "them" },
+                    if clobbered.len() == 1 {
+                        "the file"
+                    } else {
+                        "those files"
+                    },
+                ),
+            };
+        }
         // Updates need the pre-write content for the line diff; deletes need
         // it for the pre-deletion line count. Lossy UTF-8 so a binary file
         // still yields a deterministic (if approximate) line count.
@@ -1565,6 +1630,157 @@ impl ToolRegistry {
     /// `revision` assigned under the lock — concurrent touches may deliver
     /// out of order, but consumers keep the highest revision and stay
     /// consistent.
+    /// Record what this session now knows `path` to hold, hashed from disk.
+    ///
+    /// Called for every successful touch, reads included: a read is how an
+    /// agent acquires the belief a later write acts on, so it is exactly as
+    /// load-bearing here as a write. A path that no longer exists drops its
+    /// entry — after a delete there is nothing left to clobber, and the next
+    /// agent to create the file is starting fresh rather than overwriting.
+    fn remember_observed(&self, path: &str, full: &std::path::Path) {
+        let mut observed = self.observed.lock().unwrap_or_else(|p| p.into_inner());
+        match std::fs::read(full) {
+            Ok(bytes) => {
+                observed.insert(path.to_string(), crate::staleness::hex_sha256(&bytes));
+            }
+            Err(_) => {
+                observed.remove(path);
+            }
+        }
+    }
+
+    /// This session's staleness map as JSON, for a durable host to persist.
+    ///
+    /// `BTreeMap`, so the bytes are a pure function of the contents: this is
+    /// written into a content-addressed store on every step boundary, and a
+    /// `HashMap`'s iteration order would mint a fresh object each time for a
+    /// map that had not changed.
+    ///
+    /// `None` when nothing has been observed yet — there is no state to write,
+    /// and an empty object would still cost a commit.
+    #[must_use]
+    pub fn observed_snapshot(&self) -> Option<String> {
+        let observed = self.observed.lock().unwrap_or_else(|p| p.into_inner());
+        if observed.is_empty() {
+            return None;
+        }
+        let ordered: std::collections::BTreeMap<&str, &str> = observed
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        serde_json::to_string(&ordered).ok()
+    }
+
+    /// Restore a staleness map persisted by [`Self::observed_snapshot`],
+    /// returning how many paths came back.
+    ///
+    /// Restoring is what makes the no-clobber guarantee survive a crash. Without
+    /// it a resumed session is *less* safe than a fresh one is honest: the
+    /// restored transcript still says the agent read a file, so the model acts
+    /// on content it believes it knows, while the guard — having forgotten it
+    /// was ever read — waves the overwrite through. That is the one combination
+    /// the guard exists to prevent.
+    ///
+    /// Merges rather than replaces. Anything this session has already seen is
+    /// newer than the snapshot by construction, so it wins.
+    pub fn restore_observed(&self, json: &str) -> usize {
+        let Ok(restored) = serde_json::from_str::<HashMap<String, String>>(json) else {
+            return 0;
+        };
+        let mut observed = self.observed.lock().unwrap_or_else(|p| p.into_inner());
+        // REPLACE, never merge. The restored map is this session's complete
+        // belief about the tree, and the deck reuses one registry across a
+        // session switch — so merging would leave the departing session's
+        // observations in place and refuse the arriving session's writes to
+        // files it never read. `or_insert` compounded it by preferring the
+        // stale entry when both sessions had seen the same path, making a
+        // disagreement unresolvable in the wrong direction. A guard built to
+        // have no false positives cannot inherit another session's memory.
+        let count = restored.len();
+        *observed = restored;
+        count
+    }
+
+    /// The paths in `pending` this call would clobber — ones this session has
+    /// seen before whose bytes on disk no longer match what it saw.
+    ///
+    /// Only `Update` and `Delete` can clobber. A `Create` is checked by the
+    /// filesystem itself, and a `Read` changes nothing. A path this session
+    /// has never observed is NOT flagged: this guard's claim is "you are about
+    /// to overwrite a change you never saw", and it can only make that claim
+    /// about a file it watched the agent look at. Blind writes to never-read
+    /// files are a separate policy question and are deliberately left alone
+    /// here, so this check has no false positives.
+    ///
+    /// An unreadable file is not a conflict either — the tool's own error
+    /// path reports that far better than a staleness message would.
+    fn clobbered_paths(&self, pending: &[PendingTouch]) -> Vec<String> {
+        let observed = self.observed.lock().unwrap_or_else(|p| p.into_inner());
+        pending
+            .iter()
+            .filter(|p| matches!(p.op, FileOp::Update | FileOp::Delete))
+            .filter(|p| {
+                observed.get(&p.path).is_some_and(|seen| {
+                    std::fs::read(&p.full)
+                        .is_ok_and(|bytes| crate::staleness::hex_sha256(&bytes) != *seen)
+                })
+            })
+            .map(|p| p.path.clone())
+            .collect()
+    }
+
+    /// Bind this session's durable record, replacing any earlier binding.
+    ///
+    /// Re-binding is how a host whose registry outlives one session — the deck,
+    /// across a session switch — keeps the record attributed to the session
+    /// that is actually running. Mutations before the call land on the previous
+    /// session's ref and stay there; nothing already committed moves.
+    ///
+    /// `agent` labels the commits, so a workspace worked by several agents
+    /// reads back as an attributable log rather than an anonymous one.
+    pub fn attach_work_journal(
+        &self,
+        journal: stella_store::work_journal::WorkJournal,
+        agent: impl Into<String>,
+    ) {
+        let mut slot = self.work_journal.write().unwrap_or_else(|p| p.into_inner());
+        *slot = Some((journal, agent.into()));
+    }
+
+    /// Commit one mutation to the session's durable record.
+    ///
+    /// Best-effort by the same reasoning as the checkpoint sink: a journal
+    /// that cannot be written leaves the agent exactly as recoverable as it
+    /// was before durability existed, so failing a live tool call to report
+    /// the loss of a *safety net* would be strictly worse than not having one.
+    /// Reads are skipped — nothing changed, and a commit per read would bury
+    /// the record of real work.
+    fn journal_mutation(&self, pending: &PendingTouch, reason: &str) {
+        // Cloned out from under the lock rather than held across the commit:
+        // `record` spawns git, and a read guard held across a subprocess would
+        // park a concurrent re-bind for the length of it. The clone is three
+        // paths and a string.
+        let Some((journal, agent)) = self
+            .work_journal
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+        else {
+            return;
+        };
+        let verb = match pending.op {
+            FileOp::Read => return,
+            FileOp::Create => "create",
+            FileOp::Update => "update",
+            FileOp::Delete => "delete",
+        };
+        let _ = journal.record(
+            std::slice::from_ref(&pending.path),
+            &[],
+            &format!("stella({agent}): {verb} {} — {reason}", pending.path),
+        );
+    }
+
     fn record_touch(
         &self,
         pending: PendingTouch,
@@ -1573,6 +1789,11 @@ impl ToolRegistry {
         input: &Value,
         bus: Option<&HookBus>,
     ) {
+        // Refresh this session's belief about the file before anything else in
+        // here can fail or return early: the ledger is telemetry, but this is
+        // the guarantee, and a touch whose digest went unrecorded would leave
+        // the NEXT write to this path unguarded.
+        self.remember_observed(&pending.path, &pending.full);
         let reason = input
             .get("reason")
             .and_then(|v| v.as_str())
@@ -1580,6 +1801,11 @@ impl ToolRegistry {
             .filter(|s| !s.is_empty())
             .map(String::from)
             .unwrap_or_else(|| default_reason(pending.op).to_string());
+        // The durable record, written from the same choke point as the ledger
+        // and the staleness map, so all three describe one reality. Before the
+        // diff work below, which is presentation: if anything here is going to
+        // be expensive, the commit that makes the work recoverable goes first.
+        self.journal_mutation(&pending, &reason);
         // Counts and rendered diff come out of the SAME pre/post pair, so the
         // ledger, the telemetry payload and the TUI describe one reality.
         let pre = pre_content.as_deref().unwrap_or("");

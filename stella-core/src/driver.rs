@@ -73,6 +73,7 @@
 use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
@@ -261,6 +262,19 @@ pub struct EngineConfig {
     /// field still defaults `false` so a programmatically-built config opts in
     /// deliberately rather than inheriting a product default it never read.
     pub lifecycle_enabled: bool,
+    /// Where this engine's turns write their resume point, if anywhere.
+    ///
+    /// `None` — the default — is the behaviour every caller had before: a turn
+    /// interrupted mid-flight is gone, and the host recovers by re-dispatching
+    /// the prompt and paying for the work again. Attaching a sink makes the
+    /// turn itself recoverable; see [`crate::step::CheckpointSink`] for the failure
+    /// contract, and [`Engine::resume_turn`] for the other half.
+    ///
+    /// Kept here rather than passed to `run_turn` because it is a property of
+    /// the host's durability arrangement, not of any one turn — the same
+    /// reasoning that puts [`Self::cwd`] here rather than making the engine
+    /// sniff it.
+    pub checkpoint_sink: Option<Arc<dyn crate::step::CheckpointSink>>,
 }
 
 impl Default for EngineConfig {
@@ -291,6 +305,11 @@ impl Default for EngineConfig {
             cwd: ".".to_string(),
             turn_instance: 0,
             lifecycle_enabled: false,
+            // Off by default for the same reason `turn_budget` is: only a
+            // caller that owns durable storage can say where a resume point
+            // belongs, and a default location invented here would write one
+            // process's turns into another's session.
+            checkpoint_sink: None,
         }
     }
 }
@@ -699,8 +718,17 @@ impl<'a> Engine<'a> {
                 self.emit_lifecycle(bus::names::AGENT_TURN_COMPLETED, || {
                     turn_outcome_payload(&outcome, turn.state.step)
                 });
+                self.discard_checkpoint();
                 return outcome;
             }
+            // The checkpoint seam (#971). `StepOutcome::Continue` is the one
+            // moment the transcript is guaranteed well-paired — no `tool_use`
+            // without its `tool_result` — and `state.step` has already been
+            // advanced by `run_step`, so the snapshot names the step that runs
+            // NEXT rather than the one that just finished. Writing here and
+            // nowhere else is what makes a resumed turn indistinguishable from
+            // one that was never interrupted.
+            self.persist_checkpoint(&turn.state);
         }
 
         let reason = step_cap_reason(self.config.max_steps);
@@ -718,7 +746,43 @@ impl<'a> Engine<'a> {
         self.emit_lifecycle(bus::names::AGENT_TURN_COMPLETED, || {
             turn_outcome_payload(&outcome, turn.state.step)
         });
+        // A turn that ran into the step cap is over, however unhappily. Leaving
+        // its checkpoint behind would offer a resume that replays a turn whose
+        // whole problem was that it would not stop.
+        self.discard_checkpoint();
         outcome
+    }
+
+    /// Write `state`'s resume point through the configured
+    /// [`crate::step::CheckpointSink`], if the host attached one.
+    ///
+    /// Public because a host that drives [`Self::run_step`] itself — as
+    /// `stella-serve` does — owns its own loop and must reach the same seam.
+    /// Sharing this method rather than letting each driver write its own is
+    /// what keeps a served turn and a CLI turn equally recoverable.
+    ///
+    /// Silent on every failure path, by the sink contract: an unwritable
+    /// checkpoint leaves the turn exactly as recoverable as it was before the
+    /// sink existed, and failing a live turn to report a durability
+    /// *improvement* would be strictly worse than not offering one.
+    pub fn persist_checkpoint(&self, state: &crate::step::TurnState) {
+        let Some(sink) = self.config.checkpoint_sink.as_ref() else {
+            return;
+        };
+        if let Ok(json) = state.to_checkpoint().to_json() {
+            sink.persist(&json);
+        }
+    }
+
+    /// Drop any resume point for the turn that just ended.
+    ///
+    /// Called on every terminal path — completion, abort, and the step cap —
+    /// because a checkpoint that outlives its turn is worse than none: it
+    /// invites a resume that re-runs work the caller already saw finish.
+    pub fn discard_checkpoint(&self) {
+        if let Some(sink) = self.config.checkpoint_sink.as_ref() {
+            sink.discard();
+        }
     }
 
     /// Run exactly ONE committed step against `state`, the unit a durable host

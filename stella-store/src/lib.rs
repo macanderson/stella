@@ -164,6 +164,8 @@ pub mod reflection;
 pub mod scoreboard;
 pub mod sessions;
 pub mod usage;
+pub mod work_journal;
+pub mod workspace_local;
 
 use ddl::TABLES;
 // Corruption classification and its actionable wording live with the tooling

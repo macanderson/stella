@@ -2391,3 +2391,50 @@ fn recalled_frames_are_bounded_with_visible_markers() {
     assert_eq!(small.len(), 1);
     assert_eq!(small[0].content, "ok");
 }
+
+/// `create_worktrees` precedence, without a gate in the way.
+///
+/// The case that matters most is the first one: a lookup never raises the
+/// question. `ask` is the default, so a policy that asked before knowing the
+/// class would put a prompt in front of every `stella "what does this do"` —
+/// about relocating work the run is never going to do.
+#[test]
+fn the_worktree_policy_defers_to_the_class_then_to_what_is_available() {
+    use crate::pipeline::{Decided, worktree_decision_without_asking as decide};
+    use crate::ports::WorktreePolicy::{Always, Ask, Never};
+
+    // A run that changes nothing is never isolated and never asks — not even
+    // under `always`.
+    for policy in [Always, Ask, Never] {
+        assert_eq!(
+            decide(policy, false, true),
+            Decided::No,
+            "{policy:?} must not isolate a run that changes nothing"
+        );
+    }
+
+    // No isolation available: silent for the two policies that did not ask for
+    // it, and told for the one that did.
+    assert_eq!(decide(Ask, true, false), Decided::No);
+    assert_eq!(decide(Never, true, false), Decided::No);
+    assert!(
+        matches!(decide(Always, true, false), Decided::NoAndSayWhy(_)),
+        "an operator who configured `always` and cannot have it must be told"
+    );
+
+    // And with everything available, the policy decides.
+    assert_eq!(decide(Always, true, true), Decided::Yes);
+    assert_eq!(decide(Never, true, true), Decided::No);
+    assert_eq!(decide(Ask, true, true), Decided::MustAsk);
+}
+
+/// An approval gate that cannot ask answers "no", so an unwired or headless
+/// host keeps doing exactly what it did before the question existed.
+#[tokio::test]
+async fn a_gate_with_nobody_behind_it_declines_to_relocate_the_work() {
+    use crate::ports::{AlwaysAbortGate, ApprovalGate};
+    assert!(
+        !AlwaysAbortGate.confirm("anything at all").await,
+        "a headless run must not silently relocate somebody's work"
+    );
+}
