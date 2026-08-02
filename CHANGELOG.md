@@ -35,6 +35,8 @@ skip the roll) were re-inserted the same way.
 
 ## [Unreleased]
 
+## [0.6.65] — 2026-08-02
+
 ### Added
 
 - **`stella` writes a log you can attach to a bug report.** When a run panics or
