@@ -102,6 +102,13 @@ pub struct ToolRegistry {
     /// also the wrong cost model for an agent — being told "that moved, read
     /// it again" is a cheap retry, where blocking burns a turn.
     observed: std::sync::Mutex<HashMap<String, String>>,
+    /// The session's durable record, once a host attaches one.
+    ///
+    /// `OnceLock` because a session binds exactly one journal, at start, and
+    /// never rebinds: a registry whose journal changed mid-session would split
+    /// one agent's history across two stores. Absent — the default — leaves
+    /// every existing caller behaving exactly as before.
+    work_journal: std::sync::OnceLock<(stella_store::work_journal::WorkJournal, String)>,
     /// Paths `read_symbol` resolved and read, shared with the registered
     /// tool instance and drained once per execution into the file-touch
     /// ledger — the symbol's file is resolved through the code graph
@@ -486,6 +493,7 @@ impl ToolRegistry {
             root,
             touched: std::sync::Mutex::new(FileTouchLedger::default()),
             observed: std::sync::Mutex::new(HashMap::new()),
+            work_journal: std::sync::OnceLock::new(),
             span_reads,
             workspace_probe: std::sync::Mutex::new(None),
             turn_bracketing: std::sync::atomic::AtomicBool::new(false),
@@ -1664,6 +1672,44 @@ impl ToolRegistry {
             .collect()
     }
 
+    /// Bind this session's durable record. Idempotent by construction: a
+    /// second call is ignored, because one session owns one history.
+    ///
+    /// `agent` labels the commits, so a workspace worked by several agents
+    /// reads back as an attributable log rather than an anonymous one.
+    pub fn attach_work_journal(
+        &self,
+        journal: stella_store::work_journal::WorkJournal,
+        agent: impl Into<String>,
+    ) {
+        let _ = self.work_journal.set((journal, agent.into()));
+    }
+
+    /// Commit one mutation to the session's durable record.
+    ///
+    /// Best-effort by the same reasoning as the checkpoint sink: a journal
+    /// that cannot be written leaves the agent exactly as recoverable as it
+    /// was before durability existed, so failing a live tool call to report
+    /// the loss of a *safety net* would be strictly worse than not having one.
+    /// Reads are skipped — nothing changed, and a commit per read would bury
+    /// the record of real work.
+    fn journal_mutation(&self, pending: &PendingTouch, reason: &str) {
+        let Some((journal, agent)) = self.work_journal.get() else {
+            return;
+        };
+        let verb = match pending.op {
+            FileOp::Read => return,
+            FileOp::Create => "create",
+            FileOp::Update => "update",
+            FileOp::Delete => "delete",
+        };
+        let _ = journal.record(
+            std::slice::from_ref(&pending.path),
+            &[],
+            &format!("stella({agent}): {verb} {} — {reason}", pending.path),
+        );
+    }
+
     fn record_touch(
         &self,
         pending: PendingTouch,
@@ -1684,6 +1730,11 @@ impl ToolRegistry {
             .filter(|s| !s.is_empty())
             .map(String::from)
             .unwrap_or_else(|| default_reason(pending.op).to_string());
+        // The durable record, written from the same choke point as the ledger
+        // and the staleness map, so all three describe one reality. Before the
+        // diff work below, which is presentation: if anything here is going to
+        // be expensive, the commit that makes the work recoverable goes first.
+        self.journal_mutation(&pending, &reason);
         // Counts and rendered diff come out of the SAME pre/post pair, so the
         // ledger, the telemetry payload and the TUI describe one reality.
         let pre = pre_content.as_deref().unwrap_or("");

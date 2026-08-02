@@ -932,3 +932,68 @@ async fn a_session_never_conflicts_with_itself() {
         "revision 2\n"
     );
 }
+
+/// Every mutation is durably recorded without the agent deciding to commit.
+///
+/// This is the answer to work lost when a turn dies before its commit: the
+/// hook is the tool, not the model's judgement, so there is no window in which
+/// a write exists only in the working tree.
+#[tokio::test]
+async fn every_mutation_is_committed_without_the_agent_choosing_to() {
+    let root = tempfile::tempdir().unwrap();
+    let store = tempfile::tempdir().unwrap();
+    let reg = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+    let journal = stella_store::work_journal::WorkJournal::open_in(
+        store.path(),
+        root.path(),
+        "ses-autocommit",
+    )
+    .unwrap();
+    reg.attach_work_journal(journal.clone(), "lead");
+
+    // One ordinary write. The agent never asks for a commit.
+    let out = reg
+        .execute(
+            "write_file",
+            &serde_json::json!({
+                "path": "work.txt",
+                "content": "the work\n",
+                "reason": "doing the job",
+            }),
+        )
+        .await;
+    assert!(!out.is_error(), "the write succeeds: {out:?}");
+
+    journal.mark_turn(1, &journal_tip(&journal)).unwrap();
+    assert_eq!(
+        journal.read_at_turn(1, "work.txt").unwrap(),
+        "the work\n",
+        "the mutation is durable the instant it lands, with no commit step"
+    );
+
+    // A second write supersedes it in the record rather than appending noise.
+    let out = reg
+        .execute(
+            "write_file",
+            &serde_json::json!({
+                "path": "work.txt",
+                "content": "revised\n",
+                "reason": "revising",
+            }),
+        )
+        .await;
+    assert!(!out.is_error(), "{out:?}");
+    journal.mark_turn(2, &journal_tip(&journal)).unwrap();
+    assert_eq!(journal.read_at_turn(2, "work.txt").unwrap(), "revised\n");
+    assert_eq!(
+        journal.read_at_turn(1, "work.txt").unwrap(),
+        "the work\n",
+        "and turn 1 still replays its own version — history, not a snapshot"
+    );
+}
+
+/// The session ref's current commit. A test affordance: production callers
+/// mark turns from the commit `record` returns.
+fn journal_tip(journal: &stella_store::work_journal::WorkJournal) -> String {
+    journal.session_tip().expect("a mutation was recorded")
+}

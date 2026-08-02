@@ -128,7 +128,11 @@ impl WorkJournal {
     }
 
     /// The commit this session last recorded, if any.
-    fn tip(&self) -> Option<String> {
+    ///
+    /// Public because marking a turn needs it: a caller that records several
+    /// mutations in a turn marks the turn from wherever the session ended up,
+    /// rather than threading the last commit id back out of every write.
+    pub fn session_tip(&self) -> Option<String> {
         self.git(&[
             "rev-parse",
             "--verify",
@@ -153,7 +157,7 @@ impl WorkJournal {
         blobs: &[(&str, &str)],
         message: &str,
     ) -> Result<String> {
-        let parent = self.tip();
+        let parent = self.session_tip();
 
         // Seed the index from the parent so this commit is the parent's tree
         // plus these changes, not just these changes.
