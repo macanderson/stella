@@ -989,13 +989,17 @@ export type AgentEvent = {
   duration_ms: number;
   /**
    * The engine's RAW (uncalibrated) pre-call estimate of the input it
-   * sent — paired with `input_tokens` this is one drift sample, the
-   * feedback that calibrates future estimates per model
-   * (`stella-core::estimator::Calibration`). Raw by contract:
+   * sent — paired with `input_tokens` (plus cache-write tokens, which
+   * are real prompt tokens split out only for pricing) this is one
+   * drift sample, the feedback that calibrates future estimates per
+   * model (`stella-core::estimator::Calibration`). Raw by contract:
    * consumers rebuild the correction from these pairs, and a
    * corrected estimate here would compound the correction on every
-   * round trip. `0` means no estimate was taken (pre-drift emitters —
-   * hence `serde(default)`, so old streams still parse).
+   * round trip. Attachment weight is excluded — the media estimate is
+   * a deliberate ~80× over-estimate of billed tokens, right for
+   * context pressure and poison as a drift sample. `0` means no
+   * estimate was taken (pre-drift emitters — hence `serde(default)`,
+   * so old streams still parse).
    */
   estimated_input_tokens?: number;
   input_tokens: number;
