@@ -18,9 +18,8 @@
 //!    lines and file headers survive where full eviction would lose them.
 //! 4. **Tool-output eviction**: oldest large tool outputs are replaced with
 //!    a stub once the conversation still exceeds the budget. A tool result
-//!    whose call is still the most recent one is never evicted (the
-//!    property test below: compaction never drops a still-referenced tool
-//!    result).
+//!    whose call is still the most recent one is never evicted (the test
+//!    below: compaction never drops a still-referenced tool result).
 //!
 //! The system message and the latest user message are never touched.
 
@@ -190,11 +189,13 @@ pub(crate) fn elide_truncated_partial(content: &str) -> Option<String> {
     })
 }
 
-/// Evict + dedup until the conversation fits `budget_tokens`, or until
-/// nothing more can be safely removed. Returns `None` if no compaction was
-/// needed (already under budget) — or if the pass changed nothing (all
-/// remaining content is protected), so a permanently-over-budget
-/// conversation doesn't emit a no-op `Compaction` event before every step.
+/// Evict + dedup until the conversation fits `budget_tokens` — reclaiming
+/// down to a low watermark an eighth below it (see `compact_measured`'s
+/// hysteresis note) — or until nothing more can be safely removed. Returns
+/// `None` if no compaction was needed (already under budget) — or if the
+/// pass changed nothing (all remaining content is protected), so a
+/// permanently-over-budget conversation doesn't emit a no-op `Compaction`
+/// event before every step.
 ///
 /// Prefer [`compact_measured`] on the step path: this form throws away the
 /// post-pass token count, which the caller then has to walk the whole
@@ -225,6 +226,17 @@ pub fn compact_measured(
     if before_tokens <= budget_tokens {
         return (before_tokens, None);
     }
+    // Hysteresis: the pass TRIGGERS at the budget but passes 3/4 reclaim down
+    // to this low watermark. Stopping exactly at the budget meant a saturated
+    // long turn re-crossed it on every step's few thousand new tokens, and
+    // each re-triggered pass rewrote the next-oldest tool result — a fresh
+    // prefix mutation deep in the transcript on EVERY step, invalidating the
+    // provider prompt cache for everything after it (invariant 7: cache hits
+    // are a feature; #372's whole point). An eighth of headroom absorbs
+    // several steps of growth per mutation instead of one. A tiny budget
+    // (under 8 tokens) has no headroom eighth and degrades gracefully to the
+    // old stop-at-budget behavior.
+    let target_tokens = budget_tokens - budget_tokens / 8;
 
     let mut deduped = 0usize;
     let mut superseded = 0usize;
@@ -285,7 +297,14 @@ pub fn compact_measured(
         // read by POSITION, never through the result's call_id: two results
         // that merely share a recurring call_id are different content and
         // must keep different identities here, or dedup destroys one of them.
-        let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        // Keyed to the (message, result) POSITION of the earliest copy, not
+        // the message index alone: the driver records a whole step's results
+        // in ONE Tool message, so an index-only key made two byte-identical
+        // outputs from the same step (two reads of the same file in one
+        // parallel batch) structurally un-dedupable — `kept_at < idx` was
+        // false for same-message duplicates.
+        let mut seen: std::collections::HashMap<String, (usize, usize)> =
+            std::collections::HashMap::new();
         // First record positions of the earliest occurrence.
         for (idx, message) in messages.iter().enumerate() {
             if message.role != MessageRole::Tool {
@@ -300,7 +319,7 @@ pub fn compact_measured(
                     // collide with every other unidentifiable one.
                     let id = id_at(idx, ridx);
                     if !id.is_empty() {
-                        seen.entry(id).or_insert(idx);
+                        seen.entry(id).or_insert((idx, ridx));
                     }
                 }
             }
@@ -317,7 +336,8 @@ pub fn compact_measured(
                     && content.len() > 200
                 {
                     let id = id_at(idx, ridx);
-                    if !id.is_empty() && seen.get(&id).is_some_and(|&kept_at| kept_at < idx) {
+                    if !id.is_empty() && seen.get(&id).is_some_and(|&kept_at| kept_at < (idx, ridx))
+                    {
                         deduped_blocks.push(id);
                         result.output = ToolOutput::Ok {
                             content: DEDUP_STUB.to_string(),
@@ -432,10 +452,10 @@ pub fn compact_measured(
 
     // Pass 3: aging — before dropping anything whole, shrink old large
     // outputs to head+tail. Oldest first, incremental accounting, stop as
-    // soon as the budget fits; what aging saves, eviction never has to
-    // destroy.
+    // soon as the low watermark fits; what aging saves, eviction never has
+    // to destroy.
     let mut current_tokens = estimate_conversation_tokens(messages);
-    if current_tokens > budget_tokens {
+    if current_tokens > target_tokens {
         for (idx, message) in messages.iter_mut().enumerate() {
             if Some(idx) == last_tool_idx || message.role != MessageRole::Tool {
                 continue;
@@ -463,7 +483,7 @@ pub fn compact_measured(
             }
             let after = estimate_message_tokens(message);
             current_tokens = current_tokens.saturating_sub(before.saturating_sub(after));
-            if current_tokens <= budget_tokens {
+            if current_tokens <= target_tokens {
                 break;
             }
         }
@@ -477,7 +497,7 @@ pub fn compact_measured(
     // an O(n) rescan per eviction would be wasteful besides. (Re-scanned
     // once here so aging's incremental drift can't leak into eviction.)
     current_tokens = estimate_conversation_tokens(messages);
-    if current_tokens > budget_tokens {
+    if current_tokens > target_tokens {
         for (idx, message) in messages.iter_mut().enumerate() {
             if Some(idx) == last_tool_idx || message.role != MessageRole::Tool {
                 continue;
@@ -504,7 +524,7 @@ pub fn compact_measured(
             }
             let after = estimate_message_tokens(message);
             current_tokens = current_tokens.saturating_sub(before.saturating_sub(after));
-            if current_tokens <= budget_tokens {
+            if current_tokens <= target_tokens {
                 break;
             }
         }
@@ -689,9 +709,10 @@ mod tests {
         // Budget must be tight enough to force compaction (below the
         // ~1000-token pre-dedup total) but loose enough that the single
         // surviving copy left after dedup (~500 tokens) doesn't ALSO need
-        // to be evicted — otherwise this test would be indistinguishable
-        // from the eviction test above.
-        let report = compact(&mut messages, 700).expect("should compact");
+        // to be evicted — the low WATERMARK (budget minus an eighth), not
+        // the budget itself, is what passes 3/4 reclaim toward, so the
+        // budget sits an eighth higher than the pre-hysteresis tuning.
+        let report = compact(&mut messages, 800).expect("should compact");
         assert!(report.deduped >= 1);
         // The EARLIEST copy (idx 2) survives byte-identical, so the prompt
         // prefix — and the provider cache built over it — is untouched (#372).
@@ -705,6 +726,77 @@ mod tests {
                 assert!(content.contains("earlier tool result"), "got: {content}")
             }
             _ => panic!("expected dedup stub"),
+        }
+    }
+
+    #[test]
+    fn duplicates_within_one_tool_message_are_deduped() {
+        // A whole step's results land in ONE Tool message, so a parallel
+        // batch that read the same file twice puts two byte-identical
+        // outputs at the same message index. The index-only dedup key could
+        // never fire on them (`kept_at < idx` is false within a message);
+        // the positional key must stub the later sibling and keep the first.
+        let repeated = "same big output ".repeat(100);
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage {
+                role: MessageRole::Assistant,
+                content: String::new(),
+                tool_calls: vec![
+                    ToolCall {
+                        call_id: "c1".into(),
+                        name: "read_file".into(),
+                        input: serde_json::json!({ "path": "a.rs" }),
+                    },
+                    ToolCall {
+                        call_id: "c2".into(),
+                        name: "read_file".into(),
+                        input: serde_json::json!({ "path": "b.rs" }),
+                    },
+                ],
+                tool_results: vec![],
+                attachments: Vec::new(),
+            },
+            CompletionMessage {
+                role: MessageRole::Tool,
+                content: String::new(),
+                tool_calls: vec![],
+                tool_results: vec![
+                    ToolResult {
+                        call_id: "c1".into(),
+                        output: ToolOutput::Ok {
+                            content: repeated.clone(),
+                        },
+                    },
+                    ToolResult {
+                        call_id: "c2".into(),
+                        output: ToolOutput::Ok {
+                            content: repeated.clone(),
+                        },
+                    },
+                ],
+                attachments: Vec::new(),
+            },
+            assistant_with_call("c3"),
+            tool_msg("c3", "different".into()),
+        ];
+        // Tight enough to trigger (below the ~970-token raw total), loose
+        // enough that the surviving copy needs no eviction (watermark above
+        // the ~550-token post-dedup total).
+        let report = compact(&mut messages, 700).expect("should compact");
+        assert!(report.deduped >= 1, "{report:?}");
+        match &messages[2].tool_results[0].output {
+            ToolOutput::Ok { content } => assert_eq!(content, &repeated, "first copy survives"),
+            _ => panic!("earliest copy must be intact"),
+        }
+        match &messages[2].tool_results[1].output {
+            ToolOutput::Ok { content } => {
+                assert!(
+                    content.contains("earlier tool result"),
+                    "the same-message sibling must be stubbed, got: {content}"
+                )
+            }
+            _ => panic!("expected a dedup stub on the sibling"),
         }
     }
 
@@ -724,7 +816,7 @@ mod tests {
             assistant_with_call("c3"),
             tool_msg("c3", "different".into()),
         ];
-        let report = compact(&mut messages, 700).expect("should compact");
+        let report = compact(&mut messages, 800).expect("should compact");
         assert_eq!(report.superseded, 0, "{report:?}");
         assert!(report.deduped >= 1, "{report:?}");
         match &messages[2].tool_results[0].output {
@@ -829,6 +921,44 @@ mod tests {
     }
 
     #[test]
+    fn a_compacted_conversation_absorbs_a_step_of_growth_without_recompacting() {
+        // The hysteresis witness: stopping exactly at the budget meant a
+        // saturated turn re-crossed it on every step's few thousand new
+        // tokens, and every step's pass rewrote another old tool result —
+        // a prompt-cache-destroying prefix mutation per step. Reclaiming to
+        // the low watermark must leave enough headroom that the next step's
+        // ordinary growth does NOT re-trigger a rewrite.
+        let budget = 4_000u64;
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("do things"),
+        ];
+        for i in 0..8 {
+            let id = format!("c{i}");
+            messages.push(assistant_with_call(&id));
+            messages.push(tool_msg(&id, format!("{i} ").repeat(1500)));
+        }
+        let (after, report) = compact_measured(&mut messages, budget);
+        assert!(report.is_some(), "the oversized transcript must compact");
+        assert!(after <= budget, "must land under budget: {after}");
+        assert!(
+            after <= budget - budget / 8,
+            "must reclaim to the low watermark, not stop at the budget: {after}"
+        );
+
+        // One step of ordinary growth — an assistant turn and a small tool
+        // result — fits inside the reclaimed headroom…
+        messages.push(assistant_with_call("next"));
+        messages.push(tool_msg("next", "small new output".into()));
+        let (_, report) = compact_measured(&mut messages, budget);
+        // …so the pass must NOT mutate the transcript again this step.
+        assert!(
+            report.is_none(),
+            "growth inside the watermark headroom must not re-trigger a rewrite: {report:?}"
+        );
+    }
+
+    #[test]
     fn eviction_is_monotonic_under_shrinking_budgets() {
         // Property: budget eviction monotonic — a smaller budget never
         // yields MORE tokens than a bigger one on the same input.
@@ -868,10 +998,12 @@ mod tests {
             assistant_with_call_on("c3", "src/lib.rs"),
             tool_msg("c3", "post-edit contents ".repeat(100)),
         ];
-        // Below the raw total (~1300 tokens) but above what supersession
-        // alone leaves (~900), so eviction never has to fire and the
-        // untouched-neighbors assertions below stay meaningful.
-        let report = compact(&mut messages, 1_100).expect("should compact");
+        // Below the raw total (~1300 tokens), with the low WATERMARK (budget
+        // minus an eighth — what passes 3/4 actually reclaim toward) still
+        // above what supersession alone leaves (~900), so eviction never has
+        // to fire and the untouched-neighbors assertions below stay
+        // meaningful.
+        let report = compact(&mut messages, 1_250).expect("should compact");
         assert!(report.superseded >= 1, "{report:?}");
         match &messages[2].tool_results[0].output {
             ToolOutput::Ok { content } => {

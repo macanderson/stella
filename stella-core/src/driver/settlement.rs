@@ -8,8 +8,8 @@ use crate::event_sender::EventSender;
 /// the current turn. A breach persists across every remaining settled call
 /// in the turn, so without this the same warning would repeat on each one;
 /// the ledger claims the first warning per axis and swallows the rest.
-/// Constructed fresh per turn in `run_turn_with_sender`, so it resets when a
-/// new turn begins.
+/// Constructed fresh per turn — `TurnMemos::new`, which every `TurnState`
+/// constructor builds — so it resets when a new turn begins.
 #[derive(Default)]
 pub(super) struct BudgetWarnings {
     turn_warned: bool,
@@ -105,18 +105,29 @@ impl super::Engine<'_> {
     /// `record_spend` so child spend moves the HUD and trips observed-mode
     /// warnings exactly like the engine's own calls — money that only
     /// appeared in the total would be money no one saw arrive.
+    ///
+    /// `total_cost_usd` is `&mut` because the drained spend is the turn's
+    /// money too: `TurnOutcome`/`AgentEvent::Complete` report the turn total,
+    /// and `Complete`'s contract is "a summary of the `StepUsage` events that
+    /// preceded it" — a child's `StepUsage` is deliberately forwarded onto
+    /// the parent stream, so a total that excluded child spend contradicted
+    /// both the event contract and the guard beside it. Added BEFORE the
+    /// abort decision below, which reports this same number: when the child's
+    /// spend is what trips the cap, the abort must not under-report by
+    /// exactly that amount.
     pub(super) fn check_budget(
         &self,
         budget: &mut BudgetGuard,
-        total_cost_usd: f64,
+        total_cost_usd: &mut f64,
         warnings: &mut BudgetWarnings,
         events: &EventSender,
     ) -> Option<TurnOutcome> {
         let child_spend = self.tools.drain_sub_agent_spend_usd();
         if child_spend > 0.0 {
             record_settled_cost(budget, child_spend, warnings, events);
+            *total_cost_usd += child_spend;
         }
-        check_budget(budget, total_cost_usd, warnings, events)
+        check_budget(budget, *total_cost_usd, warnings, events)
     }
 }
 

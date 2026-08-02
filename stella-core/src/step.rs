@@ -806,9 +806,19 @@ where
 /// Drop guard for the paid-call window ([`Engine::run_model_call`]): armed
 /// before the retried provider dispatch, disarmed on both normal exits. It
 /// fires only when the turn future is dropped mid-await — the caller-side
-/// hard cancel — leaving one content-free `Cancelled` usage envelope so a
-/// possibly-billed in-flight call never vanishes from the accounting
-/// stream. Content-free by construction, same privacy rule as every other
+/// hard cancel — AND a paid attempt was genuinely in flight
+/// (`attempt_in_flight`, stored by the attempt closure exactly around its
+/// dispatch), leaving one content-free `Cancelled` usage envelope so a
+/// possibly-billed in-flight call never vanishes from the accounting stream.
+///
+/// The in-flight latch is what keeps a drop landing in a BACKOFF SLEEP
+/// silent: no attempt is running then, and the failed attempt that preceded
+/// the sleep already reported its own per-attempt `ProviderError` envelope —
+/// a second `Cancelled` envelope for the same single dispatch would
+/// double-report it. Mirrors `run_accounted_call`'s timeout-during-backoff
+/// discipline.
+///
+/// Content-free by construction, same privacy rule as every other
 /// `UsageIncomplete` envelope: no request or response body is representable.
 pub(crate) struct CancelUsageGuard {
     pub(crate) events: EventSender,
@@ -816,6 +826,7 @@ pub(crate) struct CancelUsageGuard {
     pub(crate) provider: String,
     pub(crate) started: std::time::Instant,
     pub(crate) armed: bool,
+    pub(crate) attempt_in_flight: Arc<AtomicBool>,
 }
 
 impl CancelUsageGuard {
@@ -826,7 +837,7 @@ impl CancelUsageGuard {
 
 impl Drop for CancelUsageGuard {
     fn drop(&mut self) {
-        if !self.armed {
+        if !self.armed || !self.attempt_in_flight.load(Ordering::SeqCst) {
             return;
         }
         let _ = self.events.send(AgentEvent::UsageIncomplete {

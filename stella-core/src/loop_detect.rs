@@ -79,9 +79,15 @@ const MAX_CYCLE_PERIOD: usize = 4;
 /// step, so an owned output meant a full heap copy of every tool result in the
 /// turn — quadratic in steps across a long turn — to compare bytes the
 /// transcript was already holding.
+///
+/// The call is a [`Cow`] for the same quadratic-copy reason: the driver
+/// borrows each call straight out of the transcript it is scanning (an
+/// `edit_file` input carries whole old/new file chunks, so an owned
+/// `ToolCall` re-cloned every step was the same cost the output's `Cow`
+/// was introduced to eliminate), while test fixtures own theirs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallRecord<'a> {
-    pub call: ToolCall,
+    pub call: Cow<'a, ToolCall>,
     pub output: Option<Cow<'a, ToolOutput>>,
     pub identity: Option<String>,
 }
@@ -278,7 +284,10 @@ fn detect_short_cycle(records: &[CallRecord<'_>], repeats_threshold: usize) -> O
     for period in 2..=MAX_CYCLE_PERIOD {
         // Reaching the threshold takes `period * repeats_threshold`
         // records; longer periods need strictly more, so stop entirely.
-        if records.len() < period * repeats_threshold {
+        // Saturating: the module's contract is "never panics on any input",
+        // and a pathological threshold must not overflow the multiply in a
+        // debug build.
+        if records.len() < period.saturating_mul(repeats_threshold) {
             break;
         }
         let pattern = &records[records.len() - period..];
@@ -308,7 +317,10 @@ fn detect_short_cycle(records: &[CallRecord<'_>], repeats_threshold: usize) -> O
         let repeats = matched / period;
         if repeats >= repeats_threshold {
             return Some(LoopVerdict::ShortCycle {
-                pattern: pattern.iter().map(|record| record.call.clone()).collect(),
+                pattern: pattern
+                    .iter()
+                    .map(|record| record.call.as_ref().clone())
+                    .collect(),
                 repeats,
             });
         }
@@ -332,11 +344,11 @@ mod tests {
         static NEXT_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         CallRecord {
-            call: ToolCall {
+            call: Cow::Owned(ToolCall {
                 call_id: format!("call_{id}"),
                 name: name.into(),
                 input,
-            },
+            }),
             output: output.map(Cow::Owned),
             // No snapshot: these fixtures exercise the raw-output
             // comparison. The identity path has its own witness in
@@ -910,6 +922,19 @@ mod tests {
     }
 
     #[test]
+    fn pathological_thresholds_do_not_overflow_the_cycle_arithmetic() {
+        // The "never panics on any input" contract covers the config too: a
+        // usize::MAX threshold must saturate, not overflow the
+        // `period * repeats_threshold` multiply in a debug build.
+        let records = vec![read("a.rs"); 8];
+        let config = LoopDetectionConfig {
+            exact_repeat_threshold: usize::MAX,
+            short_cycle_repeats: usize::MAX,
+        };
+        assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
+    }
+
+    #[test]
     fn evidence_is_none_for_no_loop() {
         assert_eq!(LoopVerdict::NoLoop.evidence(), None);
     }
@@ -929,7 +954,10 @@ mod tests {
     #[test]
     fn evidence_describes_short_cycle() {
         let verdict = LoopVerdict::ShortCycle {
-            pattern: vec![read("a.rs").call, edit("a.rs").call],
+            pattern: vec![
+                read("a.rs").call.into_owned(),
+                edit("a.rs").call.into_owned(),
+            ],
             repeats: 3,
         };
         let evidence = verdict.evidence().expect("loop verdict has evidence");

@@ -874,6 +874,7 @@ async fn complete_reassembles_a_streamed_tool_use_block() {
 struct RecordingObserver {
     calls: std::sync::Mutex<Vec<stella_protocol::ToolCall>>,
     deltas: std::sync::Mutex<Vec<String>>,
+    input_ticks: std::sync::atomic::AtomicU32,
 }
 
 impl RecordingObserver {
@@ -881,6 +882,7 @@ impl RecordingObserver {
         Self {
             calls: std::sync::Mutex::new(Vec::new()),
             deltas: std::sync::Mutex::new(Vec::new()),
+            input_ticks: std::sync::atomic::AtomicU32::new(0),
         }
     }
 }
@@ -891,6 +893,10 @@ impl ToolCallObserver for RecordingObserver {
     }
     fn text_delta(&self, delta: &str) {
         self.deltas.lock().unwrap().push(delta.to_string());
+    }
+    fn tool_input_delta(&self) {
+        self.input_ticks
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -1001,6 +1007,16 @@ async fn complete_observed_announces_a_tool_call_at_its_block_stop() {
     assert_eq!(
         announced[0].input,
         serde_json::json!({"path": "src/lib.rs"})
+    );
+    // Liveness: each streamed argument fragment ticks the observer, so a
+    // call-only generation registers against the engine's idle deadline
+    // instead of reading as total silence.
+    assert_eq!(
+        observer
+            .input_ticks
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "one input_json_delta fragment, one liveness tick"
     );
 }
 

@@ -1059,10 +1059,21 @@ async fn tool_dispatched_child_spend_aborts_the_parent_at_the_next_step_boundary
     let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
 
     match outcome {
-        TurnOutcome::Aborted { reason, .. } => assert!(
-            reason.contains("budget exceeded"),
-            "the parent must abort on the CHILDREN's spend, got: {reason}"
-        ),
+        TurnOutcome::Aborted { reason, cost_usd } => {
+            assert!(
+                reason.contains("budget exceeded"),
+                "the parent must abort on the CHILDREN's spend, got: {reason}"
+            );
+            // The abort's own figure must carry the money that tripped it:
+            // `Complete`/`TurnOutcome` totals are summaries of the StepUsage
+            // events on the stream, and the children's StepUsage is forwarded
+            // — a total excluding child spend contradicted the reason string
+            // sitting right beside it.
+            assert!(
+                (cost_usd - 1.20).abs() < 1e-9,
+                "the outcome's cost must include the children's spend, got {cost_usd}"
+            );
+        }
         other => panic!("expected a budget abort, got {other:?}"),
     }
     assert!(
@@ -1109,7 +1120,7 @@ async fn the_drain_is_destructive_so_child_spend_is_never_charged_twice() {
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, _rx) = mpsc::unbounded_channel();
 
-    engine.run_turn(&mut messages, &mut budget, &tx).await;
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
 
     assert!(
         tools.drains.load(Ordering::SeqCst) >= 2,
@@ -1120,6 +1131,13 @@ async fn the_drain_is_destructive_so_child_spend_is_never_charged_twice() {
         "0.25 spent once, charged once — got {}",
         budget.session_spent_usd()
     );
+    match outcome {
+        TurnOutcome::Completed { cost_usd, .. } => assert!(
+            (cost_usd - 0.25).abs() < 1e-9,
+            "a completed turn's total must include child spend exactly once, got {cost_usd}"
+        ),
+        other => panic!("expected completion, got {other:?}"),
+    }
 }
 
 #[test]

@@ -738,6 +738,11 @@ async fn aggregate_openai_stream(
                     output_index,
                     delta,
                 } => {
+                    // Liveness only (see `ToolCallObserver::tool_input_delta`):
+                    // a call-only generation must still register as producing.
+                    if let Some(observer) = observer {
+                        observer.tool_input_delta();
+                    }
                     tool_calls
                         .entry(output_index)
                         .or_default()

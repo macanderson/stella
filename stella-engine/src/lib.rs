@@ -11,7 +11,9 @@
 //! This crate exposes the same engine one step at a time:
 //!
 //! ```no_run
-//! use stella_engine::{BudgetGuard, BudgetMode, CancelToken, Engine, EventSender, StepOutcome};
+//! use stella_engine::{
+//!     BudgetGuard, BudgetMode, CancelToken, Engine, EventSender, StepOutcome, step_cap_reason,
+//! };
 //! # async fn drive(engine: &Engine<'_>, events: &EventSender, save: impl Fn(&str))
 //! # -> Option<String> {
 //! let messages = Vec::new();
@@ -20,6 +22,18 @@
 //! let mut state = engine.new_turn(messages, budget).with_cancel_token(cancel.clone());
 //!
 //! loop {
+//!     // The step cap is the HOST's loop bound when driving steps directly —
+//!     // `run_turn` applies it internally, but `run_step` deliberately does
+//!     // not (the cap is the host's, exposed via [`Engine::max_steps`] so it
+//!     // never keeps a second copy of the number). Without this gate a model
+//!     // that keeps varying its arguments — the shape loop detection
+//!     // deliberately ignores — drives the loop forever. A real host also
+//!     // emits the non-retryable `Error` event `run_turn` pairs with this
+//!     // exit (see `stella-serve`'s session loop for the production pattern).
+//!     if state.step() >= engine.max_steps() {
+//!         eprintln!("turn ended: {}", step_cap_reason(engine.max_steps()));
+//!         return None;
+//!     }
 //!     match engine.run_step(&mut state, events).await {
 //!         StepOutcome::Continue => {
 //!             // The one moment the transcript is guaranteed well-paired.
@@ -39,7 +53,11 @@
 //!
 //! Nothing here re-implements the loop. [`Engine::run_turn`] is itself a loop
 //! over [`Engine::run_step`], so a host driving steps and a CLI driving turns
-//! run the identical code and emit the identical [`AgentEvent`] sequence.
+//! run the identical per-step code and emit the identical per-step
+//! [`AgentEvent`] sequence. What `run_turn` adds is turn *framing* the host
+//! owns for itself in this mode: the `Stage(Execute)` event before the first
+//! step, the step-cap gate above, and — on that exit — a non-retryable `Error`
+//! carrying [`step_cap_reason`].
 //!
 //! # Stopping a turn: cancel, do not drop
 //!
