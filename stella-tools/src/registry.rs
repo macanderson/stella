@@ -77,6 +77,31 @@ pub struct ToolRegistry {
     late_tools: std::sync::RwLock<HashMap<String, Arc<dyn Tool>>>,
     root: PathBuf,
     touched: std::sync::Mutex<FileTouchLedger>,
+    /// `normalized workspace path → sha256 of the content THIS session last
+    /// observed`, and the whole of the no-clobber guarantee.
+    ///
+    /// Every successful touch records what the file looked like when this
+    /// agent was done with it — a read records what it read, a write records
+    /// what it wrote. Before a later mutation of the same path, the on-disk
+    /// content is re-hashed and compared: a mismatch means something outside
+    /// this session changed the file since this agent last looked, so the
+    /// mutation would silently overwrite work the agent never saw.
+    ///
+    /// # Why this needs no shared state
+    ///
+    /// It is deliberately NOT a lock, and there is no registry, daemon, or
+    /// lease anywhere. Each agent remembers only what it saw itself, which is
+    /// exactly enough: agent B's write is what makes agent A's memory stale,
+    /// so A detects it locally with no channel to B and no knowledge that B
+    /// exists. Two processes, two containers, or a human editing in an editor
+    /// are all the same case.
+    ///
+    /// A lock would be strictly weaker. It serializes writers but does nothing
+    /// about staleness: B waits, takes the lock, and overwrites the file A
+    /// just changed using a plan A's content no longer justifies. Waiting is
+    /// also the wrong cost model for an agent — being told "that moved, read
+    /// it again" is a cheap retry, where blocking burns a turn.
+    observed: std::sync::Mutex<HashMap<String, String>>,
     /// Paths `read_symbol` resolved and read, shared with the registered
     /// tool instance and drained once per execution into the file-touch
     /// ledger — the symbol's file is resolved through the code graph
@@ -460,6 +485,7 @@ impl ToolRegistry {
             late_tools: std::sync::RwLock::new(HashMap::new()),
             root,
             touched: std::sync::Mutex::new(FileTouchLedger::default()),
+            observed: std::sync::Mutex::new(HashMap::new()),
             span_reads,
             workspace_probe: std::sync::Mutex::new(None),
             turn_bracketing: std::sync::atomic::AtomicBool::new(false),
@@ -767,6 +793,32 @@ impl ToolRegistry {
         // tools yield zero or one op; `apply_edits` yields one Update per
         // distinct file in its batch.
         let pending_ops = self.classify_file_ops(name, input);
+        // The no-clobber guard. Refuse BEFORE executing: once a write lands,
+        // the other agent's work is already gone and the best this could do is
+        // narrate the loss. Returned as a tool `Error` rather than a turn
+        // abort because it is a recoverable, model-actionable condition — the
+        // message names the file and the fix, and re-reading is one cheap step
+        // where a failed turn would be a whole one.
+        let clobbered = self.clobbered_paths(&pending_ops);
+        if !clobbered.is_empty() {
+            return ToolOutput::Error {
+                message: format!(
+                    "refusing to write: {} changed since you last read {}. Another \
+                     agent (or a person) edited it after you looked, and this call \
+                     would overwrite their work with a plan formed against content \
+                     that no longer exists.\n\nRe-read {} and redo the change \
+                     against what is there now. Your edit is not lost — nothing was \
+                     written.",
+                    clobbered.join(", "),
+                    if clobbered.len() == 1 { "it" } else { "them" },
+                    if clobbered.len() == 1 {
+                        "the file"
+                    } else {
+                        "those files"
+                    },
+                ),
+            };
+        }
         // Updates need the pre-write content for the line diff; deletes need
         // it for the pre-deletion line count. Lossy UTF-8 so a binary file
         // still yields a deterministic (if approximate) line count.
@@ -1565,6 +1617,53 @@ impl ToolRegistry {
     /// `revision` assigned under the lock — concurrent touches may deliver
     /// out of order, but consumers keep the highest revision and stay
     /// consistent.
+    /// Record what this session now knows `path` to hold, hashed from disk.
+    ///
+    /// Called for every successful touch, reads included: a read is how an
+    /// agent acquires the belief a later write acts on, so it is exactly as
+    /// load-bearing here as a write. A path that no longer exists drops its
+    /// entry — after a delete there is nothing left to clobber, and the next
+    /// agent to create the file is starting fresh rather than overwriting.
+    fn remember_observed(&self, path: &str, full: &std::path::Path) {
+        let mut observed = self.observed.lock().unwrap_or_else(|p| p.into_inner());
+        match std::fs::read(full) {
+            Ok(bytes) => {
+                observed.insert(path.to_string(), crate::staleness::hex_sha256(&bytes));
+            }
+            Err(_) => {
+                observed.remove(path);
+            }
+        }
+    }
+
+    /// The paths in `pending` this call would clobber — ones this session has
+    /// seen before whose bytes on disk no longer match what it saw.
+    ///
+    /// Only `Update` and `Delete` can clobber. A `Create` is checked by the
+    /// filesystem itself, and a `Read` changes nothing. A path this session
+    /// has never observed is NOT flagged: this guard's claim is "you are about
+    /// to overwrite a change you never saw", and it can only make that claim
+    /// about a file it watched the agent look at. Blind writes to never-read
+    /// files are a separate policy question and are deliberately left alone
+    /// here, so this check has no false positives.
+    ///
+    /// An unreadable file is not a conflict either — the tool's own error
+    /// path reports that far better than a staleness message would.
+    fn clobbered_paths(&self, pending: &[PendingTouch]) -> Vec<String> {
+        let observed = self.observed.lock().unwrap_or_else(|p| p.into_inner());
+        pending
+            .iter()
+            .filter(|p| matches!(p.op, FileOp::Update | FileOp::Delete))
+            .filter(|p| {
+                observed.get(&p.path).is_some_and(|seen| {
+                    std::fs::read(&p.full)
+                        .is_ok_and(|bytes| crate::staleness::hex_sha256(&bytes) != *seen)
+                })
+            })
+            .map(|p| p.path.clone())
+            .collect()
+    }
+
     fn record_touch(
         &self,
         pending: PendingTouch,
@@ -1573,6 +1672,11 @@ impl ToolRegistry {
         input: &Value,
         bus: Option<&HookBus>,
     ) {
+        // Refresh this session's belief about the file before anything else in
+        // here can fail or return early: the ledger is telemetry, but this is
+        // the guarantee, and a touch whose digest went unrecorded would leave
+        // the NEXT write to this path unguarded.
+        self.remember_observed(&pending.path, &pending.full);
         let reason = input
             .get("reason")
             .and_then(|v| v.as_str())

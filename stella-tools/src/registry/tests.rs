@@ -807,3 +807,128 @@ async fn exec_ok(reg: &ToolRegistry, name: &str, input: serde_json::Value) {
 mod chain;
 mod schema_gate;
 mod touch;
+
+/// The no-clobber guarantee, end to end and across two independent sessions.
+///
+/// Two registries over one workspace stand in for two agents: they share no
+/// state, no lock and no channel, exactly as two processes would. The claim is
+/// that A cannot silently overwrite B's edit — not that A is made to wait for
+/// it.
+#[tokio::test]
+async fn one_agent_cannot_clobber_another_agents_edit() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("shared.txt");
+    std::fs::write(&file, "original\n").unwrap();
+
+    let agent_a = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+    let agent_b = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+
+    // A reads the file — this is the belief its later write will act on.
+    let read = agent_a
+        .execute(
+            "read_file",
+            &serde_json::json!({ "path": "shared.txt", "reason": "planning an edit" }),
+        )
+        .await;
+    assert!(!read.is_error(), "A can read the file: {read:?}");
+
+    // B edits it. B has never heard of A and takes no lock.
+    let b_wrote = agent_b
+        .execute(
+            "write_file",
+            &serde_json::json!({
+                "path": "shared.txt",
+                "content": "B's careful work\n",
+                "reason": "B does its job",
+            }),
+        )
+        .await;
+    assert!(!b_wrote.is_error(), "B's write lands: {b_wrote:?}");
+
+    // A now writes against content that no longer exists. This is the exact
+    // moment work gets destroyed in a lock-based design — B has released, so
+    // A proceeds and B's edit is gone.
+    let a_wrote = agent_a
+        .execute(
+            "write_file",
+            &serde_json::json!({
+                "path": "shared.txt",
+                "content": "A's stale work\n",
+                "reason": "A does its job",
+            }),
+        )
+        .await;
+    match &a_wrote {
+        ToolOutput::Error { message } => {
+            assert!(
+                message.contains("shared.txt"),
+                "the refusal names the file so the model can act on it: {message}"
+            );
+            assert!(
+                message.contains("nothing was written"),
+                "the refusal says the edit was not half-applied: {message}"
+            );
+        }
+        other => panic!("A's stale write must be refused, got {other:?}"),
+    }
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "B's careful work\n",
+        "B's work survives untouched — this is the whole guarantee"
+    );
+
+    // And the recovery is one cheap step, not a failed turn: re-read, then
+    // write. This is why staleness beats a lock for an agent — being told to
+    // look again costs a step; blocking costs a turn.
+    let reread = agent_a
+        .execute(
+            "read_file",
+            &serde_json::json!({ "path": "shared.txt", "reason": "re-reading after the refusal" }),
+        )
+        .await;
+    assert!(!reread.is_error(), "A re-reads: {reread:?}");
+    let retry = agent_a
+        .execute(
+            "write_file",
+            &serde_json::json!({
+                "path": "shared.txt",
+                "content": "A's work, rebased on B's\n",
+                "reason": "redone against current content",
+            }),
+        )
+        .await;
+    assert!(
+        !retry.is_error(),
+        "after re-reading, A writes normally: {retry:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "A's work, rebased on B's\n"
+    );
+}
+
+/// A session writing its own file repeatedly must never trip the guard — the
+/// digest it remembers after each write is the one it finds on the next.
+/// Without this, the guarantee would make ordinary single-agent work fail.
+#[tokio::test]
+async fn a_session_never_conflicts_with_itself() {
+    let root = tempfile::tempdir().unwrap();
+    let agent = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+    for i in 0..3 {
+        let out = agent
+            .execute(
+                "write_file",
+                &serde_json::json!({
+                    "path": "mine.txt",
+                    "content": format!("revision {i}\n"),
+                    "reason": "iterating",
+                }),
+            )
+            .await;
+        assert!(!out.is_error(), "write {i} succeeds: {out:?}");
+    }
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("mine.txt")).unwrap(),
+        "revision 2\n"
+    );
+}
