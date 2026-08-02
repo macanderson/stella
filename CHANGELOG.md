@@ -35,6 +35,8 @@ skip the roll) were re-inserted the same way.
 
 ## [Unreleased]
 
+## [0.6.64] — 2026-08-02
+
 ### Changed
 
 - **Stella now asks each model for what that model can actually emit.** The
