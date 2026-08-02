@@ -202,9 +202,27 @@ pub struct EngineConfig {
     /// once per retry, which would multiply the very window the deadline
     /// exists to close.
     ///
-    /// 10 minutes: above any generation a caller would still want (it matches
-    /// `UNARY_READ_TIMEOUT`, the most generous transport bound in the
-    /// workspace) while staying finite.
+    /// 13.6 minutes, and the number is measured rather than chosen. It was 10
+    /// (matching `UNARY_READ_TIMEOUT`) on the reasoning that no generation a
+    /// caller still wants runs longer. That premise is false at high effort
+    /// against a large output ceiling: on the Terminal-Bench 2.1 gate a
+    /// comparator on the same model, same API and same effort earned reward
+    /// `1.0` on single steps of 624s and 756s. A 600s bound kills exactly
+    /// those steps — and kills them *after* paying for them.
+    ///
+    /// The rule fixing the constant is "never be the side that stops first":
+    /// 60s above the longest single step the comparator was ever rewarded for
+    /// (756s). Raising it is what makes a raised output ceiling reachable —
+    /// the two are one budget, and moving either alone provably does nothing,
+    /// which is why the earlier 16384 → 32000 → 64000 attempts each traded
+    /// one truncation mode for another instead of clearing it.
+    ///
+    /// This bounds the *streaming* path, which is the real request path:
+    /// adapters bound their streams by `STREAM_IDLE_TIMEOUT` (120s between
+    /// chunks, not a total), so nothing under this cuts a generation that
+    /// keeps producing. A non-streaming adapter still carries its own
+    /// `UNARY_READ_TIMEOUT` (600s) and will bind before this does — that
+    /// ceiling is untouched here and remains a per-adapter transport concern.
     pub model_timeout: Option<Duration>,
     /// Wall clock one turn may spend, used to decide whether a length
     /// continuation is affordable. `None` — the default — leaves the
@@ -265,7 +283,7 @@ impl Default for EngineConfig {
             summarize_keep_recent: 8,
             max_steps: 200,
             tool_timeout: Some(Duration::from_secs(15 * 60)),
-            model_timeout: Some(Duration::from_secs(10 * 60)),
+            model_timeout: Some(Duration::from_secs(816)),
             // Off by default: only a caller that knows its own deadline can
             // supply a true one, and a guessed budget would decline work the
             // caller had time for.

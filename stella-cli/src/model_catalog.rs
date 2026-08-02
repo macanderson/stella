@@ -734,7 +734,21 @@ fn install_runtime_catalog(store: &CatalogStore) {
                             }),
                     },
                 )
-                .with_reasoning(listing.pricing.supports_reasoning),
+                .with_reasoning(listing.pricing.supports_reasoning)
+                // The model's own completion ceiling, from `limit.output` on
+                // the card. Parsed, stored and read back before this line
+                // existed, then dropped here — the same way the cache-write
+                // rate was dropped at this site before #97, and with the same
+                // consequence: the engine fell back to one global 16384 for
+                // every model, and truncated steps that the model had room to
+                // finish. Saturating rather than wrapping, so an absurd card
+                // value cannot silently become a small one.
+                .with_max_output_tokens(
+                    listing
+                        .pricing
+                        .max_output_tokens
+                        .map(|v| v.min(u32::MAX as u64) as u32),
+                ),
             );
             known.insert(key);
         }

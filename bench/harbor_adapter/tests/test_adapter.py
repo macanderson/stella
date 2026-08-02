@@ -595,7 +595,7 @@ class TestForwardedEnv:
             assert posture["agents"][role] == {
                 "effort": "xhigh",
                 "reasoning": "on",
-                "params": {"max_tokens": 32000},
+                "params": {"max_tokens": 64000},
             }
         assert posture["agents"]["triage"] == {"effort": "low", "reasoning": "off"}
         assert json.loads(normalized) == posture
@@ -603,7 +603,7 @@ class TestForwardedEnv:
         # edits land here deliberately. Keep it in step with the superseding
         # table in bench/READINESS.md, not the protocol's earlier `max` table.
         assert digest == (
-            "4249a1f95976f388cc8c5177a8c085ff0152fe5e6884d3dbfaada349d989b725"
+            "9d7ad135db12e32d4519f893b8d8ed9d918b0ef54c7a4e4d22d1398b0015785b"
         )
 
     def test_excludes_all_provider_keys_and_selects_only_effective_provider(

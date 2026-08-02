@@ -79,6 +79,7 @@ _FIXED_ADAPTER_SOURCE_PATHS = (
     "bench/harbor_adapter/stella_harbor/portability.py",
     "bench/harbor_adapter/stella_harbor/posture.py",
     "bench/harbor_adapter/stella_harbor/secure_launcher.py",
+    "bench/harbor_adapter/stella_harbor/turn_budget.py",
 )
 _FIXED_READINESS_SOURCE_PATHS = (
     "bench/readiness/synthetic-adapter-sentinel/environment/Dockerfile",
