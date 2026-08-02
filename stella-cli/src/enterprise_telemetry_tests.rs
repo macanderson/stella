@@ -630,6 +630,10 @@ fn managed_identifiers_are_bounded_before_any_store_or_ledger_mutation() {
         );
         std::env::set_var("STELLA_TEST_TELEMETRY_TOKEN", "separate-bearer-token");
     }
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "test fixture: a one-off oversized literal, never a log field"
+    )]
     let too_long: &'static str = Box::leak("x".repeat(129).into_boxed_str());
     let managed = signed_managed(
         "STELLA_TEST_VERIFY_SECRET",

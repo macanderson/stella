@@ -128,7 +128,7 @@ chasing the citations in the same PR.
 
 ## Where does my change go? — a workspace tour
 
-Fifteen crates sounds like a lot; the rule of thumb is one sentence each:
+Eighteen crates sounds like a lot; the rule of thumb is one sentence each:
 
 | You want to… | Go to |
 |---|---|
@@ -138,6 +138,7 @@ Fifteen crates sounds like a lot; the rule of thumb is one sentence each:
 | Change a CLI command, flag, or the agent wiring | `stella-cli` |
 | Change the REPL rendering / panels / keybindings | `stella-tui` |
 | Touch shared types crossing a crate boundary | `stella-protocol` (zero logic, zero I/O — types only) |
+| Log why the program did something (not what the agent did) | `stella-diag` (a leaf; a field that could carry a path or model output will not compile) |
 | Persistence: executions, events, telemetry (SQLite) | `stella-store` |
 | Retrieval: graph, embeddings, episodic memory | `stella-context` |
 | Tree-sitter code indexing | `stella-graph` |

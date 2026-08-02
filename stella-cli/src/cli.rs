@@ -152,6 +152,41 @@ pub(crate) struct GlobalArgs {
     /// NO_COLOR.
     #[arg(long, global = true, hide_short_help = true)]
     pub(crate) no_anim: bool,
+
+    /// Diagnostics: -v info, -vv debug, -vvv trace
+    ///
+    /// Turns on the diagnostic plane — the stream that explains why stella
+    /// behaved the way it did, as distinct from what the agent did (the
+    /// event stream) or what it cost (the receipts). Records carry a stable
+    /// code and typed fields, never prompts, paths, or model output.
+    /// Default is `warn`. See --log-level for per-crate control.
+    #[arg(short = 'v', long = "verbose", global = true, action = clap::ArgAction::Count)]
+    pub(crate) verbose: u8,
+
+    /// Diagnostic filter, per crate: "warn,stella_store=debug"
+    ///
+    /// A comma-separated spec. A bare level sets the default; `target=level`
+    /// overrides it for that module subtree, longest match winning — so
+    /// `warn,stella_store=debug,stella_model=trace` is quiet everywhere
+    /// except where you are looking. Levels: off, error, warn, info, debug,
+    /// trace. A target is a Rust module path, so library crates are
+    /// `stella_store`, `stella_model`, … and this binary's own records are
+    /// under `stella` (hyphens are accepted too: `stella-store=debug`).
+    /// Also settable as STELLA_LOG (this flag wins over it, and over -v).
+    /// An unrecognised clause is skipped and reported, never fatal.
+    #[arg(long, global = true, value_name = "SPEC", hide_short_help = true)]
+    pub(crate) log_level: Option<String>,
+
+    /// Write diagnostics as JSONL to a file (created 0600)
+    ///
+    /// Defaults to `info` where stderr defaults to `warn`, since a file
+    /// nobody reads until something breaks may as well be able to explain it;
+    /// --log-level or -v raise it further. An unwritable path is reported and
+    /// the run continues. For a crash you did not anticipate you need no flag
+    /// at all: stella writes .stella/private/crash-*.jsonl on a panic or a
+    /// failed run, and `stella doctor --last-failure` prints the newest.
+    #[arg(long, global = true, value_name = "PATH", hide_short_help = true)]
+    pub(crate) log_file: Option<std::path::PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -648,6 +683,15 @@ pub(crate) enum Command {
         /// are both left untouched. The next session starts a fresh store.
         #[arg(long)]
         repair: bool,
+
+        /// Print the newest crash dump instead of running the checks:
+        /// .stella/private/crash-*.jsonl, written automatically when a run
+        /// panics or exits non-zero. It is content-free by construction — the
+        /// diagnostic record type cannot hold a prompt, a path, or model
+        /// output — so it is safe to attach to a bug report without reading
+        /// it first. Exits non-zero if there is no dump to print.
+        #[arg(long)]
+        last_failure: bool,
     },
 
     /// Manage BYOK provider keys in ~/.stella/credentials.toml

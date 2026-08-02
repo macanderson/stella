@@ -98,11 +98,43 @@ impl Check {
     }
 }
 
-/// Entry point for `stella doctor [--repair]`.
-pub fn run_doctor(repair: bool) -> Result<(), String> {
+/// Entry point for `stella doctor [--repair] [--last-failure]`.
+pub fn run_doctor(repair: bool, last_failure: bool) -> Result<(), String> {
     let workspace_root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
+    if last_failure {
+        return print_last_failure(&workspace_root);
+    }
     run_doctor_at(&workspace_root, repair)
+}
+
+/// Print the newest crash dump — `docs/design/diagnostics.md` §7.4.
+///
+/// The file is content-free by construction (§5.2 makes a record that carries
+/// a prompt, a path, or model output a *compile* error), which is what turns
+/// "please attach your log" from a request needing a privacy review into one a
+/// stranger on the internet can act on immediately. Printing it here rather
+/// than only naming it means a user can eyeball what they are about to send,
+/// which is the other half of being able to send it comfortably.
+fn print_last_failure(workspace_root: &Path) -> Result<(), String> {
+    let dir = crate::diag_boot::crash_dir(workspace_root);
+    let Some(path) = stella_diag::latest_crash_file(&dir) else {
+        return Err(format!(
+            "no crash dump in {}. One is written automatically when a run panics or \
+             exits non-zero; if the run you are chasing succeeded, there is nothing to show.",
+            dir.display()
+        ));
+    };
+    let body = std::fs::read_to_string(&path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+
+    println!("{}", path.display().to_string().bold());
+    println!(
+        "{}\n",
+        "content-free by construction — safe to attach to a bug report".dimmed()
+    );
+    print!("{body}");
+    Ok(())
 }
 
 /// The command with its workspace passed in, so tests can drive a scratch
