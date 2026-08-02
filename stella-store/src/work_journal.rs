@@ -62,6 +62,21 @@ fn turn_ref(session: &str, turn: u32) -> String {
     format!("refs/stella/{session}/turn/{turn}")
 }
 
+/// Stella's own records live under a reserved prefix, so a blob can never
+/// collide with a real workspace path.
+fn journal_blob_path(name: &str) -> String {
+    format!(".stella-journal/{name}")
+}
+
+/// The reserved blob holding the in-flight turn's resume point.
+///
+/// The checkpoint lives *here*, in the same commit graph as the work it
+/// describes, and not in a transient file beside it. A resume point and the
+/// file changes it is a resume point *for* are one fact; splitting them across
+/// two stores means a recovery path has to decide which one to believe when
+/// they disagree — and they will, because nothing can update both atomically.
+pub const CHECKPOINT_BLOB: &str = "checkpoint.json";
+
 impl WorkJournal {
     /// Open (creating on first use) the durable history for `workspace_root`.
     ///
@@ -148,13 +163,17 @@ impl WorkJournal {
     /// content that has no file — the turn checkpoint, the staleness map),
     /// as one commit on this session's ref.
     ///
+    /// A blob whose content is `None` is *removed* from the record. That is
+    /// what lets a turn ending retract its resume point in the same substrate
+    /// that wrote it, rather than needing a second store with its own delete.
+    ///
     /// Returns the new commit id. Paths are workspace-relative and are staged
     /// individually — never `git add -A`, which would sweep in the user's own
     /// unrelated work and make the history a lie about what the agent did.
     pub fn record(
         &self,
         paths: &[String],
-        blobs: &[(&str, &str)],
+        blobs: &[(&str, Option<&str>)],
         message: &str,
     ) -> Result<String> {
         let parent = self.session_tip();
@@ -184,16 +203,27 @@ impl WorkJournal {
         }
 
         for (name, content) in blobs {
-            let oid = self.hash_blob(content)?;
-            // 100644 = a regular file. These are stella's own records, kept
-            // under a reserved prefix so they can never collide with a real
-            // workspace path.
-            self.git(&[
-                "update-index",
-                "--add",
-                "--cacheinfo",
-                &format!("100644,{oid},.stella-journal/{name}"),
-            ])?;
+            let entry = journal_blob_path(name);
+            match content {
+                Some(content) => {
+                    let oid = self.hash_blob(content)?;
+                    // 100644 = a regular file. These are stella's own records,
+                    // kept under a reserved prefix so they can never collide
+                    // with a real workspace path.
+                    self.git(&[
+                        "update-index",
+                        "--add",
+                        "--cacheinfo",
+                        &format!("100644,{oid},{entry}"),
+                    ])?;
+                }
+                // `--force-remove` drops the entry whether or not the file
+                // exists in the work tree — and it never does for these, which
+                // is the whole point of a blob: it has no file.
+                None => {
+                    self.git(&["update-index", "--force-remove", "--", &entry])?;
+                }
+            }
         }
 
         let tree = self.git(&["write-tree"])?.trim().to_string();
@@ -259,6 +289,57 @@ impl WorkJournal {
             )));
         }
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    /// Write the in-flight turn's resume point, replacing any earlier one.
+    ///
+    /// One commit per step boundary. Measurably dearer than an atomic file
+    /// write — about 27ms against 8ms for a transcript-sized snapshot — and
+    /// the right trade anyway: a step is a model call, so the difference is
+    /// noise beside it, and what it buys is that the resume point and the file
+    /// changes it describes share one commit graph instead of needing to be
+    /// reconciled across two stores.
+    pub fn record_checkpoint(&self, json: &str) -> Result<String> {
+        self.record(
+            &[],
+            &[(CHECKPOINT_BLOB, Some(json))],
+            "stella: turn checkpoint",
+        )
+    }
+
+    /// Retract the resume point — the turn it described reached a terminal
+    /// outcome, and a checkpoint that outlives its turn invites a resume that
+    /// replays work the caller already saw finish.
+    ///
+    /// Idempotent, and cheap when there is nothing to retract: every terminal
+    /// path discards unconditionally, including turns that ended before their
+    /// first step boundary, so the common case must not cost a commit. One
+    /// `cat-file -e` answers that.
+    pub fn clear_checkpoint(&self) -> Result<()> {
+        if self.checkpoint().is_none() {
+            return Ok(());
+        }
+        self.record(
+            &[],
+            &[(CHECKPOINT_BLOB, None)],
+            "stella: turn checkpoint retired",
+        )?;
+        Ok(())
+    }
+
+    /// The in-flight turn's resume point as of this session's tip, or `None`
+    /// when no turn was interrupted.
+    ///
+    /// An unreadable record answers `None` for the same reason a missing one
+    /// does: both mean "nothing to resume from", and the recovery path is
+    /// identical — re-run the prompt.
+    pub fn checkpoint(&self) -> Option<String> {
+        let tip = self.session_tip()?;
+        self.git(&[
+            "show",
+            &format!("{tip}:{}", journal_blob_path(CHECKPOINT_BLOB)),
+        ])
+        .ok()
     }
 
     /// Mark `commit` as the state at the end of `turn`, so it can be replayed
@@ -355,15 +436,86 @@ mod tests {
         let c1 = journal
             .record(
                 &["a.txt".into()],
-                &[("checkpoint.json", r#"{"version":1,"step":3}"#)],
+                &[(CHECKPOINT_BLOB, Some(r#"{"version":1,"step":3}"#))],
                 "turn 7 step 3",
             )
             .unwrap();
         journal.mark_turn(7, &c1).unwrap();
 
         assert_eq!(
-            journal.blob_at_turn(7, "checkpoint.json").unwrap(),
+            journal.blob_at_turn(7, CHECKPOINT_BLOB).unwrap(),
             r#"{"version":1,"step":3}"#
+        );
+    }
+
+    #[test]
+    fn a_checkpoint_survives_verbatim_and_clearing_is_idempotent() {
+        // Moved here from the sidecar journal when the checkpoint folded into
+        // this store. The bytes must come back EXACTLY as written: they are a
+        // `Checkpoint::to_json` payload whose version gate lives in
+        // stella-core, and any re-encoding (storing the `String` through a
+        // serializer, say) would hand that gate an escaped JSON string literal
+        // instead of a checkpoint.
+        let (_guard, ws, store) = scratch();
+        let journal = WorkJournal::open_in(&store, &ws, "ses-verbatim").unwrap();
+
+        assert_eq!(
+            journal.checkpoint(),
+            None,
+            "no interrupted turn means no resume point"
+        );
+        // Clearing before anything was ever written is success: a turn that
+        // ended on its first step discards without having persisted.
+        journal
+            .clear_checkpoint()
+            .expect("clearing an absent checkpoint is not an error");
+
+        let json = r#"{"version":1,"step":3,"messages":[],"nested":{"quote":"\"x\""}}"#;
+        journal.record_checkpoint(json).unwrap();
+        assert_eq!(
+            journal.checkpoint().as_deref(),
+            Some(json),
+            "stored verbatim — not re-serialized"
+        );
+
+        // Rewriting replaces rather than appends: one live turn, one point.
+        let second = r#"{"version":1,"step":4}"#;
+        journal.record_checkpoint(second).unwrap();
+        assert_eq!(journal.checkpoint().as_deref(), Some(second));
+
+        journal.clear_checkpoint().unwrap();
+        assert_eq!(
+            journal.checkpoint(),
+            None,
+            "a finished turn leaves nothing for a later resume to replay"
+        );
+        journal
+            .clear_checkpoint()
+            .expect("clearing twice is still success");
+    }
+
+    #[test]
+    fn retracting_a_checkpoint_leaves_the_workspace_files_alone() {
+        // `--force-remove` drops an index entry; the fear it raises is that it
+        // reaches the work tree too. It must not: the agent's files are the
+        // whole point of the record, and a turn ending is not a reason to
+        // forget them.
+        let (_guard, ws, store) = scratch();
+        std::fs::write(ws.join("kept.txt"), "real work\n").unwrap();
+        let journal = WorkJournal::open_in(&store, &ws, "ses-retract").unwrap();
+        journal
+            .record(&["kept.txt".into()], &[], "the agent's write")
+            .unwrap();
+        journal.record_checkpoint(r#"{"step":2}"#).unwrap();
+
+        journal.clear_checkpoint().unwrap();
+
+        let tip = journal.session_tip().unwrap();
+        journal.mark_turn(1, &tip).unwrap();
+        assert_eq!(journal.read_at_turn(1, "kept.txt").unwrap(), "real work\n");
+        assert!(
+            ws.join("kept.txt").exists(),
+            "the file on disk is untouched by a checkpoint retraction"
         );
     }
 

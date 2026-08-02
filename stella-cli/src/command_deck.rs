@@ -445,7 +445,6 @@ pub async fn run_deck_session(
         &cfg.durability,
         &registry,
         &cfg.workspace_root,
-        sidecar_dir.clone(),
         &session_record.id,
     ) {
         let _ = deck_tx.send(system_notice(warning));
@@ -1043,7 +1042,6 @@ pub async fn run_deck_session(
                                     &cfg.durability,
                                     &registry,
                                     &cfg.workspace_root,
-                                    sidecar_dir.clone(),
                                     &session_record.id,
                                 ) {
                                     let _ = deck_tx.send(chrome_note(warning));

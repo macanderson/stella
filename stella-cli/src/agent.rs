@@ -2033,13 +2033,9 @@ impl SessionPresence {
         // stderr, not stdout: `--output-format json` owns stdout, and a
         // durability advisory must never land inside a machine-readable
         // document.
-        if let Some(warning) = crate::durability::bind_session(
-            &cfg.durability,
-            tools,
-            &cfg.workspace_root,
-            registry.sidecar_dir(&record.id),
-            &record.id,
-        ) {
+        if let Some(warning) =
+            crate::durability::bind_session(&cfg.durability, tools, &cfg.workspace_root, &record.id)
+        {
             eprintln!("  {warning}");
         }
         Self {

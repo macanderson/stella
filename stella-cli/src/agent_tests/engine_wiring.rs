@@ -57,7 +57,8 @@ fn a_bound_session_checkpoints_from_every_role() {
     // role can be left out, and "left out" is invisible from inside the engine
     // crate — an unbound sink is indistinguishable from a session that simply
     // never crashed. This is the wire.
-    let dir = tempfile::tempdir().unwrap();
+    let store = tempfile::tempdir().unwrap();
+    let ws = tempfile::tempdir().unwrap();
     let cfg = cfg_for("zai");
 
     // Unbound: no sink, so `persist_checkpoint` does not serialize a whole
@@ -66,10 +67,18 @@ fn a_bound_session_checkpoints_from_every_role() {
         crate::agent::engine_config_for(&cfg)
             .checkpoint_sink
             .is_none(),
-        "a session with no durable location attaches nothing",
+        "a session with no durable record attaches nothing",
     );
 
-    cfg.durability.bind(dir.path().to_path_buf());
+    // `open_in`, never `open`: the latter reads `STELLA_HOME`, and a test that
+    // touched a process-global would race its siblings.
+    let record = stella_store::work_journal::WorkJournal::open_in(
+        store.path(),
+        ws.path(),
+        "ses-engine-wiring",
+    )
+    .unwrap();
+    cfg.durability.bind(record.clone());
 
     let worker = ModelRef::new("zai", "glm-5.2".to_string());
     for (role, engine) in [
@@ -86,16 +95,13 @@ fn a_bound_session_checkpoints_from_every_role() {
         );
     }
 
-    // And it reaches the file the store will read back — the binding is live,
+    // And it reaches the record the store reads back — the binding is live,
     // not merely present.
     crate::agent::engine_config_for(&cfg)
         .checkpoint_sink
         .expect("bound")
         .persist("{\"version\":1}");
-    assert_eq!(
-        stella_store::journal::read_checkpoint(dir.path()).as_deref(),
-        Some("{\"version\":1}"),
-    );
+    assert_eq!(record.checkpoint().as_deref(), Some("{\"version\":1}"));
 }
 
 #[test]
