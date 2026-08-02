@@ -1596,6 +1596,16 @@ impl<'a> Pipeline<'a> {
         // solo-provider setups do) previously aborted here after one model
         // call, having done no work at all. Degrade to the unauthored verify
         // ladder instead, and say so once.
+        // Whether this is the `create_worktrees` caller — a plain single-shot
+        // run the operator asked to happen in a worktree — as opposed to
+        // best-of-N or an authored witness. Read from the CALLER's argument,
+        // before the degradation below shadows it, because a requested-then-
+        // degraded authored witness is still not this caller.
+        //
+        // Exact by construction: `run` takes the direct path when
+        // `n == 1 && !authored_witness && !isolate`, so reaching here with
+        // `n == 1 && !author_witness` means `isolate` was the only reason.
+        let single_shot_isolation = n == 1 && !author_witness;
         // `can_author_independent_witness` already gated `author_witness` and
         // announced any degradation, so this is the invariant guard for that
         // decision — silent on purpose, never a second warning.
@@ -1753,20 +1763,23 @@ impl<'a> Pipeline<'a> {
                     // conflicting files; the winning work stays recoverable.
                     Err(e) => adopt_failure = Some(e),
                 }
-            } else if n == 1 {
-                // A SINGLE candidate that did not pass. Discarding it is right
-                // for best-of-N — the operator asked for the best of several
-                // and none was good, and the losers were never meant to
-                // survive. It is wrong here, and this branch has a third caller
-                // now that `create_worktrees` routes a plain single-shot run
-                // through isolation: that operator asked where the work should
-                // *happen*, not that it be thrown away unless it verified.
+            } else if single_shot_isolation {
+                // The `create_worktrees` run that did not pass. Discarding is
+                // right for best-of-N — the operator asked for the best of
+                // several and none was good, and the losers were never meant to
+                // survive. It is also right for an authored-witness abort,
+                // where the candidate is *poisoned* rather than merely
+                // unverified (a tampered artifact, an author that edited
+                // production code) and `witness_isolation`'s tests pin its
+                // removal.
                 //
-                // Without this they would be strictly worse off than with
-                // isolation off, where a failed run at least leaves its changes
-                // in the tree to look at. So keep the snapshot and name it —
-                // the same posture as the adopt-failure arm just above, and for
-                // the same reason: unverified is not worthless.
+                // It is wrong for this third caller. That operator asked where
+                // the work should *happen*, not that it be thrown away unless
+                // it verified — and without this they end up strictly worse off
+                // than with isolation off, where a failed run at least leaves
+                // its changes in the tree to look at. So keep the snapshot and
+                // name it: the same posture as the adopt-failure arm just
+                // above, and for the same reason — unverified is not worthless.
                 self.warn(format!(
                     "this run's changes did not verify, so they were not adopted into your \
                      working tree — they are kept at {} for you to inspect or salvage",
