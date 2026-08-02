@@ -239,8 +239,8 @@ Two modes. They **must be distinguishable in the signature and never inferred**
 from whether a tree happens to be present.
 
 **Apply — the default.** Replay against a tree the caller already has, gated on
-the fingerprint in §2. Fast, and the honest answer for the same-laptop-next-
-morning case. On `Drifted` or `Unknown` it refuses, per §2.
+the fingerprint in §2. Fast, and the honest answer for the
+same-laptop-next-morning case. On `Drifted` or `Unknown` it refuses, per §2.
 
 **Materialize.** Write the agent-touched subset out of the pack onto a base the
 caller names, then replay. This is the cross-machine case, and its limit must
