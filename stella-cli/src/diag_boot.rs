@@ -14,22 +14,38 @@
 //! is frequently not a request the user can fulfil. Hence [`install`], and
 //! hence the crash ring reaching disk without anyone having asked for it.
 //!
-//! ## No global handle, on purpose
+//! ## The handle may be ambient; the context may not
 //!
-//! [`install`] hands the [`Dx`] back and `main` holds it; nothing here is a
-//! `static`. §7.1 is emphatic about why, and it is the same reason invariant 2
-//! bans ambient state in the engine: a handle that is reachable from anywhere
-//! is a handle nothing has to declare it uses, and the first symptom is a test
-//! that cannot arrange for silence.
+//! [`install`] hands the [`Dx`] back and `main` holds it. It *also* parks a
+//! clone in a `OnceLock`, and the distinction between what is allowed to be
+//! ambient here is worth being precise about, because §7.1 is emphatic on the
+//! subject.
 //!
-//! The panic hook — genuinely a global, since it takes no parameter — closes
-//! over its own `Arc` clone rather than reaching for a shared slot, so the one
-//! place that *needs* ambient access gets it without offering it to everyone
-//! else.
+//! What §7.1 forbids is an ambient **`Cx`** — a thread-local or task-local
+//! carrying which session/turn/step a record belongs to. That is wrong under
+//! `!Send` turn futures and wrong under `tokio` task migration, and stella does
+//! not need it: invariant 2 already forces every decision function to receive
+//! its inputs explicitly, so correlation rides as a parameter. It still does —
+//! [`DomainBridge`](crate::diag_bridge::DomainBridge) accrues its own `Cx` from
+//! the event stream and stamps each record itself.
+//!
+//! A **sink handle** is a different animal: process-wide configuration fixed at
+//! boot, exactly like the panic hook, which is genuinely global because it
+//! takes no parameter. The event drains ([`spawn_renderer`] and
+//! [`spawn_forwarder`]) are spawned from thirteen call sites across the deck,
+//! fleet and sub-session paths, most of which have no `Dx` in scope and no
+//! reason to grow a parameter for one. Threading it there would buy nothing
+//! §7.1 is protecting and cost a large, risky diff through code that has
+//! nothing to do with logging.
+//!
+//! So: the handle is reachable, the context is not.
+//!
+//! [`spawn_renderer`]: crate::agent::spawn_renderer
+//! [`spawn_forwarder`]: crate::command_deck::forwarder::spawn_forwarder
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use colored::Colorize;
 use stella_diag::{
@@ -42,6 +58,33 @@ use crate::cli::GlobalArgs;
 /// the floor. A file nobody reads until something breaks may as well contain
 /// enough to explain it; stderr stays at `warn` so a normal run is quiet.
 const FILE_FLOOR: LevelFilter = LevelFilter::Info;
+
+/// The process's diagnostic handle and the workspace it is reporting on.
+///
+/// Set once by [`install`]. See the module docs for why this one thing is
+/// allowed to be reachable when a `Cx` is not.
+static BOOTED: OnceLock<(Arc<Dx>, PathBuf)> = OnceLock::new();
+
+/// The process's diagnostic handle, or a disabled one if [`install`] has not
+/// run.
+///
+/// Never `None`: a caller reaching for diagnostics before boot — or in a unit
+/// test that never booted — gets a handle whose ring still fills and whose
+/// sinks are empty, rather than an `Option` every call site has to answer for.
+/// Reserved for the event drains and anything else genuinely spawned beyond
+/// reach of `main`'s handle; ordinary code should take a `&Dx`.
+pub(crate) fn dx() -> Arc<Dx> {
+    booted().0.clone()
+}
+
+/// The workspace root [`install`] was given, for path classification.
+pub(crate) fn workspace_root() -> PathBuf {
+    booted().1.clone()
+}
+
+fn booted() -> &'static (Arc<Dx>, PathBuf) {
+    BOOTED.get_or_init(|| (Arc::new(Dx::disabled()), PathBuf::from(".")))
+}
 
 /// Where crash dumps land: the 0700 directory `trace.rs` already establishes.
 pub(crate) fn crash_dir(workspace_root: &Path) -> PathBuf {
@@ -108,6 +151,12 @@ pub(crate) fn install(globals: &GlobalArgs, workspace_root: &Path) -> Arc<Dx> {
     }
 
     let dx = Arc::new(Dx::new(sinks));
+    // Losing this race means another thread booted first; take that one, so
+    // every drain and `main` agree on a single ring.
+    let dx = BOOTED
+        .get_or_init(|| (dx, workspace_root.to_path_buf()))
+        .0
+        .clone();
     let dir = crash_dir(workspace_root);
     stella_diag::install_panic_hook(dx.clone(), dir, |path| {
         // Presentation, deliberately: naming a file for a human to read is the

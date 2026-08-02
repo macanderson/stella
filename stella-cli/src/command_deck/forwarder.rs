@@ -58,7 +58,16 @@ pub(crate) fn spawn_forwarder(
         let mut seq = 0u64;
         let mut store_warned = false;
         let mut persistence_complete = true;
+        // The deck's half of the diagnostic timeline. The renderer covers the
+        // one-shot and pipeline paths; every deck lane and sub-session worker
+        // arrives here instead, and a bridge on only one of the two would make
+        // the log silently depend on which shell the user happened to run in.
+        let mut bridge = crate::diag_bridge::DomainBridge::new(
+            crate::diag_boot::dx(),
+            Some(crate::diag_boot::workspace_root()),
+        );
         while let Some(event) = rx.recv().await {
+            bridge.observe(&event);
             if let Some((store, id)) = &execution {
                 let outcome = agent::persist_event_detailed(store, *id, seq, &event, &provider_id);
                 if !outcome.is_complete() {
@@ -94,6 +103,7 @@ pub(crate) fn spawn_forwarder(
                 let _ = inbound.send(insight);
             }
         }
+        bridge.finish();
         persistence_complete
     })
 }
