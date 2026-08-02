@@ -254,7 +254,16 @@ impl Catalog {
                         cache_write_usd_per_mtok: 3.75,
                     },
                 )
-                .with_reasoning(Some(true)),
+                .with_reasoning(Some(true))
+                // The model's own completion ceiling. Seeded, not left to a
+                // refresh: the runtime catalog only carries card data after
+                // `stella models refresh`, and a benchmark container runs
+                // frozen (`STELLA_CATALOG_AUTO_REFRESH=0`), so an unseeded
+                // ceiling is `None` everywhere it matters and the engine
+                // silently falls back to its global 16384. Measured off the
+                // wire before this line existed: a trial-shaped run sent
+                // `max_tokens: 16384` for a model whose ceiling is 64000.
+                .with_max_output_tokens(Some(64_000)),
                 CatalogEntry::new(
                     "claude-fable-5",
                     "anthropic",
@@ -273,7 +282,9 @@ impl Catalog {
                         cache_write_usd_per_mtok: 12.50,
                     },
                 )
-                .with_reasoning(Some(true)),
+                .with_reasoning(Some(true))
+                // Same ceiling as Sonnet 5, and seeded for the same reason.
+                .with_max_output_tokens(Some(64_000)),
                 CatalogEntry::new(
                     "gpt-5.5",
                     "openai",
@@ -628,6 +639,31 @@ mod tests {
                 .max_output_tokens,
             Some(64_000),
         );
+    }
+
+    #[test]
+    fn the_seed_carries_a_ceiling_where_the_frozen_catalog_is_all_there_is() {
+        // A refreshed model card is not available everywhere the ceiling is
+        // needed. `stella models refresh` populates the card store, but a
+        // benchmark container runs frozen (`STELLA_CATALOG_AUTO_REFRESH=0`)
+        // and a fresh install has never refreshed at all — in both, the seed
+        // *is* the catalog. An unseeded ceiling is `None` there, and the
+        // engine falls back to its global default.
+        //
+        // That is not hypothetical: before these rows carried a ceiling, a
+        // trial-shaped run of the real binary against a recording endpoint
+        // put `max_tokens: 16384` on the wire for a model whose ceiling is
+        // 64000. Same run after: 64000.
+        for slug in ["claude-sonnet-5", "claude-fable-5"] {
+            assert_eq!(
+                Catalog::seed()
+                    .resolve_for("anthropic", slug)
+                    .unwrap()
+                    .max_output_tokens,
+                Some(64_000),
+                "{slug} must carry its ceiling in the seed, not only after a refresh",
+            );
+        }
     }
 
     #[test]
