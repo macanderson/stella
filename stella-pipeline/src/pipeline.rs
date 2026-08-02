@@ -919,7 +919,17 @@ impl<'a> Pipeline<'a> {
         // asked for this run's work to happen in a worktree rather than in
         // their checkout. Resolved here, beside the other two, so all three
         // reach the same one decision.
-        let isolate = self.isolate_in_worktree(task_class).await;
+        // Asked ONLY when the answer can change what happens. Best-of-N and an
+        // authored witness already require a disposable candidate, so the
+        // branch below is taken regardless of this value — prompting there
+        // would put a question to the operator whose answer is then discarded,
+        // which teaches them their choices do not matter. `false` is the safe
+        // value in that case precisely because it is unreachable.
+        let isolate = if n == 1 && !authored_witness {
+            self.isolate_in_worktree(task_class).await
+        } else {
+            false
+        };
         // Single-shot (the default) runs directly over the session ports —
         // zero snapshot/adoption machinery only when the user supplied the
         // test invocation (or witness authoring is otherwise disabled).

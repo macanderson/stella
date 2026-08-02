@@ -1688,11 +1688,16 @@ impl ToolRegistry {
             return 0;
         };
         let mut observed = self.observed.lock().unwrap_or_else(|p| p.into_inner());
-        let mut count = 0;
-        for (path, digest) in restored {
-            observed.entry(path).or_insert(digest);
-            count += 1;
-        }
+        // REPLACE, never merge. The restored map is this session's complete
+        // belief about the tree, and the deck reuses one registry across a
+        // session switch — so merging would leave the departing session's
+        // observations in place and refuse the arriving session's writes to
+        // files it never read. `or_insert` compounded it by preferring the
+        // stale entry when both sessions had seen the same path, making a
+        // disagreement unresolvable in the wrong direction. A guard built to
+        // have no false positives cannot inherit another session's memory.
+        let count = restored.len();
+        *observed = restored;
         count
     }
 

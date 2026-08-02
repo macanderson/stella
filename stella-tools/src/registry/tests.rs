@@ -997,3 +997,39 @@ async fn every_mutation_is_committed_without_the_agent_choosing_to() {
 fn journal_tip(journal: &stella_store::work_journal::WorkJournal) -> String {
     journal.session_tip().expect("a mutation was recorded")
 }
+
+/// Switching sessions must not inherit the previous session's beliefs.
+///
+/// The deck reuses one registry across a session switch, so a merging restore
+/// left the departing session's observations in place — and the arriving
+/// session was then refused writes to files it had never read. A guard built
+/// to have no false positives cannot carry another session's memory.
+#[test]
+fn restoring_a_session_replaces_rather_than_inherits() {
+    let root = tempfile::tempdir().unwrap();
+    let reg = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+
+    // Session A saw two files, one of which B never touches.
+    let a = serde_json::json!({ "shared.rs": "aaa", "only-a-saw-this.rs": "bbb" }).to_string();
+    assert_eq!(reg.restore_observed(&a), 2);
+
+    // Session B's record disagrees about the shared file and never mentions
+    // the other one at all.
+    let b = serde_json::json!({ "shared.rs": "ccc" }).to_string();
+    assert_eq!(reg.restore_observed(&b), 1);
+
+    let json = reg
+        .observed_snapshot()
+        .expect("a restored session has a snapshot");
+    let observed: std::collections::HashMap<String, String> =
+        serde_json::from_str(&json).expect("the snapshot round-trips");
+    assert_eq!(
+        observed.get("shared.rs").map(String::as_str),
+        Some("ccc"),
+        "the arriving session's digest wins — `or_insert` used to keep the stale one"
+    );
+    assert!(
+        !observed.contains_key("only-a-saw-this.rs"),
+        "a file only the departing session read must not guard the arriving one"
+    );
+}
