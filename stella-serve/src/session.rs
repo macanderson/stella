@@ -12,8 +12,10 @@
 //!
 //! Scope note: one [`Session`] drives one turn. Multi-turn sessions (retaining
 //! the message history across turns) layer on top of this without changing the
-//! transport; per-step checkpointing now has its seam here (see
-//! [`drive_turn`]) but nothing is persisted yet.
+//! transport; per-step checkpointing happens here (see [`drive_turn`]) through
+//! the `CheckpointSink` the host attaches to `EngineConfig`, so a served turn
+//! interrupted mid-flight resumes from its last step boundary rather than
+//! being re-run from the prompt.
 
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -381,9 +383,11 @@ struct DrivenTurn {
 /// - **A checkpoint seam.** `StepOutcome::Continue` is the one moment the
 ///   transcript is guaranteed well-paired (no `tool_use` without its
 ///   `tool_result`), which is exactly where a durable runner would persist
-///   `state.to_checkpoint()`. This server does not persist one yet — there is
-///   nowhere to put it — but the seam is now here rather than one refactor
-///   away.
+///   `state.to_checkpoint()`. It does: when the host attaches a
+///   `CheckpointSink` to `EngineConfig`, every step boundary of a served turn
+///   writes a resume point, exactly as a CLI turn does — the two drivers call
+///   the same `Engine::persist_checkpoint`, so an HTTP turn and a local turn
+///   are equally recoverable rather than merely similar.
 async fn drive_turn(
     engine: &Engine<'_>,
     messages: Vec<CompletionMessage>,
@@ -413,18 +417,26 @@ async fn drive_turn(
                 message: reason.clone(),
                 retryable: false,
             });
+            engine.discard_checkpoint();
             break TurnOutcome::Aborted {
                 reason,
                 cost_usd: state.total_cost_usd(),
             };
         }
         match engine.run_step(&mut state, &events).await {
-            // The checkpoint seam. Nothing is persisted yet; the comment is
-            // here so the next person looking for where a checkpoint would go
-            // finds the answer rather than the question.
-            StepOutcome::Continue => continue,
+            // The checkpoint seam: the one moment the transcript is
+            // guaranteed well-paired. A served turn that dies here — a dropped
+            // connection, a killed process — resumes from this point instead
+            // of re-running the prompt and paying for the work twice.
+            StepOutcome::Continue => {
+                engine.persist_checkpoint(&state);
+                continue;
+            }
             terminal => {
                 if let Some(outcome) = terminal.into_turn_outcome() {
+                    // The turn ended; a resume point that outlives it would
+                    // offer to replay work the client already saw finish.
+                    engine.discard_checkpoint();
                     break outcome;
                 }
                 // Unreachable: `into_turn_outcome` is `None` only for

@@ -756,11 +756,16 @@ impl<'a> Engine<'a> {
     /// Write `state`'s resume point through the configured
     /// [`crate::step::CheckpointSink`], if the host attached one.
     ///
+    /// Public because a host that drives [`Self::run_step`] itself — as
+    /// `stella-serve` does — owns its own loop and must reach the same seam.
+    /// Sharing this method rather than letting each driver write its own is
+    /// what keeps a served turn and a CLI turn equally recoverable.
+    ///
     /// Silent on every failure path, by the sink contract: an unwritable
     /// checkpoint leaves the turn exactly as recoverable as it was before the
     /// sink existed, and failing a live turn to report a durability
     /// *improvement* would be strictly worse than not offering one.
-    fn persist_checkpoint(&self, state: &crate::step::TurnState) {
+    pub fn persist_checkpoint(&self, state: &crate::step::TurnState) {
         let Some(sink) = self.config.checkpoint_sink.as_ref() else {
             return;
         };
@@ -774,7 +779,7 @@ impl<'a> Engine<'a> {
     /// Called on every terminal path — completion, abort, and the step cap —
     /// because a checkpoint that outlives its turn is worse than none: it
     /// invites a resume that re-runs work the caller already saw finish.
-    fn discard_checkpoint(&self) {
+    pub fn discard_checkpoint(&self) {
         if let Some(sink) = self.config.checkpoint_sink.as_ref() {
             sink.discard();
         }
