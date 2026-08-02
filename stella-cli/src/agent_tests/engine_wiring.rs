@@ -51,6 +51,54 @@ fn the_turn_budget_flag_reaches_every_role_that_can_continue() {
 }
 
 #[test]
+fn a_bound_session_checkpoints_from_every_role() {
+    // The same argument as the turn budget above, for the same reason: the
+    // sink is attached at ONE place (`tuned_engine_config`) precisely so no
+    // role can be left out, and "left out" is invisible from inside the engine
+    // crate — an unbound sink is indistinguishable from a session that simply
+    // never crashed. This is the wire.
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = cfg_for("zai");
+
+    // Unbound: no sink, so `persist_checkpoint` does not serialize a whole
+    // transcript per step only to drop it.
+    assert!(
+        crate::agent::engine_config_for(&cfg)
+            .checkpoint_sink
+            .is_none(),
+        "a session with no durable location attaches nothing",
+    );
+
+    cfg.durability.bind(dir.path().to_path_buf());
+
+    let worker = ModelRef::new("zai", "glm-5.2".to_string());
+    for (role, engine) in [
+        ("default", crate::agent::engine_config_for(&cfg)),
+        ("judge", crate::agent::judge_engine_config_for(&cfg)),
+        (
+            "worker",
+            crate::agent::pipeline_engine_config_for(&cfg, &worker),
+        ),
+    ] {
+        assert!(
+            engine.checkpoint_sink.is_some(),
+            "the {role} engine must carry the session's checkpoint sink",
+        );
+    }
+
+    // And it reaches the file the store will read back — the binding is live,
+    // not merely present.
+    crate::agent::engine_config_for(&cfg)
+        .checkpoint_sink
+        .expect("bound")
+        .persist("{\"version\":1}");
+    assert_eq!(
+        stella_store::journal::read_checkpoint(dir.path()).as_deref(),
+        Some("{\"version\":1}"),
+    );
+}
+
+#[test]
 fn pipeline_worker_model_is_inert_without_the_fix_but_routes_with_it() {
     // Issue #276: `pipeline_worker_model` (and `agents.worker.*`) must
     // actually change what `Role::Worker` resolves to — previously the

@@ -212,6 +212,7 @@ fn config_debug_never_leaks_the_api_key() {
         model_id: "glm-5.2".to_string(),
         turn_budget: None,
         model_pinned_by_flag: false,
+        durability: Default::default(),
         api_key: ApiKey::new(secret),
         workspace_root: std::path::PathBuf::from("/tmp/ws"),
         base_url_override: None,

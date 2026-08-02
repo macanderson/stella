@@ -48,6 +48,7 @@ mod diag_bridge;
 mod discovery;
 mod doctor;
 mod domains;
+mod durability;
 mod engine_config;
 mod enterprise_telemetry;
 #[cfg(test)]

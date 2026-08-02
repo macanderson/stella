@@ -344,6 +344,17 @@ pub struct Config {
     /// with a truthful partial instead of being destroyed mid-flight.
     pub turn_budget: Option<std::time::Duration>,
     pub workspace_root: std::path::PathBuf,
+    /// Where this session's turns write their resume point — the handle every
+    /// engine this session builds reads its `checkpoint_sink` from.
+    ///
+    /// A shared cell rather than a session id or a path because neither exists
+    /// yet when a `Config` is built: the drivers resolve their
+    /// [`stella_store::SessionRecord`] afterwards, and the deck re-points it on
+    /// every in-deck session switch. Empty until a driver binds it, which is
+    /// also what keeps the non-session commands (`stella config`, `stella
+    /// tools`) from carrying durability they have no turn to use. See
+    /// [`crate::durability`].
+    pub durability: crate::durability::SessionDurability,
     /// `--base-url`: required for the `local` provider (it IS the server
     /// address), an optional proxy/override for every other provider.
     pub base_url_override: Option<String>,
@@ -696,6 +707,10 @@ impl Config {
                     // Stamped by the caller that holds the parsed CLI; see the
                     // field's doc comment.
                     turn_budget: None,
+                    // Unbound: the session whose sidecar this points at is
+                    // resolved by the driver, after config load. See the
+                    // field's doc comment.
+                    durability: crate::durability::SessionDurability::default(),
                     api_key: ApiKey::new(api_key),
                     workspace_root,
                     base_url_override: Some(base_url),
@@ -887,6 +902,9 @@ impl Config {
             model_pinned_by_flag: false,
             // Likewise stamped by the caller that holds the parsed CLI.
             turn_budget: None,
+            // Unbound until a driver resolves this run's session record — see
+            // the field's doc comment.
+            durability: crate::durability::SessionDurability::default(),
             api_key: key,
             workspace_root: workspace_root.to_path_buf(),
             base_url_override: base_url_override.map(str::to_string),

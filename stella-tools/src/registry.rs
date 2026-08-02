@@ -102,13 +102,18 @@ pub struct ToolRegistry {
     /// also the wrong cost model for an agent — being told "that moved, read
     /// it again" is a cheap retry, where blocking burns a turn.
     observed: std::sync::Mutex<HashMap<String, String>>,
-    /// The session's durable record, once a host attaches one.
+    /// The session's durable record, once a host attaches one. Absent — the
+    /// default — leaves every existing caller behaving exactly as before.
     ///
-    /// `OnceLock` because a session binds exactly one journal, at start, and
-    /// never rebinds: a registry whose journal changed mid-session would split
-    /// one agent's history across two stores. Absent — the default — leaves
-    /// every existing caller behaving exactly as before.
-    work_journal: std::sync::OnceLock<(stella_store::work_journal::WorkJournal, String)>,
+    /// `RwLock`, not `OnceLock`, because a registry can outlive the session it
+    /// was built for. The deck builds one registry and then lets the user
+    /// switch sessions under it, re-keying everything that names the session —
+    /// claim holder, notification attribution, journal sidecar. The durable
+    /// record has to follow, or work done after the switch commits to the ref
+    /// of the session the user left. Splitting one *registry's* history across
+    /// two stores is not the hazard it first looks like: they are two
+    /// sessions, and two histories is the correct answer.
+    work_journal: std::sync::RwLock<Option<(stella_store::work_journal::WorkJournal, String)>>,
     /// Paths `read_symbol` resolved and read, shared with the registered
     /// tool instance and drained once per execution into the file-touch
     /// ledger — the symbol's file is resolved through the code graph
@@ -493,7 +498,7 @@ impl ToolRegistry {
             root,
             touched: std::sync::Mutex::new(FileTouchLedger::default()),
             observed: std::sync::Mutex::new(HashMap::new()),
-            work_journal: std::sync::OnceLock::new(),
+            work_journal: std::sync::RwLock::new(None),
             span_reads,
             workspace_probe: std::sync::Mutex::new(None),
             turn_bracketing: std::sync::atomic::AtomicBool::new(false),
@@ -1672,8 +1677,12 @@ impl ToolRegistry {
             .collect()
     }
 
-    /// Bind this session's durable record. Idempotent by construction: a
-    /// second call is ignored, because one session owns one history.
+    /// Bind this session's durable record, replacing any earlier binding.
+    ///
+    /// Re-binding is how a host whose registry outlives one session — the deck,
+    /// across a session switch — keeps the record attributed to the session
+    /// that is actually running. Mutations before the call land on the previous
+    /// session's ref and stay there; nothing already committed moves.
     ///
     /// `agent` labels the commits, so a workspace worked by several agents
     /// reads back as an attributable log rather than an anonymous one.
@@ -1682,7 +1691,8 @@ impl ToolRegistry {
         journal: stella_store::work_journal::WorkJournal,
         agent: impl Into<String>,
     ) {
-        let _ = self.work_journal.set((journal, agent.into()));
+        let mut slot = self.work_journal.write().unwrap_or_else(|p| p.into_inner());
+        *slot = Some((journal, agent.into()));
     }
 
     /// Commit one mutation to the session's durable record.
@@ -1694,7 +1704,16 @@ impl ToolRegistry {
     /// Reads are skipped — nothing changed, and a commit per read would bury
     /// the record of real work.
     fn journal_mutation(&self, pending: &PendingTouch, reason: &str) {
-        let Some((journal, agent)) = self.work_journal.get() else {
+        // Cloned out from under the lock rather than held across the commit:
+        // `record` spawns git, and a read guard held across a subprocess would
+        // park a concurrent re-bind for the length of it. The clone is three
+        // paths and a string.
+        let Some((journal, agent)) = self
+            .work_journal
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+        else {
             return;
         };
         let verb = match pending.op {

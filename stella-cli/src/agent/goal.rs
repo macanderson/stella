@@ -104,7 +104,7 @@ pub(crate) async fn run_raw_one_shot(
     let started_unix = crate::memory::unix_now_secs();
     // Machine-wide presence: findable in the deck's SESSIONS overlay and
     // replayable from its journal after this process exits.
-    let mut presence = SessionPresence::announce(cfg, prompt);
+    let mut presence = SessionPresence::announce(cfg, prompt, &registry);
     let outcome = run_turn(
         &*provider,
         base_tools,
@@ -270,7 +270,7 @@ pub async fn run_goal_cmd(
     let started_unix = crate::memory::unix_now_secs();
     // Machine-wide presence: a goal run is exactly the long-lived headless
     // session the SESSIONS overlay + replay exist for.
-    let mut presence = SessionPresence::announce(cfg, goal);
+    let mut presence = SessionPresence::announce(cfg, goal, &registry);
     let outcome = if use_pipeline {
         run_goal_pipeline_turn(
             &*provider,

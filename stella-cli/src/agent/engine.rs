@@ -40,6 +40,17 @@ fn tuned_engine_config(
         // default. Read here rather than at each receipt site so every engine
         // this session builds — default, worker, judge — agrees on it.
         lifecycle_enabled: crate::memory::session_lifecycle_enabled(&cfg.workspace_root),
+        // Durability, for every role at once. This is the single place an
+        // engine is tuned in this crate, so attaching the sink here covers the
+        // deck's lead turn and its pipeline, sub-agents, sub-sessions and the
+        // fleet without six chances to forget one.
+        //
+        // `None` while the session has not bound its durable location — a
+        // command with no turn to checkpoint, or a driver that has not yet
+        // resolved its session record. That is not a silent downgrade: it is
+        // what stops `persist_checkpoint` from serializing a whole transcript
+        // per step only to discard it.
+        checkpoint_sink: cfg.durability.sink(),
         ..EngineConfig::default()
     };
     // Compaction must fire BEFORE the provider's context window overflows:
