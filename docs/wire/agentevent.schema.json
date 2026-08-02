@@ -1871,7 +1871,7 @@
         },
         "estimated_input_tokens": {
           "default": 0,
-          "description": "The engine's RAW (uncalibrated) pre-call estimate of the input it\nsent — paired with `input_tokens` this is one drift sample, the\nfeedback that calibrates future estimates per model\n(`stella-core::estimator::Calibration`). Raw by contract:\nconsumers rebuild the correction from these pairs, and a\ncorrected estimate here would compound the correction on every\nround trip. `0` means no estimate was taken (pre-drift emitters —\nhence `serde(default)`, so old streams still parse).",
+          "description": "The engine's RAW (uncalibrated) pre-call estimate of the input it\nsent — paired with `input_tokens` (plus cache-write tokens, which\nare real prompt tokens split out only for pricing) this is one\ndrift sample, the feedback that calibrates future estimates per\nmodel (`stella-core::estimator::Calibration`). Raw by contract:\nconsumers rebuild the correction from these pairs, and a\ncorrected estimate here would compound the correction on every\nround trip. Attachment weight is excluded — the media estimate is\na deliberate ~80× over-estimate of billed tokens, right for\ncontext pressure and poison as a drift sample. `0` means no\nestimate was taken (pre-drift emitters — hence `serde(default)`,\nso old streams still parse).",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
