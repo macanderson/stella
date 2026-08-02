@@ -1350,6 +1350,13 @@ async fn aggregate_zai_stream(
                             acc.name.push_str(&name);
                         }
                         if let Some(args) = function.arguments {
+                            // Liveness only (see
+                            // `ToolCallObserver::tool_input_delta`): a
+                            // call-only generation must still register as
+                            // producing against the idle deadline.
+                            if let Some(observer) = observer {
+                                observer.tool_input_delta();
+                            }
                             acc.arguments.push_str(&args);
                         }
                     }

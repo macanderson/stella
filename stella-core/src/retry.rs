@@ -18,9 +18,11 @@
 //!   exposes every failed dispatched attempt so unknown provider usage can be
 //!   persisted even when a later attempt succeeds.
 //!
-//! Jitter and per-call timeouts (L-E4) are a caller concern layered on top
-//! of `attempt_fn`; this module only owns "should we try again, and if so
-//! after how long".
+//! Per-call timeouts (L-E4) are a caller concern layered on top of
+//! `attempt_fn`; this module owns "should we try again, and if so after how
+//! long" — and the jitter on that delay is part of the answer
+//! ([`compute_backoff_delay_ms`]'s equal jitter, `server_hint_delay_ms`'s
+//! additive nudge), not something a caller layers on.
 
 use std::future::Future;
 
@@ -102,11 +104,23 @@ impl RetryPolicy {
         }
     }
 
-    /// The default policy for ordinary provider calls: up to 3 retries,
+    /// The default policy for ordinary provider calls: up to 6 retries,
     /// 250ms floor, 8s computed-backoff ceiling, 120s server-hint ceiling.
+    ///
+    /// Six retries, not three, because the envelope has to actually span the
+    /// ceiling: delays run 250 → 500 → 1000 → 2000 → 4000 → 8000ms, so the
+    /// last retry reaches `max_delay_ms` exactly and the whole ladder waits
+    /// up to ~15.75s. At three retries the worst case was 1.75s of total
+    /// backoff — the 8s cap was dead configuration — and any provider
+    /// brownout longer than ~2s (an overloaded-burst 5xx window, a 429 with
+    /// no `Retry-After` header; real ones last tens of seconds) exhausted
+    /// every attempt and aborted the turn, losing a task the agent was
+    /// actively solving to a transient blip. The ladder is still bounded and
+    /// still budget-checked at the step boundary; a genuinely down provider
+    /// costs ~16 extra seconds before the same clean abort.
     pub fn standard() -> Self {
         Self {
-            max_retries: 3,
+            max_retries: 6,
             base_delay_ms: 250,
             max_delay_ms: 8_000,
             max_server_hint_ms: DEFAULT_MAX_SERVER_HINT_MS,
@@ -279,14 +293,18 @@ where
 
                 let delay_ms = match &error {
                     ProviderError::RateLimited {
+                        message,
                         retry_after_ms: Some(hint),
-                        ..
                     } => {
                         if *hint > policy.max_server_hint_ms {
+                            // The provider's own message rides along — the
+                            // hint explains the wait, the message explains
+                            // the limit, and dropping either loses half the
+                            // diagnosis.
                             return Err(ProviderError::Terminal(format!(
-                                "rate-limited and the server asked to wait {hint}ms before \
-                                 retrying, past this call's {ceiling}ms server-hint ceiling — \
-                                 failing fast instead of parking the turn",
+                                "rate-limited ({message}) and the server asked to wait {hint}ms \
+                                 before retrying, past this call's {ceiling}ms server-hint \
+                                 ceiling — failing fast instead of parking the turn",
                                 ceiling = policy.max_server_hint_ms,
                             )));
                         }
@@ -346,6 +364,27 @@ mod tests {
     #[test]
     fn default_policy_is_standard() {
         assert_eq!(RetryPolicy::default(), RetryPolicy::standard());
+    }
+
+    #[test]
+    fn standard_policy_backoff_envelope_actually_reaches_its_ceiling() {
+        // The witness for the dead-cap defect: with max_retries: 3 the
+        // exponential ladder topped out at 1000ms and the configured 8s
+        // max_delay_ms was unreachable — config and behavior disagreed, and
+        // any provider brownout longer than ~2s exhausted the ladder. The
+        // last computed delay (attempt index max_retries - 1) must reach the
+        // ceiling exactly, so every configured millisecond of backoff is
+        // live.
+        let policy = RetryPolicy::standard();
+        let last_attempt_index = policy.max_retries - 1;
+        let envelope = policy
+            .base_delay_ms
+            .saturating_mul(2u64.saturating_pow(last_attempt_index))
+            .min(policy.max_delay_ms);
+        assert_eq!(
+            envelope, policy.max_delay_ms,
+            "standard()'s ladder must span its own max_delay_ms"
+        );
     }
 
     // ---- compute_backoff_delay_ms (pure, no sleeping) --------------------

@@ -30,10 +30,12 @@
 //!
 //! # Telemetry
 //!
-//! Every judge call emits `Stage(Judge)` → `GoalVerdict` (with the judge
-//! call's own `cost_usd`) → `BudgetTick`, so a metering consumer sees
-//! judge spend with the same fidelity as worker spend, and the verdict
-//! stream reconstructs the goal loop's arc without any out-of-band state.
+//! Every judge call emits `Stage(Judge)`, then the judge turn's own metering
+//! (its `StepUsage` + `BudgetTick`, forwarded like any sub-agent's), then
+//! `GoalVerdict` carrying the judge call's own `cost_usd` — so a metering
+//! consumer sees judge spend with the same fidelity as worker spend, and the
+//! verdict stream reconstructs the goal loop's arc without any out-of-band
+//! state.
 
 use std::borrow::Cow;
 
@@ -329,14 +331,23 @@ const VERDICT_REPORT_CHARS: usize = 32_000;
 const CHARS_PER_TOKEN_CEILING: usize = 8;
 
 /// Extract the verdict from judge output that may wrap its JSON in prose or
-/// a code fence: parse the outermost `{ … }` span.
+/// a code fence.
+///
+/// Parsed from the END, matching `JUDGE_SYSTEM_PROMPT`'s own contract that
+/// the JSON object terminates the reply: candidate `{` offsets are tried
+/// LAST-first against the final `}`, and the first span that parses wins.
+/// The old outermost-span rule (`first '{' ..= last '}'`) rejected any reply
+/// whose earlier prose contained a brace — quoted Rust (`if x { … }`), a
+/// cited JSON tool result — silently converting a judge's `met: true` into
+/// "not parseable → not met" and, at temperature 0, deterministically
+/// re-converting it every round until the round cap scored a solved goal as
+/// `Unmet`.
 fn parse_verdict(text: &str) -> Option<GoalJudgeVerdict> {
-    let start = text.find('{')?;
     let end = text.rfind('}')?;
-    if end <= start {
-        return None;
-    }
-    serde_json::from_str(&text[start..=end]).ok()
+    text.match_indices('{')
+        .rev()
+        .filter(|&(start, _)| start < end)
+        .find_map(|(start, _)| serde_json::from_str(&text[start..=end]).ok())
 }
 
 /// Render the conversation for the judge: role-labeled, tool activity
@@ -1097,6 +1108,32 @@ mod tests {
         assert!(verdict.met);
         assert!(parse_verdict("no json here at all").is_none());
         assert!(parse_verdict("} backwards {").is_none());
+    }
+
+    #[test]
+    fn parse_verdict_survives_braces_in_the_judges_prose() {
+        // The judge is a code reviewer told to cite evidence, so its prose
+        // realistically quotes Rust or JSON before the verdict. The old
+        // first-'{'..last-'}' span swallowed those braces, failed to parse,
+        // and silently converted `met: true` into "not met" — at temperature
+        // 0, every round, until the round cap scored a solved goal Unmet.
+        let brace_prose = "The fix adds `if cfg!(test) { return; }` and the tool result was \
+                           {\"status\": \"passed\"} — verified.\n\
+                           {\"met\": true, \"reasoning\": \"witness confirmed\"}";
+        let verdict = parse_verdict(brace_prose).expect("prose braces must not break the verdict");
+        assert!(verdict.met, "the judge said met:true and must be believed");
+        assert_eq!(verdict.reasoning, "witness confirmed");
+    }
+
+    #[test]
+    fn parse_verdict_handles_braces_inside_the_verdicts_own_strings() {
+        // Braces INSIDE the JSON object's strings: the last-'{'-first scan
+        // must walk past them to the object's real opening brace.
+        let inner = "verdict: {\"met\": false, \"reasoning\": \"code still has `if x { }` bug\", \
+                     \"feedback\": \"fix the {} arm\"}";
+        let verdict = parse_verdict(inner).expect("inner braces must not break the verdict");
+        assert!(!verdict.met);
+        assert!(verdict.feedback.contains("{}"));
     }
 
     #[test]

@@ -2585,6 +2585,128 @@ async fn each_committed_step_feeds_the_calibration_and_reports_its_estimate() {
     );
 }
 
+/// Witness for the cache-write undercount: cache-WRITE tokens are real
+/// prompt tokens the provider read (adapters split them out of
+/// `input_tokens` for pricing only), so the actual side of every drift
+/// sample must be the SUM. Fed the bare `input_tokens`, a cache-enabled
+/// session's first call — nearly its whole prompt a cache write — recorded
+/// a near-zero ratio that dragged the factor toward the floor and inflated
+/// the effective compaction budget past the provider's context window.
+#[tokio::test]
+async fn cache_write_tokens_count_toward_the_calibration_actual() {
+    let with_cache_write_usage = |result: CompletionResultAlias| {
+        let mut result = result;
+        result.usage = CompletionUsage {
+            reported: true,
+            // Almost the entire prompt was a cache write: the bare input
+            // side alone would read as a wild UNDER-run of the estimate.
+            input_tokens: 10,
+            output_tokens: 50,
+            cached_input_tokens: 0,
+            cache_write_tokens: 100_000,
+        };
+        if let Some(call) = result.tool_calls.first_mut() {
+            call.input = serde_json::json!({ "cmd": format!("echo {}", call.call_id) });
+        }
+        result
+    };
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![
+            Ok(with_cache_write_usage(tool_call_result("call_1", "bash"))),
+            Ok(with_cache_write_usage(tool_call_result("call_2", "bash"))),
+            Ok(with_cache_write_usage(tool_call_result("call_3", "bash"))),
+            Ok(with_cache_write_usage(text_result("done"))),
+        ]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let calibration = CalibrationMap::new();
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
+        .with_calibration(&calibration);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("hi"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+
+    // The true total (10 + 100_000) dwarfs the tiny history's estimate, so
+    // every sample clamps HIGH and the factor lands pinned at its 2.0
+    // ceiling. Under the old bare-`input_tokens` feed, actual (10) read as
+    // a wild under-run and the factor sank toward the 0.5 floor instead —
+    // the two feeds are on opposite sides of 1.0, so this equality is a
+    // strict witness.
+    assert_eq!(
+        calibration.factor(Some("scripted")),
+        2.0,
+        "cache-write-dominated usage must push the factor up, not down"
+    );
+}
+
+/// Witness for the attachment-poisoning fix: the drift-sample estimate on
+/// `StepUsage` excludes attachment weight. The media estimate is a
+/// deliberate ~80× over-estimate of billed tokens — right for context
+/// pressure, poison for calibration, where one screenshot-bearing step
+/// clamped the ratio to the sample floor and doubled the effective
+/// compaction budget for the rest of the session.
+#[tokio::test]
+async fn attachment_weight_is_excluded_from_the_drift_sample_estimate() {
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![Ok(text_result("done"))]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user_with_attachments(
+            "what is in this screenshot?",
+            vec![stella_protocol::Attachment::from_path(
+                "shot.png",
+                "image/png",
+                350_000,
+                "/tmp/shot.png",
+            )],
+        ),
+    ];
+    let full = crate::estimator::estimate_conversation_tokens(&messages);
+    let attachment = crate::estimator::estimate_conversation_attachment_tokens(&messages);
+    assert!(
+        attachment > 100_000,
+        "fixture sanity: the attachment must dominate the estimate"
+    );
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+
+    let estimates: Vec<u64> = drain_events(&mut rx)
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::StepUsage {
+                estimated_input_tokens,
+                ..
+            } => Some(*estimated_input_tokens),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        estimates,
+        vec![full - attachment],
+        "the persisted drift-sample estimate must be the text share only"
+    );
+}
+
 // ---- Lifecycle hooks wired into the turn path -------------------------
 
 /// A no-I/O [`HookRunner`] test double: returns a fixed exit code +
@@ -3195,6 +3317,99 @@ async fn a_streaming_generation_outlives_the_deadline_because_it_is_not_stalled(
     assert!(
         outcome.is_err(),
         "a provider that keeps streaming must not trip the deadline: {outcome:?}"
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "the streaming call is never re-issued"
+    );
+    drain_events(&mut rx);
+}
+
+/// A provider whose entire output streams as TOOL-CALL content — argument
+/// fragments and announced mutating calls, never a text or reasoning delta.
+/// The shape of a model emitting one large `write_file`, where the old
+/// text-only idle tap saw total silence.
+struct CallOnlyStreamingProvider {
+    interval: Duration,
+    calls: Arc<AtomicU32>,
+}
+#[async_trait]
+impl Provider for CallOnlyStreamingProvider {
+    fn id(&self) -> &str {
+        "call-only-streaming"
+    }
+    async fn complete_ref(
+        &self,
+        _req: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResultAlias, ProviderError> {
+        unreachable!("the engine always takes the observed path")
+    }
+    async fn complete_observed_ref(
+        &self,
+        _req: CompletionRequestRef<'_>,
+        observer: &dyn stella_protocol::provider::ToolCallObserver,
+    ) -> Result<CompletionResultAlias, ProviderError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let mut announced = false;
+        loop {
+            tokio::time::sleep(self.interval).await;
+            // Alternate the two tool-side signals: per-fragment argument
+            // liveness, and a whole announced MUTATING call (which the gate
+            // fences — it must still count as the provider answering).
+            if announced {
+                observer.tool_input_delta();
+            } else {
+                observer.tool_call_streamed(&ToolCall {
+                    call_id: "call_w".into(),
+                    name: "bash".into(),
+                    input: serde_json::json!({"cmd": "true"}),
+                });
+                announced = true;
+            }
+        }
+    }
+}
+
+/// The idle deadline's blind spot, witnessed: a healthy generation streaming
+/// ONLY tool-call content — no text, no reasoning — must not be killed as
+/// "stalled". The tick used to ride the gate's event sender, which only
+/// text/reasoning deltas traverse; a call-only stream (one large `write_file`
+/// spanning minutes) read as total silence and died at the deadline, after
+/// paying for the whole generation.
+#[tokio::test]
+async fn a_call_only_stream_outlives_the_deadline_because_it_is_not_stalled() {
+    let calls = Arc::new(AtomicU32::new(0));
+    let provider = CallOnlyStreamingProvider {
+        interval: Duration::from_millis(20),
+        calls: calls.clone(),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let config = EngineConfig {
+        model_timeout: Some(Duration::from_millis(50)),
+        ..EngineConfig::default()
+    };
+    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("hi"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = tokio::time::timeout(
+        Duration::from_millis(600),
+        engine.run_turn(&mut messages, &mut budget, &tx),
+    )
+    .await;
+
+    assert!(
+        outcome.is_err(),
+        "a call-only stream is still an answering provider — the deadline \
+         must not fire: {outcome:?}"
     );
     assert_eq!(
         calls.load(Ordering::SeqCst),

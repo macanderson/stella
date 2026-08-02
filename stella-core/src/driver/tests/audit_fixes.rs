@@ -375,6 +375,73 @@ async fn hard_cancel_mid_stream_emits_a_cancelled_usage_envelope() {
     );
 }
 
+/// A [`Sleeper`] that announces the first sleep and then parks forever — the
+/// harness for dropping a turn future in the middle of a BACKOFF sleep.
+struct HangingSleeper {
+    sleeping: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait::async_trait]
+impl crate::retry::Sleeper for HangingSleeper {
+    async fn sleep(&self, _duration_ms: u64) {
+        self.sleeping.notify_one();
+        std::future::pending().await
+    }
+}
+
+/// The other half of F9's contract: a hard cancel landing in a backoff sleep
+/// — no paid attempt in flight — must NOT emit a `Cancelled` envelope. The
+/// failed attempt before the sleep already reported its own per-attempt
+/// `ProviderError` envelope, and a second envelope for the same single
+/// dispatch double-reports it (the guard's armed window used to span the
+/// sleeps; `attempt_in_flight` is what narrowed it).
+#[tokio::test]
+async fn hard_cancel_during_a_backoff_sleep_emits_no_phantom_cancelled_envelope() {
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![Err(ProviderError::Transport("blip".into()))]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeping = Arc::new(tokio::sync::Notify::new());
+    let sleeper = HangingSleeper {
+        sleeping: sleeping.clone(),
+    };
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let mut messages = vec![CompletionMessage::user("go")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    {
+        let turn = engine.run_turn(&mut messages, &mut budget, &tx);
+        tokio::pin!(turn);
+        tokio::select! {
+            outcome = &mut turn => panic!("a hanging sleeper must keep the turn pending: {outcome:?}"),
+            _ = sleeping.notified() => {}
+            _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+                panic!("the retry ladder never reached its backoff sleep")
+            }
+        }
+        // Scope end drops the turn future mid-sleep — the hard cancel.
+    }
+
+    let events = drain_events(&mut rx);
+    let reasons: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::UsageIncomplete { reason, .. } => Some(*reason),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        reasons,
+        vec![stella_protocol::UsageIncompleteReason::ProviderError],
+        "exactly the failed attempt's own envelope, no phantom Cancelled: {events:?}"
+    );
+}
+
 /// A conversation whose oldest span (after the task statement, before the
 /// kept tail) is a summarizable ≥4-message run — the input every direct
 /// `summarize_overflow_span` witness below needs.

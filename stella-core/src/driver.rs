@@ -30,7 +30,7 @@
 //! MUTATING tools: a mutating call runs once, after a model call has
 //! already succeeded and returned tool calls to run — never inside the
 //! retried closure — so a retried step structurally cannot re-execute a
-//! non-idempotent tool. See the property test
+//! non-idempotent tool. See the test
 //! `retry_never_re_executes_a_tool_call` below, which proves it by counting
 //! real executions against a flaky scripted provider.
 //!
@@ -91,13 +91,6 @@ use lifecycle::{step_outcome_label, turn_outcome_payload};
 mod lifecycle;
 mod loop_evidence;
 mod truncation;
-pub(crate) use truncation::CONTINUATION_MARKER_PREFIX;
-use truncation::{
-    ContinuationBudget, ContinuationPlan, MAX_LENGTH_CONTINUATIONS, TIME_EXHAUSTED_PARTIAL,
-    plan_continuation,
-};
-// Named only by the tests that pin the nudge's exact body; the production path
-// reaches it through `Continuation::into_parts`.
 use crate::estimator::{CalibrationMap, estimate_conversation_tokens};
 use crate::event_sender::EventSender;
 use crate::hooks::{HookEvent, HookPayload, HookRunner, Hooks, any_matcher_matches, run_hooks};
@@ -110,6 +103,13 @@ use crate::step::{
     BorrowedTurn, CancelUsageGuard, CompactionPass, SpeculationDropGuard, StepOutcome,
     StreamProgress, SummarizerHealth, TurnState, bounded_generation,
 };
+pub(crate) use truncation::CONTINUATION_MARKER_PREFIX;
+use truncation::{
+    ContinuationBudget, ContinuationPlan, MAX_LENGTH_CONTINUATIONS, TIME_EXHAUSTED_PARTIAL,
+    plan_continuation,
+};
+// Named only by the tests that pin the nudge's exact body; the production path
+// reaches it through `Continuation::into_parts`.
 #[cfg(test)]
 use truncation::LENGTH_CONTINUATION_NUDGE;
 // The latch count itself is only ever named by the test that pins it against
@@ -451,10 +451,17 @@ const SPECULATION_DISCARD_BUDGET_ABORT: &str = "budget_abort";
 
 const BUDGET_ABORT_TOOL_RESULT: &str = "not executed — turn aborted on budget";
 
+/// The `ToolOutput::Error` that closes a `tool_use` left open when the soft
+/// stop lands — same repair the cancel exit performs at this boundary
+/// (`crate::step::close_open_tool_calls`), with wording that names who
+/// stopped the turn.
+const SOFT_STOP_TOOL_RESULT: &str = "not executed — turn stopped by user at a step boundary";
+
 /// One committed model call plus the step-scoped context the phases after
 /// it consume: the pre-call raw token estimate (drift feedback + telemetry
-/// — raw, never calibrated, see [`Engine::run_model_call`]) and the
-/// read-only tool set for dispatch scheduling. The step's `StepUsage`
+/// — raw, never calibrated, attachments excluded, see
+/// [`Engine::run_model_call`]) and the read-only tool set for dispatch
+/// scheduling. The step's `StepUsage`
 /// metering record (retry and duration figures included) was already
 /// emitted by [`Engine::run_model_call`] at the no-await settlement
 /// boundary — it is deliberately NOT carried here.
@@ -721,9 +728,13 @@ impl<'a> Engine<'a> {
     /// cancellation check → steering drain and soft stop → budget check →
     /// result-identity snapshot → compaction pass → loop detection → budget
     /// check → the model call (with retry+backoff) → committed-result
-    /// bookkeeping → dispatch. Every `AgentEvent` [`Self::run_turn`] emits is
-    /// emitted here, in the same order — `run_turn` IS this method in a loop,
-    /// so there is one code path and no second implementation to drift.
+    /// bookkeeping → dispatch. Every per-step `AgentEvent` [`Self::run_turn`]
+    /// emits is emitted here, in the same order — `run_turn` IS this method in
+    /// a loop, so there is one code path and no second implementation to
+    /// drift. What `run_turn` adds around the loop is turn framing only: the
+    /// initial `Stage(Execute)` and, on the step-cap exit, a non-retryable
+    /// `Error` carrying [`step_cap_reason`] — a host driving steps itself owns
+    /// both (see `stella-engine`'s crate docs).
     ///
     /// `StepOutcome::Continue` means the step committed and `state.step` has
     /// advanced; anything else ends the turn and leaves `state.step` naming
@@ -826,7 +837,18 @@ impl<'a> Engine<'a> {
             if steering.soft_stop_requested() {
                 // A user choice, not a failure: no Error event, and the
                 // caller keeps every completed step (unlike the hard
-                // cancel, which drops the future and truncates).
+                // cancel, which drops the future and truncates). Open
+                // `tool_use`s are closed exactly as the cancel exit closes
+                // them: the engine's own path never leaves one open at this
+                // boundary, but history a caller handed in (or appended to)
+                // mid-turn can, and the kept transcript must stay valid for
+                // the next turn on this exit for the same reason it must on
+                // that one.
+                crate::step::close_open_tool_calls(
+                    &mut state.messages,
+                    SOFT_STOP_TOOL_RESULT,
+                    events,
+                );
                 return StepOutcome::Aborted {
                     reason: SOFT_STOP_REASON.to_string(),
                     cost_usd: state.total_cost_usd,
@@ -835,7 +857,7 @@ impl<'a> Engine<'a> {
         }
         if let Some(aborted) = self.check_budget(
             &mut state.budget,
-            state.total_cost_usd,
+            &mut state.total_cost_usd,
             &mut state.memos.warnings,
             events,
         ) {
@@ -883,7 +905,7 @@ impl<'a> Engine<'a> {
         }
         if let Some(aborted) = self.check_budget(
             &mut state.budget,
-            state.total_cost_usd,
+            &mut state.total_cost_usd,
             &mut state.memos.warnings,
             events,
         ) {
@@ -1151,7 +1173,6 @@ impl<'a> Engine<'a> {
         step: usize,
         events: &EventSender,
     ) -> f64 {
-        let before_tokens = crate::estimator::estimate_conversation_tokens(messages);
         // Span start: after the system prompt and the FIRST user message —
         // the task statement anchors every later step and must survive
         // verbatim. A Tool message can't open the kept tail either side of
@@ -1188,6 +1209,10 @@ impl<'a> Engine<'a> {
         if health.is_latched() {
             return 0.0;
         }
+        // After the guards, not before: a latched or tiny-span step returns
+        // above without needing this number, and the walk is Θ(transcript)
+        // on precisely the steps whose transcript is at its largest.
+        let before_tokens = crate::estimator::estimate_conversation_tokens(messages);
         let rendered = crate::summarize::render_span_for_summary(&messages[start..end]);
         let request = CompletionRequest {
             messages: vec![
@@ -1212,7 +1237,12 @@ impl<'a> Engine<'a> {
                 // overflow — a transient blip here must be retried, not
                 // fast-failed into an oversized, doomed next call.
                 retry_policy: RetryPolicy::standard(),
-                timeout: None,
+                // The same generation deadline every worker call runs under.
+                // `None` left a wedged summarizer provider parking the whole
+                // turn indefinitely — the one un-bounded await on the step
+                // path — and a trip lands in the Timeout arm below, which
+                // counts toward the give-up latch like any other failure.
+                timeout: self.config.model_timeout,
                 estimated_input_tokens,
                 // The summarizer rewrites the conversation it is called on, so
                 // its own input is the only record of what it was given to
@@ -1503,7 +1533,17 @@ impl<'a> Engine<'a> {
             .filter(|name| self.tool_has_matching_hook(name))
             .cloned()
             .collect();
-        let estimated_input_tokens = estimate_conversation_tokens(messages);
+        // The drift-sample estimate: text only, attachments excluded. The
+        // attachment weight is a deliberate ~80× over-estimate of billed
+        // media tokens (right for context pressure, poison for calibration —
+        // see `estimate_conversation_attachment_tokens`), and this value is
+        // what StepUsage persists as the drift sample and what
+        // `handle_committed_result` records. The compaction decision keeps
+        // the full attachment-weighted estimate via its own walk in
+        // `run_compaction_pass`.
+        let estimated_input_tokens = estimate_conversation_tokens(messages).saturating_sub(
+            crate::estimator::estimate_conversation_attachment_tokens(messages),
+        );
         let req_config = &self.config;
         // Built ONCE, outside the attempt closure below, and borrowed from
         // there. `CompletionRequestRef` is `Copy` (slices + scalars), so each
@@ -1528,11 +1568,13 @@ impl<'a> Engine<'a> {
         // and consumers replace the preview with it (protocol docs).
         let delta_events = events.clone();
         // What separates a wedged provider from a slow one, for the model
-        // deadline: every event the gate forwards is a fragment that arrived,
-        // so tapping the same sender the gate already writes to costs one
-        // relaxed increment and needs no new plumbing through the adapter.
-        // Per-attempt, like the pool it sits beside — a retry starts its own
-        // idle clock rather than inheriting the previous attempt's silence.
+        // deadline. The gate itself ticks this clock from EVERY observer
+        // method — text, reasoning, streamed calls, argument fragments — so
+        // a generation whose whole output is tool calls still registers as
+        // producing (a sender-tap here only saw text/reasoning events and
+        // read call-only streams as total silence). Per-attempt, like the
+        // pool it sits beside — a retry starts its own idle clock rather
+        // than inheriting the previous attempt's silence.
         let stream_progress = StreamProgress::default();
         let attempt_progress = stream_progress.clone();
         // The pump reports its discarded read-only work (a failed attempt's
@@ -1548,26 +1590,28 @@ impl<'a> Engine<'a> {
         // drops its pool with the attempt — safe to waste for the workspace,
         // but each completed entry emits a `SpeculationDiscarded` event on
         // the way out (#370) — and the retry builds a fresh channel and pool.
+        // Stored true exactly around each attempt's dispatch, so the drop
+        // guard below can tell "a paid call may be in flight" apart from "the
+        // ladder is asleep between attempts" — the failed attempt before a
+        // sleep already reported its own envelope through the observer.
+        let attempt_in_flight = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let attempt_in_flight_latch = attempt_in_flight.clone();
         let attempt: RetryAttemptFn = Box::new(move || {
             let read_only = speculation_read_only.clone();
             let safe = speculation_safe.clone();
             let gated = speculation_hook_gated.clone();
             let progress = attempt_progress.clone();
-            let ticked = progress.clone();
-            let forwarded = delta_events.clone();
-            // Every fragment the gate forwards bumps the idle clock on its way
-            // through, so "did anything arrive" is answered by the same events
-            // the consumer already sees — no second channel to keep in sync.
-            let delta_tx = EventSender::from_fn(move |event| {
-                ticked.record();
-                forwarded.send(event)
-            });
+            let gate_progress = progress.clone();
+            let in_flight = attempt_in_flight_latch.clone();
+            let delta_tx = delta_events.clone();
             let pump_tx = pump_events.clone();
             Box::pin(async move {
+                in_flight.store(true, std::sync::atomic::Ordering::SeqCst);
                 let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
                 let mut pump: SpeculationFuture<'_> = Box::pin(self.pump_speculations(rx, pump_tx));
                 let mut complete = Box::pin(async move {
-                    let gate = SpeculationGate::new(read_only, safe, gated, tx, delta_tx);
+                    let gate =
+                        SpeculationGate::new(read_only, safe, gated, tx, delta_tx, gate_progress);
                     self.provider.complete_observed_ref(req, &gate).await
                     // `gate` (and its sender) drop here → the pump's
                     // stream ends once in-flight executions drain.
@@ -1594,6 +1638,7 @@ impl<'a> Engine<'a> {
                             .into(),
                     )),
                 };
+                in_flight.store(false, std::sync::atomic::Ordering::SeqCst);
                 drop(complete);
                 result.map(|result| (result, pump))
             })
@@ -1605,20 +1650,25 @@ impl<'a> Engine<'a> {
         // still leaves one content-free `Cancelled` envelope behind.
         // Disarmed on BOTH normal exits — a success reports through its
         // `StepUsage`, and a terminal failure's attempts already reported
-        // through the per-attempt observer below.
+        // through the per-attempt observer below. The shared latch narrows
+        // "in flight" to the dispatch itself: a drop landing in a backoff
+        // sleep emits nothing, because the failed attempt before the sleep
+        // already reported its own envelope.
         let mut cancel_guard = CancelUsageGuard {
             events: events.clone(),
             role: self.call_role,
             provider: self.provider.id().to_string(),
             started: call_started,
             armed: true,
+            attempt_in_flight,
         };
         let incomplete_events = events.clone();
         // Every failed attempt's reason, accumulated through the observer:
         // retry.rs returns retry history only for calls that COMMIT, so on
         // exhaustion this is the sole record of the doomed attempts
-        // (receipts spec §6.3 — RetriesExhausted). A std Mutex (not RefCell)
-        // so the future holding `&` stays Send.
+        // (receipts spec §6.3 — RetriesExhausted). A std Mutex, never held
+        // across an await and contention-free — the observer runs serially
+        // within this call.
         let attempt_reasons: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
         let RetryOutcome {
             value: (result, speculation_future),
@@ -1832,16 +1882,23 @@ impl<'a> Engine<'a> {
     ) -> Option<TurnOutcome> {
         let result = &committed.result;
 
-        // Drift feedback: the provider's reported input tokens (total,
-        // cached included — cached tokens were still real prompt tokens)
-        // against the raw estimate, keyed by the model that actually
-        // served the call. `record` ignores zero-sided pairs, so a
+        // Drift feedback: the provider's reported input tokens PLUS its
+        // cache-write tokens against the raw estimate, keyed by the model
+        // that actually served the call. Cache writes are real prompt tokens
+        // the provider read — adapters split them out of `input_tokens` for
+        // pricing, not because they were not sent — and omitting them fed a
+        // falsely low actual on every cache-writing step (worst on a
+        // cache-enabled session's first call, where nearly the whole prompt
+        // is a cache write). `record` ignores zero-sided pairs, so a
         // provider omitting usage never poisons the state.
         if let Some(calibration) = self.calibration {
             calibration.record(
                 &result.model,
                 committed.estimated_input_tokens,
-                result.usage.input_tokens,
+                result
+                    .usage
+                    .input_tokens
+                    .saturating_add(result.usage.cache_write_tokens),
             );
         }
 

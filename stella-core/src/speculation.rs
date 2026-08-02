@@ -74,6 +74,7 @@ use stella_protocol::{AgentEvent, ToolCall, ToolCallObserver, ToolOutput};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::event_sender::EventSender;
+use crate::step::StreamProgress;
 
 /// One speculatively-executed call's outcome, held until dispatch decides
 /// whether to harvest it.
@@ -133,6 +134,15 @@ pub(crate) struct SpeculationGate {
     /// no reset marker exists; consumers replace the preview when the
     /// authoritative `Text` lands.
     events: EventSender,
+    /// The attempt's idle clock ([`crate::step::bounded_generation`]).
+    /// Ticked by EVERY observer method — text, reasoning, a whole streamed
+    /// call, an argument fragment — because each is a fragment that arrived,
+    /// and the deadline's question is only "is anything arriving". Ticked
+    /// FIRST in `tool_call_streamed`, before the fence/eligibility
+    /// early-returns: a stream of mutating calls (`bash`, `edit` — the
+    /// common case) announces work the gate declines to speculate, but the
+    /// provider is plainly answering and must never read as stalled.
+    progress: StreamProgress,
 }
 
 impl SpeculationGate {
@@ -142,6 +152,7 @@ impl SpeculationGate {
         hook_gated: HashSet<String>,
         tx: UnboundedSender<ToolCall>,
         events: impl Into<EventSender>,
+        progress: StreamProgress,
     ) -> Self {
         Self {
             read_only_tools,
@@ -150,12 +161,14 @@ impl SpeculationGate {
             fenced: AtomicBool::new(false),
             tx,
             events: events.into(),
+            progress,
         }
     }
 }
 
 impl ToolCallObserver for SpeculationGate {
     fn text_delta(&self, delta: &str) {
+        self.progress.record();
         if delta.is_empty() {
             return;
         }
@@ -167,6 +180,7 @@ impl ToolCallObserver for SpeculationGate {
     }
 
     fn reasoning_delta(&self, delta: &str) {
+        self.progress.record();
         if delta.is_empty() {
             return;
         }
@@ -178,7 +192,17 @@ impl ToolCallObserver for SpeculationGate {
         });
     }
 
+    fn tool_input_delta(&self) {
+        // Pure liveness: the fragment's bytes are partial JSON only
+        // `tool_call_streamed` may deliver whole. Without this, a generation
+        // whose entire output is one large tool call (a `write_file` of a
+        // whole document) streams in observer silence and the idle deadline
+        // kills a healthy, paying call as "stalled".
+        self.progress.record();
+    }
+
     fn tool_call_streamed(&self, call: &ToolCall) {
+        self.progress.record();
         if self.fenced.load(Ordering::Relaxed) {
             return;
         }
@@ -265,7 +289,14 @@ mod tests {
             speculation_safe.iter().map(|s| s.to_string()).collect();
         let hook_gated: HashSet<String> = gated.iter().map(|s| s.to_string()).collect();
         (
-            SpeculationGate::new(read_only, speculation_safe, hook_gated, tx, events_tx),
+            SpeculationGate::new(
+                read_only,
+                speculation_safe,
+                hook_gated,
+                tx,
+                events_tx,
+                StreamProgress::default(),
+            ),
             rx,
             events_rx,
         )

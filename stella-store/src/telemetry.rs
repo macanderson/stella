@@ -13,8 +13,9 @@ pub struct TelemetryRow {
     pub call_role: String,
     pub model: String,
     pub input_tokens: u64,
-    /// The engine's raw pre-call estimate of `input_tokens` — paired they
-    /// are one drift sample ([`Store::drift_samples`]); 0 means no estimate.
+    /// The engine's raw pre-call estimate — paired with
+    /// `input_tokens + cache_write_tokens` it is one drift sample
+    /// ([`Store::drift_samples`]); 0 means no estimate.
     pub estimated_input_tokens: u64,
     pub output_tokens: u64,
     pub cache_read_tokens: u64,
@@ -132,6 +133,17 @@ impl Store {
     }
 
     /// Recent complete (estimated, actual) input-token pairs, oldest first.
+    ///
+    /// The actual side is `input_tokens + cache_write_tokens`: cache writes
+    /// are real prompt tokens the provider read (they are split out of
+    /// `input_tokens` by adapters for *pricing*, not because they were not
+    /// sent), and serving the bare column fed calibration a falsely low
+    /// actual on every cache-writing step — worst on a cache-enabled
+    /// session's first call, where nearly the whole prompt is a cache write
+    /// and the resulting ~0 ratio seeded the EWMA with garbage that inflated
+    /// the effective compaction budget past the provider's context window.
+    /// Summing here also cleans already-recorded history on replay, since
+    /// both columns have always been persisted.
     pub fn drift_samples(
         &self,
         provider: &str,
@@ -140,11 +152,12 @@ impl Store {
     ) -> Result<Vec<(u64, u64)>> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
-            "SELECT estimated_input_tokens, input_tokens FROM (
-               SELECT estimated_input_tokens, input_tokens, execution_id, step
+            "SELECT estimated_input_tokens, input_tokens + cache_write_tokens FROM (
+               SELECT estimated_input_tokens, input_tokens, cache_write_tokens,
+                      execution_id, step
                FROM telemetry
                WHERE provider = ? AND model = ? AND usage_complete = 1
-                 AND estimated_input_tokens > 0 AND input_tokens > 0
+                 AND estimated_input_tokens > 0 AND input_tokens + cache_write_tokens > 0
                ORDER BY execution_id DESC, step DESC
                LIMIT ?
              ) ORDER BY execution_id ASC, step ASC",

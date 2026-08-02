@@ -67,8 +67,12 @@ pub(super) fn recent_call_records<'a>(
     for message in &messages[turn_start..] {
         match message.role {
             MessageRole::Assistant => {
+                // Borrowed, not cloned: this window is rebuilt every step, and
+                // an owned call deep-copied every `edit_file` input's file
+                // chunks once per step — quadratic across a long turn (the
+                // same cost the output's `Cow` exists to avoid).
                 records.extend(message.tool_calls.iter().map(|call| CallRecord {
-                    call: call.clone(),
+                    call: Cow::Borrowed(call),
                     output: None,
                     identity: None,
                 }));

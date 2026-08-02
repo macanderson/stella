@@ -106,7 +106,7 @@ fn estimate_attachment_tokens(attachment: &stella_protocol::Attachment) -> u64 {
 // walk is Θ(transcript), so on a long turn the difference between two per step
 // and four is the difference between two and four full re-reads of the history
 // for every model call. Test-only; thread-local so it measures one turn's own
-// work (see `stella_context::store::CONTENT_BYTES_LOADED` for the same reasoning).
+// work (see `stella_context`'s `cost_counters` module for the same reasoning).
 #[cfg(test)]
 thread_local! {
     static CONVERSATION_WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -128,6 +128,27 @@ pub fn estimate_conversation_tokens(messages: &[CompletionMessage]) -> u64 {
     #[cfg(test)]
     CONVERSATION_WALKS.with(|c| c.set(c.get() + 1));
     messages.iter().map(estimate_message_tokens).sum()
+}
+
+/// The attachment share of [`estimate_conversation_tokens`] — what to
+/// subtract to get the calibration-facing text estimate.
+///
+/// The attachment weight is a deliberate ~80× over-estimate of what
+/// providers actually bill for media (base64 request pressure vs. image
+/// tiles), which is the safe direction for the compaction decision but
+/// poison as a drift sample: one screenshot-bearing step's ratio clamps to
+/// the sample floor, drags the factor toward `CALIBRATION_MIN_FACTOR`, and
+/// the inflated effective budget then lets a text-dominated transcript grow
+/// past the provider's real context window before compaction fires. So the
+/// pressure decision keeps the full estimate and calibration records the
+/// estimate minus this. Cheap — it touches only attachment metadata, never
+/// the transcript's text.
+pub fn estimate_conversation_attachment_tokens(messages: &[CompletionMessage]) -> u64 {
+    messages
+        .iter()
+        .flat_map(|m| m.attachments.iter())
+        .map(estimate_attachment_tokens)
+        .sum()
 }
 
 /// EWMA smoothing weight for new drift samples. 0.3 converges within a
@@ -192,8 +213,13 @@ impl Calibration {
         }
     }
 
-    /// Feed one observed pair: the raw (uncalibrated) pre-call estimate and
-    /// the provider-reported actual input tokens (total, cached included).
+    /// Feed one observed pair: the raw (uncalibrated) pre-call estimate —
+    /// attachments excluded, see [`estimate_conversation_attachment_tokens`]
+    /// — and the provider-reported actual input tokens. The actual is a TRUE
+    /// total: fresh input plus cache reads plus cache writes, because cache
+    /// writes are real prompt tokens the provider read (adapters split them
+    /// out of `input_tokens` for pricing, not because they were not sent) and
+    /// omitting them fed falsely low ratios on every cache-writing step.
     /// Zero on either side carries no signal (scripted tests, providers that
     /// omit usage) and is ignored rather than recorded as ratio 0/∞.
     pub fn record(&mut self, estimated: u64, actual: u64) {

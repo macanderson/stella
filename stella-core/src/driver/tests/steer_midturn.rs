@@ -34,6 +34,80 @@ impl crate::ports::TurnSteering for SteerAtDrain {
     }
 }
 
+/// A [`crate::ports::TurnSteering`] that requests the soft stop immediately.
+struct StopNow;
+
+impl crate::ports::TurnSteering for StopNow {
+    fn drain_steering(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn soft_stop_requested(&self) -> bool {
+        true
+    }
+}
+
+/// The soft stop keeps history the next turn can reuse — including history a
+/// CALLER handed in with an unanswered `tool_use` (the engine's own path
+/// never leaves one open at this boundary). The cancel exit has always
+/// closed the pairing; the soft stop lands at the same boundary with the
+/// same keep-the-transcript contract, so it must repair the same shape or
+/// the kept history hard-fails the next provider call.
+#[tokio::test]
+async fn a_soft_stop_closes_caller_supplied_open_tool_calls() {
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![Ok(text_result("never reached"))]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let steering = StopNow;
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
+        .with_steering(&steering);
+    // A caller-injected assistant message whose call nothing answered.
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("the task"),
+        CompletionMessage {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            tool_calls: vec![ToolCall {
+                call_id: "orphan".into(),
+                name: "bash".into(),
+                input: serde_json::json!({}),
+            }],
+            tool_results: Vec::new(),
+            attachments: Vec::new(),
+        },
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+    assert!(
+        matches!(outcome, TurnOutcome::Aborted { ref reason, .. } if reason == SOFT_STOP_REASON),
+        "got {outcome:?}"
+    );
+    assert_eq!(
+        provider.calls.load(Ordering::SeqCst),
+        0,
+        "the stop must land before any model call"
+    );
+    assert_tool_pairing(&messages);
+    let closing = messages.last().expect("a closing Tool message");
+    assert_eq!(closing.role, MessageRole::Tool);
+    assert!(
+        matches!(
+            &closing.tool_results[..],
+            [ToolResult { call_id, output: ToolOutput::Error { message } }]
+                if call_id == "orphan" && message.contains("stopped by user")
+        ),
+        "the orphan must be closed with the soft-stop wording: {closing:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_steer_after_a_tool_round_keeps_every_call_paired_with_its_result() {
     // Step 0 calls a tool; step 1's boundary is where the steer lands, so the

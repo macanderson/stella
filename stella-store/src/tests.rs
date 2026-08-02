@@ -1206,6 +1206,33 @@ fn drift_samples_roundtrip_the_estimated_column_oldest_first() {
 }
 
 #[test]
+fn drift_samples_count_cache_writes_as_real_prompt_tokens() {
+    // The undercount witness: adapters split cache-WRITE tokens out of
+    // `input_tokens` for pricing, but the provider still read them — a
+    // cache-enabled session's first call reports nearly its whole prompt as
+    // a cache write, and serving the bare `input_tokens` column fed
+    // calibration a near-zero ratio that inflated the effective compaction
+    // budget past the provider's context window. The actual side of a drift
+    // sample must be the SUM.
+    let store = Store::in_memory().unwrap();
+    let id = store.begin_execution("run", "p", "zai", "glm-5.2").unwrap();
+    let mut row = drift_row(0, "zai", "glm-5.2", 20_000, 300);
+    row.cache_write_tokens = 19_500;
+    store.record_telemetry(id, &row).unwrap();
+    // A row whose entire prompt was a cache write still carries signal.
+    let mut all_written = drift_row(1, "zai", "glm-5.2", 10_000, 0);
+    all_written.cache_write_tokens = 9_800;
+    store.record_telemetry(id, &all_written).unwrap();
+
+    let samples = store.drift_samples("zai", "glm-5.2", 10).unwrap();
+    assert_eq!(
+        samples,
+        vec![(20_000, 19_800), (10_000, 9_800)],
+        "actual must be input_tokens + cache_write_tokens"
+    );
+}
+
+#[test]
 fn drift_samples_are_keyed_by_provider_and_model_and_skip_signal_free_rows() {
     let store = Store::in_memory().unwrap();
     let id = store.begin_execution("run", "p", "zai", "glm-5.2").unwrap();

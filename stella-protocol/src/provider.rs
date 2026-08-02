@@ -60,6 +60,21 @@ pub trait ToolCallObserver: Send + Sync {
     fn reasoning_delta(&self, delta: &str) {
         let _ = delta;
     }
+
+    /// One fragment of a tool call's streamed ARGUMENTS arrived. Carries no
+    /// payload on purpose: the bytes are partial JSON that only
+    /// [`Self::tool_call_streamed`] may deliver once whole and parsed — this
+    /// is purely a liveness signal, so a generation whose entire output is
+    /// one large tool call (a `write_file` of a whole document, say) still
+    /// registers as *producing* against an idle deadline that would
+    /// otherwise see total silence and kill a healthy call as stalled.
+    ///
+    /// Same best-effort contract as the other deltas, and a default no-op so
+    /// existing observers compile unchanged. Adapters without per-fragment
+    /// argument visibility (Gemini's whole-part `functionCall`s, unary
+    /// dialects) never call it — their tool activity registers through
+    /// `tool_call_streamed` instead.
+    fn tool_input_delta(&self) {}
 }
 
 /// One model provider adapter. `stella-core` drives every call through

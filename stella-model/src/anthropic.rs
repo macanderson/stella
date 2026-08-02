@@ -927,6 +927,14 @@ async fn aggregate_anthropic_stream(
                         }
                     }
                     AnthropicDelta::InputJsonDelta { partial_json } => {
+                        // Liveness only — the partial JSON itself is never
+                        // announced (tool_call_streamed owns the parsed
+                        // whole). Without this tick a generation that is one
+                        // large tool call streams in total observer silence
+                        // and an idle deadline kills it as stalled.
+                        if let Some(observer) = observer {
+                            observer.tool_input_delta();
+                        }
                         if let Some(acc) = tool_uses.get_mut(&index) {
                             acc.input_json.push_str(&partial_json);
                         }
