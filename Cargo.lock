@@ -3123,7 +3123,7 @@ dependencies = [
 
 [[package]]
 name = "stella-diag"
-version = "0.6.62"
+version = "0.6.63"
 dependencies = [
  "proptest",
  "serde",
