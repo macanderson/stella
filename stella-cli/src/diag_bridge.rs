@@ -466,7 +466,10 @@ impl DomainBridge {
                 );
             }
             AgentEvent::GoalVerdict {
-                round, met, cost_usd, ..
+                round,
+                met,
+                cost_usd,
+                ..
             } => {
                 self.emit(
                     Level::Info,
@@ -537,7 +540,10 @@ impl DomainBridge {
                     "agent.file.change",
                     self.at_seq()
                         .with("kind", file_change_kind(*kind))
-                        .with("path", PathClass::classify(std::path::Path::new(path), &self.paths))
+                        .with(
+                            "path",
+                            PathClass::classify(std::path::Path::new(path), &self.paths),
+                        )
                         .with("added", *added)
                         .with("removed", *removed),
                 );
@@ -729,9 +735,7 @@ mod tests {
     fn ten_thousand_text_deltas_produce_no_records() {
         let (mut bridge, records) = bridge();
         for _ in 0..10_000 {
-            bridge.observe(&AgentEvent::TextDelta {
-                text: "tok".into(),
-            });
+            bridge.observe(&AgentEvent::TextDelta { text: "tok".into() });
         }
         assert!(
             records.records().is_empty(),
