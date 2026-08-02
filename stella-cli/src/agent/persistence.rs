@@ -50,7 +50,16 @@ pub(crate) fn spawn_renderer(
         let mut seq = 0u64;
         let mut store_warned = false;
         let mut stream_terminal = None;
+        // The diagnostic timeline (docs/design/diagnostics.md §8). Built on the
+        // RECEIVING side: a bridge holding an `EventSender` clone would keep the
+        // channel open and hang close-out, which is the whole point of
+        // `close_event_stream` above.
+        let mut bridge = crate::diag_bridge::DomainBridge::new(
+            crate::diag_boot::dx(),
+            Some(crate::diag_boot::workspace_root()),
+        );
         while let Some(event) = rx.recv().await {
+            bridge.observe(&event);
             let event = if format == OutputFormat::StreamJson {
                 let Some(event) = defer_stream_terminal(&mut stream_terminal, event) else {
                     continue;
@@ -123,6 +132,10 @@ pub(crate) fn spawn_renderer(
             }
             emit_stream_json(&event, durable_pre_persisted);
         }
+        // The stream is closed, so the bounded tally is final: one record
+        // carrying the per-token counts that deliberately produced none of
+        // their own (§3.8).
+        bridge.finish();
         outcome
     })
 }

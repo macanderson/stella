@@ -44,6 +44,7 @@ mod credential_handoff;
 mod credential_status;
 mod deck_mcp;
 mod diag_boot;
+mod diag_bridge;
 mod discovery;
 mod doctor;
 mod domains;
