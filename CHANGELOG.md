@@ -35,6 +35,46 @@ skip the roll) were re-inserted the same way.
 
 ## [Unreleased]
 
+### Changed
+
+- **Stella now asks each model for what that model can actually emit.** The
+  engine carried one output cap (16,384 tokens) for every model on every
+  provider, and fell back to it even though each model's real ceiling was
+  already being read from models.dev, written to the `max_output_tokens`
+  column of the local model card, and read back out — then dropped when the
+  runtime catalog was assembled. `CatalogEntry` now carries the ceiling and
+  the engine uses it, in both directions: a model that can emit 64,000 gets
+  asked for 64,000, and one whose ceiling is below 16,384 stops being asked
+  for more than its provider will serve. An explicit `params.max_tokens` in
+  settings still wins, and a model the catalog has no ceiling for keeps the
+  previous default.
+
+  The symptom this fixes is truncation that looks like failure: a step that
+  spends its whole budget reasoning and is cut off before it can emit a tool
+  call does no work and reports nothing useful, and on a benchmark that is
+  scored identically to getting the answer wrong.
+
+- **`model_timeout` is 816s, up from 600s.** The old value assumed no
+  generation a caller still wants runs past ten minutes. At high effort
+  against a large output ceiling that is false — single steps producing
+  correct, complete work were measured at 624s and 756s, and a 600s bound
+  killed them after paying for them. Raising the output ceiling without this
+  only relocates the cliff, which is why earlier attempts to fix truncation
+  by raising the cap alone did not.
+
+### Fixed
+
+- **The benchmark adapter passes the turn deadline it is running under.** The
+  engine could already decline to start a length continuation it could not
+  finish, and end the turn with a truthful partial rather than being killed
+  mid-flight — but nothing told it the deadline, so the policy was inert in
+  the one place it was written for. The Harbor adapter now derives
+  `--turn-budget` per trial from Harbor's own agent timeout (via
+  `--agent-kwarg agent_timeout_sec=<seconds>`, the seam Harbor's Cline adapter
+  uses), holding back a fixed 60s so the turn ends as a result instead of a
+  kill. `STELLA_TURN_BUDGET` is accepted as a fallback and is now registered:
+  before this, exporting it did not enable the policy, it refused the run.
+
 ## [0.6.62] — 2026-08-01
 
 ## [0.6.61] — 2026-08-01

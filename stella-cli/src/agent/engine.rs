@@ -55,6 +55,23 @@ fn tuned_engine_config(
                 .compaction_budget_tokens
                 .min(window.saturating_mul(3) / 4);
         }
+        // The model's own completion ceiling replaces the global default,
+        // in BOTH directions. `EngineConfig::default()` carries one 16384 for
+        // every model on every provider and its own comment called per-model
+        // caps the eventual refinement; this is that refinement, and the data
+        // has been on the model card the whole time.
+        //
+        // Raising matters where the work is long: a comparator on the same
+        // model, same API and same effort spent 45,001–64,000 output tokens
+        // finishing tasks whose Stella runs ended at the cap with no tool
+        // call. Lowering matters too — a row whose ceiling is below 16384 was
+        // being asked for more than the provider will serve.
+        //
+        // Settings still win: this lands before the `engine_settings` block,
+        // so an explicit `params.max_tokens` overrides it.
+        if let Some(ceiling) = entry.max_output_tokens.filter(|c| *c > 0) {
+            engine.max_output_tokens = Some(ceiling);
+        }
     }
     if let Some(settings) = &cfg.engine_settings {
         let tuning = crate::engine_config::tuning_for(settings, kind);

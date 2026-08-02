@@ -164,31 +164,47 @@ def _benchmark_engine_posture(
         # tier without raising the cap buys reasoning that cannot fit an answer
         # beside it, and the step ends with no tool call at all.
         #
-        # 32000 rather than more, bounded by `model_timeout` (600s): the effort
-        # preflight spent ~280s reaching 32000 output tokens, so ~64000 would
-        # sit close enough to the model timeout to trade one truncation mode
-        # for another. Sonnet 5's own ceiling (128000) is not the constraint.
+        # 64000, which is the model's own ceiling and therefore the
+        # comparator's. The previous value was 32000, held there because
+        # `model_timeout` was 600s and a 64000-token step would not fit inside
+        # it — one self-imposed ceiling justifying another. Both moved
+        # together; `model_timeout` is now 816s, and neither binds first.
+        #
+        # The 32000 value was falsified directly. On the gate, four trials
+        # ended on a step that emitted exactly 32000 output tokens with zero
+        # tool calls. Claude Code passed all four of those tasks (reward 1.0)
+        # on the same model, same API and same effort, and its winning steps
+        # on them spent 45,001, 64,000, 64,000 and 25,965 output tokens. Two
+        # landed on precisely 64,000 — its ceiling — and still had room to
+        # emit the tool call. Sonnet fills whatever budget it is given in
+        # either agent; the only variable is who stops it first.
+        #
+        # That is also why 16384 -> 32000 did not fix truncation and 64000
+        # "merely traded truncation for a model_timeout": each attempt moved
+        # one ceiling while the others held. The output cap, `model_timeout`
+        # and the turn budget are one budget, and the rule that sets all three
+        # is the same — never be the side that stops first.
         #
         # This is not compute handed to one side. Claude Code does not cap
-        # itself at 16k, so the cap was a Stella-side handicap and removing it
-        # restores parity rather than breaking it. `triage` keeps the default:
-        # it runs at low effort and emits a three-line classification, so 16384
-        # was never near binding for it.
+        # itself, so every number below the model's ceiling was a Stella-side
+        # handicap and removing it restores parity rather than breaking it.
+        # `triage` keeps the engine default: it runs at low effort and emits a
+        # three-line classification, so the cap was never near binding for it.
         "agents": {
             "default": {
                 "effort": "xhigh",
                 "reasoning": "on",
-                "params": {"max_tokens": 32000},
+                "params": {"max_tokens": 64000},
             },
             "worker": {
                 "effort": "xhigh",
                 "reasoning": "on",
-                "params": {"max_tokens": 32000},
+                "params": {"max_tokens": 64000},
             },
             "judge": {
                 "effort": "xhigh",
                 "reasoning": "on",
-                "params": {"max_tokens": 32000},
+                "params": {"max_tokens": 64000},
             },
             "triage": {"effort": "low", "reasoning": "off"},
         },

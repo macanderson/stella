@@ -524,9 +524,9 @@ includes `headless_scope_bypass: on` (see Engine posture above), are:
 
 | Configuration model | Engine-posture SHA-256 |
 |---|---|
-| `openrouter/deepseek/deepseek-v4-pro` | `0de2116f1773a81a1ab5590313efba49120ac119149ee21c0b13271a5f469bb2` |
-| `openrouter/z-ai/glm-5.2` | `a0ab8a753a4ffaf7eff5a4ec051f2e6ba3daef38bfb7455af07a634ebde7a407` |
-| `openrouter/x-ai/grok-4.5` | `ff61cb0609f4649df922fb19715bea826121c6eeaad72be9a0f4db20a4a1ea0e` |
+| `openrouter/deepseek/deepseek-v4-pro` | `9d7ad135db12e32d4519f893b8d8ed9d918b0ef54c7a4e4d22d1398b0015785b` |
+| `openrouter/z-ai/glm-5.2` | `7e9da63355a399025c537e6d26528a0500a533b096e4f1eda1b88a3e3c51c0b4` |
+| `openrouter/x-ai/grok-4.5` | `19c4d3454de88a1fe5560d17bdf9a063be1d1720190a90a5dc1bdcb2159c9f15` |
 
 Each posture differs only in the inherited selected model and its one-entry
 `allowed_models` list. A repository setting or Harbor extra that attempts to

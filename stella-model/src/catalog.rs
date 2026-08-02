@@ -126,6 +126,27 @@ pub struct CatalogEntry {
     /// effort picker hides its levels and the request path drops
     /// effort/reasoning instead of sending a parameter the API rejects.
     pub supports_reasoning: Option<bool>,
+    /// The model's own maximum completion length, from `limit.output` on the
+    /// model card. `None` is "unknown" and leaves the engine default standing.
+    ///
+    /// This exists because the engine had no way to ask. `EngineConfig`
+    /// carried one global `max_output_tokens` (16384) for every model on
+    /// every provider, and its comment named per-model caps as "the eventual
+    /// refinement" — while the value was already being parsed from
+    /// models.dev, written to the `max_output_tokens` column of the model
+    /// card, read back out, and then dropped at the runtime-catalog assembly
+    /// in `stella-cli`. Exactly the shape of the cache-write rate before #97,
+    /// at exactly the same site.
+    ///
+    /// The cost was not theoretical. On the Terminal-Bench 2.1 gate, four
+    /// trials ended on a step that emitted the cap exactly and made no tool
+    /// call, against a comparator that spent 45,001–64,000 output tokens on
+    /// those same four tasks and finished each with its tool call, reward
+    /// `1.0`. Two of the comparator's winning steps landed on precisely
+    /// 64,000 — its own ceiling — so the model fills whatever budget it is
+    /// given and the only question is whose number stops it first. Ours did,
+    /// at half the height, on data we already had.
+    pub max_output_tokens: Option<u32>,
 }
 
 impl CatalogEntry {
@@ -149,6 +170,7 @@ impl CatalogEntry {
             tool_dialect,
             pricing,
             supports_reasoning: None,
+            max_output_tokens: None,
         }
     }
 
@@ -157,6 +179,15 @@ impl CatalogEntry {
     #[must_use]
     pub fn with_reasoning(mut self, supports_reasoning: Option<bool>) -> Self {
         self.supports_reasoning = supports_reasoning;
+        self
+    }
+
+    /// Set the model's own completion ceiling (builder-style, same reason as
+    /// [`CatalogEntry::with_reasoning`] — the seed rows and the many `new`
+    /// call sites stay untouched, and a row without the data keeps `None`).
+    #[must_use]
+    pub fn with_max_output_tokens(mut self, max_output_tokens: Option<u32>) -> Self {
+        self.max_output_tokens = max_output_tokens;
         self
     }
 }
@@ -560,6 +591,48 @@ mod tests {
             Catalog::seed().resolve("glm-5.2").unwrap().pricing,
         );
         assert!(current.resolve_for("anthropic", "test-only-model").is_ok());
+    }
+
+    #[test]
+    fn a_row_carries_the_models_own_output_ceiling_and_defaults_to_unknown() {
+        // The value models.dev publishes as `limit.output`. It was parsed,
+        // written to the model card's `max_output_tokens` column and read
+        // back, then dropped when the runtime catalog was assembled — the
+        // same site, and the same shape, as the cache-write rate before #97.
+        // With nowhere to carry it, the engine fell back to one global 16384
+        // for every model, and truncated steps the model had room to finish.
+        let entry = CatalogEntry::new(
+            "test-only-ceiling-model",
+            "anthropic",
+            "claude",
+            200_000,
+            ToolDialect::AnthropicTools,
+            Pricing {
+                input_usd_per_mtok: 3.0,
+                output_usd_per_mtok: 15.0,
+                cached_input_usd_per_mtok: 0.3,
+                cache_write_usd_per_mtok: 3.75,
+            },
+        );
+        // Absent by default: a row without the data must not invent a ceiling.
+        assert_eq!(entry.max_output_tokens, None);
+
+        let entry = entry.with_max_output_tokens(Some(64_000));
+        assert_eq!(entry.max_output_tokens, Some(64_000));
+
+        // And it survives the lookup the engine actually performs. Superset of
+        // the seed, per `install_runtime_extends_current_without_disturbing_seed_rows`.
+        let mut entries = Catalog::seed().entries.clone();
+        entries.push(entry);
+        Catalog::install_runtime(Catalog::with_entries(entries));
+
+        assert_eq!(
+            Catalog::current()
+                .resolve_for("anthropic", "test-only-ceiling-model")
+                .unwrap()
+                .max_output_tokens,
+            Some(64_000),
+        );
     }
 
     #[test]

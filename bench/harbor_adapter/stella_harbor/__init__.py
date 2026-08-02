@@ -84,6 +84,12 @@ from .posture import (
     _benchmark_engine_posture,
     fold_witness_observations,
 )
+from .turn_budget import (
+    TURN_BUDGET_ENV as _TURN_BUDGET_ENV,
+)
+from .turn_budget import (
+    resolve_turn_budget as _resolve_turn_budget,
+)
 
 try:
     # Harbor renders prompt templates onto the ``instruction`` argument of a
@@ -122,6 +128,7 @@ _TELEMETRY_INCOMPLETE = "stella-adapter: TELEMETRY-INCOMPLETE"
 # Defaults when neither Harbor nor the environment specify a value.
 _DEFAULT_MODEL = "anthropic/claude-fable-5"
 _DEFAULT_BUDGET = "5.0"
+
 # What a run with no per-trial spend cap discloses as its cap. A word rather
 # than an omission, because the metadata dict drops `None` values entirely and
 # a published manifest would then spell "no cap" and "this adapter never
@@ -187,6 +194,11 @@ _HOST_ONLY_STELLA_ENV = frozenset(
         "STELLA_SOURCE_COMMIT",
         "STELLA_MODEL",
         "STELLA_BASE_URL",
+        # The turn deadline (#1161/#1170/#1173). Host-only like STELLA_MODEL:
+        # read here, expressed as argv, never forwarded. Registered because the
+        # ambient check below fails closed — unregistered, exporting it refused
+        # the run rather than enabling the policy. See `turn_budget`.
+        _TURN_BUDGET_ENV,
         _WITNESS_AUTHOR_ENV,
         # The portability target triple and glibc floor (#1018). `env.sh` exports
         # both so `build_sut.sh` builds to the same floor `preflight` asserts
@@ -1102,6 +1114,23 @@ class StellaAgent(BaseInstalledAgent):
     _assurance_tiers_json: str
     _assurance_tiers_sha256: str
 
+    def __init__(self, *args: Any, agent_timeout_sec: Any = None, **kwargs: Any):
+        """Accept Harbor's per-trial agent deadline, and keep it off the base.
+
+        Harbor 0.6.1 hands ``agent_timeout_sec`` to the *oracle* agent only, so
+        an installed agent is never told the deadline it runs against — the
+        reason the continuation policy shipped inert. The supported route is
+        the agent kwarg (``--agent-kwarg agent_timeout_sec=<seconds>``), as
+        Harbor's own Cline adapter takes it. Popping it is required, not
+        stylistic: ``BaseInstalledAgent`` forwards unrecognized kwargs to
+        ``BaseAgent.__init__``, which rejects it. Why it matters:
+        :mod:`stella_harbor.turn_budget`.
+        """
+        # Raw: validation belongs at the point of use, since `__init__` is not
+        # the only way this is set (the suite uses `__new__`).
+        self._agent_timeout_sec = agent_timeout_sec
+        super().__init__(*args, **kwargs)
+
     @staticmethod
     def name() -> str:
         return "stella"
@@ -1422,6 +1451,7 @@ class StellaAgent(BaseInstalledAgent):
         """
         model = model or self._effective_model()
         budget = self._configured_budget()
+        turn_budget = self._configured_turn_budget()
         base_url = base_url or self._effective_base_url(model)
         parts = [
             _INSTALL_PATH,
@@ -1431,6 +1461,9 @@ class StellaAgent(BaseInstalledAgent):
             # budget" to clap, it is a malformed number, and it exits 2 before
             # the turn starts.
             *(["--budget", budget] if budget is not None else []),
+            # Omit-when-absent, same discipline and same reason as `--budget`:
+            # an absent flag is "no deadline", an empty value exits 2.
+            *(["--turn-budget", turn_budget] if turn_budget is not None else []),
             "--output-format",
             "stream-json",
         ]
@@ -1550,6 +1583,23 @@ class StellaAgent(BaseInstalledAgent):
         if budget is None or not str(budget).strip():
             return None
         return budget
+
+    def _configured_turn_budget(self) -> str | None:
+        """Resolve the turn deadline in seconds, or ``None`` for no deadline.
+
+        Policy and parsing live in :mod:`stella_harbor.turn_budget`; this
+        supplies the two inputs and nothing else.
+
+        ``getattr`` rather than attribute access: Harbor constructs this class,
+        but the suite builds instances without running ``__init__`` — the same
+        reason ``_configured_value`` reaches for ``_resolved_env_vars`` this
+        way — and an adapter that only works when fully constructed is an
+        adapter whose deadline handling is untested.
+        """
+        return _resolve_turn_budget(
+            getattr(self, "_agent_timeout_sec", None),
+            self._configured_value(_TURN_BUDGET_ENV),
+        )
 
     def _forwarded_env(self) -> dict[str, str]:
         """Build the registered minimal claim environment.
