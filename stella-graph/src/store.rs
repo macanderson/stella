@@ -58,7 +58,16 @@ use crate::symbol::SymbolKind;
 use crate::walk::walk_indexable;
 
 /// The on-disk schema version stamped in `PRAGMA user_version`. Bump it in
-/// the same commit that changes the shape [`MIGRATION`] produces.
+/// the same commit as a **reshape** — an altered or backfilled column,
+/// anything the `IF NOT EXISTS` guard would silently skip on an existing
+/// store. A purely *additive* table or index is what convergence already
+/// expresses (the whole [`MIGRATION`] batch replays on every writer open),
+/// so it ships **without** a bump — bumping would make every older binary
+/// refuse a store a newer one touched
+/// ([`stella_store::durable::ensure_converged_schema_version`] fails closed
+/// on a future stamp) for no protection gained. Precedent: the #1214
+/// storage indexes and the #335 `code_graph_calls` table, both additive,
+/// both unbumped.
 const SCHEMA_VERSION: i64 = 1;
 
 /// The tables [`MIGRATION`] must have produced before the version is stamped.
