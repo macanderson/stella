@@ -815,6 +815,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             base_ref,
             watch,
             no_pipeline,
+            task_timeout,
         } => {
             signals::block_on_interruptible(
                 rt()?,
@@ -827,6 +828,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                     cli.globals.budget,
                     watch,
                     !no_pipeline,
+                    task_timeout.map(std::time::Duration::from_secs),
                     cli.globals.output_format,
                 ),
             )?;

@@ -74,6 +74,7 @@ pub async fn run_fleet(
     budget_limit: Option<f64>,
     watch: bool,
     use_pipeline: bool,
+    task_timeout: Option<std::time::Duration>,
     output_format: crate::OutputFormat,
 ) -> Result<(), String> {
     crate::enterprise_telemetry::authorize_execution_surface(
@@ -171,7 +172,14 @@ pub async fn run_fleet(
         ledger,
         agent::build_budget_guard(budget_limit),
         SystemClock::new(),
-        FleetConfig::new(&run_id, &base_sha).with_max_concurrency(max_concurrency.max(1)),
+        {
+            let mut config =
+                FleetConfig::new(&run_id, &base_sha).with_max_concurrency(max_concurrency.max(1));
+            if let Some(limit) = task_timeout {
+                config = config.with_task_timeout(limit);
+            }
+            config
+        },
     )
     .map_err(|e| format!("could not start the fleet: {e}"))?;
     // File claims live in the workspace store (`.stella/private/store.db`), opened
@@ -1084,6 +1092,16 @@ fn render_report(plan: &Plan, report: &FleetRunReport, ledger_path: &Path) {
         if !handle.outcome.summary.is_empty() {
             println!("      {}", handle.outcome.summary.dimmed());
         }
+        if let Some(error) = &handle.ledger_error {
+            // The result above is authoritative; what was lost is the durable
+            // row. Silent here would mean the only witness to an open
+            // attempts row is a future `stella doctor`.
+            println!(
+                "      {} attempt not recorded in the fleet ledger ({error}) — the row stays \
+                 open; `stella doctor` will report it",
+                "!".yellow()
+            );
+        }
     }
     for (task_id, reason) in &report.dispatch_failures {
         println!(
@@ -1378,6 +1396,7 @@ mod tests {
             },
             worktree: None,
             budget: BudgetOutcome::Continue,
+            ledger_error: None,
         }
     }
 

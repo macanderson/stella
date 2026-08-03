@@ -376,6 +376,14 @@ pub(crate) enum Command {
         /// the default.
         #[arg(long)]
         no_pipeline: bool,
+
+        /// Wall-clock ceiling per worker attempt, in seconds. On expiry the
+        /// task's stop line fires (the same clean cancel the dashboard's
+        /// `[x]` sends) and the attempt reports as failed instead of
+        /// occupying its concurrency slot forever — the only way to unstick
+        /// a hung worker on a piped or CI run. Unset = unbounded.
+        #[arg(long, value_name = "SECS")]
+        task_timeout: Option<u64>,
     },
 
     /// Query the code graph — definitions, references, imports

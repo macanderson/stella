@@ -198,6 +198,14 @@ pub struct FleetConfig {
     /// Bounds the fleet's fan-out so it shares a bounded executor rather than
     /// spawning freely (L-S4).
     pub max_concurrency: usize,
+    /// Wall-clock ceiling on one worker attempt. `None` (the default) keeps
+    /// the historical behavior: nothing bounds a worker, and a hung one
+    /// occupies its `buffer_unordered` slot forever — on a piped or CI run,
+    /// with no dashboard `[x]` reachable, that is the whole plan stalled with
+    /// no way out. With a limit, expiry fires the task's own stop line (the
+    /// same clean cancel the dashboard sends), waits [`TASK_STOP_GRACE`] for
+    /// the worker to settle and report, and only then gives up on it.
+    pub task_timeout: Option<std::time::Duration>,
 }
 
 impl FleetConfig {
@@ -210,6 +218,7 @@ impl FleetConfig {
             run_id: run_id.into(),
             base_ref: base_ref.into(),
             max_concurrency: 4,
+            task_timeout: None,
         }
     }
 
@@ -220,7 +229,22 @@ impl FleetConfig {
         self.max_concurrency = n;
         self
     }
+
+    /// Bound one worker attempt's wall-clock (builder style). See
+    /// [`FleetConfig::task_timeout`].
+    #[must_use]
+    pub fn with_task_timeout(mut self, limit: std::time::Duration) -> Self {
+        self.task_timeout = Some(limit);
+        self
+    }
 }
+
+/// How long a timed-out worker gets to observe its stop line and settle
+/// before dispatch stops waiting for it. Generous on purpose: the stop lands
+/// at the worker's next await point and a settling worker reports its real
+/// spend and commits — synthesizing a result instead loses both, so the
+/// grace is the cheap path and the synthesis the last resort.
+const TASK_STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// The completed record of one dispatched task: what the worker produced, the
 /// worktree it ran in (if isolated), the ledger attempt id, and the parent
@@ -236,6 +260,13 @@ pub struct TaskHandle {
     /// The parent [`BudgetGuard`]'s outcome after this child's cost was
     /// metered — `AbortTurn` signals `run_plan` to stop launching new waves.
     pub budget: BudgetOutcome,
+    /// `Some(reason)` when the attempt's durable ledger close failed AFTER
+    /// the worker settled. The in-memory result above is authoritative for
+    /// this run — a disk error must not convert a completed worker into a
+    /// dispatch failure and skip its dependents — but the `attempts` row is
+    /// left open and its commits/spend rows were not written, so anything
+    /// reading the ledger later sees an attempt that never closed.
+    pub ledger_error: Option<String>,
 }
 
 /// The result of running a whole plan.
@@ -553,7 +584,54 @@ where
         //    pause/stop. Re-dispatch a task after its previous attempt
         //    settles, not alongside it.
         let (controls, control_guard) = self.register_controls(task);
-        let outcome = self.worker.run(task, &workspace_root, controls).await;
+        let outcome = match self.config.task_timeout {
+            None => self.worker.run(task, &workspace_root, controls).await,
+            Some(limit) => {
+                let run = self.worker.run(task, &workspace_root, controls);
+                tokio::pin!(run);
+                match tokio::time::timeout(limit, &mut run).await {
+                    Ok(outcome) => outcome,
+                    Err(_) => {
+                        // Expiry fires the worker's OWN stop line — the same
+                        // clean cancel the dashboard's `[x]` sends — then
+                        // keeps awaiting: a stopping worker settles at its
+                        // next await point and reports its real spend and
+                        // commits, which a synthesized result cannot.
+                        self.stop_task(&task.id);
+                        match tokio::time::timeout(TASK_STOP_GRACE, &mut run).await {
+                            Ok(mut outcome) => {
+                                outcome.success = false;
+                                outcome.summary = format!(
+                                    "task timeout after {}s: {}",
+                                    limit.as_secs(),
+                                    outcome.summary
+                                );
+                                outcome
+                            }
+                            // The worker ignored its stop line for the whole
+                            // grace. Dropping the future here is the same
+                            // abandon seam a cancelled dispatch takes (#803):
+                            // the CLI worker's abandon channel closes with it
+                            // and its detached thread stops at ITS next await.
+                            // The synthesized result is honest about what was
+                            // lost — spend and commits were never observed.
+                            Err(_) => WorkerOutcome {
+                                cost_usd: 0.0,
+                                commits: Vec::new(),
+                                summary: format!(
+                                    "task timeout after {}s: stop was requested and the worker \
+                                     did not settle within the {}s grace; its spend and commits \
+                                     could not be observed",
+                                    limit.as_secs(),
+                                    TASK_STOP_GRACE.as_secs()
+                                ),
+                                success: false,
+                            },
+                        }
+                    }
+                }
+            }
+        };
         // The worker settled — drop its control handle so a later pause or
         // stop for this id reports "no live worker" instead of signalling
         // into the void. Dropping the guard explicitly keeps deregistration
@@ -578,20 +656,31 @@ where
             let mut guard = self.lock_budget();
             guard.record_spend(outcome.cost_usd)
         };
-        {
+        // The stamp can fail; the result must survive it. The worker has
+        // already done its work and its spend is already in the gate above —
+        // propagating a disk/`SQLITE_BUSY` error here converted a COMPLETED
+        // worker into a dispatch failure, which dropped its result, skipped
+        // its dependents, and left the attempts row permanently open anyway.
+        // The same honesty argument as the spend ordering: losing the durable
+        // row is bad, and losing the run's real outcome with it is worse. The
+        // failure is carried on the handle, never swallowed.
+        let ledger_error = {
             let ledger = self.lock_ledger();
-            ledger.finish_attempt(&AttemptFinish {
-                attempt_id,
-                run_id: self.config.run_id.clone(),
-                task_id: task.id.clone(),
-                finished_at_ms,
-                success: outcome.success,
-                summary: outcome.summary.clone(),
-                commits: outcome.commits.clone(),
-                cost_usd: outcome.cost_usd,
-                spend_at_ms: finished_at_ms,
-            })?;
-        }
+            ledger
+                .finish_attempt(&AttemptFinish {
+                    attempt_id,
+                    run_id: self.config.run_id.clone(),
+                    task_id: task.id.clone(),
+                    finished_at_ms,
+                    success: outcome.success,
+                    summary: outcome.summary.clone(),
+                    commits: outcome.commits.clone(),
+                    cost_usd: outcome.cost_usd,
+                    spend_at_ms: finished_at_ms,
+                })
+                .err()
+                .map(|e| e.to_string())
+        };
 
         Ok(TaskHandle {
             task_id: task.id.clone(),
@@ -599,6 +688,7 @@ where
             outcome,
             worktree,
             budget,
+            ledger_error,
         })
     }
 
@@ -1104,6 +1194,154 @@ mod tests {
                 .any(|c| c.first().map(String::as_str) == Some("worktree")),
             "shared-tree dispatch must not create a worktree"
         );
+    }
+
+    // task timeout: a hung worker costs minutes, never the plan
+
+    /// A worker that never completes on its own and settles only when its
+    /// stop line fires — the honoring half of the task-timeout contract.
+    struct StopHonoringWorker;
+    #[async_trait]
+    impl FleetWorker for StopHonoringWorker {
+        async fn run(&self, _task: &Task, _root: &Path, controls: WorkerControls) -> WorkerOutcome {
+            let WorkerControls { stop, .. } = controls;
+            let _ = stop.await;
+            WorkerOutcome {
+                cost_usd: 0.25,
+                commits: Vec::new(),
+                summary: "settled after stop".to_string(),
+                success: true,
+            }
+        }
+    }
+
+    /// A worker that ignores every control line — the grace-expiry half.
+    struct DeafWorker;
+    #[async_trait]
+    impl FleetWorker for DeafWorker {
+        async fn run(
+            &self,
+            _task: &Task,
+            _root: &Path,
+            _controls: WorkerControls,
+        ) -> WorkerOutcome {
+            std::future::pending::<WorkerOutcome>().await
+        }
+    }
+
+    /// Expiry fires the worker's own stop line, and a worker that honors it
+    /// settles and keeps its REAL spend — the whole reason the timeout stops
+    /// through the control seam instead of dropping the future outright.
+    #[tokio::test(start_paused = true)]
+    async fn a_task_timeout_stops_the_worker_and_keeps_its_observed_spend() {
+        let manager = WorktreeManager::new(OkGit::new(), "/repo");
+        let ledger = Ledger::open_in_memory().unwrap();
+        let f = Fleet::new(
+            StopHonoringWorker,
+            manager,
+            ledger,
+            BudgetGuard::new(BudgetMode::Observed, None, None),
+            SeqClock::new(),
+            FleetConfig::new("run1", "HEAD").with_task_timeout(std::time::Duration::from_secs(300)),
+        )
+        .unwrap();
+
+        let handle = f
+            .dispatch(&Task::new("t1", "title", "prompt").shared_tree())
+            .await
+            .unwrap();
+        assert!(
+            !handle.outcome.success,
+            "a timed-out attempt must not report success"
+        );
+        assert!(
+            handle
+                .outcome
+                .summary
+                .starts_with("task timeout after 300s:"),
+            "the summary names the timeout: {}",
+            handle.outcome.summary
+        );
+        assert!(
+            (handle.outcome.cost_usd - 0.25).abs() < 1e-9,
+            "the settling worker's real spend survives"
+        );
+        assert!(
+            (f.budget_snapshot().session_spent_usd() - 0.25).abs() < 1e-9,
+            "and is metered into the parent gate"
+        );
+    }
+
+    /// A worker that ignores its stop line for the whole grace is given up
+    /// on with an honest synthesized result — a handle, never a hang and
+    /// never a dispatch error.
+    #[tokio::test(start_paused = true)]
+    async fn a_worker_deaf_to_its_stop_line_is_abandoned_after_the_grace() {
+        let manager = WorktreeManager::new(OkGit::new(), "/repo");
+        let ledger = Ledger::open_in_memory().unwrap();
+        let f = Fleet::new(
+            DeafWorker,
+            manager,
+            ledger,
+            BudgetGuard::new(BudgetMode::Observed, None, None),
+            SeqClock::new(),
+            FleetConfig::new("run1", "HEAD").with_task_timeout(std::time::Duration::from_secs(60)),
+        )
+        .unwrap();
+
+        let handle = f
+            .dispatch(&Task::new("t1", "title", "prompt").shared_tree())
+            .await
+            .unwrap();
+        assert!(!handle.outcome.success);
+        assert!(
+            handle.outcome.summary.contains("could not be observed"),
+            "the synthesized result must say what was lost: {}",
+            handle.outcome.summary
+        );
+    }
+
+    // ledger close failure: the result survives the stamp
+
+    /// A ledger that cannot close the attempt must not convert a completed
+    /// worker into a dispatch failure — the handle survives, carrying the
+    /// error, and dependents are unblocked by the worker's real success.
+    #[tokio::test]
+    async fn a_failed_ledger_close_keeps_the_result_and_carries_the_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("fleet.db");
+        let worker = FakeWorker::new(0.10);
+        let manager = WorktreeManager::new(OkGit::new(), "/repo");
+        let ledger = Ledger::open(&db).unwrap();
+        let f = Fleet::new(
+            worker,
+            manager,
+            ledger,
+            BudgetGuard::new(BudgetMode::Observed, None, None),
+            SeqClock::new(),
+            FleetConfig::new("run1", "HEAD"),
+        )
+        .unwrap();
+
+        // Break the durable half from a second connection, after the run row
+        // exists: the attempt close's spend INSERT now has no table.
+        rusqlite::Connection::open(&db)
+            .unwrap()
+            .execute_batch("DROP TABLE spend")
+            .unwrap();
+
+        let handle = f
+            .dispatch(&Task::new("t1", "title", "prompt").shared_tree())
+            .await
+            .expect("a ledger stamp failure is not a dispatch failure");
+        assert!(handle.outcome.success, "the worker's result is untouched");
+        assert!(
+            handle.ledger_error.is_some(),
+            "and the lost durable row is named on the handle"
+        );
+        // The spend still reached the in-memory gate — the direction the
+        // spend-before-stamp ordering already guarantees.
+        assert!((f.budget_snapshot().session_spent_usd() - 0.10).abs() < 1e-9);
     }
 
     // claims: cooperative file locks through the workspace store

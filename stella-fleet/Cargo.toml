@@ -27,3 +27,6 @@ futures-util.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 proptest.workspace = true
+# `test-util` gives the task-timeout tests paused time (start_paused), so a
+# 60s stop-grace elapses instantly instead of stalling the suite.
+tokio = { workspace = true, features = ["test-util"] }
