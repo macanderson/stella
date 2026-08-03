@@ -715,10 +715,11 @@ pub trait CandidateWorkspacePort: Send + Sync {
 /// schema / ticket context" case.
 ///
 /// Consulted exactly where the isolated-candidate path runs
-/// (`Pipeline::run_best_of_n`), which is `candidates > 1` **and** the
-/// single-candidate authored-witness run — an authored witness needs a
-/// disposable workspace even at N=1, so it takes the same route. The plain
-/// single-shot path never reaches it.
+/// (`Pipeline::run_best_of_n`): `candidates > 1`, the single-candidate
+/// authored-witness run (an authored witness needs a disposable workspace
+/// even at N=1), and a single-shot run isolated into a throwaway worktree
+/// (`isolate_in_worktree` answering yes). Only a single-shot run executing
+/// in the session tree never reaches it.
 #[async_trait]
 pub trait McpPrefetchPort: Send + Sync {
     /// Best-effort: `None` when there is nothing worth injecting (no
@@ -931,8 +932,8 @@ impl ApprovalGate for StdioApprovalGate {
 
 /// The ports the pipeline orchestrates over. The `stella-cli` glue fills this
 /// with real subsystem adapters; tests fill it with scripted doubles. Grouped
-/// into one struct so [`crate::pipeline::Pipeline::new`] stays a two-argument
-/// constructor rather than a nine-parameter one.
+/// into one struct so [`crate::pipeline::Pipeline::new`] stays a
+/// three-argument constructor rather than a twenty-parameter one.
 pub struct PipelinePorts<'a> {
     /// Role → model resolution (`stella-core`). Held immutably; see the
     /// module's "breaker feedback boundary" note.

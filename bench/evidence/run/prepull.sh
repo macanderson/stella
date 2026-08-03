@@ -27,4 +27,6 @@ while IFS= read -r img; do
   if [ "$ok" = 1 ]; then echo "[$i/$total] pulled  $img"
   else echo "[$i/$total] FAILED  $img"; echo "$img" >> "$FAILED"; fi
 done < "$LIST"
-echo "PREPULL_DONE failed=$(grep -c . "$FAILED" || echo 0)"
+# `grep -c` prints its 0 AND exits 1 on an empty file, so `|| echo 0` printed
+# the count twice ("failed=0 0") in exactly the healthy case.
+echo "PREPULL_DONE failed=$(grep -c . "$FAILED" || true)"

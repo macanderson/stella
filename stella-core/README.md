@@ -63,7 +63,7 @@ HTTP client, no SQLite. `stella-cli`, `stella-tools`, `stella-mcp`,
 ## Key concepts
 
 **The step loop is a fixed phase sequence.** `run_turn`
-([`src/driver.rs:406`](src/driver.rs)) iterates up to `EngineConfig::max_steps`,
+([`src/driver.rs:673`](src/driver.rs)) iterates up to `EngineConfig::max_steps`,
 and each step runs the same phases in the same order: pause gate → drain
 steering / check soft stop → budget check → snapshot tool-result identities →
 compaction pass → loop detection → model call (wrapped in retry+backoff) →
@@ -128,7 +128,7 @@ anything else is discarded and reported as an
 (#370).
 
 **Compaction's four mechanisms pull in opposite directions on purpose.**
-`compact()` ([`src/compaction.rs:133`](src/compaction.rs)) applies, least-lossy
+`compact()` ([`src/compaction.rs:203`](src/compaction.rs)) applies, least-lossy
 first: dedup of byte-identical tool outputs, supersession of re-run calls, aging
 (middle-out truncation of old large outputs), then eviction. Dedup keeps the
 **earliest** copy — byte-identical content is position-independent, so stubbing

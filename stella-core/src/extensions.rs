@@ -30,7 +30,7 @@
 //! Ecosystem tools already maintain `.claude/{commands,skills,agents}` and
 //! `.agents/{commands,skills,agents}`. On `stella init`, entries found there
 //! are **symlinked** into the matching `.stella/`-side directory so stella
-//! sees them without copying (edits stay in one place). Three rules keep the
+//! sees them without copying (edits stay in one place). Four rules keep the
 //! adoption sane, all encoded in [`plan_extension_sync`]:
 //!
 //!   1. **Never link a symlink.** Other agents symlink between these
@@ -52,6 +52,11 @@
 //!      read it (issue #104), so the rule and the reality have swapped: such
 //!      a directory is adopted. Skills and agents have no namespace syntax
 //!      and keep the stricter test.
+//!   4. **One definition per loaded name.** Two source entries — or a source
+//!      entry and an existing destination file under a different filename —
+//!      that load under the same frontmatter `name:` would both be adopted
+//!      and one would silently shadow the other, so the later one is skipped
+//!      ([`SyncSkipReason::DuplicateName`]).
 //!
 //! # No I/O in this module
 //!
@@ -666,9 +671,9 @@ pub struct ExistingTargets {
 /// `sources` are in precedence order (e.g. `.claude/<kind>` before
 /// `.agents/<kind>`); `existing` describes each kind's destination directory.
 /// Deterministic: actions come out in scan order. See the module doc for the
-/// three rules (never link a symlink, never clobber, never link something
-/// unloadable); collision precedence between sources is decided on
-/// [`SyncEntry::definition_name`].
+/// four rules (never link a symlink, never clobber, never link something
+/// unloadable, one definition per loaded name); collision precedence between
+/// sources is decided on [`SyncEntry::definition_name`].
 pub fn plan_extension_sync(
     sources: &[SyncSource],
     existing: &dyn Fn(ExtensionKind) -> ExistingTargets,

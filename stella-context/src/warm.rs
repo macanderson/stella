@@ -1,9 +1,11 @@
 //! Embedding catch-up ("warming") and its cancellation contract.
 //!
 //! [`ContextStore::open_and_warm`](crate::ContextStore::open_and_warm) spawns
-//! [`warm_index`] as a detached tokio task at mount (`L-C1`: pay indexing at
-//! mount, not on the first prompt). This module owns that task's body and the
-//! one flag that can stop it early.
+//! [`warm_index`] as a background tokio task at mount (`L-C1`: pay indexing
+//! at mount, not on the first prompt) whose join handle the store owns —
+//! joined by `await_warm`, aborted on `Drop` (see the cancellation contract
+//! below). This module owns that task's body and the one flag that can stop
+//! it early.
 //!
 //! # Why there is a cancel flag at all
 //!

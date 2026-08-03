@@ -434,13 +434,17 @@ impl SessionRegistry {
     /// died reads as crashed and is in scope — deliberately, since nothing
     /// will ever move it to a terminal state otherwise. Note what that
     /// implies: sweeping it also deletes its sidecar, so a crashed session
-    /// stops being resumable once it ages past the cutoff. Only records whose
-    /// owner is still alive are unconditionally spared.
+    /// stops being resumable once it ages past the cutoff. Two shapes are
+    /// spared: records whose presented status is still live, and `Paused`
+    /// ones — a pause is a deliberate promise that the state is kept for
+    /// `resume` (its documented contract), so it must not age out from under
+    /// the user who made it.
     pub fn prune(&self, max_age_ms: u64) -> Result<usize> {
         let cutoff = now_ms().saturating_sub(max_age_ms);
         let mut removed = 0;
         for record in self.list() {
-            if !record.status.is_live() && record.updated_at_ms < cutoff {
+            let terminal = !record.status.is_live() && record.status != SessionStatus::Paused;
+            if terminal && record.updated_at_ms < cutoff {
                 removed += usize::from(self.remove(&record.id)?);
             }
         }
@@ -812,6 +816,32 @@ mod tests {
         assert_eq!(removed, 1);
         assert!(reg.get(&done.id).is_none());
         assert_eq!(reg.get(&live.id).unwrap().id, live.id);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A paused session is a deliberate promise that its state is kept for
+    /// `resume` — it must survive the age sweep however old it gets. It used
+    /// not to: `Paused` is not `is_live()`, so the sweep treated it as
+    /// terminal and deleted the sidecar `latest_resumable` exists to find.
+    #[test]
+    fn prune_spares_a_paused_session_however_old() {
+        let (dir, reg) = temp_registry("prune-paused");
+
+        let mut paused = SessionRecord::new("/w/paused", "paused");
+        paused.status = SessionStatus::Paused;
+        reg.upsert(&paused).unwrap();
+        let mut old = reg.get(&paused.id).unwrap();
+        old.updated_at_ms = 1;
+        std::fs::write(
+            dir.join(format!("{}.json", old.id)),
+            serde_json::to_string(&old).unwrap(),
+        )
+        .unwrap();
+
+        let removed = reg.prune(60_000).unwrap();
+        assert_eq!(removed, 0, "a paused session must not age out");
+        assert!(reg.get(&paused.id).is_some());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

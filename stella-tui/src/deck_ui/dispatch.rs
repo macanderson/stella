@@ -109,10 +109,19 @@ pub fn route(ui: &mut DeckUi, model: &WorkspaceModel, text: String) -> Option<Wo
 /// a different costume.
 pub fn handle_key(key: KeyEvent, ui: &mut DeckUi) -> Option<DeckAction> {
     let pending = ui.pending_dispatch.as_ref()?;
+    // Quit must win over the card's modality: the caller's Ctrl-C branch runs
+    // AFTER this function, so claiming Ctrl-C in the catch-all made the deck
+    // unquittable while a card was up.
+    if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c')) {
+        return None;
+    }
     let route = match key.code {
-        KeyCode::Char('s') => DispatchRoute::Steer,
-        KeyCode::Char('n') => DispatchRoute::NextTurn,
-        KeyCode::Char('p') => DispatchRoute::Sidecar,
+        // Bare letters only: `ctrl+n`/`ctrl+p` are transcript-nav chords
+        // everywhere else on this tab, and a modified key must not commit the
+        // held words down a route the user never chose.
+        KeyCode::Char('s') if key.modifiers.is_empty() => DispatchRoute::Steer,
+        KeyCode::Char('n') if key.modifiers.is_empty() => DispatchRoute::NextTurn,
+        KeyCode::Char('p') if key.modifiers.is_empty() => DispatchRoute::Sidecar,
         KeyCode::Esc => {
             let text = pending.text.clone();
             ui.pending_dispatch = None;

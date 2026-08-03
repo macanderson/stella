@@ -733,20 +733,31 @@ impl Observatory {
     /// detector behind the live stream.
     ///
     /// This is the query the server runs several times a second, so it must
-    /// stay trivial: four `max()`/`count()` probes that SQLite answers from
-    /// index or table metadata, with no join, no scan, and no aggregation
-    /// over history. Comparing two fingerprints answers "is there anything
+    /// stay cheap: five probes with no join, four answered from index or
+    /// table metadata. `count(*) FROM tool_calls` is the one that scans and
+    /// grows with history — carried because a tool_result closes a row in
+    /// place and moves no maximum. Comparing two fingerprints answers "is there anything
     /// new?" without paying for a single one of the payload queries — which
     /// is the whole reason the browser can stop re-aggregating all of history
     /// on a timer.
     ///
     /// `events` moves on every persisted event, so it alone is a near-total
-    /// change signal. The other three are carried because they can move
+    /// change signal. The other four are carried because they can move
     /// without it: an execution row opens before its first event, and the
     /// `finished_at` stamp and per-day rollups land after the last one.
     pub fn cursor(&self) -> Result<Value, DbError> {
         let Some(conn) = self.store() else {
-            return Ok(json!({ "events": 0, "executions": 0, "tool_calls": 0, "telemetry": 0 }));
+            // Same key set as the store-backed branch below: a cursor that
+            // changes shape when store.db first appears reads as a spurious
+            // all-keys change, and a client indexing `tool_calls_running`
+            // on a fresh workspace would find the key missing.
+            return Ok(json!({
+                "events": 0,
+                "executions": 0,
+                "tool_calls": 0,
+                "tool_calls_running": 0,
+                "telemetry": 0,
+            }));
         };
         // `max(rowid)` is monotonic and never reused while rows are only
         // appended; `count(*)` catches the in-place UPDATEs a tool result
@@ -777,10 +788,13 @@ impl Observatory {
     ///
     /// Small by construction — this is "what is happening right now", not
     /// history — so the live stream can carry it inline on every change
-    /// instead of making the client come back for it. Both queries read
-    /// through partial indexes (`executions_unfinished`,
-    /// `tool_calls_by_state`) that hold only the open rows, so the cost
-    /// tracks concurrent work rather than accumulated work.
+    /// instead of making the client come back for it. Every rollup is scoped
+    /// to the open executions (the subqueries filter on
+    /// `finished_at IS NULL` before aggregating), so the cost tracks
+    /// concurrent work rather than accumulated work. This ran unscoped once:
+    /// the inner `GROUP BY`s aggregated the whole `tool_calls` and
+    /// `telemetry` tables 4×/second per open stream, and the outer
+    /// `WHERE e.finished_at IS NULL` discarded almost all of it.
     ///
     /// `elapsed_ms` is computed here rather than in the browser because the
     /// timestamps are the database's clock, and a client whose clock is
@@ -800,13 +814,19 @@ impl Observatory {
              LEFT JOIN (SELECT execution_id, count(*) AS calls,
                                count(*) FILTER (WHERE state = 'running') AS running,
                                count(*) FILTER (WHERE state = 'error')   AS errors
-                        FROM tool_calls GROUP BY execution_id) tc
+                        FROM tool_calls
+                        WHERE execution_id IN
+                              (SELECT id FROM executions WHERE finished_at IS NULL)
+                        GROUP BY execution_id) tc
                ON tc.execution_id = e.id
              LEFT JOIN (SELECT execution_id, count(*) AS steps,
                                sum(input_tokens)  AS input_tokens,
                                sum(output_tokens) AS output_tokens,
                                sum(cost_usd)      AS cost_usd
-                        FROM telemetry GROUP BY execution_id) t
+                        FROM telemetry
+                        WHERE execution_id IN
+                              (SELECT id FROM executions WHERE finished_at IS NULL)
+                        GROUP BY execution_id) t
                ON t.execution_id = e.id
              WHERE e.finished_at IS NULL
              ORDER BY e.id DESC",

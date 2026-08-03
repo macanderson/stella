@@ -252,8 +252,9 @@ impl RecallTuning {
 pub(crate) struct Ranked {
     /// The candidate's ranking metadata — id, label, hash, byte count.
     pub meta: NodeMeta,
-    /// Its MMR-adjusted relevance, carried through packing so the frame built
-    /// for a survivor declares the score the ranking gave it.
+    /// Its max-normalized fused (RRF) score, carried through packing so the
+    /// frame built for a survivor declares the score the ranking gave it.
+    /// MMR changes the order these arrive in, not this value.
     pub relevance: f32,
     /// Why this candidate is in front of the budget at all — Phase 2 (#713).
     pub selection_reason: SelectionReason,

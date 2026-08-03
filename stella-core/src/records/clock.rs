@@ -116,10 +116,11 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
 /// treat that as "cannot schedule", and [`is_due`] resolves it to *due* — see the
 /// module docs on which direction is safe.
 pub fn duration_seconds(iso: &str) -> Option<i64> {
-    let body = iso
-        .trim()
-        .strip_prefix('P')
-        .or_else(|| iso.strip_prefix('p'))?;
+    // Trim ONCE, then strip either case from the trimmed text: the lowercase
+    // fallback used to re-read the untrimmed input, so ` p90d` parsed as
+    // no-duration (= due on every sweep) while ` P90D` parsed fine.
+    let text = iso.trim();
+    let body = text.strip_prefix('P').or_else(|| text.strip_prefix('p'))?;
     let (date_part, time_part) = match body.split_once(['T', 't']) {
         Some((date, time)) => (date, Some(time)),
         None => (body, None),
@@ -313,6 +314,16 @@ mod tests {
             duration_seconds("P1DT6H30M"),
             Some(SECS_PER_DAY + 6 * SECS_PER_HOUR + 30 * SECS_PER_MINUTE)
         );
+    }
+
+    #[test]
+    fn case_and_padding_do_not_change_what_parses() {
+        // The lowercase fallback used to strip the prefix from the UNTRIMMED
+        // input, so ` p90d` was "not a duration" (= due on every sweep via
+        // `is_due`'s fail-open) while ` P90D` parsed. One trim, both cases.
+        assert_eq!(duration_seconds(" P90D"), Some(90 * SECS_PER_DAY));
+        assert_eq!(duration_seconds(" p90d"), Some(90 * SECS_PER_DAY));
+        assert_eq!(duration_seconds("p90d "), Some(90 * SECS_PER_DAY));
     }
 
     #[test]

@@ -79,11 +79,15 @@ from .portability import raise_for_loader_failure
 from .posture import (
     _ASSURANCE_TIERS_VERSION,
     _ENGINE_POSTURE_VERSION,
+    _TRIAGE_MODEL_ENV,
     _WITNESS_AUTHOR_ENV,
+    _WORKER_EFFORT_ENV,
     PostureBuilder,
     _benchmark_assurance_tiers,
     _benchmark_engine_posture,
     fold_witness_observations,
+    resolve_triage_model,
+    resolve_worker_effort,
 )
 from .turn_budget import (
     TURN_BUDGET_ENV as _TURN_BUDGET_ENV,
@@ -201,6 +205,12 @@ _HOST_ONLY_STELLA_ENV = frozenset(
         # the run rather than enabling the policy. See `turn_budget`.
         _TURN_BUDGET_ENV,
         _WITNESS_AUTHOR_ENV,
+        # Worker effort and triage author: host-only like the witness author,
+        # reaching Stella only inside the hashed posture. Registering them is
+        # load-bearing, not tidy — the ambient check fails closed, and an
+        # unlisted `STELLA_TURN_BUDGET` killed all ten trials of a run.
+        _WORKER_EFFORT_ENV,
+        _TRIAGE_MODEL_ENV,
         # The portability target triple and glibc floor (#1018). `env.sh` exports
         # both so `build_sut.sh` builds to the same floor `preflight` asserts
         # against — keeping them apart is what let a glibc-2.35 binary reach five
@@ -1428,9 +1438,23 @@ class StellaAgent(BaseInstalledAgent):
         — a changed posture is a changed digest, visible in the manifest.
 
         The base implementation is the frozen benchmark posture and must stay
-        that way: a claim run's posture is part of its identity.
+        that way: a claim run's posture is part of its identity. The worker
+        effort and triage author are resolved here rather than at the call
+        site so the exec boundary, which recomputes through this same bound
+        method, resolves them identically — a selected arm must produce the
+        same posture at collection and at the process boundary or the run is
+        refused.
         """
-        return _benchmark_engine_posture(model, witness_author=witness_author)
+        return _benchmark_engine_posture(
+            model,
+            witness_author=witness_author,
+            worker_effort=resolve_worker_effort(
+                self._configured_value(_WORKER_EFFORT_ENV)
+            ),
+            triage_model=resolve_triage_model(
+                self._configured_value(_TRIAGE_MODEL_ENV)
+            ),
+        )
 
     def _witness_author_model(self) -> str | None:
         """Return the pinned witness/judge author, or ``None`` for the control arm.
@@ -1445,6 +1469,7 @@ class StellaAgent(BaseInstalledAgent):
             return None
         stripped = value.strip()
         return stripped or None
+
 
     def _effective_base_url(self, model: str) -> str | None:
         """Resolve and validate the authoritative provider endpoint."""

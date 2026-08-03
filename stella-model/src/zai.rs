@@ -657,16 +657,23 @@ struct ZaiStreamError {
 }
 
 impl ZaiStreamError {
-    /// The lowercased text classification matches against: `type`, `message`,
-    /// and the stringified `code`. A JSON string code is unquoted first so
-    /// `"502"` and `502` produce the same haystack.
+    /// The lowercased prose the word-based classification matches against:
+    /// `type` and `message` only. Numeric statuses are matched against
+    /// [`Self::code_text`] exactly — never against this text, where a message
+    /// quoting a token count ("maximum context length is 500000 tokens")
+    /// would substring-match "500" and turn a terminal request error into a
+    /// retry storm that re-pays the prompt on every attempt.
     fn haystack(&self) -> String {
-        let code = match &self.code {
-            Some(serde_json::Value::String(s)) => s.clone(),
+        format!("{} {}", self.kind, self.message).to_lowercase()
+    }
+
+    /// The stringified `code`, unquoted so `"502"` and `502` compare equal.
+    fn code_text(&self) -> String {
+        match &self.code {
+            Some(serde_json::Value::String(s)) => s.trim().to_lowercase(),
             Some(other) => other.to_string(),
             None => String::new(),
-        };
-        format!("{} {} {}", self.kind, self.message, code).to_lowercase()
+        }
     }
 }
 
@@ -681,6 +688,7 @@ impl ZaiStreamError {
 /// points at the right credential and endpoint.
 fn classify_zai_stream_error(err: &ZaiStreamError, label: &str) -> ProviderError {
     let haystack = err.haystack();
+    let code = err.code_text();
     let detail = if err.message.is_empty() {
         format!("{label} stream error ({})", err.kind)
     } else {
@@ -690,14 +698,13 @@ fn classify_zai_stream_error(err: &ZaiStreamError, label: &str) -> ProviderError
         || haystack.contains("server_error")
         || haystack.contains("unavailable")
         || haystack.contains("timeout")
-        || haystack.contains("500")
-        || haystack.contains("502")
-        || haystack.contains("503")
-        || haystack.contains("529")
+        || code == "500"
+        || code == "502"
+        || code == "503"
+        || code == "529"
     {
         ProviderError::Transport(detail)
-    } else if haystack.contains("429") || (haystack.contains("rate") && haystack.contains("limit"))
-    {
+    } else if code == "429" || (haystack.contains("rate") && haystack.contains("limit")) {
         // A `code: 429` frame carries no "rate limit" prose on some gateways,
         // so the numeric status is the only signal that this is throttling
         // rather than a permanent rejection.
@@ -1347,6 +1354,16 @@ async fn aggregate_zai_stream(
                     }
                     if let Some(function) = tc_delta.function {
                         if let Some(name) = function.name {
+                            // Accumulated, not assigned: the dialect contract
+                            // (pinned by
+                            // `complete_reassembles_a_streamed_tool_call_split_across_many_chunks`)
+                            // allows the name to arrive in fragments like the
+                            // arguments do, so append is the correct
+                            // reassembly. A gateway that instead repeats the
+                            // WHOLE name per fragment would garble this — no
+                            // such gateway has been observed; if one appears,
+                            // dedupe the exact-repeat case rather than
+                            // switching to last-wins.
                             acc.name.push_str(&name);
                         }
                         if let Some(args) = function.arguments {

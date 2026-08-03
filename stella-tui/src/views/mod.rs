@@ -9,7 +9,7 @@
 //! is a third: it
 //! is the AGENTS tab's INSTALLED AGENTS pane, dispatched from
 //! [`agents::render`] rather than from the deck's tab match, and its
-//! `render(ui, area, buf)` drops the unused `model` parameter rather than
+//! `render(ui, now_ms, area, buf)` takes only the deck clock off the model rather than
 //! carry a dead one — it has no model-derived state and no key handler of
 //! its own, deck_ui.rs routes its keys directly.)
 

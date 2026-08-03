@@ -203,13 +203,17 @@ pub struct EngineConfig {
     /// once per retry, which would multiply the very window the deadline
     /// exists to close.
     ///
-    /// 13.6 minutes, and the number is measured rather than chosen. It was 10
-    /// (matching `UNARY_READ_TIMEOUT`) on the reasoning that no generation a
-    /// caller still wants runs longer. That premise is false at high effort
-    /// against a large output ceiling: on the Terminal-Bench 2.1 gate a
-    /// comparator on the same model, same API and same effort earned reward
-    /// `1.0` on single steps of 624s and 756s. A 600s bound kills exactly
-    /// those steps — and kills them *after* paying for them.
+    /// 13.6 minutes of SILENCE, not of elapsed time: `bounded_generation`
+    /// measures idle gaps between stream fragments, so a generation that
+    /// keeps producing is never cut however long it runs. The number is
+    /// measured rather than chosen. It was 10 minutes (matching
+    /// `UNARY_READ_TIMEOUT`) on the reasoning that no generation a caller
+    /// still wants goes longer without progress. Context for the size: on
+    /// the Terminal-Bench 2.1 gate a comparator on the same model, same API
+    /// and same effort earned reward `1.0` on single steps of 624s and 756s
+    /// — steps that stream throughout and are untouched by an idle bound,
+    /// but that shaped the margin chosen here for a provider that has
+    /// genuinely stopped answering.
     ///
     /// The rule fixing the constant is "never be the side that stops first":
     /// 60s above the longest single step the comparator was ever rewarded for
@@ -283,8 +287,10 @@ impl Default for EngineConfig {
             // 16k, not 8k: reasoning models (e.g. glm-5.2) can spend their whole
             // output budget on chain-of-thought and get cut off before emitting
             // any answer. 16k gives the answer room to land after reasoning and
-            // is within every seeded catalog model's output ceiling. Per-model
-            // caps in the catalog are the eventual refinement.
+            // is within every seeded catalog model's output ceiling — and it is
+            // only the fallback: a model whose catalog entry declares its own
+            // output ceiling overrides this at engine assembly
+            // (stella-cli::agent::engine::tuned_engine_config).
             max_output_tokens: Some(16384),
             temperature: Some(0.0),
             effort: None,
@@ -1104,6 +1110,28 @@ impl<'a> Engine<'a> {
     /// A [`TurnState`] resumed from a durable snapshot. See
     /// [`TurnState::from_checkpoint`] for exactly what resuming rebuilds
     /// rather than restores.
+    ///
+    /// # Who calls this, and who deliberately does not
+    ///
+    /// This is for a host that drives [`Self::run_step`] itself and owns its
+    /// own loop — it hands back a state to keep stepping. Neither shipping
+    /// surface is one today, and that is a declaration rather than an
+    /// oversight:
+    ///
+    /// - **The CLI** resumes an interrupted turn at *transcript* granularity
+    ///   instead. Its turns are dispatched through `stella-pipeline`, which
+    ///   owns turn framing and builds its own state via `run_turn`, so there is
+    ///   no seam to hand a resumed `TurnState` to without threading a
+    ///   checkpoint through the entire verification ladder. What it does do is
+    ///   reopen the conversation at the checkpoint's step boundary, so the
+    ///   completed steps' work is not re-run — see `stella-parity`'s
+    ///   `turn.checkpoint_resume` row.
+    /// - **`stella-serve`** drives steps and would use this directly, but has
+    ///   no store to read a checkpoint back from (same row, API side).
+    ///
+    /// So the production callers are embedders, and the in-tree exercise of it
+    /// is `stella-engine`'s test suite. Anything that changes on either surface
+    /// should change that row in the same PR.
     #[must_use]
     pub fn resume_turn(&self, checkpoint: crate::step::Checkpoint) -> TurnState {
         TurnState::from_checkpoint(checkpoint, &self.config)

@@ -77,10 +77,13 @@ struct AnthropicRequest<'a> {
     stream: bool,
     /// Sampling temperature, forwarded from `CompletionRequest.temperature`.
     /// Omitted when `None` so Anthropic applies its own default (dropping it
-    /// unconditionally would silently ignore a caller-set temperature). Also
-    /// omitted whenever `thinking` is set: the Messages API rejects any
-    /// temperature != 1 alongside extended thinking, and the engine's default
-    /// (0.0) would fail every thinking turn.
+    /// unconditionally would silently ignore a caller-set temperature).
+    /// Omitted entirely on adaptive-thinking models (Claude 4.6+ / the 5
+    /// family), which reject any sampling parameter with a 400 whether or not
+    /// `thinking` is set. On the legacy shape it is forwarded, except when
+    /// `thinking` is on: the Messages API rejects any temperature != 1
+    /// alongside extended thinking, and the engine's default (0.0) would fail
+    /// every thinking turn.
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     /// Sampling overrides from `CompletionRequest.params`, skipped when
@@ -546,9 +549,10 @@ struct AnthropicUsage {
     /// Tokens WRITTEN to the prompt cache by this call — also reported
     /// separately from `input_tokens`. Surfaced as the normalized
     /// `cache_write_tokens` (telemetry, `stella stats`) but deliberately NOT
-    /// folded into `input_tokens`: Anthropic bills cache writes at a premium
-    /// rate the catalog does not carry yet, so folding them in would
-    /// misprice them as plain input (see `Pricing::cost_usd`).
+    /// folded into `input_tokens`: the catalog prices writes on their own
+    /// line (`cache_write_usd_per_mtok`, 1.25x input on the Anthropic rows),
+    /// so folding them in would misprice them as plain input (see
+    /// `Pricing::cost_usd`).
     #[serde(default)]
     cache_creation_input_tokens: u64,
 }
@@ -975,13 +979,27 @@ async fn aggregate_anthropic_stream(
                     if let Some(u) = u {
                         usage.reported = true;
                         if u.input_tokens > 0 {
+                            // Take the whole input-side picture from ONE
+                            // frame: `input_tokens` and its cache splits
+                            // describe the same request, so under independent
+                            // `> 0` guards a delta that restates
+                            // `input_tokens` without the cache fields (some
+                            // gateways do) kept an earlier frame's
+                            // `cached_input_tokens` — leaving cached > input,
+                            // a 100% "hit rate" on a turn that read nothing,
+                            // and thousands of cache-read tokens off the bill.
                             usage.input_tokens = u.input_tokens + u.cache_read_input_tokens;
-                        }
-                        if u.cache_read_input_tokens > 0 {
                             usage.cached_input_tokens = u.cache_read_input_tokens;
-                        }
-                        if u.cache_creation_input_tokens > 0 {
                             usage.cache_write_tokens = u.cache_creation_input_tokens;
+                        } else {
+                            // A cache-only delta (no input restatement) still
+                            // updates the split it actually reports.
+                            if u.cache_read_input_tokens > 0 {
+                                usage.cached_input_tokens = u.cache_read_input_tokens;
+                            }
+                            if u.cache_creation_input_tokens > 0 {
+                                usage.cache_write_tokens = u.cache_creation_input_tokens;
+                            }
                         }
                         usage.output_tokens = u.output_tokens;
                     }

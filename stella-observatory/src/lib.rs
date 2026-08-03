@@ -33,7 +33,9 @@
 //! consequences for the read timeout and the connection semaphore that are
 //! documented on each, and the transport itself lives in the `live` module.
 //!
-//! Every `/api/*` route accepts `?project=<id>`: the id is resolved against
+//! Every per-workspace `/api/*` route accepts `?project=<id>` (the
+//! cross-project `/api/projects` and `/api/hub-telemetry` ignore it by
+//! design): the id is resolved against
 //! the cross-project rollup's `projects` table (the `global` module) and, when
 //! known, that project's workspace root replaces the serving root for the request —
 //! the dashboard's project switcher. Unknown ids fall back to the serving

@@ -155,38 +155,6 @@ pub(crate) fn assemble_system_prompt(
     prompt
 }
 
-/// How many characters of volatile records ride the recall block.
-///
-/// The same order as the memory budget above, and for the same reason: the volatile
-/// channel competes with recalled memories and skills for one turn's attention, so a
-/// records set that grew without bound would crowd out the recall it sits beside.
-/// Records over the budget are reported as dropped rather than silently lost — that
-/// gap is `MissingContextKind::NotRendered`.
-pub(crate) const RECORD_CHANNEL_BUDGET: usize = 2_000;
-
-/// Hand `memory` the volatile record channel — `may`/`info` facts and anything the
-/// truth sweep demoted — so it rides the per-turn recall block.
-///
-/// Separate from [`assemble_system_prompt`] because it belongs to a different cache
-/// contract: this text may differ every turn, which is exactly why it must live
-/// after the stable prefix rather than inside it. Written as one call the drivers
-/// make once, rather than three copies of the render-and-set pair, so a fourth
-/// session surface cannot half-wire it.
-pub(crate) fn attach_record_channel(
-    memory: &mut crate::memory::SessionMemory,
-    active_rules: &crate::rules::ResolvedRules,
-) {
-    memory.set_record_channel(
-        active_rules
-            .registry()
-            .render(
-                stella_core::records::Channel::Volatile,
-                Some(RECORD_CHANNEL_BUDGET),
-            )
-            .text,
-    );
-}
-
 /// The workspace-maps half of [`assemble_system_prompt`]: the exploration
 /// store's index — every COMPLETED map with its per-file freshness verdict —
 /// so orientation is pushed at turn 1 instead of waiting for the model to

@@ -85,8 +85,8 @@ impl LevelFilter {
 
 /// Which endpoint a request reached, as a **template**.
 ///
-/// The raw path is never recorded, because for five of these it contains the
-/// turn id. Serde renames each variant to its template so a record reads like
+/// The raw path is never recorded, because for seven of these it contains
+/// the turn id (and two more carry a session id). Serde renames each variant to its template so a record reads like
 /// an access log without any rendering step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Route {
@@ -112,6 +112,10 @@ pub enum Route {
     TurnPause,
     #[serde(rename = "/v1/turns/{id}/resume")]
     TurnResume,
+    /// `GET` (read back) and `DELETE` (reclaim) share the member path, the
+    /// same one-resource-two-verbs shape as [`Route::Session`].
+    #[serde(rename = "/v1/turns/{id}/checkpoint")]
+    TurnCheckpoint,
     #[serde(rename = "/v1/sessions")]
     SessionsCreate,
     /// `GET` (read) and `DELETE` (end) share the member path — one resource,
@@ -120,6 +124,9 @@ pub enum Route {
     Session,
     #[serde(rename = "/v1/sessions/{id}/turns")]
     SessionTurns,
+    /// `GET` (read back) and `DELETE` (reclaim) — see [`Route::TurnCheckpoint`].
+    #[serde(rename = "/v1/sessions/{id}/checkpoint")]
+    SessionCheckpoint,
     /// A path that matched no route. The path itself is deliberately dropped:
     /// a 404 probe is attacker-controlled text, and this is a log.
     #[serde(rename = "<unrouted>")]
@@ -142,9 +149,11 @@ impl Route {
             Self::TurnSteer => "/v1/turns/{id}/steer",
             Self::TurnPause => "/v1/turns/{id}/pause",
             Self::TurnResume => "/v1/turns/{id}/resume",
+            Self::TurnCheckpoint => "/v1/turns/{id}/checkpoint",
             Self::SessionsCreate => "/v1/sessions",
             Self::Session => "/v1/sessions/{id}",
             Self::SessionTurns => "/v1/sessions/{id}/turns",
+            Self::SessionCheckpoint => "/v1/sessions/{id}/checkpoint",
             Self::Unrouted => "<unrouted>",
         }
     }
@@ -160,7 +169,7 @@ impl Route {
     /// method's exhaustive match until the author classifies it, and the
     /// tests assert `ALL` contains exactly the `is_real` variants it names —
     /// so the array cannot silently lag the enum.
-    pub const ALL: [Route; 14] = [
+    pub const ALL: [Route; 16] = [
         Route::Healthz,
         Route::Readyz,
         Route::Metrics,
@@ -172,9 +181,11 @@ impl Route {
         Route::TurnSteer,
         Route::TurnPause,
         Route::TurnResume,
+        Route::TurnCheckpoint,
         Route::SessionsCreate,
         Route::Session,
         Route::SessionTurns,
+        Route::SessionCheckpoint,
     ];
 
     /// Whether this is a real, dispatchable route rather than the 404
@@ -196,9 +207,11 @@ impl Route {
             | Route::TurnSteer
             | Route::TurnPause
             | Route::TurnResume
+            | Route::TurnCheckpoint
             | Route::SessionsCreate
             | Route::Session
-            | Route::SessionTurns => true,
+            | Route::SessionTurns
+            | Route::SessionCheckpoint => true,
             Route::Unrouted => false,
         }
     }
@@ -423,6 +436,20 @@ impl StreamEndReason {
 pub enum ReverseKind {
     Provider,
     Tool,
+}
+
+/// Which half of the checkpoint sink failed.
+///
+/// Both halves are worth telling apart: a failing `persist` means turns are
+/// running undurable right now, while a failing `discard` means resume points
+/// are *accumulating* — the same store, two different operational problems.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointOp {
+    /// Writing a resume point at a step boundary.
+    Persist,
+    /// Clearing it when the turn ended.
+    Discard,
 }
 
 /// Why a host answer matched nothing.
@@ -667,6 +694,19 @@ pub enum ServeEvent {
         kind: AcceptKind,
         streak: u32,
     },
+    /// A turn's resume point could not be written or cleared (#1198).
+    ///
+    /// Emitted **once per turn**, not once per step: `persist` runs at every
+    /// step boundary, so a store that is failing would otherwise produce a
+    /// line per step for as long as the server is up. The alternative to that
+    /// budget is not silence — a durability feature that fails quietly leaves
+    /// an operator believing served turns are recoverable until the incident
+    /// that needed them proves otherwise.
+    CheckpointFailed {
+        turn: TurnRef,
+        op: CheckpointOp,
+        error: String,
+    },
 }
 
 impl ServeEvent {
@@ -705,6 +745,10 @@ impl ServeEvent {
             // Something is broken and a human should look.
             Self::ReverseTimedOut { .. }
             | Self::FrameUnencodable { .. }
+            // Not `Warn`: the server is still serving, so nothing else will
+            // ever say that the durability the operator configured is not
+            // happening.
+            | Self::CheckpointFailed { .. }
             | Self::AcceptGaveUp { .. } => Level::Error,
         }
     }

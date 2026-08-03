@@ -80,10 +80,11 @@ pub(crate) async fn run_raw_one_shot(
 
     // The self-improvement loop (memory.rs): recall relevant memories +
     // skills into a volatile block after the stable system prefix (L-E8)…
-    let mut memory = SessionMemory::open_with_authority(
+    let mut memory = SessionMemory::open_for_session(
         &cfg.workspace_root,
         format == OutputFormat::Text,
         &cfg.authority,
+        &active_rules,
     );
     if let Some(m) = &mut memory {
         // Conformance-gated external CGP providers join before the first
@@ -121,6 +122,7 @@ pub(crate) async fn run_raw_one_shot(
         Some(presence.id()),
         &crate::discovery::new_activation(),
         recall_event,
+        memory.as_mut(),
     )
     .await;
     // Episodic memory first (works even for a failed turn — failures are
@@ -258,7 +260,8 @@ pub async fn run_goal_cmd(
         )
         .await,
     )];
-    let mut memory = SessionMemory::open_with_authority(&cfg.workspace_root, true, &cfg.authority);
+    let mut memory =
+        SessionMemory::open_for_session(&cfg.workspace_root, true, &cfg.authority, &active_rules);
     // Phase 2 (#713): carried to the turn runner, which owns the event channel.
     let mut recall_event = None;
     if let Some(m) = &memory {
@@ -288,6 +291,7 @@ pub async fn run_goal_cmd(
             active_rules.clone(),
             mcp.clone(),
             recall_event,
+            memory.as_mut(),
         )
         .await
     } else {
@@ -304,6 +308,7 @@ pub async fn run_goal_cmd(
             goal,
             Some(presence.id()),
             recall_event,
+            memory.as_mut(),
         )
         .await
     };
@@ -388,9 +393,16 @@ pub(crate) async fn run_goal_turn(
     // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller
     // because recall necessarily precedes the channel it would be emitted on.
     recall_event: Option<AgentEvent>,
+    // The caller's session memory, so this round's execution id is stamped
+    // before the turn runs — reflection stores the self-review 1:1 with an
+    // execution, and an unstamped round files an id-less row.
+    session_memory: Option<&mut crate::memory::SessionMemory>,
 ) -> Result<(), String> {
     let turn_start = Instant::now();
     let execution = begin_execution(store, "goal", goal, cfg, session);
+    if let (Some((_, id)), Some(m)) = (&execution, session_memory) {
+        m.set_execution_id(*id);
+    }
     let files_before = registry.files_touched().len();
 
     // Route the JUDGE role. `Some` only when a distinct-family judge was
@@ -537,9 +549,15 @@ async fn run_goal_pipeline_turn(
     mcp: Option<Arc<stella_mcp::McpToolSet>>,
     // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller.
     recall_event: Option<AgentEvent>,
+    // Same contract as `run_goal_turn`: stamp the execution id into the
+    // caller's memory before the turn runs, so reflection can name its row.
+    session_memory: Option<&mut crate::memory::SessionMemory>,
 ) -> Result<(), String> {
     let turn_start = Instant::now();
     let execution = begin_execution(store, "goal", goal, cfg, session);
+    if let (Some((_, id)), Some(m)) = (&execution, session_memory) {
+        m.set_execution_id(*id);
+    }
     let files_before = registry.files_touched().len();
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
 

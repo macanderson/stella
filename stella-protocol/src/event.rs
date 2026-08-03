@@ -266,7 +266,7 @@ fn retries_exhausted_retryable_default() -> bool {
 /// associated functions instead of the trait impls, so the hand-written
 /// [`Serialize`]/[`Deserialize`] impls below can delegate to it after routing
 /// [`AgentEvent::Unknown`] around it. Without that indirection the forward-
-/// compat fallback would mean hand-writing a visitor for all 34 variants.
+/// compat fallback would mean hand-writing a visitor for every variant.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "snake_case", remote = "Self")]
@@ -1222,9 +1222,11 @@ pub enum ProofTree {
 /// One step of the proof a turn builds for its own work, in the order the
 /// pipeline makes the observation. Carried by [`AgentEvent::Proof`].
 ///
-/// Additive to the wire contract in both directions: an older reader sees the
-/// whole event as [`AgentEvent::Unknown`], and a reader that knows `Proof` but
-/// not a future step tags it `Unknown` at the step level rather than guessing.
+/// Additive in one direction only: an older reader that does not know the
+/// `proof` type tag preserves the whole event via [`AgentEvent::Unknown`],
+/// but a reader that knows `Proof` and meets a future `kind` fails the whole
+/// event — this nested enum is closed, with no `Unknown` step (see the
+/// module docs on nested vocabularies).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]

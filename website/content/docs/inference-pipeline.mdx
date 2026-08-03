@@ -36,11 +36,13 @@ in stages:
 
 <PipelineFlowDiagram />
 
-In full: triage → recall → plan → scope review → witness → execute → verify
+In full: triage → recall → plan → scope review → execute → witness → verify
 → judge, with a bounded revise loop. Recall runs concurrently with triage
 but emits after it; plan, scope review, and witness are conditional — a
 simple lookup skips them, scope review fires only above thresholds, and the
-witness is authored only without `--test-command`.
+witness is authored only without `--test-command`, on demand *after*
+execution, once the warrant has read the diff and confirmed the change
+needs a test at all.
 
 ### 1. Triage
 
@@ -97,12 +99,27 @@ typing — a note beginning "also do X" would have approved the plan it was
 arguing with. `Esc` is the one exception, because it cannot be mistaken for
 prose and it stops work rather than starting it.
 
-### 4. Witness
+### 4. Execute
+
+The worker runs the step loop against the plan — reading, editing, building,
+testing — with the full [toolbelt](/docs/agent-tools) and its
+[configured model, prompt, and parameters](/docs/configuration/agent-engine-config).
+If you passed `--test-command`, that command is run once *before* execution to
+record the failing baseline — the fail half of the flip oracle.
+
+### 5. Witness
 
 Verification needs something deterministic to check. If you passed
-`--test-command`, that command is the oracle. If not, an independent model —
+`--test-command`, that command is the oracle. If not, the **warrant** reads
+the diff the execute stage produced and decides whether the change needs a
+test at all — a docs-only edit, a pure removal, or a test-only change gets a
+stated reason instead of a test, and anything mixed or unreadable fails
+closed to "prove it". When a witness is warranted, an independent model —
 the **witness author**, never the worker — writes a minimal *failing* test
-that pins down the intended behavior. Witness files are watched for tampering:
+that pins down the intended behavior. The author works in a pristine snapshot
+of the *pre-execution* tree, blind to the diff, so it cannot write a test
+that merely restates the patch; its test must fail there first, and its
+command then arms the flip oracle. Witness files are watched for tampering:
 a worker that edits the witness test doesn't get credit for "passing" it.
 
 The witness is scaffolding for one run, not a test you inherit. It is written
@@ -114,19 +131,13 @@ nobody reviewed. Pass `--keep-witness` to promote it into your working tree
 when the test is worth keeping.
 
 ```bash
-# No oracle armed — an independent model authors the witness, and it is
-# discarded with the candidate workspace.
+# No oracle armed — an independent model authors the witness on demand, and
+# it is discarded with the candidate workspace.
 stella run "make Plan::validate reject a self-dependency by name"
 
 # Same run, but keep the authored test as a file you can review and commit.
 stella run --keep-witness "make Plan::validate reject a self-dependency by name"
 ```
-
-### 5. Execute
-
-The worker runs the step loop against the plan — reading, editing, building,
-testing — with the full [toolbelt](/docs/agent-tools) and its
-[configured model, prompt, and parameters](/docs/configuration/agent-engine-config).
 
 ### 6. Verify — the deterministic ladder
 

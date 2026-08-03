@@ -2,9 +2,9 @@
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
 //! The request fold: one record per connection, produced where the connection
-//! ends rather than at the sixteen places it can exit.
+//! ends rather than at the twenty-odd places it can exit.
 //!
-//! `handle_conn` has fifteen `return`s and a tail expression. Emitting a record
+//! `route` has twenty `return`s and a tail match. Emitting a record
 //! before each is the obvious implementation and it is the wrong one — this
 //! project has already been burned by that shape and written it down. The PROOF
 //! rail (#901, "the proof rail resolves on every path, not just the happy one")
@@ -22,8 +22,8 @@
 //!    the accept loop has nothing left to discard.
 //! 3. **One construction site.** [`ServeEvent::RequestCompleted`] is built
 //!    here and nowhere else in the crate, and `close` consumes `self`.
-//! 4. **Prove it with a property.** `exactly_one_record_per_connection` in
-//!    `tests/observe.rs` drives arbitrary bytes at a live server and asserts
+//! 4. **Prove it with a property.** `exactly_one_record_per_connection_for_any_input` in
+//!    `tests/http.rs` drives arbitrary bytes at a live server and asserts
 //!    the count, because the original bug is always a path nobody enumerated.
 
 use std::sync::Arc;

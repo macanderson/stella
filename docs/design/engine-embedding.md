@@ -239,12 +239,26 @@ capabilities (`run_goal`, `run_sub_agent`) with wire-ready event
 vocabulary; serve simply never wires them. Judged multi-round autonomy is
 exactly what agent-app hosts want from an engine.
 
-**G5 — No durable turn anywhere, and two resume formats.** The engine's
-versioned `Checkpoint` has zero production writers: serve marks the
-persistence seam but persists nothing (a served turn dies with the
-process), and the CLI resumes from its own `session_persist` journal
-instead. Convergence: serve gets a checkpoint store; the deck's journal
-either adopts or wraps `Checkpoint`.
+**G5 — No durable turn over the API.** The CLI half of this closed: the
+deck attaches a `CheckpointSink` that writes the engine's versioned
+`Checkpoint` into the workspace's git-backed work journal at every step
+boundary, and its resume path prefers that checkpoint over the
+turn-boundary `history.json` whenever one exists — so an interrupted CLI
+turn reopens at its last step and does not re-run the completed ones.
+
+What remains is serve: it reaches both write seams (`persist_checkpoint`
+and `discard_checkpoint`, at the same boundaries the CLI driver uses) but
+nothing sets `checkpoint_sink`, and there is nowhere to read one back
+from — `SessionSpec` carries no session identity to key a store on. So a
+served turn still dies with the process. Fix shape: a checkpoint store
+behind serve, which the portable-session design gates.
+
+The "two resume formats" framing was wrong and is retired. The sidecar and
+the work journal are not competing formats; they are canonical for
+different *instants* — the sidecar between turns, the checkpoint inside
+one, and a checkpoint exists only while a turn is in flight. See the table
+in `stella_store::journal`'s module docs. Converging the two stores is
+therefore not a goal; giving serve one at all is.
 
 **G6 — Wire types live in the server crate.** `ServerFrame` and the inbound
 bodies are `stella-serve` types, and schema export is split across two

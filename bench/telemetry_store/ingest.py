@@ -21,9 +21,10 @@ import sqlite3
 import sys
 from datetime import datetime, timezone
 
-# Measured, not guessed: over the runs to date these four types are 87% of all
-# events (block_registered 134,776 + text_delta 125,331 against ~30k of
-# everything else) and none of them answers a question anyone asks twice.
+# Measured, not guessed: the list began as the four types that were 87% of
+# all events over the runs to date (block_registered 134,776 + text_delta
+# 125,331 against ~30k of everything else); the entries added since are the
+# same shape. None of them answers a question anyone asks twice.
 DROP_EVENT_TYPES = {
     "block_registered",
     "text_delta",
@@ -336,7 +337,9 @@ def main() -> int:
     ap.add_argument("--jobs", required=True)
     ap.add_argument("--run", required=True, help="tag, e.g. fair20b")
     ap.add_argument("--kind", default="smoke", choices=["scored", "smoke"])
-    ap.add_argument("--model", default=None)
+    # Required because `runs.model` is NOT NULL — with a None default the
+    # INSERT raised IntegrityError before a single trial was ingested.
+    ap.add_argument("--model", required=True, help="model id recorded on the run row")
     ap.add_argument("--void", default=None, help="reason this run is invalid")
     ap.add_argument("--prereg", default=None)
     ap.add_argument("--preflight", default=None)

@@ -407,10 +407,11 @@ For every selected model, the normalized posture is:
   "auto_mode": "off",
   "effort_auto": "off",
   "reasoning_auto": "off",
+  "headless_scope_bypass": "on",
   "agents": {
-    "default": {"effort": "high", "reasoning": "on"},
-    "worker": {"effort": "high", "reasoning": "on"},
-    "judge": {"effort": "high", "reasoning": "on"},
+    "default": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
+    "worker": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
+    "judge": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
     "triage": {"effort": "low", "reasoning": "off"}
   }
 }

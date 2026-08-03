@@ -15,7 +15,7 @@
 //! **A sequence number.** Every frame the host receives carries a monotonic
 //! `seq`, so "resume after 42" is expressible at all. It is assigned in
 //! [`FrameHistory::record`], which is called from the single point where
-//! frames leave the session ([`crate::session::Session::next_frame`]) rather
+//! frames leave the session ([`crate::session::Session::next_seq_frame`]) rather
 //! than at each sender. That matters: frames enter the channel from three
 //! independent producers — the `AgentEvent` forwarder task, `RemoteProvider`
 //! and `RemoteToolExecutor` (the latter two bypass the forwarder on purpose,

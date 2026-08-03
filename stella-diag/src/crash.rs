@@ -77,8 +77,11 @@ pub fn dump(dx: &Dx, dir: &Path) -> Option<PathBuf> {
     dx.flush();
     let written = dx.ring().dump_into(dir).ok().flatten()?;
     // One dump per failed run adds up, and nothing else prunes this directory.
-    // After writing, not before: the file just written must be among the
-    // survivors even if the keep window is somehow full of newer stamps.
+    // After writing rather than before, so a normal run keeps the newest dump.
+    // Note this does NOT guarantee the just-written file survives: pruning
+    // ranks by the filename stamp, so a directory already holding CRASH_KEEP
+    // newer stamps (clock skew, a restored backup) deletes it — and the path
+    // returned here is then announced for a file that no longer exists.
     crate::ring::prune_crash_files(dir, crate::ring::CRASH_KEEP);
     Some(written)
 }

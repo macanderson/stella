@@ -288,8 +288,8 @@ pub fn handle_key(key: KeyEvent, model: &SessionModel, ui: &mut UiState) -> Shel
     // option (only when nothing is typed), and the submit chord dispatches
     // whatever free text has been typed — the always-available affordance
     // the AskUser renderer contract mandates. Anything else (including a
-    // plain `⏎` line break) falls through to normal composer editing so the
-    // user can compose a multi-line free-text answer.
+    // *modified* `⏎` line break) falls through to normal composer editing so
+    // the user can compose a multi-line free-text answer.
     if let Some(prompt) = &model.pending_ask_user
         && !ui.ask_answered
         && let Some(action) = handle_ask_user_key(key, prompt, ui)
@@ -349,7 +349,7 @@ fn handle_ask_user_key(
     }
 }
 
-/// The scope-card key bindings. `Esc` from an empty composer aborts; every
+/// The scope-card key bindings. `Esc` aborts, whatever is typed; every
 /// other answer — `a`, `t`, `x`, `ok`, or a sentence asking for a different
 /// scope — is typed and sent with the submit chord, read by
 /// [`ScopeDecision::from_typed`]. Returns `None` to fall through to normal

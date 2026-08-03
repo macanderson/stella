@@ -70,6 +70,7 @@ fn spec_for(prompt: &str) -> SessionSpec {
         turn: TurnRef::new("turn-bridgetest0"),
         observer: stella_serve::observe::null_observer(),
         on_settled: None,
+        checkpoint: None,
     }
 }
 

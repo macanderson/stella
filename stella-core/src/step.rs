@@ -505,6 +505,18 @@ pub const CHECKPOINT_VERSION: u32 = 1;
 /// back with its keys sorted and the round-trip would not be byte-identical.
 /// Field order here IS the wire order, and
 /// `checkpoint_round_trips_byte_identically` pins it.
+///
+/// # What is in one
+///
+/// [`Self::messages`] is the whole conversation, verbatim — which means the
+/// full content of every file the agent read, including whatever was in those
+/// files. That is deliberate (the engine's next model call needs the bytes),
+/// but it makes a checkpoint as sensitive as the workspace it was taken from.
+///
+/// Anything that moves one somewhere the workspace is not — a host, a server, a
+/// support bundle, a log — is making an egress decision, and should make it
+/// knowing that. Stated here rather than left to be discovered, because this is
+/// the type someone reads before writing the code that moves it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Checkpoint {
     /// [`CHECKPOINT_VERSION`] at the time of writing.
@@ -595,6 +607,12 @@ pub enum CheckpointError {
 ///
 /// Implementations are invoked on the turn's own task and block it, so
 /// `persist` must be cheap. The file-backed sink is one temp+fsync+rename.
+///
+/// # What a sink is being handed
+///
+/// The bytes are a whole conversation, so they carry the full content of every
+/// file the agent read — see [`Checkpoint`]. Choosing where a sink puts them is
+/// choosing where that content lives.
 pub trait CheckpointSink: Send + Sync + std::fmt::Debug {
     /// Record `json` as the resume point for this turn, replacing any earlier
     /// one. `json` is [`Checkpoint::to_json`] output and is a complete
