@@ -9,6 +9,7 @@ Read back what your runs actually cost. `stella stats` summarizes cost, tokens, 
 
 ```bash
 stella stats [--format <table|json|csv>] [--provider <id>]
+stella stats graph [--format <table|json|csv>] [--limit <N>]
 stella stats prune [--older-than <AGE>] [--max-rows <N>] [--force] [--vacuum] [--dry-run]
 ```
 
@@ -88,6 +89,65 @@ stella stats --format json | jq '.[] | select(.cache_hit_rate < 0.2) | {provider
 <Callout type="info">
 The store is a real SQLite file. Beyond `stella stats` you can query it directly with any SQLite client — see [Telemetry &amp; budget](/docs/telemetry).
 </Callout>
+
+## Code-graph retrieval health — `stella stats graph`
+
+The code graph only pays for itself if the agent reaches for it *and* gets an answer.
+`stella stats graph` reports both, from the same local store:
+
+```bash
+stella stats graph
+```
+
+```
+graph_query retrieval health (from .stella/private/store.db)
+
+OP              CALLS  RESOLVED  UNRESOLVED  OUT-OF-ROOT  NOT-INDEXED  FAILED  RESOLVED%
+definitions        12         9           3            0            0       0      75.0%
+neighbors           4         2           0            2            0       0      50.0%
+TOTAL              16        11           3            2            0       0      68.8%
+
+adoption: graph_query 16 of 84 structural searches (graph_query + grep + glob) = 19.0%
+```
+
+<CardGrid size="md">
+  <OptionCard name="RESOLVED%">
+    The health metric: what share of `graph_query` calls came back with frames rather
+    than a miss. An empty answer is a perfectly *successful* call, so a plain call count
+    cannot see this — a falling resolve rate is how a tool teaches the model to stop
+    asking.
+  </OptionCard>
+  <OptionCard name="OUT-OF-ROOT">
+    Queries aimed at a path outside the indexed workspace root — a sibling checkout, or a
+    session rooted on a package inside a larger monorepo. Re-indexing cannot fix these;
+    re-rooting the session on the enclosing tree can.
+  </OptionCard>
+  <OptionCard name="NOT-INDEXED">
+    Queries aimed at a file type the graph does not carry (Markdown, TOML, YAML…).
+    Also unfixable by re-indexing — use `grep` and `read_file` for those.
+  </OptionCard>
+  <OptionCard name="adoption">
+    `graph_query` calls as a share of `graph_query + grep + glob`. `bash` is deliberately
+    excluded from the denominator: most shell calls are builds and git, not searches.
+  </OptionCard>
+</CardGrid>
+
+<CardGrid size="md">
+  <OptionCard name="--limit <N>" defaultValue="500">
+    How many recent `graph_query` answers to classify. The adoption counts always come
+    from the full projection; only the resolve-rate window is bounded.
+  </OptionCard>
+  <OptionCard name="--format <table|json|csv>" defaultValue="table">
+    `json` emits the whole report as one object (per-op rows, the total, and the adoption
+    counts); `csv` emits the per-op rows plus a `TOTAL` row.
+  </OptionCard>
+</CardGrid>
+
+Track it over time to see whether a change to retrieval actually landed:
+
+```bash
+stella stats graph --format json | jq '{resolved: .total.resolved_rate, adoption: .adoption_rate}'
+```
 
 ## Bounding the store — `stella stats prune`
 

@@ -578,6 +578,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             return match cmd {
                 None => stats::run_stats(*format, provider.as_deref()),
                 Some(stats::StatsCmd::Prune(args)) => stats::run_stats_prune(args),
+                Some(stats::StatsCmd::Graph(args)) => stats::run_stats_graph(args),
             };
         }
         Some(Command::Usage { cmd }) => {
