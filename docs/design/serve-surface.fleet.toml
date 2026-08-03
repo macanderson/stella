@@ -183,14 +183,14 @@ Verify: unit test that emit_named delivers a lifecycle event to a registered obs
 id = "p3-tools-isolation"
 title = "Per-session isolation of stella-tools process-global state"
 depends_on = ["p0-runtime-lib"]
-claims = ["stella-tools/src/web.rs", "stella-tools/src/sandbox.rs", "stella-tools/src/media.rs"]
+claims = ["stella-tools/src/web.rs", "stella-tools/src/media.rs"]
 prompt = '''
 You are one worker in a fleet preparing Stella as a headless multi-session engine service. Read docs/design/serve-surface.md §"Containment posture" and the relevant stella-tools files. Reconcile with landed work.
 
-Problem (from the tools sweep): server mode runs one engine process per trust boundary, but several tool knobs are read from process-global std::env and cannot be per-session: STELLA_BASH_SANDBOX (sandbox.rs), STELLA_WEB_AUTH_FILE + web auth config (web.rs), BRAVE_API_KEY/TAVILY_API_KEY (web.rs), media provider keys (media.rs via detect_media_backend in stella-tools/src/media.rs). For the serve sidecar these are delegated to the host (RemoteToolExecutor), but the CLI still needs them — so make them INJECTABLE without breaking the CLI.
+Problem (from the tools sweep): server mode runs one engine process per trust boundary, but several tool knobs are read from process-global std::env and cannot be per-session: STELLA_WEB_AUTH_FILE + web auth config (web.rs), BRAVE_API_KEY/TAVILY_API_KEY (web.rs), media provider keys (media.rs via detect_media_backend in stella-tools/src/media.rs). (STELLA_BASH_SANDBOX in sandbox.rs was a fourth; #1300 removed both the variable and the module, so there is nothing to inject there.) For the serve sidecar these are delegated to the host (RemoteToolExecutor), but the CLI still needs them — so make them INJECTABLE without breaking the CLI.
 
 Your task:
-1. Add explicit-config constructors alongside the env-reading paths: web auth, search keys, sandbox mode, and the media backend must all be constructible from passed-in values (a config struct), falling back to the env-reading path ONLY when the CLI wiring opts in. Do NOT delete the env path — the CLI relies on it; add an injection seam next to it (mirror how the model adapters already take ApiKey as a constructor arg while the CLI does env detection).
+1. Add explicit-config constructors alongside the env-reading paths: web auth, search keys, and the media backend must all be constructible from passed-in values (a config struct), falling back to the env-reading path ONLY when the CLI wiring opts in. Do NOT delete the env path — the CLI relies on it; add an injection seam next to it (mirror how the model adapters already take ApiKey as a constructor arg while the CLI does env detection).
 2. detect_media_backend(): add a per-request variant that takes injected keys instead of reading ZAI_API_KEY/OPENAI_API_KEY from std::env.
 3. Document that in server (`--tools remote`) mode none of these run locally.
 
