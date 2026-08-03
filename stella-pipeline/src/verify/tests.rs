@@ -504,11 +504,18 @@ fn both_judge_prompts_mark_the_diff_as_worker_authored_data() {
             "the diff must be framed as data, not instructions: {p}"
         );
         assert!(
-            // Read from the source rather than restated. This assertion has
-            // been broken by a rewording three times (#1206, #1214, #1240) —
-            // each time it went on passing its own stale spelling, asserting a
-            // string that existed nowhere. A restated literal cannot detect the
-            // heading changing; only the shared constant can.
+            // Read from the source rather than restated. A rewording has
+            // broken this line three times (#1206, #1214, #1240), and between
+            // breaks it went on passing its own stale spelling — asserting the
+            // presence of a string the prompts had stopped emitting.
+            //
+            // #1242 loosened it to `contains("worker-authored") &&
+            // contains("data, not instructions")`, which absorbs the exact
+            // drift that happened (the punctuation between the halves) but is
+            // still a restatement: reword either half and it breaks a fourth
+            // time, in the same silent direction. Matching the constant the
+            // prompts are built from removes the restatement instead of
+            // widening it.
             p.contains(UNTRUSTED_DIFF_HEADING_SUFFIX),
             "the diff section heading must carry the framing where the diff starts: {p}"
         );
