@@ -205,13 +205,9 @@ impl Tool for Bash {
     }
 
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
-        let command = match input.get("command").and_then(|v| v.as_str()) {
-            Some(c) => c,
-            None => {
-                return ToolOutput::Error {
-                    message: "missing required field `command`".into(),
-                };
-            }
+        let command = match crate::input::required_str(input, "command") {
+            Ok(v) => v,
+            Err(message) => return ToolOutput::Error { message },
         };
         let timeout_secs = crate::exec::timeout_from(input, DEFAULT_TIMEOUT_SECS);
         // trace: true prefixes `set -x` so every executed line echoes to

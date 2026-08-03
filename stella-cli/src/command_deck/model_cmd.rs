@@ -237,6 +237,7 @@ mod tests {
             model_id: provider.default_model.to_string(),
             provider,
             turn_budget: None,
+            plan_mode: false,
             model_pinned_by_flag: false,
             durability: Default::default(),
             create_worktrees: Default::default(),

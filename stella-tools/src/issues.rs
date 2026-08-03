@@ -239,10 +239,9 @@ impl Tool for CreateIssue {
         }
     }
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
-        let Some(title) = input.get("title").and_then(|v| v.as_str()) else {
-            return ToolOutput::Error {
-                message: "missing required field `title`".into(),
-            };
+        let title = match crate::input::required_str(input, "title") {
+            Ok(v) => v,
+            Err(message) => return ToolOutput::Error { message },
         };
         let params = CreateParams {
             title: title.to_string(),
