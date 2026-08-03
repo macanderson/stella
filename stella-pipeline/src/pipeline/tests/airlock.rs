@@ -64,6 +64,7 @@ assertion `left == right` failed
             tests: &runner,
             lint: None,
             mutation: None,
+            coverage: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,

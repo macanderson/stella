@@ -65,6 +65,24 @@ pub struct CalibrationReport {
     pub deterministic_passes: u32,
     pub deterministic_reconciled: u32,
     pub deterministic_false_positives: u32,
+    /// Verdicts carrying a ladder snapshot — the denominator for the
+    /// judge-alone rate below (#1295). Verdicts recorded before snapshots
+    /// existed (#865) are excluded rather than assumed either way.
+    pub snapshotted_verdicts: u32,
+    /// …of which NOTHING mechanical corroborated the result: no flip, and no
+    /// touched-test run observed green.
+    ///
+    /// This is `LadderInputs::judge_pass_stands_alone` read back off the
+    /// record, and it is the number #1295 turns on: the gated "send it back
+    /// for evidence" behaviour is worth a turn only where this is the
+    /// suspicious minority. Counted over every snapshotted verdict, not only
+    /// judge passes, because the question is how often the *condition* holds
+    /// — which is what decides whether gating on it taxes every turn.
+    pub uncorroborated_verdicts: u32,
+    /// Model-judge PASSes where the condition held — the turns
+    /// `require_evidence_for_lone_judge_pass` would actually have sent back,
+    /// and the ones the pipeline relabels UNVERIFIED while it is off.
+    pub judge_passes_standing_alone: u32,
 }
 
 impl CalibrationReport {
@@ -76,7 +94,26 @@ impl CalibrationReport {
         self.deterministic_passes += other.deterministic_passes;
         self.deterministic_reconciled += other.deterministic_reconciled;
         self.deterministic_false_positives += other.deterministic_false_positives;
+        self.snapshotted_verdicts += other.snapshotted_verdicts;
+        self.uncorroborated_verdicts += other.uncorroborated_verdicts;
+        self.judge_passes_standing_alone += other.judge_passes_standing_alone;
         self
+    }
+
+    /// How often a verdict had no deterministic corroboration behind it, over
+    /// the verdicts that recorded enough to say (#1295). `None` when nothing
+    /// was snapshotted — an unmeasured rate is reported as unmeasured, never
+    /// as zero.
+    ///
+    /// **The number that decides
+    /// `PipelineConfig::require_evidence_for_lone_judge_pass`.** A minority
+    /// rate is the situation the send-back was designed for; a majority rate
+    /// is the Terminal-Bench measurement that switched it off, and leaving it
+    /// off is then the answer with the reason recorded beside it.
+    #[must_use]
+    pub fn uncorroborated_rate(&self) -> Option<f64> {
+        (self.snapshotted_verdicts > 0)
+            .then(|| f64::from(self.uncorroborated_verdicts) / f64::from(self.snapshotted_verdicts))
     }
 
     /// The measured false-positive rate over RECONCILED judge passes, or
@@ -113,12 +150,31 @@ pub fn render_calibration(report: &CalibrationReport) -> String {
              {false_positives} CI-failed — {rate}"
         )
     }
+    // #1295: the rate that decides whether asking for evidence is worth a
+    // turn. Rendered beside the calibration cohorts because it is read for
+    // the same reason — to replace an argument about the judge with a number
+    // — and stated with its denominator, like every other rate here.
+    let judge_alone = match report.uncorroborated_rate() {
+        Some(rate) => format!(
+            "  judge-alone rate: {:.0}% of {} snapshotted verdict(s) had no flip and no green \
+             test ({} of them were model-judge PASSes)\n  \
+             → a MINORITY is the condition `require_evidence_for_lone_judge_pass` was built for; \
+             a majority reproduces the measurement that switched it off (#1295)",
+            100.0 * rate,
+            report.snapshotted_verdicts,
+            report.judge_passes_standing_alone,
+        ),
+        None => {
+            "  judge-alone rate: unmeasured (no verdict carried a ladder snapshot yet)".to_string()
+        }
+    };
     format!(
         "judge calibration (#871) — passes reconciled against later CI verdicts\n\
          {}\n{}\n\
          note: reconciliation is stream-local; passes after a session's last\n\
          terminal CI verdict stay unreconciled, and reverts are not yet a\n\
-         ground-truth source.",
+         ground-truth source.\n\
+         {judge_alone}",
         cohort(
             "  model judge  ",
             report.judge_passes,
@@ -148,10 +204,25 @@ pub fn calibration(events: &[AgentEvent]) -> CalibrationReport {
     let mut pending: Vec<bool> = Vec::new();
     for event in events {
         match event {
-            AgentEvent::JudgeVerdict {
-                passed: true,
-                evidence,
-            } => {
+            // Every verdict — pass or fail — contributes to the judge-alone
+            // denominator (#1295): the question is how often the pipeline
+            // reaches a verdict with nothing mechanical behind it, and a
+            // failing turn is as much a part of that population as a passing
+            // one. The pass cohorts below are counted separately, on the same
+            // pass.
+            AgentEvent::JudgeVerdict { passed, evidence } => {
+                if let Some(snapshot) = evidence.ladder.as_deref() {
+                    report.snapshotted_verdicts += 1;
+                    if stands_alone(snapshot) {
+                        report.uncorroborated_verdicts += 1;
+                        if *passed && !evidence.deterministic {
+                            report.judge_passes_standing_alone += 1;
+                        }
+                    }
+                }
+                if !*passed {
+                    continue;
+                }
                 if evidence.deterministic {
                     report.deterministic_passes += 1;
                     pending.push(false);
@@ -180,6 +251,18 @@ pub fn calibration(events: &[AgentEvent]) -> CalibrationReport {
         }
     }
     report
+}
+
+/// Whether a recorded verdict had no deterministic corroboration behind it
+/// (#1295) — the snapshot-side reading of
+/// `crate::verify::LadderInputs::judge_pass_stands_alone`.
+///
+/// Deliberately the same two conjuncts and no more. A readable diff or a
+/// recorded file touch proves the tree **changed**; neither says the change
+/// is **correct**, and only the second claim is what a pass makes — so
+/// counting them here would report a rate the pipeline does not gate on.
+fn stands_alone(snapshot: &stella_protocol::LadderSnapshot) -> bool {
+    !snapshot.flip_achieved && snapshot.touched_tests_passed != Some(true)
 }
 
 /// Render an oracle trace compactly — `baseline:fail → candidate:pass` —
@@ -262,6 +345,13 @@ pub fn verdict_provenance(evidence: &JudgeEvidence) -> Option<String> {
     }
     if snapshot.witness_intact == Some(true) {
         out.push_str("; witness=intact");
+    }
+    // #1291: rendered whenever the snapshot carries it, `unmeasured`
+    // included. Unlike the judge prompt — which has nothing to reason from in
+    // that case — a provenance reader is asking "what was checked?", and "the
+    // overlap was not measured" is a direct answer to it.
+    if let Some(coverage) = &snapshot.diff_coverage {
+        out.push_str(&format!("; diff_coverage={coverage}"));
     }
     Some(out)
 }
@@ -1125,5 +1215,86 @@ mod calibration_tests {
         assert_eq!(merged.judge_passes, 2);
         assert_eq!(merged.judge_reconciled, 2);
         assert_eq!(merged.judge_false_positives, 1);
+    }
+
+    /// A verdict carrying its ladder snapshot, so the judge-alone fold has
+    /// something to read. `corroborated` decides whether the recorded turn
+    /// had a flip behind it.
+    fn snapshotted(passed: bool, deterministic: bool, corroborated: bool) -> AgentEvent {
+        let snapshot = stella_protocol::LadderSnapshot {
+            rung: None,
+            tracked_command: None,
+            oracle_trace: vec![],
+            flip_achieved: corroborated,
+            unstable_flip: false,
+            flip_refused_different_failure: false,
+            touched_tests_passed: corroborated.then_some(true),
+            test_infra: None,
+            diff_lines: 4,
+            diff_budget: 400,
+            diff_available: true,
+            file_change_events: 1,
+            mutating_actions: 2,
+            new_diag_errors: 0,
+            new_diag_warnings: 0,
+            witness_intact: None,
+            witness_mutation: None,
+            diff_coverage: None,
+        };
+        AgentEvent::JudgeVerdict {
+            passed,
+            evidence: JudgeEvidence {
+                summary: String::new(),
+                deterministic,
+                evidence_refs: vec![],
+                ladder: Some(Box::new(snapshot)),
+            },
+        }
+    }
+
+    /// #1295: the rate that decides whether asking for evidence is worth a
+    /// turn is measured off what is already recorded — every snapshotted
+    /// verdict counts toward the denominator, and a model-judge PASS with
+    /// nothing behind it is separately identified as a turn the gated
+    /// behaviour would have sent back.
+    #[test]
+    fn the_judge_alone_rate_is_measured_from_recorded_snapshots() {
+        let events = vec![
+            snapshotted(true, false, false),  // judge PASS, nothing behind it
+            snapshotted(true, true, true),    // deterministic pass, flip achieved
+            snapshotted(false, false, false), // a FAILING verdict, also uncorroborated
+            snapshotted(true, false, true),   // judge PASS with a flip behind it
+        ];
+        let report = calibration(&events);
+        assert_eq!(report.snapshotted_verdicts, 4);
+        assert_eq!(
+            report.uncorroborated_verdicts, 2,
+            "the denominator is every verdict, not only the passing ones — the question is how \
+             often the CONDITION holds"
+        );
+        assert_eq!(report.uncorroborated_rate(), Some(0.5));
+        assert_eq!(
+            report.judge_passes_standing_alone, 1,
+            "only the judge PASS with no flip and no green test would be sent back"
+        );
+        // The pass cohorts are untouched by the new fold.
+        assert_eq!(report.judge_passes, 2);
+        assert_eq!(report.deterministic_passes, 1);
+    }
+
+    /// A rate with no denominator is reported as unmeasured, never as 0% —
+    /// the same discipline the false-positive rates already keep. Verdicts
+    /// recorded before ladder snapshots existed (#865) contribute nothing
+    /// rather than being assumed corroborated.
+    #[test]
+    fn a_stream_without_snapshots_leaves_the_judge_alone_rate_unmeasured() {
+        let report = calibration(&[verdict(true, false), verdict(false, true)]);
+        assert_eq!(report.snapshotted_verdicts, 0);
+        assert_eq!(report.uncorroborated_rate(), None);
+        assert!(
+            render_calibration(&report).contains("judge-alone rate: unmeasured"),
+            "an unmeasured rate must say so: {}",
+            render_calibration(&report)
+        );
     }
 }

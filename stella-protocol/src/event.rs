@@ -1945,6 +1945,7 @@ mod tests {
                     new_diag_warnings: 0,
                     witness_intact: Some(true),
                     witness_mutation: None,
+                    diff_coverage: Some("covered".into()),
                 })),
             },
         };

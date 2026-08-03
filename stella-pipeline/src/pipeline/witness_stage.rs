@@ -251,7 +251,7 @@ impl<'a> Pipeline<'a> {
         // fabricate the oracle's Failing precondition) nor justify a repair
         // turn (the author cannot fix a toolchain). Degrade without a witness
         // and say why — cheaper and honest.
-        let first_baseline = baseline.tests.run_test(&invocation).await;
+        let first_baseline = self.run_test_observed(baseline.tests, &invocation).await;
         if let Some(label) = first_baseline.infra_label() {
             return Err(WitnessAbort::degradable(format!(
                 "witness baseline run was {label}; no assertion was observed, so a failing \
@@ -303,7 +303,7 @@ impl<'a> Pipeline<'a> {
                 )));
             };
             invocation = repaired_invocation;
-            let repaired_baseline = baseline.tests.run_test(&invocation).await;
+            let repaired_baseline = self.run_test_observed(baseline.tests, &invocation).await;
             if let Some(label) = repaired_baseline.infra_label() {
                 return Err(WitnessAbort::degradable(format!(
                     "witness baseline run after repair was {label}; no assertion was observed"
@@ -428,6 +428,7 @@ impl<'a> Pipeline<'a> {
             // veto has nothing to audit here.
             lint: None,
             mutation: None,
+            coverage: None,
             repo_status: baseline.repo_status(),
             cwd: Some(baseline.root()),
             // No hooks in the baseline: nothing there is the user's work, and

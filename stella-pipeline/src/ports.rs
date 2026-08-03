@@ -380,6 +380,20 @@ pub enum CmdKind {
     /// The runner killed the process at its own deadline. `exit_code` is
     /// synthetic, and nothing about the command's assertions was observed.
     TimedOut,
+    /// The machine ran out of memory and the run died for it (#1294) — the
+    /// kernel's OOM killer, or a runtime that noticed its own allocation
+    /// failure first. See [`crate::oom`] for what is observable and what is
+    /// deliberately not read.
+    ///
+    /// Its own variant rather than a shade of [`Self::Infra`] because the two
+    /// call for opposite handling. An unspawnable toolchain will be
+    /// unspawnable on every retry, so re-running it is spend with no
+    /// information; a memory kill is exactly the outcome a human would simply
+    /// *try again* (see `PipelineConfig::test_oom_retries`). Collapsing them
+    /// would make one of the two behaviors wrong, and the evidence a judge
+    /// reads would say "infra_failure" where the honest word is
+    /// "out_of_memory".
+    OutOfMemory,
     /// The process never produced a real exit status — it could not be
     /// spawned (missing program/toolchain) or its wait failed.
     Infra,
@@ -439,7 +453,7 @@ impl CmdOutcome {
     pub fn assertion_result(&self) -> Option<bool> {
         match self.kind {
             CmdKind::Completed => Some(self.exit_code == 0),
-            CmdKind::TimedOut | CmdKind::Infra => None,
+            CmdKind::TimedOut | CmdKind::OutOfMemory | CmdKind::Infra => None,
         }
     }
 
@@ -450,8 +464,22 @@ impl CmdOutcome {
         match self.kind {
             CmdKind::Completed => None,
             CmdKind::TimedOut => Some("timed_out"),
+            CmdKind::OutOfMemory => Some("out_of_memory"),
             CmdKind::Infra => Some("infra_failure"),
         }
+    }
+
+    /// Whether this run died for want of memory (#1294) — the one
+    /// unobservable outcome worth *retrying* rather than reporting, because
+    /// re-running is exactly what a human would do by hand.
+    ///
+    /// Kept beside [`Self::infra_label`] rather than open-coded at the call
+    /// sites so "which outcomes are retryable" stays one answer: a future
+    /// variant that is also worth a retry joins it here, not in five
+    /// pipeline stages.
+    #[must_use]
+    pub fn is_out_of_memory(&self) -> bool {
+        self.kind == CmdKind::OutOfMemory
     }
 }
 
@@ -513,6 +541,32 @@ pub trait LintProbe: Send + Sync {
     /// cwd). The root parameter is what lets one probe serve both the
     /// session tree and an isolated candidate worktree.
     async fn snapshot(&self, root: Option<&str>) -> Option<Vec<LintRecord>>;
+}
+
+/// Runs a test invocation under coverage instrumentation and reports which
+/// lines it executed (#1291) — the host half of the diff-coverage check.
+///
+/// `None` is the answer for every way the measurement cannot be made: no
+/// coverage tool for this dialect, the tool not installed, an instrumented run
+/// that produced no readable report. It is deliberately indistinguishable from
+/// "not wired", because the ladder treats all of them identically — as
+/// [`crate::verify::coverage::DiffCoverage::Unmeasured`], which is a statement
+/// about the instrument and never about the work.
+///
+/// Called only from the pre-submit audit, where a deterministic pass is about
+/// to be credited, so a run that never reaches a fast-submit pays no
+/// instrumented suite run at all. The cost when it does fire is one extra
+/// (slower) run of the tracked command — which is why the strict reading is
+/// opt-in and why a host is free never to implement this port.
+#[async_trait]
+pub trait CoverageProbe: Send + Sync {
+    /// Executed lines by repo-relative path, for a run of `invocation`
+    /// against the tree at `root` (`None` = process cwd).
+    async fn covered_lines(
+        &self,
+        root: Option<&str>,
+        invocation: &TestInvocation,
+    ) -> Option<crate::verify::coverage::CoverageReport>;
 }
 
 /// One single-line mutant for the witness mutation check (#870), proposed by
@@ -964,6 +1018,10 @@ pub struct PipelinePorts<'a> {
     /// The witness mutation check (#870). `None` disables the check and
     /// nothing else.
     pub mutation: Option<&'a dyn MutationProbe>,
+    /// The diff-coverage check (#1291) — did the passing test run the changed
+    /// lines? `None` leaves every candidate's overlap `Unmeasured`, which is
+    /// stated in the verdict and (by default) withholds nothing.
+    pub coverage: Option<&'a dyn CoverageProbe>,
     /// The interactive scope-review gate (L-E5).
     pub approvals: &'a dyn ApprovalGate,
     /// The delay port for retry backoff — the same testability seam
@@ -1025,7 +1083,7 @@ mod tests {
     /// pathological `exit_code: 0` shapes a buggy runner could produce.
     #[test]
     fn infra_outcomes_are_never_assertions() {
-        for kind in [CmdKind::TimedOut, CmdKind::Infra] {
+        for kind in [CmdKind::TimedOut, CmdKind::OutOfMemory, CmdKind::Infra] {
             for code in [0, 1, -1, 124] {
                 let out = CmdOutcome {
                     exit_code: code,
@@ -1041,6 +1099,48 @@ mod tests {
                 );
                 assert!(out.infra_label().is_some());
             }
+        }
+    }
+
+    /// #1294: an out-of-memory kill is its OWN outcome — not a failure, and
+    /// not the same word as an unspawnable toolchain. The label is what a
+    /// judge reads, so it has to say which of the two happened.
+    #[test]
+    fn an_out_of_memory_kill_is_its_own_outcome() {
+        let oom = CmdOutcome {
+            // Whatever the runner synthesized: an OOM kill leaves no real
+            // code, and the exit code must not be what anyone reads.
+            exit_code: -1,
+            stdout_tail: String::new(),
+            stderr_tail: String::new(),
+            kind: CmdKind::OutOfMemory,
+        };
+        assert!(!oom.passed());
+        assert_eq!(
+            oom.assertion_result(),
+            None,
+            "a run the kernel killed observed no assertion, so it is not a failing test"
+        );
+        assert_eq!(oom.infra_label(), Some("out_of_memory"));
+        assert!(oom.is_out_of_memory());
+        for kind in [CmdKind::Completed, CmdKind::TimedOut, CmdKind::Infra] {
+            assert!(
+                !CmdOutcome {
+                    kind,
+                    ..oom.clone()
+                }
+                .is_out_of_memory(),
+                "{kind:?} is not an out-of-memory kill"
+            );
+            assert_ne!(
+                CmdOutcome {
+                    kind,
+                    ..oom.clone()
+                }
+                .infra_label(),
+                Some("out_of_memory"),
+                "{kind:?} must not borrow the out-of-memory label"
+            );
         }
     }
 

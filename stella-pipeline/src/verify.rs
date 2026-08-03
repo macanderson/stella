@@ -60,6 +60,7 @@
 //! oracle (L-E11): only a real test command's fail→pass counts. The pipeline
 //! never feeds a lint/typecheck command to [`FlipOracle::observe`].
 
+pub mod coverage;
 pub mod fingerprint;
 pub mod mutation;
 
@@ -417,6 +418,16 @@ pub struct LadderInputs {
     /// check found the witness sound and when it never ran: the downgrade
     /// requires positive evidence of tautology, never its absence.
     pub witness_tautological: bool,
+    /// Whether the passing test run actually executed the lines the change
+    /// added (#1291). [`coverage::DiffCoverage::Unmeasured`] — the default —
+    /// is "nobody could tell", which is a different answer from "it did not"
+    /// and is treated as one.
+    pub diff_coverage: coverage::DiffCoverage,
+    /// Configuration, not evidence: whether an *unmeasured* overlap also
+    /// withholds the fast-submit (a measured non-overlap always does).
+    /// Carried here so the ladder stays a pure function of one input value,
+    /// exactly like [`Self::veto_warnings`].
+    pub require_diff_coverage: bool,
 }
 
 impl LadderInputs {
@@ -540,6 +551,13 @@ pub fn ladder_decision(inputs: &LadderInputs) -> LadderDecision {
         && inputs.new_diag_errors == 0
         && (!inputs.veto_warnings || inputs.new_diag_warnings == 0)
         && !inputs.witness_tautological
+        // #1291: a test that never executed the changed lines passed for some
+        // other reason. Withholding the deterministic credit sends the turn to
+        // the judge — "unproven" — and is never a failure; an *unmeasured*
+        // overlap withholds only when the operator asked for strictness.
+        && inputs
+            .diff_coverage
+            .credits_a_deterministic_pass(inputs.require_diff_coverage)
     {
         return LadderDecision::SubmitFast;
     }
@@ -570,13 +588,25 @@ impl From<LadderDecision> for LadderRung {
 /// Build the deterministic `JudgeEvidence` for a `SubmitFast` verdict — the
 /// evidence attached to the emitted `JudgeVerdict { passed: true,
 /// evidence: { deterministic: true, .. } }`.
-pub fn deterministic_pass_evidence(tracked_cmd: Option<&str>, diff_lines: u32) -> JudgeEvidence {
+///
+/// The coverage status rides along (#1291) even when it credited the pass,
+/// and especially when it was `Unmeasured`: the deterministic badge means
+/// "a test went fail→pass", and a reader is entitled to know whether anyone
+/// checked that the test ran the changed lines. Stating it here is what keeps
+/// the default (unmeasured does not withhold) from being a *silent* pass.
+pub fn deterministic_pass_evidence(
+    tracked_cmd: Option<&str>,
+    diff_lines: u32,
+    diff_coverage: coverage::DiffCoverage,
+) -> JudgeEvidence {
     let summary = match tracked_cmd {
         Some(cmd) => format!(
-            "flip oracle: fail→pass of `{cmd}`; touched tests green; diff {diff_lines} lines within budget"
+            "flip oracle: fail→pass of `{cmd}`; touched tests green; diff {diff_lines} lines within budget; {}",
+            diff_coverage.explain()
         ),
         None => format!(
-            "touched tests green; diff {diff_lines} lines within budget (no flip command tracked)"
+            "touched tests green; diff {diff_lines} lines within budget (no flip command tracked); {}",
+            diff_coverage.explain()
         ),
     };
     JudgeEvidence {

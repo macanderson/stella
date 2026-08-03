@@ -75,6 +75,7 @@ async fn aborted_pipeline_totals_match_every_management_and_execute_usage_record
             tests: &runner,
             lint: None,
             mutation: None,
+            coverage: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,

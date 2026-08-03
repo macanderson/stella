@@ -160,6 +160,10 @@ pub struct AgentsSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_candidates: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_evidence_for_lone_judge_pass: Option<Toggle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_require_diff_coverage: Option<Toggle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_timeout_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction_budget_tokens: Option<u64>,
@@ -559,6 +563,8 @@ pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection) {
         headless_scope_bypass: cfg.headless_scope_bypass,
         pipeline_max_revisions: cfg.pipeline_max_revisions,
         pipeline_candidates: cfg.pipeline_candidates,
+        pipeline_evidence_for_lone_judge_pass: cfg.pipeline_evidence_for_lone_judge_pass,
+        pipeline_require_diff_coverage: cfg.pipeline_require_diff_coverage,
         model_timeout_secs: cfg.model_timeout_secs,
         compaction_budget_tokens: cfg.compaction_budget_tokens,
         tool_result_horizon_steps: cfg.tool_result_horizon_steps,
@@ -626,6 +632,8 @@ fn lower_agents(agents: AgentsSection, models: ModelsSection) -> Option<AgentEng
         headless_scope_bypass: agents.headless_scope_bypass,
         pipeline_max_revisions: agents.pipeline_max_revisions,
         pipeline_candidates: agents.pipeline_candidates,
+        pipeline_evidence_for_lone_judge_pass: agents.pipeline_evidence_for_lone_judge_pass,
+        pipeline_require_diff_coverage: agents.pipeline_require_diff_coverage,
         model_timeout_secs: agents.model_timeout_secs,
         compaction_budget_tokens: agents.compaction_budget_tokens,
         tool_result_horizon_steps: agents.tool_result_horizon_steps,

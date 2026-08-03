@@ -730,6 +730,7 @@ async fn run_goal_pipeline_turn(
                 tests: &ws_ports.test_runner,
                 lint: Some(&ws_ports.lint_probe),
                 mutation: Some(&ws_ports.mutation_probe),
+                coverage: Some(&ws_ports.coverage_probe),
                 approvals: &HEADLESS_APPROVAL_GATE,
                 sleeper: &TokioSleeper,
                 hooks: cfg

@@ -708,7 +708,10 @@ fn heuristic_fallback_passes_only_on_confirmed_green_tests() {
 
 #[test]
 fn evidence_builders_tag_determinism_correctly() {
-    assert!(deterministic_pass_evidence(Some("cargo test"), 10).deterministic);
+    assert!(
+        deterministic_pass_evidence(Some("cargo test"), 10, coverage::DiffCoverage::Covered)
+            .deterministic
+    );
     assert!(deterministic_fail_evidence("boom").deterministic);
     let model = model_verdict_evidence(&JudgeVerdict {
         passed: true,
