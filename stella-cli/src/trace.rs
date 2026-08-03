@@ -43,7 +43,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use stella_core::redact::redact_secrets;
-use stella_pipeline::reward::{RewardLabel, RewardShaping, Settlement, TrajectoryCost, label};
+use stella_pipeline::reward::{RewardLabel, RewardPolicy, Settlement, TrajectoryCost, label};
 use stella_protocol::{AgentEvent, CompletionMessage};
 use stella_store::Store;
 
@@ -54,7 +54,15 @@ use stella_store::Store;
 /// `2` added the reward label (#1043), which every record now carries and an
 /// older record does not — so a v1 line is skipped rather than parsed with an
 /// invented label.
-pub const TRACE_SCHEMA_VERSION: u32 = 2;
+///
+/// `3` stamps the [`RewardPolicy`] onto that label, now that the weights are
+/// configurable. Every v2 line was in fact written under the defaults — the
+/// weights were constants then — so a reader *could* upgrade one by assuming
+/// them. The bump says no: `policy` is a required field, nothing reads traces
+/// yet, and the alternative is every future reader carrying "v2 implies the
+/// 2026-08 defaults" as a permanent special case. Skipping is cheaper and
+/// cannot rot.
+pub const TRACE_SCHEMA_VERSION: u32 = 3;
 
 /// The append-only trace file, one JSON record per line, under
 /// `.stella/private/`.
@@ -175,8 +183,9 @@ pub fn capture_or_warn(
     execution_id: i64,
     files_touched: &[(String, String)],
     workspace_root: &Path,
+    policy: &RewardPolicy,
 ) {
-    if let Err(error) = capture(store, execution_id, files_touched, workspace_root) {
+    if let Err(error) = capture(store, execution_id, files_touched, workspace_root, policy) {
         eprintln!("  ⚠ trace capture failed: {error}");
     }
 }
@@ -188,8 +197,9 @@ pub fn capture(
     execution_id: i64,
     files_touched: &[(String, String)],
     workspace_root: &Path,
+    policy: &RewardPolicy,
 ) -> Result<PathBuf, String> {
-    let record = assemble(store, execution_id, files_touched)?;
+    let record = assemble(store, execution_id, files_touched, policy)?;
     append_trace(workspace_root, &record)
 }
 
@@ -199,6 +209,7 @@ pub fn assemble(
     store: &Store,
     execution_id: i64,
     files_touched: &[(String, String)],
+    policy: &RewardPolicy,
 ) -> Result<TraceRecord, String> {
     let summary = store
         .execution_summary(execution_id)
@@ -280,7 +291,7 @@ pub fn assemble(
             cost_usd: summary.cost_usd,
             revisions: fold.verdicts.saturating_sub(1),
         },
-        &RewardShaping::default(),
+        policy,
     );
 
     Ok(TraceRecord {
@@ -658,7 +669,7 @@ mod tests {
             .unwrap();
 
         let files = vec![("src/auth.rs".to_string(), "U".to_string())];
-        let record = assemble(&store, id, &files).unwrap();
+        let record = assemble(&store, id, &files, &RewardPolicy::default()).unwrap();
 
         assert_eq!(record.schema, TRACE_SCHEMA_VERSION);
         assert_eq!(record.outcome.as_deref(), Some("completed"));
@@ -738,7 +749,7 @@ mod tests {
             )
             .unwrap();
 
-        let record = assemble(&store, id, &[]).unwrap();
+        let record = assemble(&store, id, &[], &RewardPolicy::default()).unwrap();
         assert_eq!(record.calls.len(), 1);
         assert!(!record.calls[0].reconstruction_verified);
         assert!(record.calls[0].reconstruction_error.is_some());
@@ -787,7 +798,7 @@ mod tests {
             .finish_execution_accounted(id, "completed", 0.40, true)
             .unwrap();
 
-        let record = assemble(&store, id, &[]).unwrap();
+        let record = assemble(&store, id, &[], &RewardPolicy::default()).unwrap();
         assert_eq!(record.reward.rung, Some(LadderRung::SubmitFast));
         assert_eq!(record.reward.outcome, Some(1.0));
         assert_eq!(
@@ -836,7 +847,7 @@ mod tests {
             .finish_execution_accounted(id, "completed", 0.10, true)
             .unwrap();
 
-        let record = assemble(&store, id, &[]).unwrap();
+        let record = assemble(&store, id, &[], &RewardPolicy::default()).unwrap();
         assert_eq!(record.reward.rung, Some(LadderRung::Unverifiable));
         assert_eq!(record.reward.reward, None);
         assert_eq!(

@@ -396,6 +396,12 @@ pub struct Config {
     /// Trajectory trace capture after each finished execution (settings
     /// `trace_capture`, #1042). Default off.
     pub trace_capture: bool,
+    /// What a turn's verdict is worth as a training label (settings `reward`,
+    /// #1043). Resolved and VALIDATED once here, so every consumer downstream
+    /// receives a policy that already satisfies the ordering rule rather than
+    /// re-checking it — and a workspace with an impossible weight fails at
+    /// launch, by name, instead of quietly mislabelling every turn.
+    pub reward_policy: stella_pipeline::reward::RewardPolicy,
     /// Whether a run does its work in a throwaway git worktree instead of this
     /// checkout (settings `create_worktrees`). Default `ask`, put once at
     /// triage and only when the run is going to change files.
@@ -581,6 +587,7 @@ impl Config {
         cfg.tool_policy = settings.tool_policy();
         cfg.enable_recap = settings.recap_enabled();
         cfg.trace_capture = settings.trace_capture_enabled();
+        cfg.reward_policy = settings.reward_policy()?;
         cfg.create_worktrees = settings.create_worktrees();
         Ok(cfg)
     }
@@ -725,6 +732,7 @@ impl Config {
                     tool_policy: Default::default(),
                     enable_recap: false,
                     trace_capture: false,
+                    reward_policy: stella_pipeline::reward::RewardPolicy::default(),
                     create_worktrees: Default::default(),
                     authority: crate::settings::AuthorityPolicy::default(),
                     credential_source,
@@ -923,6 +931,7 @@ impl Config {
             tool_policy: Default::default(),
             enable_recap: false,
             trace_capture: false,
+            reward_policy: stella_pipeline::reward::RewardPolicy::default(),
             create_worktrees: Default::default(),
             authority: crate::settings::AuthorityPolicy::default(),
             credential_source: Some(source),

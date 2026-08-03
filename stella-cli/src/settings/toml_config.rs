@@ -40,7 +40,7 @@ use super::context::ContextSettings;
 use super::context_providers::ContextProviderSettings;
 use super::{
     AgentEngineAgent, AgentEngineAgents, AgentEngineConfig, McpSettings, ProviderSettings,
-    Settings, Toggle, ToolsSettings, UiSettings,
+    RewardSettings, Settings, Toggle, ToolsSettings, UiSettings,
 };
 
 /// The schema version this build writes and understands.
@@ -226,6 +226,10 @@ pub struct TomlConfig {
     pub context_providers: ContextProviderSettings,
     #[serde(default)]
     pub ui: Option<UiSettings>,
+    /// `[reward]` — what a turn's verdict is worth as a training label (#1043).
+    /// Same shape in JSON and TOML, so no lowering beyond the move.
+    #[serde(default)]
+    pub reward: Option<RewardSettings>,
     /// Honored only from the managed tier; see [`Settings::managed_authority`].
     #[serde(default)]
     pub authority: Option<ManagedAuthoritySettings>,
@@ -325,6 +329,7 @@ impl TomlConfig {
             context,
             context_providers,
             ui,
+            reward,
             authority,
             enterprise_telemetry,
         } = self;
@@ -354,6 +359,7 @@ impl TomlConfig {
             trace_capture: run.trace_capture,
             create_worktrees: run.create_worktrees,
             ui,
+            reward,
             context,
             context_providers,
             managed_authority: authority,

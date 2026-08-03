@@ -506,6 +506,51 @@ theme = "stella-dark"   # stella-dark | stella-light
 
 
 # -----------------------------------------------------------------------------
+# REWARD  ── settings.json `reward`
+# Source: stella-cli/src/settings.rs `RewardSettings`
+#         stella-pipeline/src/reward.rs `RewardPolicy`
+#
+# What a finished turn's verdict is worth when it becomes a training label
+# (#1043). Whole-block last-wins across scopes, like `[ui]`; carries no
+# credential or egress authority, so no trust restoration — a project setting a
+# weight is stating an opinion about its own judge, not borrowing permission.
+#
+# WHY THIS IS CONFIGURABLE AT ALL: `judge_weight = 0.5` is an estimate of ONE
+# judge's accuracy — across an 89-task Terminal-Bench run the model judge
+# agreed with the benchmark's own grader 46% of the time. A workspace pointing
+# a weaker model at the judge role, or working in a domain where the judge
+# keeps reading house style as a defect, is entitled to trust it less.
+#
+# LOWER IS SUPPORTED. HIGHER THAN `deterministic_weight` IS REFUSED: above that
+# line a model's opinion outranks a test's observation, which inverts the
+# premise the verification ladder is built on. `judge_weight = 0.0` is legal and
+# means "do not train on this judge at all" — those turns are DISCARDED (with
+# the reason `judge_distrusted`), not scored as zero. A zero is a claim that a
+# neutral outcome was observed; a discard is the refusal to claim anything.
+#
+# UNLIKE `[context.retrieval]` ABOVE, AN OUT-OF-RANGE VALUE HERE IS REJECTED,
+# NOT CLAMPED. The postures differ because the failures differ: a bad retrieval
+# knob degrades one turn, visibly and recoverably, so clamping keeps the agent
+# working. A bad reward weight writes permanently mislabelled training data that
+# looks perfectly well-formed — there is no turn to fail and nothing downstream
+# that could notice. So it fails at LAUNCH, naming the key, before any work
+# starts.
+#
+# Every label carries the policy it was computed under, so two workspaces on
+# different weights emit rows a reader can still tell apart and renormalize.
+# Values below are the shipping defaults; an absent key is its default, never
+# zero.
+# -----------------------------------------------------------------------------
+
+[reward]
+deterministic_weight = 1.0    # a fail->pass flip, or touched tests red
+judge_weight         = 0.5    # a model judge's opinion; 0.0 discards instead
+per_step             = 0.02   # subtracted per model call
+per_usd              = 0.5    # subtracted per USD
+per_revision         = 0.1    # subtracted per verification round after the first
+
+
+# -----------------------------------------------------------------------------
 # ENTERPRISE TELEMETRY  ── settings.json `enterprise_telemetry`
 #
 # Captured from MANAGED scope only, parsed as raw JSON and validated fail-open

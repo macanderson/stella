@@ -19,6 +19,50 @@
 //! | [`LadderRung::ModelJudge`] (fail) | **−0.5** | Same discount, same reason. |
 //! | everything else | **discarded** | See below. |
 //!
+//! # Why the magnitudes are configurable, and why only downward
+//!
+//! The 0.5 is an estimate of one judge's accuracy, and the judge in question is
+//! whichever model a workspace pointed at it. A workspace whose judge is worse
+//! than the one that produced the 46% figure — a cheaper model, an unfamiliar
+//! domain, a house style the judge keeps mistaking for a defect — is entitled to
+//! trust it less, so [`OutcomeWeights`] carries both magnitudes and a workspace
+//! can lower the judged one.
+//!
+//! It cannot raise it past the deterministic weight. Above that line a model's
+//! opinion outranks a test's observation, which inverts the premise the whole
+//! ladder is built on: deterministic evidence is tried *first* precisely because
+//! it is worth more. [`OutcomeWeights::validate`] refuses it, at config load and
+//! again at [`label`], so a policy that got past one path cannot get past the
+//! other.
+//!
+//! **Refused, not clamped** — deliberately the opposite posture to
+//! `stella_context`'s retrieval tuning, which sanitizes an out-of-range knob
+//! rather than failing. The postures differ because the failures do. A bad
+//! retrieval knob degrades one turn, visibly, and the next turn recovers; the
+//! worse answer there is failing a person's work over a typo. A bad reward
+//! weight writes permanently mislabelled training data that is perfectly
+//! well-formed — there is no turn to fail, and nothing downstream can tell that
+//! a substituted weight was ever applied. So this one fails at launch, naming
+//! the key, before any work starts.
+//!
+//! A judged weight of exactly `0.0` is legal and means something specific: *do
+//! not train on this judge at all*. It maps to [`DiscardReason::JudgeDistrusted`]
+//! rather than to a `0.0` scalar, because a zero reward is a claim — "we watched
+//! and it came out neutral" — and this setting is the opposite of a claim. That
+//! is the same distinction the abstain rungs exist to preserve, applied to a
+//! knob instead of a rung.
+//!
+//! # The policy travels with the label
+//!
+//! Every [`RewardLabel`] carries the [`RewardPolicy`] it was computed under.
+//! Without it, two workspaces on different weights emit rows that are
+//! arithmetically indistinguishable and silently incomparable — pooling them
+//! would average a 0.5-scale judged pass against a 0.2-scale one as though they
+//! were the same measurement. With it, a reader can renormalize, or select one
+//! policy and drop the rest. `stella_core::comparison::ComparisonReport` already
+//! stamps its own `RewardWeights` for the same reason; this is that rule applied
+//! to the per-turn label.
+//!
 //! # Why the abstain rungs are discarded rather than punished
 //!
 //! This is the rule the whole module exists to enforce. [`LadderRung::Unverifiable`]
@@ -56,13 +100,135 @@
 use serde::{Deserialize, Serialize};
 use stella_protocol::{JudgeEvidence, LadderRung};
 
-/// Magnitude of a label backed by a deterministic test observation.
+/// Default magnitude of a label backed by a deterministic test observation.
 const DETERMINISTIC_WEIGHT: f64 = 1.0;
 
-/// Magnitude of a label backed only by a model judge's opinion. Half, and the
-/// halving is measured rather than aesthetic: across an 89-task Terminal-Bench
-/// run the judge agreed with the benchmark's grader 46% of the time.
+/// Default magnitude of a label backed only by a model judge's opinion. Half,
+/// and the halving is measured rather than aesthetic: across an 89-task
+/// Terminal-Bench run the judge agreed with the benchmark's grader 46% of the
+/// time.
 const JUDGED_WEIGHT: f64 = 0.5;
+
+/// What each tier of evidence is worth, before shaping.
+///
+/// Two numbers, one ordering rule: a judge's opinion may be worth less than a
+/// test's observation, never more. See the module docs for why the ceiling is
+/// not negotiable and why `judged = 0.0` is a discard rather than a zero.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct OutcomeWeights {
+    /// Magnitude of a deterministic pass or fail. The unit the judged weight
+    /// is measured against.
+    pub deterministic: f64,
+    /// Magnitude of a model judge's pass or fail. `0.0` discards judged turns
+    /// instead of scoring them.
+    pub judged: f64,
+}
+
+impl Default for OutcomeWeights {
+    fn default() -> Self {
+        Self {
+            deterministic: DETERMINISTIC_WEIGHT,
+            judged: JUDGED_WEIGHT,
+        }
+    }
+}
+
+/// Why a set of [`OutcomeWeights`] cannot be used.
+///
+/// Carries no `String`, so a caller can render it wherever it needs to and a
+/// label can name it without opening a hole in the airlock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WeightError {
+    /// A weight was `NaN` or infinite. Arithmetic on it produces a corrupt
+    /// scalar rather than a small one.
+    NotFinite,
+    /// The deterministic weight is zero or negative. A scale whose unit is
+    /// zero has no directions in it, and a negative one silently inverts every
+    /// label's sign.
+    DeterministicNotPositive,
+    /// A negative judged weight. It would label a judge's *pass* as a penalty,
+    /// which no configuration can have meant.
+    JudgedNegative,
+    /// The judged weight exceeds the deterministic one — an opinion outranking
+    /// an observation. See the module docs.
+    JudgedAboveDeterministic,
+    /// A negative shaping price, which would pay a trajectory for spending
+    /// more. See [`RewardShaping::validate`].
+    ShapingNegative,
+}
+
+impl WeightError {
+    /// A one-line explanation, for a config error a person has to act on.
+    #[must_use]
+    pub fn explain(self) -> &'static str {
+        match self {
+            WeightError::NotFinite => "must be a finite number",
+            WeightError::DeterministicNotPositive => {
+                "deterministic_weight must be greater than zero — it is the unit \
+                 every other weight is measured against"
+            }
+            WeightError::JudgedNegative => {
+                "judge_weight must not be negative — a negative weight scores a \
+                 judge's pass as a penalty"
+            }
+            WeightError::JudgedAboveDeterministic => {
+                "judge_weight must not exceed deterministic_weight — above it a \
+                 model's opinion outranks a test's observation, which inverts \
+                 the verification ladder. Lower it (0.0 discards judged turns \
+                 entirely) rather than raising the ceiling"
+            }
+            WeightError::ShapingNegative => {
+                "shaping prices must not be negative — a negative price pays a \
+                 trajectory for spending more"
+            }
+        }
+    }
+}
+
+impl OutcomeWeights {
+    /// Check the ordering rule. Called at config load so a bad value is a loud
+    /// launch failure, and again inside [`label`] so a policy that arrived by
+    /// some other path (a deserialized record, a direct struct literal) is
+    /// still refused rather than applied.
+    pub fn validate(&self) -> Result<(), WeightError> {
+        if !self.deterministic.is_finite() || !self.judged.is_finite() {
+            return Err(WeightError::NotFinite);
+        }
+        if self.deterministic <= 0.0 {
+            return Err(WeightError::DeterministicNotPositive);
+        }
+        if self.judged < 0.0 {
+            return Err(WeightError::JudgedNegative);
+        }
+        if self.judged > self.deterministic {
+            return Err(WeightError::JudgedAboveDeterministic);
+        }
+        Ok(())
+    }
+}
+
+/// The whole reward policy: what evidence is worth, and what effort costs.
+///
+/// One value so a workspace configures, validates, and stamps a single thing —
+/// a label computed under half the outcome weights but the default shaping is
+/// as incomparable to a default label as one computed under different shaping,
+/// and splitting them would let a reader stamp one and forget the other.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct RewardPolicy {
+    /// What each rung's verdict is worth.
+    pub outcome: OutcomeWeights,
+    /// What the trajectory's effort subtracts.
+    pub shaping: RewardShaping,
+}
+
+impl RewardPolicy {
+    /// Check every rule this policy has to satisfy.
+    pub fn validate(&self) -> Result<(), WeightError> {
+        self.outcome.validate()?;
+        self.shaping.validate()
+    }
+}
 
 /// What the verify stage settled on for one trajectory, as a reader recovers
 /// it from the journal.
@@ -133,6 +299,14 @@ pub enum DiscardReason {
     /// The shaping terms could not be computed — a non-finite cost. A reward
     /// that is `NaN` is not a smaller reward, it is a corrupt one.
     CostNotFinite,
+    /// The workspace set its judged weight to `0.0`: this judge is not trusted
+    /// to label anything. Distinct from a `0.0` reward, which would assert that
+    /// a neutral outcome was observed — see the module docs.
+    JudgeDistrusted,
+    /// The [`RewardPolicy`] itself is invalid, so no scalar computed under it
+    /// would mean anything. The rung is still published, because the rung is
+    /// still true; only the arithmetic is refused.
+    PolicyInvalid,
 }
 
 /// How the composite reward prices the effort a trajectory spent.
@@ -160,6 +334,27 @@ impl Default for RewardShaping {
             per_usd: 0.5,
             per_revision: 0.1,
         }
+    }
+}
+
+impl RewardShaping {
+    /// Every price must be finite and non-negative.
+    ///
+    /// Non-negative is not fussiness: "shaping only ever subtracts" is a stated
+    /// invariant of this module and a property test
+    /// (`tests::shaping_never_raises_a_reward`) that a consumer is entitled to
+    /// rely on. A negative price would *pay* a trajectory for spending more,
+    /// quietly turning a cost model into an incentive to burn tokens.
+    pub fn validate(&self) -> Result<(), WeightError> {
+        for price in [self.per_step, self.per_usd, self.per_revision] {
+            if !price.is_finite() {
+                return Err(WeightError::NotFinite);
+            }
+            if price < 0.0 {
+                return Err(WeightError::ShapingNegative);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -211,6 +406,12 @@ pub struct RewardLabel {
     /// The shaping inputs, republished so a reader can recompute the reward
     /// under different weights without re-reading the journal.
     pub cost: TrajectoryCost,
+    /// The policy this label was computed under, stamped so the number above is
+    /// interpretable outside the workspace that produced it. Always present,
+    /// including on a discard — a reader pooling records has to be able to tell
+    /// a `JudgeDistrusted` discard from a `judged = 0.5` workspace that simply
+    /// never reached the judge.
+    pub policy: RewardPolicy,
 }
 
 impl RewardLabel {
@@ -221,29 +422,47 @@ impl RewardLabel {
     }
 }
 
-/// Label one trajectory.
+/// Label one trajectory under `policy`.
 ///
-/// Total: every settlement, every rung, and any cost — including a non-finite
-/// one — resolves to a `RewardLabel`, never a panic (invariant #5). A
-/// trajectory that cannot be scored says so in [`RewardLabel::discard`].
-pub fn label(settlement: Settlement, cost: TrajectoryCost, shaping: &RewardShaping) -> RewardLabel {
-    let (rung, outcome) = match settlement {
-        Settlement::Settled { rung, passed } => (Some(rung), outcome_term(rung, passed)),
-        Settlement::RungUnknown => (None, Err(DiscardReason::RungUnknown)),
-        Settlement::Absent => (None, Err(DiscardReason::NoVerdict)),
+/// Total: every settlement, every rung, any cost — including a non-finite one —
+/// and any policy, including an invalid one, resolves to a `RewardLabel`, never
+/// a panic (invariant #5). A trajectory that cannot be scored says so in
+/// [`RewardLabel::discard`], and the policy is stamped on the result either way.
+pub fn label(settlement: Settlement, cost: TrajectoryCost, policy: &RewardPolicy) -> RewardLabel {
+    let rung = match settlement {
+        Settlement::Settled { rung, .. } => Some(rung),
+        Settlement::RungUnknown | Settlement::Absent => None,
+    };
+    // Every early return stamps the same policy, so a discard is as
+    // interpretable as a score. `unscored` exists to make forgetting that
+    // impossible rather than merely discouraged.
+    let unscored = |discard: DiscardReason, outcome: Option<f64>| RewardLabel {
+        rung,
+        outcome,
+        reward: None,
+        discard: Some(discard),
+        cost,
+        policy: *policy,
+    };
+
+    // The policy is checked before the rung is priced: a weight set this module
+    // would refuse at config load must not be quietly honored just because the
+    // value reached `label` by another path.
+    if policy.validate().is_err() {
+        return unscored(DiscardReason::PolicyInvalid, None);
+    }
+
+    let outcome = match settlement {
+        Settlement::Settled { rung, passed } => outcome_term(rung, passed, &policy.outcome),
+        Settlement::RungUnknown => Err(DiscardReason::RungUnknown),
+        Settlement::Absent => Err(DiscardReason::NoVerdict),
     };
     let outcome = match outcome {
         Ok(outcome) => outcome,
-        Err(discard) => {
-            return RewardLabel {
-                rung,
-                outcome: None,
-                reward: None,
-                discard: Some(discard),
-                cost,
-            };
-        }
+        Err(discard) => return unscored(discard, None),
     };
+
+    let shaping = &policy.shaping;
     let reward = outcome
         - shaping.per_step * f64::from(cost.steps)
         - shaping.per_usd * cost.cost_usd
@@ -251,13 +470,7 @@ pub fn label(settlement: Settlement, cost: TrajectoryCost, shaping: &RewardShapi
     if !reward.is_finite() {
         // A corrupt cost poisons the scalar but not the record: the rung and
         // the outcome term are still true, so they are still published.
-        return RewardLabel {
-            rung,
-            outcome: Some(outcome),
-            reward: None,
-            discard: Some(DiscardReason::CostNotFinite),
-            cost,
-        };
+        return unscored(DiscardReason::CostNotFinite, Some(outcome));
     }
     RewardLabel {
         rung,
@@ -265,18 +478,31 @@ pub fn label(settlement: Settlement, cost: TrajectoryCost, shaping: &RewardShapi
         reward: Some(reward),
         discard: None,
         cost,
+        policy: *policy,
     }
 }
 
-/// The unshaped outcome term a rung earns, or the reason it earns none.
+/// The unshaped outcome term a rung earns under `weights`, or the reason it
+/// earns none.
 ///
 /// The sign comes from the verdict's own `passed` rather than from the rung,
 /// so a rung emitted with an unexpected polarity is labelled by what actually
 /// happened instead of by what the rung usually means.
-pub fn outcome_term(rung: LadderRung, passed: bool) -> Result<f64, DiscardReason> {
+///
+/// A judged rung under a zero judged weight is a **discard**, not a `0.0`. The
+/// difference is the whole reason [`DiscardReason::JudgeDistrusted`] exists —
+/// see the module docs.
+pub fn outcome_term(
+    rung: LadderRung,
+    passed: bool,
+    weights: &OutcomeWeights,
+) -> Result<f64, DiscardReason> {
     let magnitude = match rung {
-        LadderRung::SubmitFast | LadderRung::Revise => DETERMINISTIC_WEIGHT,
-        LadderRung::ModelJudge => JUDGED_WEIGHT,
+        LadderRung::SubmitFast | LadderRung::Revise => weights.deterministic,
+        LadderRung::ModelJudge if weights.judged == 0.0 => {
+            return Err(DiscardReason::JudgeDistrusted);
+        }
+        LadderRung::ModelJudge => weights.judged,
         LadderRung::Unverifiable => return Err(DiscardReason::Abstained),
         LadderRung::NothingAttempted => return Err(DiscardReason::NothingAttempted),
         LadderRung::HeuristicFallback => return Err(DiscardReason::JudgeUnavailable),

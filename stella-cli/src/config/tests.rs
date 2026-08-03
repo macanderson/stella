@@ -223,6 +223,7 @@ fn config_debug_never_leaks_the_api_key() {
         tool_policy: Default::default(),
         enable_recap: false,
         trace_capture: false,
+        reward_policy: Default::default(),
         authority: crate::settings::AuthorityPolicy::default(),
         credential_source: Some(stella_model::credential::CredentialSource::EnvVar),
         credential_advisories: Vec::new(),
@@ -441,6 +442,62 @@ fn model_pinned_by_flag_records_whether_the_flag_or_settings_answered() {
         "a settings-provided default is NOT a flag pin — it must stay \
          overridable by pipeline_worker_model (#276)"
     );
+}
+
+/// The reward policy reaches the `Config` every consumer reads, resolved once
+/// here rather than re-derived at each call site (#1043).
+#[test]
+fn a_configured_reward_policy_reaches_the_config() {
+    let _env = crate::test_env::lock();
+    // `Settings` has private fields, so functional-update syntax is out —
+    // mutate the one field instead of restating the struct.
+    let mut settings = crate::settings::Settings::default();
+    settings.reward = Some(crate::settings::RewardSettings {
+        judge_weight: Some(0.2),
+        ..Default::default()
+    });
+    let cfg = Config::load_with_settings(
+        Some("openrouter/deepseek/deepseek-v4-pro"),
+        Some("test-key"),
+        Some("https://openrouter.ai/api/v1"),
+        &settings,
+        std::path::PathBuf::from("/tmp/ws"),
+    )
+    .expect("a legal weight loads");
+    assert_eq!(cfg.reward_policy.outcome.judged, 0.2);
+    assert_eq!(
+        cfg.reward_policy.outcome.deterministic, 1.0,
+        "an unset weight stays at its default"
+    );
+}
+
+/// A judge weight that outranks a test fails the LAUNCH, by name — it does not
+/// get clamped to something legal and then quietly applied.
+///
+/// This is the whole reason `reward_policy()` returns a `Result`. A substituted
+/// weight would produce correctly-shaped labels for every turn thereafter,
+/// meaning something the operator never asked for, and nothing downstream could
+/// tell that had happened.
+#[test]
+fn an_impossible_reward_weight_fails_the_launch_instead_of_being_clamped() {
+    let _env = crate::test_env::lock();
+    // `Settings` has private fields, so functional-update syntax is out —
+    // mutate the one field instead of restating the struct.
+    let mut settings = crate::settings::Settings::default();
+    settings.reward = Some(crate::settings::RewardSettings {
+        judge_weight: Some(3.0),
+        ..Default::default()
+    });
+    let error = Config::load_with_settings(
+        Some("openrouter/deepseek/deepseek-v4-pro"),
+        Some("test-key"),
+        Some("https://openrouter.ai/api/v1"),
+        &settings,
+        std::path::PathBuf::from("/tmp/ws"),
+    )
+    .expect_err("a judge outranking a test must not launch");
+    assert!(error.contains("judge_weight"), "{error}");
+    assert!(error.contains("deterministic_weight"), "{error}");
 }
 
 #[test]
