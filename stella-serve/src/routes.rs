@@ -52,6 +52,108 @@ struct TurnRequest {
     /// Omitted — or an empty object — reproduces today's behavior exactly.
     #[serde(default)]
     engine: Option<EngineOverrides>,
+    /// Run this turn as a judged multi-round goal run (#1297). Omitted is a
+    /// single turn, exactly as before.
+    #[serde(default)]
+    goal: Option<GoalSpec>,
+    /// Let this turn delegate to sub-agents (#1297). Omitted advertises no
+    /// `task` tool, so the model never learns children exist.
+    #[serde(default)]
+    sub_agents: Option<SubAgentsSpec>,
+}
+
+/// `goal` on `POST /v1/turns` — a judged multi-round run (#1297).
+///
+/// The engine's own `GoalConfig` knobs, plus the one thing only the wire can
+/// express: which provider serves the judge. Every value is clamped by the
+/// server; see [`MAX_SERVED_GOAL_ROUNDS`].
+#[derive(Debug, Deserialize)]
+struct GoalSpec {
+    /// What the judge assesses each round against.
+    goal: String,
+    /// Working rounds before the run gives up, clamped to
+    /// [`MAX_SERVED_GOAL_ROUNDS`].
+    #[serde(default)]
+    max_rounds: Option<usize>,
+    /// Output-token cap on a judge call — a verdict is small by design.
+    #[serde(default)]
+    judge_max_output_tokens: Option<u32>,
+    /// Transcript characters the judge is shown, tail-biased.
+    #[serde(default)]
+    judge_transcript_chars: Option<usize>,
+    /// The provider id the judge's calls announce, so a host can route it to
+    /// a different family than the worker. Omitted runs the judge on the
+    /// turn's own provider id.
+    #[serde(default)]
+    judge_provider_id: Option<String>,
+}
+
+/// `sub_agents` on `POST /v1/turns` — what the caller asks for, before the
+/// operator's [`stella_serve_policy`](crate::SubAgentPolicy) clamps it.
+#[derive(Debug, Deserialize)]
+struct SubAgentsSpec {
+    /// Present-but-disabled is a legal, meaningful request: it says "no
+    /// children" explicitly rather than by omission.
+    #[serde(default = "default_true")]
+    enabled: bool,
+    /// Ceiling on what this turn's children may spend between them, clamped
+    /// down to the operator's.
+    #[serde(default)]
+    pool_limit_usd: Option<f64>,
+    /// Per-child step cap, clamped into the operator's range.
+    #[serde(default)]
+    max_steps: Option<usize>,
+    /// Provider id serving the children's calls.
+    #[serde(default)]
+    provider_id: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Ceiling on [`GoalSpec::max_rounds`].
+///
+/// A goal round is a whole agent turn plus a judge call, so the round cap is
+/// the dominant term in what a goal run can cost and how long it can hold a
+/// thread. The engine's own default is 8; 32 is four times that — past any
+/// run that is still converging — while keeping the worst case bounded, which
+/// is the same argument [`MAX_SERVED_STEPS`] makes one level down.
+const MAX_SERVED_GOAL_ROUNDS: usize = 32;
+
+/// Lower a caller's `goal` block into the engine's own configuration, with
+/// every knob clamped. `None` when the goal text is blank — a goal nobody
+/// stated cannot be judged, and inventing one would be worse than refusing.
+fn goal_run(spec: GoalSpec) -> Option<crate::GoalRun> {
+    if spec.goal.trim().is_empty() {
+        return None;
+    }
+    let mut config = stella_core::GoalConfig::default();
+    if let Some(rounds) = spec.max_rounds {
+        config.max_rounds = rounds.clamp(1, MAX_SERVED_GOAL_ROUNDS);
+    }
+    if let Some(tokens) = spec.judge_max_output_tokens {
+        config.judge_max_output_tokens = Some(tokens);
+    }
+    if let Some(chars) = spec.judge_transcript_chars {
+        config.judge_transcript_chars = chars;
+    }
+    Some(crate::GoalRun {
+        goal: spec.goal,
+        config,
+        judge_provider_id: spec.judge_provider_id,
+    })
+}
+
+impl From<SubAgentsSpec> for crate::SubAgentRequest {
+    fn from(spec: SubAgentsSpec) -> Self {
+        Self {
+            enabled: spec.enabled,
+            pool_limit_usd: spec.pool_limit_usd,
+            max_steps: spec.max_steps,
+            provider_id: spec.provider_id,
+        }
+    }
 }
 
 /// Spend policy for a turn — the serializable projection of a [`BudgetGuard`].
@@ -254,6 +356,14 @@ pub(crate) async fn handle_create(
     // the closure because only `register_turn` — under the registry lock —
     // can mint it.
     let checkpoint_state = Arc::clone(state);
+    // #1297: both are the caller's request AFTER the server's own ceilings —
+    // the round cap here, the sub-agent policy in `ServerState`. A request
+    // that asks for more is clamped rather than refused: these are resource
+    // dials, and a tuning mistake in one should not fail a turn.
+    let goal = turn.goal.and_then(goal_run);
+    let sub_agents = turn
+        .sub_agents
+        .and_then(|spec| state.sub_agent_policy().clamp(spec.into()));
     let registered = state.register_turn(move |turn_id| {
         Session::start(SessionSpec {
             provider_id: turn.provider_id,
@@ -270,6 +380,8 @@ pub(crate) async fn handle_create(
             observer,
             on_settled: None,
             checkpoint: checkpoint_state.checkpoint_for(turn_id),
+            goal,
+            sub_agents,
         })
     });
     let Some(id) = registered else {
@@ -914,6 +1026,16 @@ struct SessionTurnRequest {
     /// prefix survives a turn that runs at a different temperature.
     #[serde(default)]
     engine: Option<EngineOverrides>,
+    /// A judged multi-round goal run inside a persistent session (#1297) —
+    /// the same block as the stateless route. The rounds' messages join the
+    /// session history like any other turn's, so a follow-up turn sees what
+    /// the goal run did.
+    #[serde(default)]
+    goal: Option<GoalSpec>,
+    /// Sub-agents for this turn (#1297), same block and same operator caps as
+    /// the stateless route.
+    #[serde(default)]
+    sub_agents: Option<SubAgentsSpec>,
 }
 
 /// Response to `POST /v1/sessions/{id}/turns`. The turn is an ordinary member
@@ -1087,6 +1209,11 @@ pub(crate) async fn handle_session_turn(
     // path for a turn that never existed — miscounting an abort and racing
     // the `release` below.
     let hook_sess = Arc::clone(&sess);
+    // Same clamping as the stateless path (#1297) — a session turn is a turn.
+    let goal = request.goal.and_then(goal_run);
+    let sub_agents = request
+        .sub_agents
+        .and_then(|spec| state.sub_agent_policy().clamp(spec.into()));
     let registered = state.register_turn(move |turn_id| {
         Session::start(SessionSpec {
             provider_id: request.provider_id,
@@ -1099,6 +1226,8 @@ pub(crate) async fn handle_session_turn(
             observer,
             on_settled: Some(hook_sess.settle_hook(token)),
             checkpoint,
+            goal,
+            sub_agents,
         })
     });
     let Some(turn_id) = registered else {

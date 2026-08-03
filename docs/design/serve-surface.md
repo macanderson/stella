@@ -58,7 +58,7 @@ not in this table is a 404.
 | `GET` | `/healthz` | Unauthenticated. Liveness — is the process alive. `{"status":"ok"}` |
 | `GET` | `/readyz` | Unauthenticated. Readiness — is it safe to send new work. `200 {"state":"ready"}`, or `503` with `"starting"` / `"draining"` (#1131) |
 | `GET` | `/v1/metrics` | Counters as a flat JSON object of integers. Authenticated like every other route, and **pull-only** — see [serve-observability.md](./serve-observability.md) |
-| `POST` | `/v1/turns` | Body is `TurnRequest`; returns `{"turn_id":"turn-<32 hex>"}`. Optional `engine` object (#1167) carries per-turn caller-policy knobs (`max_output_tokens`, `temperature`, `effort`, `reasoning`, `params`, `compaction_budget_tokens`, `summarize_overflow`, `summarize_keep_recent`) lowered onto the defaults — omitted/empty is a no-op; unusable values are 400s naming the knob; values past an operator ceiling are clamped and reported in the response's `clamped` array (`{knob, requested, effective}`, absent when nothing was lowered). `retry_policy`/`loop_detection` are operator policy and not settable |
+| `POST` | `/v1/turns` | Body is `TurnRequest`; returns `{"turn_id":"turn-<32 hex>"}`. Optional `goal` and `sub_agents` objects (#1297) — see below. Optional `engine` object (#1167) carries per-turn caller-policy knobs (`max_output_tokens`, `temperature`, `effort`, `reasoning`, `params`, `compaction_budget_tokens`, `summarize_overflow`, `summarize_keep_recent`) lowered onto the defaults — omitted/empty is a no-op; unusable values are 400s naming the knob; values past an operator ceiling are clamped and reported in the response's `clamped` array (`{knob, requested, effective}`, absent when nothing was lowered). `retry_policy`/`loop_detection` are operator policy and not settable |
 | `GET` | `/v1/turns/{id}/events` | SSE `id: <seq>` + `data: <ServerFrame>`. Resumable via `?after=<seq>` or `Last-Event-ID`. One concurrent subscriber; a second gets 409 |
 | `POST` | `/v1/turns/{id}/provider-result` | Answers a `provider_request` |
 | `POST` | `/v1/turns/{id}/provider-delta` | Optional (#1165): a batch of streamed fragments (`{"request_id", "deltas": [{"kind":"text"\|"reasoning","text":"…"}]}`) for an in-flight `provider_request`, ahead of its `provider-result`. Fragments surface on `/events` as `text_delta` / `reasoning` frames and each batch resets the reverse-request deadline. Empty batches are refused (400); fragments after the result get a 409 |
@@ -128,6 +128,91 @@ replay the retained stream to rediscover what it owes.
 Also: the tool surface is selected by the `STELLA_SERVE_TOOLS=remote`
 environment variable, not a `--tools remote` flag — the binary parses no flags
 beyond `healthcheck`, `--version` and `--help`.
+
+### Judged multi-round runs, and sub-agents (#1297)
+
+Two capabilities used to exist only on the command line — not restricted, not
+disabled, simply unrequestable over the wire. Both are now blocks on the turn
+request, on `/v1/turns` and `/v1/sessions/{id}/turns` alike.
+
+**`goal` — keep working until an independent judge agrees it is done.**
+
+```jsonc
+{
+  "provider_id": "worker-model",
+  "tools": [ /* … the host's schemas … */ ],
+  "messages": [],
+  "goal": {
+    "goal": "make `cargo test -p widget` pass",
+    "max_rounds": 6,              // clamped to 32
+    "judge_provider_id": "judge-model",  // optional; omitted = the turn's own
+    "judge_max_output_tokens": 1024,     // optional
+    "judge_transcript_chars": 24000      // optional
+  }
+}
+```
+
+A round is one working turn plus one judge assessment. What a client must
+know:
+
+- **Progress is the stream, not a poll.** Each round emits a `goal_verdict`
+  agent event (`round`, `met`, `reasoning`, `cost_usd`) on the existing
+  `GET /v1/turns/{id}/events`, alongside every ordinary event. There is
+  nothing new to poll and nothing to reconcile between two channels; a client
+  that drops reconnects with `?after=` and replays the rounds it missed.
+- **Stopping is `POST /v1/turns/{id}/cancel`,** unchanged. The round in flight
+  unwinds at its next step boundary; completed rounds keep their work (it is
+  in the transcript the session writes back, and their events have already
+  been delivered), and the turn settles as `aborted` carrying its real cost.
+- **A met goal completes the turn**, with the judge's reasoning as the
+  terminal frame's `text`. An unmet one — round cap, an aborted round, a judge
+  that could not answer — is `aborted` with a reason naming which. It is never
+  a silent success.
+- **The judge is only independent if the host makes it so.** Every judge call
+  arrives as a `provider_request` whose `provider_id` is `judge_provider_id`
+  and whose `role` is `judge`; routing it to a different model family is the
+  host's to do. The engine cannot enforce it, because the host owns the calls.
+
+**`sub_agents` — let a turn delegate.**
+
+```jsonc
+{
+  "sub_agents": {
+    "enabled": true,
+    "pool_limit_usd": 0.50,     // clamped to the operator's ceiling
+    "max_steps": 8,             // per child; clamped into the operator's range
+    "provider_id": "cheap-model" // optional; omitted = the turn's own
+  }
+}
+```
+
+With this and the operator's policy both saying yes, the turn's tool list
+gains `task`: the model delegates a self-contained research question to a
+child that investigates and returns one paragraph. The child's forty tool
+results never enter the parent's transcript.
+
+- **Containment is unchanged.** A child runs on the same remoted ports — its
+  model calls are `provider_request` frames (announcing the child's
+  `provider_id`), its tool calls are `tool_request` frames. The sidecar still
+  executes nothing.
+- **A child cannot write, and cannot spawn a child.** Children run behind
+  `ReadOnlyTools`, and `task` is not in the view a child gets, so nesting is
+  capped at one level by construction rather than by a counter.
+- **The operator caps everything the caller may set.** `ServeConfig::sub_agents`
+  (a `SubAgentPolicy`) decides whether children are allowed at all — **off by
+  default**, because children spend money on the host's account — and bounds
+  the pool and the per-child step cap. A request past a ceiling is clamped,
+  not refused.
+
+Both are witnessed end to end in `stella-serve/tests/goal_and_subagents.rs`,
+and both are claimed by `stella-parity`'s capability matrix (`goal.loop`,
+`agent.subagents`).
+
+One frame-shape note for anyone mirroring this protocol: `provider_request`
+carries `provider_id` and `role` alongside `request_id` and `request`. Both
+are additive — a single-model host can ignore them and answer every request
+with its one model, exactly as before — and both are what make a judge or a
+child addressable as a *different* model.
 
 ## Durability — what a served turn survives (#1198)
 

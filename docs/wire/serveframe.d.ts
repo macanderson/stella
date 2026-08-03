@@ -1623,8 +1623,18 @@ export type ServerFrame = {
   request_id: string;
   type: "tool_request";
 } | {
+  /**
+   * The provider the caller asked to serve THIS call: the turn's own
+   * `provider_id`, or the override on its goal/sub-agent block.
+   */
+  provider_id: string;
   request: CompletionRequest;
   request_id: string;
+  /**
+   * What the call is for, so a host can route by role rather than by
+   * string-matching a provider id.
+   */
+  role: ModelCallRole;
   type: "provider_request";
 } | {
   reason?: string | null;

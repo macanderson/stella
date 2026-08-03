@@ -59,6 +59,7 @@ mod controls;
 mod engine_overrides;
 mod error;
 mod frame;
+mod goal;
 mod history;
 mod hostguard;
 mod http;
@@ -73,6 +74,7 @@ pub mod schema_export;
 mod server;
 mod session;
 mod sessions;
+pub mod subagents;
 mod throttle;
 
 pub use checkpoint::{
@@ -84,6 +86,7 @@ pub use frame::{
     ProviderDelta, ProviderDeltaIn, ProviderErrorWire, ProviderOutcomeIn, ProviderResultIn,
     ServerFrame, ToolResultIn, TurnOutcomeWire,
 };
+pub use goal::GoalRun;
 pub use hostguard::HostMode;
 pub use observe::{Metrics, Observer, ServeEvent, SharedObserver};
 pub use pending::Pending;
@@ -92,3 +95,7 @@ pub use server::{
     MAX_SHUTDOWN_GRACE, ServeConfig, serve, serve_until,
 };
 pub use session::{Session, SessionSpec, SettleHook, TurnSettlement};
+pub use subagents::{
+    DEFAULT_MAX_CHILD_STEPS, DEFAULT_SUB_AGENT_POOL_USD, EffectiveSubAgents, SubAgentPolicy,
+    SubAgentRequest,
+};

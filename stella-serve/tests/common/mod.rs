@@ -115,6 +115,10 @@ pub async fn start_drainable_server_with_checkpoints(
             metrics,
             resume_grace,
             session_idle_ttl: stella_serve::DEFAULT_SESSION_IDLE_TTL,
+            // #1297: the shipped default — a deployment that has not opted in
+            // gets no sub-agents. The witness that turns them on builds its
+            // own config rather than relaxing this one for everybody.
+            sub_agents: stella_serve::SubAgentPolicy::default(),
             // Empty on purpose: the bind is loopback, so the `Host` guard
             // already knows what this server is called and needs no
             // allow-list. Every helper below dials 127.0.0.1 and announces
