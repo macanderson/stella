@@ -79,10 +79,15 @@ from .portability import raise_for_loader_failure
 from .posture import (
     _ASSURANCE_TIERS_VERSION,
     _ENGINE_POSTURE_VERSION,
+    _TRIAGE_MODEL_ENV,
     _WITNESS_AUTHOR_ENV,
+    _WORKER_EFFORT_ENV,
+    PostureBuilder,
     _benchmark_assurance_tiers,
     _benchmark_engine_posture,
     fold_witness_observations,
+    resolve_triage_model,
+    resolve_worker_effort,
 )
 from .turn_budget import (
     TURN_BUDGET_ENV as _TURN_BUDGET_ENV,
@@ -200,6 +205,12 @@ _HOST_ONLY_STELLA_ENV = frozenset(
         # the run rather than enabling the policy. See `turn_budget`.
         _TURN_BUDGET_ENV,
         _WITNESS_AUTHOR_ENV,
+        # Worker effort and triage author: host-only like the witness author,
+        # reaching Stella only inside the hashed posture. Registering them is
+        # load-bearing, not tidy — the ambient check fails closed, and an
+        # unlisted `STELLA_TURN_BUDGET` killed all ten trials of a run.
+        _WORKER_EFFORT_ENV,
+        _TRIAGE_MODEL_ENV,
         # The portability target triple and glibc floor (#1018). `env.sh` exports
         # both so `build_sut.sh` builds to the same floor `preflight` asserts
         # against — keeping them apart is what let a glibc-2.35 binary reach five
@@ -539,6 +550,7 @@ async def _secure_exec_with_credential_fd(
     credential: str,
     witness_author: str | None = None,
     expected_posture_json: str | None = None,
+    posture_builder: PostureBuilder | None = None,
 ) -> ExecResult:
     """Execute in Harbor Docker with the credential only on anonymous stdin.
 
@@ -573,9 +585,15 @@ async def _secure_exec_with_credential_fd(
     # whose metadata records the treatment arm — a silently disabled tier,
     # which is the whole of #1007. The equality check makes that divergence a
     # refused run instead of an unlabelled one.
-    _, normalized_posture, _ = _benchmark_engine_posture(
-        command_model, witness_author=witness_author
-    )
+    #
+    # `posture_builder` is the agent class's own canonical builder, never a
+    # value the call site computed. A non-claim subclass may declare a
+    # different frozen posture, and the boundary must recompute from *that*
+    # declaration or reject every such run. "Recompute independently, never
+    # trust a passed-in string" is untouched: the class pins the builder, and
+    # the claim launcher pins the class.
+    builder = posture_builder or _benchmark_engine_posture
+    _, normalized_posture, _ = builder(command_model, witness_author=witness_author)
     if (
         expected_posture_json is not None
         and normalized_posture != expected_posture_json
@@ -1308,7 +1326,7 @@ class StellaAgent(BaseInstalledAgent):
             self._engine_posture,
             self._engine_posture_json,
             self._engine_posture_sha256,
-        ) = _benchmark_engine_posture(configured_model, witness_author=witness_author)
+        ) = self._build_engine_posture(configured_model, witness_author=witness_author)
         (
             self._assurance_tiers,
             self._assurance_tiers_json,
@@ -1351,6 +1369,7 @@ class StellaAgent(BaseInstalledAgent):
             credential=credential,
             witness_author=witness_author,
             expected_posture_json=self._engine_posture_json,
+            posture_builder=self._build_engine_posture,
         )
 
         stdout = getattr(result, "stdout", None)
@@ -1404,6 +1423,39 @@ class StellaAgent(BaseInstalledAgent):
             or _DEFAULT_MODEL
         )
 
+    def _build_engine_posture(
+        self, model: str, *, witness_author: str | None
+    ) -> tuple[dict[str, Any], str, str]:
+        """Return ``(posture, canonical_json, sha256)`` for this trial.
+
+        The one seam a *non-claim* harness may override to run a different
+        frozen engine configuration — a head-to-head varying effort across
+        arms, say, which the benchmark posture deliberately holds constant.
+        Safe by construction, not convention: the claim launcher pins
+        ``--agent-import-path`` to ``stella_harbor:StellaAgent`` and rejects
+        any other agent, so a subclass cannot reach a claim run, and whatever
+        it returns is hashed into the same ``stella_engine_posture*`` metadata
+        — a changed posture is a changed digest, visible in the manifest.
+
+        The base implementation is the frozen benchmark posture and must stay
+        that way: a claim run's posture is part of its identity. The worker
+        effort and triage author are resolved here rather than at the call
+        site so the exec boundary, which recomputes through this same bound
+        method, resolves them identically — a selected arm must produce the
+        same posture at collection and at the process boundary or the run is
+        refused.
+        """
+        return _benchmark_engine_posture(
+            model,
+            witness_author=witness_author,
+            worker_effort=resolve_worker_effort(
+                self._configured_value(_WORKER_EFFORT_ENV)
+            ),
+            triage_model=resolve_triage_model(
+                self._configured_value(_TRIAGE_MODEL_ENV)
+            ),
+        )
+
     def _witness_author_model(self) -> str | None:
         """Return the pinned witness/judge author, or ``None`` for the control arm.
 
@@ -1417,6 +1469,7 @@ class StellaAgent(BaseInstalledAgent):
             return None
         stripped = value.strip()
         return stripped or None
+
 
     def _effective_base_url(self, model: str) -> str | None:
         """Resolve and validate the authoritative provider endpoint."""

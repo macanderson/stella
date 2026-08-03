@@ -53,3 +53,8 @@ tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time",
 # guards against is always a path nobody enumerated, so hand-listed cases are
 # precisely how it would be missed.
 proptest.workspace = true
+# The `FileCheckpointStore` tests need a real directory to write into, and a
+# temp one keeps them from fighting each other or the developer's tree.
+# Already a workspace dependency (stella-cli, stella-store), so no crate joins
+# the graph.
+tempfile.workspace = true

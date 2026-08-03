@@ -114,6 +114,22 @@ impl<'a> Pipeline<'a> {
         let mut config = self.config.engine.clone();
         if let Some(cwd) = surface.cwd {
             config.cwd = cwd.to_string();
+            // An ISOLATED candidate does not write the session's resume point.
+            //
+            // The sink is attached once, for every role at once, in
+            // `stella-cli`'s engine tuning — which is right for the session's
+            // own turns and wrong for a candidate running in a throwaway
+            // snapshot. Its transcript describes edits at paths inside that
+            // snapshot, and every candidate but the winner has its workspace
+            // removed, so resuming from one would hand the model a conversation
+            // asserting it edited files that no longer exist. A losing
+            // candidate's transcript is not this session's resume point at all.
+            //
+            // Only isolated candidates are cleared. `run_shared_candidates`
+            // works the session tree with no workspace of its own (`cwd: None`)
+            // and is the ordinary single-shot path, so it keeps checkpointing —
+            // which is the case that actually needs to survive a crash.
+            config.checkpoint_sink = None;
         }
         config
     }

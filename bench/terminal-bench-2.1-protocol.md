@@ -141,9 +141,13 @@ raw trials, and disclosed comparator below.
 - Engine posture: the adapter atomically replaces merged repository/user
   `agent_engine_config` through the trusted `STELLA_ENGINE_CONFIG_JSON` seam
   after all Harbor extras. Every role inherits the exact selected model from
-  `default_model`; default/worker/judge use reasoning `on` at effort `high`,
-  triage uses reasoning `off` at effort `low`, all auto modes are `off`, and no
-  role has a provider/model/prompt/parameter override. The posture also sets
+  `default_model`; default/worker/judge use reasoning `on` at effort `xhigh`
+  with a raised `params.max_tokens` output cap of `64000` (retuned from the
+  original `high`/uncapped posture after the effort-parity and
+  output-truncation findings in `bench/READINESS.md` §8.4 — the digests in the
+  calibration manifest below are for this retuned posture), triage uses
+  reasoning `off` at effort `low`, all auto modes are `off`, and no
+  role has any other provider/model/prompt/parameter override. The posture also sets
   `headless_scope_bypass: on` (a string toggle) — a **deliberate,
   score-affecting** setting, disclosed here explicitly. A headless trial has no
   operator to approve an over-threshold plan; with this flag *off*, any plan

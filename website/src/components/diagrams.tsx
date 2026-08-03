@@ -221,8 +221,8 @@ export function PipelineFlowDiagram() {
   const stages: [string, string][] = [
     ["triage", "route it"],
     ["plan", "split context"],
-    ["witness", "failing test"],
     ["execute", "step loop"],
+    ["witness", "failing test"],
     ["verify", "flip oracle"],
     ["judge", "cross-family"],
   ];
@@ -231,7 +231,7 @@ export function PipelineFlowDiagram() {
       className="sdg"
       viewBox="0 0 720 150"
       role="img"
-      aria-label="The staged pipeline: triage, plan, witness, execute, verify, judge — with a revise loop back into execute."
+      aria-label="The staged pipeline: triage, plan, execute, witness, verify, judge — with a revise loop back into execute."
     >
       <title>The staged inference pipeline</title>
       <Defs />
@@ -253,8 +253,8 @@ export function PipelineFlowDiagram() {
         );
       })}
       {/* revise: judge back to execute */}
-      <Wire d="M672 96 C672 132 420 132 420 98" />
-      <text className="sdg-sub" x="546" y="142" textAnchor="middle">
+      <Wire d="M672 96 C672 132 302 132 302 98" />
+      <text className="sdg-sub" x="487" y="142" textAnchor="middle">
         revise — bounded, with evidence
       </text>
     </svg>

@@ -65,6 +65,10 @@ pub(crate) mod proposals;
 #[cfg(test)]
 mod quarantine_tests;
 mod recall;
+// Which sessions actually receive the volatile record channel — a separate
+// question from what recall renders, and the one that went unasked (epic #897).
+#[cfg(test)]
+mod record_channel_tests;
 // Phase 4 (#715): reversible retirement of context that stops helping.
 pub(crate) mod retirement;
 pub(crate) mod rules_mining;
@@ -249,7 +253,7 @@ pub struct SessionMemory {
     /// It rides the recall block rather than the cached system prefix because that
     /// is what `force` means: `must`/`should` are unconditional and cacheable,
     /// facts are only worth tokens when they apply. Set once per session by
-    /// [`Self::set_record_channel`] from the already-resolved rule registry —
+    /// [`Self::open_for_session`] from the already-resolved rule registry —
     /// re-deriving it here would re-walk the rule directories and re-run the truth
     /// sweep on every turn.
     record_channel: Option<String>,
@@ -301,14 +305,48 @@ impl SessionMemory {
         self.execution_id = Some(execution_id);
     }
 
-    /// Open memory with workspace skill injection governed by the session's
-    /// immutable authority snapshot. Context recall itself remains evidence.
-    pub fn open_with_authority(
+    /// Open this session's memory with its volatile record channel already
+    /// attached — the one constructor every session surface goes through.
+    ///
+    /// It takes `active_rules` because opening and attaching used to be two
+    /// calls, and that split had no failure mode a driver could notice: a
+    /// surface that made only the first got a memory that recalled perfectly
+    /// well, just without the `may`/`info` records and anything the truth sweep
+    /// demoted. No error, no empty block — only facts that never arrived.
+    ///
+    /// Three of the five surfaces forgot the second call that way — the Command
+    /// Deck (`run_deck_session`, the surface most users actually touch), `/goal`
+    /// (`run_goal_cmd`), and `stella run`'s non-pipeline path
+    /// (`run_raw_one_shot`) — so the pair is now one call that cannot be
+    /// half-made. [`Self::open_with_workspace_skills`] is private for the same
+    /// reason: there is no authority-scoped door that skips the channel.
+    ///
+    /// The channel rides the per-turn recall block rather than the system
+    /// prefix because that is what `force` means: `must`/`should` are
+    /// unconditional and cacheable, facts are only worth tokens when they
+    /// apply. Rendering it into the byte-stable prefix would also be a
+    /// guaranteed cache miss on every call, since its text may differ per turn.
+    pub fn open_for_session(
         workspace_root: &Path,
         warn: bool,
         authority: &crate::settings::AuthorityPolicy,
+        active_rules: &crate::rules::ResolvedRules,
     ) -> Option<Self> {
-        Self::open_with_workspace_skills(workspace_root, warn, authority.project_prompts_allowed)
+        let mut memory = Self::open_with_workspace_skills(
+            workspace_root,
+            warn,
+            authority.project_prompts_allowed,
+        )?;
+        memory.set_record_channel(
+            active_rules
+                .registry()
+                .render(
+                    stella_core::records::Channel::Volatile,
+                    Some(recall::RECORD_CHANNEL_BUDGET),
+                )
+                .text,
+        );
+        Some(memory)
     }
 
     fn open_with_workspace_skills(

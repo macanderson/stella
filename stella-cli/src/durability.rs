@@ -50,6 +50,19 @@ use stella_store::work_journal::WorkJournal;
 /// Cloned into [`crate::config::Config`] and shared by every engine the session
 /// builds. Empty until a driver calls [`Self::bind`]; binding again re-points
 /// it, which is what an in-deck session switch needs.
+///
+/// # There is no unbind, deliberately
+///
+/// A finished session leaves the handle bound, and nothing clears it. That is
+/// safe because the only thing a binding does is answer where the *next* turn
+/// checkpoints, and after a session finishes there is no next turn: the deck
+/// re-binds on a switch, and the one-shot drivers exit. A stale binding cannot
+/// reach a child either — sub-agent and isolated-candidate engines carry no sink
+/// at all (see `Engine::run_sub_agent`), so nothing inherits it downward.
+///
+/// An unbind would also cost something real: it would open a window where a
+/// turn still in flight finds `sink()` empty and silently stops checkpointing,
+/// which is the failure this whole module exists to prevent.
 #[derive(Clone, Debug, Default)]
 pub struct SessionDurability {
     /// `RwLock` rather than `OnceLock` because a deck session can be switched,
@@ -103,6 +116,77 @@ impl SessionDurability {
             .unwrap_or_else(|p| p.into_inner())
             .clone()?;
         Some(Arc::new(JournalCheckpointSink { bound }))
+    }
+
+    /// The bound session's durable record, or `None` while unbound.
+    fn journal(&self) -> Option<Arc<WorkJournal>> {
+        Some(
+            self.bound
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .as_ref()?
+                .journal
+                .clone(),
+        )
+    }
+
+    /// The resume point an interrupted turn left behind, or `None` when this
+    /// session has none — which, because every terminal path discards, means
+    /// no turn of it was interrupted.
+    ///
+    /// This is the read side of [`Self::sink`]. It exists so the deck's resume
+    /// path can prefer a step-boundary transcript over the turn-boundary one in
+    /// the sidecar; see [`crate::session_persist::restore_conversation`] for
+    /// which wins and why.
+    pub fn checkpoint(&self) -> Option<String> {
+        self.journal()?.checkpoint()
+    }
+
+    /// Mark the state at the end of a turn, so the work can later be read back
+    /// by turn number rather than by commit id
+    /// ([`WorkJournal::read_at_turn`]).
+    ///
+    /// The turn number comes from the ref namespace's own high-water mark
+    /// rather than from a counter this process keeps, because a counter is
+    /// exactly the thing a resume resets: a session that restarts and numbers
+    /// its next turn 3 would overwrite the turn 3 that ran before the
+    /// interruption, and the ref would then name work from a different turn
+    /// than its name claims. The refs survive the restart, so asking them costs
+    /// one `for-each-ref` and cannot drift.
+    ///
+    /// Best-effort and silent, like everything else here: a turn that ended is
+    /// not made less ended by an unwritable marker.
+    pub fn mark_turn_end(&self) {
+        let Some(journal) = self.journal() else {
+            return;
+        };
+        // Nothing recorded means nothing to name. A session whose turns only
+        // read files never commits, and marking a turn at no commit at all is
+        // not a fact worth writing down.
+        let Some(tip) = journal.session_tip() else {
+            return;
+        };
+        let turn = journal.last_marked_turn().unwrap_or(0).saturating_add(1);
+        let _ = journal.mark_turn(turn, &tip);
+    }
+
+    /// Compact the durable record — the end-of-session step.
+    ///
+    /// Every step of every turn writes a commit, a tree and a blob or two, all
+    /// as loose objects. Without this a long-lived workspace accumulates them
+    /// without bound, which is a leak rather than an untidiness. `git gc
+    /// --auto` returns immediately when the loose-object count is under git's
+    /// own threshold, so calling it at every exit costs one short-lived
+    /// subprocess on the sessions that do not need it and packs the ones that
+    /// do.
+    ///
+    /// Best-effort and never on the critical path of an exit, by the same
+    /// reasoning as the sink: a session that has already finished its work must
+    /// not be held up — or failed — by housekeeping.
+    pub fn compact(&self) {
+        if let Some(journal) = self.journal() {
+            let _ = journal.compact();
+        }
     }
 }
 
@@ -185,14 +269,7 @@ pub fn bind_session(
 ) -> Option<String> {
     match WorkJournal::open(workspace_root, session_id) {
         Ok(journal) => {
-            // Before anything else can touch a file: a resumed session that
-            // wrote before restoring would be unguarded for exactly the writes
-            // its restored transcript most encourages it to make.
-            if let Some(observed) = journal.observed() {
-                registry.restore_observed(&observed);
-            }
-            registry.attach_work_journal(journal.clone(), agent_label(workspace_root));
-            durability.bind(journal, registry.clone());
+            bind_opened(durability, registry, journal, workspace_root);
             None
         }
         Err(e) => Some(format!(
@@ -200,6 +277,36 @@ pub fn bind_session(
              not be recoverable from stella's own history"
         )),
     }
+}
+
+/// [`bind_session`] over an already-opened record.
+///
+/// Split out because [`bind_session`] resolves the record through
+/// [`WorkJournal::open`], which reads `STELLA_HOME` — so a test exercising the
+/// binding itself would have to reach for a process-global and race every
+/// sibling. This half takes the record as a parameter, the same trade
+/// [`WorkJournal::open_in`] makes for the same reason.
+fn bind_opened(
+    durability: &SessionDurability,
+    registry: &Arc<stella_tools::ToolRegistry>,
+    journal: WorkJournal,
+    workspace_root: &Path,
+) {
+    // Before anything else can touch a file: a resumed session that wrote
+    // before restoring would be unguarded for exactly the writes its restored
+    // transcript most encourages it to make.
+    //
+    // A session with no map of its own is restored to an EMPTY one, not left
+    // holding whatever was there. The deck reuses a single registry across an
+    // in-deck session switch, so "nothing to restore, leave it alone" would
+    // hand the arriving session the departing session's belief about the tree
+    // — and it would then refuse the arriving session's writes to files only
+    // the departing one ever read. That is the inherited guard
+    // `restore_observed`'s replace-don't-merge semantics exist to prevent,
+    // arriving through the one door those semantics cannot see.
+    registry.restore_observed(journal.observed().as_deref().unwrap_or("{}"));
+    registry.attach_work_journal(journal.clone(), agent_label(workspace_root));
+    durability.bind(journal, registry.clone());
 }
 
 #[cfg(test)]
@@ -330,6 +437,59 @@ mod tests {
         record.mark_turn(1, &tip).unwrap();
         assert_eq!(record.read_at_turn(1, "work.txt").unwrap(), "half-done\n");
         assert_eq!(record.checkpoint().as_deref(), Some("{\"step\":7}"));
+    }
+
+    #[tokio::test]
+    async fn switching_to_a_session_with_no_map_does_not_inherit_the_last_ones() {
+        // The deck reuses ONE registry across an in-deck session switch. A
+        // session that never observed a file must not arrive holding the
+        // departing session's observations, or it will be refused writes to
+        // files it has never read — a false positive in a guard whose whole
+        // claim is that it has none.
+        let store = tempfile::tempdir().unwrap();
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::write(ws.path().join("shared.txt"), "original\n").unwrap();
+        let registry = registry(ws.path());
+        let durability = SessionDurability::default();
+
+        // Session one reads the file and checkpoints, so its map is durable.
+        let out = registry
+            .execute(
+                "read_file",
+                &serde_json::json!({ "path": "shared.txt", "reason": "planning" }),
+            )
+            .await;
+        assert!(!out.is_error(), "{out:?}");
+        let first = journal(store.path(), ws.path(), "ses-departing");
+        durability.bind(first.clone(), registry.clone());
+        durability.sink().expect("bound").persist("{\"step\":1}");
+        assert!(first.observed().is_some(), "the map was persisted");
+
+        // Something else edits the file, and the user switches to a session
+        // that has never seen it.
+        std::fs::write(ws.path().join("shared.txt"), "somebody else's work\n").unwrap();
+        let second = journal(store.path(), ws.path(), "ses-arriving");
+        assert!(
+            second.observed().is_none(),
+            "the arriving session has no map"
+        );
+        bind_opened(&durability, &registry, second, ws.path());
+
+        let out = registry
+            .execute(
+                "write_file",
+                &serde_json::json!({
+                    "path": "shared.txt",
+                    "content": "the arriving session's work\n",
+                    "reason": "this session never read that file",
+                }),
+            )
+            .await;
+        assert!(
+            !out.is_error(),
+            "a session that never read the file must not be held to the last session's \
+             observation of it: {out:?}"
+        );
     }
 
     #[tokio::test]

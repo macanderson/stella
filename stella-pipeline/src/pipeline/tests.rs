@@ -1744,6 +1744,40 @@ async fn a_chat_classification_on_a_files_request_still_reaches_execute() {
     assert_eq!(outcome.status, PipelineStatus::Completed);
 }
 
+/// A headless run never takes the chat route on the model's opinion: its goal
+/// arrived from a script, a CI job, or a benchmark harness, the chat path is
+/// terminal no-work, and a misroute there reports an untouched task as
+/// complete. Only the model's say is withheld — the deterministic greeting arm
+/// (exercised above) still routes.
+#[tokio::test]
+async fn headless_runs_ignore_a_model_chat_call_and_reach_execute() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("CLASS: chat\nWITNESS: no\nJUDGE: no"),
+        text_result("done"),
+    ]);
+    let (outcome, events, _) = run_unisolated_with_router(
+        &provider,
+        PipelineConfig {
+            headless: true,
+            ..PipelineConfig::default()
+        },
+        // Short, and free of every deterministic vocabulary veto — an
+        // interactive run WOULD route this to chat; headless must not.
+        "how would you approach the thing we discussed",
+        router(),
+    )
+    .await;
+    let outcome = outcome.expect("run succeeds");
+
+    let s = stages(&events);
+    assert!(
+        s.contains(&StageKind::Execute),
+        "a headless goal must reach the tool-bound execute turn even when \
+         triage called it chat: {s:?}"
+    );
+    assert_eq!(outcome.status, PipelineStatus::Completed);
+}
+
 /// Losing the independent witness author must cost the run its authored
 /// witness, never the whole task. With every role pinned to one model the
 /// pipeline used to abort here after a single model call, having executed

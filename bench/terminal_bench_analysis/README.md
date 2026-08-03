@@ -81,14 +81,15 @@ name and `dataset.ref` carries the same `sha256:` digest separately.
       "auto_mode": "off",
       "effort_auto": "off",
       "reasoning_auto": "off",
+      "headless_scope_bypass": "on",
       "agents": {
-        "default": {"effort": "high", "reasoning": "on"},
-        "worker": {"effort": "high", "reasoning": "on"},
-        "judge": {"effort": "high", "reasoning": "on"},
+        "default": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
+        "worker": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
+        "judge": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
         "triage": {"effort": "low", "reasoning": "off"}
       }
     },
-    "engine_posture_sha256": "98511188b8338637afe0f2ffde1998c26f048db2f9c936549f75bd222600cf76"
+    "engine_posture_sha256": "8530a36f8fe064d59a64b6b732d57d9e9d9613c0fee27da9b5a6f1501551ffe9"
   },
   "analysis": {
     "sha256": "REPLACE_AFTER_FINAL_ANALYZER_FREEZE_WITH_64_HEX",
@@ -202,9 +203,9 @@ name and `dataset.ref` carries the same `sha256:` digest separately.
           "auto_mode": "off", "effort_auto": "off", "reasoning_auto": "off",
           "headless_scope_bypass": "on",
           "agents": {
-            "default": {"effort": "high", "reasoning": "on"},
-            "worker": {"effort": "high", "reasoning": "on"},
-            "judge": {"effort": "high", "reasoning": "on"},
+            "default": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
+            "worker": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
+            "judge": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
             "triage": {"effort": "low", "reasoning": "off"}
           }
         },
@@ -218,9 +219,9 @@ name and `dataset.ref` carries the same `sha256:` digest separately.
           "auto_mode": "off", "effort_auto": "off", "reasoning_auto": "off",
           "headless_scope_bypass": "on",
           "agents": {
-            "default": {"effort": "high", "reasoning": "on"},
-            "worker": {"effort": "high", "reasoning": "on"},
-            "judge": {"effort": "high", "reasoning": "on"},
+            "default": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
+            "worker": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
+            "judge": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
             "triage": {"effort": "low", "reasoning": "off"}
           }
         },
@@ -234,9 +235,9 @@ name and `dataset.ref` carries the same `sha256:` digest separately.
           "auto_mode": "off", "effort_auto": "off", "reasoning_auto": "off",
           "headless_scope_bypass": "on",
           "agents": {
-            "default": {"effort": "high", "reasoning": "on"},
-            "worker": {"effort": "high", "reasoning": "on"},
-            "judge": {"effort": "high", "reasoning": "on"},
+            "default": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
+            "worker": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
+            "judge": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
             "triage": {"effort": "low", "reasoning": "off"}
           }
         },

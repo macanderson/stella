@@ -340,13 +340,8 @@ pub async fn run_deck_session(
     // default. See the build beside `restore_messages`.
     // `warn: false`: past this point diagnostics would land on the alternate
     // screen; a memory-less session degrades silently here.
-    let mut memory = SessionMemory::open_with_authority(&cfg.workspace_root, false, &cfg.authority);
-    if let Some(m) = &mut memory {
-        // The volatile record channel rides the recall block, so a deck that
-        // never attached it silently dropped `may`/`info` facts from every
-        // turn while the one-shot path carried them.
-        agent::attach_record_channel(m, &active_rules);
-    }
+    let mut memory =
+        SessionMemory::open_for_session(&cfg.workspace_root, false, &cfg.authority, &active_rules);
     // Custom extensions: ⚡ commands/skills in the slash menu, custom agents
     // behind `/agents`. Reloaded after `/init`, which may adopt new ones.
     let mut custom = crate::extensions::CustomExtensions::load_with_authority(
@@ -475,6 +470,42 @@ pub async fn run_deck_session(
     ) {
         let _ = deck_tx.send(system_notice(warning));
     }
+    // Which of the two durable stores this session's conversation comes back
+    // from, decided HERE because the fresher candidate — the resume point an
+    // interrupted turn left mid-flight — lives in the record the bind above
+    // opens. `restore_conversation` owns the rule and the fallback; this owns
+    // only when it can be asked.
+    //
+    // The note is held rather than sent: the journal replay below is what puts
+    // the restored transcript on screen, and a line explaining that transcript
+    // belongs after it rather than ahead of it.
+    let mut resume_note: Option<String> = None;
+    if let Some(rs) = &mut resume_state {
+        let restored = crate::session_persist::restore_conversation(
+            cfg.durability.checkpoint().as_deref(),
+            std::mem::take(&mut rs.history),
+            &system_prompt,
+        );
+        messages = restored.messages;
+        resume_note = Some(restored.note);
+        // `--budget` means THIS session on every resume path: the guard's
+        // session accumulator reseeds to exactly what the session had
+        // already spent, so spend stays monotone across interruptions. Same
+        // seam as the in-deck session switch (`SessionResume` in the driver
+        // loop below).
+        //
+        // Two meters can answer that, and the larger wins. The journal's last
+        // `BudgetTick` and the checkpoint's step-boundary snapshot are written
+        // at different moments of the same turn, so either can be the later
+        // one — and spend only ever goes up, so taking the max cannot
+        // over-count, while taking the wrong one silently hands a resumed
+        // session budget it already spent.
+        budget.reseed_session_spend(
+            rs.spent_usd
+                .unwrap_or(0.0)
+                .max(restored.spent_usd.unwrap_or(0.0)),
+        );
+    }
     // A release-build panic aborts before any `Drop` or `catch_unwind` runs
     // (the workers' panic catch included), so this hook is the journal's
     // only flush point on that path — the terminal is restored by
@@ -564,6 +595,11 @@ pub async fn run_deck_session(
     let mut queue = crate::session_persist::DurableQueue::fresh(sidecar_dir.clone());
     let mut resume_hold = false;
     if let Some(rs) = &mut resume_state {
+        // Which granularity the transcript above came back at, now that it is
+        // on screen for the line to be about.
+        if let Some(note) = resume_note.take() {
+            let _ = deck_tx.send(system_notice(note));
+        }
         // Interrupted prompts (any lane's unsettled dispatch) go back at the
         // FRONT, ahead of the stored backlog, in their original order.
         let mut restored = std::mem::take(&mut rs.interrupted);
@@ -578,15 +614,11 @@ pub async fn run_deck_session(
                 });
             }
             let _ = deck_tx.send(system_notice(format!(
-                "session restored — {} prompt(s) waiting, dispatch held. Submit anything to \
-                 run it first (then the backlog), or ctrl+t to edit the queue.",
+                "{} prompt(s) waiting, dispatch held. Submit anything to run it first (then \
+                 the backlog), or ctrl+t to edit the queue.",
                 restored.len()
             )));
             queue.adopt(sidecar_dir.clone(), restored);
-        } else {
-            let _ = deck_tx.send(system_notice(
-                "session restored — the conversation continues where it left off.".to_string(),
-            ));
         }
     } else if session_registry.latest_resumable(&workspace_path).is_some() {
         // A fresh session in a workspace that has something to go back to:
@@ -1094,10 +1126,18 @@ pub async fn run_deck_session(
                                     LEAD,
                                     &deck_tx,
                                 );
-                                messages = crate::session_persist::restore_messages(
-                                    rs.history.take().unwrap_or_default(),
+                                // Same two-store choice as the startup resume,
+                                // and for the same reason it is made here: the
+                                // bind above is what re-keys the record the
+                                // adopted session's resume point lives in, so
+                                // asking any earlier would read the session
+                                // being left behind.
+                                let adopted = crate::session_persist::restore_conversation(
+                                    cfg.durability.checkpoint().as_deref(),
+                                    rs.history.take(),
                                     &system_prompt,
                                 );
+                                messages = adopted.messages;
                                 // Interrupted prompts (any lane's unsettled
                                 // dispatch) go back at the FRONT, ahead of the
                                 // stored backlog, in their original order.
@@ -1123,7 +1163,15 @@ pub async fn run_deck_session(
                                 // startup resume uses). No synthetic tick is
                                 // emitted; the next real turn's ticks
                                 // reflect the reseeded guard naturally.
-                                budget.reseed_session_spend(rs.spent_usd.unwrap_or(0.0));
+                                // The larger of the journal's last tick and the
+                                // adopted checkpoint's step-boundary meter —
+                                // see the startup resume for why max, not
+                                // either one.
+                                budget.reseed_session_spend(
+                                    rs.spent_usd
+                                        .unwrap_or(0.0)
+                                        .max(adopted.spent_usd.unwrap_or(0.0)),
+                                );
 
                                 // Fresh meta over the replayed one (pid, model,
                                 // clock), back to waiting-on-you, and a fresh
@@ -1138,16 +1186,14 @@ pub async fn run_deck_session(
                                     agent: LEAD.to_string(),
                                     status: AgentStatus::WaitingInput,
                                 });
-                                let _ = deck_tx.send(chrome_note(match queue.len() {
-                                    0 => "session restored — the conversation continues where \
-                                          it left off."
-                                        .to_string(),
-                                    n => format!(
-                                        "session restored — {n} prompt(s) waiting, dispatch \
-                                         held. Submit anything to run it first, or ctrl+t to \
-                                         edit the queue."
-                                    ),
-                                }));
+                                let _ = deck_tx.send(chrome_note(adopted.note));
+                                if !queue.is_empty() {
+                                    let _ = deck_tx.send(chrome_note(format!(
+                                        "{} prompt(s) waiting, dispatch held. Submit anything \
+                                         to run it first, or ctrl+t to edit the queue.",
+                                        queue.len()
+                                    )));
+                                }
                                 let _ = in_tx.send(sessions_inbound(
                                     &session_registry,
                                     &session_record.id,
@@ -1254,11 +1300,12 @@ pub async fn run_deck_session(
                 // `/init` changed the taxonomy and rebuilt the index. Re-open
                 // memory so recall/reflection use the new domains this session
                 // (not just the next), and push a fresh Graph-tab snapshot.
-                memory =
-                    SessionMemory::open_with_authority(&cfg.workspace_root, false, &cfg.authority);
-                if let Some(m) = &mut memory {
-                    agent::attach_record_channel(m, &active_rules);
-                }
+                memory = SessionMemory::open_for_session(
+                    &cfg.workspace_root,
+                    false,
+                    &cfg.authority,
+                    &active_rules,
+                );
                 if let Some(snapshot) = agent::graph_snapshot(&cfg.workspace_root) {
                     let _ = in_tx.send(Inbound::GraphSnapshot(snapshot));
                 }
@@ -1860,6 +1907,13 @@ pub async fn run_deck_session(
                     &in_tx,
                 )
                 .await;
+                // Name the workspace state this turn ended at, so it can be
+                // read back by turn number rather than by commit id
+                // (`WorkJournal::read_at_turn`). A turn that ABORTED is still a
+                // turn that ended, and the files it left behind are exactly the
+                // ones someone comparing turns wants to see — so this is not
+                // conditioned on the outcome.
+                cfg.durability.mark_turn_end();
                 session_exit = if outcome.is_err() {
                     stella_store::SessionStatus::Error
                 } else {
@@ -2042,6 +2096,18 @@ pub async fn run_deck_session(
         .unwrap_or_else(|p| p.into_inner())
         .sync();
     let _ = crate::session_persist::snapshot_history(&sidecar_dir, &messages);
+    // Pack the durable record's loose objects. Every step of every turn writes
+    // a commit, a tree and a blob or two, so a workspace worked in for months
+    // accumulates them without bound — a leak, not an untidiness. `git gc
+    // --auto` is a no-op below git's own loose-object threshold, so the cost on
+    // a short session is one subprocess that returns immediately.
+    //
+    // Here rather than in the deck's teardown: this runs before the terminal is
+    // handed back, and it is the last point at which the session's record is
+    // still bound. Best-effort and silent, like the sink — a session whose work
+    // is already done and persisted must never be delayed, or failed, by
+    // housekeeping.
+    cfg.durability.compact();
     session_record.status = if queue.is_empty() {
         session_exit
     } else {

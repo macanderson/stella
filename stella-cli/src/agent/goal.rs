@@ -80,10 +80,11 @@ pub(crate) async fn run_raw_one_shot(
 
     // The self-improvement loop (memory.rs): recall relevant memories +
     // skills into a volatile block after the stable system prefix (L-E8)…
-    let mut memory = SessionMemory::open_with_authority(
+    let mut memory = SessionMemory::open_for_session(
         &cfg.workspace_root,
         format == OutputFormat::Text,
         &cfg.authority,
+        &active_rules,
     );
     if let Some(m) = &mut memory {
         // Conformance-gated external CGP providers join before the first
@@ -266,10 +267,8 @@ pub async fn run_goal_cmd(
         )
         .await,
     )];
-    let mut memory = SessionMemory::open_with_authority(&cfg.workspace_root, true, &cfg.authority);
-    if let Some(m) = &mut memory {
-        prompt::attach_record_channel(m, &active_rules);
-    }
+    let mut memory =
+        SessionMemory::open_for_session(&cfg.workspace_root, true, &cfg.authority, &active_rules);
     // Phase 2 (#713): carried to the turn runner, which owns the event channel.
     let mut recall_event = None;
     if let Some(m) = &memory {

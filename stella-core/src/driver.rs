@@ -1110,6 +1110,28 @@ impl<'a> Engine<'a> {
     /// A [`TurnState`] resumed from a durable snapshot. See
     /// [`TurnState::from_checkpoint`] for exactly what resuming rebuilds
     /// rather than restores.
+    ///
+    /// # Who calls this, and who deliberately does not
+    ///
+    /// This is for a host that drives [`Self::run_step`] itself and owns its
+    /// own loop — it hands back a state to keep stepping. Neither shipping
+    /// surface is one today, and that is a declaration rather than an
+    /// oversight:
+    ///
+    /// - **The CLI** resumes an interrupted turn at *transcript* granularity
+    ///   instead. Its turns are dispatched through `stella-pipeline`, which
+    ///   owns turn framing and builds its own state via `run_turn`, so there is
+    ///   no seam to hand a resumed `TurnState` to without threading a
+    ///   checkpoint through the entire verification ladder. What it does do is
+    ///   reopen the conversation at the checkpoint's step boundary, so the
+    ///   completed steps' work is not re-run — see `stella-parity`'s
+    ///   `turn.checkpoint_resume` row.
+    /// - **`stella-serve`** drives steps and would use this directly, but has
+    ///   no store to read a checkpoint back from (same row, API side).
+    ///
+    /// So the production callers are embedders, and the in-tree exercise of it
+    /// is `stella-engine`'s test suite. Anything that changes on either surface
+    /// should change that row in the same PR.
     #[must_use]
     pub fn resume_turn(&self, checkpoint: crate::step::Checkpoint) -> TurnState {
         TurnState::from_checkpoint(checkpoint, &self.config)
