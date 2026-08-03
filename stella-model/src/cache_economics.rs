@@ -132,12 +132,16 @@ pub fn hit_rate(input_tokens: u64, cached_input_tokens: u64) -> f64 {
 /// Gates first: a diagnosis only fires once a session has run enough turns to
 /// have *established* a cache to hit (`turns > MIN_TURNS`) and the hit rate is
 /// genuinely under `threshold`. The discriminator between the two opt-in
-/// failure modes is **`cache_write_tokens`**, not the hit rate:
-///  - opt-in provider that wrote *nothing* over the turns → the marker never
-///    reached the wire ([`CacheCause::OptInNeverEngaged`]);
-///  - otherwise (writes happened, or an implicit-cache provider) a low hit
+/// failure modes is **cache traffic**, not the hit rate:
+///  - opt-in provider that over the turns wrote nothing *and read nothing* →
+///    the marker never reached the wire ([`CacheCause::OptInNeverEngaged`]);
+///  - otherwise (any traffic at all, or an implicit-cache provider) a low hit
 ///    rate is the prefix being rewritten or expiring between turns
 ///    ([`CacheCause::PrefixInstability`]).
+///
+/// Both halves of "no traffic" are required. Reads and writes land on
+/// different turns, so zero writes alone is the ordinary shape of a warm
+/// cache — see the inline note at the discriminator.
 ///
 /// `IdleBeyondTtl` is a refinement the live scheduler surfaces from actual
 /// idle gaps; this token-only diagnosis cannot see wall-clock gaps, so it
@@ -163,9 +167,24 @@ pub fn diagnose_cache(
     }
 
     let is_opt_in = matches!(cache_posture(provider), Some(CachePosture::OptIn { .. }));
-    if is_opt_in && cache_write_tokens == 0 {
-        // The provider caches nothing without an explicit marker, and not one
-        // token was ever written — the opt-in never engaged.
+    if is_opt_in && cache_write_tokens == 0 && cached_input_tokens == 0 {
+        // The provider caches nothing without an explicit marker, nothing was
+        // ever written, AND nothing was ever read — the opt-in never engaged.
+        //
+        // The read count is load-bearing, not belt-and-braces. A READ is proof
+        // the cache engaged: nothing can be read that was never written. Writes
+        // and reads land on different turns — once a prefix is cached, later
+        // turns read it and write nothing — so `cache_write_tokens == 0` on its
+        // own is the NORMAL shape of a warm cache, not evidence of a missing
+        // marker. Discriminating on writes alone reported "opt-in never
+        // engaged — likely a bug" for sessions that were simultaneously
+        // showing thousands of read tokens and real savings.
+        //
+        // `stella-tui`'s hand-rolled copy of this gate
+        // (`cache_panel.rs::cache_diagnosis`) already carried the read
+        // condition; this one did not, so `stella stats` and the deck's CACHE
+        // cell disagreed on exactly the warm-cache case. That divergence is
+        // what the module docs meant by "nothing cross-checks the two".
         return Some(CacheCause::OptInNeverEngaged);
     }
     Some(CacheCause::PrefixInstability)
@@ -377,6 +396,23 @@ mod tests {
     }
 
     #[test]
+    fn a_warm_cache_with_no_writes_this_window_is_never_opt_in_never_engaged() {
+        // The regression this discriminator was getting wrong. Anthropic is an
+        // opt-in provider, the hit rate is under the bar, and NOTHING was
+        // written — but 9.6K tokens were READ, which is only possible if the
+        // marker engaged and a prefix was cached on an earlier turn. Writes and
+        // reads land on different turns, so "zero writes" here is a warm cache,
+        // not a missing marker.
+        //
+        // Before the read condition was added this returned OptInNeverEngaged —
+        // "likely a bug" printed next to a real read count and real savings.
+        // `stella-tui`'s copy of this gate already got this right, so the two
+        // surfaces disagreed on the same session.
+        let cause = diagnose_cache("anthropic", 6, 120_000, 9_600, 0, 0.20);
+        assert_eq!(cause, Some(CacheCause::PrefixInstability));
+    }
+
+    #[test]
     fn diagnosis_on_implicit_provider_is_prefix_instability_never_opt_in() {
         // An implicit-cache provider (zai) can never have an opt-in-marker
         // bug — a low hit rate there is prefix instability regardless of the
@@ -394,6 +430,46 @@ mod tests {
             diagnose_cache("anthropic", 10, 100_000, 50_000, 10_000, 0.20),
             None
         );
+    }
+
+    #[test]
+    fn the_write_premium_and_the_ttl_table_encode_the_same_cache_window() {
+        // These two tables are two readings of ONE provider policy choice, and
+        // nothing but this test says so. Anthropic's 5-minute cache writes bill
+        // at 1.25x input and evict after 300s; the 1-hour window bills at 2x and
+        // evicts after 3600s. Change the window in one table and not the other
+        // and every write is silently mis-priced — `cache_savings_usd` keeps
+        // returning a number, just the wrong one, and no surface can tell.
+        //
+        // The 1-hour TTL is a per-request opt-in that is not observable in the
+        // usage envelope, so nothing downstream can detect the mismatch after
+        // the fact. Today it is unreachable — the adapter's `AnthropicCacheControl`
+        // has no `ttl` field at all, so every request takes the 5-minute default
+        // and 1.25x is correct. This test is the tripwire for the change that
+        // would make it wrong: adding TTL support means touching both tables,
+        // and this fails until both move.
+        for provider in ["anthropic", "bedrock", "openrouter"] {
+            assert_eq!(
+                cache_write_premium_multiplier(provider),
+                1.25,
+                "{provider}: premium is no longer the 5-minute rate — if this is \
+                 1-hour support (2x), provider_cache_ttl_secs must move to 3600 \
+                 in the same change"
+            );
+            assert_eq!(
+                provider_cache_ttl_secs(provider),
+                Some(300),
+                "{provider}: TTL is no longer the 5-minute window — \
+                 cache_write_premium_multiplier must move off 1.25 in the same \
+                 change, or every cache write is priced at the wrong rate"
+            );
+        }
+
+        // The control: an implicit-cache provider has no marker to opt into, so
+        // it has neither a write premium nor a documented eviction window. If
+        // this pair ever diverges the taxonomy has changed, not the pricing.
+        assert_eq!(cache_write_premium_multiplier("zai"), 1.0);
+        assert_eq!(provider_cache_ttl_secs("zai"), None);
     }
 
     #[test]
