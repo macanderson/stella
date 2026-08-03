@@ -180,7 +180,7 @@ code { font-family: var(--mono); font-size: .92em; color: var(--citron); }
 }
 /* Sits immediately after the "random" button and belongs to it, so it is
    sized to its content rather than taking a flex share of the toolbar. */
-#random-n { width: 68px; flex: none; }
+#random-n, #random-max-mem { width: 68px; flex: none; }
 input[type=search], input[type=text], input[type=number], select, textarea {
   background: var(--panel);
   border: 1px solid var(--line);

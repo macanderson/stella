@@ -68,7 +68,11 @@ def _cmd_tasks(args: argparse.Namespace) -> int:
         if seed is None:
             seed = random.randrange(1, 2**31)
         tasks = sample_tasks(
-            tasks, args.random, seed, exclude_heavy=args.exclude_heavy
+            tasks,
+            args.random,
+            seed,
+            exclude_heavy=args.exclude_heavy,
+            max_memory_mb=args.max_memory_mb,
         )
 
     for task in tasks:
@@ -76,11 +80,24 @@ def _cmd_tasks(args: argparse.Namespace) -> int:
         print(f"{task.name:38} {task.difficulty:8} {task.category}{heavy}")
 
     if args.random:
-        pool = "non-heavy tasks" if args.exclude_heavy else "tasks"
+        # Report the size of the pool actually drawn from, not the dataset. A
+        # filtered draw is a sample of a smaller population, and "10 of 89"
+        # would quietly claim otherwise.
+        drawn_from = len(
+            sample_tasks(
+                DEFAULT_REGISTRY.tasks(args.dataset),
+                total,
+                seed,
+                exclude_heavy=args.exclude_heavy,
+                max_memory_mb=args.max_memory_mb,
+            )
+        )
+        narrowed = "" if drawn_from == total else f" (of {total} in the dataset)"
         print(
-            f"\n{len(tasks)} of {total} {pool} — reproduce with "
-            f"--random {args.random} --seed {seed}"
-            + (" --exclude-heavy" if args.exclude_heavy else ""),
+            f"\n{len(tasks)} drawn from a pool of {drawn_from}{narrowed} — "
+            f"reproduce with --random {args.random} --seed {seed}"
+            + (" --exclude-heavy" if args.exclude_heavy else "")
+            + (f" --max-memory-mb {args.max_memory_mb}" if args.max_memory_mb else ""),
             file=sys.stderr,
         )
     else:
@@ -145,6 +162,15 @@ def main(argv: list[str] | None = None) -> int:
         "--exclude-heavy",
         action="store_true",
         help="draw only from tasks that do not force concurrency to 1",
+    )
+    tasks_parser.add_argument(
+        "--max-memory-mb",
+        type=int,
+        default=0,
+        metavar="MB",
+        help="draw only from tasks asking for at most MB of memory; with N "
+             "contestants racing, the ceiling that matters is your Docker "
+             "allocation divided by N",
     )
     tasks_parser.set_defaults(func=_cmd_tasks)
 

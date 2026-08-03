@@ -769,3 +769,15 @@ class TestRandomTaskSampling:
         drawn = sample_tasks(pool, 10, 7, exclude_heavy=True)
         assert len(drawn) == 10
         assert not any(task.heavy for task in drawn)
+
+    def test_a_memory_ceiling_narrows_the_pool(self):
+        """`heavy` is calibrated for a bigger machine than the one in front of
+        you. A host giving Docker 8 GB and racing two contestants can afford
+        4 GB each, which excludes tasks `heavy` happily keeps."""
+        pool = self._tasks(50)
+        drawn = sample_tasks(pool, 10, 7, max_memory_mb=4096)
+        assert drawn and all(task.memory_mb <= 4096 for task in drawn)
+        assert any(task.memory_mb == 8192 for task in pool), "fixture must have some"
+
+    def test_a_ceiling_that_excludes_everything_draws_nothing(self):
+        assert sample_tasks(self._tasks(50), 10, 7, max_memory_mb=1) == []

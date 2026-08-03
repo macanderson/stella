@@ -99,7 +99,12 @@ class ArenaServer:
         }
 
     def task_sample(
-        self, key: str, count: int, seed: int | None, exclude_heavy: bool
+        self,
+        key: str,
+        count: int,
+        seed: int | None,
+        exclude_heavy: bool,
+        max_memory_mb: int = 0,
     ) -> Any:
         """Draw a reproducible random slice of a dataset.
 
@@ -114,12 +119,17 @@ class ArenaServer:
         if seed is None:
             seed = random.randrange(1, 2**31)
         chosen = sample_tasks(
-            self.registry.tasks(key), count, seed, exclude_heavy=exclude_heavy
+            self.registry.tasks(key),
+            count,
+            seed,
+            exclude_heavy=exclude_heavy,
+            max_memory_mb=max_memory_mb,
         )
         return {
             "seed": seed,
             "requested": count,
             "exclude_heavy": exclude_heavy,
+            "max_memory_mb": max_memory_mb,
             "names": [task.name for task in chosen],
         }
 
@@ -397,6 +407,7 @@ def _handler_factory(arena: ArenaServer) -> type[BaseHTTPRequestHandler]:
                             seed=_int("seed"),
                             exclude_heavy=(query.get("exclude_heavy") or [""])[0]
                             == "1",
+                            max_memory_mb=_int("max_memory_mb") or 0,
                         )
                     )
                 case ["agents"]:

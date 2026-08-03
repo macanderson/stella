@@ -270,6 +270,7 @@ def sample_tasks(
     seed: int,
     *,
     exclude_heavy: bool = False,
+    max_memory_mb: int = 0,
 ) -> list[Task]:
     """A reproducible random subset of ``tasks``.
 
@@ -285,11 +286,24 @@ def sample_tasks(
     at a glance.
 
     ``exclude_heavy`` narrows the pool before drawing, for a host that cannot
-    give a task 8 GB and still run a second contestant beside it. It changes
-    what the sample is a sample *of*, so a caller that sets it owes the reader
-    that detail — this is a smaller population, not the same one.
+    give a task 8 GB and still run a second contestant beside it.
+    ``max_memory_mb`` narrows it by an explicit ceiling, which is the honest
+    knob when :attr:`Task.heavy` is calibrated for a larger machine than the
+    one in front of you: a match with N contestants runs N containers at once,
+    so the ceiling that matters is the Docker allocation divided by N, and
+    only the operator knows both numbers.
+
+    Both change what the sample is a sample *of*. A caller that sets either
+    owes the reader that detail — this is a smaller population, not the same
+    one, and a solve rate over the easy-to-schedule tasks is not a solve rate
+    over the benchmark.
     """
-    pool = [task for task in tasks if not (exclude_heavy and task.heavy)]
+    pool = [
+        task
+        for task in tasks
+        if not (exclude_heavy and task.heavy)
+        and not (max_memory_mb and task.memory_mb > max_memory_mb)
+    ]
     if count >= len(pool):
         return pool
     if count <= 0:

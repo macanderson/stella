@@ -64,6 +64,9 @@
       <button class="btn btn-ghost" id="select-random">random</button>
       <input type="number" id="random-n" value="10" min="1" max="500"
              title="how many tasks to draw at random">
+      <input type="number" id="random-max-mem" value="0" min="0" step="1024"
+             title="draw only tasks asking for at most this many MB (0 = no ceiling). With N contestants racing, use your Docker memory allocation divided by N."
+             placeholder="≤ MB">
     </div>
 
     <div class="task-grid" id="task-grid"></div>

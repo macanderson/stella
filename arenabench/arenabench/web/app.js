@@ -213,16 +213,18 @@ async function drawRandomTasks() {
   if (!State.dataset) return;
   const count = Math.max(1, Number($('#random-n').value) || 10);
   const heavy = $('#filter-light').checked ? '1' : '0';
+  const maxMem = Math.max(0, Number($('#random-max-mem').value) || 0);
   const seedEl = $('#random-seed');
   try {
     const drawn = await api(
       `/api/datasets/${encodeURIComponent(State.dataset.key)}/sample` +
-      `?count=${count}&exclude_heavy=${heavy}`);
+      `?count=${count}&exclude_heavy=${heavy}&max_memory_mb=${maxMem}`);
     State.selected = new Set(drawn.names);
     State.draw = new Set(drawn.names);
     seedEl.textContent =
       `· ${drawn.names.length} drawn, seed ${drawn.seed}` +
-      (drawn.exclude_heavy ? ', heavy excluded' : '');
+      (drawn.exclude_heavy ? ', heavy excluded' : '') +
+      (drawn.max_memory_mb ? `, ≤${drawn.max_memory_mb} MB` : '');
     renderTasks();
   } catch (err) {
     seedEl.textContent = `· draw failed: ${err.message}`;
