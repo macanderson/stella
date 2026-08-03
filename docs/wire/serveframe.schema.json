@@ -1901,6 +1901,46 @@
       ],
       "type": "object"
     },
+    "LadderRung": {
+      "description": "Which rung of the evidence ladder a `JudgeVerdict` actually came to rest\non (#1043).\n\n# Why the rung is on the wire instead of inferred\n\n`JudgeEvidence` already carries `passed` and `deterministic`, and for a\nwhile that looked like enough. It is not, and the gap is not academic:\n\n- `deterministic: true, passed: false` is emitted by **two** rungs — a red\n  touched test ([`LadderRung::Revise`], a genuine failure) and a turn that\n  dispatched nothing ([`LadderRung::NothingAttempted`], where the honest\n  label is \"no evidence\", not \"wrong\").\n- `deterministic: true, passed: true` is emitted both by the full\n  deterministic pass ([`LadderRung::SubmitFast`]) and by a *waived* review\n  where the warrant found nothing to prove ([`LadderRung::Waived`]) — so a\n  reader inferring \"deterministic pass\" from those two flags would label a\n  turn nothing checked as the ladder's strongest possible result.\n- `deterministic: false` covers a real model judge, a heuristic verdict\n  after the judge call *failed*, and the abstain rung. The first is soft\n  signal, the second is not signal at all, and the only thing separating\n  them in the old shape was the wording of a summary string.\n\nRe-deriving the rung by re-running the ladder over\n[`LadderSnapshot`] cannot close any of that: it reproduces the *decision*\nbut not which of the three ways the judge arm resolved, and it silently\ndisagrees with reality whenever the run's `veto_warnings` setting differed\nfrom the reader's assumption. So the pipeline states the rung it took.\n\nWire-compatible in the additive direction only, like every nested\nvocabulary in this crate: a reader that meets a rung it does not know fails\nthe event rather than laundering it (see the [`crate::event`] docs).",
+      "oneOf": [
+        {
+          "const": "submit_fast",
+          "description": "Deterministic pass: a fail→pass flip of the tracked command, touched\ntests green, diff within budget, no fresh diagnostics. The judge was\nskipped because nothing was left to ask.",
+          "type": "string"
+        },
+        {
+          "const": "revise",
+          "description": "Deterministic failure: the touched tests were red. No judge call — the\nfailure was already conclusive.",
+          "type": "string"
+        },
+        {
+          "const": "nothing_attempted",
+          "description": "The turn dispatched no call capable of changing the workspace. A\ndeterminate finding about the turn, and the one place this ladder reads\nan absence as evidence.",
+          "type": "string"
+        },
+        {
+          "const": "unverifiable",
+          "description": "Every evidence channel was blind, so the ladder abstained. Nothing is\nclaimed about the work — in particular not that it failed.",
+          "type": "string"
+        },
+        {
+          "const": "model_judge",
+          "description": "A model judge answered on genuinely inconclusive evidence.",
+          "type": "string"
+        },
+        {
+          "const": "heuristic_fallback",
+          "description": "The judge call itself failed or returned something unparseable, and the\nconservative heuristic verdict stood in for it. A verdict about the\njudge's availability, not about the work.",
+          "type": "string"
+        },
+        {
+          "const": "waived",
+          "description": "No independent review was bought at all: triage waived it and the\nwarrant agreed, or the change warranted no witness test. A pass\ncarrying no evidence either way.",
+          "type": "string"
+        }
+      ]
+    },
     "LadderSnapshot": {
       "description": "The deterministic evidence the ladder decided a verdict from, snapshotted\nat decision time (#865). Everything here existed when the decision was\nmade; attaching it to the verdict is what makes \"why?\" answerable later\nwithout re-deriving — and re-deriving is exactly what a replay of an\nevent stream cannot do, because the world the probes read is gone.",
       "properties": {
@@ -1957,6 +1997,17 @@
             "$ref": "#/$defs/OracleObservation"
           },
           "type": "array"
+        },
+        "rung": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LadderRung"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The rung this verdict came to rest on (#1043). Absent on events\nrecorded before it existed, which is the one case a reader must handle\nas \"unknown\" rather than guess at — see [`LadderRung`] for why the\nguess is not available."
         },
         "test_infra": {
           "description": "Why the test run observed nothing, when it didn't (`timed_out`,\n`infra_failure`) — the #860 distinction between \"the suite failed\"\nand \"the suite could not be watched\".",
@@ -2479,7 +2530,7 @@
       ]
     },
     "ProofTree": {
-      "description": "Which code state a [`ProofStep::Oracle`] observation was made against.\n\nThe distinction is the whole content of a flip: the same command failing in\n`Baseline` and passing in `Candidate` is proof, while either result twice\nagainst one tree is a tree observed twice.",
+      "description": "Which code state a `ProofStep::Oracle` observation was made against.\n\nThe distinction is the whole content of a flip: the same command failing in\n`Baseline` and passing in `Candidate` is proof, while either result twice\nagainst one tree is a tree observed twice.",
       "oneOf": [
         {
           "const": "baseline",

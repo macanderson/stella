@@ -132,6 +132,13 @@ impl<'a> Pipeline<'a> {
     /// revise / judge?" without re-deriving — and so the judge prompt can
     /// carry it (#864). Pure assembly over already-gathered evidence: no
     /// probe runs here.
+    ///
+    /// `rung` is seeded with the ladder's own decision over the same `inputs`
+    /// ([`ladder_decision`] is pure, so this cannot disagree with the arm the
+    /// caller takes). The three arms that resolve *past* that decision — a
+    /// judge that answered, a judge that was unavailable, a review that was
+    /// waived — restamp it with [`LadderSnapshot::with_rung`] before attaching
+    /// their evidence.
     pub(super) fn ladder_snapshot(
         inputs: &LadderInputs,
         state: &CandidateState,
@@ -139,6 +146,7 @@ impl<'a> Pipeline<'a> {
         witness_intact: Option<bool>,
     ) -> LadderSnapshot {
         LadderSnapshot {
+            rung: Some(ladder_decision(inputs).into()),
             tracked_command: state.oracle.tracked_command().map(str::to_string),
             oracle_trace: state.oracle_trace.clone(),
             flip_achieved: inputs.flip_achieved,
