@@ -5,9 +5,9 @@ name: normative-home
 #
 #  1. Boundary drift guard for context-graph-protocol#27: the adaptive-context
 #     docs reference CGP as the normative home for frame/wire semantics instead
-#     of restating them. This keeps the pinned CGP revision in those docs in
-#     sync with the contextgraph-* rev stella actually builds against
-#     (stella-cli/Cargo.toml).
+#     of restating them. This keeps the pinned CGP release in those docs in
+#     sync with the exact contextgraph-* version stella actually builds against
+#     (the root Cargo.toml's [workspace.dependencies]).
 #  2. Citation guard (#652, #561): every `docs/**.md` path named in a Rust
 #     comment must exist, and every cited `§N` must be a section that document
 #     has. `docs/context-reuse.md` was cited 23 times while absent from the
@@ -27,7 +27,7 @@ on:
       - "docs/**"
       - "**/*.md"
       - "**/*.rs"
-      - "stella-cli/Cargo.toml"
+      - "Cargo.toml"
       - "scripts/check-normative-home.sh"
       - "scripts/check-doc-citations.sh"
       - "scripts/check-invariants.sh"
@@ -38,7 +38,7 @@ on:
       - "docs/**"
       - "**/*.md"
       - "**/*.rs"
-      - "stella-cli/Cargo.toml"
+      - "Cargo.toml"
       - "scripts/check-normative-home.sh"
       - "scripts/check-doc-citations.sh"
       - "scripts/check-invariants.sh"

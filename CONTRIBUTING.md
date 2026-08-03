@@ -83,9 +83,9 @@ Or just `make gate`, which is the nine of them in order.
 CI enforces the same steps (split across `ci.yml` and `normative-home.yml`,
 plus a release smoke build) and one more that needs no local toolchain:
 `scripts/check-normative-home.sh` (in `normative-home.yml`, asserting the
-pinned CGP revision in `docs/**` still matches the `contextgraph-*` git rev in
-`stella-cli/Cargo.toml`). Run that one by hand if you touched a
-`NORMATIVE-HOME:` document.
+CGP release pinned in `docs/**` still matches the exact `contextgraph-*`
+version in the root `Cargo.toml`'s `[workspace.dependencies]`). Run that one
+by hand if you touched a `NORMATIVE-HOME:` document.
 
 **Run `make hooks` once per clone.** It points `core.hooksPath` at `.githooks`,
 whose `pre-push` hook runs `make gate` and aborts the push if it fails — so a

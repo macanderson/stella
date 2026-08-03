@@ -26,10 +26,11 @@ round trip to the site.
 Three documents — [`design/context-frame-spec.md`](design/context-frame-spec.md),
 [`design/directive-schema.md`](design/directive-schema.md), and the vendored
 [`context-reuse.md`](context-reuse.md) — carry a `NORMATIVE-HOME:` header
-pinning the Context Graph Protocol revision they defer to instead of restating
+pinning the Context Graph Protocol release they defer to instead of restating
 its wire semantics. `scripts/check-normative-home.sh` fails CI if that pin
-drifts from the `contextgraph-*` git rev in `stella-cli/Cargo.toml`, so repin
-the docs and the dependency in the same PR. The check discovers files by the
+drifts from the exact `contextgraph-*` version in the root `Cargo.toml`'s
+`[workspace.dependencies]`, so repin the docs — re-vendoring the vendored
+copy's body — and bump the dependency in the same PR. The check discovers files by the
 marker written as an HTML comment, so prose that merely *names* the convention —
 this paragraph — is not itself treated as a pinned document. (Do not paste the
 comment form into prose: the guard matches the literal text and would then fail

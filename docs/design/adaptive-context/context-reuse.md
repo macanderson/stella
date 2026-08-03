@@ -1,6 +1,6 @@
 # Context reuse: identity, accounting, consent, and verification
 
-<!-- NORMATIVE-HOME: macanderson/context-graph-protocol @ c5fb2fe (contextgraph/1.0-draft) -->
+<!-- NORMATIVE-HOME: macanderson/context-graph-protocol @ v0.1.2 (contextgraph/1.0-draft) -->
 
 <!--
   VENDORED — do not edit this copy.
@@ -16,9 +16,11 @@
   scripts/check-doc-citations.sh verify both the path and the cited section.
 
   The NORMATIVE-HOME pin above is enforced by scripts/check-normative-home.sh
-  against the contextgraph-* git rev in stella-cli/Cargo.toml, so this copy
-  cannot silently drift from the revision the workspace compiles against. To
-  re-sync when that pin moves, bump the manifests and re-fetch:
+  against the exact contextgraph-* version in the root Cargo.toml's
+  [workspace.dependencies] (crates.io releases since #819), so this copy
+  cannot silently drift from the release the workspace compiles against. To
+  re-sync when that pin moves, bump the manifest and re-fetch the doc at the
+  git tag of the new release:
 
       gh api "repos/macanderson/context-graph-protocol/contents/docs/context-reuse.md?ref=<rev>" \
         --jq .content | base64 -d
@@ -43,8 +45,8 @@
   now resolve like any other.
 
   WARNING — re-vendor the BODY when you bump the pin, not just the header.
-  check-normative-home.sh compares the pinned sha against the manifests; it
-  cannot tell whether these bytes came from that sha. Bumping the pin alone
+  check-normative-home.sh compares the pinned release against the manifest; it
+  cannot tell whether these bytes came from that release. Bumping the pin alone
   leaves a copy that *claims* a rev it does not match, and the guard goes green.
   That is exactly how this file spent a commit pinned at one rev with another
   rev's body — §3 existed upstream and was missing here. Re-fetch with the

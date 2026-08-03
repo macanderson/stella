@@ -68,10 +68,11 @@ CI enforces the same thirteen steps split across two workflows:
 `/.github/workflows/ci.yml`'s required job runs everything except
 `doc-citations` and `invariants` and adds a release smoke build (thin LTO);
 `normative-home.yml` runs those two plus `check-normative-home.sh`.
-(`check-normative-home.sh` was written to assert the CGP revision pinned in
-`docs/**` matches the `contextgraph-*` dependency; since #819 moved those to
-exact-version registry deps there is no git rev to read and the script
-self-skips — it is kept for the day a git pin returns.) It needs no Rust
+(`check-normative-home.sh` asserts the CGP release pinned in `docs/**`
+(`@ v<X.Y.Z>`) matches the exact `contextgraph-*` version in the root
+`Cargo.toml`'s `[workspace.dependencies]` — and fails rather than skips when
+it cannot read either side: the git-rev-era version silently self-skipped
+from #819's registry move until the pin form caught up.) It needs no Rust
 toolchain and is the one check the gate does not cover, so run it by hand
 after touching a `NORMATIVE-HOME:` document.
 
