@@ -10,6 +10,27 @@
 //! single candidate when a witness is being authored, and "candidate 1/1" there
 //! is noise rather than signal.
 
+/// Announce a fan-out whose candidates run *together* (#1215), before any of
+/// them starts.
+///
+/// Two facts the user cannot infer from the per-candidate lines that follow.
+/// The first is that the wall clock is now the slowest candidate rather than
+/// the sum, which is the whole reason to pay for N. The second is why their
+/// terminal stops streaming mid-thought: while N models share one event
+/// stream the live text preview is muted, and its absence would otherwise read
+/// as a stalled run. A sequential fan-out (`width <= 1`) says neither, because
+/// neither is true of it.
+pub(crate) fn candidate_fanout_notice(n: u32, width: u32) -> Option<String> {
+    if n <= 1 || width <= 1 {
+        return None;
+    }
+    Some(format!(
+        "\n▸ best-of-{n}: running {width} candidates at once — this turn costs the slowest \
+         candidate, not the sum. Live text previews are paused while they share the stream; \
+         each candidate's full answer still arrives.\n"
+    ))
+}
+
 /// Announce a candidate as it starts, naming its position and whether it is
 /// isolated — isolation is what decides whether a loser's edits survive, so it
 /// belongs in the line the user actually reads.
@@ -86,5 +107,28 @@ mod tests {
     fn a_single_candidate_never_narrates() {
         assert!(candidate_start_notice(0, 1, true).is_none());
         assert!(candidate_winner_notice(0, 1, 1).is_none());
+        assert!(candidate_fanout_notice(1, 1).is_none());
+    }
+
+    #[test]
+    fn a_concurrent_fan_out_names_its_width_and_the_muted_preview() {
+        let notice = candidate_fanout_notice(3, 3).expect("a wide fan-out narrates");
+        assert!(notice.contains("best-of-3"), "{notice}");
+        assert!(notice.contains("3 candidates at once"), "{notice}");
+        assert!(
+            notice.contains("not the sum"),
+            "the wall-clock claim is the reason to pay for N: {notice}"
+        );
+        assert!(
+            notice.contains("previews are paused"),
+            "a silent stream must be explained, not discovered: {notice}"
+        );
+    }
+
+    /// A fan-out that runs one candidate at a time streams exactly as it
+    /// always did, so it must not claim otherwise.
+    #[test]
+    fn a_sequential_fan_out_promises_no_concurrency() {
+        assert!(candidate_fanout_notice(3, 1).is_none());
     }
 }
