@@ -35,6 +35,20 @@ skip the roll) were re-inserted the same way.
 
 ## [Unreleased]
 
+### Changed
+
+- When a model judge passes a turn and **nothing deterministic backs it up** —
+  no fail→pass flip, no test that ran green — the pipeline now spends one
+  revision asking the worker for that evidence instead of recording the pass as
+  `UNVERIFIED` on the spot (#1295). The ask is raised **only where a tracked
+  command exists to answer it**: both facts that would settle the question are
+  observations of that command, so without one the request is unanswerable
+  however well the worker responds — which is why the same feature was measured
+  as a loss and switched off the first time. Bounded to one ask per candidate,
+  paid from the existing `max_revisions` budget. Turn it off with
+  `agent_engine_config.pipeline_judge_evidence_demand = "off"`; the measurement
+  and its limits are in `bench/evidence/judge-evidence-demand-1295/`.
+
 ## [0.6.80] — 2026-08-03
 
 ### Added

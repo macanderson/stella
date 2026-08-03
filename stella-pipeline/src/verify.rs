@@ -877,6 +877,41 @@ pub fn guidance_prompt(goal: &str, diff: &str, evidence_summary: &str) -> String
     )
 }
 
+/// Whether a standalone judge pass is worth one revision spent demanding
+/// corroboration (#1295) — the pure decision behind that branch of
+/// `Pipeline::verify_candidate`, so it is directly testable and so the
+/// pipeline module states only what it *does*.
+///
+/// Assumes the caller has already established the standalone pass; this
+/// answers the second question only. Four conditions, and the interesting one
+/// is `tracked_command`:
+///
+/// * the ask is enabled ([`crate::PipelineConfig::judge_evidence_demand`]);
+/// * it has not already been spent on this candidate — once is the cap,
+///   because the second ask goes to a worker that has already answered;
+/// * a revision remains in the same budget a real failure spends;
+/// * **a tracked command exists.** The two facts that would clear
+///   [`LadderInputs::judge_pass_stands_alone`] — a fail→pass flip, and touched
+///   tests green — are both observations of that command. With none resolved
+///   neither is reachable, so the ask cannot be satisfied by any worker on any
+///   turn and the turn it costs is pure loss. That is the shape the feature's
+///   first measurement found and was reverted for (#1211 §1): on Terminal-Bench
+///   the condition held on most turns *precisely because* most turns had no
+///   command, and buying turns against a 900-second wall cost more tasks than
+///   it recovered.
+#[must_use]
+pub fn evidence_demand_is_worth_a_turn(
+    config: &crate::PipelineConfig,
+    demands_spent: u32,
+    revisions_spent: u32,
+    tracked_command: Option<&str>,
+) -> bool {
+    config.judge_evidence_demand
+        && demands_spent == 0
+        && revisions_spent < config.max_revisions
+        && tracked_command.is_some()
+}
+
 /// The feedback a turn carries back to the WORKER when a model judge passed
 /// with nothing deterministic behind it (#1295) — no flip, no green test —
 /// and the run has a tracked command that could still carry that evidence.

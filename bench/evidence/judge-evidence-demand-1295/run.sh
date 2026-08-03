@@ -64,9 +64,10 @@ run_arm() {
   local job="jed1295-$arm"
   echo "=== arm $arm (STELLA_JUDGE_EVIDENCE_DEMAND=$demand) -> $JOBS/$job"
   local includes=()
-  for task in $TASKS; do includes+=(--path "$DATASET_DIR/$task"); done
+  for task in $TASKS; do includes+=(--include-task-name "$task"); done
   STELLA_JUDGE_EVIDENCE_DEMAND="$demand" scrubbed harbor run \
     --env docker \
+    --path "$DATASET_DIR" \
     "${includes[@]}" \
     --agent-import-path stella_harbor:StellaAgent \
     --model "$TB_MODEL" \

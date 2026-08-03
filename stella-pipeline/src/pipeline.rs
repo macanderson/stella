@@ -88,9 +88,9 @@ use stella_protocol::ToolOutput;
 use crate::flip_halt::{FlipHalt, command_of};
 use crate::verify::{
     FlipOracle, JudgeVerdict as ModelJudgeVerdict, LadderDecision, LadderInputs,
-    deterministic_fail_evidence, deterministic_pass_evidence, guidance_prompt, heuristic_fallback,
-    judge_prompt, ladder_decision, model_verdict_evidence, nothing_attempted_evidence,
-    parse_judge_response, unverifiable_evidence,
+    deterministic_fail_evidence, deterministic_pass_evidence, evidence_demand_is_worth_a_turn,
+    guidance_prompt, heuristic_fallback, judge_prompt, ladder_decision, model_verdict_evidence,
+    nothing_attempted_evidence, parse_judge_response, unverifiable_evidence,
 };
 use crate::witness::airlock::{
     DisclosureGrain, FailureFingerprint, SealedFailure, grain_for_repeats, redact, scrub,
@@ -2676,32 +2676,15 @@ impl<'a> Pipeline<'a> {
                         // `Unverified` score keeps it from tying a genuinely
                         // verified sibling in best-of-N.
                         if inputs.judge_pass_stands_alone() {
-                            // Ask for the missing evidence once, when asking
-                            // can be answered (#1295). The precondition that
-                            // makes this affordable is `effective_cmd`: the
-                            // two things that would clear
-                            // `judge_pass_stands_alone` — a flip, or touched
-                            // tests green — are BOTH observations of the
-                            // tracked command, so with none resolved the ask
-                            // is unanswerable however well the worker
-                            // responds, and every turn spent on it is pure
-                            // cost. That is the shape the first measurement
-                            // found (#1211 §1): on Terminal-Bench the
-                            // condition held on most turns precisely because
-                            // most turns had no command, and buying turns
-                            // against a 900-second wall cost more tasks than
-                            // it recovered.
-                            //
-                            // Capped at one demand per candidate and drawn
-                            // from the same `max_revisions` budget a real
-                            // failure spends, so the worst case is one extra
-                            // turn on a run that was going to be recorded
-                            // unverified anyway — not an unbounded hunt for
-                            // proof.
-                            if self.config.judge_evidence_demand
-                                && state.evidence_demands == 0
-                                && state.revisions < self.config.max_revisions
-                                && let Some(cmd) = effective_cmd
+                            // Ask for the missing evidence once, if asking can
+                            // be answered at all (#1295 — the predicate states
+                            // why `effective_cmd` decides that).
+                            if evidence_demand_is_worth_a_turn(
+                                &self.config,
+                                state.evidence_demands,
+                                state.revisions,
+                                effective_cmd.map(|cmd| cmd.command),
+                            ) && let Some(cmd) = effective_cmd
                             {
                                 state.evidence_demands += 1;
                                 let ask = crate::verify::evidence_demand_prompt(cmd.command);
@@ -2714,12 +2697,11 @@ impl<'a> Pipeline<'a> {
                                     return CandidateResult::aborted(state.messages, reason);
                                 }
                                 // Re-observe from the top: the revised tree
-                                // gets a fresh test run, and the ladder
-                                // re-decides over it. A turn that produced
-                                // the evidence now takes a deterministic
-                                // rung; one that did not lands back here with
-                                // `evidence_demands` spent and is relabelled
-                                // below.
+                                // gets a fresh test run and the ladder
+                                // re-decides over it. A turn that produced the
+                                // evidence now takes a deterministic rung; one
+                                // that did not lands back here with the ask
+                                // spent, and is relabelled below.
                                 continue;
                             }
                             // No answerable ask left — record the pass as

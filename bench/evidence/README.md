@@ -30,6 +30,16 @@ tests/                    what keeps the two of them honest
 |---|---|---|
 | [`tb21-hh10-20260731`](tb21-hh10-20260731/) | Matched head-to-head, native x86_64 host, `glm-5.2`, effort `max`, no budget cap | Stella **58/89 = 65.2%** · Claude Code **44/89 = 49.4%** |
 
+### Investigations in here
+
+Not runs — a directory that carries a question, the harness that answers it, and
+what is known so far. Listed apart from the table above because none of them
+produces a pass rate, and a reader scanning for one must not find these.
+
+| Investigation | Question | State |
+|---|---|---|
+| [`judge-evidence-demand-1295`](judge-evidence-demand-1295/) | How often is a model judge's pass the only thing behind a turn, and is asking for corroboration worth a turn? | Precondition measured from committed evidence; the two-arm run is scripted but **unrun** (no funded credential) |
+
 Reproducing a published number needs only that run directory:
 
 ```bash
