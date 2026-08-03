@@ -35,6 +35,7 @@ skip the roll) were re-inserted the same way.
 
 ## [Unreleased]
 
+## [0.6.81] — 2026-08-03
 ### Removed
 
 - **The `bash` sandbox is gone (#1300).** `STELLA_BASH_SANDBOX` —
