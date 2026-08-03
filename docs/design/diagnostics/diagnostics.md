@@ -443,8 +443,7 @@ it, docs link it, and it outlives the message text.
 `docs/reference/diagnostics.md` is **generated** from the facet registry by a
 `make` target, one section per code: what it means, what fields it carries, what
 to do about it. `scripts/check-diagnostic-codes.sh` fails the gate on an
-undocumented code, a duplicated code, or a documented code no longer emitted —
-reusing `check-doc-citations.sh`'s shape.
+undocumented code, a duplicated code, or a documented code no longer emitted.
 
 Very few projects treat log codes as a versioned surface. It is the difference
 between a log an operator greps and a log an operator can build on, and it is

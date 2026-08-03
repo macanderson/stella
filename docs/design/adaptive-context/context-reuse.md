@@ -1,6 +1,7 @@
 # Context reuse: identity, accounting, consent, and verification
 
-<!-- NORMATIVE-HOME: macanderson/context-graph-protocol @ c5fb2fe (contextgraph/1.0-draft) -->
+*Normative home: the [Context Graph Protocol](https://github.com/macanderson/context-graph-protocol/tree/c5fb2fe)
+(`contextgraph/1.0-draft`).*
 
 <!--
   VENDORED — do not edit this copy.
@@ -11,14 +12,14 @@
   This is the normative contract cited by 23 rustdoc comments across five
   crates (stella-cli, stella-context, stella-graph, stella-pipeline,
   stella-protocol). It lived only upstream, so every one of those citations
-  dangled: `cargo doc` rendered them as plain text and nothing could check
-  them. Vendoring makes them resolve offline and lets
-  scripts/check-doc-citations.sh verify both the path and the cited section.
+  dangled: `cargo doc` rendered them as plain text. Vendoring makes them
+  resolve offline for a reader working without a network.
 
-  The NORMATIVE-HOME pin above is enforced by scripts/check-normative-home.sh
-  against the contextgraph-* git rev in stella-cli/Cargo.toml, so this copy
-  cannot silently drift from the revision the workspace compiles against. To
-  re-sync when that pin moves, bump the manifests and re-fetch:
+  Nothing checks this copy against upstream. The two guards that used to —
+  check-normative-home.sh and check-doc-citations.sh — were retired when doc
+  citations moved to public-docs paths and upstream URLs, so keeping this file
+  honest is a review responsibility, not a CI one. To re-sync, bump the
+  manifests and re-fetch:
 
       gh api "repos/macanderson/context-graph-protocol/contents/docs/context-reuse.md?ref=<rev>" \
         --jq .content | base64 -d
@@ -38,17 +39,15 @@
 
   A second caveat used to live here and is now resolved: the intro numbered four
   guarantees while the document shipped only §1, §2 and §4, so a rustdoc comment
-  citing §3 (consent scopes and receipts) failed check-doc-citations.sh. §3 is
-  written upstream as of this rev and the body below carries it, so §3 citations
-  now resolve like any other.
+  citing §3 (consent scopes and receipts) pointed at a section that did not
+  exist. §3 is written upstream as of this rev and the body below carries it.
 
-  WARNING — re-vendor the BODY when you bump the pin, not just the header.
-  check-normative-home.sh compares the pinned sha against the manifests; it
-  cannot tell whether these bytes came from that sha. Bumping the pin alone
-  leaves a copy that *claims* a rev it does not match, and the guard goes green.
-  That is exactly how this file spent a commit pinned at one rev with another
-  rev's body — §3 existed upstream and was missing here. Re-fetch with the
-  command above (or `git show <rev>:docs/context-reuse.md` from a checkout),
+  WARNING — re-vendor the BODY when you bump the rev, not just the header.
+  Nothing compares these bytes against the sha they claim. Bumping the header
+  alone leaves a copy that *claims* a rev it does not match, and no check will
+  say so. That is exactly how this file spent a commit pinned at one rev with
+  another rev's body — §3 existed upstream and was missing here. Re-fetch with
+  the command above (or `git show <rev>:docs/context-reuse.md` from a checkout),
   keeping this header and replacing everything below it.
 -->
 

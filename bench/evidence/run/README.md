@@ -49,6 +49,28 @@ bench/evidence/run/primary.sh A "<job-name>-phaseA"
 bench/evidence/run/finalize.sh "<run-id>" "<job-name>"
 ```
 
+## Running the two arms of an A/B instead
+
+`witness_ab.sh` replaces step 5 when the run is a paired experiment rather than
+a score — currently the authored-witness A/B (#1284), whose protocol,
+preregistered analysis plan and decision rule are in
+[`../witness-ab/`](../witness-ab/). It takes the arm as an argument rather than
+reading it out of the ambient environment, pins the task list so both arms
+cannot drift apart, and refuses an unusable witness author on the host before a
+container exists:
+
+```bash
+export STELLA_WITNESS_AUTHOR_MODEL=openrouter/deepseek/deepseek-v4-pro
+bench/evidence/run/witness_ab.sh off "<job>-off"
+bench/evidence/run/witness_ab.sh on  "<job>-on"
+```
+
+Finalize each arm into its own evidence directory, then compare them with
+`../compare_arms.py`. Finalize the control arm under
+`env -u STELLA_WITNESS_AUTHOR_MODEL`: the author stays exported across both
+arms, and a manifest that names one the arm did not run with is a mislabeled
+arm (`make_manifest.py` refuses it rather than recording it).
+
 ## The SUT binary must be the portable build
 
 `build_sut.sh` cross-compiles against `x86_64-unknown-linux-gnu.2.17` via

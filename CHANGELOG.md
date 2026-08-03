@@ -35,6 +35,23 @@ skip the roll) were re-inserted the same way.
 
 ## [Unreleased]
 
+### Added
+
+- Bedrock is now a first-class provider everywhere the credential chain reaches,
+  not only in a shell with the standard AWS variables exported. `stella auth set
+  bedrock` stores the whole set — access key id, secret access key, optional
+  session token, and region — in `~/.stella/credentials.toml` (new
+  `[credential_fields.<provider>]` section), prompting for each or accepting
+  `--field NAME=VALUE`. `stella auth list` shows which companion values a
+  provider has stored, by name; `stella auth remove` takes them with it.
+- Secure benchmark runs can use Bedrock (#1301). The launcher's credential
+  handover carries a set of secrets instead of exactly one, still over a single
+  unlinked owner-only descriptor that never touches disk or the environment, and
+  the region rides beside it as disclosed routing rather than as a secret. Which
+  AWS credential sources are supported — and which are deliberately excluded
+  (profile files, SSO, IMDS/container roles, web-identity tokens) — is documented
+  in `bench/harbor_adapter/README.md`.
+
 ### Changed
 
 - When a model judge passes a turn and **nothing deterministic backs it up** —
@@ -48,6 +65,46 @@ skip the roll) were re-inserted the same way.
   paid from the existing `max_revisions` budget. Turn it off with
   `agent_engine_config.pipeline_judge_evidence_demand = "off"`; the measurement
   and its limits are in `bench/evidence/judge-evidence-demand-1295/`.
+
+### Fixed
+
+- Auto-detection no longer selects Bedrock when only `AWS_ACCESS_KEY_ID` is set.
+  A shell carrying an unrelated AWS key used to launch a provider that then died
+  with a SigV4 error; it now falls through to the first-run message naming
+  providers that can actually run. `--model bedrock/…` still pins it explicitly
+  and reports the named missing-credential error.
+
+## [0.6.81] — 2026-08-03
+### Removed
+
+- **The `bash` sandbox is gone (#1300).** `STELLA_BASH_SANDBOX` —
+  `workspace-write` / `restricted`, backed by `sandbox-exec` (Seatbelt) on
+  macOS and `bwrap` (bubblewrap) on Linux — has been removed along with
+  `stella-tools/src/sandbox.rs`. **The variable is now inert:** it is read
+  nowhere, so a value left in a shell profile, CI job, or service unit does
+  nothing and warns about nothing. Setting it no longer fails a tool call
+  either — an unrecognized value used to be an error, and now it is ignored
+  like any other unused variable.
+
+  It confined the `bash` tool and nothing else. `build_project` and
+  `run_tests` (via `command`), `verify_done` (via `test_cmd`), `run_script`,
+  `start_process`, the `repo_*` and `ci_status` `git`/`gh` invocations, custom
+  manifest tools, and hook actions all spawned around it and always ran
+  unconfined — so "sandbox: on" read as a bound on the session while
+  delivering a bound on one tool. A half-boundary people rely on is worse than
+  a clearly absent one, which is the whole reason this is a removal and not an
+  extension.
+
+  **If you were relying on it:** run the whole `stella` process inside a
+  container (Docker, Podman, or a remote sandbox) and mount only the
+  repository you want the agent to touch. That boundary sits outside every
+  spawn path instead of on one of them, so no tool can route around it. Add
+  `--network none` for the equivalent of `restricted`, with the same cost it
+  always had — no model provider, no dependency fetches, no `git push`. See
+  [Permissions](https://stella.oxagen.sh/docs/agent-tools/permissions) and
+  `docs/design/remote-sandboxes.md`. Nothing else changes: `bash` already ran
+  unconfined by default, and the `command.started` policy chain still gates
+  every model-authored command line before it spawns.
 
 ## [0.6.80] — 2026-08-03
 

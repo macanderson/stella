@@ -464,6 +464,7 @@ fn pin_role(
         entry.api_key.clone(),
         entry.config.base_url.to_string(),
         None,
+        entry.aux.clone(),
     ) {
         Ok(provider) => {
             for &role in roles {
@@ -744,6 +745,7 @@ pub(crate) fn build_provider(cfg: &Config) -> Result<Box<dyn Provider>, String> 
         cfg.api_key.clone(),
         cfg.effective_base_url().to_string(),
         cfg.base_url_override.as_deref(),
+        cfg.aux_credentials.clone(),
     )
 }
 
@@ -754,7 +756,10 @@ pub(crate) fn build_provider(cfg: &Config) -> Result<Box<dyn Provider>, String> 
 /// catalog check — live in exactly one place. `effective_base_url` is the
 /// base URL requests go to (override-or-default); `base_url_override` is the
 /// raw `--base-url`, which only the Vertex/Bedrock arms consume (they build
-/// region/project-scoped URLs themselves).
+/// region/project-scoped URLs themselves). `aux` carries whatever the provider
+/// needs beyond one key — Bedrock's AWS secret access key, optional session
+/// token, and region — already resolved through the credential chain by
+/// `config::aux::provider_aux`; empty for every other provider.
 ///
 /// The catalog is consulted first (provider-scoped, since the same slug
 /// legitimately exists on several providers — `gemini-3-pro` on both `gemini`
@@ -778,6 +783,7 @@ fn build_provider_parts(
     api_key: ApiKey,
     effective_base_url: String,
     base_url_override: Option<&str>,
+    aux: stella_model::AuxCredentials,
 ) -> Result<Box<dyn Provider>, String> {
     // The full anti-invalid-slug ladder, for EVERY provider (not just seeded
     // ones): the seed floor always passes; a provider whose master-list rows
@@ -814,6 +820,7 @@ fn build_provider_parts(
         api_key,
         effective_base_url,
         base_url_override,
+        aux,
     ))
     .map_err(|error| error.to_string())
 }
@@ -902,6 +909,7 @@ pub(crate) fn resolve_cross_family_judge(
         entry.api_key.clone(),
         entry.config.base_url.to_string(),
         None,
+        entry.aux.clone(),
     )
     .ok()?;
     Some((judge, decision.model_ref.provider))

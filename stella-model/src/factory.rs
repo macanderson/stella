@@ -141,6 +141,13 @@ pub fn check_seed_floor(spec: &ProviderSpec<'_>, model_id: &str) -> Result<(), S
 /// `base_url_override` is the raw `--base-url`, which only the Vertex/Bedrock
 /// arms consume (they build region/project-scoped URLs themselves).
 ///
+/// `aux` carries the values a provider needs *beyond* `api_key`, already
+/// resolved through whatever chain the host owns — Bedrock's AWS secret
+/// access key, optional session token, and region today; empty for every
+/// other dialect. An empty set is not an error: the Bedrock arm falls back to
+/// the standard AWS environment variables, which is exactly what it did
+/// before hosts could resolve them.
+///
 /// Runs [`check_seed_floor`] first — no caller can skip the anti-phantom-slug
 /// floor by going through this function.
 pub fn build_provider(
@@ -149,6 +156,7 @@ pub fn build_provider(
     api_key: ApiKey,
     effective_base_url: String,
     base_url_override: Option<&str>,
+    aux: &crate::credential::AuxCredentials,
 ) -> Result<Box<dyn Provider>, String> {
     check_seed_floor(spec, model_id)?;
 
@@ -189,11 +197,12 @@ pub fn build_provider(
         }
         Dialect::Bedrock => {
             // `api_key` is AWS_ACCESS_KEY_ID via the credential chain; the rest
-            // of the standard AWS env set is resolved by `crate::credential`,
-            // alongside the adapter that needs it. A missing secret is a named
-            // error pointing at the exact var, not a doomed unsigned request.
-            let aws =
-                crate::credential::BedrockCredentials::resolve().map_err(|e| e.to_string())?;
+            // of the standard AWS set arrives in `aux` when the host resolved
+            // it through that same chain, and falls back to the environment
+            // when it did not. A missing secret is a named error pointing at
+            // the exact var, not a doomed unsigned request.
+            let aws = crate::credential::BedrockCredentials::resolve_with(aux)
+                .map_err(|e| e.to_string())?;
             let mut provider = crate::bedrock::BedrockProvider::new(
                 api_key,
                 aws.secret_access_key,
@@ -240,6 +249,7 @@ pub fn build_provider(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::credential::AuxCredentials;
 
     fn spec(id: &'static str, dialect: Dialect, seeded: bool) -> ProviderSpec<'static> {
         ProviderSpec {
@@ -275,6 +285,7 @@ mod tests {
                 key(),
                 "https://example.invalid".to_string(),
                 None,
+                &AuxCredentials::default(),
             )
             .unwrap_or_else(|e| panic!("{id}/{slug} should construct: {e}"));
             assert_eq!(&provider.id(), want_id, "{id} adapter reports a wrong id");
@@ -291,6 +302,7 @@ mod tests {
                 key(),
                 "https://example.invalid".to_string(),
                 None,
+                &AuxCredentials::default(),
             )
             .expect("openai-compatible arm constructs for any slug when unseeded");
             assert_eq!(provider.id(), id);
@@ -307,12 +319,62 @@ mod tests {
             key(),
             "https://example.invalid".to_string(),
             None,
+            &AuxCredentials::default(),
         ) else {
             panic!("a phantom slug must not construct a provider");
         };
         assert!(
             err.contains("claude-does-not-exist-9"),
             "the error must name the rejected slug, got: {err}"
+        );
+    }
+
+    #[test]
+    fn bedrock_builds_from_host_resolved_aux_values_without_reading_the_environment() {
+        // The whole point of the aux seam: a sealed process (benchmark claim
+        // mode) has no AWS variables at all, so a Bedrock adapter that could
+        // only read the environment could never be constructed there.
+        let mut aux = AuxCredentials::new();
+        aux.insert("AWS_SECRET_ACCESS_KEY", "aws-secret-from-the-host-chain");
+        aux.insert("AWS_REGION", "eu-central-1");
+
+        let provider = build_provider(
+            &spec("bedrock", Dialect::Bedrock, true),
+            "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            key(),
+            "https://example.invalid".to_string(),
+            None,
+            &aux,
+        )
+        .expect("bedrock constructs from host-resolved aux credentials");
+        assert_eq!(provider.id(), "bedrock");
+    }
+
+    #[test]
+    fn bedrock_without_a_secret_anywhere_is_a_named_error_not_an_unsigned_request() {
+        // No aux secret and (under the test harness) no AWS_SECRET_ACCESS_KEY:
+        // the failure must name the variable rather than construct an adapter
+        // that signs nothing and 403s on its first call.
+        //
+        // Guarded on the environment actually being clean — a developer with
+        // real AWS credentials exported would otherwise see this fail for a
+        // reason that has nothing to do with the code.
+        if std::env::var_os("AWS_SECRET_ACCESS_KEY").is_some() {
+            return;
+        }
+        let Err(err) = build_provider(
+            &spec("bedrock", Dialect::Bedrock, true),
+            "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            key(),
+            "https://example.invalid".to_string(),
+            None,
+            &AuxCredentials::default(),
+        ) else {
+            panic!("bedrock must not construct without a secret access key");
+        };
+        assert!(
+            err.contains("AWS_SECRET_ACCESS_KEY"),
+            "the error must name the missing variable, got: {err}"
         );
     }
 

@@ -763,6 +763,104 @@ class TestWitnessStreamObservation:
         assert envelope["_stella_stream"]["proof_step_counts"] == {}
 
 
+class TestSelfVerdictStreamObservation:
+    """What Stella claimed about its own work, beside what it was graded.
+
+    The A/B in #1284 turns on comparing the two. Stella's claim is a
+    `judge_verdict` event and the grade is the verifier's reward, which the
+    agent never sees — so a trial is the only place they meet, and the event
+    stream is the only place the claim exists.
+    """
+
+    @staticmethod
+    def _stream(*events: dict) -> dict:
+        envelope = _stream_to_envelope(
+            "\n".join(json.dumps(event) for event in events), process_returned=True
+        )
+        assert envelope is not None
+        return envelope["_stella_stream"]
+
+    def test_a_model_opinion_and_a_flip_oracle_are_told_apart(self) -> None:
+        """`deterministic` is the difference between two instruments.
+
+        #1284 measures the *judge's* agreement with the official grader.
+        Folding an oracle verdict in under the same name reports the ladder's
+        aggregate as the judge's reliability.
+        """
+        opinion = self._stream(
+            {
+                "type": "judge_verdict",
+                "passed": True,
+                "evidence": {"summary": "looks right", "deterministic": False},
+            },
+            {"type": "complete", "status": "completed", "cost_usd": 0.5},
+        )
+        assert opinion["self_verdict_passed"] is True
+        assert opinion["self_verdict_state"] == "passed"
+        assert opinion["self_verdict_deterministic"] is False
+
+        oracle = self._stream(
+            {
+                "type": "judge_verdict",
+                "passed": True,
+                "evidence": {
+                    "summary": "flip oracle: fail→pass on `pytest -q`",
+                    "deterministic": True,
+                },
+            },
+            {"type": "complete", "status": "completed", "cost_usd": 0.5},
+        )
+        assert oracle["self_verdict_deterministic"] is True
+
+    def test_the_last_verdict_is_the_one_the_trial_ended_on(self) -> None:
+        """A revised candidate is judged again; the reward grades the last one."""
+        stream = self._stream(
+            {
+                "type": "judge_verdict",
+                "passed": False,
+                "evidence": {"summary": "test still red", "deterministic": True},
+            },
+            {
+                "type": "judge_verdict",
+                "passed": True,
+                "evidence": {"summary": "flip observed", "deterministic": True},
+            },
+            {"type": "complete", "status": "completed", "cost_usd": 0.5},
+        )
+        assert stream["self_verdict_passed"] is True
+        assert stream["self_verdict_count"] == 2
+
+    def test_a_trial_that_closed_no_verdict_claimed_nothing(self) -> None:
+        """Silence is not a failed verdict.
+
+        An interrupted trial made no claim about its work, and scoring that as
+        a truthful "it failed" credits the agent with honesty it never showed —
+        on exactly the trials most likely to be re-read.
+        """
+        stream = self._stream(
+            {"type": "complete", "status": "completed", "cost_usd": 0.5}
+        )
+        assert stream["self_verdict_passed"] is None
+        assert stream["self_verdict_state"] == "not_reported"
+        assert stream["self_verdict_deterministic"] is None
+        assert stream["self_verdict_count"] == 0
+
+    def test_an_abstention_is_counted_and_is_not_a_verdict(self) -> None:
+        """#973: every evidence channel blind is a stated outcome of its own."""
+        stream = self._stream(
+            {
+                "type": "proof",
+                "step": {
+                    "kind": "verification_unavailable",
+                    "reason": "no oracle, no test result, unreadable tree",
+                },
+            },
+            {"type": "complete", "status": "completed", "cost_usd": 0.5},
+        )
+        assert stream["verification_unavailable_count"] == 1
+        assert stream["self_verdict_state"] == "not_reported"
+
+
 class TestWitnessArmEndToEnd:
     """Env knob -> posture -> container -> trial metadata."""
 
@@ -865,6 +963,11 @@ class TestWitnessArmEndToEnd:
                 "type": "proof",
                 "step": {"kind": "witness_unavailable", "reason": reason},
             },
+            {
+                "type": "judge_verdict",
+                "passed": True,
+                "evidence": {"summary": "reads correct", "deterministic": False},
+            },
             {"type": "complete", "status": "completed", "cost_usd": 0.42},
         ]
         (tmp_path / "stella-events.jsonl").write_text(
@@ -896,6 +999,12 @@ class TestWitnessArmEndToEnd:
         assert context.metadata["stella_stream"]["witness_unavailable_reasons"] == [
             reason
         ]
+        # The control arm's whole shape, in one trial: no witness could be
+        # authored, and a model judge — the worker's own model — declared the
+        # work done anyway. Whether the grader agreed is the comparison #1284
+        # runs, and it needs this field to be a field.
+        assert context.metadata["stella_self_verdict_state"] == "passed"
+        assert context.metadata["stella_stream"]["self_verdict_deterministic"] is False
 
 
 _CATALOG_RS = (

@@ -440,7 +440,7 @@ fn pre_dotenv_snapshot_restores_every_privileged_control_and_credential_ref() {
     let names = [
         "STELLA_DATA_DIR",
         "STELLA_TRUST_PROJECT",
-        "STELLA_BASH_SANDBOX",
+        "STELLA_PROJECT_HOOKS",
         "STELLA_SKILLS_SEARCH_CMD",
         "HTTPS_PROXY",
         "STELLA_TEST_VERIFY_SECRET",

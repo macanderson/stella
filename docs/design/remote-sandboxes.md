@@ -7,11 +7,13 @@ file or a type that exists today (`stella-tools/src/registry.rs`,
 state being generalized; where it names the `Sandbox` trait, its two
 implementations, or the provider protocol, that is new surface to build.
 
-**This document also proposes deleting `stella-tools/src/sandbox.rs`** —
-the opt-in Seatbelt/bubblewrap confinement that today wraps the `bash`
-tool and nothing else. §2 makes that case from the module's own
-documentation and from `threat-model.md`, and §12 sequences the removal
-behind its replacement.
+**This document also proposed deleting `stella-tools/src/sandbox.rs`** —
+the opt-in Seatbelt/bubblewrap confinement that wrapped the `bash` tool
+and nothing else. §2 makes that case from the module's own documentation
+and from `threat-model.md`. **That deletion has landed (#1300);** it is
+the one part of this document that is built. It landed *ahead of* the
+replacement §12 sequenced it behind — see the note in §12 for what that
+costs and what fills the gap in the meantime.
 
 ---
 
@@ -45,12 +47,14 @@ that maps each design decision back to the invariant it protects.
 
 ## 2. Delete the local sandbox; isolation becomes structural
 
-`stella-tools/src/sandbox.rs` exists today and appears to occupy this
-space. **It should be deleted, not generalized.** The case is short, and
-it is made almost entirely out of the module's own documentation and the
-project's own threat model.
+`stella-tools/src/sandbox.rs` appeared to occupy this space. **It should
+be deleted, not generalized** — and it has been, in #1300. The case is
+short, and it is made almost entirely out of the module's own
+documentation and the project's own threat model. It is kept here in the
+present tense because it is the argument, and because the rest of this
+document builds on it.
 
-What it is: `SandboxMode` = `off | workspace-write | restricted`, lowered
+What it was: `SandboxMode` = `off | workspace-write | restricted`, lowered
 to a Seatbelt SBPL profile on macOS and a `bwrap` argv on Linux. It is
 read from **one environment variable** (`STELLA_BASH_SANDBOX`) at
 **exactly one call site** (`bash.rs`). No `Settings` field, no config
@@ -633,10 +637,21 @@ separately-reviewable changes (§12).
 
 ## 12. Phasing
 
-The ordering constraint that matters: **the seatbelt path is not deleted
+The ordering constraint that mattered: **the seatbelt path is not deleted
 until a replacement ships.** Phase 3 removes it, Phase 2 provides
-`docker`. Landing them in the other order would leave a release where
-local isolation is simply gone.
+`docker`. Landing them in the other order leaves a release where local
+isolation is simply gone.
+
+> **The ordering was not held.** #1300 landed Phase 3 first, on the
+> maintainer's call, with Phases 0–2 unbuilt. The reasoning is in the
+> issue: a partial boundary people rely on is worse than an absent one,
+> so the overstatement was worth removing immediately rather than
+> carrying until a replacement existed. The cost is exactly what this
+> paragraph predicted — until Phase 2 lands there is no `location =`
+> knob, and the answer for a user who wants local isolation is to run
+> `stella` inside a container they start themselves (`docs` and
+> `permissions.mdx` say so plainly). Phases 0–2 below are unchanged and
+> still the plan; Phase 3 is done.
 
 - **Phase 0 — the refactor, alone.** `Sandbox` trait plus `LocalSandbox`;
   `Tool::execute` takes `&dyn Sandbox` instead of `&Path`. No protocol,
@@ -653,10 +668,11 @@ local isolation is simply gone.
   `release`, seeding and harvesting, session binding and resume, the deck
   chip, the `stella sandbox` command surface, and the **`docker`
   provider** (§7.1) — the replacement that Phase 3 depends on.
-- **Phase 3 — remove `sandbox.rs`.** The deletion in §2.4, as its own
-  reviewable change, with the release note and the `permissions.mdx`
-  migration line. Deliberately *after* Phase 2, and deliberately not
-  bundled with a refactor, so it can be judged and reverted on its own.
+- **Phase 3 — remove `sandbox.rs`. ✅ Landed (#1300).** The deletion in
+  §2.4, as its own reviewable change, with the release note and the
+  `permissions.mdx` migration line. It was *not* bundled with a refactor,
+  so it can still be judged and reverted on its own — but it shipped
+  before Phase 2 rather than after it (see the note above).
 - **Phase 4 — concurrency.** Adapter multiplexing, fleet integration,
   limits and cost guards.
 - **Phase 5 — vendors.** Reference Modal and E2B adapters published

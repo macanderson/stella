@@ -36,6 +36,15 @@ print(f"reward={reward} stella_status={md.get('stella_status')} "
       f"binary_verified={md.get('stella_binary_sha256_verified_in_container')} "
       f"commit_verified={md.get('stella_source_commit_verified_in_binary')} "
       f"exception={(r.get('exception_info') or {}).get('exception_type')}")
+# Which verification arm this trial ran, and what its ladder actually reached.
+# Reported rather than gated: on a witness-arm sentinel `witness=authored` is
+# the cheapest possible proof that the tier fires before 89 trials depend on it
+# (#1284), but a warrant that decided this task needed no new test is a
+# legitimate `not_reported`, and failing on it would be a false gate.
+print(f"arm={md.get('stella_assurance_arm')} "
+      f"author={md.get('stella_witness_author_model')} "
+      f"witness={md.get('stella_witness_authored_state')} "
+      f"self_verdict={md.get('stella_self_verdict_state')}")
 # NOTE: while #960 stands, an AgentTimeoutError accompanies even a perfect
 # trial, so the gate is the reward and the in-container verifications — not the
 # absence of an exception, which the audited protocol additionally requires.
