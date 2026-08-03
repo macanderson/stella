@@ -4377,7 +4377,7 @@ async fn run_lead_pipeline_turn(
             // a run with *nobody to ask* proceed, and this run has someone.
             headless: false,
             headless_bypass_scope_review: false,
-            ..PipelineConfig::default()
+            ..agent::apply_pipeline_tuning(cfg, PipelineConfig::default())
         };
         let pipeline = Pipeline::new(ports, tx.clone(), config);
         pipeline.run(prompt, messages, budget).await

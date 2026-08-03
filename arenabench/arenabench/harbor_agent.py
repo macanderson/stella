@@ -52,6 +52,8 @@ _ENGINE_ROOT_FIELDS = frozenset(
         "effort_auto",
         "reasoning_auto",
         "headless_scope_bypass",
+        "pipeline_max_revisions",
+        "pipeline_candidates",
         "agents",
     }
 )

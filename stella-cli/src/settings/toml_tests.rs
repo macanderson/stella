@@ -39,6 +39,8 @@ fn a_toml_config_and_its_json_equivalent_produce_identical_settings() {
             "auto_mode": "off",
             "effort_auto": "on",
             "headless_scope_bypass": "off",
+            "pipeline_max_revisions": 4,
+            "pipeline_candidates": 2,
             "agents": {
               "judge": {
                 "provider": "openrouter",
@@ -86,6 +88,8 @@ pipeline_judge_model = "openrouter/openai/gpt-5.5"
 auto_mode = "off"
 effort_auto = "on"
 headless_scope_bypass = "off"
+pipeline_max_revisions = 4
+pipeline_candidates = 2
 
 [agents.judge]
 provider = "openrouter"

@@ -85,7 +85,9 @@ from .git_baseline import run_git_baseline
 from .portability import raise_for_loader_failure
 from .posture import (
     _ASSURANCE_TIERS_VERSION,
+    _CANDIDATES_ENV,
     _ENGINE_POSTURE_VERSION,
+    _MAX_REVISIONS_ENV,
     _TRIAGE_MODEL_ENV,
     _WITNESS_AUTHOR_ENV,
     _WORKER_EFFORT_ENV,
@@ -93,6 +95,8 @@ from .posture import (
     _benchmark_assurance_tiers,
     _benchmark_engine_posture,
     fold_witness_observations,
+    resolve_candidates,
+    resolve_max_revisions,
     resolve_triage_model,
     resolve_worker_effort,
 )
@@ -235,6 +239,13 @@ _HOST_ONLY_STELLA_ENV = frozenset(
         # unlisted `STELLA_TURN_BUDGET` killed all ten trials of a run.
         _WORKER_EFFORT_ENV,
         _TRIAGE_MODEL_ENV,
+        # The attempt-count selectors (#1211 §6.7, §6.8). Same bucket and same
+        # reason as the three above: read on the host, expressed only inside
+        # the hashed posture, never forwarded into the container. Registering
+        # them is the load-bearing half — the ambient check fails closed, so an
+        # unlisted selector refuses the run instead of enabling the arm.
+        _MAX_REVISIONS_ENV,
+        _CANDIDATES_ENV,
         # The portability target triple and glibc floor (#1018). `env.sh` exports
         # both so `build_sut.sh` builds to the same floor `preflight` asserts
         # against — keeping them apart is what let a glibc-2.35 binary reach five
@@ -1649,11 +1660,11 @@ class StellaAgent(BaseInstalledAgent):
 
         The base implementation is the frozen benchmark posture and must stay
         that way: a claim run's posture is part of its identity. The worker
-        effort and triage author are resolved here rather than at the call
-        site so the exec boundary, which recomputes through this same bound
-        method, resolves them identically — a selected arm must produce the
-        same posture at collection and at the process boundary or the run is
-        refused.
+        effort, triage author and attempt counts are resolved here rather than
+        at the call site so the exec boundary, which recomputes through this
+        same bound method, resolves them identically — a selected arm must
+        produce the same posture at collection and at the process boundary or
+        the run is refused.
         """
         return _benchmark_engine_posture(
             model,
@@ -1664,6 +1675,10 @@ class StellaAgent(BaseInstalledAgent):
             triage_model=resolve_triage_model(
                 self._configured_value(_TRIAGE_MODEL_ENV)
             ),
+            max_revisions=resolve_max_revisions(
+                self._configured_value(_MAX_REVISIONS_ENV)
+            ),
+            candidates=resolve_candidates(self._configured_value(_CANDIDATES_ENV)),
         )
 
     def _witness_author_model(self) -> str | None:

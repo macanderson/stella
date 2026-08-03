@@ -632,6 +632,56 @@ fn the_trusted_control_arm_posture_does_not_arm_the_witness_refusal() {
     );
 }
 
+/// Before #1211 §6.7/§6.8 these two knobs had no writer outside the pipeline's
+/// own tests: `max_revisions` was set once, to `2`, and `candidates` once, to
+/// `None`. Best-of-N was fully implemented and had never run in production —
+/// not disabled by policy, just unreachable. This is the writer.
+#[test]
+fn the_attempt_count_settings_reach_the_pipeline_config() {
+    let mut cfg = cfg_with_engine(
+        "anthropic",
+        r#"{ "default_model": "anthropic/claude-sonnet-5",
+             "pipeline_max_revisions": 4,
+             "pipeline_candidates": 2 }"#,
+    );
+    cfg.model_id = "claude-sonnet-5".to_string();
+    let worker_ref = ModelRef::new("anthropic", "claude-sonnet-5");
+
+    let config = pipeline_config_for_approval_capability(
+        &cfg,
+        PipelineApprovalCapability::Unavailable,
+        None,
+        &worker_ref,
+    );
+    assert_eq!(config.max_revisions, 4);
+    assert_eq!(config.candidates, Some(2));
+}
+
+/// Absent keys must leave the pipeline's OWN defaults in place rather than
+/// restating them here. Asserted against `PipelineConfig::default()` instead of
+/// against the literals `2`/`None`, so the day the pipeline changes its mind
+/// this test follows it — a hard-coded expectation would instead pin the CLI to
+/// a default the pipeline had already abandoned.
+#[test]
+fn absent_attempt_count_settings_leave_the_pipeline_defaults_alone() {
+    let mut cfg = cfg_with_engine(
+        "anthropic",
+        r#"{ "default_model": "anthropic/claude-sonnet-5" }"#,
+    );
+    cfg.model_id = "claude-sonnet-5".to_string();
+    let worker_ref = ModelRef::new("anthropic", "claude-sonnet-5");
+
+    let config = pipeline_config_for_approval_capability(
+        &cfg,
+        PipelineApprovalCapability::Unavailable,
+        None,
+        &worker_ref,
+    );
+    let defaults = stella_pipeline::PipelineConfig::default();
+    assert_eq!(config.max_revisions, defaults.max_revisions);
+    assert_eq!(config.candidates, defaults.candidates);
+}
+
 #[test]
 fn the_models_own_output_ceiling_replaces_the_global_default() {
     // `EngineConfig::default()` carries one `max_output_tokens` (16384) for
