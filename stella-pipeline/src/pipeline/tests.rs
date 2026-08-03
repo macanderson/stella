@@ -1580,11 +1580,18 @@ async fn witness_authored_command_arms_the_flip_oracle_and_submits_fast() {
 /// bought a plan, an authored witness, and a judge no matter what triage said.
 /// An independent judge model IS available here, so a skipped witness proves
 /// triage's call was honored rather than independence being unavailable.
+///
+/// The judge is the one ceremony triage does NOT get to decline outright: its
+/// `JUDGE: no` was a prompt-time guess, this fixture's diff is behavioral, and
+/// nothing proved it — so the waiver does not stand (`judge_waiver_stands`)
+/// and the reviewer runs. Cheaper-than-the-floor still holds: no plan turn,
+/// no witness author, no baseline runs.
 #[tokio::test]
 async fn triage_can_route_work_onto_a_cheaper_path_than_the_keyword_floor() {
     let provider = ScriptedProvider::new(vec![
         text_result("CLASS: single\nWITNESS: no\nJUDGE: no"),
         text_result("done"),
+        text_result("PASS looks right"),
     ]);
     let (outcome, events, _) = run_unisolated_with_router(
         &provider,
@@ -1607,12 +1614,18 @@ async fn triage_can_route_work_onto_a_cheaper_path_than_the_keyword_floor() {
         !s.contains(&StageKind::Witness),
         "triage said no witness: {s:?}"
     );
-    // Two paid calls: triage and the worker. No witness author, no judge.
+    assert!(
+        s.contains(&StageKind::Judge),
+        "a behavioral diff keeps its reviewer, whatever triage guessed: {s:?}"
+    );
+    // Three paid calls: triage, the worker, and the judge the evidence
+    // demanded. The plan and witness-author ceremony triage declined is
+    // never bought.
     let calls = events
         .iter()
         .filter(|e| matches!(e, AgentEvent::StepUsage { .. }))
         .count();
-    assert_eq!(calls, 2, "ceremony triage declined is never bought: {s:?}");
+    assert_eq!(calls, 3, "no plan or witness-author call is bought: {s:?}");
 }
 
 /// The observed failure, end to end at the seam that actually decides it.
@@ -1628,6 +1641,9 @@ async fn a_chat_classification_on_a_files_request_still_reaches_execute() {
     let provider = ScriptedProvider::new(vec![
         text_result("CLASS: chat\nWITNESS: no\nJUDGE: no"),
         text_result("done"),
+        // The zero-diff guard revokes the lookup's judge-skip and the diff is
+        // behavioral, so the `JUDGE: no` waiver does not stand.
+        text_result("PASS looks right"),
     ]);
     let (outcome, events, _) = run_unisolated_with_router(
         &provider,
@@ -1659,6 +1675,8 @@ async fn headless_runs_ignore_a_model_chat_call_and_reach_execute() {
     let provider = ScriptedProvider::new(vec![
         text_result("CLASS: chat\nWITNESS: no\nJUDGE: no"),
         text_result("done"),
+        // Behavioral diff → the `JUDGE: no` waiver does not stand.
+        text_result("PASS looks right"),
     ]);
     let (outcome, events, _) = run_unisolated_with_router(
         &provider,
@@ -1927,11 +1945,14 @@ async fn run_isolated(
 /// execution on the working tree — not end the turn having done nothing.
 #[tokio::test]
 async fn a_setup_failure_degrades_to_a_bare_execution_instead_of_aborting() {
-    // triage → single; worker → done. No witness-author turn: the failure is
-    // pure isolation setup, and the bare fallback runs the worker once.
+    // triage → single; worker → done; judge → verdict. No witness-author
+    // turn: the failure is pure isolation setup, and the bare fallback runs
+    // the worker once. The judge runs despite `JUDGE: no` — the diff is
+    // behavioral, so the waiver does not stand (`judge_waiver_stands`).
     let provider = ScriptedProvider::new(vec![
         text_result("CLASS: single\nWITNESS: no\nJUDGE: no"),
         text_result("done"),
+        text_result("PASS looks right"),
     ]);
     let resolver = OneProvider(&provider);
     let runner = ScriptedRunner::new(vec![], "@@ -1 +1 @@\n-a\n+b");

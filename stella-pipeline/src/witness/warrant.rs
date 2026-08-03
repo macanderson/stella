@@ -346,19 +346,42 @@ fn is_test(path: &str) -> bool {
 }
 
 /// Build, CI, and dependency manifests: verified by the build and the gate.
+///
+/// A CLOSED list of names, on purpose. This used to also match every `*.yml`,
+/// `*.yaml`, and `*.lock` — but "yaml" is a syntax, not a category, and most
+/// yaml in the wild is behavior: a `docker-compose.yml`, a Helm values file,
+/// or an app's own config changes what runs, and each was completing with a
+/// PASS asserting "the build and gate verify these" while no build, gate, test
+/// or reviewer had seen it. A name this list has never heard of falls through
+/// to `Required`, exactly like every other rule here — when in doubt, the
+/// module buys the test.
 fn is_config(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     let name = lower.rsplit('/').next().unwrap_or(&lower);
-    lower.starts_with(".github/")
-        || name == "cargo.lock"
-        || name == "cargo.toml"
-        || name == "package-lock.json"
-        || name == "pnpm-lock.yaml"
-        || name == "makefile"
-        || name == ".gitignore"
-        || lower.ends_with(".yml")
-        || lower.ends_with(".yaml")
-        || lower.ends_with(".lock")
+    // Dependency manifests and lockfiles (verified by the build), the build's
+    // own entry points, and CI pipeline definitions (verified by the gate
+    // itself running). Each entry names a file whose format has exactly one
+    // consumer; anything reusable-syntax lands on `Required`.
+    const MANIFESTS: &[&str] = &[
+        "cargo.toml",
+        "cargo.lock",
+        "go.mod",
+        "go.sum",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "bun.lock",
+        "bun.lockb",
+        "poetry.lock",
+        "uv.lock",
+        "gemfile.lock",
+        "composer.lock",
+        "makefile",
+        ".gitignore",
+        ".gitlab-ci.yml",
+        "azure-pipelines.yml",
+    ];
+    lower.starts_with(".github/") || MANIFESTS.contains(&name)
 }
 
 #[cfg(test)]

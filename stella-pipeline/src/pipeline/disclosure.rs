@@ -131,4 +131,48 @@ impl Pipeline<'_> {
         });
         Some(evidence)
     }
+
+    /// The verdict for a judge waiver that stands: triage said `JUDGE: no`
+    /// and the warrant agrees ([`Pipeline::judge_waiver_stands`]). A pass
+    /// carrying no independent evidence — the caller scores it `Unverified`,
+    /// never `DeterministicPass`, so a review-waived candidate cannot tie a
+    /// genuinely flip-verified sibling in best-of-N and then win the
+    /// smaller-diff tiebreak. The summary states plainly what was not done:
+    /// falling through to `heuristic_fallback` instead would report "judge
+    /// unavailable", which describes a judge that broke, not one that was
+    /// deliberately waived.
+    pub(super) fn waived_completion(
+        &self,
+        snapshot: &stella_protocol::LadderSnapshot,
+    ) -> JudgeEvidence {
+        let evidence = JudgeEvidence {
+            summary: "model review waived by triage; no independent verification was performed"
+                .to_string(),
+            deterministic: false,
+            evidence_refs: vec![],
+            ladder: Some(Box::new(snapshot.clone())),
+        };
+        self.emit(AgentEvent::JudgeVerdict {
+            passed: true,
+            evidence: evidence.clone(),
+        });
+        evidence
+    }
+
+    /// Whether triage's `JUDGE: no` waiver may stand, decided from the change
+    /// itself rather than the prompt.
+    ///
+    /// The waiver was answered before any work existed, and it is only ever
+    /// consulted once the ladder has come back inconclusive — the state in
+    /// which its own premise ("success is self-evident or a test proves it")
+    /// has been falsified. So the warrant gets the final word: the waiver
+    /// stands only where the diff shows nothing an independent reviewer could
+    /// catch (the same classes [`Pipeline::warranted_completion`] completes
+    /// without a judge). A behavioral diff, a deletion, or anything the diff
+    /// machinery could not read keeps its reviewer, whatever triage guessed.
+    pub(super) fn judge_waiver_stands(state: &CandidateState) -> bool {
+        warrant(&state.diff_text, state.file_changes)
+            .reason()
+            .is_some_and(|reason| !reason.warrants_independent_review())
+    }
 }

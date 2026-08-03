@@ -2428,33 +2428,18 @@ impl<'a> Pipeline<'a> {
                         return CandidateResult::aborted(state.messages, reason);
                     }
                 }
-                // Triage judged this result not worth a separate reviewer.
-                // Record exactly that: a pass carrying no independent
-                // evidence. Falling through to `heuristic_fallback` would
-                // report "judge unavailable", which describes a judge that
-                // broke — not one that was deliberately waived — and would
-                // turn a task triage called simple into a verification
-                // failure. The summary states plainly what was not done.
-                LadderDecision::ModelJudge if !assessment.wants_judge() => {
-                    let evidence = JudgeEvidence {
-                        summary: "model review waived by triage; no independent \
-                                  verification was performed"
-                            .to_string(),
-                        deterministic: false,
-                        evidence_refs: vec![],
-                        ladder: Some(Box::new(snapshot.clone())),
-                    };
-                    self.emit(AgentEvent::JudgeVerdict {
-                        passed: true,
-                        evidence: evidence.clone(),
-                    });
-                    // Scored `Unverified`, NOT `DeterministicPass`: the run
-                    // passes, but no evidence was gathered for it. Claiming
-                    // the ladder's strongest score here would let a
-                    // review-waived candidate tie a genuinely flip-verified
-                    // sibling in best-of-N and then win the smaller-diff
-                    // tiebreak — selection would prefer the candidate that
-                    // proved the least.
+                // Triage judged this result not worth a separate reviewer,
+                // and the warrant AGREES from the change itself
+                // (`judge_waiver_stands`) — the guard is load-bearing, because
+                // this arm is only reached when the ladder came back
+                // inconclusive, which falsifies the waiver's own premise. A
+                // prompt-time `JUDGE: no` must not strip the last reviewer
+                // from a behavioral change nothing proved (§7.1:
+                // predict-then-commit is the bug).
+                LadderDecision::ModelJudge
+                    if !assessment.wants_judge() && Self::judge_waiver_stands(&state) =>
+                {
+                    let evidence = self.waived_completion(&snapshot);
                     return state.into_verified(
                         true,
                         &evidence,
