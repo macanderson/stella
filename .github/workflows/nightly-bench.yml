@@ -222,8 +222,17 @@ jobs:
           BUDGET: ${{ inputs.budget || env.LOOP_BENCH_BUDGET }}
           MIN_PASS: ${{ inputs.min_pass || env.LOOP_BENCH_MIN_PASS }}
         run: |
-          set -o pipefail
+          set -euo pipefail
           mkdir -p loop-bench-out
+          # Actions runs `run:` blocks under `bash -e`, so errexit is already on
+          # and a red gate would abort the step AT the pipeline below — before
+          # PIPESTATUS is ever read. Every non-zero verdict would then reach
+          # `Summarize` as an empty exit_code and be reported as "loop-bench
+          # never ran", which is the one thing it definitely did. Drop errexit
+          # for the measured command only, so the setup above stays guarded.
+          # `pipefail` stays on to keep `$?` honest; PIPESTATUS[0] is what the
+          # gate actually reads, since `tee` would otherwise report its own 0.
+          set +e
           cargo run --quiet -p loop-bench -- \
             --tasks "$TASKS" \
             --model "$MODEL" \
