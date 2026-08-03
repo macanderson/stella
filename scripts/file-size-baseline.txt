@@ -28,7 +28,7 @@
 1524 stella-model/src/zai.rs
 1773 stella-model/src/zai/tests.rs
 3403 stella-pipeline/src/pipeline.rs
-2440 stella-pipeline/src/pipeline/tests.rs
+2474 stella-pipeline/src/pipeline/tests.rs
 2784 stella-protocol/src/event.rs
 2078 stella-store/src/lib.rs
 2261 stella-store/src/tests.rs

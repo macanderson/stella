@@ -127,46 +127,121 @@ impl TaskAssessment {
     }
 }
 
-/// Parse one `KEY: yes|no` line out of a triage response, `None` when the key
-/// is absent or its value is not a recognized boolean.
+/// Parse one `KEY: yes|no` line out of a triage response, `None` when no line
+/// carries the key with a recognized boolean value.
 fn parse_flag(lower: &str, key: &str) -> Option<bool> {
     for line in lower.lines() {
         let line = line.trim().trim_start_matches(['-', '*', ' ']);
         let Some(rest) = line.strip_prefix(key) else {
             continue;
         };
+        // A word boundary must follow the key: `judgement …` is not the
+        // `judge` line, and treating it as one used to end the scan before a
+        // real `JUDGE: no` further down was ever read.
+        if rest
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
+        {
+            continue;
+        }
         let rest = rest.trim_start().trim_start_matches(':').trim();
-        let word = rest
+        let Some(word) = rest
             .split(|c: char| !c.is_ascii_alphanumeric())
-            .find(|w| !w.is_empty())?;
-        return match word {
-            "yes" | "true" | "required" | "y" => Some(true),
-            "no" | "false" | "skip" | "none" | "n" => Some(false),
-            _ => None,
+            .find(|w| !w.is_empty())
+        else {
+            continue;
         };
+        match word {
+            "yes" | "true" | "required" | "y" => return Some(true),
+            "no" | "false" | "skip" | "none" | "n" => return Some(false),
+            // Not a recognized boolean — keep scanning; a later line may
+            // still carry the real answer.
+            _ => continue,
+        }
     }
     None
 }
 
+/// One recognized classification token: the non-task escape (`chat`) or one
+/// of the three orchestration classes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClassToken {
+    Chat,
+    Class(TaskClass),
+}
+
+/// The classification vocabulary — the single place a response word maps to a
+/// token, shared by the class parser and the conversational check so the two
+/// can never disagree about which token a response led with.
+fn class_token(word: &str) -> Option<ClassToken> {
+    match word {
+        "chat" | "greeting" | "smalltalk" | "small_talk" => Some(ClassToken::Chat),
+        "lookup" | "simple" | "simple_lookup" | "read" | "explain" => {
+            Some(ClassToken::Class(TaskClass::SimpleLookup))
+        }
+        "single" | "single_task" | "task" | "fix" => Some(ClassToken::Class(TaskClass::SingleTask)),
+        "multi" | "multi_step" | "multistep" | "complex" | "plan" => {
+            Some(ClassToken::Class(TaskClass::MultiStep))
+        }
+        _ => None,
+    }
+}
+
+/// The first recognized class token, read from the labeled `CLASS:` line when
+/// the response has one, and from a whole-text scan only when it does not.
+///
+/// The labeled line is authoritative because the rest of the response is not
+/// a classification: models pad the format with justification prose, and that
+/// prose is written in exactly the vocabulary the scan matches. `This task
+/// spans several files.` before a `CLASS: multi` used to classify as SINGLE —
+/// the word "task" outran the answer — and `No plan needed.` before a
+/// `CLASS: single` classified as MULTI off the word "plan". A response with
+/// no labeled line at all (the legacy bare-token contract) keeps the
+/// first-keyword scan unchanged.
+fn first_class_token(text: &str) -> Option<ClassToken> {
+    let lower = text.to_ascii_lowercase();
+    let scan = |segment: &str| {
+        segment
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .find_map(class_token)
+    };
+    for line in lower.lines() {
+        let line = line
+            .trim_start()
+            .trim_start_matches(['-', '*', '`', '#', ' ']);
+        if let Some(rest) = line.strip_prefix("class") {
+            // Accept any spelling of the label itself (`class`,
+            // `classification`) but require the colon, so prose that merely
+            // opens with "classifying…" is not mistaken for the answer line.
+            let after_label = rest.trim_start_matches(|c: char| c.is_ascii_alphanumeric());
+            if let Some(value) = after_label.trim_start().strip_prefix(':') {
+                // The labeled line IS the answer: an unrecognized value there
+                // is an unparseable response, not a cue to go mine the prose.
+                return scan(value);
+            }
+        }
+    }
+    scan(&lower)
+}
+
 /// Parse a triage response into a full [`TaskAssessment`].
 ///
-/// Tolerant by construction: the class comes from the same keyword scan the
-/// bare-token contract always used, so a model that ignores the structured
-/// format still classifies correctly and simply expresses no assurance
-/// opinion. A `chat` answer sets [`TaskAssessment::conversational`] (see
-/// [`classify_conversational`]). Returns `None` only when neither a class
-/// keyword nor a chat signal appears at all.
+/// Tolerant by construction: the class comes from [`first_class_token`] — the
+/// labeled `CLASS:` line when the model followed the format, the legacy
+/// first-keyword scan when it answered with a bare token — so a model that
+/// ignores the structured format still classifies correctly and simply
+/// expresses no assurance opinion. A `chat` answer sets
+/// [`TaskAssessment::conversational`] (see [`classify_conversational`]).
+/// Returns `None` only when neither a class keyword nor a chat signal
+/// appears at all.
 pub fn parse_triage_response(text: &str) -> Option<TaskAssessment> {
-    let conversational = classify_conversational(text);
-    let class = match classify_triage_response(text) {
-        Some(class) => class,
-        // A pure `chat` answer carries no orchestration keyword. Park the class
-        // at the cheapest tier — it is never consulted, since the
-        // conversational path skips plan/execute/witness/verify. Neither a
-        // class nor a chat signal means the response is unparseable: fall
-        // through to the deterministic floor exactly as before.
-        None if conversational => TaskClass::SimpleLookup,
-        None => return None,
+    let (class, conversational) = match first_class_token(text)? {
+        ClassToken::Class(class) => (class, false),
+        // A pure `chat` answer carries no orchestration keyword. Park the
+        // class at the cheapest tier — it is never consulted, since the
+        // conversational path skips plan/execute/witness/verify.
+        ClassToken::Chat => (TaskClass::SimpleLookup, true),
     };
     let lower = text.to_ascii_lowercase();
     Some(TaskAssessment {
@@ -181,26 +256,15 @@ pub fn parse_triage_response(text: &str) -> Option<TaskAssessment> {
 /// CLASS answer (a greeting, small talk, a question about the agent), not a
 /// software task.
 ///
-/// Scans in the same first-recognized-class-keyword-wins order as
-/// [`classify_triage_response`], but resolves to a boolean: `true` only when
-/// the first class token is a chat token. That ordering is load-bearing — a
-/// justification that mentions "chat" *after* a real class token
+/// Reads the same token [`classify_triage_response`] reads (one scan, shared
+/// via [`first_class_token`]), but resolves to a boolean: `true` only when
+/// that token is a chat token. The labeled-line precedence is load-bearing —
+/// a justification that mentions "chat" beside a real class answer
 /// (`CLASS: lookup — just answering a chat about the code`) must not misfire,
 /// because routing to chat is terminal no-work and a false positive silently
 /// drops a real task.
 pub fn classify_conversational(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    for raw in lower.split(|c: char| !c.is_ascii_alphanumeric() && c != '_') {
-        match raw {
-            "chat" | "greeting" | "smalltalk" | "small_talk" => return true,
-            // Any real class token appearing first overrules a later "chat".
-            "lookup" | "simple" | "simple_lookup" | "read" | "explain" | "single"
-            | "single_task" | "task" | "fix" | "multi" | "multi_step" | "multistep" | "complex"
-            | "plan" => return false,
-            _ => {}
-        }
-    }
-    false
+    matches!(first_class_token(text), Some(ClassToken::Chat))
 }
 
 /// Whether the input should take the conversational (no-work) path.
@@ -233,12 +297,27 @@ pub fn classify_conversational(text: &str) -> bool {
 /// about a folder of documents had nowhere else to land; the prompt now says
 /// otherwise ([`triage_prompt`]) and this veto backstops it, because routing to
 /// chat is terminal no-work and a false positive silently drops the task.
+///
+/// The third veto is length ([`CHAT_ROUTE_MAX_CHARS`]): vocabulary vetoes can
+/// only ever name the task shapes someone has already seen fail, and a long
+/// prompt whose verbs and nouns happen to fall outside both lists would still
+/// be silently dropped on one cheap model's `chat`. Genuine small talk is
+/// short; past the cap the model's opinion stops being sufficient. Like the
+/// other vetoes this can only push a message *onto* the work path — a
+/// rambling greeting degrades to a lookup turn, never the reverse.
 pub fn resolve_conversational(model_says_chat: bool, goal: &str) -> bool {
     is_bare_greeting(goal)
         || (model_says_chat
+            && goal.trim().chars().count() <= CHAT_ROUTE_MAX_CHARS
             && deterministic_floor(goal) == TaskClass::SimpleLookup
             && !has_action_request(goal))
 }
+
+/// The longest message the model-opinion arm of [`resolve_conversational`]
+/// may route to chat. The deterministic greeting arm is unaffected (its
+/// matches are all a few words), and so is the veto direction — length can
+/// only push a message toward the work path, never onto chat.
+const CHAT_ROUTE_MAX_CHARS: usize = 280;
 
 /// Whether the whole message is nothing but a greeting / acknowledgement — the
 /// deterministic half of [`resolve_conversational`]. Normalizes (trim,
@@ -448,32 +527,20 @@ fn names_a_file_shaped_object(lower: &str) -> bool {
 
 /// Parse a triage model's classification response into a [`TaskClass`].
 ///
-/// The triage prompt (see [`triage_prompt`]) asks the model to answer with a
-/// single bare token; real models add whitespace, punctuation, or a short
-/// justification, so this scans case-insensitively for the first recognized
-/// keyword. Returns `None` when nothing matches — the caller treats an
-/// unparseable triage response the same as a failed call: fall through to the
-/// full path (never guess a fast path off ambiguous output).
+/// Reads the labeled `CLASS:` line when the model followed the structured
+/// format; only a response with no such line falls back to the legacy scan
+/// for the first recognized keyword anywhere in the text (whole tokens, not
+/// substrings, so "multi_step" inside a longer word never matches and the
+/// model may wrap the token in punctuation). Returns `None` when nothing
+/// matches — the caller treats an unparseable triage response the same as a
+/// failed call: fall through to the full path (never guess a fast path off
+/// ambiguous output).
 pub fn classify_triage_response(text: &str) -> Option<TaskClass> {
-    let lower = text.to_ascii_lowercase();
-    // Scan token by token for the first recognized class keyword. Checking
-    // whole tokens (not substrings) avoids matching e.g. "multi_step" inside
-    // a longer word, and lets the model wrap the token in punctuation.
-    for raw in lower.split(|c: char| !c.is_ascii_alphanumeric() && c != '_') {
-        match raw {
-            "lookup" | "simple" | "simple_lookup" | "read" | "explain" => {
-                return Some(TaskClass::SimpleLookup);
-            }
-            "single" | "single_task" | "task" | "fix" => {
-                return Some(TaskClass::SingleTask);
-            }
-            "multi" | "multi_step" | "multistep" | "complex" | "plan" => {
-                return Some(TaskClass::MultiStep);
-            }
-            _ => {}
-        }
+    match first_class_token(text)? {
+        ClassToken::Class(class) => Some(class),
+        // A chat token carries no orchestration class.
+        ClassToken::Chat => None,
     }
-    None
 }
 
 /// The deterministic pattern floor on task class (L-E2: "single-task goals
@@ -555,29 +622,126 @@ pub fn resolve_task_class(model_class: Option<TaskClass>, goal: &str) -> TaskCla
     model.max(floor.one_level_cheaper())
 }
 
-/// Count enumerated list items ("1.", "2)", "- ", "* ") in the goal — a
-/// crude but deterministic proxy for "the user listed several asks".
+/// Count enumerated list items ("1.", "2)", "- ", "* ") whose text reads as
+/// an instruction — a crude but deterministic proxy for "the user listed
+/// several asks".
+///
+/// An item counts only when it *leads* with a work verb (after any
+/// sequencing/politeness words). That requirement is what keeps specification
+/// bullets from counting: a task description that enumerates *requirements*
+/// (`- listens on port 8080`, `- output is JSON`) is one task with three
+/// constraints, not three tasks, and flooring it at multi-step bought a
+/// planner pass for work one execute turn handles. Only items that ask for
+/// something (`- add a field`) still raise the floor.
 fn enumerated_item_count(lower: &str) -> usize {
     let mut count = 0usize;
     for line in lower.lines() {
         let t = line.trim_start();
-        let is_bullet = t.starts_with("- ") || t.starts_with("* ");
-        let is_numbered = {
+        let body = if let Some(rest) = t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")) {
+            rest
+        } else {
             let mut chars = t.chars();
-            let first = chars.next();
-            match first {
-                Some(d) if d.is_ascii_digit() => {
-                    matches!(chars.next(), Some('.') | Some(')'))
-                }
-                _ => false,
+            match (chars.next(), chars.next()) {
+                (Some(d), Some('.' | ')')) if d.is_ascii_digit() => chars.as_str(),
+                _ => continue,
             }
         };
-        if is_bullet || is_numbered {
+        if leads_with_work_verb(body) {
             count += 1;
         }
     }
     count
 }
+
+/// Whether `text` opens with a work verb, skipping the sequencing and
+/// politeness words that commonly front an enumerated instruction
+/// (`- then update the schema`, `1. please add a field`).
+fn leads_with_work_verb(text: &str) -> bool {
+    const LEAD_INS: &[&str] = &[
+        "then", "also", "and", "now", "next", "finally", "first", "second", "third", "please",
+        "pls", "you", "should", "must",
+    ];
+    text.split_whitespace()
+        .map(|w| w.trim_matches(|c: char| !c.is_ascii_alphanumeric()))
+        .filter(|w| !w.is_empty())
+        .find(|w| !LEAD_INS.contains(w))
+        .is_some_and(|w| WORK_VERBS.contains(&w))
+}
+
+/// Verbs that ask for work to be done — the shared vocabulary behind
+/// [`has_action_request`] and the enumerated-item floor
+/// ([`enumerated_item_count`]). A superset of [`conjoined_imperative`]'s
+/// CHANGE_VERBS (which stays mutation-only on purpose: two *mutating* clauses
+/// are its evidence), widened with the inspect/arrange verbs that are real
+/// work over files, and with the build/install/run operations vocabulary
+/// terminal tasks are phrased in. Matching everywhere is whole-word and
+/// unstemmed — see [`has_action_request`] for why.
+const WORK_VERBS: &[&str] = &[
+    "add",
+    "audit",
+    "benchmark",
+    "build",
+    "categorise",
+    "categorize",
+    "check",
+    "clean",
+    "compile",
+    "compress",
+    "configure",
+    "convert",
+    "create",
+    "debug",
+    "decrypt",
+    "delete",
+    "deploy",
+    "download",
+    "encrypt",
+    "explore",
+    "extract",
+    "find",
+    "fix",
+    "generate",
+    "group",
+    "implement",
+    "insert",
+    "inspect",
+    "install",
+    "launch",
+    "list",
+    "look",
+    "migrate",
+    "move",
+    "organise",
+    "organize",
+    "parse",
+    "patch",
+    "read",
+    "rearrange",
+    "refactor",
+    "remove",
+    "rename",
+    "replace",
+    "restore",
+    "restructure",
+    "review",
+    "run",
+    "search",
+    "setup",
+    "sort",
+    "start",
+    "summarise",
+    "summarize",
+    "test",
+    "tidy",
+    "train",
+    "uncompress",
+    "unzip",
+    "update",
+    "upgrade",
+    "wire",
+    "write",
+    "zip",
+];
 
 /// Detect two or more imperative clauses joined by "and"/"then" — "add a
 /// field and update the migration". Heuristic and intentionally narrow: it
@@ -650,55 +814,28 @@ fn conjoined_imperative(lower: &str) -> bool {
 /// fixing the file`, `nice, you renamed the folder`) do not — those are chat,
 /// and the work they describe already happened.
 fn has_action_request(goal: &str) -> bool {
-    // Verbs that ask for work. A superset of `conjoined_imperative`'s
-    // CHANGE_VERBS, widened with the inspect/arrange verbs that describe real
-    // work over files that changes no code — the category the floor was blind
-    // to.
-    const ACTION_VERBS: &[&str] = &[
-        "add",
-        "audit",
-        "categorize",
-        "categorise",
-        "check",
-        "clean",
-        "create",
-        "delete",
-        "explore",
-        "extract",
-        "find",
-        "fix",
-        "group",
-        "implement",
-        "inspect",
-        "list",
-        "look",
-        "migrate",
-        "move",
-        "organize",
-        "organise",
-        "read",
-        "rearrange",
-        "refactor",
-        "remove",
-        "rename",
-        "replace",
-        "restructure",
-        "review",
-        "search",
-        "sort",
-        "summarize",
-        "summarise",
-        "tidy",
-        "update",
-        "wire",
-        "write",
-    ];
     // Nouns naming something the agent could act on. Not code-specific: the
     // workspace is whatever directory Stella was pointed at, and pointing it at
-    // a folder of documents is a supported thing to do.
+    // a folder of documents is a supported thing to do. The ops rows (server,
+    // database, dataset, container, …) exist for the same reason the ops verbs
+    // do — a terminal task phrased entirely in that vocabulary used to be
+    // invisible to this veto, and routing it to chat is terminal no-work.
     const WORKSPACE_NOUNS: &[&str] = &[
-        "codebase",
+        "app",
+        "application",
+        "binary",
+        "branch",
         "code",
+        "codebase",
+        "config",
+        "container",
+        "csv",
+        "data",
+        "database",
+        "dataset",
+        "db",
+        "dependencies",
+        "dependency",
         "desktop",
         "dir",
         "directories",
@@ -707,21 +844,45 @@ fn has_action_request(goal: &str) -> bool {
         "document",
         "documents",
         "downloads",
+        "endpoint",
+        "env",
+        "environment",
         "file",
         "files",
         "folder",
         "folders",
+        "function",
+        "image",
+        "json",
+        "log",
+        "logs",
+        "module",
+        "notebook",
         "notes",
+        "package",
         "photos",
         "pictures",
+        "pipeline",
+        "program",
         "project",
         "repo",
         "repository",
+        "schema",
         "screenshots",
+        "script",
+        "scripts",
+        "server",
+        "service",
         "spreadsheet",
         "spreadsheets",
+        "table",
+        "test",
+        "tests",
         "tree",
+        "url",
+        "website",
         "workspace",
+        "yaml",
     ];
 
     let words: Vec<&str> = goal
@@ -733,7 +894,7 @@ fn has_action_request(goal: &str) -> bool {
             .iter()
             .any(|w| set.contains(&w.to_ascii_lowercase().as_str()))
     };
-    has(ACTION_VERBS) && has(WORKSPACE_NOUNS)
+    has(WORK_VERBS) && has(WORKSPACE_NOUNS)
 }
 
 /// The prompt handed to the Role::Triage model to classify a user message. A
@@ -779,511 +940,17 @@ pub fn triage_prompt(goal: &str) -> String {
          correctness is already obvious from the diff, or when the project \
          has no way to run such a test. Always say no when the ask is to \
          DELETE something — a witness must fail on the old code and pass on \
-         the new, and a removal leaves nothing to write that against.\n\
-         JUDGE is whether a separate model should review the result. Say no \
-         when success is self-evident or a test already proves it.\n\
-         Prefer `no` for both on small, self-evident work — ceremony that \
-         proves nothing costs the user time and money.\n\n\
+         the new, and a removal leaves nothing to write that against. Prefer \
+         `no` on small, self-evident work — ceremony that proves nothing \
+         costs the user time and money.\n\
+         JUDGE is whether a separate model should review the result. It is \
+         only consulted when no test settled the outcome, so say no ONLY \
+         when a test will already prove the change or the result is \
+         trivially checkable from its diff; when unsure, say yes.\n\n\
          Task:\n{goal}\n\n\
          Answer:"
     )
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn task_class_ordering_is_least_to_most_work() {
-        assert!(TaskClass::SimpleLookup < TaskClass::SingleTask);
-        assert!(TaskClass::SingleTask < TaskClass::MultiStep);
-    }
-
-    #[test]
-    fn plans_and_verifies_flags_match_the_fast_path_design() {
-        assert!(!TaskClass::SimpleLookup.plans());
-        assert!(!TaskClass::SingleTask.plans());
-        assert!(TaskClass::MultiStep.plans());
-
-        assert!(!TaskClass::SimpleLookup.verifies_unconditionally());
-        assert!(TaskClass::SingleTask.verifies_unconditionally());
-        assert!(TaskClass::MultiStep.verifies_unconditionally());
-    }
-
-    #[test]
-    fn parses_each_class_from_bare_and_decorated_responses() {
-        assert_eq!(
-            classify_triage_response("lookup"),
-            Some(TaskClass::SimpleLookup)
-        );
-        assert_eq!(
-            classify_triage_response("Classification: single."),
-            Some(TaskClass::SingleTask)
-        );
-        assert_eq!(
-            classify_triage_response("`multi` — this spans files"),
-            Some(TaskClass::MultiStep)
-        );
-        assert_eq!(
-            classify_triage_response("I think this is a SIMPLE read"),
-            Some(TaskClass::SimpleLookup)
-        );
-    }
-
-    #[test]
-    fn unparseable_triage_response_is_none_not_a_guess() {
-        assert_eq!(classify_triage_response(""), None);
-        assert_eq!(classify_triage_response("hmm, not sure"), None);
-        assert_eq!(classify_triage_response("42"), None);
-    }
-
-    #[test]
-    fn deterministic_floor_raises_on_strong_multi_step_markers() {
-        assert_eq!(
-            deterministic_floor("Add the field and then update the migration"),
-            TaskClass::MultiStep
-        );
-        assert_eq!(
-            deterministic_floor("Rename all callers of foo across the codebase"),
-            TaskClass::MultiStep
-        );
-        assert_eq!(
-            deterministic_floor("First, add a route. Secondly wire the handler."),
-            TaskClass::MultiStep
-        );
-    }
-
-    #[test]
-    fn deterministic_floor_detects_enumerated_lists() {
-        let goal = "Please:\n1. add a field\n2. update the schema\n3. add a test";
-        assert_eq!(deterministic_floor(goal), TaskClass::MultiStep);
-
-        let bullets = "Do these:\n- add a field\n- update the schema\n- add a test";
-        assert_eq!(deterministic_floor(bullets), TaskClass::MultiStep);
-    }
-
-    #[test]
-    fn deterministic_floor_conjoined_imperatives_reach_single_task() {
-        assert_eq!(
-            deterministic_floor("Add a field and update the migration"),
-            // "and then" isn't present, but two change verbs joined by "and"
-            // floor at single-task (the model may raise it to multi).
-            TaskClass::SingleTask
-        );
-    }
-
-    #[test]
-    fn deterministic_floor_leaves_plain_prompts_at_lookup() {
-        assert_eq!(
-            deterministic_floor("What does the retry policy do?"),
-            TaskClass::SimpleLookup
-        );
-        assert_eq!(
-            deterministic_floor("Explain the flip oracle"),
-            TaskClass::SimpleLookup
-        );
-        // A descriptive "and" between nouns must NOT trip the imperative
-        // detector (no leading change verb).
-        assert_eq!(
-            deterministic_floor("Where are the parser and the lexer defined?"),
-            TaskClass::SimpleLookup
-        );
-    }
-
-    #[test]
-    fn parses_the_structured_assurance_answer() {
-        let a = parse_triage_response("CLASS: single\nWITNESS: no\nJUDGE: yes")
-            .expect("a well-formed answer parses");
-        assert_eq!(a.class, TaskClass::SingleTask);
-        assert_eq!(a.require_witness, Some(false));
-        assert_eq!(a.require_judge, Some(true));
-        assert!(!a.wants_witness(), "an explicit no wins over the class");
-        assert!(a.wants_judge());
-    }
-
-    #[test]
-    fn a_bare_token_answer_still_classifies_and_claims_no_assurance_opinion() {
-        // The pre-existing contract: models that ignore the structured format
-        // must keep working, falling back to what the class implies.
-        let a = parse_triage_response("multi").expect("a bare token parses");
-        assert_eq!(a.class, TaskClass::MultiStep);
-        assert_eq!(a.require_witness, None);
-        assert_eq!(a.require_judge, None);
-        assert!(a.wants_witness(), "class-derived default stands");
-    }
-
-    #[test]
-    fn an_answer_with_no_class_keyword_is_not_a_guess() {
-        assert_eq!(parse_triage_response("WITNESS: no\nJUDGE: no"), None);
-        assert_eq!(parse_triage_response("hmm, hard to say"), None);
-    }
-
-    #[test]
-    fn assurance_flags_tolerate_bullets_punctuation_and_case() {
-        let a =
-            parse_triage_response("- CLASS: Multi\n- Witness: NO\n* judge : none").expect("parses");
-        assert_eq!(a.class, TaskClass::MultiStep);
-        assert_eq!(a.require_witness, Some(false));
-        assert_eq!(a.require_judge, Some(false));
-    }
-
-    #[test]
-    fn a_chat_answer_parses_as_conversational_and_parks_the_class() {
-        // The whole point: a greeting must have somewhere to land. A `chat`
-        // CLASS carries no orchestration keyword, so the class parks at the
-        // cheapest tier and the conversational flag is what the pipeline reads.
-        let a = parse_triage_response("CLASS: chat\nWITNESS: no\nJUDGE: no")
-            .expect("a chat answer parses");
-        assert!(a.conversational);
-        assert_eq!(a.class, TaskClass::SimpleLookup);
-
-        // A bare `chat` token works too (models that ignore the format).
-        let bare = parse_triage_response("chat").expect("a bare chat token parses");
-        assert!(bare.conversational);
-    }
-
-    #[test]
-    fn classify_conversational_is_first_class_keyword_wins() {
-        assert!(classify_conversational("chat"));
-        assert!(classify_conversational("CLASS: chat — greeting, no task"));
-        assert!(classify_conversational("greeting"));
-        // A real class token appearing FIRST overrules a later "chat": routing
-        // to no-work is terminal, so a justification must never flip it.
-        assert!(!classify_conversational(
-            "CLASS: lookup — just answering a chat about the code"
-        ));
-        assert!(!classify_conversational("multi"));
-        assert!(!classify_conversational(""));
-        assert!(!classify_conversational("hmm, not sure"));
-    }
-
-    #[test]
-    fn a_non_chat_answer_is_not_conversational() {
-        assert!(!parse_triage_response("single").unwrap().conversational);
-        assert!(
-            !parse_triage_response("CLASS: lookup\nWITNESS: no\nJUDGE: no")
-                .unwrap()
-                .conversational
-        );
-        // A class carried by `from_class` is never conversational.
-        assert!(!TaskAssessment::from_class(TaskClass::SimpleLookup).conversational);
-    }
-
-    #[test]
-    fn a_bare_greeting_is_conversational_without_any_model_opinion() {
-        // The deterministic route: no model answer needed for an unmistakable
-        // greeting — the fix must not hinge on a cheap model choosing `chat`.
-        assert!(resolve_conversational(false, "hi"));
-        assert!(resolve_conversational(false, "  Hi!  "));
-        assert!(resolve_conversational(false, "hello"));
-        assert!(resolve_conversational(false, "thanks"));
-        assert!(resolve_conversational(false, ""));
-    }
-
-    #[test]
-    fn is_bare_greeting_matches_whole_message_only() {
-        for g in [
-            "hi",
-            "Hi",
-            "  hi  ",
-            "hi!",
-            "hello.",
-            "HELLO",
-            "hey",
-            "yo",
-            "hey there",
-            "thanks",
-            "thank you",
-            "thankyou",
-            "ty",
-            "",
-            "   ",
-            "hi stella",
-            "\"hi\"",
-            "gm",
-            "good morning",
-        ] {
-            assert!(is_bare_greeting(g), "{g:?} should be a bare greeting");
-        }
-        // NOT greetings: a real task that merely opens with one, or anything
-        // with trailing content. Whole-message match, never prefix/substring.
-        for g in [
-            "hey, fix the login bug",
-            "hi, can you refactor the parser",
-            "fix the parser",
-            "hello world function",
-            "hey there, add a test",
-            "thanks for nothing, delete the file",
-            "high", // superstring of "hi"
-            "history",
-        ] {
-            assert!(!is_bare_greeting(g), "{g:?} must NOT be a bare greeting");
-        }
-    }
-
-    #[test]
-    fn the_floor_vetoes_an_over_eager_model_chat_when_there_is_task_signal() {
-        // Model says chat, no task signal, not a bare greeting → chat stands.
-        assert!(resolve_conversational(true, "what's your favorite color"));
-        // Model silent AND not a greeting → not conversational.
-        assert!(!resolve_conversational(
-            false,
-            "what does the retry policy do?"
-        ));
-        // Positive task signal overrules an over-eager `chat`: an enumeration,
-        // conjoined imperatives, or cross-cutting scope is real work no matter
-        // what the cheap triage model guessed.
-        assert!(!resolve_conversational(
-            true,
-            "add the field and then update the migration"
-        ));
-        assert!(!resolve_conversational(
-            true,
-            "rename all callers of foo across the codebase"
-        ));
-        assert!(!resolve_conversational(true, "add a field and update it"));
-    }
-
-    #[test]
-    fn an_action_request_on_non_code_files_is_not_chat() {
-        // The observed failure, verbatim from the session journal. Triage
-        // answered `CLASS: chat`, the floor saw no code-change keyword, and the
-        // task took the tool-less conversational path: the model replied "Let
-        // me first check what operating system you're on" with no tools bound,
-        // and the turn reported complete. It must reach the work path.
-        assert!(!resolve_conversational(
-            true,
-            "i want you to organize my documents folder but I don't know whats \
-             inside so can you explore and help me develop a convention for my \
-             files and where they are saved and what i call them"
-        ));
-
-        // The shapes the floor is structurally blind to: a polite frame moves
-        // the verb off the front of the message, and none of these verbs are
-        // code-change verbs.
-        assert!(!resolve_conversational(
-            true,
-            "could you take a look at my documents directory"
-        ));
-        assert!(!resolve_conversational(
-            true,
-            "can you explore the downloads folder and tell me what is in there"
-        ));
-        assert!(!resolve_conversational(
-            true,
-            "sort out the files on my desktop"
-        ));
-        assert!(!resolve_conversational(true, "organize this project"));
-    }
-
-    #[test]
-    fn real_chat_survives_the_action_request_veto() {
-        // The negative half, and the one that actually constrains the design:
-        // this veto can only ever push a message ONTO the work path, so a false
-        // positive resurrects the bug the conversational route exists to fix
-        // (`hi` authoring a witness test). Every one of these must stay chat.
-        for goal in [
-            "what can you do?",
-            "who built you?",
-            "how are you today",
-            // Names a workspace noun but asks for nothing — a verb alone or a
-            // noun alone must never be enough.
-            "that's a cool project",
-            "i really like this codebase",
-            // Acknowledgements of work already done. The past/progressive forms
-            // are why matching is unstemmed: `fixing`/`renamed` must not read
-            // as `fix`/`rename`.
-            "nice, thanks for fixing the file",
-            "thanks, you renamed the folder correctly",
-        ] {
-            assert!(
-                resolve_conversational(true, goal),
-                "{goal:?} must stay conversational"
-            );
-        }
-    }
-
-    #[test]
-    fn action_request_matching_is_whole_word() {
-        // `encoder` contains "code" and `direct` contains "dir"; a substring
-        // test would call this a workspace request. It is not one.
-        assert!(!has_action_request("check that the encoder is direct"));
-        // Same verb, a real noun → now it is.
-        assert!(has_action_request("check that the directory is empty"));
-    }
-
-    #[test]
-    fn the_triage_prompt_does_not_frame_every_real_class_as_code() {
-        let p = triage_prompt("anything");
-        // The regression: `lookup`/`single`/`multi` each said "code", leaving a
-        // non-code task no bucket but `chat`.
-        assert!(
-            p.contains("The workspace is not always code"),
-            "the prompt must tell triage that non-code work is still work"
-        );
-        assert!(
-            !p.contains("one concrete code change"),
-            "`single` must not be scoped to code changes"
-        );
-        assert!(
-            !p.contains("question about the code"),
-            "`lookup` must not be scoped to questions about code"
-        );
-    }
-
-    #[test]
-    fn a_judge_opinion_is_required_to_skip_the_judge() {
-        // `wants_judge` is only consulted after the ladder came back
-        // inconclusive, so silence must never mean "skip".
-        for class in [
-            TaskClass::SimpleLookup,
-            TaskClass::SingleTask,
-            TaskClass::MultiStep,
-        ] {
-            assert!(
-                TaskAssessment::from_class(class).wants_judge(),
-                "{class:?} with no triage opinion must still reach the judge"
-            );
-        }
-    }
-
-    #[test]
-    fn triage_may_lower_the_floor_by_one_level_and_raise_it_without_bound() {
-        // Floor says multi (markers present), triage says lookup → lands on
-        // single: DAG planning is skipped, verification is kept. Triage read
-        // the goal, but it is the weakest tier, so it does not get to strip
-        // planning, witness, and judge in one move.
-        assert_eq!(
-            resolve_task_class(
-                Some(TaskClass::SimpleLookup),
-                "refactor across the codebase"
-            ),
-            TaskClass::SingleTask
-        );
-        // One level down is honored exactly.
-        assert_eq!(
-            resolve_task_class(Some(TaskClass::SingleTask), "refactor across the codebase"),
-            TaskClass::SingleTask
-        );
-        // A floor of single may be lowered all the way to lookup.
-        assert_eq!(
-            resolve_task_class(Some(TaskClass::SimpleLookup), "add the field and update it"),
-            TaskClass::SimpleLookup
-        );
-        // Raising stays unbounded: erring toward more work was never the risk.
-        assert_eq!(
-            resolve_task_class(Some(TaskClass::MultiStep), "explain X"),
-            TaskClass::MultiStep
-        );
-        // Failed/unparseable triage → floor stands alone.
-        assert_eq!(
-            resolve_task_class(None, "explain X"),
-            TaskClass::SimpleLookup
-        );
-        assert_eq!(
-            resolve_task_class(None, "add a field and then update the migration"),
-            TaskClass::MultiStep
-        );
-    }
-
-    #[test]
-    fn a_bare_deletion_never_authors_a_witness() {
-        // The reported failure, verbatim: this asked for a removal and got a
-        // witness author, which produced a test whose entire body was a
-        // `panic!("witness tests must be removed")`.
-        for goal in [
-            "can you remove the witness tests please",
-            "remove the witness tests",
-            "delete stella-cli/tests/slash_models_witness.rs",
-            "please delete the hi_witness.rs file",
-            "rm bench/old_harness.rs",
-            "get rid of the dead code in stella-graph/src/walk.rs",
-            "drop the unused imports",
-            "delete the docs/legacy folder",
-        ] {
-            assert!(
-                is_pure_deletion(goal),
-                "{goal:?} should be recognized as a bare deletion"
-            );
-            // ... and the ceiling overrules even an explicit WITNESS: yes.
-            assert!(
-                !resolve_witness(Some(true), TaskClass::MultiStep, goal),
-                "{goal:?} must not author a witness even when triage asked for one"
-            );
-            assert!(!resolve_witness(None, TaskClass::SingleTask, goal));
-        }
-    }
-
-    #[test]
-    fn the_deletion_ceiling_does_not_swallow_real_work() {
-        // The negative half, and the one that matters: a false positive here
-        // ships a behavior change with no authored witness. Each of these must
-        // keep the normal path.
-        for goal in [
-            // Behavior removals — nothing file-shaped, a witness can pin these.
-            "remove the retry backoff",
-            "remove the rate limiter from the auth handler",
-            "delete the stale-session check",
-            "drop the trailing-slash redirect",
-            // Deletion plus a second clause / replacement / preserved behavior.
-            "remove the old parser and add the new one",
-            "delete config.toml and replace it with config.yaml",
-            "remove src/legacy.rs but keep the public API working",
-            "delete the cache layer, make sure reads still work",
-            "remove the shim then update every caller",
-            "delete the adapter and refactor the callers",
-            // Sweeping / enumerated work that merely opens with a removal verb.
-            "remove the deprecated helper from every file",
-            "delete all the files under bench/",
-            // Not an imperative removal at all — prose that mentions deletion.
-            "why was stella-cli/src/foo.rs deleted?",
-            "explain the removal of the witness stage",
-            "the tests were deleted, can you tell me what covered auth.rs",
-            // A real change that happens to name a file.
-            "fix the panic in stella-pipeline/src/verify.rs",
-            "add a test to stella-core/src/lib.rs",
-        ] {
-            assert!(
-                !is_pure_deletion(goal),
-                "{goal:?} must NOT be treated as a bare deletion"
-            );
-            assert!(
-                resolve_witness(Some(true), TaskClass::SingleTask, goal),
-                "{goal:?} must honor an explicit WITNESS: yes"
-            );
-        }
-    }
-
-    #[test]
-    fn the_ceiling_leaves_every_other_witness_decision_untouched() {
-        // Outside the deletion shape, `resolve_witness` must be exactly the old
-        // `wants_witness` contract: triage's call, else the class default.
-        let goal = "make the parser handle escaped quotes";
-        assert!(!resolve_witness(Some(false), TaskClass::MultiStep, goal));
-        assert!(resolve_witness(Some(true), TaskClass::SimpleLookup, goal));
-        assert!(!resolve_witness(None, TaskClass::SimpleLookup, goal));
-        assert!(resolve_witness(None, TaskClass::SingleTask, goal));
-        assert!(resolve_witness(None, TaskClass::MultiStep, goal));
-        for class in [
-            TaskClass::SimpleLookup,
-            TaskClass::SingleTask,
-            TaskClass::MultiStep,
-        ] {
-            assert_eq!(
-                resolve_witness(None, class, goal),
-                TaskAssessment::from_class(class).wants_witness(),
-                "{class:?} must keep the class-derived default"
-            );
-        }
-    }
-
-    #[test]
-    fn triage_prompt_names_all_four_class_tokens_and_the_goal() {
-        let p = triage_prompt("Fix the failing test");
-        assert!(p.contains("chat"));
-        assert!(p.contains("lookup"));
-        assert!(p.contains("single"));
-        assert!(p.contains("multi"));
-        assert!(p.contains("Fix the failing test"));
-    }
-}
+mod tests;
