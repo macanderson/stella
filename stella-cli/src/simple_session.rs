@@ -419,6 +419,13 @@ fn handle_local_command(
     }
 }
 
+/// The marker every driver notice opens with.
+///
+/// The same `▸` the CLI already uses on the normal screen for "the program is
+/// speaking, not the model" (see the surface notice in
+/// [`run_simple_session`], and `main`'s plain-REPL banner).
+const NOTICE_MARKER: &str = "▸ ";
+
 /// Say something to the user through the transcript itself.
 ///
 /// Driver notices ride the event stream rather than `println!` because the
@@ -426,9 +433,16 @@ fn handle_local_command(
 /// repainted away. As a `Text` event it becomes a transcript entry, which
 /// means it also reaches scrollback — so the notice is still there after it
 /// scrolls, which is the whole point of this surface.
+///
+/// It is marked because of what that costs. `AgentEvent` has no system-notice
+/// variant, and a `Text` entry renders on the **agent** rail — so an unmarked
+/// "conversation cleared" is the transcript stating that the model said it.
+/// On a surface being read aloud, where the rail glyph is the only thing
+/// distinguishing speakers and it may not be announced at all, that is the
+/// kind of small lie worth one character to avoid.
 fn emit_notice(events: &UnboundedSender<AgentEvent>, text: &str) {
     let _ = events.send(AgentEvent::Text {
-        delta: format!("{text}\n"),
+        delta: format!("{NOTICE_MARKER}{text}\n"),
     });
 }
 
@@ -737,6 +751,26 @@ mod tests {
                 "{name} is advertised but not reserved, so a custom command could shadow it"
             );
         }
+    }
+
+    /// `AgentEvent` has no system-notice variant, so a driver message goes out
+    /// as `Text` — which renders on the AGENT rail. Unmarked, the transcript
+    /// would be asserting that the model said "conversation cleared". The rail
+    /// glyph is a visual distinction, and this is the surface where visual
+    /// distinctions are the ones least likely to land.
+    #[test]
+    fn a_driver_notice_is_marked_as_the_program_speaking() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        emit_notice(&tx, "conversation cleared");
+        let AgentEvent::Text { delta } = rx.try_recv().expect("a notice was sent") else {
+            panic!("a notice rides the transcript as Text");
+        };
+        assert!(
+            delta.starts_with(NOTICE_MARKER),
+            "an unmarked notice reads as model speech: {delta:?}"
+        );
+        assert!(delta.contains("conversation cleared"));
+        assert!(delta.ends_with('\n'), "notices are whole lines: {delta:?}");
     }
 
     /// `/help` is the only place this surface explains that it is a subset.
