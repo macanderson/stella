@@ -3447,13 +3447,10 @@ fn handle_agents_key(
         }
         // Agent controls — only when the composer is empty (else they type).
         // `s` stop · `p` pause/resume toggle (by the row's current status) ·
-        // `r` restart. The driver honors all three on worker lanes
-        // (`req:`/`sub:`): pause parks the worker at its next step boundary
-        // (never mid-tool), restart respawns the lane from its retained
-        // spec. On the lead, `s` is the interrupt (as Esc is) and `p` parks
-        // the live turn at the same step boundary — sub-agents included
-        // (#1219); only `r` stays a no-op there, because restarting the lead
-        // is just re-submitting the prompt and there is no spec to respawn.
+        // `r` restart. `s` and `p` work on every lane — pause parks the turn at
+        // its next step boundary, never mid-tool, sub-agents included (#1219).
+        // `r` respawns a worker from its retained spec; on the lead it is a
+        // no-op, since restarting it is just re-submitting the prompt.
         KeyCode::Char('s') if composer_empty => model.agents.get(ui.focused).map(|entry| {
             DeckAction::Send(WorkspaceInput::Control {
                 agent: entry.meta.id.clone(),
