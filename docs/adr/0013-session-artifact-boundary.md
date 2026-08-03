@@ -44,11 +44,27 @@ resume. The module says so itself: "local sessions are local"
 Meanwhile the engine already exports a portable turn snapshot.
 `stella_core::step::Checkpoint` (`step.rs:509`) is a versioned serde struct
 whose field order is the wire order, and `Engine::resume_turn`
-(`driver.rs:1108`) reconstitutes a `TurnState` from one. The cross-surface
-matrix records that this format has **no production writers**: the CLI replays
-its own `session_persist` journal and never calls `to_checkpoint`/`resume_turn`,
-and nothing behind `stella-serve` persists at all (the `turn.checkpoint_resume`
-row in `stella-parity/src/lib.rs`, deferred on both surfaces).
+(`driver.rs:1108`) reconstitutes a `TurnState` from one. When this ADR was
+written the cross-surface matrix recorded that this format had **no production
+writers**: the CLI replayed its own `session_persist` journal and never called
+`to_checkpoint`/`resume_turn`, and nothing behind `stella-serve` persisted at
+all (the `turn.checkpoint_resume` row in `stella-parity/src/lib.rs`, deferred
+on both surfaces).
+
+> **Update — 2026-08-03 (#1302).** That sentence is out of date, in the
+> pessimistic direction, and the argument below is unaffected by the
+> correction. `Checkpoint` has **two production writers**: the CLI deck writes
+> one into the work journal's `CHECKPOINT_BLOB` at every step boundary and its
+> resume path prefers it over `history.json`, and a served turn writes one into
+> an embedder-supplied `CheckpointStore`, read back at
+> `GET /v1/sessions/{id}/checkpoint` (#1198). What still has **no production
+> caller** is `Engine::resume_turn` — neither surface replays a snapshot into a
+> `TurnState`, so the format is written, stored, and handed back, but never fed
+> back in. The live statement of both halves is `stella-parity/src/lib.rs`
+> (`turn.checkpoint`, `turn.checkpoint_resume`); the paragraph above is kept as
+> the state this decision was taken against, because §4's version contract is
+> an obligation incurred *before* there were writers to bind — and now there
+> are.
 
 So the question this ADR answers is not "how do we build sync". It is: **when a
 session moves between machines, which half of that problem is Stella's?**
@@ -71,12 +87,14 @@ outright: the host assembles the turn and "every governed side effect — model
 calls and tool calls — is remoted back to the host"; "the engine never holds
 ambient authority" (`stella-serve/src/lib.rs:7`). A served turn is structurally
 incapable of reading a user's file, because reading a file is a request the
-host answers. The matrix already reasons from that line when it defers
-server-side checkpointing: "in the reverse-RPC model the workspace lives on the
-HOST side, so serve has no filesystem location it could honestly checkpoint
-against" (the `turn.checkpoint` row's API note in `stella-parity/src/lib.rs`).
-Applying the same line to durability is consistency, not a new concept to
-defend.
+host answers. The matrix reasoned from that line when it deferred server-side
+checkpointing — "in the reverse-RPC model the workspace lives on the HOST side,
+so serve has no filesystem location it could honestly checkpoint against" — and
+#1198 held the line while promoting that row: what a server may own is the
+engine's own turn state, not the work, and the location stays the embedder's
+(the `turn.checkpoint` row's API note in `stella-parity/src/lib.rs` is the
+current text). Applying the same line to durability is consistency, not a new
+concept to defend.
 
 **2. It deletes the hardest problem instead of solving it.** A portable
 workspace identity is the part of cross-machine resume with no good answer:
@@ -409,7 +427,10 @@ from anything above, and each would need its own decision:
   means the workspace is the host's (the `turn.checkpoint` row's API note in
   `stella-parity/src/lib.rs`). This ADR
   gives an embedder a defined artifact to persist; it does not give the server a
-  filesystem.
+  filesystem. (#1198 shipped a checkpoint *port* inside that line rather than
+  across it: `ServeConfig::checkpoints` is `None` by default, the crate names no
+  path, and the binary takes no `--checkpoint-dir` — so the embedder persists
+  the artifact and the server still chooses no location.)
 - **A stability promise on the *bundle* layout.** The `Checkpoint` version
   contract (§4) is a promise. The manifest and pack layout around it are not yet,
   and a first implementation should say so in its own docs.

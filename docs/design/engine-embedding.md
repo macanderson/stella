@@ -239,26 +239,36 @@ capabilities (`run_goal`, `run_sub_agent`) with wire-ready event
 vocabulary; serve simply never wires them. Judged multi-round autonomy is
 exactly what agent-app hosts want from an engine.
 
-**G5 — No durable turn over the API.** The CLI half of this closed: the
-deck attaches a `CheckpointSink` that writes the engine's versioned
-`Checkpoint` into the workspace's git-backed work journal at every step
-boundary, and its resume path prefers that checkpoint over the
-turn-boundary `history.json` whenever one exists — so an interrupted CLI
-turn reopens at its last step and does not re-run the completed ones.
+**G5 — A durable turn over the API, with no way to continue it.** Both
+halves of the *writing* closed. The CLI's deck attaches a `CheckpointSink`
+that writes the engine's versioned `Checkpoint` into the workspace's
+git-backed work journal at every step boundary, and its resume path prefers
+that checkpoint over the turn-boundary `history.json` whenever one exists —
+so an interrupted CLI turn reopens at its last step and does not re-run the
+completed ones. Serve's half landed too (#1198): `CheckpointStore` is a
+three-verb port an embedder fills, `SessionSpec::checkpoint` is the durable
+identity that keys it, and `GET|DELETE /v1/{sessions,turns}/{id}/checkpoint`
+read a resume point back or reclaim it. A served turn no longer dies with
+the process — given a store, which is `None` by default because the server
+never picks a location (ADR 0013).
 
-What remains is serve: it reaches both write seams (`persist_checkpoint`
-and `discard_checkpoint`, at the same boundaries the CLI driver uses) but
-nothing sets `checkpoint_sink`, and there is nowhere to read one back
-from — `SessionSpec` carries no session identity to key a store on. So a
-served turn still dies with the process. Fix shape: a checkpoint store
-behind serve, which the portable-session design gates.
+So the `Checkpoint` format has two production writers, and what remains is
+the *replay* direction: no route accepts a checkpoint, `Engine::resume_turn`
+has zero production callers, and serve deliberately does not re-drive a turn
+on restart — a resumed turn's first act is a reverse request only a host can
+answer. A host that reads back a resume point today must continue it by
+driving `stella-engine` in its own process. That is a real capability for a
+Mode-A host and no capability at all for a Mode-B one. Fix shape: a `resume`
+field on turn create that feeds a stored checkpoint into `Engine::resume_turn`
+— not a new `/v1/turns/{id}/resume`, which is already the pause gate's other
+half. Matrix row `turn.checkpoint_resume`, API side.
 
 The "two resume formats" framing was wrong and is retired. The sidecar and
 the work journal are not competing formats; they are canonical for
 different *instants* — the sidecar between turns, the checkpoint inside
 one, and a checkpoint exists only while a turn is in flight. See the table
 in `stella_store::journal`'s module docs. Converging the two stores is
-therefore not a goal; giving serve one at all is.
+therefore not a goal.
 
 **G6 — Wire types live in the server crate.** `ServerFrame` and the inbound
 bodies are `stella-serve` types, and schema export is split across two
