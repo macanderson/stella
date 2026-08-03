@@ -227,7 +227,7 @@ fn first_class_token(text: &str) -> Option<ClassToken> {
 
 /// Parse a triage response into a full [`TaskAssessment`].
 ///
-/// Tolerant by construction: the class comes from [`first_class_token`] — the
+/// Tolerant by construction: the class comes from `first_class_token` — the
 /// labeled `CLASS:` line when the model followed the format, the legacy
 /// first-keyword scan when it answered with a bare token — so a model that
 /// ignores the structured format still classifies correctly and simply
@@ -257,7 +257,7 @@ pub fn parse_triage_response(text: &str) -> Option<TaskAssessment> {
 /// software task.
 ///
 /// Reads the same token [`classify_triage_response`] reads (one scan, shared
-/// via [`first_class_token`]), but resolves to a boolean: `true` only when
+/// via `first_class_token`), but resolves to a boolean: `true` only when
 /// that token is a chat token. The labeled-line precedence is load-bearing —
 /// a justification that mentions "chat" beside a real class answer
 /// (`CLASS: lookup — just answering a chat about the code`) must not misfire,
@@ -298,7 +298,7 @@ pub fn classify_conversational(text: &str) -> bool {
 /// otherwise ([`triage_prompt`]) and this veto backstops it, because routing to
 /// chat is terminal no-work and a false positive silently drops the task.
 ///
-/// The third veto is length ([`CHAT_ROUTE_MAX_CHARS`]): vocabulary vetoes can
+/// The third veto is length (`CHAT_ROUTE_MAX_CHARS`): vocabulary vetoes can
 /// only ever name the task shapes someone has already seen fail, and a long
 /// prompt whose verbs and nouns happen to fall outside both lists would still
 /// be silently dropped on one cheap model's `chat`. Genuine small talk is
