@@ -159,6 +159,14 @@ column, sorts against the other arm, and crowns a winner on a dimension nobody
 measured. **Ignore Total Cost for any seat on the coding plan.** If you need a
 real cost comparison, run both arms on metered keys.
 
+**Worse: the two arms do not even use the same pricing table.** On the same
+task, Claude Code reported `0.3326` and Stella `0.0641`. Stella's catalog *has*
+a `glm-5.2` entry, so its figure is a fair estimate of what the run would cost
+on metered z.ai. Claude Code's has none, so its figure prices GLM as the
+Anthropic model whose alias it was pointed at. Read side by side that says
+"Stella is 5× cheaper", which is not a finding about either agent — it is two
+different tables being subtracted from each other.
+
 **Cache read is real and large** — the same trial reported 286,656 of 296,070
 input tokens served from cache. z.ai returns `cache_read_input_tokens`, so that
 dimension is comparable. It returns no `cache_creation_input_tokens`, so **cache
