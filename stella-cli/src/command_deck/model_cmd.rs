@@ -254,6 +254,7 @@ mod tests {
             authority: crate::settings::AuthorityPolicy::default(),
             credential_source: None,
             credential_advisories: Vec::new(),
+            aux_credentials: Default::default(),
         }
     }
 

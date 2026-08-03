@@ -548,11 +548,13 @@ fn auth_set_key_parses_and_stays_independent_of_the_global_api_key() {
                     provider,
                     key,
                     stdin,
+                    fields,
                 },
         }) => {
             assert_eq!(provider, "zai");
             assert_eq!(key.as_deref(), Some("sk-stored"));
             assert!(!stdin);
+            assert!(fields.is_empty());
         }
         _ => panic!("expected `auth set`"),
     }

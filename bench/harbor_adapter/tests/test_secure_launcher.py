@@ -21,6 +21,8 @@ import stella_harbor.secure_launcher as launcher_module  # noqa: E402
 from stella_harbor.credential_bundle import (  # noqa: E402
     HOST_CREDENTIAL_BUNDLE_FD_ENV,
     create_anonymous_credential_bundle,
+    is_credential_env_name,
+    provider_credentials_for_model,
     read_anonymous_credential_bundle,
     sanitized_harbor_environment,
 )
@@ -1159,10 +1161,136 @@ def test_bundle_is_unlinked_owner_only_and_pread_is_offset_independent() -> None
                     [str(fd)] * 16,
                 )
             )
-        assert reads == [{"OPENROUTER_API_KEY": "test-openrouter-secret"}] * 16
+        assert [read.credentials for read in reads] == [
+            {"OPENROUTER_API_KEY": "test-openrouter-secret"}
+        ] * 16
+        assert all(read.routing == {} for read in reads)
         assert handle.tell() == 0
     finally:
         handle.close()
+
+
+def test_bedrock_selects_its_whole_explicit_credential_set_and_region() -> None:
+    """#1301: the handover carries a set, and the region rides beside it."""
+    selected = provider_credentials_for_model(
+        {
+            "AWS_ACCESS_KEY_ID": "AKIATESTACCESSKEYID",
+            "AWS_SECRET_ACCESS_KEY": "test-bedrock-secret-access-key",
+            "AWS_SESSION_TOKEN": "test-bedrock-session-token",
+            "AWS_REGION": "eu-central-1",
+            # Present and irrelevant: another provider's key must not ride along.
+            "OPENROUTER_API_KEY": "test-openrouter-secret",
+        },
+        "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    )
+
+    assert list(selected.credentials) == [
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+    ]
+    assert selected.routing == {"AWS_REGION": "eu-central-1"}
+    assert "OPENROUTER_API_KEY" not in selected.credentials
+
+
+def test_bedrock_session_token_is_optional_and_region_may_come_from_the_alias() -> None:
+    selected = provider_credentials_for_model(
+        {
+            "AWS_ACCESS_KEY_ID": "AKIATESTACCESSKEYID",
+            "AWS_SECRET_ACCESS_KEY": "test-bedrock-secret-access-key",
+            "AWS_DEFAULT_REGION": "ap-southeast-2",
+        },
+        "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    )
+
+    assert list(selected.credentials) == ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]
+    # Canonicalized: everything downstream records and forwards one spelling.
+    assert selected.routing == {"AWS_REGION": "ap-southeast-2"}
+
+
+@pytest.mark.parametrize(
+    "environ",
+    [
+        # No secret access key: SigV4 cannot sign, so this must never launch.
+        {"AWS_ACCESS_KEY_ID": "AKIATESTACCESSKEYID", "AWS_REGION": "us-east-1"},
+        # No access key id.
+        {"AWS_SECRET_ACCESS_KEY": "test-secret", "AWS_REGION": "us-east-1"},
+        # No region, which is required rather than defaulted — see the spec.
+        {
+            "AWS_ACCESS_KEY_ID": "AKIATESTACCESSKEYID",
+            "AWS_SECRET_ACCESS_KEY": "test-secret",
+        },
+        # Two spellings of the region: fail closed rather than pick a winner.
+        {
+            "AWS_ACCESS_KEY_ID": "AKIATESTACCESSKEYID",
+            "AWS_SECRET_ACCESS_KEY": "test-secret",
+            "AWS_REGION": "us-east-1",
+            "AWS_DEFAULT_REGION": "eu-west-1",
+        },
+    ],
+)
+def test_an_incomplete_bedrock_route_refuses_to_launch(
+    environ: dict[str, str],
+) -> None:
+    with pytest.raises(RuntimeError):
+        provider_credentials_for_model(
+            environ, "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+        )
+
+
+def test_ambient_aws_credential_sources_are_never_a_supported_route() -> None:
+    """Explicit credentials only — the excluded sources stay excluded.
+
+    A profile, SSO cache, IMDS/container-role endpoint, or web-identity token
+    would have the sealed container resolve whatever AWS identity the host
+    happens to carry. Each stays on the scrub deny-list, and none of them can
+    stand in for the explicit pair.
+    """
+    for name in (
+        "AWS_PROFILE",
+        "AWS_DEFAULT_PROFILE",
+        "AWS_SHARED_CREDENTIALS_FILE",
+        "AWS_WEB_IDENTITY_TOKEN_FILE",
+        "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+        "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+    ):
+        assert is_credential_env_name(name), f"{name} must be scrubbed"
+
+    with pytest.raises(RuntimeError, match="credential"):
+        provider_credentials_for_model(
+            {"AWS_PROFILE": "bench", "AWS_REGION": "us-east-1"},
+            "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        )
+
+
+def test_a_bedrock_bundle_round_trips_credentials_and_routing_separately() -> None:
+    handle = create_anonymous_credential_bundle(
+        {
+            "AWS_ACCESS_KEY_ID": "AKIATESTACCESSKEYID",
+            "AWS_SECRET_ACCESS_KEY": "test-bedrock-secret-access-key",
+        },
+        {"AWS_REGION": "eu-central-1"},
+    )
+    try:
+        bundle = read_anonymous_credential_bundle(str(handle.fileno()))
+        assert bundle.credentials == {
+            "AWS_ACCESS_KEY_ID": "AKIATESTACCESSKEYID",
+            "AWS_SECRET_ACCESS_KEY": "test-bedrock-secret-access-key",
+        }
+        assert bundle.routing == {"AWS_REGION": "eu-central-1"}
+        # The region is routing, so it is NOT among the values scrubbed from
+        # evidence; both halves must stay distinguishable after a round trip.
+        assert "eu-central-1" not in bundle.secret_values()
+    finally:
+        handle.close()
+
+
+def test_the_bundle_refuses_a_routing_name_it_does_not_know() -> None:
+    with pytest.raises(RuntimeError, match="unsupported routing names"):
+        create_anonymous_credential_bundle(
+            {"AWS_ACCESS_KEY_ID": "AKIATESTACCESSKEYID"},
+            {"AWS_ENDPOINT_URL": "https://attacker.invalid"},
+        )
 
 
 def test_sanitizer_removes_named_and_arbitrary_alias_copies() -> None:
@@ -1365,7 +1493,8 @@ def test_exec_bundles_only_roster_key_and_scrubs_unrelated_keys(
             provider_key_reader=_FakeProviderKeyReader(),
         )
 
-    assert observed["bundle"] == {"OPENROUTER_API_KEY": openrouter_secret}
+    assert observed["bundle"].credentials == {"OPENROUTER_API_KEY": openrouter_secret}
+    assert observed["bundle"].routing == {}
     child_env = observed["environment"]
     assert isinstance(child_env, dict)
     assert "BENIGN" not in child_env
@@ -2699,7 +2828,8 @@ def test_secure_launch_separates_runtime_and_management_key_reads(
         ("key_record", management_secret, provider.fingerprint),
         ("credits", management_secret),
     ]
-    assert observed["bundle"] == {"OPENROUTER_API_KEY": benchmark_secret}
+    assert observed["bundle"].credentials == {"OPENROUTER_API_KEY": benchmark_secret}
+    assert observed["bundle"].routing == {}
     child_env = observed["environment"]
     assert isinstance(child_env, dict)
     assert all(
