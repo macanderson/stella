@@ -13,12 +13,22 @@ about itself was therefore unfalsifiable. This directory is where that stops.
 ```
 score_dev_baseline.py     scoring: trials.jsonl -> pass@1 + two 95% intervals
 make_manifest.py          identity: freeze every input that can move the number
+tests/                    what keeps the two of them honest
 <run-id>/
   run-manifest.json       the frozen inputs, and why the run is not a claim
+  preregistration.json    what was fixed before the first trial
   trials.jsonl            one row per trial — the score's whole input
   results.md              per-task table, human-readable
   score.json              the computed number, as published
+  comparator/             a second arm, when one was run beside it — same files,
+                          same denominator, and its own README caveats
 ```
+
+### Runs in here
+
+| Run | What | Result |
+|---|---|---|
+| [`tb21-hh10-20260731`](tb21-hh10-20260731/) | Matched head-to-head, native x86_64 host, `glm-5.2`, effort `max`, no budget cap | Stella **58/89 = 65.2%** · Claude Code **44/89 = 49.4%** |
 
 Reproducing a published number needs only that run directory:
 
@@ -30,6 +40,21 @@ The multi-gigabyte Harbor job tree (raw trajectories, container logs) is **not**
 committed. `trials.jsonl` is extracted from it and carries every field the score
 depends on; `run-manifest.json` records the digest of each committed artifact so
 a reader can tell whether what they have is what was published.
+
+Each row also carries the posture digest, assurance arm, binary SHA, source
+commit and Harbor version **the trial itself recorded**, so the manifest states
+the run's identity by collapsing 89 independent observations of it rather than by
+recomputing it from whatever checkout the manifest happened to be built in. Those
+are the same thing only while the run is still warm.
+
+### Reading a descriptive total
+
+`score.json`'s descriptive block reports every partial total beside its own
+denominator — `usd_reported_by`, `tool_calls_reported_by`, `trials`. Cost and
+tool calls come from Stella's accounting block, which a comparator agent does not
+emit, so **absent and zero are different answers** and the block distinguishes
+them. A `usd_total` whose `usd_reported_by` is below `trials` is a sum over part
+of the run and must not be set beside a complete one.
 
 ## Two kinds of run, and never confusing them
 
