@@ -127,6 +127,148 @@ impl ToolPolicy {
             }
         }
     }
+
+    /// Narrow this policy by another scope: a tool ends up allowed only if
+    /// **both** policies allow it.
+    ///
+    /// This is [`deny_all_from`](Self::deny_all_from)'s guarantee — a lower
+    /// scope may narrow, never widen — computed over *resolved* answers
+    /// instead of over raw keys, which is what a wildcard-plus-exception
+    /// scope needs.
+    ///
+    /// `deny_all_from` folds key by key, so the read-only idiom
+    /// `{"*": off, "read_file": on}` folds in as `{"*": off}` alone: the
+    /// grant is dropped (correctly — grants never transfer), and `read_file`
+    /// then falls through to the wildcard and is denied. The scope says
+    /// "nothing except read_file" and the fold hears "nothing". Resolving
+    /// each key through [`allows`](Self::allows) first keeps the exception,
+    /// because `other.allows("read_file")` is `true` while
+    /// `other.allows("*")` is `false`.
+    ///
+    /// The narrowing guarantee is unchanged and still structural: every entry
+    /// is `self.allows(k) && other.allows(k)`, so a tool this policy denies
+    /// stays denied whatever `other` says.
+    pub fn narrow_with(&mut self, other: &ToolPolicy) {
+        let keys: std::collections::BTreeSet<String> = self
+            .switches
+            .keys()
+            .chain(other.switches.keys())
+            .cloned()
+            .collect();
+        let resolved: Vec<(String, bool)> = keys
+            .into_iter()
+            .map(|key| {
+                let allowed = self.allows(&key) && other.allows(&key);
+                (key, allowed)
+            })
+            .collect();
+        self.switches.extend(resolved);
+    }
+
+    /// Parse a comma-separated switch spec — the CLI spelling of the
+    /// `settings.json` `"tools"` table (#1263).
+    ///
+    /// `*:off,read_file:on,grep:on` is a read-only agent; `repo_push:off`
+    /// removes one capability. `on`/`off` are the only values, matching the
+    /// settings file exactly rather than inventing a second vocabulary for
+    /// the same concept. Whitespace around either side is ignored so a
+    /// quoted, spaced-out spec behaves.
+    pub fn parse_spec(spec: &str) -> Result<Self, String> {
+        let mut switches = BTreeMap::new();
+        for entry in spec.split(',') {
+            let entry = entry.trim();
+            if entry.is_empty() {
+                continue;
+            }
+            let Some((key, value)) = entry.rsplit_once(':') else {
+                return Err(format!(
+                    "`{entry}` is not a tool switch — write it as `name:on` or `name:off` \
+                     (e.g. `*:off,read_file:on`)"
+                ));
+            };
+            let key = key.trim();
+            if key.is_empty() {
+                return Err(format!("`{entry}` has no tool name before the `:`"));
+            }
+            let enabled = match value.trim() {
+                "on" => true,
+                "off" => false,
+                other => {
+                    return Err(format!("`{key}` must be `on` or `off`, not `{other}`"));
+                }
+            };
+            switches.insert(key.to_string(), enabled);
+        }
+        if switches.is_empty() {
+            return Err("empty tool spec — pass at least one `name:on`/`name:off`".into());
+        }
+        Ok(Self { switches })
+    }
+}
+
+#[cfg(test)]
+mod narrowing_tests {
+    use super::*;
+
+    /// The read-only idiom, and the reason `narrow_with` exists at all:
+    /// `deny_all_from` folds key by key, drops the `read_file:on` grant, and
+    /// leaves `read_file` falling through to `*:off` — so the scope that says
+    /// "nothing except read_file" would have been heard as "nothing".
+    #[test]
+    fn a_wildcard_off_with_an_exception_keeps_the_exception() {
+        let scope = ToolPolicy::parse_spec("*:off,read_file:on,grep:on").unwrap();
+        let mut effective = ToolPolicy::allow_all();
+        effective.narrow_with(&scope);
+
+        assert!(effective.allows("read_file"), "the exception must survive");
+        assert!(effective.allows("grep"));
+        assert!(!effective.allows("bash"));
+        assert!(!effective.allows("write_file"));
+
+        // The old fold is what this replaces — pinned so a future
+        // simplification back to it fails loudly rather than silently
+        // disarming every `--tools` exception.
+        let mut folded = ToolPolicy::allow_all();
+        folded.deny_all_from(&scope);
+        assert!(
+            !folded.allows("read_file"),
+            "deny_all_from drops grants — if this ever passes, narrow_with is redundant"
+        );
+    }
+
+    /// The guarantee that makes a lowest-authority CLI scope safe: it can
+    /// narrow, never widen.
+    #[test]
+    fn a_cli_scope_cannot_re_enable_what_settings_denied() {
+        let mut effective = ToolPolicy::from_switches([("bash".to_string(), false)]);
+        let scope = ToolPolicy::parse_spec("bash:on").unwrap();
+        effective.narrow_with(&scope);
+        assert!(!effective.allows("bash"), "a grant must never transfer");
+    }
+
+    /// A narrowing scope must not disturb tools neither side mentions.
+    #[test]
+    fn tools_no_scope_mentions_are_untouched() {
+        let mut effective = ToolPolicy::allow_all();
+        effective.narrow_with(&ToolPolicy::parse_spec("repo_push:off").unwrap());
+        assert!(!effective.allows("repo_push"));
+        assert!(effective.allows("read_file"));
+        assert!(effective.allows("bash"));
+    }
+
+    #[test]
+    fn a_spec_is_parsed_or_named_as_malformed() {
+        let p = ToolPolicy::parse_spec(" *:off , read_file:on ").unwrap();
+        assert!(p.allows("read_file"));
+        assert!(!p.allows("bash"));
+
+        for bad in ["read_file", "read_file:yes", ":on", ""] {
+            assert!(
+                ToolPolicy::parse_spec(bad).is_err(),
+                "`{bad}` must be rejected"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

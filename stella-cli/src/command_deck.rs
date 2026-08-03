@@ -1382,7 +1382,10 @@ pub async fn run_deck_session(
         if !pipeline_on {
             // Attach any media files the prompt names (including `⌃V`
             // clipboard images, which arrive as their stored payload path).
-            messages.push(crate::attachments::user_message(&prompt));
+            messages.push(crate::attachments::user_message_in(
+                &prompt,
+                &cfg.workspace_root,
+            ));
         }
         let reflect_start = messages.len();
 
