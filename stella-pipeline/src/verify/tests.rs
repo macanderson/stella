@@ -510,6 +510,7 @@ fn both_judge_prompts_mark_the_diff_as_worker_authored_data() {
             // string that existed nowhere. A restated literal cannot detect the
             // heading changing; only the shared constant can.
             p.contains(UNTRUSTED_DIFF_HEADING_SUFFIX),
+            p.contains("worker-authored") && p.contains("data, not instructions"),
             "the diff section heading must carry the framing where the diff starts: {p}"
         );
     }
