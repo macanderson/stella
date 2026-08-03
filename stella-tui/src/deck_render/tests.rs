@@ -866,3 +866,65 @@ fn sessions_overlay_repeats_the_heading_when_scrolled_into_a_group_midway() {
         "the selected row is in the window:\n{text}"
     );
 }
+
+/// L-T7 for the deck (#933): a panic inside one band renders an error card in
+/// that band, every other band still draws, and the next frame is the real
+/// view again — the `DeckUi` came through the caught panic intact.
+///
+/// The panic is injected at `panel_guard`'s test-only seam rather than crafted
+/// from a model, because no model or `DeckUi` makes a view panic:
+/// `tests/render_robustness.rs` already sweeps all nine tabs and every overlay
+/// across 121 geometries without one. The injection fires inside the guarded
+/// closure, exactly where a view's own panic would surface.
+#[test]
+fn a_panicking_deck_view_renders_an_error_card_and_the_session_survives() {
+    let model = running_model_with_queue();
+
+    // The reference frame: a deck that never saw a panic.
+    let mut clean_ui = DeckUi::default();
+    clean_ui.splash.skip();
+    let mut clean = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    clean
+        .draw(|f| render_deck(&model, &mut clean_ui, f))
+        .unwrap();
+    let reference = buffer_text(clean.backend().buffer());
+
+    let mut ui = DeckUi::default();
+    ui.splash.skip();
+    let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+
+    // Frame 1: the SESSION band panics mid-draw. `draw` still returns Ok —
+    // nothing unwound out of it, so the event loop keeps its terminal.
+    {
+        let _armed = crate::panel_guard::arm_panic("SESSION");
+        term.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+    }
+    let text = buffer_text(term.backend().buffer());
+    assert!(
+        text.contains("panel 'SESSION' panicked"),
+        "the error card names the band that failed:\n{text}"
+    );
+    assert!(
+        text.contains("injected panic in band SESSION"),
+        "the error card carries the panic message:\n{text}"
+    );
+    for surviving in [">>>", "stella", "CONTEXT", "AGENTS"] {
+        assert!(
+            text.contains(surviving),
+            "the surviving bands still rendered ({surviving:?} missing):\n{text}"
+        );
+    }
+
+    // Frame 2, injection gone: the real view is back, and the frame is
+    // byte-for-byte what a deck that never panicked draws — nothing tore.
+    term.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+    let recovered = buffer_text(term.backend().buffer());
+    assert!(
+        !recovered.contains("panicked"),
+        "the error card clears once the view stops panicking:\n{recovered}"
+    );
+    assert_eq!(
+        recovered, reference,
+        "the frame after a caught panic matches one that never saw it"
+    );
+}

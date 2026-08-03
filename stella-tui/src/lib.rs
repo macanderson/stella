@@ -26,7 +26,8 @@
 //! native copy (L-T2, [`RunOptions::mouse_capture`]), paste chips (L-T3,
 //! [`Composer::paste`]), line-exact scroll (L-T4, [`ScrollState`]), diffs on
 //! the single event path (L-T5, [`model::FileState`]), buffer-not-ANSI tests
-//! (L-T6), the panel panic boundary (L-T7, [`mod@render`]), and the debug channel
+//! (L-T6), the panel panic boundary (L-T7, `panel_guard` — covering both
+//! the single-session panels and the deck's bands), and the debug channel
 //! (L-T8, [`DebugLog`]).
 
 pub mod ansi;
@@ -35,6 +36,7 @@ pub mod clipboard;
 pub mod composer;
 pub mod input;
 pub mod model;
+pub(crate) mod panel_guard;
 pub mod render;
 pub mod scroll;
 pub mod shell;

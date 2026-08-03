@@ -7,17 +7,19 @@
 //!
 //! # Panel panic boundary (L-T7)
 //!
-//! Each panel is drawn through `guarded_panel`, which renders it into its
-//! **own** throwaway [`Buffer`] inside `catch_unwind`. If a panel panics
-//! mid-write, that local buffer is discarded and an error card is drawn in its
-//! place; the app keeps running with input alive. This is sound because the
-//! draw closures capture only immutable references (`&SessionModel` and
-//! `Copy` values — no interior mutability) and the sole mutable state they
-//! touch is the freshly-created local buffer, which is thrown away on panic.
-//! The frame's real buffer is only ever written by the infallible `blit`
-//! *after* the panel has finished, so a half-written panel can never reach the
-//! screen. Hence the `AssertUnwindSafe` wrapper is justified rather than
-//! papered over.
+//! Each panel is drawn through `guarded_panel`, a thin `Frame`-shaped
+//! wrapper over `panel_guard::guarded_band` — the crate's single
+//! boundary, shared with the deck. The panel renders into its own scratch
+//! [`Buffer`]; a panic mid-write discards it and paints an error card in its
+//! place, and the app keeps running with input alive.
+//!
+//! On *this* path the `AssertUnwindSafe` needs no recoverability argument at
+//! all: the draw closures below capture only immutable references
+//! (`&SessionModel` and `Copy` values — no interior mutability) and the sole
+//! mutable state they touch is the scratch buffer, which is thrown away on
+//! panic. `ui.metrics` is written by `render` itself, outside every guard. The
+//! deck's closures do capture `&mut DeckUi`, and the argument for those lives
+//! with the boundary in `panel_guard`.
 
 use std::ops::Range;
 
@@ -219,74 +221,15 @@ pub(crate) fn inner_width(area: Rect) -> usize {
 
 // Panel panic boundary (L-T7)
 
-/// Render one panel into a throwaway buffer under `catch_unwind`; on panic,
-/// substitute a visible error card. See the module docs for the soundness
-/// argument behind `AssertUnwindSafe`.
-///
-/// The [`crate::term::PanelBoundary`] marker tells the panic hook this panic
-/// is caught here (in unwind builds), so it must not restore the terminal
-/// mid-session; in abort builds the catch is inert and the hook restores
-/// unconditionally — the process is about to die either way.
+/// Render one panel of the single-session shell under the crate's panic
+/// boundary; on panic, substitute a visible error card. See
+/// `panel_guard` for the mechanism and the `AssertUnwindSafe`
+/// argument, and this module's docs for why that argument is trivial here.
 pub(crate) fn guarded_panel<F>(frame: &mut Frame, area: Rect, label: &str, draw: F)
 where
-    F: Fn(&mut Buffer),
+    F: FnOnce(&mut Buffer),
 {
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-    let drawn = {
-        let _boundary = crate::term::PanelBoundary::enter();
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut buf = Buffer::empty(area);
-            draw(&mut buf);
-            buf
-        }))
-    };
-    let buf = match drawn {
-        Ok(buf) => buf,
-        Err(payload) => error_card(area, label, &panic_message(&*payload)),
-    };
-    blit(frame.buffer_mut(), &buf, area);
-}
-
-/// Copy every cell of `src` in `area` into `dst`. Infallible — the only write
-/// to the real frame buffer, always after a panel has fully drawn or failed.
-fn blit(dst: &mut Buffer, src: &Buffer, area: Rect) {
-    for y in area.top()..area.bottom() {
-        for x in area.left()..area.right() {
-            let cell = src.cell((x, y)).cloned();
-            if let (Some(cell), Some(slot)) = (cell, dst.cell_mut((x, y))) {
-                *slot = cell;
-            }
-        }
-    }
-}
-
-/// Extract a human message from a panic payload.
-fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
-    if let Some(s) = payload.downcast_ref::<&str>() {
-        (*s).to_string()
-    } else if let Some(s) = payload.downcast_ref::<String>() {
-        s.clone()
-    } else {
-        "panicked with a non-string payload".to_string()
-    }
-}
-
-/// A visible red error card standing in for a panel that panicked.
-fn error_card(area: Rect, label: &str, message: &str) -> Buffer {
-    let mut buf = Buffer::empty(area);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::new().fg(theme::DANGER))
-        .title(format!(" ⚠ panel '{label}' panicked "));
-    let body = format!("{message}\n\nthe rest of the TUI is still running");
-    Paragraph::new(body)
-        .block(block)
-        .wrap(Wrap { trim: true })
-        .style(Style::new().fg(theme::DANGER).add_modifier(Modifier::BOLD))
-        .render(area, &mut buf);
-    buf
+    crate::panel_guard::guarded_band(frame.buffer_mut(), area, label, draw);
 }
 
 // Panels

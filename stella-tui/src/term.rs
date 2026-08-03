@@ -12,13 +12,13 @@
 //!
 //! In unwind (dev) builds the hook never restores. The hook fires for EVERY
 //! panic on ANY thread or tokio task, and a session can outlive a panic in
-//! two ways that make hook-time restoration actively harmful: panel panics
-//! are caught by `render::guarded_panel` and rendered as an error card in
-//! place (see [`PanelBoundary`]), and a panic on a background task can leave
-//! the deck session running while other sessions continue — restoring there
-//! would tear the live UI out from under them. Any panic that really does
-//! end the program unwinds into [`TerminalGuard`]'s `Drop`, which performs
-//! the restore on that orderly path. Printing at hook time is just as wrong
+//! two ways that make hook-time restoration actively harmful: band panics are
+//! caught by [`crate::panel_guard`] and rendered as an error card in place
+//! (see [`PanelBoundary`]), and a panic on a background task can leave the
+//! deck session running while other sessions continue — restoring there would
+//! tear the live UI out from under them. Any panic that really does end the
+//! program unwinds into [`TerminalGuard`]'s `Drop`, which performs the restore
+//! on that orderly path. Printing at hook time is just as wrong
 //! as restoring — stderr goes to the alternate screen and vanishes with it —
 //! so the unwind-build hook instead writes the debug log and STASHES the
 //! panic report (message + backtrace) on the shared state; the restore
@@ -27,6 +27,24 @@
 //! chance to run — the process dies inside the hook — so the hook is the
 //! only restoration point and restoring (then delegating to the previous
 //! hook for the message) is always right, even mid-panel-draw.
+//!
+//! The whole argument above rests on "band panics are caught", so here is
+//! exactly which panics that covers. [`crate::panel_guard`] wraps every
+//! single-session panel (`render::render`), every deck band — tab bar, active
+//! tab content, trace strip, progress bar, composer, footer, statline, the
+//! splash, and each floating overlay (`deck_render::render_deck`) — and the
+//! fleet dashboard's single band. Those are all the places in this crate that
+//! draw into a frame. A panic in one of them is repainted as an error card and
+//! the session continues; a panic anywhere else — the event loop, `ingest`, a
+//! background task — is not caught here and is a fatal one that leaves through
+//! `Drop`.
+//!
+//! One consequence worth stating plainly, because it changes what a developer
+//! sees: a caught band panic is deliberately NOT stashed for the
+//! after-restore stderr replay, so a deck view that panics every frame prints
+//! nothing to stderr at exit — the operator sees the error card and that is
+//! all. Every panic still reaches the structured debug log unconditionally
+//! (below), which is where to look for one.
 
 use std::cell::Cell;
 use std::io;
@@ -171,21 +189,25 @@ impl Drop for TerminalGuard {
 }
 
 thread_local! {
-    /// True while the current thread is inside a `guarded_panel` draw whose
+    /// True while the current thread is inside a guarded band draw whose
     /// panics are caught and rendered in place (dev builds only — see the
     /// module docs for the abort-build caveat).
     static IN_GUARDED_PANEL: Cell<bool> = const { Cell::new(false) };
 }
 
-/// RAII marker for a panel draw whose panics are caught by the caller
-/// (`render::guarded_panel`, effective in unwind builds only).
+/// RAII marker for a band draw whose panics are caught by the caller
+/// ([`crate::panel_guard`], effective in unwind builds only).
 ///
 /// The unwind-build panic hook consults this flag to tell caught-in-place
-/// panics from fatal ones: a guarded panel draw renders its panic as an
-/// error card, so its report is not stashed for the after-restore stderr
-/// replay (module docs). Under abort the catch is inert — the process is
-/// about to die — so restoring even during a marked panel draw is always
-/// right and the flag is ignored.
+/// panics from fatal ones: a guarded band renders its panic as an error card,
+/// so its report is not stashed for the after-restore stderr replay (module
+/// docs). Under abort the catch is inert — the process is about to die — so
+/// restoring even during a marked band draw is always right and the flag is
+/// ignored.
+///
+/// A thread-local is the right scope: `terminal.draw(..)` is synchronous with
+/// no `await` inside, so a band is entered and left on one thread even though
+/// the surrounding task can migrate between tokio workers.
 pub(crate) struct PanelBoundary {
     prev: bool,
 }
@@ -217,11 +239,11 @@ type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'sta
 /// installed hook, so the standard panic message and `RUST_BACKTRACE`
 /// output print on the user's real screen, not the alternate one. In unwind
 /// builds step (2) never happens — the hook fires for panics the session
-/// survives (caught panel draws, background tasks), and real teardown
+/// survives (caught band draws, background tasks), and real teardown
 /// restores via [`TerminalGuard`]'s `Drop` instead. What an unwind build
-/// does instead is stash the report (unless a `guarded_panel` catch renders
-/// it in place) so the restore can replay it on stderr — a fatal dev panic
-/// must not exit silently (see the module docs).
+/// does instead is stash the report (unless a [`crate::panel_guard`] catch
+/// renders it in place) so the restore can replay it on stderr — a fatal dev
+/// panic must not exit silently (see the module docs).
 pub(crate) struct PanicHookGuard {
     prev: Arc<PanicHook>,
 }
@@ -248,7 +270,7 @@ impl PanicHookGuard {
             // the session survives, and stderr would land on the alternate
             // screen anyway — so the report is stashed for the restore to
             // replay on the real screen (see the module docs). A guarded
-            // panel draw is exempt: its catcher renders the panic in place.
+            // band draw is exempt: its catcher renders the panic in place.
             if cfg!(panic = "abort") {
                 state.restore();
                 (*delegate)(info);

@@ -30,7 +30,8 @@ and the TUI communicate over two channels and never call each other directly.
 | [`src/lib.rs`](src/lib.rs) | The authoritative design statement (pure core + thin shell) and the whole public re-export surface. Read it first. |
 | [`src/model.rs`](src/model.rs) | `SessionModel` — one agent's fold. `apply` (line 319) is the *only* mutator; `replay` (line 645) rebuilds it from a log. |
 | [`src/ui.rs`](src/ui.rs) | `UiState` (scroll, composer, focus — everything *not* derived from events) and the pure `handle_key` / `ingest`. |
-| [`src/render.rs`](src/render.rs) | `render(model, ui, frame)` for the single-session REPL, plus `guarded_panel` — the panel panic boundary. |
+| [`src/render.rs`](src/render.rs) | `render(model, ui, frame)` for the single-session REPL, plus `guarded_panel` — its entry to the panic boundary. |
+| [`src/panel_guard.rs`](src/panel_guard.rs) | The panel panic boundary itself (L-T7), shared by the REPL, the deck and the fleet dashboard — and the written argument for what a caught panic can leave in `DeckUi`. |
 | [`src/shell.rs`](src/shell.rs) | `run(...)`: terminal setup, crossterm loop, two channels, `RunOptions`, `DebugLog`. No decision logic. |
 | [`src/term.rs`](src/term.rs) | `TerminalGuard` + `PanicHookGuard`. Open this before touching anything about raw mode or panics. |
 | [`src/deck.rs`](src/deck.rs) | `WorkspaceModel` — N `SessionModel`s plus cross-agent read-models (file ledger, route log, prompt queue, unified trace). |
@@ -112,12 +113,17 @@ every panic on every thread, including panel panics the session survives.
 
 ## Gotchas
 
-- `guarded_panel` is **single-session only**. Every `guarded_panel` call site is
-  in [`src/render.rs`](src/render.rs) (hud, transcript, files, diff,
-  scope-review, ask-user, composer, slash-menu). `render_deck` calls its view
-  modules directly, so a panic inside a deck tab is not caught and rendered as
-  an error card — it takes the process down. Do not assume the boundary covers
-  a new tab you add.
+- **The panic boundary covers every band, but only in unwind builds.**
+  [`src/panel_guard.rs`](src/panel_guard.rs) wraps the single-session panels,
+  every deck band (tab bar, active tab, trace strip, progress bar, composer,
+  footer, statline, splash, each overlay) and the fleet dashboard, so a
+  panicking view becomes an error card and the session continues. Release
+  builds set `panic = "abort"`, where `catch_unwind` never runs its handler —
+  so the shipped binary still dies on a view panic. A new draw surface is
+  covered only if you route it through `guarded_band`/`guarded_overlay`, and a
+  new `&mut DeckUi` write in a view has to be classified in that module's
+  "what a caught panic can leave behind" list or the argument there stops
+  being true.
 - **Digits never switch tabs, deliberately.** They quick-pick `ask_user`
   answers and must stay typeable as a prompt's first character, so `Tab` /
   `Shift-Tab` are the only tab navigation
