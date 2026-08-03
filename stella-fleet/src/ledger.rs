@@ -405,6 +405,45 @@ impl Ledger {
             .optional()?;
         Ok(matches!(finished, Some(Some(_))))
     }
+
+    /// When a task last finished an attempt, across **every** run in this
+    /// ledger — the per-task half of the prompt-cache warmth signal
+    /// (issue #1222): on a re-run of a plan the task ids repeat, so this is
+    /// the timestamp the caller projects to "seconds until this task's
+    /// prefix expires". Unfinished attempts (in flight, or crashed before
+    /// stamping) carry no signal — the last provider call of a finished
+    /// attempt is ~its finish time; an unfinished row's start time would
+    /// only mis-date it. `None` when the task has never finished one.
+    ///
+    /// The value is whatever clock the writing fleet stamped. The CLI stamps
+    /// wall-clock (Unix-epoch ms); rows written by older builds carry
+    /// process-relative ms, which read as decades-stale against a wall
+    /// clock — i.e. cold, the conservative direction for a warmth signal.
+    pub fn last_attempt_finish_ms(&self, task_id: &str) -> Result<Option<u64>, LedgerError> {
+        let last: Option<i64> = self.conn.query_row(
+            "SELECT MAX(finished_at_ms) FROM attempts WHERE task_id = ?1",
+            params![task_id],
+            |row| row.get(0),
+        )?;
+        Ok(last.map(|ms| ms as u64))
+    }
+
+    /// When **any** task in this workspace last finished an attempt — the
+    /// shared-prefix half of the warmth signal (issue #1222): within one run
+    /// every worker shares the same byte-stable workspace prefix, so a task
+    /// with no history of its own inherits the prefix's last touch. Uniform
+    /// across a ready set of first-time tasks, which makes it an honest
+    /// no-op reorder there; it only separates tasks once per-task history
+    /// exists. Same timestamp caveat as
+    /// [`last_attempt_finish_ms`](Self::last_attempt_finish_ms).
+    pub fn latest_attempt_finish_ms(&self) -> Result<Option<u64>, LedgerError> {
+        let last: Option<i64> =
+            self.conn
+                .query_row("SELECT MAX(finished_at_ms) FROM attempts", [], |row| {
+                    row.get(0)
+                })?;
+        Ok(last.map(|ms| ms as u64))
+    }
 }
 
 /// The schema version `migrate` brings a `fleet.db` up to. Bump it in the
@@ -1038,6 +1077,77 @@ mod tests {
             reopened.lineage_children("run1").unwrap(),
             vec!["t1".to_string()]
         );
+    }
+
+    // the warmth-signal reads (issue #1222)
+
+    /// Record one finished attempt for `task_id` in `run_id`, minimal shape.
+    fn finished_attempt(ledger: &Ledger, run_id: &str, task_id: &str, finished_at_ms: u64) {
+        let attempt_id = ledger
+            .start_attempt(&AttemptStart {
+                run_id: run_id.into(),
+                task_id: task_id.into(),
+                worktree_path: format!("/tmp/{task_id}"),
+                branch: format!("fleet/{task_id}"),
+                started_at_ms: finished_at_ms.saturating_sub(1_000),
+            })
+            .unwrap();
+        ledger
+            .finish_attempt(&AttemptFinish {
+                attempt_id,
+                run_id: run_id.into(),
+                task_id: task_id.into(),
+                finished_at_ms,
+                success: true,
+                summary: "ok".into(),
+                commits: vec![],
+                cost_usd: 0.0,
+                spend_at_ms: finished_at_ms,
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn last_attempt_finish_is_per_task_and_spans_runs() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        seed_run(&ledger, "run1");
+        seed_run(&ledger, "run2");
+        // The same task id across two runs — a plan re-run — plus a sibling.
+        finished_attempt(&ledger, "run1", "t1", 10_000);
+        finished_attempt(&ledger, "run2", "t1", 50_000);
+        finished_attempt(&ledger, "run1", "t2", 30_000);
+
+        assert_eq!(
+            ledger.last_attempt_finish_ms("t1").unwrap(),
+            Some(50_000),
+            "the LATEST finish across runs wins"
+        );
+        assert_eq!(ledger.last_attempt_finish_ms("t2").unwrap(), Some(30_000));
+        assert_eq!(
+            ledger.last_attempt_finish_ms("never-ran").unwrap(),
+            None,
+            "a task with no history carries no per-task signal"
+        );
+        // The shared-prefix timestamp: the newest finish over ALL tasks.
+        assert_eq!(ledger.latest_attempt_finish_ms().unwrap(), Some(50_000));
+    }
+
+    #[test]
+    fn unfinished_attempts_carry_no_warmth_signal() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        seed_run(&ledger, "run1");
+        // Opened but never stamped — a crash, or a worker still in flight.
+        ledger
+            .start_attempt(&AttemptStart {
+                run_id: "run1".into(),
+                task_id: "t1".into(),
+                worktree_path: "/tmp/t1".into(),
+                branch: "fleet/t1".into(),
+                started_at_ms: 5,
+            })
+            .unwrap();
+        assert_eq!(ledger.last_attempt_finish_ms("t1").unwrap(), None);
+        assert_eq!(ledger.latest_attempt_finish_ms().unwrap(), None);
     }
 
     #[test]

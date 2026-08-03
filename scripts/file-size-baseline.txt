@@ -19,9 +19,7 @@
 1812 stella-cli/src/agent_tests.rs
 1576 stella-cli/src/candidate_ws.rs
 4551 stella-cli/src/command_deck.rs
-4551 stella-cli/src/command_deck.rs
-4551 stella-cli/src/command_deck.rs
-1503 stella-cli/src/fleet_cmd.rs
+1514 stella-cli/src/fleet_cmd.rs
 1526 stella-cli/src/memory/tests.rs
 2129 stella-core/src/bus.rs
 2585 stella-core/src/driver.rs
