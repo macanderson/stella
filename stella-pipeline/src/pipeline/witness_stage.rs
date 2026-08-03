@@ -183,13 +183,16 @@ impl<'a> Pipeline<'a> {
             .workspace
             .expect("witness authoring requires a pristine baseline workspace");
         let witness_tools = baseline_workspace.witness_tools();
-        let engine = Engine::with_sleeper(
+        let mut engine = Engine::with_sleeper(
             author.provider,
             witness_tools,
             self.engine_config_for(baseline),
             self.sleeper,
         )
         .with_call_role(stella_protocol::ModelCallRole::WitnessAuthor);
+        if let Some(gate) = self.turn_gate {
+            engine = engine.with_gate(gate);
+        }
 
         let mut messages = vec![
             CompletionMessage::system(WITNESS_SYSTEM_PROMPT),
@@ -252,13 +255,16 @@ impl<'a> Pipeline<'a> {
         }
         if first_baseline.passed() {
             messages.push(CompletionMessage::user(witness_repair_prompt(&command)));
-            let repair_engine = Engine::with_sleeper(
+            let mut repair_engine = Engine::with_sleeper(
                 author.provider,
                 witness_tools,
                 self.engine_config_for(baseline),
                 self.sleeper,
             )
             .with_call_role(stella_protocol::ModelCallRole::WitnessRepair);
+            if let Some(gate) = self.turn_gate {
+                repair_engine = repair_engine.with_gate(gate);
+            }
             let repaired = match self
                 .run_engine_turn(
                     &repair_engine,
