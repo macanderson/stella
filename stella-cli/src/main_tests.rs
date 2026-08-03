@@ -10,7 +10,9 @@ use clap::{CommandFactory, Parser};
 use super::build_info::{
     BUILD_VERSION_IDENTITY, long_version_static, version_static, version_string,
 };
-use super::term_policy::{PlainReason, animation_disabled, deck_decision, dumb_terminal};
+use super::term_policy::{
+    ChatSurface, PlainReason, animation_disabled, chat_surface, dumb_terminal,
+};
 use super::{AuthCmd, Cli, Command, ConnectCmd, OutputFormat, TelemetryCmd, error_summary_json};
 
 /// `-V` stays one greppable line; `--version` answers the two questions a bug
@@ -202,34 +204,38 @@ fn a_dumb_terminal_disables_colour_unless_the_user_forces_it() {
 /// that is what the caller prints.
 #[test]
 fn every_plain_fallback_names_a_reason_and_a_real_terminal_gets_the_deck() {
+    // (plain_flag, simple_flag, plain_env, simple_env, stdin_tty, stdout_tty)
     // The only combination that earns the deck.
-    assert_eq!(deck_decision(false, false, true, true), None);
+    assert_eq!(
+        chat_surface(false, false, false, false, true, true),
+        ChatSurface::Deck
+    );
 
     // Explicit opt-outs outrank stream shape: someone who passed `--plain`
     // does not need to be told about their tty.
     assert_eq!(
-        deck_decision(true, false, true, true),
-        Some(PlainReason::Flag)
+        chat_surface(true, false, false, false, true, true),
+        ChatSurface::Plain(PlainReason::Flag)
     );
     assert_eq!(
-        deck_decision(false, true, true, true),
-        Some(PlainReason::Env)
+        chat_surface(false, false, true, false, true, true),
+        ChatSurface::Plain(PlainReason::Env)
     );
     assert_eq!(
-        deck_decision(true, false, false, false),
-        Some(PlainReason::Flag),
+        chat_surface(true, false, false, false, false, false),
+        ChatSurface::Plain(PlainReason::Flag),
         "the flag is reported ahead of the ttys it makes irrelevant"
     );
 
     // A piped stdin is the case behind the bug report: the deck never starts,
     // and the REPL exits the moment that pipe ends.
     assert_eq!(
-        deck_decision(false, false, false, true),
-        Some(PlainReason::StdinNotTty)
+        chat_surface(false, false, false, false, false, true),
+        ChatSurface::Plain(PlainReason::StdinNotTty)
     );
     assert_eq!(
-        deck_decision(false, false, true, false),
-        Some(PlainReason::StdoutNotTty)
+        chat_surface(false, false, false, false, true, false),
+        ChatSurface::Plain(PlainReason::StdoutNotTty)
     );
 
     // No fallback is allowed to be silent — an empty explanation would print
@@ -242,6 +248,61 @@ fn every_plain_fallback_names_a_reason_and_a_real_terminal_gets_the_deck() {
     ] {
         assert!(!reason.explain().is_empty(), "{reason:?} explains nothing");
     }
+}
+
+/// `--simple` is an accessibility request, and the ladder in
+/// [`chat_surface`] exists so that it behaves like one: it beats an inherited
+/// `STELLA_PLAIN`, it never silently becomes the deck, and when there is no
+/// terminal to draw on it degrades to the REPL naming the stream at fault
+/// rather than failing or pretending.
+#[test]
+fn the_simple_surface_wins_over_an_inherited_plain_env_but_still_needs_a_terminal() {
+    // (plain_flag, simple_flag, plain_env, simple_env, stdin_tty, stdout_tty)
+    assert_eq!(
+        chat_surface(false, true, false, false, true, true),
+        ChatSurface::Simple
+    );
+
+    // A typed flag beats an exported variable. Someone who needs the
+    // accessible surface must not be overruled by a STELLA_PLAIN their shell
+    // profile set for something else.
+    assert_eq!(
+        chat_surface(false, true, true, false, true, true),
+        ChatSurface::Simple
+    );
+
+    // …but an explicitly typed `--plain` still wins: it is the most
+    // conservative request available and nothing overrides it.
+    assert_eq!(
+        chat_surface(true, true, false, false, true, true),
+        ChatSurface::Plain(PlainReason::Flag)
+    );
+
+    // STELLA_SIMPLE makes it the default without a flag — that is how a
+    // screen-reader user stops typing `--simple` every time.
+    assert_eq!(
+        chat_surface(false, false, false, true, true, true),
+        ChatSurface::Simple
+    );
+    // Between the two env vars, the conservative one wins: the ladder checks
+    // STELLA_PLAIN first.
+    assert_eq!(
+        chat_surface(false, false, true, true, true, true),
+        ChatSurface::Plain(PlainReason::Env)
+    );
+
+    // `--simple` is an *inline* TUI: it still needs raw mode and a real
+    // stdout. Over a pipe it degrades to the REPL and names the stream, the
+    // same way an unflagged run does — never a hard failure, never a silent
+    // one.
+    assert_eq!(
+        chat_surface(false, true, false, false, false, true),
+        ChatSurface::Plain(PlainReason::StdinNotTty)
+    );
+    assert_eq!(
+        chat_surface(false, true, false, false, true, false),
+        ChatSurface::Plain(PlainReason::StdoutNotTty)
+    );
 }
 
 /// `--no-anim`'s help promises "Also forced on by STELLA_NO_ANIM or NO_COLOR",

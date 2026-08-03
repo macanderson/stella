@@ -262,7 +262,7 @@ export type AgentEvent = {
   estimated_input_tokens?: number;
   /**
    * Why generation stopped, as the provider reported it
-   * ([`stella_protocol::completion::FinishReason`]). `Length` is the
+   * (`stella_protocol::completion::FinishReason`). `Length` is the
    * only *ground truth* a consumer has that this step was cut off at
    * the output ceiling — the "we stopped first" event.
    *

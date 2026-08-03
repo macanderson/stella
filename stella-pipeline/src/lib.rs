@@ -94,6 +94,7 @@
 //! [`PipelinePorts`]: ports::PipelinePorts
 
 pub mod candidate;
+pub(crate) mod candidate_fanout;
 pub(crate) mod candidate_narration;
 pub mod flip_halt;
 pub(crate) mod candidate_steering;

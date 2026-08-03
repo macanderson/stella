@@ -12,6 +12,14 @@
 #
 # The two lists must not drift: scripts/check-license-allowlist-parity.sh
 # (wired into `make gate`) fails if this list and deny.toml's disagree.
+#
+# `allow-dependencies-licenses` is the one escape hatch, and it is deliberately
+# narrow: the reasoning above is about LINKED code — a crate whose license
+# rides along into the distributed binary. A pinned GitHub Action is build
+# tooling that runs on the runner and ships in nothing, so its license cannot
+# reach either track. Exemptions here are per-package, never per-license, so
+# the crate policy stays exactly as strict as deny.toml says it is and the
+# parity guard above keeps checking it.
 name: dependency-review
 
 on:
@@ -30,6 +38,22 @@ jobs:
         with:
           fail-on-severity: high
           comment-summary-in-pr: on-failure
+          # Swatinem/rust-cache is LGPL-3.0 and has been in ci.yml, release.yml
+          # and live-smoke.yml since long before this gate existed — the action
+          # only surfaces in a review when a PR adds a workflow file that uses
+          # it, which is how a settled dependency turned up as a new finding on
+          # #1233. It caches a target directory on the runner; nothing it
+          # touches is distributed, so the AGPL/dual-license reasoning in the
+          # header does not apply to it. Vulnerability review still does — this
+          # input excludes the package from the LICENSE check only.
+          #
+          # Must stay ABOVE `allow-licenses`: check-license-allowlist-parity.sh
+          # reads that key's folded scalar by consuming every following indented
+          # line, so a sibling key underneath it would be parsed as an SPDX id.
+          #
+          # The version in a purl is ignored when matching, so re-pinning the
+          # action above does not require touching this line.
+          allow-dependencies-licenses: pkg:githubactions/Swatinem/rust-cache
           allow-licenses: >-
             AGPL-3.0-only, Apache-2.0, Apache-2.0 WITH LLVM-exception, MIT,
             BSD-2-Clause, BSD-3-Clause, ISC, Zlib, BSL-1.0, MPL-2.0, Unlicense,

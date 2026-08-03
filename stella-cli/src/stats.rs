@@ -765,6 +765,27 @@ fn render_csv(rows: &[StatsRow]) -> String {
 mod tests {
     use super::*;
 
+    /// The CLI's low-hit-rate bar and the deck's must be the same number.
+    ///
+    /// `stella-tui` cannot depend on the model tier, so it re-derives
+    /// `diagnose_cache`'s gate by hand — `stella_model::cache_economics`'s own
+    /// module docs flag this and note that "nothing cross-checks the two", so a
+    /// change to one silently makes `stella stats` and the deck's CACHE cell
+    /// disagree about whether the same session is healthy. Neither surface
+    /// fails when they diverge; they just report different things. This is the
+    /// cross-check, placed here because `stella-cli` is the one crate that can
+    /// see both constants.
+    #[test]
+    fn the_low_hit_rate_bar_agrees_with_the_decks() {
+        assert_eq!(
+            LOW_HIT_RATE_THRESHOLD,
+            stella_tui::cache_panel::LOW_HIT_RATE_THRESHOLD,
+            "stella stats and the deck's CACHE cell would disagree about which \
+             sessions are unhealthy. Both re-derive `diagnose_cache`'s bar by \
+             hand; change them together."
+        );
+    }
+
     fn row(provider: &str, model: &str) -> StatsRow {
         StatsRow {
             provider: provider.into(),
