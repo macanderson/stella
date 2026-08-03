@@ -1509,7 +1509,7 @@ fn assemble_user_message_puts_recall_before_the_task() {
         id: None,
         content_digest: None,
     }];
-    let msg = assemble_user_message("do the thing", &frames);
+    let msg = assemble_user_message("do the thing", &frames, None);
     let recall_idx = msg.find("Recalled context").unwrap();
     let task_idx = msg.find("do the thing").unwrap();
     assert!(recall_idx < task_idx, "recall rides before the goal");
@@ -1517,7 +1517,25 @@ fn assemble_user_message_puts_recall_before_the_task() {
 
 #[test]
 fn assemble_user_message_is_just_the_goal_when_no_recall() {
-    assert_eq!(assemble_user_message("hello", &[]), "hello");
+    assert_eq!(assemble_user_message("hello", &[], None), "hello");
+}
+
+/// The configured test command is the run's actual oracle, so the worker is
+/// told it up front instead of discovering it from the first failure's
+/// disclosure. Only the operator-configured command ever rides here — an
+/// authored witness's command is airlocked, and does not exist at assembly
+/// time anyway.
+#[test]
+fn assemble_user_message_states_the_configured_verification_contract() {
+    let msg = assemble_user_message("fix the parser", &[], Some("cargo test -p parser"));
+    let task_idx = msg.find("fix the parser").unwrap();
+    let contract_idx = msg.find("`cargo test -p parser`").unwrap();
+    assert!(
+        task_idx < contract_idx,
+        "the task leads; the contract qualifies it"
+    );
+    assert!(msg.contains("failing before your change and passing after it"));
+    assert!(msg.contains("Do not modify the tests it runs"));
 }
 
 /// With no `--test-command`, the witness author arms the flip oracle: its

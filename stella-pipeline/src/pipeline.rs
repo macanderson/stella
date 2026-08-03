@@ -869,9 +869,20 @@ impl<'a> Pipeline<'a> {
         };
         let task_class = assessment.class;
         // The volatile recall+goal message rides AFTER the stable system
-        // prefix (L-E8) — see assemble_user_message.
+        // prefix (L-E8) — see assemble_user_message. The verification
+        // contract rides only on turns that will actually be verified: a
+        // conversational turn has no oracle, and a simple lookup is verified
+        // only if it unexpectedly touches files — telling either "make this
+        // test pass" would invent work.
+        let verified_by = self
+            .config
+            .test_command
+            .as_deref()
+            .filter(|_| !assessment.conversational && task_class.verifies_unconditionally());
         messages.push(CompletionMessage::user(assemble_user_message(
-            goal, &frames,
+            goal,
+            &frames,
+            verified_by,
         )));
 
         // --- Conversational fast path. -------------------------------------
@@ -3333,26 +3344,52 @@ fn bound_recalled_frames(frames: Vec<RecalledFrame>) -> Vec<RecalledFrame> {
     out
 }
 
-fn assemble_user_message(goal: &str, frames: &[RecalledFrame]) -> String {
-    if frames.is_empty() {
+fn assemble_user_message(
+    goal: &str,
+    frames: &[RecalledFrame],
+    verified_by: Option<&str>,
+) -> String {
+    if frames.is_empty() && verified_by.is_none() {
         return goal.to_string();
     }
-    let mut s = String::from("## Recalled context\n");
-    for f in frames {
-        // Cite by human label (L-C4); include content as grounding.
-        s.push_str("- [");
-        s.push_str(&f.citation_label);
-        s.push_str("] (");
-        s.push_str(&f.source);
-        s.push_str(")\n");
-        if !f.content.trim().is_empty() {
-            s.push_str("  ");
-            s.push_str(f.content.trim());
-            s.push('\n');
+    let mut s = String::new();
+    if !frames.is_empty() {
+        s.push_str("## Recalled context\n");
+        for f in frames {
+            // Cite by human label (L-C4); include content as grounding.
+            s.push_str("- [");
+            s.push_str(&f.citation_label);
+            s.push_str("] (");
+            s.push_str(&f.source);
+            s.push_str(")\n");
+            if !f.content.trim().is_empty() {
+                s.push_str("  ");
+                s.push_str(f.content.trim());
+                s.push('\n');
+            }
         }
+        s.push('\n');
     }
-    s.push_str("\n## Task\n");
+    s.push_str("## Task\n");
     s.push_str(goal.trim());
+    // The verification contract, when the operator configured one. The
+    // methodology prompt tells the worker to "run the target test" without
+    // ever saying which — the command that actually gates the run was
+    // withheld until the first failure disclosed it (the airlock's L1 brief
+    // names it anyway). Saying it up front moves that information one failed
+    // revision earlier, on the exact channel the worker plans from. Only the
+    // operator-CONFIGURED command is ever disclosed here: an authored
+    // witness's command does not exist yet at assembly time, and its
+    // disclosure stays governed by the airlock (`crate::witness::airlock`).
+    if let Some(command) = verified_by {
+        s.push_str("\n\n## Verification\n");
+        s.push_str(&format!(
+            "This run's primary verification is `{command}`: the accepted deterministic \
+             evidence is this command failing before your change and passing after it. \
+             Reproduce the failure with it before editing; make it pass before finishing. \
+             Do not modify the tests it runs."
+        ));
+    }
     s
 }
 

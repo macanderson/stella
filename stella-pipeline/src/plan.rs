@@ -262,14 +262,31 @@ pub fn build_planner_prompt(
     prompt
 }
 
+/// Ceiling on the unparseable response echoed back in the repair prompt, in
+/// chars (~4k tokens). A healthy plan is a short JSON array, so the echo
+/// exists to remind the model what it just said — not to re-bill a planner
+/// that answered with an essay. Head-kept: the plan content, when present,
+/// leads the response; the tail of a rambling one is the part worth losing.
+const PLAN_REPAIR_ECHO_CHARS: usize = 16_000;
+
 /// A short re-prompt asking a model that returned unparseable plan output to
 /// re-emit it as a strict JSON array — the pipeline's one bounded repair
 /// retry (L-V2 "bounded repair loops"). Kept here beside the parsers it feeds.
+/// The echo is clamped to [`PLAN_REPAIR_ECHO_CHARS`]: an unbounded echo paid
+/// for a pathological response twice, once to receive it and once to repeat
+/// it back.
 pub fn plan_repair_prompt(previous_response: &str) -> String {
+    let mut echoed: String = previous_response
+        .chars()
+        .take(PLAN_REPAIR_ECHO_CHARS)
+        .collect();
+    if echoed.chars().count() < previous_response.chars().count() {
+        echoed.push_str("\n[… response truncated for the repair prompt …]");
+    }
     format!(
         "Your previous response could not be parsed as a plan. Re-emit the plan as \
          a strict JSON array of step strings and NOTHING else — no prose, no code \
-         fences. Previous response:\n{previous_response}\n\nJSON array:"
+         fences. Previous response:\n{echoed}\n\nJSON array:"
     )
 }
 
@@ -424,5 +441,19 @@ mod tests {
         let p = plan_repair_prompt("here's a plan in prose");
         assert!(p.contains("JSON array"));
         assert!(p.contains("here's a plan in prose"));
+    }
+
+    /// The repair echo is a reminder, not a second billing of the whole bad
+    /// response: past the ceiling it is head-kept with a visible marker.
+    #[test]
+    fn repair_prompt_clamps_a_pathological_response() {
+        let rambling: String = (0..10_000).map(|i| format!("thought {i}; ")).collect();
+        let p = plan_repair_prompt(&rambling);
+        assert!(p.contains("thought 0; "), "the head must survive");
+        assert!(p.contains("[… response truncated for the repair prompt …]"));
+        assert!(
+            p.chars().count() < PLAN_REPAIR_ECHO_CHARS + 500,
+            "the prompt must be bounded by the echo ceiling, not the response size"
+        );
     }
 }
