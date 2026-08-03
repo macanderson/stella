@@ -441,6 +441,14 @@ be closed by exactly one PR; if a fix spans several, close on the last and
   classification (`stella-model`, `stella-mcp`, `stella-media`).
 - **Integration tests** with fixture MCP servers (`stella-mcp/tests/`).
 - **Replay fixtures** for pipeline stages (`stella-pipeline/tests/`).
+- **Golden frames** for the command deck
+  (`stella-tui/tests/deck_render_snapshots.rs`). Each tab and overlay renders
+  into a fixed-size `TestBackend` and the whole character grid is compared
+  against a committed snapshot under `tests/snapshots/deck/`. This catches what
+  a `contains` assertion cannot — a column that shifted, a panel that moved, a
+  row that vanished. Regenerate with
+  `BLESS=1 cargo test -p stella-tui --test deck_render_snapshots`, then **read
+  the diff**: a golden blessed without looking is a changelog, not a test.
 
 When iterating, run a single crate's tests — `cargo test -p stella-core` is
 seconds; `cargo test --workspace` rebuilds everything.
