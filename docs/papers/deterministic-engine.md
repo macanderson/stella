@@ -32,7 +32,7 @@ deterministic loop produces better outcomes than the flexibility of a swarm.
 4. [Stella's engine: deterministic by construction](#4-stellas-engine-deterministic-by-construction)
 5. [Why determinism is a feature, not a limitation](#5-why-determinism-is-a-feature-not-a-limitation)
 6. [When multi-agent is the wrong answer](#6-when-multi-agent-is-the-wrong-answer)
-7. [The deferred layer: stella-fleet](#7-the-deferred-layer-stella-fleet)
+7. [The parallel layer: stella-fleet](#7-the-parallel-layer-stella-fleet)
 8. [Conclusion](#8-conclusion)
 
 ---
@@ -270,11 +270,12 @@ trade-off, and the research supports it."
 
 ---
 
-## 7. The deferred layer: stella-fleet
+## 7. The parallel layer: stella-fleet
 
 Stella's workspace includes `stella-fleet` — a multi-agent fan-out system with
 a DAG planner, git-worktree isolation per task, and a SQLite lineage + spend
-ledger. It is complete and property-tested but **not wired into the CLI.**
+ledger. (When this paper was first written it was complete and property-tested
+but not yet wired into the CLI; it has since shipped as `stella fleet`.)
 
 This is not a contradiction. `stella-fleet` addresses a different problem:
 **multi-task parallelism**, not multi-agent-per-task coordination. When you
