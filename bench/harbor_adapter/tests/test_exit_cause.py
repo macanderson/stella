@@ -119,8 +119,27 @@ class TestVerdict:
         assert "exited" in detail
 
     def test_a_missing_container_is_external_teardown(self) -> None:
-        verdict, _ = sigkill_verdict(container_state=None, memory_events={})
+        # "Missing" means the probe looked and found nothing there, which is
+        # what `container_absent` says. Absent that observation, a `None`
+        # state means only that the probe could not see — see below.
+        verdict, _ = sigkill_verdict(
+            container_state=None, memory_events={}, container_absent=True
+        )
         assert verdict == "external-teardown"
+
+    def test_an_unobservable_container_is_unattributed_not_teardown(self) -> None:
+        # A broken probe must never be reported as an affirmative cause: a
+        # Docker hiccup during the post-mortem of a real OOM would otherwise
+        # erase that OOM from the record and file it as infrastructure.
+        verdict, detail = sigkill_verdict(container_state=None, memory_events={})
+        assert verdict == "unattributed"
+        assert "could not observe" in detail
+
+    def test_oom_evidence_still_wins_over_an_unobservable_container(self) -> None:
+        verdict, _ = sigkill_verdict(
+            container_state=None, memory_events={"oom_kill": 1}
+        )
+        assert verdict == "oom-kill"
 
     def test_a_healthy_container_with_no_oom_events_is_unattributed(self) -> None:
         # "We looked and found nothing" is recorded, never guessed into a

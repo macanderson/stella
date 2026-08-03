@@ -1,0 +1,31 @@
+{
+  "schema": "stella-tb21-dev-baseline-score-v2",
+  "tasks_declared": 89,
+  "tasks_with_a_trial": 89,
+  "tasks_missing_a_trial": 0,
+  "trials": 89,
+  "passes": 44,
+  "accuracy": 0.4943820224719101,
+  "ci95_bootstrap": {
+    "low": 0.39325842696629215,
+    "high": 0.5955056179775281,
+    "seed": 20260729,
+    "draws": 50000,
+    "method": "percentile over per-task binary outcomes"
+  },
+  "ci95_clopper_pearson": {
+    "low": 0.3866645025693345,
+    "high": 0.6024838801016659,
+    "method": "exact binomial"
+  },
+  "descriptive": {
+    "usd_total": 63.3515,
+    "usd_reported_by": 71,
+    "prompt_tokens": 57233585,
+    "completion_tokens": 2226100,
+    "trials_with_zero_tool_calls": 0,
+    "tool_calls_reported_by": 0,
+    "trials_with_an_exception": 48,
+    "trials": 89
+  }
+}
