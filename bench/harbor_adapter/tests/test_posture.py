@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -657,3 +658,81 @@ class TestWitnessArmEndToEnd:
         assert context.metadata["stella_stream"]["witness_unavailable_reasons"] == [
             reason
         ]
+
+
+_CATALOG_RS = (
+    Path(__file__).resolve().parents[3] / "stella-model" / "src" / "catalog.rs"
+)
+
+
+def _seeded_output_ceilings() -> dict[str, int]:
+    """Read each seeded model's own completion ceiling from the Rust catalog.
+
+    Parsed rather than duplicated, because duplicating it is the defect this
+    exists to catch. Entries with no `with_max_output_tokens` are omitted:
+    the engine falls back to its global default for those, and the posture
+    has no per-model ceiling to match.
+    """
+    source = _CATALOG_RS.read_text(encoding="utf-8")
+    ceilings: dict[str, int] = {}
+    for chunk in source.split("CatalogEntry::new(")[1:]:
+        head = re.match(r'\s*"([^"]+)"\s*,\s*"([^"]+)"', chunk)
+        if head is None:
+            continue
+        slug, provider = head.groups()
+        if slug.startswith("test-only"):
+            continue  # fixtures for the catalog's own tests, never benchmarked
+        # `split` already consumed the delimiter, so a chunk ends exactly
+        # where the next entry begins and the first ceiling in it is this
+        # entry's own.
+        ceiling = re.search(r"with_max_output_tokens\(Some\(([\d_]+)\)\)", chunk)
+        if ceiling is None:
+            continue
+        # Always provider-qualified, never "the slug already looks qualified".
+        # The gateway rows are seeded under slugs like
+        # `anthropic/claude-fable-5`, which is what a caller writes as
+        # `--model openrouter/anthropic/claude-fable-5`. Treating that slug as
+        # already-qualified collapses it onto the direct-Anthropic row's key,
+        # and since the gateway rows come later in the file they overwrite it
+        # — the ratchet then silently checks one model's posture against
+        # another model's ceiling. Caught by deliberately drifting a single
+        # row and finding this test still green.
+        ceilings[f"{provider}/{slug}"] = int(ceiling.group(1).replace("_", ""))
+    return ceilings
+
+
+class TestOutputCeilingParity:
+    """#1211 §6.2: the posture's cap must be the model's own ceiling.
+
+    `params.max_tokens` exists to stop Stella capping itself below what the
+    comparator gets — "never be the side that stops first". It is a literal
+    in `posture.py`, and the model's actual ceiling is a literal in
+    `stella-model/src/catalog.rs`. Nothing connected the two, so a catalog
+    that learns a higher ceiling leaves the benchmark quietly capped at the
+    old one: the exact handicap the constant was introduced to remove, now
+    invisible because both numbers still look deliberate.
+    """
+
+    def test_catalog_is_readable_and_seeds_ceilings(self) -> None:
+        # If this fails, the parser below is silently checking nothing —
+        # which is how a ratchet becomes decoration.
+        assert _CATALOG_RS.is_file(), f"{_CATALOG_RS} is missing"
+        assert _seeded_output_ceilings(), "no seeded ceiling was parsed"
+
+    def test_posture_caps_every_seeded_model_at_its_own_ceiling(self) -> None:
+        for model, ceiling in _seeded_output_ceilings().items():
+            posture, _, _ = _benchmark_engine_posture(model)
+            for role, agent in posture["agents"].items():
+                params = agent.get("params")
+                if params is None:
+                    # `triage` keeps the engine default deliberately: it emits
+                    # a three-line classification, so the cap never binds.
+                    assert role == "triage", f"{role} unexpectedly has no cap"
+                    continue
+                assert params["max_tokens"] == ceiling, (
+                    f"{model} role {role}: the posture caps at "
+                    f"{params['max_tokens']} but the catalog seeds the model's "
+                    f"ceiling at {ceiling}. Whichever moved, the benchmark is "
+                    "now capping itself away from the comparator — raise the "
+                    "posture, or correct the catalog."
+                )
