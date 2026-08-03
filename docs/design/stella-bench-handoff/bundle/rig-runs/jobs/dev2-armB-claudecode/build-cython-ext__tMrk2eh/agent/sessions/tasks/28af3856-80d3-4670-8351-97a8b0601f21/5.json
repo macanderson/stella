@@ -1,0 +1,9 @@
+{
+  "id": "5",
+  "subject": "Verify README snippet and test suite",
+  "description": "Run the README code snippet and the test suite (except test_random_curves.py and test_catalogue.py) to confirm functionality.",
+  "activeForm": "Verifying README snippet and tests",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}

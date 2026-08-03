@@ -1,0 +1,9 @@
+{
+  "id": "1",
+  "subject": "Boot Alpine ISO in QEMU",
+  "description": "Launch /app/alpine.iso in qemu-system-x86_64 (TCG, no KVM) with serial console on a unix socket, monitor socket, and host port forward 127.0.0.1:2222 -> guest:22. Run detached so it persists.",
+  "activeForm": "Booting Alpine ISO in QEMU",
+  "status": "in_progress",
+  "blocks": [],
+  "blockedBy": []
+}

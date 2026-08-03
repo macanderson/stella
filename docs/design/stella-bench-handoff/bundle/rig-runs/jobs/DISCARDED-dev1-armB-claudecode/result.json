@@ -1,0 +1,46 @@
+{
+    "id": "32673af0-03e9-40d5-8cea-13a8a60d5cb1",
+    "started_at": "2026-07-31T17:06:10.486529",
+    "finished_at": null,
+    "n_total_trials": 20,
+    "stats": {
+        "n_trials": 9,
+        "n_errors": 7,
+        "evals": {
+            "claude-code__glm-5.2__terminal-bench/terminal-bench-2-1": {
+                "n_trials": 2,
+                "n_errors": 7,
+                "metrics": [
+                    {
+                        "mean": 0.2222222222222222
+                    }
+                ],
+                "pass_at_k": {},
+                "reward_stats": {
+                    "reward": {
+                        "1.0": [
+                            "code-from-image__4zAyDW8",
+                            "break-filter-js-from-html__u7G2v3M"
+                        ]
+                    }
+                },
+                "exception_stats": {
+                    "RuntimeError": [
+                        "polyglot-rust-c__dyFnu28",
+                        "extract-elf__Yu3Adsj",
+                        "distribution-search__GaFcc6z",
+                        "tune-mjcf__K3pgXL9",
+                        "constraints-scheduling__gQ5AXUj",
+                        "headless-terminal__zLTYtjd",
+                        "write-compressor__M8nYyPH"
+                    ]
+                }
+            }
+        },
+        "n_input_tokens": 699479,
+        "n_cache_tokens": 671360,
+        "n_output_tokens": 20693,
+        "cost_usd": 0.9936
+    },
+    "trial_results": []
+}

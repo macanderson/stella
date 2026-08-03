@@ -1,0 +1,103 @@
+diff --git a/bench/evidence/run/env.sh b/bench/evidence/run/env.sh
+index f91bdcb..4076359 100755
+--- a/bench/evidence/run/env.sh
++++ b/bench/evidence/run/env.sh
+@@ -13,7 +13,8 @@ export PATH="$VENV/bin:$PATH"
+ export PYTHONPATH="$TB_REPO/bench/harbor_adapter"
+ 
+ export STELLA_BINARY="$TB_REPO/target/x86_64-unknown-linux-gnu/release/stella"
+-export STELLA_BUDGET="${STELLA_BUDGET:-0.60}"
++# No default. Empty means no per-trial cap; the adapter omits --budget.
++export STELLA_BUDGET="${STELLA_BUDGET-}"
+ export STELLA_DISABLE_REFLECTION=1
+ 
+ # The frozen dataset, pinned by digest. An unversioned name is not a freeze.
+diff --git a/bench/evidence/run/primary.sh b/bench/evidence/run/primary.sh
+index 6af2482..eecb5b9 100755
+--- a/bench/evidence/run/primary.sh
++++ b/bench/evidence/run/primary.sh
+@@ -10,14 +10,17 @@ JOB="${2:?usage: primary.sh <A|B> <job-name>}"
+ test ! -e "$JOBS/$JOB" || { echo "FATAL: $JOBS/$JOB exists — a run never resumes"; exit 1; }
+ 
+ case "$PHASE" in
+-  A) KEY=phaseA; CONC="${TB_CONCURRENCY_A:-3}" ;;
+-  B) KEY=phaseB; CONC=1 ;;
+-  *) echo "FATAL: phase must be A or B"; exit 1 ;;
++  A)   KEY=phaseA; CONC="${TB_CONCURRENCY_A:-3}" ;;
++  B)   KEY=phaseB; CONC=1 ;;
++  ALL) KEY=all;    CONC="${TB_CONCURRENCY:-3}" ;;
++  *)   echo "FATAL: phase must be A, B or ALL"; exit 1 ;;
+ esac
+ 
+ python3 -c "
+ import json,sys
+-print('\n'.join(json.load(open('$TB_ROOT/phases.json'))['$KEY']))
++p=json.load(open('$TB_ROOT/phases.json'))
++names = p['phaseA'] + p['phaseB'] if '$KEY'=='all' else p['$KEY']
++print('\n'.join(sorted(names)))
+ " > "$TB_ROOT/$KEY.tasks"
+ N=$(grep -c . "$TB_ROOT/$KEY.tasks")
+ test "$N" -gt 0 || { echo "FATAL: no tasks for phase $PHASE"; exit 1; }
+diff --git a/bench/harbor_adapter/stella_harbor/__init__.py b/bench/harbor_adapter/stella_harbor/__init__.py
+index 94b8332..6101138 100644
+--- a/bench/harbor_adapter/stella_harbor/__init__.py
++++ b/bench/harbor_adapter/stella_harbor/__init__.py
+@@ -1385,14 +1385,16 @@ class StellaAgent(BaseInstalledAgent):
+         the instruction as one literal argument without shell quoting/parsing.
+         """
+         model = model or self._effective_model()
++        # An empty STELLA_BUDGET means NO cap: `--budget` is `Option<f64>` in
++        # the CLI, so omitting the flag leaves the guard unset. A benchmark run
++        # must not impose a spend ceiling the comparator does not have.
+         budget = self._configured_value("STELLA_BUDGET", _DEFAULT_BUDGET)
+         base_url = base_url or self._effective_base_url(model)
+         parts = [
+             _INSTALL_PATH,
+             "--model",
+             model,
+-            "--budget",
+-            budget,
++            *(["--budget", budget] if str(budget).strip() else []),
+             "--output-format",
+             "stream-json",
+         ]
+@@ -1538,7 +1540,11 @@ class StellaAgent(BaseInstalledAgent):
+                     )
+ 
+         budget = self._configured_value("STELLA_BUDGET", _DEFAULT_BUDGET)
+-        if budget is not None:
++        # An empty value means NO cap, so the variable must not be forwarded at
++        # all: the CLI declares `--budget` with `env = "STELLA_BUDGET"`, and clap
++        # parses an empty string as a malformed number and exits 2 before the
++        # turn starts. `is not None` is not the same test as "has a value".
++        if budget is not None and str(budget).strip():
+             forwarded["STELLA_BUDGET"] = budget
+         reflection = self._configured_value(
+             "STELLA_DISABLE_REFLECTION", _DEFAULT_DISABLE_REFLECTION
+diff --git a/bench/harbor_adapter/stella_harbor/posture.py b/bench/harbor_adapter/stella_harbor/posture.py
+index 0525548..b37afca 100644
+--- a/bench/harbor_adapter/stella_harbor/posture.py
++++ b/bench/harbor_adapter/stella_harbor/posture.py
+@@ -132,15 +132,17 @@ def _benchmark_engine_posture(
+         # Terminal-Bench number published before this change was produced under
+         # that handicap.
+         #
+-        # `triage` deliberately stays low/off, and that is parity rather than an
+-        # exception to it: it emits a three-line classification and never edits
+-        # the workspace, so raising it would change what Stella *is* rather than
+-        # what it was allowed to spend.
++        # `triage` matches the others. It was `low`/`off` on the argument that
++        # it only emits a three-line classification — true, and irrelevant to a
++        # head-to-head: Claude Code has one agent-wide effort and no cheap
++        # classifier tier, so a discounted triage is a difference between the
++        # agents that is not the endpoint. Parity is measured against the other
++        # side's configuration, not against what each role seems to deserve.
+         "agents": {
+             "default": {"effort": "max", "reasoning": "on"},
+             "worker": {"effort": "max", "reasoning": "on"},
+             "judge": {"effort": "max", "reasoning": "on"},
+-            "triage": {"effort": "low", "reasoning": "off"},
++            "triage": {"effort": "max", "reasoning": "on"},
+         },
+     }
+     if witness_author is not None:

@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A paired 89-task Terminal-Bench 2.1 comparison holding the model fixed and changing only the agent harness. Every trial inspectable.">
+<meta property="og:title" content="Terminal-Bench 2.1: same model, different harness">
+<meta property="og:description" content="Stella 58, Claude Code 44, on identical GLM-5.2. Every trial inspectable.">
+<style>*,*::before,*::after{box-sizing:border-box}
+body,h1,h2,p,ul,pre{margin:0} ul{list-style:none;padding:0}
+button{font:inherit;color:inherit} table{border-collapse:collapse}</style>
+</head>
+<body>
+<title>Terminal-Bench 2.1: same model, different harness · Stella Benchmarks</title>
+<style>
+/* Neutral monochrome, per the docs house style: no accent hue in the chrome.
+   The only colour on this page is semantic — a task passed or it did not. */
+:root{
+  --bg:#FFFFFF; --sub:#FAFAFA; --panel:#FFFFFF;
+  --ink:#0A0A0A; --ink-2:#525252; --ink-3:#8F8F8F;
+  --rule:#EAEAEA; --rule-2:#D4D4D4;
+  --pass:#11703A; --fail:#A32F1F; --pass-bg:#EDF6F0; --fail-bg:#FBF0EE;
+  --code:#F6F6F6;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0A0A0A; --sub:#0F0F0F; --panel:#111111;
+  --ink:#EDEDED; --ink-2:#A1A1A1; --ink-3:#6E6E6E;
+  --rule:#1F1F1F; --rule-2:#2E2E2E;
+  --pass:#4CC38A; --fail:#E5715F; --pass-bg:#10201A; --fail-bg:#221312;
+  --code:#151515;}}
+:root[data-theme="dark"]{
+  --bg:#0A0A0A; --sub:#0F0F0F; --panel:#111111;
+  --ink:#EDEDED; --ink-2:#A1A1A1; --ink-3:#6E6E6E;
+  --rule:#1F1F1F; --rule-2:#2E2E2E;
+  --pass:#4CC38A; --fail:#E5715F; --pass-bg:#10201A; --fail-bg:#221312;
+  --code:#151515;}
+:root[data-theme="light"]{
+  --bg:#FFFFFF; --sub:#FAFAFA; --panel:#FFFFFF;
+  --ink:#0A0A0A; --ink-2:#525252; --ink-3:#8F8F8F;
+  --rule:#EAEAEA; --rule-2:#D4D4D4;
+  --pass:#11703A; --fail:#A32F1F; --pass-bg:#EDF6F0; --fail-bg:#FBF0EE;
+  --code:#F6F6F6;}
+*{box-sizing:border-box}
+body{margin:0; background:var(--bg); color:var(--ink);
+  font:400 16px/1.65 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  -webkit-font-smoothing:antialiased; letter-spacing:-.003em}
+.mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace; font-variant-numeric:tabular-nums}
+.wrap{max-width:1140px; margin:0 auto; padding:0 28px}
+.prose{max-width:68ch}
+h1,h2,h3{letter-spacing:-.022em; text-wrap:balance; font-weight:640; margin:0}
+a{color:var(--ink); text-decoration:underline; text-decoration-color:var(--rule-2);
+  text-underline-offset:3px}
+a:hover{text-decoration-color:var(--ink)}
+:focus-visible{outline:2px solid var(--ink); outline-offset:3px; border-radius:2px}
+
+.crumb{border-bottom:1px solid var(--rule)}
+.crumb .wrap{display:flex; gap:9px; align-items:center; padding:13px 28px;
+  font-family:ui-monospace,Menlo,monospace; font-size:11.5px; letter-spacing:.04em}
+.crumb a{color:var(--ink-3); text-decoration:none}
+.crumb a:hover{color:var(--ink)}
+.crumb .sep{color:var(--rule-2)} .crumb .here{color:var(--ink-2)}
+
+header{border-bottom:1px solid var(--rule); padding:60px 0 0; background:var(--sub)}
+.eyebrow{font-family:ui-monospace,Menlo,monospace; font-size:11px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--ink-3)}
+h1{font-size:clamp(30px,4.6vw,50px); line-height:1.05; margin:16px 0 14px; font-weight:680}
+.dek{color:var(--ink-2); font-size:18.5px; max-width:60ch; margin:0 0 36px}
+
+/* score: distinguished by weight and fill, not by two competing hues */
+.score{display:grid; grid-template-columns:1fr 1fr; gap:0; border:1px solid var(--rule-2);
+  background:var(--rule); margin-bottom:0}
+.sc{background:var(--panel); padding:22px 26px 24px; display:flex; flex-direction:column; gap:7px}
+.sc.win{background:var(--ink); color:var(--bg)}
+.sc .who{font-family:ui-monospace,Menlo,monospace; font-size:11.5px; letter-spacing:.1em;
+  text-transform:uppercase; opacity:.72}
+.sc .big{font-size:clamp(50px,9vw,86px); line-height:.85; font-weight:700; letter-spacing:-.05em;
+  font-variant-numeric:tabular-nums}
+.sc .sub{font-family:ui-monospace,Menlo,monospace; font-size:12px; opacity:.6}
+.rail{display:flex; height:5px; background:var(--rule); border:1px solid var(--rule-2);
+  border-top:none; margin-bottom:40px}
+.rail i:first-child{background:var(--ink)} .rail i:last-child{background:var(--rule-2)}
+
+section{padding:54px 0; border-bottom:1px solid var(--rule)}
+h2{font-size:clamp(20px,2.4vw,26px); margin-bottom:5px}
+.lede{color:var(--ink-3); font-family:ui-monospace,Menlo,monospace; font-size:11px;
+  letter-spacing:.13em; text-transform:uppercase; margin:0 0 26px}
+p{margin:0 0 17px}
+strong{font-weight:625}
+.callout{border-left:2px solid var(--ink); padding:3px 0 3px 20px; margin:26px 0; color:var(--ink-2)}
+
+.stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(155px,1fr)); gap:1px;
+  background:var(--rule); border:1px solid var(--rule); margin:30px 0}
+.stat{background:var(--panel); padding:15px 17px; display:flex; flex-direction:column; gap:5px}
+.stat .k{font-family:ui-monospace,Menlo,monospace; font-size:10px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--ink-3)}
+.stat .v{font-weight:680; font-variant-numeric:tabular-nums; font-size:25px;
+  letter-spacing:-.03em; line-height:1}
+.stat .n{font-size:12px; color:var(--ink-3); font-family:ui-monospace,Menlo,monospace}
+
+.grid2{display:grid; grid-template-columns:auto 1fr 1fr; gap:1px; background:var(--rule);
+  border:1px solid var(--rule); max-width:580px; margin:26px 0}
+.grid2>div{background:var(--panel); padding:13px 16px}
+.grid2 .hd{font-family:ui-monospace,Menlo,monospace; font-size:10px; letter-spacing:.09em;
+  text-transform:uppercase; color:var(--ink-3)}
+.grid2 .cell{font-weight:680; font-size:24px; font-variant-numeric:tabular-nums; letter-spacing:-.025em}
+.grid2 .cell small{display:block; font-family:ui-monospace,Menlo,monospace; font-size:10.5px;
+  font-weight:400; letter-spacing:0; color:var(--ink-3); margin-top:4px}
+.grid2 .key{background:var(--ink); color:var(--bg)}
+.grid2 .key small{color:var(--bg); opacity:.62}
+
+.toolbar{display:flex; flex-wrap:wrap; gap:7px; align-items:center; margin:0 0 15px}
+.chip{font-family:ui-monospace,Menlo,monospace; font-size:11.5px; padding:6px 12px;
+  border:1px solid var(--rule-2); background:transparent; color:var(--ink-2); cursor:pointer;
+  border-radius:3px; letter-spacing:.02em}
+.chip:hover{border-color:var(--ink-3); color:var(--ink)}
+.chip[aria-pressed="true"]{background:var(--ink); color:var(--bg); border-color:var(--ink)}
+.count{margin-left:auto; font-family:ui-monospace,Menlo,monospace; font-size:11.5px; color:var(--ink-3)}
+
+.tscroll{overflow-x:auto; border:1px solid var(--rule)}
+table{border-collapse:collapse; width:100%; min-width:900px; background:var(--panel)}
+thead th{position:sticky; top:0; background:var(--panel); z-index:2; font-family:ui-monospace,Menlo,monospace;
+  font-size:10px; letter-spacing:.09em; text-transform:uppercase; color:var(--ink-3); font-weight:400;
+  text-align:right; padding:11px 12px; border-bottom:1px solid var(--rule-2); white-space:nowrap; cursor:pointer}
+thead th:first-child{text-align:left}
+thead th:hover{color:var(--ink)}
+thead th.grp{color:var(--ink); font-weight:600}
+thead th .ar{opacity:.5; margin-left:4px}
+tbody tr.row{border-bottom:1px solid var(--rule); cursor:pointer}
+tbody tr.row:hover{background:var(--code)}
+td{padding:9px 12px; text-align:right; font-family:ui-monospace,Menlo,monospace; font-size:12.5px;
+  font-variant-numeric:tabular-nums; white-space:nowrap; color:var(--ink-2)}
+td.task{text-align:left; font-size:13px; color:var(--ink); max-width:270px; overflow:hidden;
+  text-overflow:ellipsis}
+td.sep{border-left:1px solid var(--rule)}
+.v{display:inline-block; font-size:10.5px; letter-spacing:.05em; text-transform:uppercase;
+  padding:3px 7px; border-radius:3px; font-weight:600}
+.v.ok{color:var(--pass); background:var(--pass-bg)}
+.v.no{color:var(--fail); background:var(--fail-bg)}
+.v.err{color:var(--ink-3); background:var(--code)}
+
+tr.detail>td{padding:0; background:var(--code); border-bottom:1px solid var(--rule)}
+.dpanel{padding:20px 14px 24px}
+.dhead{font-family:ui-monospace,Menlo,monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--ink-3); margin:0 0 15px}
+.cmp{display:grid; grid-template-columns:152px 1fr 1fr; gap:0 16px; align-items:center}
+.cmp>div{padding:6px 0; font-family:ui-monospace,Menlo,monospace; font-size:12.5px;
+  font-variant-numeric:tabular-nums; color:var(--ink-2)}
+.cmp .lab{color:var(--ink-3); font-size:10.5px; letter-spacing:.06em; text-transform:uppercase}
+.cmp .hdr{font-size:10.5px; letter-spacing:.09em; text-transform:uppercase; padding-bottom:9px;
+  border-bottom:1px solid var(--rule-2); margin-bottom:5px; color:var(--ink); font-weight:600}
+.mrow{display:flex; align-items:center; gap:10px}
+.mbar{height:3px; flex:1; min-width:20px; background:var(--rule-2)}
+.mbar.solid{background:var(--ink)}
+.mval{min-width:84px; text-align:right}
+.win{color:var(--ink); font-weight:700}
+
+.spec{display:grid; grid-template-columns:auto 1fr; gap:1px; background:var(--rule);
+  border:1px solid var(--rule); margin:26px 0; font-family:ui-monospace,Menlo,monospace; font-size:12.5px}
+.spec>div{background:var(--panel); padding:10px 15px; color:var(--ink-2)}
+.spec .sk{color:var(--ink-3); white-space:nowrap}
+pre{background:var(--code); border:1px solid var(--rule); padding:15px 17px; overflow-x:auto;
+  font-family:ui-monospace,Menlo,monospace; font-size:12.5px; line-height:1.62; margin:20px 0}
+code{font-family:ui-monospace,Menlo,monospace; font-size:.9em; background:var(--code);
+  padding:1.5px 5px; border:1px solid var(--rule); border-radius:2px}
+pre code{background:none; border:none; padding:0}
+ul{padding-left:19px; margin:0 0 17px} li{margin-bottom:9px}
+footer{padding:38px 0 66px; color:var(--ink-3); font-family:ui-monospace,Menlo,monospace; font-size:11.5px}
+@media (max-width:760px){
+  .score{grid-template-columns:1fr}
+  .cmp{grid-template-columns:104px 1fr 1fr; gap:0 9px}
+  body{font-size:15.5px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div class="crumb"><div class="wrap">
+  <a href="https://stella.oxagen.sh">Stella</a><span class="sep">/</span>
+  <a href="/benchmarks/">Benchmarks</a><span class="sep">/</span>
+  <span class="here">Terminal-Bench 2.1</span>
+</div></div>
+
+<header>
+  <div class="wrap">
+    <div class="eyebrow">Terminal-Bench 2.1 · 89 tasks · paired, single trial · 2026-07-31</div>
+    <h1>The model was identical.<br>The harness was not.</h1>
+    <p class="dek">Two agents ran the same 89 terminal tasks on the same model, on the same
+      machine, at the same hour. One solved fourteen more of them.</p>
+    <div class="score">
+      <div class="sc win"><div class="who">Stella</div><div class="big">58</div>
+        <div class="sub">of 89 · 65.2%</div></div>
+      <div class="sc"><div class="who">Claude Code</div><div class="big">44</div>
+        <div class="sub">of 89 · 49.4%</div></div>
+    </div>
+    <div class="rail"><i style="flex:58"></i><i style="flex:44"></i></div>
+  </div>
+</header>
+
+<main class="wrap">
+
+<section>
+  <h2>The claim</h2><p class="lede">Thesis</p>
+  <div class="prose">
+    <p>An agent is two things: a model, and the machinery around it. The machinery decides
+      what the model reads, which actions it can take, when it is allowed to stop, and whether
+      anyone checks the work before it is called done. Almost every published benchmark number
+      moves both at once, so the two are rarely told apart.</p>
+    <p>This run holds the model fixed and changes only the machinery. Both agents ran
+      <strong>GLM-5.2</strong> at maximum reasoning effort. The single intended difference is
+      which company's endpoint served the tokens.</p>
+    <div class="callout">
+      <p style="margin:0"><strong>Determinism inside a probabilistic system produces better
+      results.</strong> A language model is a probabilistic component. The way to get reliable
+      work out of one is not a better prompt — it is to surround it with steps that behave the
+      same way every time: purpose-built tools instead of one general-purpose shell, a
+      verification pass that must actually observe a change, and a stopping rule that refuses
+      to accept "done" as an assertion.</p>
+    </div>
+    <p>The prediction that follows is specific, and falsifiable: with the model held constant,
+      the agent that checks its own work should convert more near-misses into completions — and
+      do so <em>without</em> a proportional increase in spend, because verification is cheap
+      relative to the work it rescues.</p>
+  </div>
+</section>
+
+<section>
+  <h2>What happened</h2><p class="lede">Result</p>
+  <div class="stats">
+    <div class="stat"><div class="k">Solve rate</div><div class="v">65.2%</div>
+      <div class="n">vs 49.4% · +14 tasks</div></div>
+    <div class="stat"><div class="k">Cost per success</div><div class="v">$1.35</div>
+      <div class="n">vs $1.44 · 6% cheaper</div></div>
+    <div class="stat"><div class="k">Total spend</div><div class="v">$78.25</div>
+      <div class="n">vs $63.35 · 24% more</div></div>
+    <div class="stat"><div class="k">Output tokens</div><div class="v">5.31M</div>
+      <div class="n">vs 2.23M · 2.4× more</div></div>
+    <div class="stat"><div class="k">Tool actions</div><div class="v">5,851</div>
+      <div class="n">vs 1,592 · 3.7× more</div></div>
+  </div>
+  <div class="prose">
+    <p>Because every task was attempted by both agents, the pairs can be read directly — far
+      more informative than the totals. Of the 89 tasks, both agents solved 36 and both failed
+      23. Those 59 say nothing about the harness. The comparison lives entirely in the 30 tasks
+      where the two disagreed:</p>
+  </div>
+  <div class="grid2">
+    <div class="hd"></div><div class="hd">Claude Code solved</div><div class="hd">Claude Code failed</div>
+    <div class="hd">Stella solved</div>
+    <div><div class="cell">36<small>both — no signal</small></div></div>
+    <div class="key"><div class="cell">22<small>Stella only</small></div></div>
+    <div class="hd">Stella failed</div>
+    <div><div class="cell">8<small>Claude Code only</small></div></div>
+    <div><div class="cell">23<small>neither — model ceiling</small></div></div>
+  </div>
+  <div class="prose">
+    <p><strong>22 to 8.</strong> Under the null hypothesis that the harness makes no difference,
+      a disagreement should fall either way with equal probability, and a split this lopsided
+      across 30 disagreements arises about 1.6% of the time
+      (<span class="mono">exact two-sided sign test, p = 0.016</span>).</p>
+    <p>One caveat belongs right here: this is a <strong>single trial per task</strong>, so
+      run-to-run variance is not measured. The leaderboard standard is five trials, and this is
+      not that.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Where the difference came from</h2><p class="lede">Mechanism</p>
+  <div class="prose">
+    <p>The failure classes explain more than the totals do. Claude Code recorded
+      <strong>25 non-zero-exit failures</strong> — the agent stopped and left the workspace
+      short of the goal. Stella recorded <strong>2</strong>. In the other direction, Stella
+      spent more of its failures on the clock, still working when time ran out.</p>
+    <p>That is the shape the thesis predicts. A harness that verifies before it stops converts
+      "I think I'm done" into another attempt. The cost shows up exactly where you would
+      expect: more tool actions, more tokens, more wall-clock — and more tasks finished.</p>
+    <p>The tool-count gap deserves its own sentence, because read carelessly it looks like
+      waste. Claude Code funnels nearly everything through one general-purpose shell; Stella
+      ships many small single-purpose tools — one that reads, one that edits, one that inspects
+      what changed, one that runs tests. More calls is the design, not the inefficiency. The
+      efficiency question is answered by cost per success, and there Stella is
+      <strong>cheaper</strong>: $1.35 against $1.44.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Every task, both agents</h2><p class="lede">Inspect · click any row for full telemetry</p>
+  <div class="toolbar">
+    <button class="chip" data-f="all" aria-pressed="true">All 89</button>
+    <button class="chip" data-f="disc" aria-pressed="false">Disagreements (30)</button>
+    <button class="chip" data-f="a" aria-pressed="false">Stella only (22)</button>
+    <button class="chip" data-f="b" aria-pressed="false">Claude Code only (8)</button>
+    <button class="chip" data-f="both" aria-pressed="false">Both solved (36)</button>
+    <button class="chip" data-f="none" aria-pressed="false">Neither (23)</button>
+    <span class="count" id="count"></span>
+  </div>
+  <div class="tscroll"><table>
+    <thead><tr>
+      <th data-s="k">Task<span class="ar"></span></th>
+      <th class="grp" data-s="av">Stella<span class="ar"></span></th>
+      <th data-s="at">Tools<span class="ar"></span></th>
+      <th data-s="ao">Out tok<span class="ar"></span></th>
+      <th data-s="ac">Cost<span class="ar"></span></th>
+      <th data-s="aw">Wall<span class="ar"></span></th>
+      <th class="grp sep" data-s="bv">Claude Code<span class="ar"></span></th>
+      <th data-s="bt">Tools<span class="ar"></span></th>
+      <th data-s="bo">Out tok<span class="ar"></span></th>
+      <th data-s="bc">Cost<span class="ar"></span></th>
+      <th data-s="bw">Wall<span class="ar"></span></th>
+    </tr></thead><tbody id="tb"></tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2>How it was run</h2><p class="lede">Method</p>
+  <div class="spec">
+    <div class="sk">Benchmark</div><div>terminal-bench/terminal-bench-2-1, pinned by digest</div>
+    <div class="sk">Tasks</div><div>All 89. No subsetting, no task chosen after seeing a result.</div>
+    <div class="sk">Model</div><div>GLM-5.2 for both agents</div>
+    <div class="sk">Effort</div><div>max, reasoning enabled, for every role that affects the outcome</div>
+    <div class="sk">Budget</div><div>No spend cap on either agent</div>
+    <div class="sk">Attempts</div><div>1 per task, 0 retries, both agents</div>
+    <div class="sk">Endpoint</div><div>Stella → OpenRouter · Claude Code → z.ai <em>(the one intended difference)</em></div>
+    <div class="sk">Host</div><div>One machine, both agents concurrently, same clock</div>
+    <div class="sk">Pre-registered</div><div>Commit, binary hash, config hash and task list fixed before launch</div>
+  </div>
+  <div class="prose">
+    <p>The run was registered before it started — the exact build, a hash of the binary, a hash
+      of the configuration, and the task list, written down in advance. That is what makes the
+      number checkable rather than merely reported: nothing here could be chosen after the
+      results were visible.</p>
+    <p>A 20-task validation run preceded this one and was checked five ways for contamination —
+      broken binaries, network exhaustion, silently-fabricated successes, unequal task counts,
+      and lost telemetry. No code changed between that check and this run.</p>
+  </div>
+</section>
+
+<section>
+  <h2>What this does not show</h2><p class="lede">Limits</p>
+  <div class="prose"><ul>
+    <li><strong>One trial per task.</strong> Agents are stochastic. Five trials is the standard
+      for a leaderboard claim, and this is not one.</li>
+    <li><strong>One model.</strong> A harness helps most when the model is close to solving
+      something. On a stronger model, more tasks are solved outright and the harness has less
+      to rescue — so this margin should be expected to compress, not to hold.</li>
+    <li><strong>Different endpoints.</strong> Provider routing affects latency and price.
+      Wall-clock and dollar comparisons carry that caveat; solve rate does not.</li>
+    <li><strong>Claude Code on a non-default model.</strong> Running it on GLM-5.2 is supported
+      but not its home configuration.</li>
+    <li><strong>Failures are published alongside passes.</strong> 23 tasks defeated both agents.
+      They are in the table above, unfiltered.</li>
+  </ul></div>
+</section>
+
+<section style="border-bottom:none">
+  <h2>Check it yourself</h2><p class="lede">Verify</p>
+  <div class="prose">
+    <p>Every trial keeps its full record on disk — the event stream, the step-by-step
+      trajectory, and the grader's verdict. The totals on this page are derived from those files
+      and nothing else; the table above is that derivation, not a summary of it. The raw
+      per-task records are published alongside this report as
+      <a href="/benchmarks/terminal-bench-2-1-glm-5-2.json">JSON</a>.</p>
+    <p>To re-derive the headline number from raw trial records:</p>
+  </div>
+<pre><code>#  one directory per task, per agent
+#  jobs/&lt;run&gt;-armA-stella/&lt;task&gt;__&lt;id&gt;/
+#      result.json                  &lt;- grader verdict (ground truth)
+#      agent/trajectory.json        &lt;- steps + token totals
+#      agent/stella-events.jsonl    &lt;- full event stream
+
+python3 - &lt;&lt;'PY'
+import json, glob
+for arm in ("armA-stella", "armB-claudecode"):
+    wins = 0
+    for f in glob.glob(f"jobs/*-{arm}/*/result.json"):
+        r = json.load(open(f))
+        rew = (r.get("verifier_result") or {}).get("rewards", {}).get("reward")
+        wins += 1 if (rew or 0) &gt;= 1 else 0
+    print(arm, wins)
+PY</code></pre>
+  <div class="prose"><p>A pass is <span class="mono">reward ≥ 1</span> from the benchmark's own
+    grader. The agent has no say in it.</p></div>
+</section>
+
+</main>
+<footer class="wrap">Run 2026-07-31 · 89 tasks · 178 trials · single attempt each ·
+  totals computed from trial records, not transcribed.</footer>
+
+<script>
+const DATA = {"rows":[{"k":"adaptive-rejection-sampler","a":{"p":1,"f":"AgentTimeoutError","st":77,"t":74,"i":4187173,"o":94485,"c":0.8992,"w":966,"cap":1},"b":{"p":0,"f":"AgentTimeoutError","st":27,"t":13,"i":637040,"o":37270,"c":0.0,"w":962,"cap":0}},{"k":"bn-fit-modify","a":{"p":1,"f":"","st":44,"t":34,"i":854034,"o":54822,"c":0.3218,"w":528,"cap":2},"b":{"p":1,"f":"","st":63,"t":26,"i":845222,"o":20172,"c":1.0593,"w":623,"cap":0}},{"k":"break-filter-js-from-html","a":{"p":1,"f":"AgentTimeoutError","st":43,"t":41,"i":672832,"o":37348,"c":0.2069,"w":1284,"cap":0},"b":{"p":1,"f":"","st":30,"t":11,"i":323904,"o":13387,"c":0.5727,"w":472,"cap":0}},{"k":"build-cython-ext","a":{"p":1,"f":"AgentTimeoutError","st":162,"t":132,"i":14072385,"o":58798,"c":2.2897,"w":920,"cap":1},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":69,"t":35,"i":530785,"o":9462,"c":0.6055,"w":760,"cap":0}},{"k":"build-pmars","a":{"p":1,"f":"","st":104,"t":98,"i":2670177,"o":51656,"c":0.6028,"w":735,"cap":0},"b":{"p":1,"f":"","st":105,"t":50,"i":1164583,"o":15136,"c":1.1121,"w":584,"cap":0}},{"k":"build-pov-ray","a":{"p":0,"f":"","st":117,"t":108,"i":6582954,"o":47141,"c":1.1781,"w":714,"cap":1},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":38,"t":16,"i":264516,"o":6465,"c":0.4068,"w":408,"cap":0}},{"k":"caffe-cifar-10","a":{"p":1,"f":"","st":107,"t":104,"i":3301723,"o":46430,"c":0.7028,"w":3748,"cap":1},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":57,"t":26,"i":467238,"o":7805,"c":0.4905,"w":738,"cap":0}},{"k":"cancel-async-tasks","a":{"p":0,"f":"","st":23,"t":21,"i":239411,"o":31290,"c":0.1172,"w":656,"cap":0},"b":{"p":0,"f":"","st":25,"t":9,"i":273134,"o":10203,"c":0.4471,"w":275,"cap":0}},{"k":"chess-best-move","a":{"p":1,"f":"AgentTimeoutError","st":24,"t":18,"i":446081,"o":23795,"c":0.1448,"w":947,"cap":1},"b":{"p":0,"f":"AgentTimeoutError","st":61,"t":15,"i":505843,"o":31545,"c":0.0,"w":940,"cap":0}},{"k":"circuit-fibsqrt","a":{"p":1,"f":"NonZeroAgentExitCodeError","st":162,"t":123,"i":13231918,"o":138690,"c":2.2888,"w":1744,"cap":2},"b":{"p":1,"f":"NonZeroAgentExitCodeError","st":59,"t":20,"i":1166231,"o":143305,"c":4.4164,"w":3108,"cap":0}},{"k":"cobol-modernization","a":{"p":1,"f":"","st":105,"t":98,"i":3717460,"o":81390,"c":0.8297,"w":648,"cap":1},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":10,"t":4,"i":41005,"o":467,"c":0.0482,"w":269,"cap":0}},{"k":"code-from-image","a":{"p":1,"f":"","st":59,"t":55,"i":5502453,"o":37493,"c":1.0116,"w":1157,"cap":1},"b":{"p":1,"f":"","st":42,"t":14,"i":306557,"o":4799,"c":0.3121,"w":517,"cap":0}},{"k":"compile-compcert","a":{"p":1,"f":"","st":108,"t":102,"i":3048662,"o":22697,"c":0.5845,"w":966,"cap":0},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":80,"t":32,"i":626781,"o":16541,"c":0.8325,"w":828,"cap":0}},{"k":"configure-git-webserver","a":{"p":0,"f":"","st":24,"t":16,"i":189785,"o":2737,"c":0.0361,"w":275,"cap":0},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":2,"t":0,"i":0,"o":0,"c":0.0,"w":253,"cap":0}},{"k":"constraints-scheduling","a":{"p":0,"f":"NonZeroAgentExitCodeError","st":109,"t":102,"i":6633933,"o":121876,"c":1.4214,"w":987,"cap":2},"b":{"p":1,"f":"","st":27,"t":10,"i":281164,"o":14967,"c":0.6029,"w":319,"cap":0}},{"k":"count-dataset-tokens","a":{"p":1,"f":"","st":22,"t":19,"i":342053,"o":11785,"c":0.0924,"w":505,"cap":0},"b":{"p":1,"f":"","st":32,"t":10,"i":259054,"o":6001,"c":0.3714,"w":298,"cap":0}},{"k":"crack-7z-hash","a":{"p":0,"f":"AgentTimeoutError","st":41,"t":46,"i":562925,"o":5158,"c":0.1276,"w":2047,"cap":0},"b":{"p":1,"f":"","st":33,"t":11,"i":267148,"o":2529,"c":0.2297,"w":380,"cap":0}},{"k":"custom-memory-heap-crash","a":{"p":1,"f":"NonZeroAgentExitCodeError","st":191,"t":196,"i":11218301,"o":92446,"c":2.2148,"w":1679,"cap":0},"b":{"p":1,"f":"","st":51,"t":23,"i":543705,"o":15005,"c":0.7568,"w":720,"cap":0}},{"k":"db-wal-recovery","a":{"p":1,"f":"","st":29,"t":20,"i":344235,"o":18983,"c":0.1039,"w":282,"cap":0},"b":{"p":1,"f":"","st":25,"t":9,"i":235461,"o":7050,"c":0.3505,"w":155,"cap":0}},{"k":"distribution-search","a":{"p":1,"f":"","st":8,"t":4,"i":135958,"o":18790,"c":0.0575,"w":229,"cap":1},"b":{"p":1,"f":"","st":14,"t":4,"i":152451,"o":14909,"c":0.5236,"w":315,"cap":0}},{"k":"dna-assembly","a":{"p":0,"f":"AgentTimeoutError","st":171,"t":134,"i":20585971,"o":217699,"c":5.1027,"w":1913,"cap":4},"b":{"p":1,"f":"AgentTimeoutError","st":76,"t":31,"i":2371603,"o":91090,"c":0.0,"w":1918,"cap":0}},{"k":"dna-insert","a":{"p":1,"f":"NonZeroAgentExitCodeError","st":120,"t":113,"i":9784289,"o":166727,"c":1.8203,"w":1272,"cap":4},"b":{"p":0,"f":"","st":43,"t":14,"i":598138,"o":32784,"c":1.3096,"w":962,"cap":0}},{"k":"extract-elf","a":{"p":0,"f":"AgentTimeoutError","st":9,"t":11,"i":65595,"o":24703,"c":0.0925,"w":925,"cap":0},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":27,"t":10,"i":216192,"o":13503,"c":0.5203,"w":825,"cap":0}},{"k":"extract-moves-from-video","a":{"p":0,"f":"AgentTimeoutError","st":147,"t":147,"i":5966572,"o":29169,"c":1.0861,"w":1830,"cap":0},"b":{"p":0,"f":"AgentTimeoutError","st":75,"t":30,"i":727324,"o":12508,"c":0.0,"w":1952,"cap":0}},{"k":"feal-differential-cryptanalysis","a":{"p":1,"f":"NonZeroAgentExitCodeError","st":18,"t":13,"i":171834,"o":51807,"c":0.1339,"w":1370,"cap":0},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":5,"t":1,"i":19409,"o":47,"c":0.0179,"w":267,"cap":0}},{"k":"feal-linear-cryptanalysis","a":{"p":1,"f":"NonZeroAgentExitCodeError","st":98,"t":82,"i":9966060,"o":130023,"c":1.9095,"w":1044,"cap":6},"b":{"p":1,"f":"","st":41,"t":16,"i":784231,"o":37631,"c":1.5485,"w":719,"cap":0}},{"k":"filter-js-from-html","a":{"p":0,"f":"","st":64,"t":58,"i":1189553,"o":32507,"c":0.2665,"w":620,"cap":0},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":8,"t":2,"i":66840,"o":29957,"c":0.9155,"w":934,"cap":0}},{"k":"financial-document-processor","a":{"p":0,"f":"","st":29,"t":20,"i":792458,"o":28328,"c":0.1908,"w":482,"cap":1},"b":{"p":0,"f":"AgentTimeoutError","st":90,"t":28,"i":1057380,"o":24444,"c":0.0,"w":1247,"cap":0}},{"k":"fix-code-vulnerability","a":{"p":0,"f":"","st":98,"t":88,"i":3229064,"o":21585,"c":0.6113,"w":287,"cap":0},"b":{"p":1,"f":"","st":35,"t":14,"i":269941,"o":2695,"c":0.2513,"w":195,"cap":0}},{"k":"fix-git","a":{"p":0,"f":"","st":15,"t":11,"i":126288,"o":3500,"c":0.0261,"w":70,"cap":0},"b":{"p":1,"f":"","st":37,"t":15,"i":267865,"o":5182,"c":0.3123,"w":204,"cap":0}},{"k":"fix-ocaml-gc","a":{"p":1,"f":"AgentTimeoutError","st":131,"t":144,"i":15273677,"o":57629,"c":2.4776,"w":4168,"cap":0},"b":{"p":1,"f":"","st":105,"t":46,"i":1757754,"o":24025,"c":1.7352,"w":2062,"cap":0}},{"k":"gcode-to-text","a":{"p":0,"f":"AgentTimeoutError","st":91,"t":88,"i":7731324,"o":52174,"c":1.3849,"w":966,"cap":0},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":39,"t":13,"i":327113,"o":18319,"c":0.7077,"w":682,"cap":0}},{"k":"git-leak-recovery","a":{"p":1,"f":"NonZeroAgentExitCodeError","st":158,"t":107,"i":4685765,"o":60040,"c":0.8975,"w":566,"cap":1},"b":{"p":1,"f":"","st":34,"t":11,"i":276342,"o":5717,"c":0.324,"w":343,"cap":0}},{"k":"git-multibranch","a":{"p":1,"f":"AgentTimeoutError","st":80,"t":56,"i":2035964,"o":40843,"c":0.4576,"w":1000,"cap":1},"b":{"p":1,"f":"","st":82,"t":43,"i":946443,"o":18398,"c":1.0444,"w":829,"cap":0}},{"k":"gpt2-codegolf","a":{"p":0,"f":"","st":11,"t":6,"i":203803,"o":57702,"c":0.1658,"w":554,"cap":3},"b":{"p":0,"f":"AgentTimeoutError","st":25,"t":10,"i":240620,"o":38149,"c":0.0,"w":932,"cap":0}},{"k":"headless-terminal","a":{"p":1,"f":"AgentTimeoutError","st":40,"t":34,"i":709373,"o":100688,"c":0.381,"w":949,"cap":1},"b":{"p":1,"f":"","st":42,"t":14,"i":497566,"o":21341,"c":0.8945,"w":579,"cap":0}},{"k":"hf-model-inference","a":{"p":1,"f":"","st":73,"t":71,"i":1043006,"o":28898,"c":0.251,"w":885,"cap":0},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":2,"t":0,"i":0,"o":0,"c":0.0,"w":278,"cap":0}},{"k":"install-windows-3.11","a":{"p":1,"f":"","st":97,"t":94,"i":2753018,"o":39241,"c":0.7382,"w":2855,"cap":0},"b":{"p":1,"f":"","st":227,"t":81,"i":5418090,"o":140137,"c":8.3103,"w":3416,"cap":0}},{"k":"kv-store-grpc","a":{"p":0,"f":"","st":25,"t":17,"i":235394,"o":3985,"c":0.0571,"w":208,"cap":0},"b":{"p":1,"f":"","st":43,"t":23,"i":234038,"o":5050,"c":0.2792,"w":467,"cap":0}},{"k":"large-scale-text-editing","a":{"p":1,"f":"AgentTimeoutError","st":48,"t":48,"i":684421,"o":47095,"c":0.2468,"w":1365,"cap":0},"b":{"p":1,"f":"","st":51,"t":17,"i":719508,"o":49849,"c":1.8514,"w":1256,"cap":0}},{"k":"largest-eigenval","a":{"p":1,"f":"AgentTimeoutError","st":140,"t":141,"i":5232979,"o":41739,"c":1.0969,"w":921,"cap":0},"b":{"p":0,"f":"AgentTimeoutError","st":89,"t":33,"i":1258509,"o":44036,"c":0.0,"w":939,"cap":0}},{"k":"llm-inference-batching-scheduler","a":{"p":1,"f":"AgentTimeoutError","st":118,"t":108,"i":12207529,"o":182408,"c":2.7757,"w":1910,"cap":6},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":60,"t":27,"i":1621652,"o":67513,"c":2.853,"w":1769,"cap":0}},{"k":"log-summary-date-ranges","a":{"p":1,"f":"","st":10,"t":7,"i":86695,"o":4591,"c":0.0378,"w":259,"cap":0},"b":{"p":1,"f":"","st":21,"t":6,"i":178850,"o":3354,"c":0.2267,"w":180,"cap":0}},{"k":"mailman","a":{"p":1,"f":"AgentTimeoutError","st":164,"t":154,"i":11857381,"o":92727,"c":2.0938,"w":1853,"cap":2},"b":{"p":1,"f":"","st":190,"t":89,"i":5090098,"o":56967,"c":4.3539,"w":1351,"cap":0}},{"k":"make-doom-for-mips","a":{"p":0,"f":"AgentTimeoutError","st":62,"t":97,"i":5473000,"o":93960,"c":1.1325,"w":969,"cap":1},"b":{"p":0,"f":"AgentTimeoutError","st":71,"t":32,"i":1470344,"o":41906,"c":0.0,"w":982,"cap":0}},{"k":"make-mips-interpreter","a":{"p":1,"f":"AgentTimeoutError","st":62,"t":70,"i":6473382,"o":109593,"c":1.6887,"w":1873,"cap":3},"b":{"p":0,"f":"AgentTimeoutError","st":90,"t":35,"i":2120769,"o":83093,"c":0.0,"w":1944,"cap":0}},{"k":"mcmc-sampling-stan","a":{"p":1,"f":"AgentTimeoutError","st":60,"t":69,"i":2189412,"o":14874,"c":0.5864,"w":2221,"cap":0},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":18,"t":6,"i":113909,"o":5345,"c":0.2254,"w":513,"cap":0}},{"k":"merge-diff-arc-agi-task","a":{"p":1,"f":"","st":43,"t":31,"i":715470,"o":62329,"c":0.3136,"w":602,"cap":2},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":33,"t":14,"i":284119,"o":6379,"c":0.3592,"w":742,"cap":0}},{"k":"model-extraction-relu-logits","a":{"p":1,"f":"AgentTimeoutError","st":90,"t":34,"i":3786813,"o":97921,"c":0.8247,"w":1046,"cap":3},"b":{"p":1,"f":"NonZeroAgentExitCodeError","st":16,"t":5,"i":177668,"o":28122,"c":0.9327,"w":990,"cap":0}},{"k":"modernize-scientific-stack","a":{"p":1,"f":"","st":17,"t":16,"i":165080,"o":8151,"c":0.041,"w":172,"cap":0},"b":{"p":1,"f":"","st":21,"t":8,"i":161940,"o":4543,"c":0.2292,"w":400,"cap":0}},{"k":"mteb-leaderboard","a":{"p":0,"f":"","st":31,"t":39,"i":1881843,"o":11421,"c":0.3497,"w":237,"cap":0},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":60,"t":23,"i":376041,"o":13339,"c":0.8732,"w":823,"cap":0}},{"k":"mteb-retrieve","a":{"p":0,"f":"","st":17,"t":23,"i":283162,"o":7318,"c":0.0909,"w":248,"cap":0},"b":{"p":0,"f":"","st":64,"t":28,"i":760748,"o":12309,"c":0.7928,"w":1176,"cap":0}},{"k":"multi-source-data-merger","a":{"p":1,"f":"AgentTimeoutError","st":57,"t":48,"i":1308698,"o":73252,"c":0.4336,"w":1015,"cap":1},"b":{"p":1,"f":"","st":25,"t":10,"i":190028,"o":6705,"c":0.3045,"w":205,"cap":0}},{"k":"nginx-request-logging","a":{"p":1,"f":"","st":36,"t":28,"i":444187,"o":8721,"c":0.09,"w":168,"cap":0},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":5,"t":1,"i":19710,"o":567,"c":0.0324,"w":267,"cap":0}},{"k":"openssl-selfsigned-cert","a":{"p":0,"f":"","st":25,"t":26,"i":229254,"o":13386,"c":0.0632,"w":195,"cap":0},"b":{"p":1,"f":"","st":42,"t":23,"i":334919,"o":6816,"c":0.3805,"w":494,"cap":0}},{"k":"overfull-hbox","a":{"p":1,"f":"AgentTimeoutError","st":57,"t":52,"i":1172316,"o":56466,"c":0.3358,"w":813,"cap":0},"b":{"p":1,"f":"AgentTimeoutError","st":54,"t":22,"i":730984,"o":25130,"c":0.0,"w":843,"cap":0}},{"k":"password-recovery","a":{"p":1,"f":"","st":21,"t":29,"i":294527,"o":26907,"c":0.1192,"w":357,"cap":0},"b":{"p":1,"f":"","st":37,"t":15,"i":330811,"o":17057,"c":0.6966,"w":852,"cap":0}},{"k":"path-tracing","a":{"p":1,"f":"AgentTimeoutError","st":122,"t":120,"i":9879996,"o":119291,"c":1.9744,"w":1897,"cap":0},"b":{"p":0,"f":"AgentTimeoutError","st":132,"t":46,"i":2827351,"o":93197,"c":0.0,"w":1944,"cap":0}},{"k":"path-tracing-reverse","a":{"p":0,"f":"AgentTimeoutError","st":30,"t":25,"i":938721,"o":62999,"c":0.3728,"w":1835,"cap":2},"b":{"p":0,"f":"AgentTimeoutError","st":51,"t":21,"i":774837,"o":133718,"c":0.0,"w":1869,"cap":0}},{"k":"polyglot-c-py","a":{"p":1,"f":"","st":15,"t":12,"i":118359,"o":30924,"c":0.0995,"w":681,"cap":0},"b":{"p":1,"f":"","st":24,"t":8,"i":221297,"o":7348,"c":0.3346,"w":306,"cap":0}},{"k":"polyglot-rust-c","a":{"p":1,"f":"","st":9,"t":4,"i":239854,"o":34201,"c":0.1689,"w":507,"cap":2},"b":{"p":1,"f":"","st":15,"t":5,"i":181601,"o":21891,"c":0.7428,"w":417,"cap":0}},{"k":"portfolio-optimization","a":{"p":1,"f":"","st":38,"t":35,"i":899918,"o":54469,"c":0.3392,"w":932,"cap":2},"b":{"p":1,"f":"","st":42,"t":17,"i":430121,"o":18306,"c":0.7818,"w":581,"cap":0}},{"k":"protein-assembly","a":{"p":0,"f":"","st":39,"t":47,"i":4843902,"o":172890,"c":1.8502,"w":1178,"cap":8},"b":{"p":0,"f":"","st":91,"t":40,"i":2045343,"o":66577,"c":3.239,"w":1237,"cap":0}},{"k":"prove-plus-comm","a":{"p":1,"f":"","st":10,"t":8,"i":66999,"o":2323,"c":0.0167,"w":179,"cap":0},"b":{"p":1,"f":"","st":16,"t":5,"i":126683,"o":2808,"c":0.1584,"w":118,"cap":0}},{"k":"pypi-server","a":{"p":1,"f":"AgentTimeoutError","st":57,"t":55,"i":707276,"o":20112,"c":0.203,"w":990,"cap":0},"b":{"p":1,"f":"","st":42,"t":16,"i":318457,"o":4501,"c":0.3086,"w":423,"cap":0}},{"k":"pytorch-model-cli","a":{"p":0,"f":"AgentTimeoutError","st":12,"t":15,"i":342876,"o":13213,"c":0.1376,"w":1053,"cap":0},"b":{"p":0,"f":"AgentTimeoutError","st":58,"t":25,"i":651584,"o":30883,"c":0.0,"w":1102,"cap":0}},{"k":"pytorch-model-recovery","a":{"p":0,"f":"AgentTimeoutError","st":67,"t":63,"i":5024961,"o":129965,"c":1.2492,"w":1204,"cap":3},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":14,"t":4,"i":85264,"o":12616,"c":0.3878,"w":599,"cap":0}},{"k":"qemu-alpine-ssh","a":{"p":1,"f":"AgentTimeoutError","st":135,"t":126,"i":2996471,"o":37042,"c":0.5739,"w":1123,"cap":1},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":2,"t":0,"i":0,"o":0,"c":0.0,"w":370,"cap":0}},{"k":"qemu-startup","a":{"p":1,"f":"","st":20,"t":17,"i":180304,"o":6308,"c":0.0422,"w":210,"cap":0},"b":{"p":0,"f":"AgentTimeoutError","st":55,"t":22,"i":692280,"o":24112,"c":0.0,"w":1004,"cap":0}},{"k":"query-optimize","a":{"p":0,"f":"AgentTimeoutError","st":33,"t":109,"i":3010154,"o":64142,"c":0.6929,"w":1954,"cap":0},"b":{"p":0,"f":"","st":25,"t":9,"i":186519,"o":4694,"c":0.247,"w":1261,"cap":0}},{"k":"raman-fitting","a":{"p":0,"f":"","st":53,"t":50,"i":2748472,"o":71725,"c":0.617,"w":614,"cap":1},"b":{"p":0,"f":"AgentTimeoutError","st":41,"t":15,"i":511740,"o":37591,"c":0.0,"w":1112,"cap":0}},{"k":"regex-chess","a":{"p":1,"f":"AgentTimeoutError","st":247,"t":233,"i":27949634,"o":323776,"c":5.4227,"w":3906,"cap":10},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":10,"t":2,"i":105455,"o":128179,"c":3.2741,"w":2184,"cap":0}},{"k":"regex-log","a":{"p":1,"f":"","st":18,"t":13,"i":373947,"o":37664,"c":0.1094,"w":453,"cap":2},"b":{"p":1,"f":"NonZeroAgentExitCodeError","st":5,"t":1,"i":19513,"o":18943,"c":0.4908,"w":640,"cap":0}},{"k":"reshard-c4-data","a":{"p":1,"f":"","st":256,"t":254,"i":18789457,"o":124764,"c":3.3348,"w":3336,"cap":1},"b":{"p":1,"f":"","st":58,"t":27,"i":1489884,"o":42286,"c":2.0165,"w":1112,"cap":0}},{"k":"rstan-to-pystan","a":{"p":0,"f":"AgentTimeoutError","st":41,"t":42,"i":709524,"o":19838,"c":0.2154,"w":1841,"cap":0},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":19,"t":9,"i":91745,"o":6745,"c":0.2625,"w":330,"cap":0}},{"k":"sam-cell-seg","a":{"p":1,"f":"NonZeroAgentExitCodeError","st":162,"t":171,"i":9815037,"o":128639,"c":2.1232,"w":4273,"cap":0},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":15,"t":6,"i":83110,"o":966,"c":0.0817,"w":362,"cap":0}},{"k":"sanitize-git-repo","a":{"p":0,"f":"","st":16,"t":36,"i":292999,"o":8052,"c":0.0687,"w":128,"cap":0},"b":{"p":1,"f":"NonZeroAgentExitCodeError","st":42,"t":18,"i":456317,"o":8534,"c":0.5667,"w":884,"cap":0}},{"k":"schemelike-metacircular-eval","a":{"p":1,"f":"AgentTimeoutError","st":107,"t":103,"i":10332490,"o":130701,"c":1.9076,"w":2607,"cap":4},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":24,"t":14,"i":99645,"o":471,"c":0.1077,"w":500,"cap":0}},{"k":"sparql-university","a":{"p":1,"f":"","st":16,"t":12,"i":311549,"o":35521,"c":0.1136,"w":439,"cap":1},"b":{"p":1,"f":"","st":33,"t":12,"i":482769,"o":23572,"c":0.9558,"w":445,"cap":0}},{"k":"sqlite-db-truncate","a":{"p":1,"f":"","st":12,"t":10,"i":96525,"o":22711,"c":0.0587,"w":222,"cap":0},"b":{"p":1,"f":"","st":19,"t":7,"i":152550,"o":11177,"c":0.4212,"w":271,"cap":0}},{"k":"sqlite-with-gcov","a":{"p":1,"f":"","st":34,"t":22,"i":447326,"o":21892,"c":0.1186,"w":376,"cap":1},"b":{"p":1,"f":"AgentTimeoutError","st":108,"t":49,"i":1392111,"o":31194,"c":0.0,"w":974,"cap":0}},{"k":"torch-pipeline-parallelism","a":{"p":0,"f":"NonZeroAgentExitCodeError","st":10,"t":7,"i":60721,"o":625,"c":0.0309,"w":785,"cap":0},"b":{"p":0,"f":"AgentTimeoutError","st":17,"t":7,"i":121908,"o":21584,"c":0.0,"w":1212,"cap":0}},{"k":"torch-tensor-parallelism","a":{"p":1,"f":"AgentTimeoutError","st":125,"t":30,"i":5014279,"o":98062,"c":1.0431,"w":1075,"cap":3},"b":{"p":1,"f":"AgentTimeoutError","st":48,"t":20,"i":875739,"o":29619,"c":1.3403,"w":1260,"cap":0}},{"k":"train-fasttext","a":{"p":0,"f":"AgentTimeoutError","st":130,"t":139,"i":4795015,"o":13379,"c":0.8434,"w":3873,"cap":0},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":5,"t":1,"i":19347,"o":197,"c":0.0213,"w":450,"cap":0}},{"k":"tune-mjcf","a":{"p":1,"f":"AgentTimeoutError","st":41,"t":41,"i":1093456,"o":51891,"c":0.371,"w":962,"cap":1},"b":{"p":0,"f":"AgentTimeoutError","st":46,"t":18,"i":506318,"o":25782,"c":0.0,"w":991,"cap":0}},{"k":"video-processing","a":{"p":0,"f":"","st":133,"t":125,"i":14557843,"o":138287,"c":3.497,"w":3439,"cap":3},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":5,"t":1,"i":19598,"o":304,"c":0.0252,"w":258,"cap":0}},{"k":"vulnerable-secret","a":{"p":1,"f":"","st":29,"t":22,"i":411657,"o":11748,"c":0.0996,"w":157,"cap":0},"b":{"p":1,"f":"","st":29,"t":10,"i":248223,"o":5805,"c":0.3324,"w":407,"cap":0}},{"k":"winning-avg-corewars","a":{"p":1,"f":"NonZeroAgentExitCodeError","st":171,"t":177,"i":20075631,"o":176421,"c":4.791,"w":3304,"cap":5},"b":{"p":1,"f":"","st":60,"t":23,"i":1106958,"o":41475,"c":1.8352,"w":1012,"cap":0}},{"k":"write-compressor","a":{"p":0,"f":"","st":7,"t":3,"i":111059,"o":49457,"c":0.1582,"w":499,"cap":3},"b":{"p":0,"f":"NonZeroAgentExitCodeError","st":2,"t":0,"i":0,"o":0,"c":0.0,"w":366,"cap":0}}]};
+const R = DATA.rows;
+const fmt = n => n == null ? "—" : n >= 1e6 ? (n/1e6).toFixed(2)+"M"
+  : n >= 1e3 ? (n/1e3).toFixed(n>=1e4?0:1)+"k" : String(n);
+const dur = s => !s ? "—" : s >= 3600 ? Math.floor(s/3600)+"h"+String(Math.round(s%3600/60)).padStart(2,"0")
+  : s >= 60 ? Math.floor(s/60)+"m"+String(s%60).padStart(2,"0") : s+"s";
+const money = c => c == null ? "—" : "$"+c.toFixed(2);
+const cls = t => !t ? "" : t.replace(/Error$/,"");
+function verdict(v){
+  if(!v) return '<span class="v err">no data</span>';
+  if(v.p) return '<span class="v ok">pass</span>';
+  if(v.f) return '<span class="v err">'+cls(v.f)+'</span>';
+  return '<span class="v no">fail</span>';
+}
+const key = r => { const a=r.a&&r.a.p, b=r.b&&r.b.p;
+  if(a&&b) return "both"; if(a) return "a"; if(b) return "b"; return "none"; };
+let filter="all", sortKey="k", sortDir=1;
+const val = (r,k) => { if(k==="k") return r.k;
+  const arm = k[0]==="a" ? r.a : r.b, f = k.slice(1);
+  if(!arm) return -1;
+  return f==="v" ? (arm.p?1:0) : f==="t" ? arm.t : f==="o" ? arm.o : f==="c" ? arm.c : f==="w" ? arm.w : 0; };
+function detail(r){
+  const rows=[["Verdict",verdict(r.a),verdict(r.b),null],
+    ["Steps",r.a&&r.a.st,r.b&&r.b.st,"lower"],["Tool actions",r.a&&r.a.t,r.b&&r.b.t,null],
+    ["Input tokens",r.a&&r.a.i,r.b&&r.b.i,"lower"],["Output tokens",r.a&&r.a.o,r.b&&r.b.o,"lower"],
+    ["Cost",r.a&&r.a.c,r.b&&r.b.c,"lower"],["Wall clock",r.a&&r.a.w,r.b&&r.b.w,"lower"],
+    ["Output-cap hits",r.a&&r.a.cap,r.b&&r.b.cap,"lower"]];
+  let h='<div class="dpanel"><p class="dhead">'+r.k+' — full telemetry, side by side</p><div class="cmp">'
+    +'<div class="lab hdr"></div><div class="hdr">Stella</div><div class="hdr">Claude Code</div>';
+  for(const [lab,av,bv,better] of rows){
+    if(lab==="Verdict"){ h+='<div class="lab">'+lab+'</div><div>'+av+'</div><div>'+bv+'</div>'; continue; }
+    const A=av||0,B=bv||0,mx=Math.max(A,B,1);
+    const disp=v=>lab==="Cost"?money(v):lab==="Wall clock"?dur(v):fmt(v);
+    const win=better==="lower"?(A<B?"a":B<A?"b":""):"";
+    h+='<div class="lab">'+lab+'</div>'
+      +'<div class="mrow"><span class="mbar '+(win==="a"?"solid":"")+'" style="width:'+(A/mx*100)+'%"></span>'
+      +'<span class="mval '+(win==="a"?"win":"")+'">'+disp(av)+'</span></div>'
+      +'<div class="mrow"><span class="mbar '+(win==="b"?"solid":"")+'" style="width:'+(B/mx*100)+'%"></span>'
+      +'<span class="mval '+(win==="b"?"win":"")+'">'+disp(bv)+'</span></div>';
+  }
+  return h+'</div></div>';
+}
+function render(){
+  const tb=document.getElementById("tb");
+  let rows=R.filter(r=>filter==="all"?true:filter==="disc"?(key(r)==="a"||key(r)==="b"):key(r)===filter);
+  rows=rows.slice().sort((x,y)=>{const a=val(x,sortKey),b=val(y,sortKey);
+    if(a===b) return x.k.localeCompare(y.k);
+    return (typeof a==="string"?a.localeCompare(b):a-b)*sortDir;});
+  document.getElementById("count").textContent=rows.length+" shown";
+  tb.innerHTML=rows.map(r=>{const a=r.a,b=r.b;
+    return '<tr class="row" tabindex="0"><td class="task">'+r.k+'</td>'
+      +'<td>'+verdict(a)+'</td><td>'+(a?a.t:"—")+'</td><td>'+(a?fmt(a.o):"—")+'</td>'
+      +'<td>'+(a?money(a.c):"—")+'</td><td>'+(a?dur(a.w):"—")+'</td>'
+      +'<td class="sep">'+verdict(b)+'</td><td>'+(b?b.t:"—")+'</td><td>'+(b?fmt(b.o):"—")+'</td>'
+      +'<td>'+(b?money(b.c):"—")+'</td><td>'+(b?dur(b.w):"—")+'</td></tr>'
+      +'<tr class="detail" hidden><td colspan="11">'+detail(r)+'</td></tr>';}).join("");
+}
+const tbEl=document.getElementById("tb");
+tbEl.addEventListener("click",e=>{const tr=e.target.closest("tr.row"); if(!tr) return;
+  const d=tr.nextElementSibling; d.hidden=!d.hidden;});
+tbEl.addEventListener("keydown",e=>{if(e.key!=="Enter"&&e.key!==" ") return;
+  const tr=e.target.closest("tr.row"); if(!tr) return; e.preventDefault();
+  const d=tr.nextElementSibling; d.hidden=!d.hidden;});
+document.querySelectorAll(".chip").forEach(c=>c.addEventListener("click",()=>{
+  document.querySelectorAll(".chip").forEach(o=>o.setAttribute("aria-pressed",o===c));
+  filter=c.dataset.f; render();}));
+document.querySelectorAll("thead th").forEach(th=>th.addEventListener("click",()=>{
+  const k=th.dataset.s;
+  if(sortKey===k) sortDir*=-1; else {sortKey=k; sortDir=k==="k"?1:-1;}
+  document.querySelectorAll("thead th .ar").forEach(a=>a.textContent="");
+  th.querySelector(".ar").textContent=sortDir>0?"↑":"↓"; render();}));
+render();
+</script>
+
+</body>
+</html>

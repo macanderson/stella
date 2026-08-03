@@ -1,0 +1,9 @@
+{
+  "id": "1",
+  "subject": "Clone pyknotid source and inspect environment",
+  "description": "Clone pyknotid 0.5.3 to /app/pyknotid, check system Python and Numpy version (2.3.0), inspect build setup and Cython extensions.",
+  "activeForm": "Cloning pyknotid and inspecting environment",
+  "status": "in_progress",
+  "blocks": [],
+  "blockedBy": []
+}

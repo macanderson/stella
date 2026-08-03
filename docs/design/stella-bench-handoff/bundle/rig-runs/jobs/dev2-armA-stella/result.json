@@ -1,0 +1,59 @@
+{
+    "id": "63d03b4c-aa02-4c5a-9388-d11d00511127",
+    "started_at": "2026-07-31T17:14:21.528825",
+    "finished_at": null,
+    "n_total_trials": 20,
+    "stats": {
+        "n_trials": 20,
+        "n_errors": 17,
+        "evals": {
+            "stella__z-ai/glm-5.2__terminal-bench/terminal-bench-2-1": {
+                "n_trials": 3,
+                "n_errors": 17,
+                "metrics": [
+                    {
+                        "mean": 0.0
+                    }
+                ],
+                "pass_at_k": {},
+                "reward_stats": {
+                    "reward": {
+                        "0.0": [
+                            "regex-log__75PT4Ne",
+                            "polyglot-rust-c__iZZZ4jE",
+                            "write-compressor__jvMSEQM"
+                        ]
+                    }
+                },
+                "exception_stats": {
+                    "NonZeroAgentExitCodeError": [
+                        "qemu-alpine-ssh__Q2td85H",
+                        "qemu-startup__BCQQKNm"
+                    ],
+                    "CancelledError": [
+                        "llm-inference-batching-scheduler__5wr87rd",
+                        "code-from-image__A2TCHF2",
+                        "fix-ocaml-gc__5zop9Wz",
+                        "build-cython-ext__BzyqiX5",
+                        "constraints-scheduling__kN3v9ZY",
+                        "make-mips-interpreter__F3LdEUr",
+                        "break-filter-js-from-html__dAdod6g",
+                        "schemelike-metacircular-eval__Hxd5u8E",
+                        "distribution-search__i3gGWop",
+                        "extract-elf__s7afiod",
+                        "tune-mjcf__dMRZu3a",
+                        "gcode-to-text__PwnaqfK",
+                        "headless-terminal__9TcqxRD",
+                        "model-extraction-relu-logits__ba3YaaF",
+                        "video-processing__yjixkFD"
+                    ]
+                }
+            }
+        },
+        "n_input_tokens": 5756369,
+        "n_cache_tokens": 4859631,
+        "n_output_tokens": 240712,
+        "cost_usd": 1.56975354
+    },
+    "trial_results": []
+}

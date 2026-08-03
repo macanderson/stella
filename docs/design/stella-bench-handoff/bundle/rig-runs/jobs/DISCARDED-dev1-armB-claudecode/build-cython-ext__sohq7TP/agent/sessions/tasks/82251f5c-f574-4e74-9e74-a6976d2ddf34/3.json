@@ -1,0 +1,9 @@
+{
+  "id": "3",
+  "subject": "Fix Cython build issues for Python 3.13/numpy 2.x",
+  "description": "Address distutils removal, cimport numpy import_array, and any Cython 3.x compile errors.",
+  "activeForm": "Fixing Cython build issues",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}

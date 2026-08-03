@@ -1,0 +1,9 @@
+{
+  "id": "2",
+  "subject": "Fix the sweeper traversal bug",
+  "description": "Fix the block-advance arithmetic in pool_sweep so the sweeper stays block-aligned, matching calc_pool_stats.",
+  "activeForm": "Fixing sweeper traversal",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

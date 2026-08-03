@@ -1,0 +1,8 @@
+{
+  "id": "2",
+  "subject": "Locate the GC sweeping changes",
+  "description": "Find the run-length compression of free space changes in the major heap sweeping code (major_gc.c, shared_heap.c, etc).",
+  "status": "in_progress",
+  "blocks": [],
+  "blockedBy": []
+}

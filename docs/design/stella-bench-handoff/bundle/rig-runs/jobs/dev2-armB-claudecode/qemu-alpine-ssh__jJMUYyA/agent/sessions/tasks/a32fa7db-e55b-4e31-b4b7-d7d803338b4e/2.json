@@ -1,0 +1,9 @@
+{
+  "id": "2",
+  "subject": "Launch persistent QEMU with port forward 2222->22",
+  "description": "Start QEMU as a persistent background process: boot alpine.iso (cdrom), attach alpine-disk.qcow2, 1GB RAM, user-mode net with hostfwd tcp 2222->22, serial console on a TCP socket, monitor on a socket. Must keep running after setup completes.",
+  "activeForm": "Launching QEMU VM persistently",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}

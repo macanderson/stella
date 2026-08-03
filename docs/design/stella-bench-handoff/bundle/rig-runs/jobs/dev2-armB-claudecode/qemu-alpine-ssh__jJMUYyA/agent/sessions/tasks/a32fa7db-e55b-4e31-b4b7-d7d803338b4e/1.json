@@ -1,0 +1,9 @@
+{
+  "id": "1",
+  "subject": "Determine Alpine ISO serial console availability",
+  "description": "Quickly test-boot the ISO in QEMU with -nographic/-serial to see whether Alpine outputs the bootloader+kernel to ttyS0 by default. If not, extract kernel/initrd and boot directly with console=ttyS0.",
+  "activeForm": "Testing Alpine ISO serial console",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}

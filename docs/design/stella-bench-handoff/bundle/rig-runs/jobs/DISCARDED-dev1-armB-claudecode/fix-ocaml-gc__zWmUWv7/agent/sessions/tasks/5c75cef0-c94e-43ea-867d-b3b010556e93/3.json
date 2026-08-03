@@ -1,0 +1,9 @@
+{
+  "id": "3",
+  "subject": "Build OCaml and confirm bootstrap",
+  "description": "Run make -j and confirm the compiler bootstraps itself without crashing.",
+  "activeForm": "Building OCaml",
+  "status": "in_progress",
+  "blocks": [],
+  "blockedBy": []
+}

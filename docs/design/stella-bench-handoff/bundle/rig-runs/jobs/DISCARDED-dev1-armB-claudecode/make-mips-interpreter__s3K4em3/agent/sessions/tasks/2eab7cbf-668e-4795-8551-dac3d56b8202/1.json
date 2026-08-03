@@ -1,0 +1,9 @@
+{
+  "id": "1",
+  "subject": "Parse ELF & memory layout",
+  "description": "Write a Node script to parse the MIPS ELF header, program headers, entry point, section/symbol table. Determine loadable segments, BSS, heap/stack placement. Find addresses of DG_ScreenBuffer, __start, entry point.",
+  "activeForm": "Parsing ELF & memory layout",
+  "status": "in_progress",
+  "blocks": [],
+  "blockedBy": []
+}

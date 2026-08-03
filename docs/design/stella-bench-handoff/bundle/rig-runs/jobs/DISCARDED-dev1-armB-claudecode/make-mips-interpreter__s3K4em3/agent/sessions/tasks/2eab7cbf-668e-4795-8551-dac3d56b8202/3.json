@@ -1,0 +1,9 @@
+{
+  "id": "3",
+  "subject": "Implement syscall handling (host FS)",
+  "description": "Handle the syscall instruction: read $v0 for number, $a0-$a3/$t0-$t1 for args. Implement read(0),write(1),open(2),close(3),lseek(8),fsync(74),rename(82),mkdir(83),unlink(87) mapping to real host filesystem via Node fs. Translate MIPS buffer addresses.",
+  "activeForm": "Implementing syscall handling",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}

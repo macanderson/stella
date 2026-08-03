@@ -1,0 +1,274 @@
+{
+    "id": "396bde44-26e6-4482-8d33-4381d315f86b",
+    "task_name": "terminal-bench/headless-terminal",
+    "trial_name": "headless-terminal__9TcqxRD",
+    "trial_uri": "file:///home/ubuntu/tb21/jobs/dev2-armA-stella/headless-terminal__9TcqxRD",
+    "task_id": {
+        "org": "terminal-bench",
+        "name": "headless-terminal",
+        "ref": "sha256:203953871ebdae4efbf163af9499849368dab5e219b70d447e5ee9701ad382d9"
+    },
+    "source": "terminal-bench/terminal-bench-2-1",
+    "task_checksum": "d1324ce5d4734d79b4569b569d2aa826dbfce6eadc6ac406f137d21446ac8d1a",
+    "config": {
+        "task": {
+            "path": null,
+            "git_url": null,
+            "git_commit_id": null,
+            "name": "terminal-bench/headless-terminal",
+            "ref": "sha256:203953871ebdae4efbf163af9499849368dab5e219b70d447e5ee9701ad382d9",
+            "overwrite": false,
+            "download_dir": null,
+            "source": "terminal-bench/terminal-bench-2-1"
+        },
+        "trial_name": "headless-terminal__9TcqxRD",
+        "trials_dir": "/home/ubuntu/tb21/jobs/dev2-armA-stella",
+        "timeout_multiplier": 1.0,
+        "agent_timeout_multiplier": null,
+        "verifier_timeout_multiplier": null,
+        "agent_setup_timeout_multiplier": null,
+        "environment_build_timeout_multiplier": null,
+        "agent": {
+            "name": null,
+            "import_path": "stella_harbor:StellaAgent",
+            "model_name": "openrouter/z-ai/glm-5.2",
+            "override_timeout_sec": null,
+            "override_setup_timeout_sec": null,
+            "max_timeout_sec": null,
+            "kwargs": {},
+            "env": {}
+        },
+        "environment": {
+            "type": "docker",
+            "import_path": null,
+            "force_build": false,
+            "delete": true,
+            "override_cpus": null,
+            "override_memory_mb": null,
+            "override_storage_mb": null,
+            "override_gpus": null,
+            "suppress_override_warnings": false,
+            "mounts_json": null,
+            "env": {},
+            "kwargs": {}
+        },
+        "verifier": {
+            "override_timeout_sec": null,
+            "max_timeout_sec": null,
+            "env": {},
+            "disable": false
+        },
+        "artifacts": [],
+        "job_id": "63d03b4c-aa02-4c5a-9388-d11d00511127"
+    },
+    "agent_info": {
+        "name": "stella",
+        "version": "stella 0.6.24-dev.18599fea0c3b2d13c3a185189318c9eaba2f9057 [binary-sha256:852f8cfd308ee063e3ad46b556483ae1fd9c591cfc89a0d9d2defbe51eef3687]",
+        "model_info": {
+            "name": "z-ai/glm-5.2",
+            "provider": "openrouter"
+        }
+    },
+    "agent_result": {
+        "n_input_tokens": 96001,
+        "n_cache_tokens": 85872,
+        "n_output_tokens": 21621,
+        "cost_usd": 0.0470961,
+        "rollout_details": null,
+        "metadata": {
+            "stella_status": "interrupted",
+            "stella_model": "z-ai/glm-5.2",
+            "stella_steps": 11,
+            "stella_return_code_state": "unknown",
+            "stella_binary_sha256": "852f8cfd308ee063e3ad46b556483ae1fd9c591cfc89a0d9d2defbe51eef3687",
+            "stella_binary_sha256_verified_in_container": true,
+            "stella_source_commit": "18599fea0c3b2d13c3a185189318c9eaba2f9057",
+            "stella_source_commit_verified_in_binary": true,
+            "stella_agent_version": "stella 0.6.24-dev.18599fea0c3b2d13c3a185189318c9eaba2f9057 [binary-sha256:852f8cfd308ee063e3ad46b556483ae1fd9c591cfc89a0d9d2defbe51eef3687]",
+            "stella_adapter_version": "0.6.0",
+            "stella_adapter_sha256": "95e301ca53c898b36ba01ad0a26db3348514bd0c37b9026cd19a8ed674738c0c",
+            "stella_harbor_version": "0.6.1",
+            "stella_harbor_sha256": "ae71004577634f20c8bf16e4d8571ade78b3d4023dc18b54de973b3f4410f3fb",
+            "stella_base_url": "https://openrouter.ai/api/v1",
+            "stella_provider_route_policy": "openrouter-auto",
+            "stella_budget_usd": "5.0",
+            "stella_output_format": "stream-json",
+            "stella_disable_reflection": "1",
+            "stella_reflection_policy": "disabled_for_ephemeral_benchmark",
+            "stella_credential_handoff": "anonymous-fd",
+            "stella_host_credential_source": "environment-fallback",
+            "stella_host_credential_bundle_count": 0,
+            "stella_container_credential_absence_verified": false,
+            "stella_launcher_controls": {
+                "process_invocation": "docker-compose-direct-argv",
+                "repository_env_file": "disabled",
+                "project_env_files": "disabled",
+                "filesystem_settings": "disabled",
+                "filesystem_credentials": "disabled",
+                "subprocess_credential_scrub": "enabled",
+                "project_trust": "disabled",
+                "project_hooks": "disabled",
+                "catalog_auto_refresh": "disabled",
+                "provider_proxy": "disabled",
+                "base_url_authority": "validated-cli-argument",
+                "engine_config_authority": "trusted-launcher-json"
+            },
+            "stella_engine_posture_version": "stella-tb21-engine-posture-v1",
+            "stella_engine_posture": {
+                "default_model": "openrouter/z-ai/glm-5.2",
+                "allowed_models": [
+                    "openrouter/z-ai/glm-5.2"
+                ],
+                "auto_mode": "off",
+                "effort_auto": "off",
+                "reasoning_auto": "off",
+                "headless_scope_bypass": "on",
+                "agents": {
+                    "default": {
+                        "effort": "max",
+                        "reasoning": "on"
+                    },
+                    "worker": {
+                        "effort": "max",
+                        "reasoning": "on"
+                    },
+                    "judge": {
+                        "effort": "max",
+                        "reasoning": "on"
+                    },
+                    "triage": {
+                        "effort": "max",
+                        "reasoning": "on"
+                    }
+                }
+            },
+            "stella_engine_posture_json": "{\"agents\":{\"default\":{\"effort\":\"max\",\"reasoning\":\"on\"},\"judge\":{\"effort\":\"max\",\"reasoning\":\"on\"},\"triage\":{\"effort\":\"max\",\"reasoning\":\"on\"},\"worker\":{\"effort\":\"max\",\"reasoning\":\"on\"}},\"allowed_models\":[\"openrouter/z-ai/glm-5.2\"],\"auto_mode\":\"off\",\"default_model\":\"openrouter/z-ai/glm-5.2\",\"effort_auto\":\"off\",\"headless_scope_bypass\":\"on\",\"reasoning_auto\":\"off\"}",
+            "stella_engine_posture_sha256": "a198038705333466eed484633429507e57c46635f74847c8cc9b27ac88f5efee",
+            "stella_assurance_tiers_version": "stella-tb21-assurance-tiers-v1",
+            "stella_assurance_arm": "witness-off",
+            "stella_assurance_tiers": {
+                "version": "stella-tb21-assurance-tiers-v1",
+                "arm": "witness-off",
+                "worker_model": "openrouter/z-ai/glm-5.2",
+                "witness_author_model": null,
+                "tiers": {
+                    "deterministic_verify": "on",
+                    "authored_witness": "off",
+                    "model_judge": "on-same-model-as-worker"
+                },
+                "authored_witness_off_reason": "no author independent of the worker: every role inherits default_model, so the witness tier cannot be authored on any task in this run"
+            },
+            "stella_assurance_tiers_json": "{\"arm\":\"witness-off\",\"authored_witness_off_reason\":\"no author independent of the worker: every role inherits default_model, so the witness tier cannot be authored on any task in this run\",\"tiers\":{\"authored_witness\":\"off\",\"deterministic_verify\":\"on\",\"model_judge\":\"on-same-model-as-worker\"},\"version\":\"stella-tb21-assurance-tiers-v1\",\"witness_author_model\":null,\"worker_model\":\"openrouter/z-ai/glm-5.2\"}",
+            "stella_assurance_tiers_sha256": "dc61da7ba0b24c5cca002ba9540f2773d706cfb8e8c6ae6331a36c9549b1dbde",
+            "stella_witness_authored_state": "unavailable",
+            "stella_accounting": {
+                "state": "incomplete",
+                "step_usage_records": 11,
+                "fields": {
+                    "input_tokens": {
+                        "state": "complete",
+                        "reported_records": 11,
+                        "total": 96001
+                    },
+                    "output_tokens": {
+                        "state": "complete",
+                        "reported_records": 11,
+                        "total": 21621
+                    },
+                    "cached_input_tokens": {
+                        "state": "complete",
+                        "reported_records": 11,
+                        "total": 85872
+                    },
+                    "cache_write_tokens": {
+                        "state": "complete",
+                        "reported_records": 11,
+                        "total": 0
+                    },
+                    "estimated_input_tokens": {
+                        "state": "complete",
+                        "reported_records": 11,
+                        "total": 29795
+                    },
+                    "cost_usd": {
+                        "state": "complete",
+                        "reported_records": 11,
+                        "total": 0.0470961
+                    },
+                    "duration_ms": {
+                        "state": "complete",
+                        "reported_records": 11,
+                        "total": 246331
+                    },
+                    "retries": {
+                        "state": "complete",
+                        "reported_records": 11,
+                        "total": 0
+                    },
+                    "tool_calls": {
+                        "state": "complete",
+                        "reported_records": 11,
+                        "total": 9
+                    }
+                },
+                "envelope_total_cost_usd": 0.0470961,
+                "step_usage_total_cost_usd": 0.0470961,
+                "cost_consistency": "derived_from_step_usage",
+                "cost_difference_usd": 0.0,
+                "model_state": "complete",
+                "model_records": 11,
+                "models": [
+                    "z-ai/glm-5.2"
+                ]
+            },
+            "stella_stream": {
+                "event_count": 245,
+                "diagnostic_lines": 0,
+                "ignored_json_objects": 0,
+                "terminal_event": "error",
+                "stream_complete": false,
+                "process_returned": false,
+                "step_usage_count": 11,
+                "complete_event_count": 0,
+                "error_event_count": 1,
+                "cost_source": "summed_step_usage",
+                "proof_step_counts": {
+                    "assurance": 1,
+                    "witness_unavailable": 1
+                },
+                "witness_authored": false,
+                "witness_authored_state": "unavailable",
+                "witness_authored_count": 0,
+                "witness_unavailable_count": 1,
+                "witness_unavailable_reasons": [
+                    "no author independent of the worker (judge and worker both resolved to `openrouter/z-ai/glm-5.2`)"
+                ],
+                "witness_warranted_count": 0,
+                "assurance_witness_planned": true
+            }
+        }
+    },
+    "verifier_result": null,
+    "exception_info": {
+        "exception_type": "CancelledError",
+        "exception_message": "",
+        "exception_traceback": "Traceback (most recent call last):\n  File \"/home/ubuntu/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/asyncio/runners.py\", line 205, in run\n    return runner.run(main)\n           ~~~~~~~~~~^^^^^^\n  File \"/home/ubuntu/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/asyncio/runners.py\", line 128, in run\n    return self._loop.run_until_complete(task)\n           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^\n  File \"/home/ubuntu/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/asyncio/base_events.py\", line 706, in run_until_complete\n    self.run_forever()\n    ~~~~~~~~~~~~~~~~^^\n  File \"/home/ubuntu/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/asyncio/base_events.py\", line 677, in run_forever\n    self._run_once()\n    ~~~~~~~~~~~~~~^^\n  File \"/home/ubuntu/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/asyncio/base_events.py\", line 2018, in _run_once\n    event_list = self._selector.select(timeout)\n  File \"/home/ubuntu/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/selectors.py\", line 452, in select\n    fd_event_list = self._selector.poll(timeout, max_ev)\n  File \"/home/ubuntu/stella/bench/harbor_adapter/.venv/lib/python3.14/site-packages/harbor/cli/jobs.py\", line 282, in _handle_sigterm\n    raise KeyboardInterrupt\nKeyboardInterrupt\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/ubuntu/stella/bench/harbor_adapter/.venv/lib/python3.14/site-packages/harbor/trial/trial.py\", line 961, in run\n    await self._execute_agent()\n  File \"/home/ubuntu/stella/bench/harbor_adapter/.venv/lib/python3.14/site-packages/harbor/trial/trial.py\", line 370, in _execute_agent\n    await asyncio.wait_for(\n    ...<6 lines>...\n    )\n  File \"/home/ubuntu/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/home/ubuntu/stella/bench/harbor_adapter/.venv/lib/python3.14/site-packages/harbor/agents/installed/base.py\", line 42, in wrapper\n    return await fn(self, instruction, *args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/ubuntu/stella/bench/harbor_adapter/stella_harbor/__init__.py\", line 1282, in run\n    result = await _secure_exec_with_credential_fd(\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    ...<6 lines>...\n    )\n    ^\n  File \"/home/ubuntu/stella/bench/harbor_adapter/stella_harbor/__init__.py\", line 592, in _secure_exec_with_credential_fd\n    stdout_bytes, _ = await process.communicate(input=wire)\n                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/ubuntu/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/asyncio/subprocess.py\", line 201, in communicate\n    stdin, stdout, stderr = await tasks.gather(stdin, stdout, stderr)\n                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/ubuntu/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/asyncio/subprocess.py\", line 181, in _read_stream\n    output = await stream.read()\n             ^^^^^^^^^^^^^^^^^^^\n  File \"/home/ubuntu/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/asyncio/streams.py\", line 723, in read\n    block = await self.read(self._limit)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/ubuntu/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/asyncio/streams.py\", line 730, in read\n    await self._wait_for_data('read')\n  File \"/home/ubuntu/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/asyncio/streams.py\", line 539, in _wait_for_data\n    await self._waiter\nasyncio.exceptions.CancelledError\n",
+        "occurred_at": "2026-07-31T17:19:31.548851"
+    },
+    "started_at": "2026-07-31T17:14:24.185149Z",
+    "finished_at": "2026-07-31T17:19:40.543359Z",
+    "environment_setup": {
+        "started_at": "2026-07-31T17:14:24.185671Z",
+        "finished_at": "2026-07-31T17:14:55.287830Z"
+    },
+    "agent_setup": {
+        "started_at": "2026-07-31T17:14:55.287852Z",
+        "finished_at": "2026-07-31T17:14:57.433422Z"
+    },
+    "agent_execution": {
+        "started_at": "2026-07-31T17:14:57.433473Z",
+        "finished_at": "2026-07-31T17:19:31.546910Z"
+    },
+    "verifier": null,
+    "step_results": null
+}

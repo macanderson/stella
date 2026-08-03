@@ -1,0 +1,32 @@
+{
+    "results": {
+        "tool": {
+            "name": "pytest",
+            "version": "8.4.1"
+        },
+        "summary": {
+            "tests": 1,
+            "passed": 0,
+            "failed": 1,
+            "skipped": 0,
+            "pending": 0,
+            "other": 0,
+            "start": 1785518279.5269692,
+            "stop": 1785518279.592565
+        },
+        "tests": [
+            {
+                "name": "test_outputs.py::test_fibonacci_polyglot",
+                "status": "failed",
+                "raw_status": "call_failed",
+                "duration": 0.0005028250002396817,
+                "start": 1785518279.5823112,
+                "stop": 1785518279.592416,
+                "retries": 0,
+                "file_path": "test_outputs.py",
+                "trace": "def test_fibonacci_polyglot():\n        \"\"\"\n        Test that main.rs is a valid polyglot that compiles with both rustc and g++,\n        produces correct Fibonacci numbers, and is contained in a single file.\n        \"\"\"\n    \n        # Check that main.rs exists (dont require it to be the only file \u2014 compilation may leave binaries)\n>       assert os.path.isfile(\"/app/polyglot/main.rs\"), \"main.rs not found in /app/polyglot\"\nE       AssertionError: main.rs not found in /app/polyglot\nE       assert False\nE        +  where False = <function isfile at 0x75b23f87f380>('/app/polyglot/main.rs')\nE        +    where <function isfile at 0x75b23f87f380> = <module 'posixpath' (frozen)>.isfile\nE        +      where <module 'posixpath' (frozen)> = os.path\n\n/tests/test_outputs.py:15: AssertionError",
+                "message": "The test failed in the call phase due to an assertion error"
+            }
+        ]
+    }
+}

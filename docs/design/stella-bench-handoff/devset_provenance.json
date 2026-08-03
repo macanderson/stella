@@ -1,0 +1,30 @@
+{
+  "rule": "sorted(all.tasks) -> random.Random(SEED).sample(tasks, 20) -> sorted",
+  "seed": 20260731,
+  "n_dev": 20,
+  "n_heldout": 69,
+  "drawn_before_consulting_any_result": true,
+  "caveat": "only 89 tasks exist, so the dev set is a SUBSET of the published set, not a true holdout. Disclosed so the 69 untouched tasks can be evaluated separately.",
+  "dev_tasks": [
+    "break-filter-js-from-html",
+    "build-cython-ext",
+    "code-from-image",
+    "constraints-scheduling",
+    "distribution-search",
+    "extract-elf",
+    "fix-ocaml-gc",
+    "gcode-to-text",
+    "headless-terminal",
+    "llm-inference-batching-scheduler",
+    "make-mips-interpreter",
+    "model-extraction-relu-logits",
+    "polyglot-rust-c",
+    "qemu-alpine-ssh",
+    "qemu-startup",
+    "regex-log",
+    "schemelike-metacircular-eval",
+    "tune-mjcf",
+    "video-processing",
+    "write-compressor"
+  ]
+}

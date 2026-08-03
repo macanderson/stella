@@ -1,0 +1,9 @@
+{
+  "id": "5",
+  "subject": "Verify README snippet and run tests",
+  "description": "Run README.md snippet; run test suite excluding test_random_curves.py and test_catalogue.py.",
+  "activeForm": "Verifying README snippet and running tests",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}

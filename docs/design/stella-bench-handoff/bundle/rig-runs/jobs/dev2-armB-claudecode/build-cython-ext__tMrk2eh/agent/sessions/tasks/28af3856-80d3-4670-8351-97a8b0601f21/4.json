@@ -1,0 +1,9 @@
+{
+  "id": "4",
+  "subject": "Build and install pyknotid to system Python",
+  "description": "Compile the Cython extensions and install pyknotid into the system's global Python environment.",
+  "activeForm": "Building and installing pyknotid",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}

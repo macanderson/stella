@@ -1,0 +1,9 @@
+{
+  "id": "5",
+  "subject": "Run & verify first frame saved",
+  "description": "Run node vm.js, debug until Doom boots and writes /tmp/frame.bmp (or designated output). Verify the first frame is a correct BMP.",
+  "activeForm": "Running and verifying first frame",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}

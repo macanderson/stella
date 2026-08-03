@@ -1,0 +1,8 @@
+{
+  "id": "4",
+  "subject": "Implement syscall + file handling in vm.js",
+  "description": "Implement the syscall ABI used by the binary (read/write/open/close/exit/etc.) and file backing so doom.wad loads and frames save.",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}
