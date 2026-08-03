@@ -27,9 +27,10 @@ step boundary — interrupting CPU-bound work *between* reverse requests
 difference is visible in the abort reason: it now names a step-boundary
 cancel rather than a failed model call, because the turn ends by being asked
 to rather than by having its transport pulled. `StepOutcome::Continue` is
-also now the seam where a durable runner would persist
-`state.to_checkpoint()`; nothing is persisted yet, since this server has
-nowhere to put it.
+also the seam where a durable runner persists `state.to_checkpoint()` — and
+as of #1198 this server does, when the embedder gives it somewhere to put
+one. See "Durability" below for what that means and, just as importantly,
+what it deliberately does not.
 
 **Date:** 2026-07-20, revised 2026-07-30. **Owner:** Mac Anderson.
 **Companion:** `oxagen-platform/docs/specs/agent-engine-v2/` (ADR-033 + spec) —
@@ -66,7 +67,11 @@ not in this table is a 404.
 | `POST` | `/v1/sessions` | `{"system_prompt": "…", "budget": …}` → `{"session_id":"session-<32 hex>"}` (#931) |
 | `GET` | `/v1/sessions/{id}` | History, cost to date, live turn id. Always answers from the last settled state |
 | `POST` | `/v1/sessions/{id}/turns` | `TurnRequest` minus `messages`/`budget`, plus `input` (this turn's new messages). Returns `{"turn_id", "session_id"}`; the turn is then an ordinary `/v1/turns/{id}` member. One live turn per session (else 409) |
-| `DELETE` | `/v1/sessions/{id}` | Ends the session and cancels its live turn |
+| `DELETE` | `/v1/sessions/{id}` | Ends the session and cancels its live turn. Also drops its resume point |
+| `GET` | `/v1/sessions/{id}/checkpoint` | The session's resume point, verbatim (a `stella_core::step::Checkpoint`). Read from the **store**, not the session registry — so a session this process never created still answers `200` if its bytes are there. `404` when there is none, when the id is not a legal key, or when no store is configured (#1198) |
+| `DELETE` | `/v1/sessions/{id}/checkpoint` | Reclaim a resume point the host has finished recovering. Idempotent |
+| `GET` | `/v1/turns/{id}/checkpoint` | As above, for a stateless `POST /v1/turns` turn, which keys on its own turn id |
+| `DELETE` | `/v1/turns/{id}/checkpoint` | As above |
 
 Session semantics a client must know: the transcript lives on the server and
 the host sends only `input` per turn; the system prompt is minted once at
@@ -120,6 +125,68 @@ replay the retained stream to rediscover what it owes.
 Also: the tool surface is selected by the `STELLA_SERVE_TOOLS=remote`
 environment variable, not a `--tools remote` flag — the binary parses no flags
 beyond `healthcheck`, `--version` and `--help`.
+
+## Durability — what a served turn survives (#1198)
+
+`drive_turn` has always called `Engine::persist_checkpoint` at the
+`StepOutcome::Continue` seam and `discard_checkpoint` on every terminal path,
+at the same boundaries the CLI driver uses. What was missing was everything on
+the other side: nothing set `EngineConfig::checkpoint_sink`, and `SessionSpec`
+carried no durable identity to key storage on. A served turn therefore died
+with the process while a local turn did not.
+
+The seam is now complete, and the shape it takes is decided by
+[ADR 0013](../adr/0013-session-artifact-boundary.md):
+
+- **The server owns a port, not a location.** `CheckpointStore` is a three-verb
+  trait (`put` / `get` / `remove`); `ServeConfig::checkpoints` is `None` by
+  default and this crate never names a path. That is ADR 0013's line held
+  exactly: the workspace stays the host's, so serve does not get a filesystem —
+  what it gets is the ability to hand an embedder a defined artifact to persist.
+- **`FileCheckpointStore` and `MemoryCheckpointStore` are library types**, not
+  a server default. The `stella-serve` binary exposes no `--checkpoint-dir`
+  flag, because choosing the location is the act that ADR 0013 lists under what
+  it does not commit us to. Adding the flag is one line if that ADR is ratified
+  the other way.
+- **Which id keys the store is a routing decision.** A turn inside a session
+  keys on the **session id** — the name the host still has after a crash, and
+  one with a single writer, since a session admits one live turn. A stateless
+  turn keys on its own turn id.
+- **Read-back consults the store, not the registry.** `200` on
+  `GET …/checkpoint` means "this id has a resume point", *not* "this session
+  exists" — deliberately different questions, because the interesting caller is
+  one whose session object died with the process.
+- **The body is the stored bytes, verbatim.** `Checkpoint`'s field order is its
+  wire order and this workspace's `serde_json` has no `preserve_order`, so
+  parsing and re-encoding would return it alphabetized. Passing bytes through
+  is both cheaper and the only version that cannot corrupt a resume point.
+
+### What this does not do
+
+- **It does not resume a turn.** A resumed turn's first act is a reverse
+  request that only a host can answer, so a server that re-drove one on startup
+  would park a thread on a request nobody is listening for. The recoverable
+  unit is the checkpoint; the host decides whether to continue.
+- **It does not survive a graceful drain's tail.** Every terminal path
+  discards, cancellation included, because `drive_turn` and the CLI driver are
+  deliberately the same in this respect — "an HTTP turn and a local turn are
+  equally recoverable rather than merely similar" is a promise `session.rs`
+  makes in prose. So what survives is the turn that died *without* unwinding: a
+  `SIGKILL`, a panic, a lost machine. A turn the shutdown drain has to cancel
+  discards on its way out. Retaining a cancelled turn's resume point is
+  arguable and is a change to what a checkpoint *means*, so it belongs in a
+  decision of its own rather than in this one, on one surface only.
+- **It does not garbage-collect.** The steady-state contents of a store are
+  exactly the turns that died without ending — bounded by crash frequency, not
+  by traffic, but not self-emptying, because nothing can tell an abandoned
+  resume point from one whose host is about to come back for it. That judgment
+  is the host's, which is why `DELETE …/checkpoint` exists.
+
+A failing store is reported once per turn as `ServeEvent::CheckpointFailed`
+and counted by `checkpoints_failed_total`, never propagated into the turn: a
+checkpoint that cannot be written leaves the turn exactly as recoverable as it
+was before the store existed, so failing live work to report a durability
+*improvement* would be strictly worse than not offering one.
 
 ## One sentence
 

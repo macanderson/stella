@@ -90,6 +90,17 @@ pub async fn start_drainable_server(
     resume_grace: Duration,
     shutdown_grace: Duration,
 ) -> (SocketAddr, Arc<Capture>, oneshot::Sender<()>) {
+    start_drainable_server_with_checkpoints(resume_grace, shutdown_grace, None).await
+}
+
+/// [`start_drainable_server`] with an optional checkpoint store, for the tests
+/// that are *about* durability. `None` is the server's own default and the
+/// posture every other test in the suite runs under.
+pub async fn start_drainable_server_with_checkpoints(
+    resume_grace: Duration,
+    shutdown_grace: Duration,
+    checkpoints: Option<Arc<dyn stella_serve::CheckpointStore>>,
+) -> (SocketAddr, Arc<Capture>, oneshot::Sender<()>) {
     let capture = Arc::new(Capture::new());
     let observer = capture.clone();
     let metrics = Arc::new(Metrics::new());
@@ -111,6 +122,7 @@ pub async fn start_drainable_server(
             // real client would send (#1130).
             allowed_hosts: Vec::new(),
             shutdown_grace,
+            checkpoints,
         };
         let _ = serve_until(
             config,

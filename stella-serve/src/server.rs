@@ -22,6 +22,7 @@
 //! | `GET /v1/sessions/{id}` | history, cost to date, live turn |
 //! | `POST /v1/sessions/{id}/turns` | run the next turn (turn semantics minus `messages`) |
 //! | `DELETE /v1/sessions/{id}` | end the session, cancelling its live turn |
+//! | `GET`/`DELETE` `/v1/{turns,sessions}/{id}/checkpoint` | read back or reclaim a resume point (#1198) |
 //!
 //! Any other method on one of those paths is a `405` carrying `Allow`; any
 //! other path is a `404`. The handlers themselves live in `src/routes.rs`; this
@@ -112,6 +113,7 @@ use crate::observe::event::{
 use crate::observe::record::{RequestRecord, Responder};
 use crate::observe::{Metrics, SharedObserver};
 use crate::pending::Pending;
+use crate::router::{allowed, classify, resume_point, route_addresses_a_turn};
 use crate::routes::{self, error_body};
 use crate::session::Session;
 use crate::throttle::TokenBucket;
@@ -177,6 +179,15 @@ pub struct ServeConfig {
     /// to avoid. [`DEFAULT_SHUTDOWN_GRACE`] deliberately finishes inside the
     /// default window.
     pub shutdown_grace: Duration,
+    /// Where served turns write their resume points, if anywhere (#1198).
+    ///
+    /// `None` — the default — is the pre-#1198 behavior: `drive_turn` still
+    /// reaches both checkpoint seams, finds no sink, and returns before
+    /// serializing anything, so a non-durable deployment pays nothing per
+    /// step. Durability is opt-in because *where* a checkpoint goes is a
+    /// deployment decision (a mounted volume, a replicated table) that this
+    /// crate cannot guess and must not invent — see `crate::checkpoint`.
+    pub checkpoints: Option<Arc<dyn crate::checkpoint::CheckpointStore>>,
 }
 
 /// The default [`ServeConfig::resume_grace`]: thirty seconds.
@@ -232,7 +243,22 @@ impl ServeConfig {
             session_idle_ttl: DEFAULT_SESSION_IDLE_TTL,
             allowed_hosts: Vec::new(),
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
+            checkpoints: None,
         }
+    }
+
+    /// Make served turns durable by writing their resume points to `store`.
+    ///
+    /// `FileCheckpointStore::open(dir)` is the ordinary production answer;
+    /// `MemoryCheckpointStore` is for tests. See
+    /// [`ServeConfig::checkpoints`].
+    #[must_use]
+    pub fn with_checkpoint_store(
+        mut self,
+        store: Arc<dyn crate::checkpoint::CheckpointStore>,
+    ) -> Self {
+        self.checkpoints = Some(store);
+        self
     }
 
     /// Set how long a shutdown drain waits before cancelling what is left,
@@ -362,6 +388,9 @@ pub(crate) struct ServerState {
     /// Ready/draining latches behind `GET /readyz` and the shutdown drain
     /// (#1131).
     lifecycle: Lifecycle,
+    /// See [`ServeConfig::checkpoints`]. `None` leaves every turn's
+    /// `checkpoint_sink` unset, which is exactly today's behavior.
+    checkpoints: Option<Arc<dyn crate::checkpoint::CheckpointStore>>,
 }
 
 impl ServerState {
@@ -375,6 +404,17 @@ impl ServerState {
 
     pub(crate) fn session_idle_ttl(&self) -> Duration {
         self.session_idle_ttl
+    }
+
+    /// The configured checkpoint store, if this deployment has one.
+    pub(crate) fn checkpoints(&self) -> Option<&Arc<dyn crate::checkpoint::CheckpointStore>> {
+        self.checkpoints.as_ref()
+    }
+
+    /// This turn's or session's durable identity, or `None` when durability is
+    /// off or `id` is not a legal key.
+    pub(crate) fn checkpoint_for(&self, id: &str) -> Option<crate::checkpoint::TurnCheckpoint> {
+        crate::checkpoint::TurnCheckpoint::for_id(self.checkpoints()?, id)
     }
 
     pub(crate) fn lookup(&self, id: &str) -> Option<Arc<Entry>> {
@@ -780,6 +820,7 @@ pub async fn serve_until(
         resume_grace: config.resume_grace.min(MAX_RESUME_GRACE),
         sessions: crate::sessions::SessionRegistry::new(),
         session_idle_ttl: config.session_idle_ttl,
+        checkpoints: config.checkpoints.clone(),
         host_policy,
         lifecycle: Lifecycle::new(),
     });
@@ -1054,6 +1095,27 @@ async fn route(
             return routes::handle_resume(res, state, member_id.as_deref().unwrap_or_default())
                 .await;
         }
+        // One handler for both templates: a checkpoint is looked up by key,
+        // and whether that key names a turn or a session is a routing fact the
+        // store has no opinion about.
+        ("GET", Route::TurnCheckpoint | Route::SessionCheckpoint) => {
+            discard_body(res.stream_mut(), &mut req).await;
+            return routes::handle_checkpoint_get(
+                res,
+                state,
+                member_id.as_deref().unwrap_or_default(),
+            )
+            .await;
+        }
+        ("DELETE", Route::TurnCheckpoint | Route::SessionCheckpoint) => {
+            discard_body(res.stream_mut(), &mut req).await;
+            return routes::handle_checkpoint_delete(
+                res,
+                state,
+                member_id.as_deref().unwrap_or_default(),
+            )
+            .await;
+        }
         ("GET", Route::Session) => {
             discard_body(res.stream_mut(), &mut req).await;
             return routes::handle_session_get(
@@ -1117,99 +1179,6 @@ async fn route(
         // routes. Answering rather than panicking keeps a future edit that
         // widens that match from taking down a request thread.
         _ => res.json("404 Not Found", br#"{"error":"not found"}"#).await,
-    }
-}
-
-/// Whether this route's member id names a turn (as opposed to a session) —
-/// what decides if it belongs in a record's turn slot.
-fn route_addresses_a_turn(route: Route) -> bool {
-    matches!(
-        route,
-        Route::TurnEvents
-            | Route::TurnToolResult
-            | Route::TurnProviderResult
-            | Route::TurnCancel
-            | Route::TurnSteer
-            | Route::TurnPause
-            | Route::TurnResume
-    )
-}
-
-/// Map a path to its route template and, where it has one, the turn id.
-///
-/// Classification is deliberately independent of the method, so a `405` records
-/// which resource was addressed rather than collapsing to "unrouted" — the
-/// difference between "you used the wrong verb on `/v1/turns`" and "you asked
-/// for a path that does not exist" is exactly what makes a record diagnostic.
-fn classify<'a>(segs: &[&'a str]) -> (Route, Option<&'a str>) {
-    match segs {
-        ["healthz"] => (Route::Healthz, None),
-        ["readyz"] => (Route::Readyz, None),
-        ["v1", "metrics"] => (Route::Metrics, None),
-        ["v1", "turns"] => (Route::TurnsCreate, None),
-        ["v1", "turns", id, "events"] => (Route::TurnEvents, Some(id)),
-        ["v1", "turns", id, "tool-result"] => (Route::TurnToolResult, Some(id)),
-        ["v1", "turns", id, "provider-result"] => (Route::TurnProviderResult, Some(id)),
-        ["v1", "turns", id, "cancel"] => (Route::TurnCancel, Some(id)),
-        ["v1", "turns", id, "steer"] => (Route::TurnSteer, Some(id)),
-        ["v1", "turns", id, "pause"] => (Route::TurnPause, Some(id)),
-        ["v1", "turns", id, "resume"] => (Route::TurnResume, Some(id)),
-        ["v1", "sessions"] => (Route::SessionsCreate, None),
-        ["v1", "sessions", id] => (Route::Session, Some(id)),
-        ["v1", "sessions", id, "turns"] => (Route::SessionTurns, Some(id)),
-        _ => (Route::Unrouted, None),
-    }
-}
-
-/// Read one parameter out of a raw query string.
-///
-/// Deliberately minimal — no percent-decoding, no repeated-key semantics, no
-/// dependency. The only parameter this server reads is `after`, whose value is
-/// a decimal integer: every byte that could need decoding makes it fail to
-/// parse as one, which is the correct outcome anyway. Growing a second
-/// parameter with a richer value type is the moment to reach for a real
-/// parser, not before.
-fn query_param<'q>(query: &'q str, name: &str) -> Option<&'q str> {
-    query.split('&').find_map(|pair| {
-        let (key, value) = pair.split_once('=')?;
-        (key == name).then_some(value)
-    })
-}
-
-/// Where a subscriber wants the stream to resume from, if anywhere.
-///
-/// Two spellings of one number, because two kinds of client name it
-/// differently. `?after=<seq>` is the explicit form, for a client that manages
-/// its own reconnects. `Last-Event-ID` is the SSE standard's form, which a
-/// browser `EventSource` sends **automatically** from the `id:` line each frame
-/// carries — so a web host resumes with no client code at all, which is the
-/// whole reason the `id:` is emitted.
-///
-/// `?after=` wins when both are present: it is the one the caller wrote on
-/// purpose, whereas `Last-Event-ID` is replayed by the platform from whatever
-/// it happened to see last.
-fn resume_point(query: &str, req: &crate::http::Request) -> Option<u64> {
-    query_param(query, "after")
-        .or_else(|| req.header("last-event-id"))
-        .and_then(|value| value.trim().parse::<u64>().ok())
-}
-
-/// The `Allow` header value for a known route.
-fn allowed(route: Route) -> &'static str {
-    match route {
-        Route::Healthz | Route::Readyz | Route::Metrics | Route::TurnEvents => "GET",
-        Route::TurnsCreate
-        | Route::TurnToolResult
-        | Route::TurnProviderResult
-        | Route::TurnCancel
-        | Route::TurnSteer
-        | Route::TurnPause
-        | Route::TurnResume
-        | Route::SessionsCreate
-        | Route::SessionTurns => "POST",
-        Route::Session => "GET, DELETE",
-        // Never reached: `Unrouted` is answered as a 404 before this is called.
-        Route::Unrouted => "",
     }
 }
 
@@ -1281,6 +1250,7 @@ mod tests {
                 lifecycle.mark_ready();
                 lifecycle
             },
+            checkpoints: None,
         };
         (state, capture)
     }
@@ -1296,6 +1266,7 @@ mod tests {
             turn: TurnRef::new(turn_id),
             observer: crate::observe::null_observer(),
             on_settled: None,
+            checkpoint: None,
         }
     }
 
@@ -1420,76 +1391,5 @@ mod tests {
                 .is_some(),
             "a refusal at capacity must be visible from outside the process"
         );
-    }
-
-    /// A path is classified independently of its method, so a 405 still records
-    /// which resource was addressed.
-    #[test]
-    fn paths_classify_to_templates_and_surrender_their_turn_id() {
-        let split = |path: &'static str| -> Vec<&'static str> {
-            path.split('/').filter(|s| !s.is_empty()).collect()
-        };
-        assert_eq!(classify(&split("/healthz")), (Route::Healthz, None));
-        assert_eq!(classify(&split("/v1/metrics")), (Route::Metrics, None));
-        assert_eq!(classify(&split("/v1/turns")), (Route::TurnsCreate, None));
-        assert_eq!(
-            classify(&split("/v1/turns/turn-abc/events")),
-            (Route::TurnEvents, Some("turn-abc"))
-        );
-        assert_eq!(
-            classify(&split("/v1/turns/turn-abc/tool-result")),
-            (Route::TurnToolResult, Some("turn-abc"))
-        );
-        assert_eq!(
-            classify(&split("/v1/turns/turn-abc/provider-result")),
-            (Route::TurnProviderResult, Some("turn-abc"))
-        );
-        assert_eq!(
-            classify(&split("/v1/turns/turn-abc/cancel")),
-            (Route::TurnCancel, Some("turn-abc"))
-        );
-        assert_eq!(classify(&split("/nope")), (Route::Unrouted, None));
-        assert_eq!(classify(&split("/v1/turns/a/b/c")), (Route::Unrouted, None));
-    }
-
-    /// Every routable path must name a verb in its `Allow` header, or a 405 is
-    /// half an answer. Iterates [`Route::ALL`], not a hand-listed subset —
-    /// the previous list covered 7 of 14 routes, which is exactly the rot an
-    /// enumerable registry exists to end.
-    #[test]
-    fn every_known_route_names_an_allowed_method() {
-        for route in Route::ALL {
-            assert!(
-                !allowed(route).is_empty(),
-                "{} has no allowed method",
-                route.template()
-            );
-        }
-        assert!(allowed(Route::Unrouted).is_empty(), "404s carry no Allow");
-    }
-
-    /// Every real route's template classifies back to the same variant — the
-    /// structural guard against adding a `Route` variant whose path the
-    /// dispatcher never learned (both dispatch matches carry catch-alls, so
-    /// that mistake compiles).
-    #[test]
-    fn every_real_routes_template_classifies_back_to_itself() {
-        for route in Route::ALL {
-            let path = route.template().replace("{id}", "member-x");
-            let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-            let (classified, member) = classify(&segs);
-            assert_eq!(
-                classified,
-                route,
-                "template {} did not classify to its own route",
-                route.template()
-            );
-            assert_eq!(
-                member.is_some(),
-                route.template().contains("{id}"),
-                "member-id capture must match the template shape for {}",
-                route.template()
-            );
-        }
     }
 }
