@@ -56,9 +56,10 @@ not in this table is a 404.
 | `GET` | `/healthz` | Unauthenticated. Liveness — is the process alive. `{"status":"ok"}` |
 | `GET` | `/readyz` | Unauthenticated. Readiness — is it safe to send new work. `200 {"state":"ready"}`, or `503` with `"starting"` / `"draining"` (#1131) |
 | `GET` | `/v1/metrics` | Counters as a flat JSON object of integers. Authenticated like every other route, and **pull-only** — see [serve-observability.md](./serve-observability.md) |
-| `POST` | `/v1/turns` | Body is `TurnRequest`; returns `{"turn_id":"turn-<32 hex>"}` |
+| `POST` | `/v1/turns` | Body is `TurnRequest`; returns `{"turn_id":"turn-<32 hex>"}`. Optional `engine` object (#1167) carries per-turn caller-policy knobs (`max_output_tokens`, `temperature`, `effort`, `reasoning`, `params`, `compaction_budget_tokens`, `summarize_overflow`, `summarize_keep_recent`) lowered onto the defaults — omitted/empty is a no-op; unusable values are 400s naming the knob; values past an operator ceiling are clamped and reported in the response's `clamped` array (`{knob, requested, effective}`, absent when nothing was lowered). `retry_policy`/`loop_detection` are operator policy and not settable |
 | `GET` | `/v1/turns/{id}/events` | SSE `id: <seq>` + `data: <ServerFrame>`. Resumable via `?after=<seq>` or `Last-Event-ID`. One concurrent subscriber; a second gets 409 |
 | `POST` | `/v1/turns/{id}/provider-result` | Answers a `provider_request` |
+| `POST` | `/v1/turns/{id}/provider-delta` | Optional (#1165): a batch of streamed fragments (`{"request_id", "deltas": [{"kind":"text"\|"reasoning","text":"…"}]}`) for an in-flight `provider_request`, ahead of its `provider-result`. Fragments surface on `/events` as `text_delta` / `reasoning` frames and each batch resets the reverse-request deadline. Empty batches are refused (400); fragments after the result get a 409 |
 | `POST` | `/v1/turns/{id}/tool-result` | Answers a `tool_request` |
 | `POST` | `/v1/turns/{id}/cancel` | Step-boundary stop (#1129): the turn unwinds at its next step, keeping completed steps, and still emits `turn_complete`. Deregistered immediately, so a second cancel is a 404. There is no `DELETE` |
 | `POST` | `/v1/turns/{id}/steer` | `{"message": "…"}` — injected at the next step boundary, echoed as a `steered` event (#932) |
@@ -66,7 +67,7 @@ not in this table is a 404.
 | `POST` | `/v1/turns/{id}/resume` | Release a held turn. Idempotent (#932) |
 | `POST` | `/v1/sessions` | `{"system_prompt": "…", "budget": …}` → `{"session_id":"session-<32 hex>"}` (#931) |
 | `GET` | `/v1/sessions/{id}` | History, cost to date, live turn id. Always answers from the last settled state |
-| `POST` | `/v1/sessions/{id}/turns` | `TurnRequest` minus `messages`/`budget`, plus `input` (this turn's new messages). Returns `{"turn_id", "session_id"}`; the turn is then an ordinary `/v1/turns/{id}` member. One live turn per session (else 409) |
+| `POST` | `/v1/sessions/{id}/turns` | `TurnRequest` minus `messages`/`budget`, plus `input` (this turn's new messages). Accepts the same optional `engine` object as `/v1/turns` (safe for the prompt-cache contract: no engine knob touches the transcript). Returns `{"turn_id", "session_id"}` plus the same `clamped` reporting; the turn is then an ordinary `/v1/turns/{id}` member. One live turn per session (else 409) |
 | `DELETE` | `/v1/sessions/{id}` | Ends the session and cancels its live turn. Also drops its resume point |
 | `GET` | `/v1/sessions/{id}/checkpoint` | The session's resume point, verbatim (a `stella_core::step::Checkpoint`). Read from the **store**, not the session registry — so a session this process never created still answers `200` if its bytes are there. `404` when there is none, when the id is not a legal key, or when no store is configured (#1198) |
 | `DELETE` | `/v1/sessions/{id}/checkpoint` | Reclaim a resume point the host has finished recovering. Idempotent |
@@ -420,11 +421,20 @@ per-step checkpoint and crash-resume. This is ADR-033 §6 item 1 and §4.3.
   id is the model's, addresses the tool call inside the transcript, and is not
   what a resolve POST is keyed by. `scope_review` / `ask_user` have no reverse
   endpoint at all yet.
-- **Provider deltas:** `RemoteProvider::complete_observed` forwards `text_delta`
-  / `tool_call_streamed` as `AgentEvent`s so the browser gets token-level
-  streaming (Anthropic + all OpenAI-compatible adapters already emit these;
-  OpenAI/Gemini/Vertex/Bedrock need `complete_observed` overrides — a small,
-  scoped addition at their existing SSE delta-parse sites).
+- **Provider deltas (built, #1165):** a host that streams its model call POSTs
+  fragment batches to `/v1/turns/{id}/provider-delta`, keyed by the same
+  `request_id` its eventual `provider-result` answers.
+  `RemoteProvider::complete_observed_ref` forwards each fragment to the
+  engine's observer, so `AgentEvent::TextDelta` / `Reasoning` fire under serve
+  exactly as with a local streaming adapter — through the same forwarder,
+  `FrameHistory`, `seq`, and replay. Strictly optional (a non-streaming host
+  keeps POSTing the whole result) and strictly advisory (the terminating
+  `CompletionResult` is authoritative; a retried call re-streams from the
+  start with no reset marker). Retention note: delta frames share the turn's
+  bounded ring (`history.rs`, 4096 frames), so a token-streaming turn evicts
+  its early frames sooner — the ring was already sized for per-token
+  `TextDelta` traffic, and a resume point older than the window is reported
+  as `replay_truncated`, never silently skipped.
 
 ## Containment posture (why the sidecar runs *inside* Oxagen's sandbox)
 

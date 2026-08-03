@@ -75,6 +75,13 @@ from .credential_bundle import (
     HOST_CREDENTIAL_SOURCE,
     read_bundle_from_environment,
 )
+from .exit_cause import (
+    EXIT_CAUSE_LOG_NAME,
+    SIGKILL_EXIT_CODE,
+    build_exit_cause_report,
+    probe_sigkill_cause,
+)
+from .git_baseline import run_git_baseline
 from .portability import raise_for_loader_failure
 from .posture import (
     _ASSURANCE_TIERS_VERSION,
@@ -557,6 +564,23 @@ async def _verify_compose_containers_exclude_credential(
             "main benchmark container defines forbidden inherited environment names: "
             + ", ".join(forbidden_names)
         )
+
+
+async def _probe_sigkill_cause(environment: BaseEnvironment) -> dict[str, Any]:
+    """Evidence gathering for a 137 exit (#1178) — see ``exit_cause``.
+
+    The logic lives in :mod:`stella_harbor.exit_cause`; only the Compose and
+    Docker plumbing is bound here, because those helpers encode this module's
+    credential-scrubbing rules and importing them back from ``exit_cause``
+    would be a cycle.
+    """
+    return await probe_sigkill_cause(
+        environment,
+        compose_base_argv=_compose_base_argv,
+        compose_host_environment=_compose_host_environment,
+        captured_process=_captured_process,
+        service_label=_COMPOSE_SERVICE_LABEL,
+    )
 
 
 async def _secure_exec_with_credential_fd(
@@ -1353,6 +1377,9 @@ class StellaAgent(BaseInstalledAgent):
         if version_line:
             self._version = version_line
 
+        # Baseline before the code graph, so `.stella/` is excluded before
+        # `stella init` writes its DB into the workspace (see git_baseline).
+        await run_git_baseline(self, environment)
         await self._build_code_graph(environment)
         await self._establish_workspace_git_baseline(environment)
 
@@ -1539,11 +1566,64 @@ class StellaAgent(BaseInstalledAgent):
         self.populate_context_post_run(context)
 
         if isinstance(self._return_code, int) and self._return_code != 0:
+            # A 137 is SIGKILL — the one exit that is not Stella's own and
+            # used to carry no explanation at all (#1178). Diagnose it now,
+            # while the container still exists, so the exception line names
+            # OOM vs external teardown instead of leaving the trial as the
+            # failure everyone steps around.
+            exit_cause_note = ""
+            if self._return_code == SIGKILL_EXIT_CODE:
+                report = await self._record_exit_cause(environment)
+                if report is not None:
+                    exit_cause_note = (
+                        f" Exit 137 is SIGKILL, not a Stella exit path; "
+                        f"verdict: {report['verdict']} ({report['detail']}) — "
+                        f"evidence in {EXIT_CAUSE_LOG_NAME}."
+                    )
             raise NonZeroAgentExitCodeError(
                 f"Stella exited with code {self._return_code}; stream telemetry "
-                f"was preserved in {_STREAM_EVENTS_PATH}. stderr: "
+                f"was preserved in {_STREAM_EVENTS_PATH}.{exit_cause_note} stderr: "
                 f"{self._truncate_output(stderr)}"
             )
+
+    async def _record_exit_cause(
+        self, environment: BaseEnvironment
+    ) -> dict[str, Any] | None:
+        """Diagnose a SIGKILL exit and persist the evidence (#1178).
+
+        Writes ``stella-exit-cause.json`` beside the event stream, carrying
+        the container's Docker ``State``, its cgroup ``memory.events``
+        counters, and whether the event stream stopped mid-step or at a step
+        boundary — the three signals that separate an OOM kill from an
+        external teardown. Best-effort: any failure is printed and swallowed,
+        because the diagnosis must never displace the official
+        ``NonZeroAgentExitCodeError`` Harbor scores the trial by.
+        """
+        try:
+            probe = await _probe_sigkill_cause(environment)
+            events: list[dict[str, Any]] | None = None
+            if self._envelope is not None:
+                raw_events = self._envelope.get("events")
+                if isinstance(raw_events, list):
+                    events = raw_events
+            report = build_exit_cause_report(
+                return_code=SIGKILL_EXIT_CODE,
+                container_state=probe.get("container_state"),
+                memory_events_text=probe.get("memory_events_text"),
+                events=events,
+                probe_errors=list(probe.get("errors") or []),
+            )
+            self._write_log(
+                EXIT_CAUSE_LOG_NAME,
+                json.dumps(report, indent=2, ensure_ascii=False),
+            )
+            return report
+        except Exception as exc:  # noqa: BLE001 - never displace the scored error
+            print(
+                f"stella-adapter: exit-cause diagnosis unavailable: {exc}",
+                file=sys.stderr,
+            )
+            return None
 
     def _effective_model(self) -> str:
         """Return the model selected by Harbor, configuration, or the default."""

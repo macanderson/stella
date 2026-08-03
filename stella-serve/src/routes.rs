@@ -23,7 +23,8 @@ use stella_core::{BudgetGuard, EngineConfig};
 use stella_protocol::{BudgetMode, CompletionMessage, ToolSchema};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::frame::{ProviderOutcomeIn, ProviderResultIn, ToolResultIn};
+use crate::engine_overrides::{ClampedKnob, EngineOverrides, apply_engine_overrides};
+use crate::frame::{ProviderDeltaIn, ProviderOutcomeIn, ProviderResultIn, ToolResultIn};
 use crate::history::{FrameHistory, Replay};
 use crate::http::{Request, discard_body, write_sse_event, write_sse_frame};
 use crate::observe::event::{ServeEvent, StreamEndReason, TurnRef};
@@ -47,6 +48,10 @@ struct TurnRequest {
     /// [`SessionSpec::DEFAULT_REVERSE_REQUEST_TIMEOUT`].
     #[serde(default)]
     reverse_request_timeout_ms: Option<u64>,
+    /// Per-turn engine knobs (#1167), lowered onto the server's defaults.
+    /// Omitted — or an empty object — reproduces today's behavior exactly.
+    #[serde(default)]
+    engine: Option<EngineOverrides>,
 }
 
 /// Spend policy for a turn — the serializable projection of a [`BudgetGuard`].
@@ -78,6 +83,10 @@ fn budget_mode_off() -> BudgetMode {
 #[derive(Debug, Serialize)]
 struct TurnCreated<'a> {
     turn_id: &'a str,
+    /// Engine knobs the server lowered below what was asked (#1167). Absent
+    /// when nothing was clamped, so pre-existing clients parse unchanged.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    clamped: Vec<ClampedKnob>,
 }
 
 /// Ceiling on a host-supplied [`TurnRequest::max_steps`].
@@ -201,6 +210,15 @@ pub(crate) async fn handle_create(
     };
 
     let mut config = EngineConfig::default();
+    let clamped = match &turn.engine {
+        Some(engine) => match apply_engine_overrides(&mut config, engine) {
+            Ok(clamped) => clamped,
+            Err(message) => {
+                return res.json("400 Bad Request", &error_body(&message)).await;
+            }
+        },
+        None => Vec::new(),
+    };
     if let Some(max_steps) = turn.max_steps {
         let Some(effective) = validate_max_steps(max_steps) else {
             return res
@@ -264,7 +282,11 @@ pub(crate) async fn handle_create(
             .await;
     };
 
-    let body = serde_json::to_vec(&TurnCreated { turn_id: &id }).unwrap_or_default();
+    let body = serde_json::to_vec(&TurnCreated {
+        turn_id: &id,
+        clamped,
+    })
+    .unwrap_or_default();
     res.json("200 OK", &body).await
 }
 
@@ -611,6 +633,60 @@ pub(crate) async fn handle_provider_result(
     }
 }
 
+/// `POST /v1/turns/{id}/provider-delta` — streamed fragments for an in-flight
+/// provider request (#1165), ahead of its terminating `provider-result`.
+///
+/// Optional: a host that cannot stream never calls this and keeps its old
+/// behavior. Batched: one POST carries any number of fragments, because a
+/// per-token HTTP request would cost more than the latency it buys. The
+/// fragments surface on `/events` as `TextDelta` / `Reasoning` frames, so a
+/// second subscriber sees text as it arrives and a resuming client replays it
+/// — and each batch resets the reverse-request deadline, which is what makes
+/// that deadline an idle bound for a host that streams.
+pub(crate) async fn handle_provider_delta(
+    res: &mut Responder<'_>,
+    state: &Arc<ServerState>,
+    id: &str,
+    body: &[u8],
+) -> std::io::Result<()> {
+    let Some(entry) = state.lookup(id) else {
+        return res.json("404 Not Found", &error_body("unknown turn")).await;
+    };
+    let posted: ProviderDeltaIn = match serde_json::from_slice(body) {
+        Ok(posted) => posted,
+        Err(err) => {
+            return res
+                .json(
+                    "400 Bad Request",
+                    &error_body(&format!("invalid provider delta: {err}")),
+                )
+                .await;
+        }
+    };
+    if posted.deltas.is_empty() {
+        // Refused rather than accepted as a keepalive: an empty batch sends
+        // nothing through the feed, so it would NOT reset the idle deadline —
+        // accepting it would let a host believe it was proving liveness while
+        // the clock ran out.
+        return res
+            .json(
+                "400 Bad Request",
+                &error_body("deltas must carry at least one fragment"),
+            )
+            .await;
+    }
+    match entry
+        .pending
+        .resolve_provider_delta(&posted.request_id, posted.deltas)
+    {
+        Ok(()) => res.json("200 OK", br#"{"status":"ok"}"#).await,
+        Err(err) => {
+            res.json("409 Conflict", &error_body(&err.to_string()))
+                .await
+        }
+    }
+}
+
 /// `POST /v1/turns/{id}/cancel` — end an in-flight turn.
 ///
 /// Answers once the turn is *signalled*, not once it has unwound: the parked
@@ -796,6 +872,12 @@ struct SessionTurnRequest {
     max_steps: Option<usize>,
     #[serde(default)]
     reverse_request_timeout_ms: Option<u64>,
+    /// Per-turn engine knobs (#1167), applied on top of the defaults exactly
+    /// as on the stateless route. Safe for the session's prompt-cache
+    /// contract: none of these knobs touch the transcript, so the byte-stable
+    /// prefix survives a turn that runs at a different temperature.
+    #[serde(default)]
+    engine: Option<EngineOverrides>,
 }
 
 /// Response to `POST /v1/sessions/{id}/turns`. The turn is an ordinary member
@@ -805,6 +887,10 @@ struct SessionTurnRequest {
 struct SessionTurnCreated<'a> {
     turn_id: &'a str,
     session_id: &'a str,
+    /// Engine knobs the server lowered below what was asked (#1167). Absent
+    /// when nothing was clamped, so pre-existing clients parse unchanged.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    clamped: Vec<ClampedKnob>,
 }
 
 /// Response to `GET /v1/sessions/{id}` — the last settled state, served even
@@ -901,6 +987,15 @@ pub(crate) async fn handle_session_turn(
             .await;
     }
     let mut config = EngineConfig::default();
+    let clamped = match &request.engine {
+        Some(engine) => match apply_engine_overrides(&mut config, engine) {
+            Ok(clamped) => clamped,
+            Err(message) => {
+                return res.json("400 Bad Request", &error_body(&message)).await;
+            }
+        },
+        None => Vec::new(),
+    };
     if let Some(max_steps) = request.max_steps {
         let Some(effective) = validate_max_steps(max_steps) else {
             return res
@@ -978,6 +1073,7 @@ pub(crate) async fn handle_session_turn(
     let body = serde_json::to_vec(&SessionTurnCreated {
         turn_id: &turn_id,
         session_id: id,
+        clamped,
     })
     .unwrap_or_default();
     res.json("200 OK", &body).await

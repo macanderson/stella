@@ -178,7 +178,19 @@ where
     F: Future<Output = Result<(), String>>,
 {
     match rt.block_on(until_interrupted(work)) {
-        Ok(inner) => inner,
+        Ok(inner) => {
+            // The same bound on the success path. Everything the run awaited
+            // has settled by here; what can still be running is *detached*
+            // blocking work — the background code-graph indexer over a large
+            // tree is the recorded case — and letting the runtime's implicit
+            // drop wait for it held a finished benchmark trial hostage until
+            // Harbor's wall clock expired: reward 1.0, terminal `complete`
+            // emitted, and the process still alive at 300.06s of a 300s
+            // budget (#960). A completed run owes stray blocking tasks the
+            // same two seconds an interrupted one gets, and no more.
+            rt.shutdown_timeout(std::time::Duration::from_secs(2));
+            inner
+        }
         Err(signal) => {
             INTERRUPTED.store(signal.exit_code(), std::sync::atomic::Ordering::SeqCst);
             rt.shutdown_timeout(std::time::Duration::from_secs(2));
@@ -195,6 +207,58 @@ mod tests {
     async fn a_future_that_completes_is_not_disturbed() {
         let out = until_interrupted(async { 7u32 }).await;
         assert_eq!(out, Ok(7));
+    }
+
+    /// The success-path half of the shutdown bound (#960): a run that
+    /// FINISHED must not be held hostage by a detached `spawn_blocking` task
+    /// it never awaited — the shape of the background code-graph indexer
+    /// over a large tree. Before the bound, the runtime's implicit drop
+    /// waited for the blocking task without limit, and a benchmark trial
+    /// with reward 1.0 sat alive until Harbor's wall clock expired.
+    ///
+    /// The wedged task sleeps 60s; the assertion window is 20s. On a
+    /// regression this fails in 20s rather than hanging the suite.
+    #[test]
+    fn a_completed_run_is_not_held_hostage_by_a_wedged_blocking_task() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = block_on_interruptible(rt, async {
+                let started = Arc::new(AtomicBool::new(false));
+                let flag = started.clone();
+                // Detached on purpose — the handle is dropped, exactly like
+                // the fire-and-forget indexing task a one-shot run leaves
+                // behind when the work finishes first.
+                drop(tokio::task::spawn_blocking(move || {
+                    flag.store(true, Ordering::SeqCst);
+                    std::thread::sleep(std::time::Duration::from_secs(60));
+                }));
+                // The wedge must actually be RUNNING when the work
+                // completes: a merely queued blocking task is discarded by
+                // shutdown without ever starting, which would prove nothing.
+                while !started.load(Ordering::SeqCst) {
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+                Ok(())
+            });
+            let _ = done_tx.send(result);
+        });
+
+        let outcome = done_rx.recv_timeout(std::time::Duration::from_secs(20));
+        assert_eq!(
+            outcome.expect(
+                "block_on_interruptible must return once the work future completes, \
+                 bounded by the shutdown grace — not wait out a detached blocking task (#960)"
+            ),
+            Ok(())
+        );
     }
 
     /// A guard that records its own drop — the synchronous shape every RAII

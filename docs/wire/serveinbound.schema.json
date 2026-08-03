@@ -1,5 +1,311 @@
 {
   "$defs": {
+    "EngineOverrides": {
+      "$defs": {
+        "GenerationParams": {
+          "description": "Optional sampling/routing parameter overrides riding a\n[`CompletionRequest`]. Every field is independently optional —\n\"include\" semantics: `None` leaves the provider's own default in place,\n`Some` puts the value on the wire. Each adapter forwards the subset its\ndialect supports and silently drops the rest (a param the provider\ncan't express must never fail the request).",
+          "properties": {
+            "frequency_penalty": {
+              "description": "Penalize tokens by their frequency in the text so far.",
+              "format": "float",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "presence_penalty": {
+              "description": "Penalize tokens that have appeared at all in the text so far.",
+              "format": "float",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "repetition_penalty": {
+              "description": "Multiplicative repetition penalty (>1 discourages, <1 encourages).",
+              "format": "float",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "seed": {
+              "description": "Random seed for deterministic outputs, where supported.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "service_tier": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ServiceTier"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which capacity tier to route to ([`ServiceTier`])."
+            },
+            "top_k": {
+              "description": "Limit sampling to the k highest-probability tokens.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "top_p": {
+              "description": "Nucleus sampling: cumulative-probability cutoff.",
+              "format": "float",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "verbosity": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Verbosity"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "How much detail to ask for ([`Verbosity`])."
+            }
+          },
+          "type": "object"
+        },
+        "ReasoningEffort": {
+          "description": "Reasoning effort forwarded to models with a thinking/extended-reasoning\nmode. One enum, mapped per-adapter to the provider's own parameter name\n(\"reasoning_param\").",
+          "oneOf": [
+            {
+              "const": "low",
+              "description": "Least thinking — cheapest and fastest.",
+              "type": "string"
+            },
+            {
+              "const": "medium",
+              "description": "The middle setting most adapters treat as their default.",
+              "type": "string"
+            },
+            {
+              "const": "high",
+              "description": "More thinking, for harder steps.",
+              "type": "string"
+            },
+            {
+              "const": "xhigh",
+              "description": "Above `High`, where the provider exposes a fourth level.",
+              "type": "string"
+            },
+            {
+              "const": "max",
+              "description": "The provider's ceiling.",
+              "type": "string"
+            }
+          ]
+        },
+        "ServiceTier": {
+          "description": "Provider service tier: `Priority` routes to faster paid-tier capacity,\n`Flex` to cheaper capacity with slower response times. Only applied by\nproviders that support tiered service; others use their default tier.",
+          "oneOf": [
+            {
+              "const": "auto",
+              "description": "Let the provider pick the tier.",
+              "type": "string"
+            },
+            {
+              "const": "default",
+              "description": "The account's standard tier.",
+              "type": "string"
+            },
+            {
+              "const": "flex",
+              "description": "Cheaper capacity, slower responses.",
+              "type": "string"
+            },
+            {
+              "const": "priority",
+              "description": "Faster paid-tier capacity.",
+              "type": "string"
+            }
+          ]
+        },
+        "Verbosity": {
+          "description": "Response-detail level for providers with a verbosity parameter (OpenAI's\n`text.verbosity`). Adapters whose wire has no equivalent ignore it — the\nsame never-fail contract as [`ReasoningEffort`].",
+          "oneOf": [
+            {
+              "const": "low",
+              "description": "Terse answers.",
+              "type": "string"
+            },
+            {
+              "const": "medium",
+              "description": "The provider's usual level of detail.",
+              "type": "string"
+            },
+            {
+              "const": "high",
+              "description": "Expansive answers.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "The caller-policy slice of `EngineConfig`, settable per turn (#1167) as\nthe optional `engine` object on `POST /v1/turns` and\n`POST /v1/sessions/{id}/turns`.\n\nEvery field is independently optional with \"lower onto defaults\" semantics:\n`None` keeps the server's configured default, `Some` overrides it for this\nturn only. What is deliberately **not** here: `retry_policy` and\n`loop_detection` are operator policy — they bound what a single request can\ncost this process, and a caller who could widen them could make a turn\neffectively unbounded — and `max_steps` / `reverse_request_timeout_ms`\nalready ride the request top-level.\n\nUnknown fields are refused rather than ignored: a typoed knob that parses\nis a knob silently *not* honored, the same illegibility the ceilings exist\nto avoid on the other side.\n\nSession note: none of these knobs touch the message transcript, so a\nper-turn override on `POST /v1/sessions/{id}/turns` cannot perturb the\nbyte-stable prompt prefix the session's cache contract depends on.",
+      "properties": {
+        "compaction_budget_tokens": {
+          "default": null,
+          "description": "Compaction trigger, in estimated tokens. Rejected at 0; clamped to\n[`MAX_COMPACTION_BUDGET_TOKENS`].",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "effort": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Reasoning-effort tier (`CompletionRequest::effort` semantics)."
+        },
+        "max_output_tokens": {
+          "default": null,
+          "description": "Output-token cap forwarded on every completion of this turn. Rejected\nat 0; clamped to [`MAX_OUTPUT_TOKENS_CEILING`]. Effort tier and this\ncap are one budget — raising effort against a small cap is how a model\nspends its tokens thinking and gets truncated before its tool call.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "params": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GenerationParams"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Sampling/routing overrides (`CompletionRequest::params` semantics —\nthe host's adapter forwards the subset its dialect supports)."
+        },
+        "reasoning": {
+          "default": null,
+          "description": "Thinking-mode enable/disable (`CompletionRequest::reasoning`\nsemantics; `None` = provider default).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "summarize_keep_recent": {
+          "default": null,
+          "description": "Messages at the tail the summarizer never touches. Clamped to\n[`MAX_SUMMARIZE_KEEP_RECENT`].",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "summarize_overflow": {
+          "default": null,
+          "description": "Whether overflow beyond the compaction budget may be summarized away\nby a model call (`EngineConfig::summarize_overflow`).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "temperature": {
+          "default": null,
+          "description": "Sampling temperature. Rejected unless finite and non-negative; clamped\nto [`MAX_TEMPERATURE`].",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "title": "EngineOverrides",
+      "type": "object"
+    },
+    "ProviderDeltaIn": {
+      "$defs": {
+        "ProviderDelta": {
+          "description": "One streamed fragment of an in-flight model completion.\n\nText and thinking are distinct variants rather than one string because the\ntwo must never be confused downstream: thinking renders as collapsible,\nvisibly-secondary content while answer text is the reply — the same\nseparation `ToolCallObserver` keeps between `text_delta` and\n`reasoning_delta`, carried across the wire.",
+          "oneOf": [
+            {
+              "description": "A fragment of user-visible answer text.",
+              "properties": {
+                "kind": {
+                  "const": "text",
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "text"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A fragment of thinking/chain-of-thought content.",
+              "properties": {
+                "kind": {
+                  "const": "reasoning",
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "text"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Host → engine: a batch of streamed fragments for an in-flight\n[`ServerFrame::ProviderRequest`] — the incremental half of a provider\nanswer (#1165), POSTed to `POST /v1/turns/{id}/provider-delta` and keyed by\nthe same `request_id` the terminating [`ProviderResultIn`] answers.\n\nStrictly optional: a host that cannot stream never POSTs one and keeps\nexactly its old behavior. Strictly advisory, with the same contract as\n`ToolCallObserver::text_delta`: the definitive text is the\n`CompletionResult` on the eventual provider result — a retried model call\nre-streams from the start with no reset marker, and consumers replace the\npreview with the authoritative `Text` event when it lands.\n\nA batch rather than one fragment per POST, because a per-token HTTP\nrequest would cost more than the latency it buys: the host accumulates\nwhatever chunking its own stream hands it and flushes on its own cadence.",
+      "properties": {
+        "deltas": {
+          "description": "The fragments, in stream order. Must not be empty — an empty batch\ncarries no information and is refused at the route.",
+          "items": {
+            "$ref": "#/$defs/ProviderDelta"
+          },
+          "type": "array"
+        },
+        "request_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "deltas"
+      ],
+      "title": "ProviderDeltaIn",
+      "type": "object"
+    },
     "ProviderResultIn": {
       "$defs": {
         "CompletionResult": {
@@ -379,6 +685,6 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Bodies a host POSTs back to answer a reverse request. ToolResultIn answers POST /v1/turns/{id}/tool-result; ProviderResultIn answers POST /v1/turns/{id}/provider-result. Each is keyed by the request_id carried on the frame it answers. This document is a definitions container, not a union: the two are not interchangeable and carry no discriminant.",
+  "description": "Bodies a host POSTs back to answer a reverse request. ToolResultIn answers POST /v1/turns/{id}/tool-result; ProviderResultIn answers POST /v1/turns/{id}/provider-result; ProviderDeltaIn optionally streams fragments of an in-flight provider answer to POST /v1/turns/{id}/provider-delta ahead of its ProviderResultIn. Each is keyed by the request_id carried on the frame it answers. EngineOverrides is not a reverse-request answer at all: it is the optional `engine` object on POST /v1/turns and POST /v1/sessions/{id}/turns, published here because it is wire contract. This document is a definitions container, not a union: the bodies are not interchangeable and carry no discriminant.",
   "title": "StellaServeInbound"
 }

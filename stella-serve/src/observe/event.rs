@@ -104,6 +104,10 @@ pub enum Route {
     TurnToolResult,
     #[serde(rename = "/v1/turns/{id}/provider-result")]
     TurnProviderResult,
+    /// The incremental half of a provider answer (#1165): streamed fragments
+    /// for an in-flight `provider_request`, ahead of its `provider-result`.
+    #[serde(rename = "/v1/turns/{id}/provider-delta")]
+    TurnProviderDelta,
     #[serde(rename = "/v1/turns/{id}/cancel")]
     TurnCancel,
     #[serde(rename = "/v1/turns/{id}/steer")]
@@ -145,6 +149,7 @@ impl Route {
             Self::TurnEvents => "/v1/turns/{id}/events",
             Self::TurnToolResult => "/v1/turns/{id}/tool-result",
             Self::TurnProviderResult => "/v1/turns/{id}/provider-result",
+            Self::TurnProviderDelta => "/v1/turns/{id}/provider-delta",
             Self::TurnCancel => "/v1/turns/{id}/cancel",
             Self::TurnSteer => "/v1/turns/{id}/steer",
             Self::TurnPause => "/v1/turns/{id}/pause",
@@ -169,7 +174,7 @@ impl Route {
     /// method's exhaustive match until the author classifies it, and the
     /// tests assert `ALL` contains exactly the `is_real` variants it names —
     /// so the array cannot silently lag the enum.
-    pub const ALL: [Route; 16] = [
+    pub const ALL: [Route; 17] = [
         Route::Healthz,
         Route::Readyz,
         Route::Metrics,
@@ -177,6 +182,7 @@ impl Route {
         Route::TurnEvents,
         Route::TurnToolResult,
         Route::TurnProviderResult,
+        Route::TurnProviderDelta,
         Route::TurnCancel,
         Route::TurnSteer,
         Route::TurnPause,
@@ -203,6 +209,7 @@ impl Route {
             | Route::TurnEvents
             | Route::TurnToolResult
             | Route::TurnProviderResult
+            | Route::TurnProviderDelta
             | Route::TurnCancel
             | Route::TurnSteer
             | Route::TurnPause
