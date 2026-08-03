@@ -115,6 +115,7 @@ mod tests_support {
             retries: 0,
             tool_calls: 0,
             complete: true,
+            finish_reason: None,
         }
     }
 

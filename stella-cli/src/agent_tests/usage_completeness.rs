@@ -18,6 +18,7 @@ fn usage(provider: &str, model: &str, cost_usd: f64) -> AgentEvent {
         retries: 0,
         tool_calls: 0,
         complete: true,
+        finish_reason: None,
     }
 }
 

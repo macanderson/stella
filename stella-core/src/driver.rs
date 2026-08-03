@@ -1870,6 +1870,10 @@ impl<'a> Engine<'a> {
             retries: retries.len() as u32,
             tool_calls: result.tool_calls.len(),
             complete: result.usage.is_complete(),
+            // The provider's own stop reason, forwarded rather than inferred:
+            // `Length` here is the only truthful "this step hit the output
+            // ceiling" signal any consumer gets.
+            finish_reason: result.finish_reason,
         });
         let speculation = speculation_future.await;
 

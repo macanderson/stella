@@ -334,6 +334,7 @@ fn step_usage_accumulates_tokens_and_file_change_fills_ledger() {
             retries: 0,
             tool_calls: 1,
             complete: true,
+            finish_reason: None,
         },
     ));
     w.apply_inbound(&ev(
@@ -424,6 +425,7 @@ fn context_tokens_track_the_latest_window_not_the_cumulative_input() {
         retries: 0,
         tool_calls: 0,
         complete: true,
+        finish_reason: None,
     };
     // Three calls of 150k each: cumulative 450k dwarfs the 200k window, but
     // the window was only 150k full on the LAST call.
@@ -456,6 +458,7 @@ fn budget_tick_sets_live_spend_without_double_counting_step_usage() {
         retries: 0,
         tool_calls: 0,
         complete: true,
+        finish_reason: None,
     };
     let mut w = WorkspaceModel::new();
     w.apply_inbound(&reg("lead"));
