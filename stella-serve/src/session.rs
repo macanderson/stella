@@ -290,6 +290,23 @@ impl Session {
         self.pending.resolve_provider(request_id, Ok(result))
     }
 
+    /// Feed streamed fragments to an in-flight
+    /// [`ServerFrame::ProviderRequest`] (#1165), ahead of the terminating
+    /// [`Session::resolve_provider`] / [`Session::fail_provider`].
+    ///
+    /// Optional and advisory: a host that cannot stream never calls this, and
+    /// the aggregated result stays authoritative. Fragments surface on the
+    /// frame stream as `AgentEvent::TextDelta` / `AgentEvent::Reasoning`
+    /// events, so every subscriber — not just the caller running the model —
+    /// sees text as it arrives, and a resuming client replays it.
+    pub fn resolve_provider_delta(
+        &self,
+        request_id: &str,
+        deltas: Vec<crate::frame::ProviderDelta>,
+    ) -> Result<(), ServeError> {
+        self.pending.resolve_provider_delta(request_id, deltas)
+    }
+
     /// Answer a [`ServerFrame::ProviderRequest`] with a classified failure.
     pub fn fail_provider(&self, request_id: &str, error: ProviderError) -> Result<(), ServeError> {
         self.pending.resolve_provider(request_id, Err(error))

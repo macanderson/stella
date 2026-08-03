@@ -112,6 +112,47 @@ pub enum ProviderOutcomeIn {
     Error { error: ProviderErrorWire },
 }
 
+/// Host → engine: a batch of streamed fragments for an in-flight
+/// [`ServerFrame::ProviderRequest`] — the incremental half of a provider
+/// answer (#1165), POSTed to `POST /v1/turns/{id}/provider-delta` and keyed by
+/// the same `request_id` the terminating [`ProviderResultIn`] answers.
+///
+/// Strictly optional: a host that cannot stream never POSTs one and keeps
+/// exactly its old behavior. Strictly advisory, with the same contract as
+/// `ToolCallObserver::text_delta`: the definitive text is the
+/// `CompletionResult` on the eventual provider result — a retried model call
+/// re-streams from the start with no reset marker, and consumers replace the
+/// preview with the authoritative `Text` event when it lands.
+///
+/// A batch rather than one fragment per POST, because a per-token HTTP
+/// request would cost more than the latency it buys: the host accumulates
+/// whatever chunking its own stream hands it and flushes on its own cadence.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderDeltaIn {
+    pub request_id: String,
+    /// The fragments, in stream order. Must not be empty — an empty batch
+    /// carries no information and is refused at the route.
+    pub deltas: Vec<ProviderDelta>,
+}
+
+/// One streamed fragment of an in-flight model completion.
+///
+/// Text and thinking are distinct variants rather than one string because the
+/// two must never be confused downstream: thinking renders as collapsible,
+/// visibly-secondary content while answer text is the reply — the same
+/// separation `ToolCallObserver` keeps between `text_delta` and
+/// `reasoning_delta`, carried across the wire.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ProviderDelta {
+    /// A fragment of user-visible answer text.
+    Text { text: String },
+    /// A fragment of thinking/chain-of-thought content.
+    Reasoning { text: String },
+}
+
 /// Serializable mirror of [`ProviderError`]'s taxonomy. The host classifies the
 /// failure at its adapter (never re-derived here) and sends the class; the
 /// engine reconstructs a real [`ProviderError`] so its retry logic behaves
@@ -308,6 +349,40 @@ mod tests {
         assert!(
             err.is_retryable(),
             "the host's classification must survive the wire: {err}"
+        );
+    }
+
+    /// The delta body, in the exact shape a streaming host POSTs it. The
+    /// `kind` tag is what keeps answer text and thinking apart on the wire —
+    /// a host that omits it must fail the parse rather than have its
+    /// deliberation published as the model's answer.
+    #[test]
+    fn the_provider_delta_body_parses_and_keeps_text_and_reasoning_apart() {
+        let posted: ProviderDeltaIn = serde_json::from_value(serde_json::json!({
+            "request_id": "prov-0",
+            "deltas": [
+                { "kind": "reasoning", "text": "weighing…" },
+                { "kind": "text", "text": "Hel" },
+                { "kind": "text", "text": "lo" },
+            ],
+        }))
+        .expect("provider delta body");
+        assert_eq!(posted.request_id, "prov-0");
+        assert_eq!(posted.deltas.len(), 3);
+        assert!(matches!(
+            posted.deltas[0],
+            ProviderDelta::Reasoning { ref text } if text == "weighing…"
+        ));
+        assert!(matches!(
+            posted.deltas[1],
+            ProviderDelta::Text { ref text } if text == "Hel"
+        ));
+
+        // An untagged fragment must not parse: guessing the channel is how
+        // thinking gets published as the answer.
+        assert!(
+            serde_json::from_value::<ProviderDelta>(serde_json::json!({ "text": "hi" })).is_err(),
+            "a fragment without a `kind` tag must be refused"
         );
     }
 

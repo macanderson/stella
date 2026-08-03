@@ -1140,6 +1140,7 @@ async fn route(
             Route::TurnsCreate
             | Route::TurnToolResult
             | Route::TurnProviderResult
+            | Route::TurnProviderDelta
             | Route::TurnSteer
             | Route::SessionsCreate
             | Route::SessionTurns,
@@ -1172,6 +1173,7 @@ async fn route(
         Route::TurnProviderResult => {
             routes::handle_provider_result(res, state, id, &req.body).await
         }
+        Route::TurnProviderDelta => routes::handle_provider_delta(res, state, id, &req.body).await,
         Route::TurnSteer => routes::handle_steer(res, state, id, &req.body).await,
         Route::SessionsCreate => routes::handle_session_create(res, state, &req.body).await,
         Route::SessionTurns => routes::handle_session_turn(res, state, id, &req.body).await,

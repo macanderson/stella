@@ -342,7 +342,16 @@ claim analyzer requires these exact values.
    `NonZeroAgentExitCodeError`, but only after output, metrics, and ATIF have
    been persisted. Harbor still runs the canonical benchmark verifier, which
    independently determines task correctness.
-8. **Writes** a validated ATIF-v1.7 trace to
+8. **Diagnoses** an exit 137 (SIGKILL — never a Stella exit path, #1178)
+   before raising, while the trial container still exists: it inspects the
+   container's Docker `State`, reads the cgroup `memory.events` counters from
+   a still-running container, and classifies where the event stream stopped
+   (mid-step vs step boundary). The verdict — `oom-kill`,
+   `external-teardown`, or `unattributed` — lands in the exception message
+   (so `exception.txt` explains itself) and the full evidence in
+   `stella-exit-cause.json` beside the event stream. Best-effort by
+   construction: a broken probe never displaces the scored error.
+9. **Writes** a validated ATIF-v1.7 trace to
    `<trial>/agent/trajectory.json` for later post-scan publication.
 
 ## Public trajectory (ATIF v1.7)
@@ -354,6 +363,9 @@ event, including an interrupted run, the adapter writes:
   preserving completed-call telemetry across an outer timeout;
 - `stella-run.stdout.txt`: the exact captured process stdout on normal return;
 - `stella-run.json`: the strict synthetic envelope parsed from the stream;
+- `stella-exit-cause.json` (exit 137 only): the SIGKILL post-mortem — Docker
+  container `State`, cgroup `memory.events`, stream-end classification, and
+  the derived verdict (#1178);
 - `trajectory.json`: Harbor's public Agent Trajectory Interchange Format.
 
 The ATIF trace includes the rendered benchmark instruction as its first user
