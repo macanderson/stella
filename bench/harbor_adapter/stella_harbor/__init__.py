@@ -54,7 +54,6 @@ import re
 import shlex
 import sys
 import uuid
-from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as distribution_version
 from pathlib import Path
@@ -81,6 +80,7 @@ from .posture import (
     _ASSURANCE_TIERS_VERSION,
     _ENGINE_POSTURE_VERSION,
     _WITNESS_AUTHOR_ENV,
+    PostureBuilder,
     _benchmark_assurance_tiers,
     _benchmark_engine_posture,
     fold_witness_observations,
@@ -145,12 +145,6 @@ _HANDOFF_TARGET_ENV = "STELLA_CREDENTIAL_HANDOFF_TARGET"
 _DURABLE_STREAM_ENV = "STELLA_DURABLE_STREAM_JSON_PATH"
 _ENGINE_CONFIG_ENV = "STELLA_ENGINE_CONFIG_JSON"
 _HANDOFF_MODE = "anonymous-fd"
-
-#: Signature of an engine-posture builder: ``(model, *, witness_author)`` ->
-#: ``(posture, canonical_json, sha256)``. `_benchmark_engine_posture` is the
-#: frozen claim implementation; `StellaAgent._build_engine_posture` is the seam
-#: a non-claim harness may override with another frozen configuration.
-PostureBuilder = Callable[..., "tuple[dict[str, Any], str, str]"]
 
 # Apply these *after* every ambient/Harbor-provided extra. A benchmark task is
 # untrusted input: it must not load a repository .env, opt itself into trusted
@@ -582,13 +576,12 @@ async def _secure_exec_with_credential_fd(
     # which is the whole of #1007. The equality check makes that divergence a
     # refused run instead of an unlabelled one.
     #
-    # `posture_builder` is the agent class's own canonical builder, not a value
-    # the call site computed: a non-claim subclass may declare a different
-    # frozen posture (see `StellaAgent._build_engine_posture`), and the boundary
-    # must recompute from *that* declaration or it would reject every such run.
-    # The property being preserved is "recompute independently, never trust a
-    # passed-in string", and it is untouched — the builder is pinned by the
-    # class, and the claim launcher pins the class.
+    # `posture_builder` is the agent class's own canonical builder, never a
+    # value the call site computed. A non-claim subclass may declare a
+    # different frozen posture, and the boundary must recompute from *that*
+    # declaration or reject every such run. "Recompute independently, never
+    # trust a passed-in string" is untouched: the class pins the builder, and
+    # the claim launcher pins the class.
     builder = posture_builder or _benchmark_engine_posture
     _, normalized_posture, _ = builder(command_model, witness_author=witness_author)
     if (
@@ -1425,18 +1418,14 @@ class StellaAgent(BaseInstalledAgent):
     ) -> tuple[dict[str, Any], str, str]:
         """Return ``(posture, canonical_json, sha256)`` for this trial.
 
-        The single seam a *non-claim* harness may override to run a different
-        frozen engine configuration — a head-to-head that varies effort or
-        reasoning across arms, for instance, which the benchmark posture
-        deliberately holds constant.
-
-        Overriding is safe by construction rather than by convention. The claim
-        launcher pins ``--agent-import-path`` to the canonical
-        ``stella_harbor:StellaAgent`` and rejects any other agent, so a subclass
-        cannot reach a claim run; and whatever a subclass returns is hashed and
-        published through the same ``stella_engine_posture*`` metadata keys, so
-        a changed posture is a changed digest and is visible in the manifest
-        rather than discoverable only by diffing trajectories.
+        The one seam a *non-claim* harness may override to run a different
+        frozen engine configuration — a head-to-head varying effort across
+        arms, say, which the benchmark posture deliberately holds constant.
+        Safe by construction, not convention: the claim launcher pins
+        ``--agent-import-path`` to ``stella_harbor:StellaAgent`` and rejects
+        any other agent, so a subclass cannot reach a claim run, and whatever
+        it returns is hashed into the same ``stella_engine_posture*`` metadata
+        — a changed posture is a changed digest, visible in the manifest.
 
         The base implementation is the frozen benchmark posture and must stay
         that way: a claim run's posture is part of its identity.

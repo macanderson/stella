@@ -26,7 +26,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from typing import Any
+
+#: Signature of an engine-posture builder: ``(model, *, witness_author)`` ->
+#: ``(posture, canonical_json, sha256)``. `_benchmark_engine_posture` is the
+#: frozen claim implementation; `StellaAgent._build_engine_posture` is the seam
+#: a non-claim harness may override with another frozen configuration.
+PostureBuilder = Callable[..., "tuple[dict[str, Any], str, str]"]
 
 _ENGINE_POSTURE_VERSION = "stella-tb21-engine-posture-v1"
 _ASSURANCE_TIERS_VERSION = "stella-tb21-assurance-tiers-v1"

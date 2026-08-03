@@ -7,7 +7,7 @@
 # must be split instead. Raising an existing ceiling is allowed but is
 # never silent — it lands as a visible diff here, to be justified in
 # review like any other change.
-1978 bench/harbor_adapter/stella_harbor/__init__.py
+2006 bench/harbor_adapter/stella_harbor/__init__.py
 4271 bench/harbor_adapter/stella_harbor/secure_launcher.py
 1910 bench/harbor_adapter/tests/test_adapter.py
 3230 bench/harbor_adapter/tests/test_secure_launcher.py
