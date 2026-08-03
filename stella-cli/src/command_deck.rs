@@ -141,10 +141,25 @@ pub(crate) fn now_ms() -> u64 {
 /// An ephemeral transcript notice for DIRECT deck sends (`deck_tx`), never
 /// the journaled `in_tx` path: boot narration, hints, and guidance that must
 /// not replay (and pile up) every time the session is resumed.
+///
+/// It is **marked** because of what riding the transcript costs.
+/// [`AgentEvent`] has no system-notice variant, so a chrome message goes out as
+/// `Text` — and a `Text` entry renders on the **agent** rail. Unmarked, the
+/// transcript is asserting that the model said "conversation cleared". The
+/// rail glyph is a *visual* distinction, which makes it exactly the one that
+/// does not survive being read aloud (#1258 §6; #1243 fixed the same thing for
+/// the surface that has since been unshipped). One `▸` — the same marker the
+/// CLI already uses on the normal screen for its own voice — costs a character
+/// and removes the lie.
 pub(crate) fn chrome_note(text: String) -> Inbound {
+    let delta = if text.starts_with(stella_tui::NOTICE_MARKER) {
+        text
+    } else {
+        format!("{}{text}", stella_tui::NOTICE_MARKER)
+    };
     Inbound::Event {
         agent: LEAD.to_string(),
-        event: AgentEvent::Text { delta: text },
+        event: AgentEvent::Text { delta },
     }
 }
 
@@ -308,9 +323,13 @@ fn requeue_front(
 pub async fn run_deck_session(
     cfg: &Config,
     budget_limit: Option<f64>,
-    no_anim: bool,
+    presentation: crate::term_policy::DeckPresentation,
     resume: Option<crate::session_persist::ResumeRequest>,
 ) -> Result<(), String> {
+    let crate::term_policy::DeckPresentation {
+        no_anim,
+        accessible,
+    } = presentation;
     crate::enterprise_telemetry::authorize_execution_surface(
         crate::enterprise_telemetry::ExecutionSurface::Deck,
     )?;
@@ -676,6 +695,7 @@ pub async fn run_deck_session(
         initial_graph: agent::graph_snapshot(&cfg.workspace_root),
         no_anim,
         pipeline: pipeline_init,
+        accessible,
         ..Default::default()
     };
     // The deck owns its channel ends and runs on its own task so rendering

@@ -58,7 +58,7 @@ pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Bu
                 Span::styled("▏", Style::default().fg(theme::ACCENT)),
             ]));
             lines.push(Line::default());
-            render_list(&ui.issues, inner, &mut lines);
+            render_list(&ui.issues, ui.accessible, inner, &mut lines);
         }
         IssuesMode::Comment | IssuesMode::SetStatus => {
             let (label, target) = (
@@ -80,9 +80,9 @@ pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Bu
                 Span::styled("▏", Style::default().fg(theme::ACCENT)),
             ]));
             lines.push(Line::default());
-            render_list(&ui.issues, inner, &mut lines);
+            render_list(&ui.issues, ui.accessible, inner, &mut lines);
         }
-        IssuesMode::Browse => render_list(&ui.issues, inner, &mut lines),
+        IssuesMode::Browse => render_list(&ui.issues, ui.accessible, inner, &mut lines),
     }
 
     // Notice line (op outcomes, errors, the no-tracker hint) + key footer.
@@ -104,7 +104,12 @@ pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Bu
 }
 
 /// The browse list, windowed on the selection so long lists keep it in view.
-fn render_list(issues: &IssuesPanel, inner: Rect, lines: &mut Vec<Line<'static>>) {
+fn render_list(
+    issues: &IssuesPanel,
+    accessible: bool,
+    inner: Rect,
+    lines: &mut Vec<Line<'static>>,
+) {
     if issues.rows.is_empty() {
         if !issues.busy {
             lines.push(Line::from(Span::styled(
@@ -124,7 +129,12 @@ fn render_list(issues: &IssuesPanel, inner: Rect, lines: &mut Vec<Line<'static>>
     let first = scroll_window_start(issues.rows.len(), selected, visible);
     let last = (first + visible).min(issues.rows.len());
     for (i, row) in issues.rows.iter().enumerate().take(last).skip(first) {
-        lines.push(issue_line(row, i == selected, inner.width as usize));
+        let width = inner.width as usize;
+        lines.push(if accessible {
+            issue_record(row, i == selected, width)
+        } else {
+            issue_line(row, i == selected, width)
+        });
     }
     if last < issues.rows.len() {
         lines.push(Line::from(Span::styled(
@@ -132,6 +142,26 @@ fn render_list(issues: &IssuesPanel, inner: Rect, lines: &mut Vec<Line<'static>>
             theme::muted(),
         )));
     }
+}
+
+/// One issue row in accessible mode: the same fields, each named.
+///
+/// `[open]` is a chip — brackets are a visual container, and spoken they are
+/// punctuation around a word that could as easily be a label as a state. The
+/// bare trailing `· octocat · bug, p1` has the same problem: two lists with no
+/// indication of which is which.
+fn issue_record(row: &IssueRow, selected: bool, width: usize) -> Line<'static> {
+    let fields = [
+        ("state", row.state.clone()),
+        ("title", row.title.clone()),
+        ("assignee", row.assignee.clone().unwrap_or_default()),
+        ("labels", row.labels.join(", ")),
+    ];
+    crate::views::linear::record_line(
+        crate::views::linear::identity(row.key.clone(), selected, theme::ACCENT),
+        &fields,
+        width,
+    )
 }
 
 /// One issue row: `▸ KEY [state] title · assignee · labels`.

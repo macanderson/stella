@@ -55,7 +55,13 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
 
     let lines: Vec<Line<'static>> = rows[window]
         .iter()
-        .map(|row| row_line(row, model.now_ms, inner_width))
+        .map(|row| {
+            if ui.accessible {
+                row_record(row, model.now_ms, inner_width)
+            } else {
+                row_line(row, model.now_ms, inner_width)
+            }
+        })
         .collect();
 
     Paragraph::new(Text::from(lines))
@@ -112,6 +118,28 @@ fn row_line(row: &TraceRow, now_ms: u64, width: usize) -> Line<'static> {
         Span::raw(" "),
         Span::styled(summary, theme::body()),
     ])
+}
+
+/// One timeline row in accessible mode: the same four values, each saying what
+/// it is.
+///
+/// The default row separates time, agent, kind and summary by position and a
+/// colour per field. Read aloud that is four unlabelled tokens in a row —
+/// `01:05 lead tool ran the tests` — where the first two could be anything.
+/// The chip's brackets go too: `[tool]` is a *visual* chip, and spoken it is
+/// punctuation.
+fn row_record(row: &TraceRow, now_ms: u64, width: usize) -> Line<'static> {
+    let identity = crate::views::linear::identity(
+        format_mmss(now_ms.saturating_sub(row.ts)),
+        false,
+        theme::MUTED,
+    );
+    let fields = [
+        ("agent", row.agent.clone()),
+        ("kind", row.kind.label().to_string()),
+        ("summary", row.summary.clone()),
+    ];
+    crate::views::linear::record_line(identity, &fields, width)
 }
 
 /// `mm:ss` elapsed since `row.ts`, relative to the deck clock. Grows past two

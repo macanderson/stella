@@ -1,11 +1,11 @@
 ---
 title: stella chat
-description: Start an interactive session with Stella — the Command Deck TUI by default, or a plain line REPL.
+description: Start an interactive session with Stella — the Command Deck TUI by default, an accessible mode of the same deck, or a plain line REPL.
 ---
 
 Start an interactive session. This is the **default** command: running `stella` with no subcommand is exactly the same as running `stella chat`.
 
-On a real terminal, `stella chat` opens the **Command Deck** — a tabbed terminal UI. Pass `--plain` (or set `STELLA_PLAIN=1`) for a plain line-based REPL instead; the deck also steps aside automatically when stdin or stdout is not a terminal.
+On a real terminal, `stella chat` opens the **Command Deck** — a tabbed terminal UI. Pass `--accessible` (or set `STELLA_ACCESSIBLE=1`) to run that same deck so a screen reader can read it. Pass `--plain` (or set `STELLA_PLAIN=1`) for a plain line-based REPL instead; the deck also steps aside automatically when stdin or stdout is not a terminal.
 
 ## Synopsis
 
@@ -15,6 +15,9 @@ stella chat [global flags]
 # Equivalent — chat is the default
 stella [global flags]
 
+# The same deck, drawn so a screen reader can read it
+stella chat --accessible
+
 # Plain line-based REPL instead of the deck
 stella chat --plain
 ```
@@ -23,7 +26,25 @@ stella chat --plain
 
 `stella chat` opens a conversational session. You type a message, the agent runs its step loop — proposing tool calls, executing them, and feeding results back until the turn is done — and then hands the prompt back to you. Conversation history is retained across turns within the session.
 
-The default **Command Deck** presents the session as a set of tabs — **SESSION** (the transcript), **AGENTS** (executions & installed agents), **TRACES**, **GRAPH**, **FILES**, **SKILLS**, **MCP**, **ISSUES** (your connected GitHub/Linear tracker, with instant type-ahead), and **SETTINGS** (the home of all config, incl. the engine-config panel). Slash commands jump between tabs and run actions, and `?` opens a tab-aware key list. The **plain REPL** (`--plain`) is a single scrolling line-based loop with a smaller command set — handy for narrow terminals, screen readers, and recordings.
+The default **Command Deck** presents the session as a set of tabs — **SESSION** (the transcript), **AGENTS** (executions & installed agents), **TRACES**, **GRAPH**, **FILES**, **SKILLS**, **MCP**, **ISSUES** (your connected GitHub/Linear tracker, with instant type-ahead), and **SETTINGS** (the home of all config, incl. the engine-config panel). Slash commands jump between tabs and run actions, and `?` opens a tab-aware key list. The **plain REPL** (`--plain`) is a single scrolling line-based loop with a smaller command set — handy for narrow terminals and recordings.
+
+### Accessible mode
+
+`--accessible` is a **mode on the deck, not a smaller surface beside it**: every tab, every gate, the prompt queue, sub-agents, steering and resume are unchanged. What changes is how the deck talks to your terminal.
+
+- It never takes over the screen. The deck draws inline underneath your prompt instead of on the alternate screen, so nothing is hidden and nothing is torn down when you quit.
+- Each completed message is written into your normal **scrollback**, exactly once — announced as it arrives, reachable with your reader's review cursor, and still there after the session ends.
+- Animation is frozen (as if `--no-anim`), so no region of the screen repaints on a clock.
+- Panels **stack in one column**: the GRAPH and SKILLS tabs and the session's work rail all read top to bottom, so no rendered row splices two panes together.
+- The grid views — TRACES, ISSUES, TOOLS, AGENTS and INSTALLED — render as **one labelled record per row** (`status running · cost $0.05 · cpu 3%`) instead of aligned columns, because column alignment is whitespace to a reader.
+- Moving is **announced**: switching tabs, opening or closing an overlay, and changing which agent has focus each emit a line.
+- Messages the program itself speaks are marked `▸`, so they are never mistaken for the model's own words.
+- The terminal cursor stays on the real insertion point, which is also what an IME needs to place its candidate window.
+- Mouse capture is forced off, so your terminal's own selection keeps working.
+
+If your terminal does not answer a cursor-position request, the deck still starts — it draws on your own screen without the scrollback flush, and says so rather than silently not delivering it.
+
+Set `STELLA_ACCESSIBLE=1` in your shell profile to make it the default for every invocation.
 
 ### Typing while a turn is running
 
@@ -76,6 +97,11 @@ All [global flags](/docs/commands) apply, in either position — `stella --model
 `stella chat` takes only the [global flags](/docs/commands). The ones that shape the chat surface:
 
 <CardGrid size="md">
+  <OptionCard name="--accessible">
+    Run the Command Deck so a screen reader can read it: inline on your own screen,
+    completed messages into scrollback, single-column panels, labelled rows instead of
+    tables, and announcements when you move. Env `STELLA_ACCESSIBLE=1`.
+  </OptionCard>
   <OptionCard name="--plain">
     Use the plain line-based REPL instead of the Command Deck. Env `STELLA_PLAIN=1`; also
     auto-selected on a non-TTY.
@@ -285,7 +311,13 @@ Pin a model and cap session spend:
 stella --model zai/glm-5.2 --budget 5.00 chat
 ```
 
-Use the plain line REPL (e.g. for a screen reader or a narrow terminal):
+Run the deck with a screen reader:
+
+```bash
+stella chat --accessible
+```
+
+Use the plain line REPL (e.g. for a narrow terminal, or a pipe):
 
 ```bash
 stella chat --plain

@@ -27,8 +27,9 @@ pub fn render(ui: &mut DeckUi, now_ms: u64, area: Rect, buf: &mut Buffer) {
     if area.height == 0 || area.width == 0 {
         return;
     }
+    let accessible = ui.accessible;
     match ui.installed.mode {
-        InstalledMode::Browse => render_list(&ui.installed, area, buf),
+        InstalledMode::Browse => render_list(&ui.installed, accessible, area, buf),
         InstalledMode::Edit => render_editor(&ui.installed, area, buf),
         InstalledMode::CreateDescribe => render_create_describe(&ui.installed, area, buf),
         InstalledMode::CreateScope => render_create_scope(&ui.installed, area, buf),
@@ -47,7 +48,7 @@ pub fn toolbelt_label(tools: &Option<Vec<String>>) -> String {
     }
 }
 
-fn render_list(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
+fn render_list(panel: &InstalledPanel, accessible: bool, area: Rect, buf: &mut Buffer) {
     let title = format!(" Installed Agents — {} on disk ", panel.entries.len());
     let block = Block::default().borders(Borders::ALL).title(title);
 
@@ -75,6 +76,27 @@ fn render_list(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
         return;
     }
 
+    // Accessible mode: the same five fields, labelled, one row per agent. The
+    // grid's `Agent | Scope | Ver | Description | Toolbelt` header is a legend
+    // for columns, and columns are whitespace to a reader.
+    if accessible {
+        let inner = block.inner(list_area);
+        block.render(list_area, buf);
+        if inner.height > 0 && inner.width > 0 {
+            let width = inner.width as usize;
+            let lines: Vec<Line<'static>> = panel
+                .entries
+                .iter()
+                .enumerate()
+                .take(inner.height as usize)
+                .map(|(i, entry)| agent_record(entry, i == panel.sel, width))
+                .collect();
+            Paragraph::new(lines).render(inner, buf);
+        }
+        render_footer(panel, foot_area, buf);
+        return;
+    }
+
     let header = Row::new(HEADERS.iter().copied().map(Cell::from)).style(theme::accent());
     let rows: Vec<Row> = panel
         .entries
@@ -96,6 +118,21 @@ fn render_list(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
         .render(list_area, buf);
 
     render_footer(panel, foot_area, buf);
+}
+
+/// One installed agent as `> name · scope project · version v2 · …`.
+fn agent_record(entry: &InstalledAgentEntry, is_selected: bool, width: usize) -> Line<'static> {
+    let fields = [
+        ("scope", entry.scope.label().to_string()),
+        ("version", format!("v{}", entry.version)),
+        ("description", entry.description.clone()),
+        ("toolbelt", toolbelt_label(&entry.tools)),
+    ];
+    crate::views::linear::record_line(
+        crate::views::linear::identity(entry.name.clone(), is_selected, theme::ACCENT),
+        &fields,
+        width,
+    )
 }
 
 fn agent_row(entry: &InstalledAgentEntry, is_selected: bool) -> Row<'static> {

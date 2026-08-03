@@ -483,6 +483,54 @@ fn eviction_clamps_the_selection_and_drops_stale_expansions() {
     assert!(ui.expanded_rev > rev, "fold cache invalidated");
 }
 
+/// Front-eviction moves every retained index down, and the scrollback counter
+/// is an index. Off by even one and accessible mode either re-announces an
+/// entry a reader already heard or — worse — suppresses one from the live pane
+/// that was never written anywhere (#1258).
+///
+/// The assertion is exact rather than approximate: the entry the counter now
+/// points at must be the very next one after the last that was flushed.
+#[test]
+fn eviction_keeps_the_scrollback_counter_pointing_at_the_same_entry() {
+    use crate::model::{MAX_TRANSCRIPT_ENTRIES, TranscriptEntry};
+    let mut model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    let retry = |i: usize| Inbound::Event {
+        agent: "lead".into(),
+        event: AgentEvent::Retry {
+            attempt: i as u32,
+            reason: "r".into(),
+        },
+    };
+    for i in 0..(MAX_TRANSCRIPT_ENTRIES - 1) {
+        ingest_inbound(&retry(i), &mut model, &mut ui);
+    }
+    // Everything up to (not including) attempt 1000 is in scrollback — past
+    // the eviction chunk, so the survivors include flushed entries and the
+    // counter has real work to do (a prefix entirely inside the evicted chunk
+    // would correctly floor at zero and prove nothing about the arithmetic).
+    ui.scrollback.set_live(true);
+    ui.scrollback.record(&crate::accessible::FlushBlock {
+        agent: "lead".into(),
+        from: 0,
+        to: 1_000,
+        header: None,
+    });
+
+    ingest_inbound(&retry(MAX_TRANSCRIPT_ENTRIES), &mut model, &mut ui);
+    let transcript = &model.agents[0].model.transcript;
+    assert!(
+        transcript.len() < MAX_TRANSCRIPT_ENTRIES,
+        "a chunk was evicted"
+    );
+    let flushed = ui.scrollback.flushed_for("lead");
+    assert!(
+        matches!(&transcript[flushed], TranscriptEntry::Retry { attempt, .. } if *attempt == 1_000),
+        "the counter must still point one past the last flushed entry, got {:?}",
+        transcript[flushed]
+    );
+}
+
 #[test]
 fn any_key_dismisses_the_splash_first() {
     let model = model_with(&["lead"]);

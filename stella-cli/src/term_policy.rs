@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! What this terminal can support: colour, animation, and the Command Deck.
+//! What this terminal can support: colour, animation, accessibility, and the
+//! Command Deck.
 //!
-//! Three decisions that look unrelated in a match arm but are one question —
-//! *is there a human at a capable terminal on the other end of this stream?* —
-//! answered from the same inputs (`TERM`, `NO_COLOR`, `CLICOLOR_FORCE`,
-//! `STELLA_NO_ANIM`, `STELLA_PLAIN`, and whether stdin/stdout are ttys).
+//! Four decisions that look unrelated in a match arm but are one question —
+//! *is there a human at a capable terminal on the other end of this stream, and
+//! how are they reading it?* — answered from the same inputs (`TERM`,
+//! `NO_COLOR`, `CLICOLOR_FORCE`, `STELLA_NO_ANIM`, `STELLA_ACCESSIBLE`,
+//! `STELLA_PLAIN`, and whether stdin/stdout are ttys).
 //!
 //! Each is a pure function of its inputs with the process-global side effect
 //! isolated in [`apply_dumb_terminal_policy`], so the decisions are testable
@@ -68,6 +70,44 @@ pub(crate) fn animation_disabled(no_anim_flag: bool) -> bool {
     let stella = std::env::var_os("STELLA_NO_ANIM").is_some_and(|v| !v.is_empty() && v != "0");
     let no_color = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
     no_anim_flag || stella || no_color
+}
+
+/// How the deck presents itself, as distinct from what it runs.
+///
+/// Grouped rather than passed as two adjacent `bool`s: they are the same kind
+/// of thing, they are both resolved here, and two positional booleans in a row
+/// is exactly the signature a caller silently transposes.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct DeckPresentation {
+    /// Motion frozen to a static frame ([`animation_disabled`]). Implied by
+    /// [`Self::accessible`].
+    pub(crate) no_anim: bool,
+    /// Accessible mode ([`accessible_mode`], #1258): the same deck, drawn on
+    /// the user's own screen with settled messages moving into scrollback.
+    /// See `stella_tui::DeckOptions::accessible`.
+    pub(crate) accessible: bool,
+}
+
+/// Whether the Command Deck runs in accessible mode: the `--accessible` flag
+/// or `STELLA_ACCESSIBLE` (#1258).
+///
+/// A **mode on the deck**, not a surface beside it — so it composes with
+/// everything and takes no part in the deck-or-REPL decision below. It follows
+/// this CLI's house convention for boolean env vars (`--plain`'s
+/// `STELLA_PLAIN`, `env_files`' `STELLA_NO_ENV_FILE`), where an explicit `0`
+/// means off.
+///
+/// The env var exists because a screen-reader user should be able to set this
+/// once, in their shell profile, rather than remember a flag on every
+/// invocation — the flag is the exception, not the habit.
+pub(crate) fn accessible_mode(accessible_flag: bool) -> bool {
+    accessible_flag || accessible_env(std::env::var_os("STELLA_ACCESSIBLE").as_deref())
+}
+
+/// The env half of [`accessible_mode`], kept pure so the convention is
+/// testable without touching the process environment.
+pub(crate) fn accessible_env(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_some_and(|v| !v.is_empty() && v != "0")
 }
 
 /// Why `chat` fell back to the line REPL instead of the Command Deck.

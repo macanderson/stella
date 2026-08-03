@@ -47,7 +47,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::oneshot;
 
 use crate::panel_guard::guarded_band;
-use crate::term::{PanicHookGuard, TerminalGuard};
+use crate::term::{PanicHookGuard, Screen, TerminalGuard};
 use crate::theme;
 
 /// How often the dashboard repaints even when no event lands, so the clocks
@@ -739,7 +739,10 @@ pub async fn run(
     mut done: oneshot::Receiver<()>,
     control: tokio::sync::mpsc::UnboundedSender<FleetControl>,
 ) -> io::Result<FleetDashResult> {
-    let guard = TerminalGuard::enter(false)?;
+    // The fleet dashboard is a full-window board with no transcript to move
+    // into scrollback, so it stays on the alternate screen; accessible mode
+    // (#1258) is the *deck's* mode and does not reach here.
+    let guard = TerminalGuard::enter(false, Screen::Alternate)?;
     let _hook = PanicHookGuard::install(None, &guard);
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     let color_mode = theme::detect_color_mode();

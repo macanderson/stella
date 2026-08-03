@@ -422,7 +422,11 @@ pub fn render_panel(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
                 )));
             }
             for (i, row) in rows.iter().enumerate().take(last).skip(first) {
-                lines.push(render_row(t, state, row, i == sel, w as usize));
+                lines.push(if ui.accessible {
+                    row_record(t, state, row, i == sel, w as usize)
+                } else {
+                    render_row(t, state, row, i == sel, w as usize)
+                });
             }
         }
     }
@@ -559,6 +563,77 @@ fn render_row(
                 ));
             }
             Line::from(spans)
+        }
+    }
+}
+
+/// One TOOLS row in accessible mode: the same fields, each named, with no
+/// column padding.
+///
+/// The default row is three fixed-width columns — name, then `on`/`off`, then
+/// a reason — and the padding between them is what separates the values. A
+/// reader collapses runs of spaces, so `read_file            on` becomes
+/// `read_file on`, which happens to still be readable; `mcp__github__create…
+/// off  org policy` does not, because nothing says which token is the state
+/// and which is the reason. Both get labels here rather than only the row that
+/// visibly breaks.
+fn row_record(
+    t: &ToolsOverlay,
+    state: &ToolPolicyState,
+    row: &ToolsRow,
+    is_sel: bool,
+    panel_w: usize,
+) -> Line<'static> {
+    match row {
+        ToolsRow::Group(group) => {
+            let on = group_enabled(state, &t.edits, group);
+            let count = state
+                .tools
+                .iter()
+                .filter(|tool| &tool.group == group)
+                .count();
+            let fields = [
+                ("state", if on { "on" } else { "off" }.to_string()),
+                ("tools", count.to_string()),
+                (
+                    "policy",
+                    if group_locked(state, group) {
+                        "org-locked".to_string()
+                    } else {
+                        String::new()
+                    },
+                ),
+            ];
+            crate::views::linear::record_line(
+                crate::views::linear::identity(
+                    format!("group {}", group.to_uppercase()),
+                    is_sel,
+                    theme::ACCENT,
+                ),
+                &fields,
+                panel_w,
+            )
+        }
+        ToolsRow::Tool(i) => {
+            let tool = &state.tools[*i];
+            let on = tool_enabled(state, &t.edits, tool);
+            // While an edit is pending the saved reason is stale — say
+            // "unsaved" instead of a sentence that describes disk.
+            let reason = if t.edits.contains_key(&tool.name) {
+                Some("unsaved".to_string())
+            } else {
+                off_reason(tool)
+            };
+            let fields = [
+                ("state", if on { "on" } else { "off" }.to_string()),
+                ("group", tool.group.clone()),
+                ("why", reason.unwrap_or_default()),
+            ];
+            crate::views::linear::record_line(
+                crate::views::linear::identity(tool.name.clone(), is_sel, theme::INK),
+                &fields,
+                panel_w,
+            )
         }
     }
 }

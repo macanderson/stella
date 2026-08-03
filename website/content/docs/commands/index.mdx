@@ -5,7 +5,7 @@ description: Overview of every Stella subcommand, the default chat behavior, glo
 
 The `stella` binary is a fast, BYOK (bring-your-own-key), model-agnostic terminal coding agent. Every piece of functionality is exposed through a subcommand.
 
-Running `stella` with **no subcommand** opens the [Command Deck](/docs/commands/chat) — a tabbed terminal UI — exactly as if you had run `stella chat`. Pass `--plain` (or set `STELLA_PLAIN=1`) for a plain line-based REPL instead; the deck also steps aside automatically when stdin or stdout is not a terminal.
+Running `stella` with **no subcommand** opens the [Command Deck](/docs/commands/chat) — a tabbed terminal UI — exactly as if you had run `stella chat`. Pass `--accessible` (or set `STELLA_ACCESSIBLE=1`) to run that same deck so a screen reader can read it. Pass `--plain` (or set `STELLA_PLAIN=1`) for a plain line-based REPL instead; the deck also steps aside automatically when stdin or stdout is not a terminal.
 
 ```bash
 # These two invocations are identical
@@ -189,6 +189,11 @@ Every one of them is registered with every subcommand, so **either position pars
   <OptionCard name="--budget <usd>" defaultValue="none (observed)">
     Hard USD spend cap for the whole run or session. Must be positive and finite. Env
     `STELLA_BUDGET`.
+  </OptionCard>
+  <OptionCard name="--accessible" defaultValue="off">
+    Run the Command Deck so a screen reader can read it: inline on your own screen,
+    completed messages into scrollback, single-column panels, labelled rows instead of
+    tables. Env `STELLA_ACCESSIBLE=1`.
   </OptionCard>
   <OptionCard name="--plain" defaultValue="off">
     Use the plain line-based REPL for chat instead of the Command Deck — also
