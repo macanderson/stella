@@ -1,11 +1,12 @@
-//! The deck's async run loop — the multi-agent analogue of [`crate::shell::run`].
+//! The deck's async run loop: terminal setup/teardown, the crossterm event
+//! loop, and channel plumbing.
 //!
 //! Deliberately thin, like the single-session shell: every decision
 //! (key→action via [`crate::deck_ui`], event→state via
 //! [`crate::deck_ui::ingest_inbound`], the frame via [`crate::deck_render`])
 //! lives in pure, unit-tested layers. This file only wires them to real I/O.
 //!
-//! It differs from [`crate::shell::run`] in one structural way: a fixed
+//! It differs from a plain single-session loop in one structural way: a fixed
 //! **animation/resource tick** (~30 fps) is a third `select!` arm. A live
 //! dashboard — CPU gauges, elapsed timers, sparklines, the run progress bar —
 //! must repaint on a clock, not only when the agent streams. That tick is also
@@ -27,14 +28,14 @@ use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::composer::{Composer, SlashCommand};
+use crate::debug_log::DebugLog;
 use crate::deck::WorkspaceModel;
 use crate::deck_render::render_deck;
 use crate::deck_ui::{DeckAction, DeckUi, focused_id, handle_deck_key, ingest_inbound};
 use crate::envelope::{AgentId, AgentMeta, AgentStatus, Inbound, WorkspaceInput};
 use crate::graph::GraphSnapshot;
 use crate::resource::ResourceMonitor;
-use crate::shell::DebugLog;
-use crate::term::{PanicHookGuard, Screen, TerminalGuard};
+use crate::term::{PanicHookGuard, TerminalGuard};
 use crate::theme;
 
 /// The repaint / sample cadence. ~30 fps keeps animations smooth and the CPU
@@ -363,7 +364,7 @@ pub async fn run_deck(
 
     // The hook shares the guard's state so a panic restores the terminal even
     // in abort builds, where Drop never runs (see `crate::term`).
-    let guard = TerminalGuard::enter(opts.mouse_capture, Screen::Alternate)?;
+    let guard = TerminalGuard::enter(opts.mouse_capture)?;
     let _hook_guard = PanicHookGuard::install(opts.debug_log_path.clone(), &guard);
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     // Detected once (see `theme::color_mode`) and threaded through the draw loop

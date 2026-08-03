@@ -16,7 +16,7 @@ use ratatui::text::{Line, Span};
 
 use stella_protocol::{CiStatus, PrStatus, SubAgentStatus};
 
-use crate::model::{FileState, SessionModel, TranscriptEntry};
+use crate::model::{FileState, TranscriptEntry};
 use crate::render::row::*;
 use crate::textline::{
     self, budget_mode_label, ci_status_label, media_kind_label, media_state_label, pr_status_label,
@@ -29,53 +29,6 @@ use super::{INLINE_DIFF_CAP, resolve_inline_diff};
 use crate::{diff, theme};
 
 // Pure content builders (unit-tested directly)
-
-/// The full visual-line list for the transcript. Each entry is rendered with
-/// per-entry wrapping so continuation lines respect the label column. An
-/// in-flight streaming preview (`SessionModel::streaming_text`) renders as a
-/// live trailing agent entry — it is not a transcript entry, so the
-/// authoritative `Text` event replaces it without leaving a duplicate row.
-/// `skip` names how many leading entries the caller has already put somewhere
-/// else and must not draw again. The screen-reader shell
-/// (`crate::shell::RunOptions::screen_reader`) moves each settled entry into
-/// the terminal's own scrollback as it settles, so its live pane renders only
-/// what is *not* already there — otherwise every line is written twice and a
-/// reader announces the conversation twice. It is an entry count, not a line
-/// count, because the flush is per-entry: half an entry can never be in
-/// scrollback. Every other caller passes 0.
-///
-/// `skip` past the end yields just the streaming preview, which is right: the
-/// whole settled transcript is in scrollback and the only thing left to show
-/// live is the sentence still being written.
-pub(crate) fn transcript_lines(
-    model: &SessionModel,
-    skip: usize,
-    expand_thinking: bool,
-    width: usize,
-) -> Vec<Line<'static>> {
-    let mut out = Vec::new();
-    let live = reasoning_is_live(&model.transcript, &model.streaming_text);
-    let last = model.transcript.len().saturating_sub(1);
-    for (i, entry) in model.transcript.iter().enumerate().skip(skip) {
-        entry_lines(
-            entry,
-            &model.files,
-            expand_thinking,
-            expand_thinking,
-            live && i == last,
-            width,
-            &mut out,
-        );
-    }
-    streaming_lines(
-        &model.streaming_text,
-        &model.files,
-        expand_thinking,
-        width,
-        &mut out,
-    );
-    out
-}
 
 /// Fold the in-flight answer preview
 /// ([`SessionModel::streaming_text`](crate::model::SessionModel::streaming_text))

@@ -651,7 +651,7 @@ fn resolve_strips_color_under_no_color() {
     assert_eq!(resolve(Color::Indexed(9), ColorMode::None), Color::Reset);
     // A non-color (Reset) stays put — nothing to strip.
     assert_eq!(resolve(Color::Reset, ColorMode::None), Color::Reset);
-    // The named ANSI colors are colors too: the single-session REPL styles
+    // The named ANSI colors are colors too: the transcript styles
     // its HUD/composer/cards with them, so `NO_COLOR` must strip them as
     // surely as it strips a palette token.
     for named in [

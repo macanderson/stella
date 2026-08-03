@@ -145,20 +145,6 @@ pub(crate) struct GlobalArgs {
     #[arg(long, global = true, hide_short_help = true)]
     pub(crate) plain: bool,
 
-    /// Use the single-pane accessible chat surface
-    ///
-    /// Built for screen readers, and useful to anyone on a limited terminal.
-    /// It never takes over the screen: the session draws inline under your
-    /// prompt, and each completed message is written into normal scrollback
-    /// once, so a reader announces it as it arrives and your review cursor
-    /// can go back through it. Panels stack in one column so reading order is
-    /// top to bottom, and the terminal cursor sits on the real insertion
-    /// point (which is also what an IME needs to place its candidate
-    /// window). Needs a terminal on both stdin and stdout; use --plain
-    /// otherwise. Env: STELLA_SIMPLE=1.
-    #[arg(long, global = true, hide_short_help = true)]
-    pub(crate) simple: bool,
-
     /// Freeze all deck animation to a static frame
     ///
     /// Stills the run progress bar's shimmer/pulse and the caret blink, for CI

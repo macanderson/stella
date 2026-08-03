@@ -1,7 +1,7 @@
 //! Multi-agent wire types — the envelope that turns the single-session
 //! `AgentEvent` stream into a workspace of many agents.
 //!
-//! The existing [`run`](crate::shell::run)`(events, submissions)` shell speaks
+//! The [`run_deck`](crate::deck_shell::run_deck)`(events, submissions)` shell speaks
 //! one `AgentEvent` stream for one session. The command deck speaks
 //! [`Inbound`] (an agent-id-tagged event) in and [`WorkspaceInput`] out, so N
 //! agents share one deck. A single-agent session is just one [`AgentId`].

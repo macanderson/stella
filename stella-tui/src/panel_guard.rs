@@ -1,6 +1,6 @@
 //! The panel panic boundary (L-T7) — the crate's only one.
 //!
-//! A *band* is any rectangle of the frame drawn by one function: a single-session
+//! A *band* is any rectangle of the frame drawn by one function: a
 //! panel ([`crate::render::guarded_panel`]), a deck chrome row, the deck's
 //! active-tab content area, or a deck overlay. Each is drawn into its own
 //! scratch [`Buffer`] inside `catch_unwind`; on a panic the scratch is dropped
@@ -89,8 +89,8 @@
 //! Release builds set `panic = "abort"` (`[profile.release]`), where
 //! `catch_unwind` never runs its handler — the process dies inside the panic
 //! hook. Everything here is therefore effective in unwind (dev/test) builds
-//! only, exactly as the single-session boundary always has been. See
-//! [`crate::term`] for what the hook does on each side of that split.
+//! only, exactly as this boundary always has been. See
+//! `crate::term` for what the hook does on each side of that split.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;

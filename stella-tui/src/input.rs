@@ -1,8 +1,8 @@
 //! The messages the TUI sends *back* to the engine over the submissions
 //! channel. This is the other half of the `run(...)` contract: `AgentEvent`s
 //! flow in, [`UserInput`] flows out. Kept in its own tiny module so both the
-//! pure key-handling layer ([`crate::ui`]) and the interactive shell
-//! ([`crate::shell`]) can depend on it without a cycle.
+//! pure key-handling layer ([`crate::deck_ui`]) and the interactive shell
+//! ([`crate::deck_shell`]) can depend on it without a cycle.
 
 use stella_protocol::Attachment;
 
