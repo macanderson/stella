@@ -459,6 +459,38 @@ values, because those describe the posture the launcher will actually emit —
 a document that disagrees with the code is the `harbor==0.6.1` failure again,
 in a different file.
 
+#### 8.4.3 The catalog moved and these digests did not (#1290)
+
+Sonnet 5's entry in `stella-model/src/catalog.rs` was corrected from 64,000 to
+its real 128,000. That number is the ceiling **every stella user** gets on the
+model, and it was wrong: Anthropic's own `GET /v1/models` reports
+`"max_tokens": 128000`, as does OpenRouter for the same model on the gateway
+route. The 64,000 it carried was never a fact about Sonnet 5 — it was where
+Claude Code's steps were measured stopping, recorded against a row that means
+something else.
+
+**No digest in the table above moves.** `anthropic/claude-sonnet-5` is still
+`3c428a22…`. The benchmark still caps at 64,000, so every posture it emits is
+byte-identical to the one that produced the published runs, and no result is
+invalidated.
+
+That the two survived apart is the point of the change rather than a lucky
+escape. The product number and the comparison number were one literal doing two
+jobs, and they only agreed by coincidence; correcting the product half would
+normally have dragged the benchmark with it and re-frozen the SUT. They are now
+separate statements:
+
+- the catalog says what Sonnet 5 **can** write — 128,000, cited to the provider;
+- `posture.py` says what an arm **asks for** — 64,000, recorded in
+  `_SUB_CEILING_RATIONALE` with the reason, which is that matching what the
+  comparator actually does is the whole point of a head-to-head.
+
+`TestOutputCeilingParity` enforces the distinction rather than the old
+equality: an arm may cap below a model's ceiling only where a rationale is
+written down, may never cap above it, and a bookable model with no seeded
+ceiling at all is now its own failure — that case used to drop silently out of
+the parity loop and run at the engine's global 16384.
+
 ### 8.5 The measured baseline
 
 See `bench/evidence/` for the run manifest, per-trial rows, per-task results and
