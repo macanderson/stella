@@ -122,6 +122,33 @@ fn a_citation_becomes_feedback_pointing_at_its_own_use() {
 }
 
 #[test]
+fn a_cited_record_handle_joins_use_to_feedback_like_any_memory_id() {
+    let (_dir, store, context) = workspace();
+    // The receipts plane records a rendered record block under its `^handle`
+    // (sigil included), and `cite_memory` accepts and stores the same string —
+    // so the join that turns a rendered directive into Cited-grade feedback is
+    // plain string equality, exactly as it is for `nod_…` memories.
+    finished_turn(
+        &store,
+        &["^license-allowlist"],
+        &[("^license-allowlist", 5, true)],
+        "completed",
+    );
+    extract_context_uses(&store, &context);
+
+    let uses = uses(&context);
+    assert_eq!(uses.len(), 1);
+    assert_eq!(uses[0].context_record_id, "^license-allowlist");
+    let feedback = feedback(&context);
+    assert_eq!(
+        feedback.len(),
+        1,
+        "context_use attribution must reach directives, not just memories"
+    );
+    assert_eq!(feedback[0].evaluation, ContextUseEvaluation::Helpful);
+}
+
+#[test]
 fn re_extraction_is_a_replay_and_appends_nothing() {
     let (_dir, store, context) = workspace();
     finished_turn(&store, &["nod_aaa"], &[("nod_aaa", 5, true)], "completed");
