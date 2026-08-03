@@ -139,7 +139,7 @@ Stella is BYOK and auto-detects the provider from whichever keys you have set.
 | **DeepSeek**           | `DEEPSEEK_API_KEY`                            | `deepseek-chat`                                                                  |
 | **Google Gemini**      | `GEMINI_API_KEY` (alias `GOOGLE_API_KEY`)     | `gemini-3-pro`                                                                   |
 | **Google Vertex AI**   | `VERTEX_ACCESS_TOKEN` + `VERTEX_PROJECT_ID`   | `gemini-3-pro`                                                                   |
-| **Amazon Bedrock**     | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` | `us.anthropic.claude-sonnet-4-5-20250929-v1:0`                                   |
+| **Amazon Bedrock**     | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (+ `AWS_REGION`) | `us.anthropic.claude-sonnet-4-5-20250929-v1:0`                  |
 | **Local**              | _none_ — pass `--base-url`                    | whatever your server hosts                                                       |
 
 OpenRouter is checked first — its key is gateway-specific, so having one is a deliberate
@@ -153,6 +153,26 @@ their vendor namespace on the wire, so pinning one on the CLI needs both halves:
 ```bash
 export ANTHROPIC_API_KEY=your_key_here     # or OPENAI_API_KEY, GEMINI_API_KEY, …
 ```
+
+Bedrock is the one provider that authenticates with more than one value — SigV4
+needs an access key id *and* a secret access key, plus a session token for
+temporary credentials, and a region to build the endpoint host from. All four
+travel through the same chain as any other credential, so `stella auth set`
+stores the whole set rather than only the first:
+
+```bash
+stella auth set bedrock                    # prompts for each, secrets masked
+stella auth set bedrock --stdin \
+  --field AWS_SECRET_ACCESS_KEY="$SECRET" \
+  --field AWS_REGION=eu-central-1          # scripted equivalent
+```
+
+Explicit credentials only: AWS profile files, SSO caches, IMDS/container roles,
+and web-identity token files are deliberately not consulted, so a Stella process
+never authenticates as whatever identity its host happens to be carrying. Bedrock
+is also checked **last** during auto-detection, and only when a secret access key
+resolves too — `AWS_ACCESS_KEY_ID` is exported in plenty of shells for reasons
+that have nothing to do with Bedrock. `--model bedrock/…` pins it regardless.
 
 Pin a provider/model per run or shell:
 

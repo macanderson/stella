@@ -6,10 +6,20 @@
 //!
 //! Resolution order: CLI flag -> env var ->
 //! provider-native config (`~/.stella/credentials.toml` here; the AWS
-//! profile file and Google ADC file remain deferred — the Bedrock/Vertex
-//! adapters take ready credentials from env vars for now, see their module
-//! docs) -> interactive prompt on first use, which never silently fails
-//! with an opaque provider error.
+//! profile file, AWS SSO/IMDS, and the Google ADC file remain deferred — the
+//! Bedrock/Vertex adapters take ready credentials from the chain above, see
+//! their module docs) -> interactive prompt on first use, which never
+//! silently fails with an opaque provider error.
+//!
+//! Most providers authenticate with exactly one secret, which is the shape
+//! [`ApiKey`] resolves. Bedrock needs a *set* — access key id, secret access
+//! key, optional session token, plus a region that is routing rather than a
+//! credential. Those extra values travel in [`AuxCredentials`] and are stored
+//! in the `[credential_fields.<provider>]` half of the credentials file, so
+//! Bedrock has a durable home for all four instead of only working when the
+//! standard AWS variables happen to be exported.
+
+mod aux;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -18,6 +28,8 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 use zeroize::{Zeroize, Zeroizing};
+
+pub use aux::AuxCredentials;
 
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum CredentialError {
@@ -258,15 +270,34 @@ fn prompt_for_key(provider_id: &str, env_var: &str) -> Result<String, Credential
 struct CredentialsFileData {
     #[serde(default)]
     credentials: BTreeMap<String, String>,
+    /// `[credential_fields.<provider_id>]` — the values a provider needs
+    /// *beyond* its one key, keyed by the same canonical environment-variable
+    /// name they carry everywhere else (`AWS_SECRET_ACCESS_KEY`,
+    /// `AWS_REGION`). Bedrock is the only provider that has any today.
+    ///
+    /// A second table rather than dotted rows inside `[credentials]`: that
+    /// table deserializes as `provider_id -> key`, so a dotted key there
+    /// would parse as a nested table and fail the whole file. Keeping the
+    /// nesting explicit also keeps the one-key common case exactly as flat as
+    /// it was — a user with no Bedrock credentials never sees this section.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    credential_fields: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 /// Every stored key is plaintext and the map outlives the calls that read it,
 /// so the whole table is wiped when the file object goes away — the same
-/// posture [`ApiKey`] takes for a single key.
+/// posture [`ApiKey`] takes for a single key. The auxiliary fields hold
+/// secrets too (a Bedrock secret access key is exactly as sensitive as any
+/// API key) and are wiped with them.
 impl Drop for CredentialsFileData {
     fn drop(&mut self) {
         for value in self.credentials.values_mut() {
             value.zeroize();
+        }
+        for fields in self.credential_fields.values_mut() {
+            for value in fields.values_mut() {
+                value.zeroize();
+            }
         }
     }
 }
@@ -427,10 +458,55 @@ impl CredentialsFile {
             .insert(provider_id.to_string(), value.into());
     }
 
-    /// Remove `provider_id`'s key from memory, if present. Returns whether
-    /// an entry existed. Call `save` to persist.
+    /// Remove `provider_id`'s key **and every auxiliary field** from memory,
+    /// if present. Returns whether anything existed. Call `save` to persist.
+    ///
+    /// Both halves go together on purpose: a Bedrock row whose access key id
+    /// was removed but whose secret access key stayed behind is a live secret
+    /// in a file the user believes they emptied.
     pub fn remove(&mut self, provider_id: &str) -> bool {
-        self.data.credentials.remove(provider_id).is_some()
+        let had_key = self.data.credentials.remove(provider_id).is_some();
+        let had_fields =
+            self.data
+                .credential_fields
+                .remove(provider_id)
+                .is_some_and(|mut fields| {
+                    let present = !fields.is_empty();
+                    for value in fields.values_mut() {
+                        value.zeroize();
+                    }
+                    present
+                });
+        had_key || had_fields
+    }
+
+    /// One auxiliary field for `provider_id`, keyed by its canonical
+    /// environment-variable name (`AWS_SECRET_ACCESS_KEY`, `AWS_REGION`).
+    pub fn field(&self, provider_id: &str, name: &str) -> Option<&str> {
+        self.data
+            .credential_fields
+            .get(provider_id)
+            .and_then(|fields| fields.get(name))
+            .map(String::as_str)
+    }
+
+    /// Set (or replace) one auxiliary field. Call `save` to persist.
+    pub fn set_field(&mut self, provider_id: &str, name: &str, value: impl Into<String>) {
+        self.data
+            .credential_fields
+            .entry(provider_id.to_string())
+            .or_default()
+            .insert(name.to_string(), value.into());
+    }
+
+    /// Every auxiliary field name stored for `provider_id`, alphabetically.
+    /// Names only — a display surface may print these; the values are secrets.
+    pub fn field_names(&self, provider_id: &str) -> impl Iterator<Item = &str> {
+        self.data
+            .credential_fields
+            .get(provider_id)
+            .into_iter()
+            .flat_map(|fields| fields.keys().map(String::as_str))
     }
 
     /// Write the current in-memory state to disk, creating parent
@@ -653,9 +729,48 @@ pub struct BedrockCredentials {
 }
 
 impl BedrockCredentials {
+    /// Every environment-variable name this resolves *beyond* the access key
+    /// id, in the order a host should offer them. Public because the host is
+    /// what walks its own chain (an inherited descriptor, the environment,
+    /// `~/.stella/credentials.toml`) for each name and hands the results back
+    /// as an [`AuxCredentials`] — it must not have to re-spell this list, or
+    /// the two copies drift and a value silently stops resolving.
+    pub const AUX_ENV_NAMES: &'static [&'static str] = &[
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
+    ];
+
+    /// The subset of [`Self::AUX_ENV_NAMES`] that is genuinely a secret, for
+    /// hosts that route secrets and routing values through different seams
+    /// (the benchmark launcher sends these over an anonymous descriptor and
+    /// the region as an ordinary variable). The complement — `AWS_REGION` and
+    /// `AWS_DEFAULT_REGION` — is addressing: required, but not a credential.
+    pub const SECRET_ENV_NAMES: &'static [&'static str] =
+        &["AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"];
+
     /// Resolve from the process environment.
     pub fn resolve() -> Result<Self, CredentialError> {
         Self::resolve_from(env_non_empty)
+    }
+
+    /// Resolve from values a host already resolved through its own chain,
+    /// falling back to the process environment for anything absent.
+    ///
+    /// The fallback is what keeps a library-style caller — one that builds a
+    /// provider straight off [`crate::factory::build_provider`] with no chain
+    /// of its own — working exactly as it did when this read the environment
+    /// directly. A host that *has* a chain resolves every name in
+    /// [`Self::AUX_ENV_NAMES`] itself and wins here, which is what lets a
+    /// sealed process (benchmark claim mode, where the AWS variables are
+    /// deliberately absent from the environment) reach Bedrock at all.
+    pub fn resolve_with(aux: &AuxCredentials) -> Result<Self, CredentialError> {
+        Self::resolve_from(|name| {
+            aux.get(name)
+                .map(str::to_string)
+                .or_else(|| env_non_empty(name))
+        })
     }
 
     /// The resolution itself, over an injected lookup — see
@@ -695,6 +810,113 @@ mod tests {
         let debug = format!("{key:?}");
         assert!(!debug.contains("sk-super-secret-value"));
         assert!(debug.contains("redacted"));
+    }
+
+    #[test]
+    fn auxiliary_fields_survive_a_save_and_reload() {
+        // Bedrock's whole "in general" gap: the secret access key and region
+        // had nowhere durable to live, so a stored access key id was a row
+        // that looked configured and could not sign.
+        let path = temp_credentials_path("aux-roundtrip");
+        let _ = std::fs::remove_file(&path);
+        let mut file = CredentialsFile::load(&path).unwrap();
+        file.set("bedrock", "AKIAEXAMPLEACCESSKEY");
+        file.set_field("bedrock", "AWS_SECRET_ACCESS_KEY", "the-secret-access-key");
+        file.set_field("bedrock", "AWS_REGION", "ap-southeast-2");
+        file.save().unwrap();
+
+        let reloaded = CredentialsFile::load(&path).unwrap();
+        assert_eq!(reloaded.get("bedrock"), Some("AKIAEXAMPLEACCESSKEY"));
+        assert_eq!(
+            reloaded.field("bedrock", "AWS_SECRET_ACCESS_KEY"),
+            Some("the-secret-access-key")
+        );
+        assert_eq!(
+            reloaded.field("bedrock", "AWS_REGION"),
+            Some("ap-southeast-2")
+        );
+        assert_eq!(reloaded.field("bedrock", "AWS_SESSION_TOKEN"), None);
+        assert_eq!(
+            reloaded.field_names("bedrock").collect::<Vec<_>>(),
+            vec!["AWS_REGION", "AWS_SECRET_ACCESS_KEY"]
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_file_with_no_auxiliary_fields_stays_exactly_as_flat_as_before() {
+        // The one-key common case must not grow a section it never uses —
+        // both because it is noise and because a `[credential_fields]` header
+        // in an otherwise-empty file reads as configuration that is missing.
+        let path = temp_credentials_path("aux-absent");
+        let _ = std::fs::remove_file(&path);
+        let mut file = CredentialsFile::load(&path).unwrap();
+        file.set("zai", "sk-value");
+        file.save().unwrap();
+
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(!written.contains("credential_fields"), "got: {written}");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn removing_a_provider_takes_its_auxiliary_secrets_with_it() {
+        // A "removed" Bedrock row that left AWS_SECRET_ACCESS_KEY behind is a
+        // live secret in a file the user believes they emptied.
+        let mut file = CredentialsFile::load(temp_credentials_path("aux-remove")).unwrap();
+        file.set("bedrock", "AKIAEXAMPLEACCESSKEY");
+        file.set_field("bedrock", "AWS_SECRET_ACCESS_KEY", "the-secret-access-key");
+
+        assert!(file.remove("bedrock"));
+        assert_eq!(file.get("bedrock"), None);
+        assert_eq!(file.field("bedrock", "AWS_SECRET_ACCESS_KEY"), None);
+        assert_eq!(file.field_names("bedrock").count(), 0);
+    }
+
+    #[test]
+    fn removing_reports_true_for_a_provider_that_only_had_fields() {
+        let mut file = CredentialsFile::load(temp_credentials_path("aux-only")).unwrap();
+        file.set_field("bedrock", "AWS_REGION", "us-west-2");
+        assert!(file.remove("bedrock"));
+        assert!(!file.remove("bedrock"));
+    }
+
+    #[test]
+    fn bedrock_prefers_host_resolved_values_over_the_environment() {
+        // `resolve_with` is what lets a sealed process reach Bedrock at all:
+        // the AWS variables are deliberately absent there, so the aux set has
+        // to be able to answer on its own.
+        let mut aux = AuxCredentials::new();
+        aux.insert("AWS_SECRET_ACCESS_KEY", "secret-from-the-host-chain");
+        aux.insert("AWS_SESSION_TOKEN", "session-from-the-host-chain");
+        aux.insert("AWS_REGION", "sa-east-1");
+
+        let resolved = BedrockCredentials::resolve_with(&aux).unwrap();
+        assert_eq!(
+            resolved.secret_access_key.reveal(),
+            "secret-from-the-host-chain"
+        );
+        assert_eq!(
+            resolved.session_token.as_ref().map(ApiKey::reveal),
+            Some("session-from-the-host-chain")
+        );
+        assert_eq!(resolved.region, "sa-east-1");
+    }
+
+    #[test]
+    fn every_bedrock_secret_name_is_also_an_aux_name() {
+        // Two lists, one truth: a host routes `SECRET_ENV_NAMES` through its
+        // secret seam and the rest as ordinary values, so a name in the first
+        // list but not the second would be sent and never read.
+        for name in BedrockCredentials::SECRET_ENV_NAMES {
+            assert!(
+                BedrockCredentials::AUX_ENV_NAMES.contains(name),
+                "{name} is declared a secret but is never resolved"
+            );
+        }
+        assert!(!BedrockCredentials::SECRET_ENV_NAMES.contains(&"AWS_REGION"));
     }
 
     #[test]

@@ -9,7 +9,7 @@
 use std::env;
 
 use colored::Colorize;
-use stella_model::credential::{ApiKey, CredentialError, CredentialsFile};
+use stella_model::credential::{ApiKey, AuxCredentials, CredentialError, CredentialsFile};
 
 /// Trusted-launcher override for the complete `agent_engine_config` object.
 ///
@@ -130,10 +130,12 @@ fn interactive_allowed() -> bool {
     INTERACTIVE_CREDENTIALS.load(std::sync::atomic::Ordering::SeqCst)
 }
 
+mod aux;
 mod providers;
 
 // Re-exported at the old paths: the table moved for the line ratchet, not
 // for callers, and `crate::config::PROVIDERS` stays the one way to reach it.
+pub(crate) use aux::{AuxField, has_required_aux, provider_aux, settable_aux_fields};
 pub(crate) use providers::no_api_key_error;
 pub use providers::{Dialect, LOCAL_PROVIDER, PROVIDERS, ProviderConfig};
 
@@ -433,6 +435,12 @@ pub struct Config {
     /// `filesystem_settings_disabled` both resolve against an in-memory
     /// `CredentialsFile::empty()`, which has nothing on disk to warn about.
     pub credential_advisories: Vec<stella_model::credential::CredentialAdvisory>,
+    /// The values this provider needs *beyond* `api_key`, resolved through
+    /// the same chain the key came from — Bedrock's AWS secret access key,
+    /// optional session token, and region today; empty for every other
+    /// provider. See `config::aux` for which credential sources are
+    /// supported and which are deliberately excluded.
+    pub aux_credentials: AuxCredentials,
 }
 
 impl Config {
@@ -744,6 +752,9 @@ impl Config {
                     authority: crate::settings::AuthorityPolicy::default(),
                     credential_source,
                     credential_advisories: credentials_file.advisories().to_vec(),
+                    // `local` speaks the OpenAI-compatible dialect; nothing to
+                    // resolve beyond the (optional) bearer token above.
+                    aux_credentials: AuxCredentials::new(),
                 });
             }
 
@@ -821,6 +832,16 @@ impl Config {
                 false,
             )
             .is_ok()
+                // A key that resolves is not the same as a provider that can
+                // build: Bedrock also needs a secret access key, and
+                // `AWS_ACCESS_KEY_ID` is exported in plenty of shells for
+                // reasons that have nothing to do with Bedrock. Without this,
+                // such a shell auto-selects a provider that then dies with a
+                // SigV4 error instead of getting the first-run message naming
+                // providers it could actually use. `--model bedrock/…` is
+                // unaffected — pinning is unambiguous and keeps the adapter's
+                // own named error.
+                && has_required_aux(&provider, &provider_aux(&provider, &credentials_file))
             {
                 let default_model = provider.default_model.to_string();
                 return Self::resolve(
@@ -944,6 +965,10 @@ impl Config {
             authority: crate::settings::AuthorityPolicy::default(),
             credential_source: Some(source),
             credential_advisories: credentials_file.advisories().to_vec(),
+            // Resolved against the same store the key came from, so a sealed
+            // process (which was handed an empty in-memory file) cannot pick
+            // up a Bedrock secret from a task image's credentials.toml.
+            aux_credentials: provider_aux(provider, credentials_file),
         })
     }
 
@@ -1350,6 +1375,11 @@ pub(crate) fn resolve_provider_key(
 pub struct ConfiguredProvider {
     pub config: ProviderConfig,
     pub api_key: ApiKey,
+    /// The provider's auxiliary values, resolved by the same chain and from
+    /// the same store as `api_key` — so a routed judge on Bedrock builds with
+    /// the credentials discovery actually verified, not a second lookup that
+    /// could disagree.
+    pub aux: AuxCredentials,
 }
 
 /// Enumerate every provider in [`PROVIDERS`] whose credential currently
@@ -1402,9 +1432,18 @@ pub fn discover_configured_providers() -> Vec<ConfiguredProvider> {
                 false,
             )
             .ok()
-            .map(|(api_key, _source)| ConfiguredProvider {
-                config: provider,
-                api_key,
+            .and_then(|(api_key, _source)| {
+                // A provider whose primary key resolves but whose required
+                // companion value does not cannot build — see
+                // `aux::has_required_aux`. Discovery is what auto-detection
+                // and judge routing pick from, so admitting it here would
+                // hand both a provider that fails at construction.
+                let aux = provider_aux(&provider, &credentials_file);
+                has_required_aux(&provider, &aux).then_some(ConfiguredProvider {
+                    config: provider,
+                    api_key,
+                    aux,
+                })
             })
         })
         .collect();
@@ -1427,9 +1466,13 @@ pub fn discover_configured_providers() -> Vec<ConfiguredProvider> {
             &credentials_file,
             false,
         ) {
+            // A settings.json provider cannot declare the Vertex/Bedrock
+            // dialects (`custom_provider` rejects both), so it never has an
+            // auxiliary value to resolve.
             configured.push(ConfiguredProvider {
                 config: provider,
                 api_key,
+                aux: AuxCredentials::new(),
             });
         }
     }

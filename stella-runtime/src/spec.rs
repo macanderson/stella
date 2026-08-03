@@ -16,7 +16,7 @@
 
 use std::path::PathBuf;
 
-use stella_model::{ApiKey, factory::Dialect};
+use stella_model::{ApiKey, AuxCredentials, factory::Dialect};
 
 /// Whether this session may touch the workspace's on-disk state at all.
 ///
@@ -73,6 +73,17 @@ pub struct ProviderParts {
     pub base_url: String,
     /// The raw override, if any. Only Vertex/Bedrock read this.
     pub base_url_override: Option<String>,
+    /// Values this provider needs *beyond* `api_key`, already resolved by the
+    /// host's own credential chain — Bedrock's AWS secret access key, optional
+    /// session token, and region today. Empty for every other dialect, and
+    /// empty is not an error: the Bedrock adapter falls back to the standard
+    /// AWS environment variables when the host resolved nothing.
+    ///
+    /// Filled by the caller for the same reason every other field is: this is
+    /// where the ambient reads belong. `stella-cli` walks handoff → env →
+    /// `~/.stella/credentials.toml` for each name; a server fills it from its
+    /// session-create request.
+    pub aux: AuxCredentials,
 }
 
 impl ProviderParts {

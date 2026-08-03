@@ -330,9 +330,14 @@ claim analyzer requires these exact values.
    is disclosed in trial metadata and the public ATIF trajectory. The step can
    never fail a trial: a workspace it could not baseline runs exactly as the
    witness-off control arm always did, and says so.
-5. **Holds** exactly one provider key in an unlinked, owner-only, seekable host
-   temporary-file descriptor, then execs Harbor with every named or aliased
-   copy of either OpenRouter credential removed from its environment. The
+5. **Holds** the selected route's provider credentials in an unlinked,
+   owner-only, seekable host temporary-file descriptor, then execs Harbor with
+   every named or aliased copy of either OpenRouter credential removed from its
+   environment. One credential is the usual case and was once the only case;
+   Bedrock's SigV4 route needs an access key id *and* a secret access key (plus
+   a session token for temporary credentials), so the handover carries a set
+   (#1301) — see **Provider credential sources** below for exactly which
+   sources are supported and which are excluded. The
    distinct management key is used only by the host launcher's control-plane
    GETs and never enters the bundle, child environment, argv, receipt, sidecar,
    runtime identity, or public evidence. On macOS this temporary backing can be
@@ -461,8 +466,14 @@ Every result exposes manifest-ready metadata keys:
   `stella_accounting`;
 - `stella_credential_handoff=anonymous-fd` (the mode only—never the value);
 - `stella_host_credential_source=anonymous-seekable-fd-v1`,
-  `stella_host_credential_name`, `stella_host_credential_bundle_count=1`, and
+  `stella_host_credential_name` (the exact comma-separated
+  `STELLA_CREDENTIAL_HANDOFF_TARGET` value, so a reader can compare the
+  manifest against the wire), `stella_host_credential_bundle_count` (`1` for a
+  single-secret route, `2`–`3` for Bedrock), and
   `stella_container_credential_absence_verified=true`;
+- `stella_provider_routing` — non-secret route addressing carried beside the
+  credentials, `AWS_REGION` today. Disclosed rather than scrubbed: a Bedrock
+  number nobody can attribute to a region is a number nobody can reproduce;
 - `stella_launcher_controls`, recording direct-argv execution, disabled
   project env files, filesystem settings/credentials, repository hooks,
   catalog auto-refresh, and proxies; subprocess credential scrubbing; plus
@@ -502,12 +513,13 @@ Every result exposes manifest-ready metadata keys:
 | `STELLA_MODEL_TIMEOUT` | Host-only. Overrides the silence ceiling that the selected model would otherwise get from `_MODEL_TIMEOUT_BY_SLUG`. Seconds; `0`–21600, where `0` means no ceiling at all and is therefore different from leaving it unset. It bounds how long the provider may go **silent** between pieces of a streamed answer, not how long the answer may take. It is normally derived from the output cap rather than chosen: a model allowed 128,000 tokens needs long enough to actually produce them, or the step dies on the clock instead of the cap — which looks the same in the results and is just as much us stopping first (#1211 §6.2). |
 | `STELLA_TB_GIT_BASELINE` | Host-only, default **on**. Before the agent starts, the adapter gives a bare task workspace a git baseline (`git init` + one `--allow-empty` commit under a synthetic per-invocation identity, with `.stella/` excluded via `.git/info/exclude`). Terminal-Bench images are plain directories, and on a plain directory Stella's diff probe is structurally blind (#973) while isolation, witness authoring, and the mutation audit all degrade — the baseline turns those channels on. Guarded in the shell and best-effort by construction: skipped when the image has no `git`, when any repository is already present (`fix-git`'s broken one included), or when the workspace exceeds 512 MiB; a skip prints its reason and can never fail a trial. Set `0`/`false` to restore the bare-directory posture — a scored-behavior change either way, so a claim run states which posture it used. |
 | `STELLA_ENGINE_CONFIG_JSON` | Internal trusted-launcher seam. The adapter discards ambient/extra values and authoritatively supplies the canonical posture above. |
-| selected provider key (`OPENROUTER_API_KEY`, etc.) | Consumed by the secure host launcher; one selected key is bundled, then delivered to Stella through inherited anonymous stdin. |
+| selected provider credentials (`OPENROUTER_API_KEY`, etc.; for Bedrock `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` + optional `AWS_SESSION_TOKEN`) | Consumed by the secure host launcher; bundled, then delivered to Stella through inherited anonymous stdin. See **Provider credential sources**. |
+| `AWS_REGION` (or `AWS_DEFAULT_REGION`) | Required for Bedrock. Routing, not a credential: carried in the bundle's routing half, forwarded as ordinary registered container environment, and disclosed as `stella_provider_routing`. Deliberately not defaulted — Stella's own chain falls back to `us-east-1`, which would silently decide which AWS region a published number came from. |
 
 Only the registered budget/reflection settings plus launcher-owned controls
 enter the task container. Unregistered `STELLA_*` knobs and arbitrary Harbor
 agent extras abort a claim run; host-only binary/source/base/model settings are
-not forwarded. Exactly one selected provider key is resolved separately and
+not forwarded. The selected provider's credentials are resolved separately and
 sent only over the anonymous FD. As final launcher overrides,
 `STELLA_NO_ENV_FILE=1` and `STELLA_NO_SETTINGS=1` prevent task repositories and
 task-image user/managed scopes from loading any `.env`, settings or credential
@@ -529,6 +541,50 @@ is always passed as `--base-url`, including the default
 **Non-claim Z.ai (GLM) experiments:** set
 `STELLA_BASE_URL=https://api.z.ai/api/coding/paas/v4` — the endpoint must
 include `/coding/`, or the API returns HTTP 429 "insufficient balance."
+
+### Provider credential sources
+
+The handover carries a *set* of values (#1301), and the set is small on
+purpose. What a route may draw on:
+
+**Supported**
+
+- The named environment variable(s) for the selected provider — one for every
+  provider but Bedrock, which takes `AWS_ACCESS_KEY_ID` and
+  `AWS_SECRET_ACCESS_KEY`, plus `AWS_SESSION_TOKEN` when the credentials are
+  temporary.
+- `AWS_REGION` (or `AWS_DEFAULT_REGION`, normalized to `AWS_REGION`) as the
+  route's region.
+
+Each value is read once on the host, placed in the unlinked owner-only bundle,
+and removed from the environment Harbor is exec'd with. Missing any required
+member refuses the launch rather than proceeding with a partial set: a Bedrock
+route with an access key id and no secret would sign nothing and arrive as a
+provider 403 several minutes into a trial.
+
+**Deliberately excluded**
+
+- Shared config/credentials profile files — `AWS_PROFILE`,
+  `AWS_DEFAULT_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, `~/.aws/credentials`.
+- AWS SSO caches.
+- Instance and container credential providers — IMDS, and the ECS/EKS role
+  endpoints behind `AWS_CONTAINER_CREDENTIALS_*`.
+- Web-identity/OIDC token files (`AWS_WEB_IDENTITY_TOKEN_FILE`), and the
+  equivalent Google (`GOOGLE_APPLICATION_CREDENTIALS`) and Azure
+  (`AZURE_FEDERATED_TOKEN_FILE`) files.
+
+Every one of these resolves a credential *ambiently*: the benchmark process
+would end up using whatever identity its host happens to be carrying, and under
+a sealed launcher it would reach back out to exactly the host state the launcher
+spends its whole design excluding. The narrowness — every secret named,
+resolved once, and handed over through one descriptor — is the security
+property, and an ambient source gives it up. All of these names stay on the
+scrub deny-list precisely so they cannot arrive by another route.
+
+Stella's own credential chain states the same split from the container's side
+in `stella-cli/src/config/aux.rs`, and `stella-cli/src/credential_handoff.rs`
+enforces which names may cross the descriptor at all (`AWS_REGION` may not — it
+is not a secret).
 
 ## Scan before publication
 

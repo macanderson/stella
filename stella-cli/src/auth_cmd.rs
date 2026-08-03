@@ -11,11 +11,18 @@
 //! `~/.stella/credentials.toml`. This is what lets the core be unit
 //! tested against a temp-path `CredentialsFile` instead of ever touching a
 //! developer's actual credentials file.
+//!
+//! "One key per provider" holds for every provider but Bedrock, which needs a
+//! secret access key and a region beside its access key id. `set` stores those
+//! companions too — see `config::aux` — because the alternative is
+//! what shipped before: `stella auth set bedrock` reported success, and the
+//! next run failed on a value the command had no way to accept.
 
 use colored::Colorize as _;
 use stella_model::credential::{ApiKey, CredentialsFile};
 use zeroize::Zeroizing;
 
+use crate::config::{AuxField, ProviderConfig, settable_aux_fields};
 use crate::credential_status;
 use crate::settings::Settings;
 
@@ -26,7 +33,8 @@ pub fn run(cmd: &crate::AuthCmd) -> Result<(), String> {
             provider,
             key,
             stdin,
-        } => run_set(provider, key.as_deref(), *stdin),
+            fields,
+        } => run_set(provider, key.as_deref(), *stdin, fields),
         crate::AuthCmd::Remove { provider } => run_remove(provider),
         crate::AuthCmd::List => run_list(),
     }
@@ -99,33 +107,206 @@ fn read_key_value(provider: &str, key: Option<&str>, use_stdin: bool) -> Result<
     Ok(trimmed)
 }
 
-/// Pure core of `stella auth set`: validates the id, resolves the key value,
-/// and stores it into `file` (caller saves). Returns the masked confirmation
-/// line — never the raw value.
+/// Parse the repeated `--field NAME=VALUE` flags against the set this
+/// provider actually reads.
+///
+/// A name the chain never looks up is rejected rather than stored: a value
+/// written under `AWS_SECRET_KEY` would sit in the file looking configured
+/// while every resolution step misses it, which is a worse outcome than the
+/// typo being named at the point of the typo. The error lists the accepted
+/// names, since for a provider with none the whole flag is a mistake.
+fn parse_field_flags(
+    provider: &str,
+    accepted: &[AuxField],
+    fields: &[String],
+) -> Result<Vec<(&'static str, String)>, String> {
+    let mut parsed: Vec<(&'static str, String)> = Vec::new();
+    for raw in fields {
+        let (name, value) = raw
+            .split_once('=')
+            .ok_or_else(|| format!("--field must be NAME=VALUE, got `{raw}`"))?;
+        let name = name.trim();
+        let Some(field) = accepted.iter().find(|f| f.name == name) else {
+            return Err(if accepted.is_empty() {
+                format!("provider `{provider}` has no companion values to store")
+            } else {
+                format!(
+                    "`{name}` is not a companion value for `{provider}` — accepted: {}",
+                    accepted
+                        .iter()
+                        .map(|f| f.name)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            });
+        };
+        if value.is_empty() {
+            return Err(format!("--field {name} has an empty value"));
+        }
+        if parsed.iter().any(|(stored, _)| *stored == field.name) {
+            return Err(format!("--field {name} was given more than once"));
+        }
+        parsed.push((field.name, value.to_string()));
+    }
+    Ok(parsed)
+}
+
+/// Read the companion values not supplied by `--field`, via a per-value
+/// prompt. Secrets are masked; the region is not (it is routing, and a masked
+/// prompt would imply a secrecy it does not have). Blank input means "leave
+/// whatever is already stored", so re-running `set` to rotate only the key
+/// does not silently clear a region.
+fn prompt_for_fields(
+    file: &CredentialsFile,
+    provider: &str,
+    accepted: &[AuxField],
+    already_given: &[(&'static str, String)],
+) -> Result<Vec<(&'static str, String)>, String> {
+    let mut collected = Vec::new();
+    for field in fields_still_unanswered(accepted, already_given) {
+        let stored = file.field(provider, field.name);
+        let suffix = if stored.is_some() {
+            " [stored — blank keeps it]"
+        } else {
+            ""
+        };
+        let label = format!("  {}{suffix}: ", field.prompt);
+        let entered = if field.secret {
+            Zeroizing::new(
+                rpassword::prompt_password(&label)
+                    .map_err(|e| format!("cannot read secret from terminal: {e}"))?,
+            )
+        } else {
+            use std::io::Write as _;
+            print!("{label}");
+            std::io::stdout()
+                .flush()
+                .map_err(|e| format!("cannot write the prompt: {e}"))?;
+            let mut line = String::new();
+            std::io::stdin()
+                .read_line(&mut line)
+                .map_err(|e| format!("cannot read from stdin: {e}"))?;
+            Zeroizing::new(line)
+        };
+        let trimmed = entered.trim();
+        if !trimmed.is_empty() {
+            collected.push((field.name, trimmed.to_string()));
+        }
+    }
+    Ok(collected)
+}
+
+/// Which companion values still need asking about — the pure half of
+/// [`prompt_for_fields`], split out because the rest of it needs a terminal
+/// and this is the part that can be wrong.
+fn fields_still_unanswered<'a>(
+    accepted: &'a [AuxField],
+    already_given: &'a [(&'static str, String)],
+) -> impl Iterator<Item = &'a AuxField> {
+    accepted
+        .iter()
+        .filter(move |field| !already_given.iter().any(|(name, _)| *name == field.name))
+}
+
+/// Pure core of `stella auth set`: validates the id, resolves the key value
+/// and any companion values, and stores them into `file` (caller saves).
+/// Returns the masked confirmation lines — never a raw value.
+///
+/// `prompt` is the seam that keeps this testable: the real command passes
+/// [`prompt_for_fields`], and a test passes a closure, so the companion-value
+/// logic is exercised without a terminal. Non-interactive callers (`--key`,
+/// `--stdin`) never prompt at all — a script that pipes a key must not block
+/// on a question it cannot answer, so it supplies companions with `--field`
+/// or leaves what is already stored in place.
 fn set_in(
     file: &mut CredentialsFile,
     path_display: &str,
     provider: &str,
     key: Option<&str>,
     use_stdin: bool,
-) -> Result<String, String> {
+    fields: &[String],
+    prompt: impl FnOnce(
+        &CredentialsFile,
+        &str,
+        &[AuxField],
+        &[(&'static str, String)],
+    ) -> Result<Vec<(&'static str, String)>, String>,
+) -> Result<Vec<String>, String> {
     validate_provider_id(provider)?;
+    let accepted = settable_aux_fields(&provider_config(provider));
+    let mut companions = parse_field_flags(provider, accepted, fields)?;
+
     let value = read_key_value(provider, key, use_stdin)?;
     let api_key = ApiKey::new(value);
+
+    let interactive = key.is_none() && !use_stdin;
+    if interactive && !accepted.is_empty() {
+        companions.extend(prompt(file, provider, accepted, &companions)?);
+    }
+
     file.set(provider, api_key.reveal());
-    Ok(format!(
+    let mut lines = vec![format!(
         "stored key for `{provider}` in {path_display} ({})",
         api_key.redacted_preview()
-    ))
+    )];
+    for (name, value) in &companions {
+        file.set_field(provider, name, value.clone());
+        lines.push(format!(
+            "stored {name} for `{provider}` ({})",
+            ApiKey::new(value.clone()).redacted_preview()
+        ));
+    }
+
+    // Say so rather than leaving the run to fail later: a Bedrock row with an
+    // access key id and no secret access key resolves at `stella models` and
+    // then dies at the first request with a SigV4 error naming a variable the
+    // user believed they had just configured.
+    for field in accepted {
+        if file.field(provider, field.name).is_none() && field.name == "AWS_SECRET_ACCESS_KEY" {
+            lines.push(format!(
+                "no {} stored — `{provider}` cannot sign a request until one is set \
+                 (rerun without --key/--stdin, or pass --field {}=…)",
+                field.name, field.name
+            ));
+        }
+    }
+    Ok(lines)
 }
 
-fn run_set(provider: &str, key: Option<&str>, use_stdin: bool) -> Result<(), String> {
+/// The provider row to look companion values up against. A settings.json
+/// provider cannot declare the Bedrock dialect, and an id stored ahead of any
+/// declaration synthesizes an OpenAI-compatible row — both correctly yield no
+/// companion values.
+fn provider_config(id: &str) -> ProviderConfig {
+    let settings = std::env::current_dir()
+        .ok()
+        .and_then(|ws| Settings::load(&ws).ok())
+        .unwrap_or_default();
+    credential_status::provider_config_for(id, &settings)
+}
+
+fn run_set(
+    provider: &str,
+    key: Option<&str>,
+    use_stdin: bool,
+    fields: &[String],
+) -> Result<(), String> {
     let mut file = load_file()?;
     let path_display = credentials_path_display();
-    let message = set_in(&mut file, &path_display, provider, key, use_stdin)?;
+    let messages = set_in(
+        &mut file,
+        &path_display,
+        provider,
+        key,
+        use_stdin,
+        fields,
+        prompt_for_fields,
+    )?;
     file.save()
         .map_err(|e| format!("failed to save {path_display}: {e}"))?;
-    println!("  {} {}", "◆".yellow(), message);
+    for message in messages {
+        println!("  {} {}", "◆".yellow(), message);
+    }
     Ok(())
 }
 
@@ -181,7 +362,18 @@ fn list_lines(file: &CredentialsFile, settings: &Settings) -> Vec<String> {
                 }
                 _ => String::new(),
             };
-            Some(format!("{id}  {preview}  credentials.toml{note}"))
+            // Companion values by NAME only — the same rule as the key itself,
+            // and the reason to show them at all is that a Bedrock row without
+            // AWS_SECRET_ACCESS_KEY looks identical to a working one otherwise.
+            let companions: Vec<&str> = file.field_names(id).collect();
+            let companion_note = if companions.is_empty() {
+                String::new()
+            } else {
+                format!("  + {}", companions.join(", "))
+            };
+            Some(format!(
+                "{id}  {preview}  credentials.toml{companion_note}{note}"
+            ))
         })
         .collect()
 }
@@ -216,6 +408,18 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    /// The prompt seam for tests that must never reach a terminal. A
+    /// non-interactive `set` (`--key`/`--stdin`) is documented never to
+    /// prompt; this turns "documented" into "asserted".
+    fn never_prompt(
+        _file: &CredentialsFile,
+        _provider: &str,
+        _accepted: &[AuxField],
+        _given: &[(&'static str, String)],
+    ) -> Result<Vec<(&'static str, String)>, String> {
+        panic!("set_in must not prompt on a non-interactive path");
+    }
+
     fn temp_credentials_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "stella-test-auth-cmd-{name}-{}.toml",
@@ -240,14 +444,17 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let mut file = CredentialsFile::load(&path).unwrap();
 
-        let message = set_in(
+        let messages = set_in(
             &mut file,
             "credentials.toml",
             "zai",
             Some("sk-super-secret-value-1234"),
             false,
+            &[],
+            never_prompt,
         )
         .unwrap();
+        let message = messages.join("\n");
 
         assert!(
             !message.contains("sk-super-secret-value-1234"),
@@ -273,6 +480,8 @@ mod tests {
             "zai",
             Some("sk-value"),
             false,
+            &[],
+            never_prompt,
         )
         .unwrap();
         file.save().unwrap();
@@ -296,10 +505,123 @@ mod tests {
             "zai/glm",
             Some("sk-value"),
             false,
+            &[],
+            never_prompt,
         )
         .unwrap_err();
         assert!(err.contains("not a valid provider id"));
         assert_eq!(file.get("zai/glm"), None);
+    }
+
+    // set: Bedrock's companion values (#1301)
+
+    #[test]
+    fn set_in_stores_bedrock_companion_values_and_never_echoes_them() {
+        let mut file = CredentialsFile::load(temp_credentials_path("set-bedrock")).unwrap();
+
+        let messages = set_in(
+            &mut file,
+            "credentials.toml",
+            "bedrock",
+            Some("AKIAEXAMPLEACCESSKEY"),
+            false,
+            &[
+                "AWS_SECRET_ACCESS_KEY=the-secret-access-key".to_string(),
+                "AWS_REGION=ap-southeast-2".to_string(),
+            ],
+            never_prompt,
+        )
+        .unwrap();
+
+        assert_eq!(file.get("bedrock"), Some("AKIAEXAMPLEACCESSKEY"));
+        assert_eq!(
+            file.field("bedrock", "AWS_SECRET_ACCESS_KEY"),
+            Some("the-secret-access-key")
+        );
+        assert_eq!(file.field("bedrock", "AWS_REGION"), Some("ap-southeast-2"));
+
+        let printed = messages.join("\n");
+        assert!(!printed.contains("the-secret-access-key"), "{printed}");
+        assert!(printed.contains("AWS_SECRET_ACCESS_KEY"), "{printed}");
+    }
+
+    #[test]
+    fn set_in_says_so_when_bedrock_is_left_unable_to_sign() {
+        // The exact shape of the old failure: `stella auth set bedrock`
+        // reported success and the next run died on AWS_SECRET_ACCESS_KEY.
+        let mut file = CredentialsFile::load(temp_credentials_path("set-bedrock-bare")).unwrap();
+
+        let messages = set_in(
+            &mut file,
+            "credentials.toml",
+            "bedrock",
+            Some("AKIAEXAMPLEACCESSKEY"),
+            false,
+            &[],
+            never_prompt,
+        )
+        .unwrap();
+
+        let printed = messages.join("\n");
+        assert!(
+            printed.contains("cannot sign a request"),
+            "storing only an access key id must say so: {printed}"
+        );
+    }
+
+    #[test]
+    fn set_in_rejects_a_field_name_the_chain_would_never_read() {
+        let mut file = CredentialsFile::load(temp_credentials_path("set-bad-field")).unwrap();
+        let err = set_in(
+            &mut file,
+            "credentials.toml",
+            "bedrock",
+            Some("AKIAEXAMPLEACCESSKEY"),
+            false,
+            &["AWS_SECRET_KEY=oops".to_string()],
+            never_prompt,
+        )
+        .unwrap_err();
+
+        assert!(err.contains("AWS_SECRET_ACCESS_KEY"), "{err}");
+        assert_eq!(file.field("bedrock", "AWS_SECRET_KEY"), None);
+        // Rejected before the key is read, so nothing is half-written.
+        assert_eq!(file.get("bedrock"), None);
+    }
+
+    #[test]
+    fn set_in_rejects_companion_values_for_a_one_key_provider() {
+        let mut file = CredentialsFile::load(temp_credentials_path("set-field-zai")).unwrap();
+        let err = set_in(
+            &mut file,
+            "credentials.toml",
+            "zai",
+            Some("sk-value"),
+            false,
+            &["AWS_REGION=us-east-1".to_string()],
+            never_prompt,
+        )
+        .unwrap_err();
+        assert!(err.contains("no companion values"), "{err}");
+    }
+
+    #[test]
+    fn the_prompt_skips_every_companion_value_a_flag_already_answered() {
+        // Asking again for something just passed on the command line is how a
+        // scripted `--field` invocation ends up blocking on a terminal.
+        let accepted = settable_aux_fields(&provider_config("bedrock"));
+        let given = vec![("AWS_SECRET_ACCESS_KEY", "from-the-flag".to_string())];
+
+        let remaining: Vec<&str> = fields_still_unanswered(accepted, &given)
+            .map(|f| f.name)
+            .collect();
+        assert_eq!(remaining, vec!["AWS_SESSION_TOKEN", "AWS_REGION"]);
+
+        let nothing_given: Vec<(&'static str, String)> = Vec::new();
+        assert_eq!(
+            fields_still_unanswered(accepted, &nothing_given).count(),
+            accepted.len()
+        );
     }
 
     // remove

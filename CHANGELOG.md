@@ -35,6 +35,31 @@ skip the roll) were re-inserted the same way.
 
 ## [Unreleased]
 
+### Added
+
+- Bedrock is now a first-class provider everywhere the credential chain reaches,
+  not only in a shell with the standard AWS variables exported. `stella auth set
+  bedrock` stores the whole set — access key id, secret access key, optional
+  session token, and region — in `~/.stella/credentials.toml` (new
+  `[credential_fields.<provider>]` section), prompting for each or accepting
+  `--field NAME=VALUE`. `stella auth list` shows which companion values a
+  provider has stored, by name; `stella auth remove` takes them with it.
+- Secure benchmark runs can use Bedrock (#1301). The launcher's credential
+  handover carries a set of secrets instead of exactly one, still over a single
+  unlinked owner-only descriptor that never touches disk or the environment, and
+  the region rides beside it as disclosed routing rather than as a secret. Which
+  AWS credential sources are supported — and which are deliberately excluded
+  (profile files, SSO, IMDS/container roles, web-identity tokens) — is documented
+  in `bench/harbor_adapter/README.md`.
+
+### Fixed
+
+- Auto-detection no longer selects Bedrock when only `AWS_ACCESS_KEY_ID` is set.
+  A shell carrying an unrelated AWS key used to launch a provider that then died
+  with a SigV4 error; it now falls through to the first-run message naming
+  providers that can actually run. `--model bedrock/…` still pins it explicitly
+  and reports the named missing-credential error.
+
 ## [0.6.80] — 2026-08-03
 
 ### Added

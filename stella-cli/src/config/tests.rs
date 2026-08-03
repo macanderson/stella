@@ -228,6 +228,7 @@ fn config_debug_never_leaks_the_api_key() {
         authority: crate::settings::AuthorityPolicy::default(),
         credential_source: Some(stella_model::credential::CredentialSource::EnvVar),
         credential_advisories: Vec::new(),
+        aux_credentials: Default::default(),
     };
     let dbg = format!("{cfg:?}");
     assert!(!dbg.contains(secret), "Config Debug leaked the key: {dbg}");
