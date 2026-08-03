@@ -333,7 +333,7 @@ fn projection_carries_the_frames_content_digest_instead_of_dropping_it() {
     .expect("labeled memory frame projects");
     assert_eq!(recalled.content_digest.as_deref(), Some("sha256:feedface"));
 
-    // A provider that declares none keeps `None`. Per docs/context-reuse.md §1
+    // A provider that declares none keeps `None`. Per docs/design/adaptive-context/context-reuse.md §1
     // such a frame is not verifiable and must be re-queried rather than reused,
     // so the absence is information — recomputing a digest locally would erase
     // it and, since this projection trims the content, would not even agree
@@ -1140,7 +1140,7 @@ async fn reflection_preserves_settled_cost_when_budget_rejects_model_output() {
 
 // ── Spec §8: auto-creation must never clobber a hand-edited file (#737) ──────
 //
-// The guarantee lives in `docs/design/adaptive-context.md` §8. Its two pure
+// The guarantee lives in `docs/design/adaptive-context/adaptive-context.md` §8. Its two pure
 // halves — the per-session cap and the no-clobber comparison itself — are
 // tested in `stella-core/src/skills.rs`, and tombstone suppression is tested
 // in `stella-store/src/forget_tests.rs`. What could not be tested there is the

@@ -21,7 +21,7 @@
 //! proposals mined from what the agent did. They have different authority models —
 //! an explicit instruction in a tracked file needs no distinct-task threshold, while
 //! a mined pattern does — and folding them into one review surface would mean one of
-//! the two gets the wrong gate. See `docs/context-pr.md` §7.
+//! the two gets the wrong gate. See `docs/design/adaptive-context/context-pr.md` §7.
 //!
 //! # The cooldown is the point
 //!

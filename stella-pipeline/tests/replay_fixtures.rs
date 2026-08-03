@@ -9,7 +9,7 @@
 //! pipeline (see `src/pipeline/tests/golden.rs`), and
 //! `tests/reference_conformance.rs` pins what an independent reference engine
 //! must emit before its runs can join them. See
-//! `docs/replay-golden-trajectories.md`.
+//! `docs/design/replay-golden-trajectories.md`.
 
 use std::fs;
 use std::path::PathBuf;

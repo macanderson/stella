@@ -157,7 +157,7 @@ export interface ContextFrameRef {
 
 /**
  * One provider's contribution to a recall's cost, as the CGP usage report
- * defines it (`docs/context-reuse.md` §2 `ProviderUsage`).
+ * defines it (`docs/design/adaptive-context/context-reuse.md` §2 `ProviderUsage`).
  *
  * Distinct from [`ProviderShare`], which counts only the frames that *won*
  * fusion and reached the prompt. This counts what the provider **served to
@@ -190,7 +190,7 @@ export interface ContextProviderUsage {
 
 /**
  * The per-request roll-up of what one context recall cost
- * (`docs/context-reuse.md` §2 `UsageReport`) — the envelope a metering
+ * (`docs/design/adaptive-context/context-reuse.md` §2 `UsageReport`) — the envelope a metering
  * pipeline bills from, and the answer to "what did this turn's context cost,
  * and which sources drove it?".
  *
@@ -1150,7 +1150,7 @@ export type AgentEvent = {
   tokens: number;
   type: "context_recall";
   /**
-   * The CGP usage report for this recall (`docs/context-reuse.md` §2):
+   * The CGP usage report for this recall (`docs/design/adaptive-context/context-reuse.md` §2):
    * per-provider frame counts and token costs against the requested
    * budget, so context cost is meterable rather than merely visible.
    * Optional and defaulted — streams recorded before the report existed

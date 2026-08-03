@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! A real filter, not a level — `docs/design/diagnostics.md` §6.
+//! A real filter, not a level — `docs/design/diagnostics/diagnostics.md` §6.
 //!
 //! `STELLA_SERVE_LOG` is a single level, which `serve-observability.md` §9
 //! knowingly gave up. At seventeen crates that stops being acceptable: `debug`

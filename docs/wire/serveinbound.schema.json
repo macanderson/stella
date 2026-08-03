@@ -248,6 +248,16 @@
             "number",
             "null"
           ]
+        },
+        "tool_result_horizon_steps": {
+          "default": null,
+          "description": "Age-based tool-result retention horizon, in tool-bearing steps\n(`EngineConfig::tool_result_horizon_steps`): results older than this\nmany steps are middle-out aged on every step, independent of the\ncompaction budget (#1285). Clamped to\n[`MAX_TOOL_RESULT_HORIZON_STEPS`]; `0` disables the pass, restoring\npure budget-triggered compaction.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "title": "EngineOverrides",

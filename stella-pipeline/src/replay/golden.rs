@@ -33,7 +33,7 @@
 //!
 //! Encoding the distinction in the fixture (rather than in prose) is what stops
 //! a baseline from being cited as a reference later. See
-//! `docs/replay-golden-trajectories.md` for the recording procedure and for the
+//! `docs/design/replay-golden-trajectories.md` for the recording procedure and for the
 //! adapter contract a reference engine has to satisfy.
 
 use std::fs;

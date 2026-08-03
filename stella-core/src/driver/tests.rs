@@ -3356,6 +3356,7 @@ async fn a_none_ceiling_leaves_tool_dispatch_unbounded() {
 mod audit_fixes;
 mod budget_boundaries;
 mod compute_passes;
+mod context_efficiency;
 mod lifecycle_bus;
 mod steer_midturn;
 mod usage_completeness;

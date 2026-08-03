@@ -180,7 +180,7 @@ pub struct Frontmatter {
     /// refuses to load a rule that has any.
     ///
     /// Why this matters (ADR 0011, Consequences): the parser strips
-    /// indentation, so `docs/context-pr.md` §6.1's own example
+    /// indentation, so `docs/design/adaptive-context/context-pr.md` §6.1's own example
     ///
     /// ```text
     /// scope:

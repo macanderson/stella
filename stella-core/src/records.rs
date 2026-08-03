@@ -7,7 +7,7 @@
 //! disposition, and — for a `hard`-mode record that clears the
 //! [`bridge`] gate — an armed Tier-2 guard.
 //!
-//! The chain the Context PR spec (`docs/context-pr.md` §4) asks for, and where
+//! The chain the Context PR spec (`docs/design/adaptive-context/context-pr.md` §4) asks for, and where
 //! each link lives:
 //!
 //! | Stage | Here |
@@ -124,7 +124,7 @@ pub enum Severity {
 ///
 /// Every variant names a *specific* defect rather than a generic "invalid",
 /// because the output of a check is only actionable if it says what to do
-/// (`docs/context-pr.md` §12: "check output must be concrete and actionable").
+/// (`docs/design/adaptive-context/context-pr.md` §12: "check output must be concrete and actionable").
 #[derive(Debug, Clone, PartialEq)]
 pub enum RecordFinding {
     /// The record was hand-authored without `record_id`/`record_hash`, and the
@@ -227,7 +227,7 @@ impl std::fmt::Display for RecordFinding {
 /// The ratified `applies_to.tasks` vocabulary (ADR 0011 field schema).
 ///
 /// Closed on purpose, resolving the open question in
-/// `docs/context-record-examples/README.md`: an open vocabulary means a typo
+/// `docs/design/adaptive-context/context-record-examples/README.md`: an open vocabulary means a typo
 /// (`intall`) produces a record that matches nothing and reports nothing, which
 /// looks identical to a record whose task simply never came up. A closed list with
 /// a [`RecordFinding::UnknownTask`] warning keeps the typo visible while leaving
@@ -339,7 +339,7 @@ impl std::error::Error for LoadError {}
 /// `organization` has no local location: an organization-scoped record is
 /// published through a repository the organization owns, so it lands in the
 /// repository tree like any other. Nothing here is a provider-hosted workspace
-/// record, which is a separate channel (`docs/context-pr.md` §2).
+/// record, which is a separate channel (`docs/design/adaptive-context/context-pr.md` §2).
 pub fn publication_dir(scope: SharingScope) -> PublicationDir {
     match scope {
         SharingScope::Personal => PublicationDir::User,

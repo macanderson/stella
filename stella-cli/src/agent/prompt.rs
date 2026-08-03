@@ -143,7 +143,7 @@ pub(crate) fn assemble_system_prompt(
     // carrying its `^handle` so the model can name what it followed. Byte-stable by
     // construction — the truth sweep already demoted or dropped anything whose
     // freshness is in question, so no clock and no per-turn text enters here
-    // (docs/context-record-examples/07-agent-projection.md).
+    // (docs/design/adaptive-context/context-record-examples/07-agent-projection.md).
     let rules_section = active_rules
         .registry()
         .render(stella_core::records::Channel::Cached, None)

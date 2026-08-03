@@ -135,7 +135,7 @@ pub fn run_doctor(
     run_doctor_at(&workspace_root, repair, model_override, base_url_override)
 }
 
-/// Print the newest crash dump — `docs/design/diagnostics.md` §7.4.
+/// Print the newest crash dump — `docs/design/diagnostics/diagnostics.md` §7.4.
 ///
 /// The file is content-free by construction (§5.2 makes a record that carries
 /// a prompt, a path, or model output a *compile* error), which is what turns

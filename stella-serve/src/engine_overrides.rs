@@ -72,6 +72,14 @@ pub(crate) struct EngineOverrides {
     /// [`MAX_SUMMARIZE_KEEP_RECENT`].
     #[serde(default)]
     summarize_keep_recent: Option<usize>,
+    /// Age-based tool-result retention horizon, in tool-bearing steps
+    /// (`EngineConfig::tool_result_horizon_steps`): results older than this
+    /// many steps are middle-out aged on every step, independent of the
+    /// compaction budget (#1285). Clamped to
+    /// [`MAX_TOOL_RESULT_HORIZON_STEPS`]; `0` disables the pass, restoring
+    /// pure budget-triggered compaction.
+    #[serde(default)]
+    tool_result_horizon_steps: Option<u64>,
     /// Seconds of provider silence that end a single generation
     /// (`EngineConfig::model_timeout`). Clamped to
     /// [`MAX_MODEL_TIMEOUT_SECS`]; `0` disables the backstop.
@@ -107,6 +115,11 @@ const MAX_COMPACTION_BUDGET_TOKENS: u64 = 2_000_000;
 /// the knob is indistinguishable from disabling the summarizer, which
 /// `summarize_overflow: false` already spells honestly.
 const MAX_SUMMARIZE_KEEP_RECENT: usize = 1_024;
+
+/// Ceiling on a caller-supplied `engine.tool_result_horizon_steps`. Beyond
+/// this the knob is indistinguishable from disabling retention, which `0`
+/// already spells honestly — same posture as [`MAX_SUMMARIZE_KEEP_RECENT`].
+const MAX_TOOL_RESULT_HORIZON_STEPS: u64 = 1_024;
 
 /// Ceiling on a caller-supplied `engine.model_timeout_secs`: six hours, far
 /// above the longest single generation any model produces today, while keeping
@@ -212,6 +225,19 @@ pub(crate) fn apply_engine_overrides(
         }
         config.summarize_keep_recent = effective;
     }
+    if let Some(requested) = overrides.tool_result_horizon_steps {
+        let effective = requested.min(MAX_TOOL_RESULT_HORIZON_STEPS);
+        if effective != requested {
+            clamped.push(ClampedKnob {
+                knob: "tool_result_horizon_steps",
+                requested: requested as f64,
+                effective: effective as f64,
+            });
+        }
+        // `0` disables the pass — a deliberate opt-out, not a spelling of
+        // "absent" (which keeps the server's configured default).
+        config.tool_result_horizon_steps = (effective > 0).then_some(effective as usize);
+    }
     if let Some(requested) = overrides.model_timeout_secs {
         let effective = requested.min(MAX_MODEL_TIMEOUT_SECS);
         if effective != requested {
@@ -266,6 +292,7 @@ mod tests {
             "compaction_budget_tokens": 200_000,
             "summarize_overflow": false,
             "summarize_keep_recent": 16,
+            "tool_result_horizon_steps": 6,
             "model_timeout_secs": 1572,
             "params": { "top_p": 0.9 },
         }))
@@ -279,6 +306,7 @@ mod tests {
         assert_eq!(config.compaction_budget_tokens, 200_000);
         assert!(!config.summarize_overflow);
         assert_eq!(config.summarize_keep_recent, 16);
+        assert_eq!(config.tool_result_horizon_steps, Some(6));
         assert_eq!(config.model_timeout, Some(Duration::from_secs(1572)));
         assert_eq!(config.params.and_then(|p| p.top_p), Some(0.9));
         // The knobs the caller did not send keep their defaults.
@@ -295,6 +323,7 @@ mod tests {
             "max_output_tokens": u32::MAX,
             "compaction_budget_tokens": u64::MAX,
             "summarize_keep_recent": 1_000_000,
+            "tool_result_horizon_steps": u64::MAX,
             "model_timeout_secs": u64::MAX,
         }))
         .expect("large values still parse");
@@ -308,6 +337,7 @@ mod tests {
                 "max_output_tokens",
                 "compaction_budget_tokens",
                 "summarize_keep_recent",
+                "tool_result_horizon_steps",
                 "model_timeout_secs",
             ],
             "every lowered knob must be named"
@@ -319,6 +349,10 @@ mod tests {
             MAX_COMPACTION_BUDGET_TOKENS
         );
         assert_eq!(config.summarize_keep_recent, MAX_SUMMARIZE_KEEP_RECENT);
+        assert_eq!(
+            config.tool_result_horizon_steps,
+            Some(MAX_TOOL_RESULT_HORIZON_STEPS as usize)
+        );
         assert_eq!(
             config.model_timeout,
             Some(Duration::from_secs(MAX_MODEL_TIMEOUT_SECS))
@@ -375,6 +409,25 @@ mod tests {
         assert!(
             EngineConfig::default().model_timeout.is_some(),
             "the default must be bounded, or this test proves nothing"
+        );
+    }
+
+    /// Same third state for the retention horizon: `0` disables the pass
+    /// (`EngineConfig` spells that as `None`), it does not mean "age
+    /// everything instantly" and it is not a spelling of "absent".
+    #[test]
+    fn a_zero_retention_horizon_disables_the_pass() {
+        let mut config = EngineConfig::default();
+        let overrides: EngineOverrides =
+            serde_json::from_value(serde_json::json!({ "tool_result_horizon_steps": 0 }))
+                .expect("parses");
+        let clamped =
+            apply_engine_overrides(&mut config, &overrides).expect("zero is a legal request");
+        assert!(clamped.is_empty(), "zero is under the ceiling, not past it");
+        assert_eq!(config.tool_result_horizon_steps, None);
+        assert!(
+            EngineConfig::default().tool_result_horizon_steps.is_some(),
+            "the default must retain, or this test proves nothing"
         );
     }
 

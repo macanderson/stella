@@ -148,6 +148,17 @@ pub struct EngineConfig {
     /// drift-corrected estimate, so this budget is honored in the model's
     /// own observed tokens rather than raw heuristic tokens.
     pub compaction_budget_tokens: u64,
+    /// Age-based tool-result retention (#1285): results older than this many
+    /// tool-bearing steps are middle-out aged on every step, batched so the
+    /// prompt-cache prefix is rewritten once per several steps rather than
+    /// per step (`compaction::RETENTION_MIN_BATCH`). This is what holds the
+    /// standing context roughly flat through a long turn — the budget above
+    /// fires only near the context ceiling, which on a long trial is the very
+    /// end of exactly the runs it should have shaped from the middle
+    /// (measured: 4× more input per step than a comparator that trims old
+    /// tool output, and ~quadratic total input growth). `None` disables the
+    /// pass, restoring pure budget-triggered compaction.
+    pub tool_result_horizon_steps: Option<usize>,
     /// When eviction/dedup/aging alone cannot reach the compaction budget
     /// (the oversized content is protected user/assistant text, or already
     /// stubbed), replace the oldest span of the conversation with a
@@ -336,6 +347,11 @@ impl Default for EngineConfig {
             retry_policy: RetryPolicy::standard(),
             loop_detection: LoopDetectionConfig::default(),
             compaction_budget_tokens: 150_000,
+            // Eight tool-bearing steps of verbatim results, matching
+            // `summarize_keep_recent`'s notion of "the recent work the model
+            // is actively reasoning over". Older results keep head+tail; the
+            // stub says how to re-fetch the rest.
+            tool_result_horizon_steps: Some(8),
             summarize_overflow: true,
             summarize_keep_recent: 8,
             max_steps: 200,
@@ -1327,7 +1343,11 @@ impl<'a> Engine<'a> {
         // returns the count it already computed on every path — including both
         // `None` paths, the common case — so this walks the transcript once per
         // step rather than eagerly re-deriving a number the callee just discarded.
-        let (after_tokens, report) = compact_measured(messages, compaction_budget);
+        let retention = self
+            .config
+            .tool_result_horizon_steps
+            .map(|keep_recent_steps| crate::compaction::RetentionPolicy { keep_recent_steps });
+        let (after_tokens, report) = compact_measured(messages, compaction_budget, retention);
         if let Some(report) = report {
             // `Some` means a pass actually stubbed, aged or superseded something,
             // so positions at or after the first rewrite name different bytes now.
@@ -2163,7 +2183,14 @@ impl<'a> Engine<'a> {
         }
         messages.push(CompletionMessage {
             role: MessageRole::Assistant,
-            content: result.text.clone(),
+            // The elision discipline holds on the abort path too: a resumed
+            // session reloads this vec, and a truncated partial retained
+            // whole here is re-sent on its every later step.
+            content: if result.finish_reason == Some(FinishReason::Length) {
+                truncation::retained_partial(&result.text)
+            } else {
+                result.text.clone()
+            },
             tool_calls: result.tool_calls.clone(),
             tool_results: Vec::new(),
             attachments: Vec::new(),
@@ -2361,9 +2388,16 @@ impl<'a> Engine<'a> {
             } else {
                 result.text
             };
+            // History keeps the elided form of a truncated partial; the
+            // outcome below keeps it whole (`retained_partial`'s contract).
+            let retained = if result.finish_reason == Some(FinishReason::Length) {
+                truncation::retained_partial(&text)
+            } else {
+                text.clone()
+            };
             messages.push(CompletionMessage {
                 role: MessageRole::Assistant,
-                content: text.clone(),
+                content: retained,
                 tool_calls: Vec::new(),
                 tool_results: Vec::new(),
                 attachments: Vec::new(),
@@ -2383,7 +2417,15 @@ impl<'a> Engine<'a> {
 
         messages.push(CompletionMessage {
             role: MessageRole::Assistant,
-            content: result.text.clone(),
+            // A length-truncated step that still carried tool calls proceeds
+            // normally — but its narration was cut off mid-stream, and
+            // retained whole it is the same compounding debris as a tool-less
+            // truncation (`retained_partial`). A natural stop keeps its text.
+            content: if result.finish_reason == Some(FinishReason::Length) {
+                truncation::retained_partial(&result.text)
+            } else {
+                result.text.clone()
+            },
             tool_calls: result.tool_calls.clone(),
             tool_results: Vec::new(),
             attachments: Vec::new(),

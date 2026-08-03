@@ -22,7 +22,7 @@
 //! `review` shows what the ingest run already decided, `validate` re-runs
 //! declarative filesystem probes, and `keep` writes a TOML file and appends a line
 //! to a ledger. The local-first solo path is a requirement, not a convenience
-//! (`docs/context-pr.md` §18: no centralized service for the solo path).
+//! (`docs/design/adaptive-context/context-pr.md` §18: no centralized service for the solo path).
 //!
 //! # Two proposal substrates, deliberately separate
 //!

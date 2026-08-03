@@ -158,7 +158,7 @@ fn file_neighborhood_round_trips_through_serde() {
     assert_eq!(hood, back);
 }
 
-/// WITNESS (#451, `docs/context-reuse.md` §1): every graph frame declares a
+/// WITNESS (#451, `docs/design/adaptive-context/context-reuse.md` §1): every graph frame declares a
 /// `content_digest` over exactly the bytes it carries inline. Without one the
 /// frame is *not verifiable* and a host must re-query it rather than reuse it
 /// (D4) — forfeiting the byte-stable prefix canonical composition buys.

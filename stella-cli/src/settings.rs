@@ -439,6 +439,28 @@ pub struct AgentEngineConfig {
     /// cap can take to produce at the model's observed throughput.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_timeout_secs: Option<u64>,
+    /// Conversation-size ceiling that triggers compaction, in estimated
+    /// tokens (`stella_core::EngineConfig::compaction_budget_tokens`). Absent
+    /// keeps the engine default, which is what every run used before this key
+    /// existed. Whatever is set here is still clamped to 3/4 of the resolved
+    /// model's context window — a budget above the window is a provider-side
+    /// overflow scheduled in advance, never a legal configuration.
+    ///
+    /// This existed only as an engine constant (and a `stella-serve`
+    /// override): a benchmark arm could not move it without a rebuild, which
+    /// made context-handling experiments system-under-test changes rather
+    /// than posture keys (#1285).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction_budget_tokens: Option<u64>,
+    /// Age-based tool-result retention horizon, in tool-bearing steps
+    /// (`stella_core::EngineConfig::tool_result_horizon_steps`): results
+    /// older than this many steps are middle-out aged on every step,
+    /// independent of the compaction budget. Absent keeps the engine
+    /// default; `0` disables the pass entirely (the same "0 opts out"
+    /// convention as `model_timeout_secs`), restoring pure budget-triggered
+    /// compaction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_result_horizon_steps: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents: Option<AgentEngineAgents>,
 }
@@ -617,6 +639,8 @@ impl AgentEngineConfig {
         take!(pipeline_max_revisions);
         take!(pipeline_candidates);
         take!(model_timeout_secs);
+        take!(compaction_budget_tokens);
+        take!(tool_result_horizon_steps);
         if let Some(agents) = &other.agents {
             let target = self.agents.get_or_insert_with(AgentEngineAgents::default);
             for kind in EngineAgentKind::ALL {
@@ -1020,7 +1044,7 @@ impl RewardSettings {
 pub struct UiSettings {
     /// The TUI colour theme slug (`stella-dark` | `stella-light`). Unset — or
     /// unrecognised — falls back to the default (`stella-dark`, Phosphor Gold
-    /// on Ink; the comet brand kit at `docs/brand/BRAND.md`).
+    /// on Ink; the comet brand kit at `docs/brand/README.md`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
 }

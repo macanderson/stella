@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
 //! Wiring the diagnostic plane into the binary — slice 2 of
-//! `docs/design/diagnostics.md`, "the moment the project can say *attach the
+//! `docs/design/diagnostics/diagnostics.md`, "the moment the project can say *attach the
 //! log*".
 //!
 //! Before this, three failures were each indistinguishable from success

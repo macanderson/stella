@@ -31,7 +31,7 @@ const MAX_ANCHORS_PER_MEMORY: usize = 8;
 /// Extract file anchors from memory text. Two shapes count:
 ///
 /// * **Rooted paths** — `word/word[/word…]` with a recognized source
-///   extension, e.g. `stella-cli/src/agent.rs`, `docs/context-reuse.md`.
+///   extension, e.g. `stella-cli/src/agent.rs`, `docs/design/adaptive-context/context-reuse.md`.
 ///   These resolve against the workspace root directly.
 /// * **Bare filenames** — a name with a recognized extension and no
 ///   directory at all, e.g. `slash_models_witness.rs`, `Cargo.toml`.

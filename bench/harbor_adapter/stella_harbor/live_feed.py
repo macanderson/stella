@@ -95,7 +95,7 @@ class _EventsCache:
     @staticmethod
     def _reduce(path: Path) -> dict[str, Any] | None:
         tools = steps = reasoning = cap_hits = 0
-        in_tok = out_tok = 0
+        in_tok = out_tok = cached_tok = cache_write_tok = 0
         cost = 0.0
         reported_finish = False
         judge_passed: bool | None = None
@@ -120,6 +120,14 @@ class _EventsCache:
                         steps += 1
                         in_tok += int(event.get("input_tokens") or 0)
                         out_tok += int(event.get("output_tokens") or 0)
+                        # The cached/uncached split is the whole question in a
+                        # same-model comparison (#1285): two arms with equal
+                        # input_tokens but 5% vs 80% hit rates are different
+                        # harnesses, and until these sums existed the table
+                        # rendered them identically — cost_usd was the only
+                        # (opaque) place the difference surfaced.
+                        cached_tok += int(event.get("cached_input_tokens") or 0)
+                        cache_write_tok += int(event.get("cache_write_tokens") or 0)
                         cost += float(event.get("cost_usd") or 0.0)
                         finish_reason = event.get("finish_reason")
                         if isinstance(finish_reason, str):
@@ -148,6 +156,8 @@ class _EventsCache:
             "reasoning": reasoning,
             "input_tokens": in_tok,
             "output_tokens": out_tok,
+            "cached_input_tokens": cached_tok,
+            "cache_write_tokens": cache_write_tok,
             "cost_usd": round(cost, 4),
             "cap_hits": cap_hits,
             # Which route produced `cap_hits`. A reader comparing arms or
@@ -176,6 +186,10 @@ def trial_view(trial_dir: Path, events_cache: _EventsCache) -> dict[str, Any]:
         "tools": None,
         "input_tokens": None,
         "output_tokens": None,
+        # None until either source speaks: a trial with no telemetry makes no
+        # cache claim, the same discipline as `cap_hits_source` below.
+        "cached_input_tokens": None,
+        "cache_write_tokens": None,
         "cost_usd": None,
         "wall_s": None,
         "age_s": None,
@@ -205,6 +219,9 @@ def trial_view(trial_dir: Path, events_cache: _EventsCache) -> dict[str, Any]:
             view["output_tokens"] = metrics.get(
                 "total_completion_tokens", view["output_tokens"]
             )
+            view["cached_input_tokens"] = metrics.get(
+                "total_cached_tokens", view["cached_input_tokens"]
+            )
             view["cost_usd"] = metrics.get("total_cost_usd", view["cost_usd"])
 
     if events is not None:
@@ -215,6 +232,8 @@ def trial_view(trial_dir: Path, events_cache: _EventsCache) -> dict[str, Any]:
             tools=events["tools"] if events["tools"] or view["tools"] is None else view["tools"],
             input_tokens=events["input_tokens"] or view["input_tokens"],
             output_tokens=events["output_tokens"] or view["output_tokens"],
+            cached_input_tokens=events["cached_input_tokens"] or view["cached_input_tokens"],
+            cache_write_tokens=events["cache_write_tokens"] or view["cache_write_tokens"],
             cost_usd=events["cost_usd"] or view["cost_usd"],
             age_s=events["age_s"],
             cap_hits=events["cap_hits"],
@@ -289,6 +308,8 @@ def _totals(rows: list[dict[str, Any]], arm: str) -> dict[str, Any]:
         "tools": sum(v["tools"] or 0 for v in views),
         "input_tokens": sum(v["input_tokens"] or 0 for v in views),
         "output_tokens": sum(v["output_tokens"] or 0 for v in views),
+        "cached_input_tokens": sum(v["cached_input_tokens"] or 0 for v in views),
+        "cache_write_tokens": sum(v["cache_write_tokens"] or 0 for v in views),
         "cost_usd": round(sum(v["cost_usd"] or 0.0 for v in views), 4),
         "wall_s": sum(v["wall_s"] or 0 for v in views),
         "cap_hits": sum(v["cap_hits"] or 0 for v in views),
@@ -356,9 +377,18 @@ def render(snapshot: dict[str, Any]) -> str:
         cap_hits = f"{totals['cap_hits']}"
         if cap_source:
             cap_hits += f" ({cap_source})"
+        # Input is reported with its cached share beside it: on a same-model
+        # A/B run the cached/uncached split is the harness-efficiency signal
+        # (#1285), and a bare input total hides an arm whose cache never hit.
+        cached_pct = (
+            f" ({100 * totals['cached_input_tokens'] // totals['input_tokens']}% cached)"
+            if totals["input_tokens"]
+            else ""
+        )
         lines.append(
             f"{arm.upper()} totals: {totals['passed']}/{totals['done']} passed "
             f"(of {totals['trials']}), tools {totals['tools']}, "
+            f"in {totals['input_tokens'] // 1000}k{cached_pct}, "
             f"out {totals['output_tokens'] // 1000}k tok, ${totals['cost_usd']:.2f}, "
             f"wall {totals['wall_s']}s, cap-hits {cap_hits}"
         )
@@ -376,11 +406,12 @@ let c=v.status!=="done"?"r":(v.resolved?"p":"f");
 return `<td class=${c}>${s}</td><td>${v.steps??"-"}/${v.tools??"-"}</td>`+
 `<td>${((v.output_tokens||0)/1000).toFixed(1)}k</td><td>$${(v.cost_usd||0).toFixed(2)}</td>`+
 `<td>${v.wall_s??""}${v.cap_hits?" ⚠cap":""}${v.tools===0&&v.status==="done"?" ∅tools":""}</td>`};
+const cachePct=t=>t.input_tokens?` ${Math.floor(100*t.cached_input_tokens/t.input_tokens)}%c`:"";
 async function tick(){const s=await (await fetch("state.json")).json();
 const ta=s.totals.a,tb=s.totals.b;
 document.getElementById("h").textContent=
-`${s.arms.a}  ${ta.passed}/${ta.done} pass  ${ta.tools} tools  ${(ta.output_tokens/1000).toFixed(0)}k tok  $${ta.cost_usd.toFixed(2)}  ||  `+
-`${s.arms.b}  ${tb.passed}/${tb.done} pass  ${tb.tools} tools  ${(tb.output_tokens/1000).toFixed(0)}k tok  $${tb.cost_usd.toFixed(2)}`;
+`${s.arms.a}  ${ta.passed}/${ta.done} pass  ${ta.tools} tools  in ${(ta.input_tokens/1e6).toFixed(1)}M${cachePct(ta)}  ${(ta.output_tokens/1000).toFixed(0)}k out  $${ta.cost_usd.toFixed(2)}  ||  `+
+`${s.arms.b}  ${tb.passed}/${tb.done} pass  ${tb.tools} tools  in ${(tb.input_tokens/1e6).toFixed(1)}M${cachePct(tb)}  ${(tb.output_tokens/1000).toFixed(0)}k out  $${tb.cost_usd.toFixed(2)}`;
 document.getElementById("t").innerHTML=
 "<tr><th>task</th><th colspan=5>A: "+s.arms.a+"</th><th colspan=5>B: "+s.arms.b+"</th></tr>"+
 s.rows.map(r=>`<tr><td>${r.task}</td>${cell(r.a)}${cell(r.b)}</tr>`).join("")}

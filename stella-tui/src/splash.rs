@@ -10,7 +10,7 @@
 //! done — even mid-fade. If there is no init to cover, it is gone in well
 //! under a second.
 //!
-//! What it draws is the comet identity's lockup (`docs/brand/BRAND.md`): the
+//! What it draws is the comet identity's lockup (`docs/brand/README.md`): the
 //! chevron, the `stella` wordmark, and the gold block cursor — plus the build
 //! version and the resolved model once one is known. Colours come from
 //! [`crate::theme`]'s semantic roles, never from raw palette constants, so

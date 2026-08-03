@@ -7,7 +7,7 @@
 //! The port is the whole point, and it is inherited unchanged from
 //! `serve-observability.md`: emission is typed and every site talks to
 //! [`Dx`](crate::Dx), so adopting `tracing` later is **one more impl in this
-//! file and no emit site touched**. `docs/design/diagnostics.md` §10 is that
+//! file and no emit site touched**. `docs/design/diagnostics/diagnostics.md` §10 is that
 //! deferral re-argued at workspace scope, and it lands on `tracing` arriving as
 //! an off-by-default `otel` cargo feature — which is exactly one more `impl
 //! Sink`.

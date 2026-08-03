@@ -2,7 +2,7 @@
 
 The **diagnostic plane**: the stream that answers *why did the program behave
 this way?* Design:
-[`../docs/design/diagnostics.md`](../docs/design/diagnostics.md), which
+[`../docs/design/diagnostics/diagnostics.md`](../docs/design/diagnostics/diagnostics.md), which
 generalises the shipped, crate-scoped
 [`../docs/design/serve-observability.md`](../docs/design/serve-observability.md)
 to the whole workspace.

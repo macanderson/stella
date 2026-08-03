@@ -203,7 +203,7 @@ pub struct ProviderShare {
 }
 
 /// One provider's contribution to a recall's cost, as the CGP usage report
-/// defines it (`docs/context-reuse.md` §2 `ProviderUsage`).
+/// defines it (`docs/design/adaptive-context/context-reuse.md` §2 `ProviderUsage`).
 ///
 /// Distinct from [`ProviderShare`], which counts only the frames that *won*
 /// fusion and reached the prompt. This counts what the provider **served to
@@ -228,7 +228,7 @@ pub struct ContextProviderUsage {
 }
 
 /// The per-request roll-up of what one context recall cost
-/// (`docs/context-reuse.md` §2 `UsageReport`) — the envelope a metering
+/// (`docs/design/adaptive-context/context-reuse.md` §2 `UsageReport`) — the envelope a metering
 /// pipeline bills from, and the answer to "what did this turn's context cost,
 /// and which sources drove it?".
 ///
@@ -255,7 +255,7 @@ pub struct ContextUsage {
 
 impl ContextUsage {
     /// Whether the report re-sums: `budget_consumed` must equal the summed
-    /// per-provider `token_cost` (`docs/context-reuse.md` §2, the arithmetic
+    /// per-provider `token_cost` (`docs/design/adaptive-context/context-reuse.md` §2, the arithmetic
     /// identity). A metering pipeline checks this before trusting a total, so
     /// a corrupted number is a checkable failure rather than a silent misbill.
     ///

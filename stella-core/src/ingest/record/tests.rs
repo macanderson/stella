@@ -1,6 +1,6 @@
 //! Schema fidelity and identity tests for the TOML context-record surface.
 //!
-//! The real `docs/context-record-examples/*.toml` files use *bare* TOML
+//! The real `docs/design/adaptive-context/context-record-examples/*.toml` files use *bare* TOML
 //! datetimes; the surface types store timestamps as strings (module docs), so
 //! these tests round-trip through TOML with quoted timestamps — the normalized
 //! form the ingest command emits — and parse a `05`-shaped proposal file to prove

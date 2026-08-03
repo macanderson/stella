@@ -4,7 +4,7 @@
 //! The **diagnostic plane**: why the program behaved the way it did.
 //!
 //! Stella has four observability planes and, until this crate, had built
-//! three. `docs/design/diagnostics.md` §2 is the table:
+//! three. `docs/design/diagnostics/diagnostics.md` §2 is the table:
 //!
 //! | Plane | Question it answers | Where it lives |
 //! |---|---|---|

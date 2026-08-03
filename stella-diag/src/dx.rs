@@ -3,7 +3,7 @@
 
 //! The emitter every call site talks to, and the macro that builds a record.
 //!
-//! [`Dx`] is a **handle, not a global**. `docs/design/diagnostics.md` §7.1 is
+//! [`Dx`] is a **handle, not a global**. `docs/design/diagnostics/diagnostics.md` §7.1 is
 //! the reason: invariant 2 already banned ambient state, so a diagnostic
 //! handle rides as an explicit parameter exactly like every other input a
 //! decision function receives. Nothing here is a thread-local or a task-local,

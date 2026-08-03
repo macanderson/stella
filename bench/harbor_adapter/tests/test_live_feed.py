@@ -53,6 +53,69 @@ _CAP_STEP = {
 }
 
 
+def test_cached_input_split_survives_the_reduction(tmp_path: Path) -> None:
+    """#1285: the cached/uncached input split must reach the table.
+
+    Two arms with identical input_tokens but opposite hit rates are different
+    harnesses; before the split was carried, ``_reduce`` summed only
+    ``input_tokens`` and the difference surfaced nowhere but ``cost_usd``.
+    """
+    cached_step = {
+        **_STEP,
+        "input_tokens": 10_000,
+        "cached_input_tokens": 8_000,
+        "cache_write_tokens": 1_500,
+    }
+    trial = _write_trial(
+        tmp_path,
+        "j-armA",
+        "regex-log",
+        events=[cached_step, cached_step, {"type": "complete"}],
+    )
+    view = trial_view(trial, _EventsCache())
+    assert view["input_tokens"] == 20_000
+    assert view["cached_input_tokens"] == 16_000
+    assert view["cache_write_tokens"] == 3_000
+
+    snapshot = state(tmp_path, "j-armA", "j-armB", _EventsCache())
+    totals = snapshot["totals"]["a"]
+    assert totals["cached_input_tokens"] == 16_000
+    assert totals["cache_write_tokens"] == 3_000
+    # The rendered footer names the split — 16k of 20k is 80%.
+    assert "(80% cached)" in render(snapshot)
+
+
+def test_a_trial_with_no_telemetry_makes_no_cache_claim(tmp_path: Path) -> None:
+    # Same discipline as cap_hits_source: absent telemetry is not a
+    # truthful zero.
+    trial = _write_trial(tmp_path, "j-armA", "regex-log", result={"reward": 1})
+    view = trial_view(trial, _EventsCache())
+    assert view["cached_input_tokens"] is None
+    assert view["cache_write_tokens"] is None
+
+
+def test_archived_trajectory_supplies_the_cached_total(tmp_path: Path) -> None:
+    # An archived bundle with no event stream still carries the split via
+    # ATIF's final_metrics (total_cached_tokens), so the trajectory-only
+    # path must read it.
+    trial = _write_trial(
+        tmp_path,
+        "j-armB",
+        "extract-elf",
+        trajectory={
+            "steps": [],
+            "final_metrics": {
+                "total_prompt_tokens": 30_000,
+                "total_completion_tokens": 2_000,
+                "total_cached_tokens": 24_000,
+            },
+        },
+    )
+    view = trial_view(trial, _EventsCache())
+    assert view["input_tokens"] == 30_000
+    assert view["cached_input_tokens"] == 24_000
+
+
 def test_running_trial_reads_from_the_event_stream(tmp_path: Path) -> None:
     trial = _write_trial(
         tmp_path,
