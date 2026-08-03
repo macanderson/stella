@@ -25,6 +25,8 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use stella_core::EngineConfig;
+use stella_core::bus::{HookBus, names as bus_names};
+use stella_core::driver::lifecycle::{turn_outcome_payload, turn_started_payload};
 use stella_engine::{
     BudgetGuard, CancelToken, Engine, EventSender, StepOutcome, TurnOutcome, step_cap_reason,
 };
@@ -105,6 +107,25 @@ pub struct SessionSpec {
     /// named a sink outright has said exactly where its checkpoints go, and
     /// this field is the server's convenience, not an override of it.
     pub checkpoint: Option<crate::checkpoint::TurnCheckpoint>,
+    /// The operator's hook plane for this turn (#1298), installed on a
+    /// freshly-minted `HookBus` before the first step runs.
+    ///
+    /// Empty — the default, and what the shipping binary uses — mints no bus
+    /// at all, so every engine emit site stays behind its `if let Some(bus)`
+    /// and a turn pays nothing for hooks nobody registered.
+    ///
+    /// **Operator-supplied only.** Nothing on the wire reaches this field;
+    /// see `crate::extensions` for why that boundary is where it is.
+    pub extensions: crate::extensions::Extensions,
+    /// Where this turn's `(estimated, actual)` token pairs are recorded, and
+    /// the correction it estimates under (#1298).
+    ///
+    /// Shared with the server's registry rather than owned per turn, because
+    /// calibration is only useful *across* turns: a map minted here would be
+    /// discarded before it cleared its three-sample floor. `None` is the
+    /// pre-#1298 behavior — the turn estimates uncorrected and contributes no
+    /// samples.
+    pub calibration: Option<Arc<stella_core::estimator::CalibrationMap>>,
 }
 
 /// The settlement callback a session owner installs on a turn — see
@@ -462,6 +483,7 @@ async fn drive_turn(
     budget: BudgetGuard,
     events: &mpsc::UnboundedSender<AgentEvent>,
     cancel: CancelToken,
+    bus: Option<&HookBus>,
 ) -> DrivenTurn {
     let events = EventSender::new(events.clone());
     // The stage marker `run_turn` opens with. Emitted here for the same
@@ -472,6 +494,18 @@ async fn drive_turn(
         name: StageKind::Execute,
     });
     let max_steps = engine.max_steps();
+    // The turn *boundary* on the hook bus, which `run_step` cannot emit — it
+    // is per-step, and a turn is what a host driving steps assembles itself
+    // (#1298). Same argument as the stage marker above and the step-cap exit
+    // below: this loop owns exactly the framing `run_turn_with_sender` owns,
+    // and it emits it through `run_turn`'s own payload shapers so the two
+    // drivers cannot say the same thing differently.
+    if let Some(bus) = bus {
+        bus.emit_named(
+            bus_names::AGENT_TURN_STARTED,
+            turn_started_payload(messages.len(), max_steps, engine.call_role()),
+        );
+    }
     let mut state = engine.new_turn(messages, budget).with_cancel_token(cancel);
 
     let outcome = loop {
@@ -519,6 +553,18 @@ async fn drive_turn(
         }
     };
 
+    // Every exit above lands here — including the step-cap backstop, whose
+    // turn is exactly the runaway an observer most wants paired with its
+    // `started`. Emitting from the individual breaks instead would be one
+    // added early return away from a silently unpaired boundary, which is the
+    // same reasoning that put `agent.step.completed` in a wrapper rather than
+    // at each of `run_step_inner`'s dozen exits.
+    if let Some(bus) = bus {
+        bus.emit_named(
+            bus_names::AGENT_TURN_COMPLETED,
+            turn_outcome_payload(&outcome, state.step()),
+        );
+    }
     let budget = *state.budget();
     DrivenTurn {
         outcome,
@@ -569,6 +615,17 @@ fn run_session(
     };
 
     runtime.block_on(async move {
+        // Minted before the ports, because the tool port carries it: the
+        // `tool.call.requested` chain has to run before a request frame
+        // leaves, and installing extensions afterwards would open a window in
+        // which a turn ran ungated. `None` when the operator installed
+        // nothing — see `crate::extensions`.
+        //
+        // Keyed on the `TurnRef`, which is the turn id already truncated for
+        // recording. Every sealed `HookEvent` embeds that key in its own id,
+        // so the hook plane inherits the same posture as the record plane —
+        // enough to correlate a turn, never enough to address one.
+        let bus = crate::extensions::install_for_turn(&spec.extensions, turn.to_string());
         let provider = RemoteProvider::new(
             spec.provider_id,
             frame_tx.clone(),
@@ -580,6 +637,7 @@ fn run_session(
             frame_tx.clone(),
             pending.clone(),
             spec.reverse_request_timeout,
+            bus.clone(),
         );
         let sleeper = TokioSleeper;
         // The controls' receiver half is lent to the engine for the turn: the
@@ -587,9 +645,18 @@ fn run_session(
         // drains `POST /steer` messages into the transcript at the same
         // boundary. The sender half stays on the registry entry.
         let (gate, steering) = control_ports.into_ports();
-        let engine = Engine::with_sleeper(&provider, &tools, spec.config, &sleeper)
+        let mut engine = Engine::with_sleeper(&provider, &tools, spec.config, &sleeper)
             .with_gate(&gate)
             .with_steering(&*steering);
+        // Both attachments are by reference for the engine's lifetime, so the
+        // owners have to outlive it — hence the bindings above rather than
+        // temporaries here.
+        if let Some(bus) = &bus {
+            engine = engine.with_bus(bus);
+        }
+        if let Some(calibration) = &spec.calibration {
+            engine = engine.with_calibration(calibration);
+        }
 
         // The engine emits `AgentEvent`s; wrap each as a frame for the host. The
         // reverse-RPC request frames bypass this and go straight to `frame_tx`
@@ -615,7 +682,15 @@ fn run_session(
             fold.finish()
         });
 
-        let outcome = drive_turn(&engine, spec.messages, spec.budget, &event_tx, cancel).await;
+        let outcome = drive_turn(
+            &engine,
+            spec.messages,
+            spec.budget,
+            &event_tx,
+            cancel,
+            bus.as_ref(),
+        )
+        .await;
         let messages = outcome.messages;
         let budget = outcome.budget;
         let outcome = outcome.outcome;

@@ -188,6 +188,19 @@ pub struct ServeConfig {
     /// deployment decision (a mounted volume, a replicated table) that this
     /// crate cannot guess and must not invent — see `crate::checkpoint`.
     pub checkpoints: Option<Arc<dyn crate::checkpoint::CheckpointStore>>,
+    /// The operator's hook extensions, installed on every served turn (#1298).
+    ///
+    /// Empty — the default, and what the shipping binary ships — is the
+    /// pre-#1298 behavior exactly: no bus is minted and no turn pays for a
+    /// boundary nobody observes.
+    ///
+    /// **Set here and nowhere else.** No route registers, names or configures
+    /// an extension, and that is a deliberate security boundary rather than an
+    /// unfinished one: the bearer token authenticates a *host*, and a host
+    /// that could install a handler could read every tool call's raw input and
+    /// `Deny` its way into steering the engine. `crate::extensions` states the
+    /// rule and what each hook kind may do.
+    pub extensions: crate::extensions::Extensions,
 }
 
 /// The default [`ServeConfig::resume_grace`]: thirty seconds.
@@ -244,7 +257,22 @@ impl ServeConfig {
             allowed_hosts: Vec::new(),
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
             checkpoints: None,
+            extensions: crate::extensions::Extensions::new(),
         }
+    }
+
+    /// Install an operator hook extension on every turn this server runs
+    /// (#1298).
+    ///
+    /// Order matters and is preserved: blocking policy handlers run in
+    /// registration order and the chain stops at the first `Deny`, so the
+    /// extension registered first is the one that gets to refuse first. See
+    /// [`ServeConfig::extensions`] for who may call this and why nobody else
+    /// can.
+    #[must_use]
+    pub fn with_extension(mut self, extension: Arc<dyn crate::extensions::ServeExtension>) -> Self {
+        self.extensions.push(extension);
+        self
     }
 
     /// Make served turns durable by writing their resume points to `store`.
@@ -391,6 +419,17 @@ pub(crate) struct ServerState {
     /// See [`ServeConfig::checkpoints`]. `None` leaves every turn's
     /// `checkpoint_sink` unset, which is exactly today's behavior.
     checkpoints: Option<Arc<dyn crate::checkpoint::CheckpointStore>>,
+    /// See [`ServeConfig::extensions`]. Cloned onto every `SessionSpec` — one
+    /// `Arc` bump per turn, and the same handler set for every turn, which is
+    /// what makes "the operator decides" checkable rather than per-request.
+    extensions: crate::extensions::Extensions,
+    /// Token-drift state, shared across every turn in the process (#1298).
+    ///
+    /// Server-owned rather than session-owned because calibration is only
+    /// useful across turns — a per-turn map would be discarded before it
+    /// cleared its sample floor — and because `GET /v1/calibration` has to
+    /// read it from outside any turn.
+    calibration: crate::calibration::CalibrationRegistry,
 }
 
 impl ServerState {
@@ -409,6 +448,18 @@ impl ServerState {
     /// The configured checkpoint store, if this deployment has one.
     pub(crate) fn checkpoints(&self) -> Option<&Arc<dyn crate::checkpoint::CheckpointStore>> {
         self.checkpoints.as_ref()
+    }
+
+    /// The operator's hook extensions, for the `SessionSpec` of a turn about
+    /// to start.
+    pub(crate) fn extensions(&self) -> crate::extensions::Extensions {
+        self.extensions.clone()
+    }
+
+    /// This process's token-drift state — read by `GET /v1/calibration`,
+    /// written by every committed step of every turn.
+    pub(crate) fn calibration(&self) -> &crate::calibration::CalibrationRegistry {
+        &self.calibration
     }
 
     /// This turn's or session's durable identity, or `None` when durability is
@@ -821,6 +872,8 @@ pub async fn serve_until(
         sessions: crate::sessions::SessionRegistry::new(),
         session_idle_ttl: config.session_idle_ttl,
         checkpoints: config.checkpoints.clone(),
+        extensions: config.extensions,
+        calibration: crate::calibration::CalibrationRegistry::new(),
         host_policy,
         lifecycle: Lifecycle::new(),
     });
@@ -1069,6 +1122,10 @@ async fn route(
             discard_body(res.stream_mut(), &mut req).await;
             return routes::handle_metrics(res, state).await;
         }
+        ("GET", Route::Calibration) => {
+            discard_body(res.stream_mut(), &mut req).await;
+            return routes::handle_calibration(res, state).await;
+        }
         ("GET", Route::TurnEvents) => {
             discard_body(res.stream_mut(), &mut req).await;
             return routes::handle_events(
@@ -1252,6 +1309,8 @@ mod tests {
                 lifecycle
             },
             checkpoints: None,
+            extensions: crate::extensions::Extensions::new(),
+            calibration: crate::calibration::CalibrationRegistry::new(),
         };
         (state, capture)
     }
@@ -1268,6 +1327,8 @@ mod tests {
             observer: crate::observe::null_observer(),
             on_settled: None,
             checkpoint: None,
+            extensions: crate::extensions::Extensions::new(),
+            calibration: None,
         }
     }
 

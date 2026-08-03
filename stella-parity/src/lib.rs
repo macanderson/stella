@@ -99,6 +99,11 @@ pub struct Capability {
 pub const COMPOSITION_SEAMS: &[&str] = &[
     "with_sleeper",
     "with_call_role",
+    // The reader for `with_call_role`, and an assembly detail for the same
+    // reason the setter is: a host that drives `run_step` itself owns the turn
+    // framing, and the `agent.turn.started` payload names the role — so it
+    // reads the engine's rather than keeping a second copy of the default.
+    "call_role",
     "with_turn_instance",
     "max_steps",
 ];
@@ -372,12 +377,14 @@ pub static CAPABILITIES: &[Capability] = &[
             missing: "a CLI-side test pinning that a configured workspace hook actually fires \
                       through agent wiring (core has hook tests; the CLI wiring has none)",
         },
-        api: SurfacePosture::Deferred {
-            waiting_on: "attaching the HookBus in serve's session assembly: shell hooks are \
-                         deliberately not run server-side (a host must not be able to make the \
-                         sidecar spawn shells), and with_bus is the server-shaped observer seam \
-                         built for exactly this — but serve never attaches it, so an API host \
-                         gets no lifecycle boundary events",
+        api: SurfacePosture::Shipped {
+            mechanism: "operator-installed ServeExtensions on a per-turn HookBus (#1298): \
+                        turn/step/model boundaries observable, tool.call.requested \
+                        interceptable before the reverse request leaves. Shell hooks stay \
+                        deliberately unreachable server-side (a host must not be able to make \
+                        the sidecar spawn shells) and NO route registers an extension — the \
+                        bearer token authenticates a host, which is not the operator",
+            witness: "operator_hooks_fire_across_a_served_turn",
         },
     },
     Capability {
@@ -404,9 +411,12 @@ pub static CAPABILITIES: &[Capability] = &[
                       calibration on session start (stella-core and stella-store each test their \
                       half; the CLI seam between them has no witness)",
         },
-        api: SurfacePosture::Deferred {
-            waiting_on: "serve attaching a CalibrationMap (and somewhere to persist samples — \
-                         serve deliberately has no store): every served turn estimates uncorrected",
+        api: SurfacePosture::Shipped {
+            mechanism: "a process-lifetime CalibrationMap per provider_id, fed by every \
+                        committed step and read at GET /v1/calibration (#1298). Samples are \
+                        not persisted — serve deliberately has no store — so a redeployed \
+                        sidecar re-converges, which is why the report carries `samples`",
+            witness: "the_drift_report_is_readable_through_the_api",
         },
     },
     Capability {
@@ -524,10 +534,12 @@ mod tests {
 
     /// API sources a witness may live in: the serve crate's unit tests plus
     /// its end-to-end suites.
-    fn api_sources() -> [&'static str; 10] {
+    fn api_sources() -> [&'static str; 12] {
         [
             include_str!("../../stella-serve/src/server.rs"),
+            include_str!("../../stella-serve/tests/calibration.rs"),
             include_str!("../../stella-serve/tests/checkpoint.rs"),
+            include_str!("../../stella-serve/tests/hooks.rs"),
             include_str!("../../stella-serve/tests/bridge.rs"),
             include_str!("../../stella-serve/tests/control.rs"),
             include_str!("../../stella-serve/tests/sessions.rs"),
