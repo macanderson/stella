@@ -16,6 +16,7 @@ pub mod accounted_call;
 pub mod budget;
 pub mod bus;
 pub mod compaction;
+pub mod comparison;
 pub mod context_record;
 pub mod discovery;
 pub mod driver;

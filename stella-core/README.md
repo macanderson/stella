@@ -59,6 +59,8 @@ HTTP client, no SQLite. `stella-cli`, `stella-tools`, `stella-mcp`,
 | [`src/tasks.rs`](src/tasks.rs) | `TaskBoard` — the transition rules behind the `task_*` tools; records `SpawnRequest`s rather than spawning. |
 | [`src/mcp_usage.rs`](src/mcp_usage.rs) | The MCP usage record/ledger types, homed here so `stella-mcp` and `stella-tools` need no edge between them. |
 | [`src/context_record.rs`](src/context_record.rs) + [`src/context_record/`](src/context_record) | The adaptive-context Phase 1 value layer: taxonomy enums, scope, temporal, canonical `record_hash`, context-use, contract, outcome, representation. Types and validators only. |
+| [`src/self_tuning.rs`](src/self_tuning.rs) | The eval-driven policy selector: reward samples per opaque arm → a confident-lift `Decision` plus a reversible `RollbackRecord`. The workspace's one significance test. |
+| [`src/comparison.rs`](src/comparison.rs) + [`src/comparison/`](src/comparison) | The A/B comparison report every measurement of "is this variant better?" emits: paired per-task trials → per-arm aggregates, a guard set, and a two-bar verdict. Consumed by `loop-bench --compare` offline and by the promotion gates. |
 
 ## Key concepts
 
