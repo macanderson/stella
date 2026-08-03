@@ -837,16 +837,23 @@ async fn run_task(
                 headless_bypass_scope_review: agent::HEADLESS_SCOPE_REVIEW_BYPASS,
                 ..PipelineConfig::default()
             };
-            let pipeline = Pipeline::new(ports, tx.clone(), config);
+            // The pause gate, honored on the pipeline path too: the pipeline
+            // attaches it to every engine it builds (execute/revise turns,
+            // the witness author) and parks its management calls behind it,
+            // so `Fleet::pause_task` reaches a pipeline-driven worker at the
+            // same safe step boundary the raw path always had. Published to
+            // the registry as well, so a paused worker's sub-agents park too.
+            let gate: Arc<WatchGate> = Arc::new(WatchGate(pause));
+            let _controls = registry.attach_turn_controls(
+                stella_core::ports::TurnControls::none().with_gate(gate.clone()),
+            );
+            let pipeline = Pipeline::new(ports, tx.clone(), config).with_turn_gate(gate.as_ref());
             // The system prompt + task prompt are already in `messages`; the
             // pipeline appends its own volatile recall+goal message, so pass the
             // raw task prompt as the goal (the pipeline never re-reads `messages`
             // for its goal — it takes `task.prompt` directly).
             // The stop line races the whole staged run — the future drops at
             // its next await point, the same clean cancel the raw path gets.
-            // Pause is NOT honored here yet: boundary-gating individual stages
-            // needs a gate port on `PipelinePorts` (the existing named
-            // follow-up) — only the raw step-loop path below holds a TurnGate.
             let raced = tokio::select! {
                 result = pipeline.run(&task.prompt, &mut messages, &mut budget) => {
                     Raced::Outcome(result)

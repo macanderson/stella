@@ -1806,11 +1806,13 @@ pub async fn run_deck_session(
                         }) => {
                             let _ = scope_tx.send(decision);
                         }
-                        // Lead-lane pause/resume/restart still need a
-                        // staged-pipeline boundary gate (the PipelinePorts
-                        // follow-up; the fleet layer's own per-task verbs
-                        // exist now, but fleet tasks are not deck lanes
-                        // yet) — a named seam, no-op here.
+                        // Lead-lane pause/resume/restart: the boundary gate
+                        // now EXISTS (`Pipeline::with_turn_gate` — the fleet's
+                        // pipeline workers park on it), but the deck's lead
+                        // turn does not yet build a watch channel and thread
+                        // it through `run_lead_turn`'s pipeline construction —
+                        // that wiring (and fleet tasks as deck lanes) is the
+                        // remaining follow-up. No-op here until then.
                         Some(WorkspaceInput::Control { .. }) => {}
                     },
                 }

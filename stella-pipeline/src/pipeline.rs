@@ -741,6 +741,10 @@ pub struct Pipeline<'a> {
     candidate_workspaces: Option<&'a dyn CandidateWorkspacePort>,
     mcp_prefetch: Option<&'a dyn McpPrefetchPort>,
     steering: Option<&'a dyn stella_core::ports::TurnSteering>,
+    /// Boundary pause gate ([`Pipeline::with_turn_gate`]): attached to every
+    /// engine this pipeline builds and consulted before every management
+    /// call, so a paused pipeline-driven worker parks instead of spending.
+    turn_gate: Option<&'a dyn stella_core::ports::TurnGate>,
     events: EventSender,
     config: PipelineConfig,
     configured_test: Result<Option<TestInvocation>, crate::witness::TestInvocationError>,
@@ -783,11 +787,28 @@ impl<'a> Pipeline<'a> {
             candidate_workspaces: ports.candidate_workspaces,
             mcp_prefetch: ports.mcp_prefetch,
             steering: ports.steering,
+            turn_gate: None,
             events: events.into(),
             config,
             configured_test,
             raw_call_seq: AtomicU64::new(RECEIPT_SEQ_ALLOCATED_BASE),
         }
+    }
+
+    /// Attach a boundary pause gate. Every engine the pipeline builds — the
+    /// worker's execute/revise turns and the witness author's — parks at its
+    /// step boundaries while the gate holds, and every management call
+    /// (triage, judge, guidance) parks before dispatch: the same safe
+    /// boundary as budget aborts, never mid-tool.
+    ///
+    /// This is the seam that lets a supervisor's pause reach a
+    /// pipeline-driven worker at all. Without it only the raw step-loop path
+    /// held a gate, so `Fleet::pause_task` on a pipeline worker silently did
+    /// nothing — the named follow-up in `fleet_cmd`.
+    #[must_use]
+    pub fn with_turn_gate(mut self, gate: &'a dyn stella_core::ports::TurnGate) -> Self {
+        self.turn_gate = Some(gate);
+        self
     }
 
     /// Drive one prompt through the full staged flow. `messages` is the
@@ -1490,6 +1511,9 @@ impl<'a> Pipeline<'a> {
             if let Some((hooks, runner)) = self.hooks {
                 engine = engine.with_hooks(hooks, runner);
             }
+            if let Some(gate) = self.turn_gate {
+                engine = engine.with_gate(gate);
+            }
             let view = fan.as_ref().map(|fan| fan.candidate());
             if let Some(view) = view.as_ref() {
                 engine = engine.with_steering(view);
@@ -1692,6 +1716,9 @@ impl<'a> Pipeline<'a> {
                 );
                 if let Some((hooks, runner)) = self.hooks {
                     engine = engine.with_hooks(hooks, surface.hook_runner.unwrap_or(runner));
+                }
+                if let Some(gate) = self.turn_gate {
+                    engine = engine.with_gate(gate);
                 }
                 let view = fan.as_ref().map(|fan| fan.candidate());
                 if let Some(view) = view.as_ref() {

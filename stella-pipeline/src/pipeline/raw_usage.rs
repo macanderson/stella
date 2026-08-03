@@ -37,6 +37,14 @@ impl<'a> Pipeline<'a> {
         budget: &mut BudgetGuard,
         total: &mut f64,
     ) -> Result<CompletionResult, RawCallError> {
+        // Park BEFORE dispatch while a supervisor holds the pause gate — the
+        // engines park at their own step boundaries, and this chokepoint is
+        // what extends the same discipline to every management call (triage,
+        // judge, guidance, conversational). Pre-spend, never mid-call: the
+        // boundary contract is the budget guard's (L-E6).
+        if let Some(gate) = self.turn_gate {
+            gate.wait_if_paused().await;
+        }
         // Destructured, so the caller-built message list is MOVED into the
         // request instead of cloned. The conversational fast path hands this
         // the whole running transcript, so the clone was a per-call copy of

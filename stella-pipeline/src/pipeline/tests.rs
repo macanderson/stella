@@ -872,6 +872,83 @@ async fn single_task_with_a_flip_submits_fast_and_skips_the_judge() {
     )));
 }
 
+/// A pause gate that counts its polls — proof the pipeline actually consults
+/// the seam, from both kinds of call site.
+struct CountingGate(std::sync::atomic::AtomicU32);
+
+#[async_trait::async_trait]
+impl stella_core::ports::TurnGate for CountingGate {
+    async fn wait_if_paused(&self) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// `Pipeline::with_turn_gate` is the seam that lets a supervisor's pause
+/// reach a pipeline-driven worker (the raw step-loop always had one; the
+/// pipeline path silently ignored pause). The gate must be polled by BOTH
+/// kinds of spend: the management chokepoint (triage here) and the engine
+/// turns the pipeline builds — otherwise a paused worker keeps buying calls
+/// on whichever side was missed.
+#[tokio::test]
+async fn the_turn_gate_is_polled_by_management_calls_and_engine_turns() {
+    let provider = ScriptedProvider::new(vec![text_result("single"), text_result("done")]);
+    let resolver = OneProvider(&provider);
+    let runner = ScriptedRunner::new(vec![false, true], "@@ -1 +1 @@\n-old\n+new");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let gate = CountingGate(std::sync::atomic::AtomicU32::new(0));
+
+    let config = PipelineConfig {
+        test_command: Some("cargo test -p x".into()),
+        diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
+        ..PipelineConfig::default()
+    };
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        config,
+    )
+    .with_turn_gate(&gate);
+
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    pipeline
+        .run("Fix the failing test", &mut messages, &mut budget)
+        .await
+        .expect("run succeeds");
+
+    let polls = gate.0.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        polls >= 2,
+        "the gate must be consulted by the triage call AND the worker's engine \
+         turn — saw {polls} poll(s)"
+    );
+}
+
 /// A context-recall port that never answers — a wedged embedding call or an
 /// unresponsive CGP host.
 struct WedgedRecall;
