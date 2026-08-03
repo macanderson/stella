@@ -161,21 +161,13 @@ impl Tool for EditFile {
     }
 
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
-        let path = match input.get("path").and_then(|v| v.as_str()) {
-            Some(p) => p,
-            None => {
-                return ToolOutput::Error {
-                    message: "missing required field `path`".into(),
-                };
-            }
+        let path = match crate::input::required_str(input, "path") {
+            Ok(v) => v,
+            Err(message) => return ToolOutput::Error { message },
         };
-        let old_string = match input.get("old_string").and_then(|v| v.as_str()) {
-            Some(s) => s,
-            None => {
-                return ToolOutput::Error {
-                    message: "missing required field `old_string`".into(),
-                };
-            }
+        let old_string = match crate::input::required_str(input, "old_string") {
+            Ok(v) => v,
+            Err(message) => return ToolOutput::Error { message },
         };
         // An empty `old_string` is destructive: `"".matches("")` reports
         // char_count+1 hits, so the tool would tell the model to set
@@ -189,13 +181,9 @@ impl Tool for EditFile {
                     .into(),
             };
         }
-        let new_string = match input.get("new_string").and_then(|v| v.as_str()) {
-            Some(s) => s,
-            None => {
-                return ToolOutput::Error {
-                    message: "missing required field `new_string`".into(),
-                };
-            }
+        let new_string = match crate::input::required_str(input, "new_string") {
+            Ok(v) => v,
+            Err(message) => return ToolOutput::Error { message },
         };
         let replace_all = input
             .get("replace_all")

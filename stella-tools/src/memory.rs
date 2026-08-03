@@ -54,15 +54,13 @@ impl Tool for SaveMemory {
     }
 
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
-        let Some(slug) = input.get("slug").and_then(|v| v.as_str()) else {
-            return ToolOutput::Error {
-                message: "missing required field `slug`".into(),
-            };
+        let slug = match crate::input::required_str(input, "slug") {
+            Ok(v) => v,
+            Err(message) => return ToolOutput::Error { message },
         };
-        let Some(memory) = input.get("memory").and_then(|v| v.as_str()) else {
-            return ToolOutput::Error {
-                message: "missing required field `memory`".into(),
-            };
+        let memory = match crate::input::required_str(input, "memory") {
+            Ok(v) => v,
+            Err(message) => return ToolOutput::Error { message },
         };
         if slug.is_empty()
             || slug.len() > 64
@@ -162,10 +160,9 @@ impl Tool for CiteMemory {
     }
 
     async fn execute(&self, input: &Value, _root: &std::path::Path) -> ToolOutput {
-        let Some(memory_id) = input.get("memory_id").and_then(|v| v.as_str()) else {
-            return ToolOutput::Error {
-                message: "missing required field `memory_id`".into(),
-            };
+        let memory_id = match crate::input::required_str(input, "memory_id") {
+            Ok(v) => v,
+            Err(message) => return ToolOutput::Error { message },
         };
         if !is_memory_id(memory_id) {
             return ToolOutput::Error {

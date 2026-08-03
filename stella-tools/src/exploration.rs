@@ -646,10 +646,9 @@ impl Tool for SaveExploration {
     }
 
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
-        let Some(slice) = input.get("slice").and_then(|v| v.as_str()) else {
-            return ToolOutput::Error {
-                message: "missing required field `slice`".into(),
-            };
+        let slice = match crate::input::required_str(input, "slice") {
+            Ok(v) => v,
+            Err(message) => return ToolOutput::Error { message },
         };
         if !valid_slice(slice) {
             return ToolOutput::Error {

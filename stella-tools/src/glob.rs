@@ -60,13 +60,9 @@ impl Tool for Glob {
     }
 
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
-        let pattern = match input.get("pattern").and_then(|v| v.as_str()) {
-            Some(p) => p,
-            None => {
-                return ToolOutput::Error {
-                    message: "missing required field `pattern`".into(),
-                };
-            }
+        let pattern = match crate::input::required_str(input, "pattern") {
+            Ok(v) => v,
+            Err(message) => return ToolOutput::Error { message },
         };
         let search_path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
 

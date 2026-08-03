@@ -382,13 +382,9 @@ impl Tool for Grep {
     }
 
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
-        let pattern = match input.get("pattern").and_then(|v| v.as_str()) {
-            Some(p) => p,
-            None => {
-                return ToolOutput::Error {
-                    message: "missing required field `pattern`".into(),
-                };
-            }
+        let pattern = match crate::input::required_str(input, "pattern") {
+            Ok(v) => v,
+            Err(message) => return ToolOutput::Error { message },
         };
         let search_path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
         let glob_filter = input.get("glob").and_then(|v| v.as_str());
@@ -746,6 +742,33 @@ mod tests {
         assert_eq!(OutputMode::Content.unit(true), "lines");
         assert_eq!(OutputMode::FilesWithMatches.unit(false), "files");
         assert_eq!(OutputMode::Count.unit(false), "files");
+    }
+
+    /// #1267 through a real tool, not just the helper: before the shared
+    /// readers, `{"pattern": 42}` came back as "missing required field", so
+    /// the model re-sent the same wrong-typed value and burned a step per
+    /// repetition.
+    #[tokio::test]
+    async fn a_wrong_typed_pattern_reports_the_type_not_a_missing_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = Grep::bare()
+            .execute(&serde_json::json!({"pattern": 42}), dir.path())
+            .await;
+        let ToolOutput::Error { message } = out else {
+            panic!("expected Error, got {out:?}");
+        };
+        assert!(message.contains("must be a string"), "got {message}");
+        assert!(message.contains("got number"), "got {message}");
+        assert!(!message.contains("missing"), "got {message}");
+
+        // A genuinely absent field still reads as absent.
+        let out = Grep::bare()
+            .execute(&serde_json::json!({}), dir.path())
+            .await;
+        let ToolOutput::Error { message } = out else {
+            panic!("expected Error");
+        };
+        assert_eq!(message, "missing required field `pattern`");
     }
 
     #[tokio::test]

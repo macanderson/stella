@@ -520,10 +520,9 @@ impl Tool for ReadOutput {
     }
 
     async fn execute(&self, input: &Value, _root: &std::path::Path) -> ToolOutput {
-        let Some(handle) = input.get("handle").and_then(|v| v.as_str()) else {
-            return ToolOutput::Error {
-                message: "missing required field `handle`".into(),
-            };
+        let handle = match crate::input::required_str(input, "handle") {
+            Ok(v) => v,
+            Err(message) => return ToolOutput::Error { message },
         };
         let clear = input
             .get("clear")
@@ -624,15 +623,13 @@ impl Tool for SendStdin {
     }
 
     async fn execute(&self, input: &Value, _root: &std::path::Path) -> ToolOutput {
-        let Some(handle) = input.get("handle").and_then(|v| v.as_str()) else {
-            return ToolOutput::Error {
-                message: "missing required field `handle`".into(),
-            };
+        let handle = match crate::input::required_str(input, "handle") {
+            Ok(v) => v,
+            Err(message) => return ToolOutput::Error { message },
         };
-        let Some(text) = input.get("text").and_then(|v| v.as_str()) else {
-            return ToolOutput::Error {
-                message: "missing required field `text`".into(),
-            };
+        let text = match crate::input::required_str(input, "text") {
+            Ok(v) => v,
+            Err(message) => return ToolOutput::Error { message },
         };
         // Take stdin out under the lock, write outside it (a lock guard
         // must not cross an await), then put it back.
@@ -712,10 +709,9 @@ impl Tool for StopProcess {
     }
 
     async fn execute(&self, input: &Value, _root: &std::path::Path) -> ToolOutput {
-        let Some(handle) = input.get("handle").and_then(|v| v.as_str()) else {
-            return ToolOutput::Error {
-                message: "missing required field `handle`".into(),
-            };
+        let handle = match crate::input::required_str(input, "handle") {
+            Ok(v) => v,
+            Err(message) => return ToolOutput::Error { message },
         };
         // Phase 1, under the lock: close stdin (EOF lets well-behaved
         // REPLs/servers exit on their own) and send the group SIGTERM.

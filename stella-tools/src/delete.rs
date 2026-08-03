@@ -58,10 +58,9 @@ impl Tool for DeleteFile {
     }
 
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
-        let Some(path) = input.get("path").and_then(|v| v.as_str()) else {
-            return ToolOutput::Error {
-                message: "missing required field `path`".into(),
-            };
+        let path = match crate::input::required_str(input, "path") {
+            Ok(v) => v,
+            Err(message) => return ToolOutput::Error { message },
         };
         let handle = match RootHandle::open(root) {
             Ok(handle) => std::sync::Arc::new(handle),

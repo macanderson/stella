@@ -26,17 +26,21 @@ use crate::symbol::{Symbol, SymbolKind};
 /// background watcher). Compiling the queries here — not per file — keeps
 /// re-indexing cheap while still sourcing them from compile-time data
 /// (L-L2).
+/// `None` per language means "this build did not compile that grammar"
+/// (#1268), not "loading failed" — a load failure is still a hard error,
+/// because a `.scm` that does not compile is a programmer error the crate's
+/// own tests catch.
 pub(crate) struct Grammars {
-    rust: LangPack,
-    python: LangPack,
-    javascript: LangPack,
-    typescript: LangPack,
-    tsx: LangPack,
-    sql: LangPack,
-    go: LangPack,
-    java: LangPack,
-    c: LangPack,
-    php: LangPack,
+    rust: Option<LangPack>,
+    python: Option<LangPack>,
+    javascript: Option<LangPack>,
+    typescript: Option<LangPack>,
+    tsx: Option<LangPack>,
+    sql: Option<LangPack>,
+    go: Option<LangPack>,
+    java: Option<LangPack>,
+    c: Option<LangPack>,
+    php: Option<LangPack>,
 }
 
 struct LangPack {
@@ -46,8 +50,10 @@ struct LangPack {
 }
 
 impl LangPack {
-    fn load(lang: Language) -> Result<LangPack, GraphError> {
-        let language = lang.ts_language();
+    fn load(lang: Language) -> Result<Option<LangPack>, GraphError> {
+        let Some(language) = lang.ts_language() else {
+            return Ok(None);
+        };
         let symbols =
             Query::new(&language, lang.symbol_query()).map_err(|e| GraphError::Query {
                 lang: lang.tag(),
@@ -60,11 +66,11 @@ impl LangPack {
                 kind: "import",
                 message: e.to_string(),
             })?;
-        Ok(LangPack {
+        Ok(Some(LangPack {
             language,
             symbols,
             imports,
-        })
+        }))
     }
 }
 
@@ -87,18 +93,21 @@ impl Grammars {
         })
     }
 
-    fn pack(&self, lang: Language) -> &LangPack {
+    /// `None` when this build carries no grammar for `lang`. Callers already
+    /// return `Option`, so a trimmed build degrades along the path they
+    /// already handle rather than a new one.
+    fn pack(&self, lang: Language) -> Option<&LangPack> {
         match lang {
-            Language::Rust => &self.rust,
-            Language::Python => &self.python,
-            Language::JavaScript => &self.javascript,
-            Language::TypeScript => &self.typescript,
-            Language::Tsx => &self.tsx,
-            Language::Sql => &self.sql,
-            Language::Go => &self.go,
-            Language::Java => &self.java,
-            Language::C => &self.c,
-            Language::Php => &self.php,
+            Language::Rust => self.rust.as_ref(),
+            Language::Python => self.python.as_ref(),
+            Language::JavaScript => self.javascript.as_ref(),
+            Language::TypeScript => self.typescript.as_ref(),
+            Language::Tsx => self.tsx.as_ref(),
+            Language::Sql => self.sql.as_ref(),
+            Language::Go => self.go.as_ref(),
+            Language::Java => self.java.as_ref(),
+            Language::C => self.c.as_ref(),
+            Language::Php => self.php.as_ref(),
         }
     }
 }
@@ -117,7 +126,7 @@ pub(crate) fn parse_tree(
     lang: Language,
     source: &str,
 ) -> Option<tree_sitter::Tree> {
-    let pack = grammars.pack(lang);
+    let pack = grammars.pack(lang)?;
     let mut parser = Parser::new();
     if parser.set_language(&pack.language).is_err() {
         return None;
@@ -133,7 +142,7 @@ pub(crate) fn parse_sql_tree(grammars: &Grammars, source: &str) -> Option<tree_s
 /// Parse one file's `source`. `None` = un-armable grammar or wholly
 /// unparseable input → the caller records a skip and continues.
 pub(crate) fn parse_file(grammars: &Grammars, lang: Language, source: &str) -> Option<Parsed> {
-    let pack = grammars.pack(lang);
+    let pack = grammars.pack(lang)?;
     let mut parser = Parser::new();
     if parser.set_language(&pack.language).is_err() {
         return None;
