@@ -530,7 +530,21 @@ other built-in; withhold all three with `"tools": {"web": "off"}` in any
 `BRAVE_API_KEY` or `TAVILY_API_KEY` — no key, no tool. They are the only
 built-ins that talk to a host other than your model provider — a fetched page
 is untrusted input and an egress channel — which is why the family off-switch
-exists. See [the web tools](https://stella.oxagen.sh/docs/agent-tools#web-opt-in).
+exists.
+
+**Where they may fetch is bounded by default.** Loopback, private ranges,
+link-local (the cloud metadata endpoints), and the `localhost` / `.internal` /
+`.local` name families are refused — checked on the URL, on the addresses DNS
+returns for it, and on every redirect hop, because a page the agent reads can
+try to steer it at an internal service. Re-open a specific destination in
+`~/.stella/web_auth.toml`:
+
+```toml
+[egress]
+allow = ["localhost:3000", "127.0.0.1:3000"]   # or ["*"] to switch the guard off
+```
+
+See [the web tools](https://stella.oxagen.sh/docs/agent-tools#web-opt-in).
 
 ## Memory and context
 

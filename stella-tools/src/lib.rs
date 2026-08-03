@@ -59,6 +59,7 @@ pub mod tracker_auth;
 pub mod validate;
 pub mod verify;
 pub mod web;
+pub mod web_egress;
 pub mod web_extract;
 pub mod write;
 

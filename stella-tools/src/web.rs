@@ -7,9 +7,9 @@
 //! `the_key_free_web_family_is_registered_with_no_options_at_all`.
 //! `web_search` additionally needs a BYOK provider key (`BRAVE_API_KEY` or
 //! `TAVILY_API_KEY`) — no key, no dead schema, exactly like the media tools.
-//! A fetched page is untrusted input *and* an uncontrolled egress channel, so
-//! an operator who wants egress bounded has to switch the family off rather
-//! than decline to switch it on.
+//! A fetched page is untrusted input *and* an egress channel, so the family
+//! carries both a destination denylist (below) and a family-wide off switch
+//! for an operator who wants no egress at all.
 //!
 //! Logged-in fetches ride the user's own sessions via
 //! `~/.stella/web_auth.toml` (override with `STELLA_WEB_AUTH_FILE`):
@@ -25,22 +25,31 @@
 //! port must all match the page's final URL, or the request goes out bare.
 //! Without that fence a page could name `https://internal.corp/secrets.css`
 //! and have Stella issue a credentialed request the user never authorized —
-//! a confused deputy the SSRF note below does not cover, because the URL is
-//! chosen by the page rather than by the operator.
+//! a confused deputy the egress guard below does not cover, because that
+//! guard bounds WHERE a request may go, not WHICH credentials ride it.
 //!
-//! No SSRF guard: a session can fetch any http(s) URL the host can reach —
-//! including `localhost` and cloud metadata endpoints. It is required for the
-//! "fetch my internal tool / dev server" use case, and there is no network
-//! allowlist.
+//! **Egress is bounded by default** (#939, the ruling on #615, option A). The
+//! compensating control this used to rest on — the family being opt-in, so
+//! that reaching a metadata endpoint took a deliberate host action — was
+//! retired in #710. A tool that ships on has to be safe when it ships on, so
+//! every agent-chosen fetch now runs through [`crate::web_egress`]: loopback,
+//! RFC1918, link-local (`169.254.0.0/16`), IPv6 unique-local (`fc00::/7`, the
+//! `fd00:ec2::254` metadata endpoint) and link-local (`fe80::/10`),
+//! carrier-grade NAT, and the `localhost` / `.internal` / `.local` name
+//! families are refused, on the URL AND on the addresses DNS returns for it,
+//! AND on every redirect hop. The legitimate "fetch my dev server on
+//! localhost:3000" case is an explicit allowance:
 //!
-//! **The compensating control this used to name is gone.** The exposure was
-//! justified here by the family being opt-in, so that reaching a metadata
-//! endpoint took a deliberate host action; since #710 the family is
-//! registered by default and the only gate is an operator who knows to set
-//! `"web": "off"`. Whether that is acceptable, or whether the default surface
-//! needs a metadata/loopback denylist, is an open ruling (#615) — this note
-//! exists so the next reader does not re-derive the retired guarantee from a
-//! stale comment.
+//! ```toml
+//! # ~/.stella/web_auth.toml
+//! [egress]
+//! allow = ["localhost:3000", "127.0.0.1:3000"]   # or ["*"] to switch it off
+//! ```
+//!
+//! `web_search` is deliberately NOT guarded: its endpoint is a module constant
+//! or an operator-set [`SearchBackend::with_endpoint`] value, never a URL the
+//! model chose, so a denylist there would buy nothing and would block an
+//! operator pointing the backend at a local proxy.
 //!
 //! Fetch/extract are `read_only` (they observe the web, not the workspace)
 //! but never `speculation_safe`: every run is real traffic against someone
@@ -51,16 +60,17 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use reqwest::Url;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 use crate::registry::Tool;
+use crate::web_egress::{EgressPolicy, GuardedResolver, refusal_in_chain};
 use crate::web_extract;
 
 /// Cap on a fetched page or stylesheet — enough for any real document,
@@ -107,6 +117,40 @@ pub struct WebAuthConfig {
     /// `www.example.com`); the longest matching suffix wins.
     #[serde(default)]
     domains: HashMap<String, DomainAuth>,
+    /// Where a model-chosen fetch may land — see [`crate::web_egress`].
+    #[serde(default)]
+    egress: EgressSettings,
+}
+
+/// The `[egress]` table: the operator's opt-out from the default denylist.
+///
+/// This rides `web_auth.toml` rather than `settings.json` on purpose. A
+/// project's `.stella/settings.json` is untrusted repo input (the trust
+/// boundary argued in `stella-cli/src/settings/merge.rs`), so letting a
+/// checked-in file re-open loopback would hand the escalation straight back to
+/// the adversary this guard exists for. `web_auth.toml` is user-scope,
+/// `deny_unknown_fields`, already parsed at registry construction, and already
+/// the file an operator edits to change what a fetch may do.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EgressSettings {
+    /// `allow = ["localhost:3000", "dev.internal"]` — hosts exempted from the
+    /// denylist, `["*"]` to switch the guard off wholesale. Parsed into the
+    /// policy here rather than later so a malformed entry is a loud parse
+    /// failure like every other key in this file, not a silently inert
+    /// exemption.
+    #[serde(default, deserialize_with = "deserialize_egress_allow")]
+    allow: Arc<EgressPolicy>,
+}
+
+fn deserialize_egress_allow<'de, D>(deserializer: D) -> Result<Arc<EgressPolicy>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let entries = Vec::<String>::deserialize(deserializer)?;
+    EgressPolicy::from_allow_list(entries)
+        .map(Arc::new)
+        .map_err(serde::de::Error::custom)
 }
 
 #[derive(Default, Deserialize)]
@@ -172,33 +216,95 @@ impl WebAuthConfig {
             .max_by_key(|(domain, _)| domain.len())
             .map(|(domain, auth)| (domain.as_str(), auth))
     }
+
+    /// The destination policy every agent-chosen fetch is held to.
+    pub fn egress_policy(&self) -> Arc<EgressPolicy> {
+        Arc::clone(&self.egress.allow)
+    }
 }
 
-/// The one HTTP client every web fetch shares.
+/// Redirect hops a fetch may follow — reqwest's own default, kept explicit
+/// because the custom policy below has to re-apply it.
+const MAX_REDIRECT_HOPS: usize = 10;
+
+/// Timeouts and the default User-Agent, shared by both clients below.
+fn client_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(60))
+        .user_agent(DEFAULT_USER_AGENT)
+}
+
+/// The client `web_search` uses — no egress guard, on purpose.
+///
+/// Its endpoint is [`BRAVE_ENDPOINT`]/[`TAVILY_ENDPOINT`] or an operator-set
+/// [`SearchBackend::with_endpoint`] value; the model supplies only the query
+/// string. There is no model-chosen destination here to guard, and guarding it
+/// would only stop an operator pointing the backend at a local proxy.
+fn search_client() -> Result<reqwest::Client, String> {
+    static CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            client_builder()
+                .redirect(reqwest::redirect::Policy::limited(MAX_REDIRECT_HOPS))
+                .build()
+                .map_err(|e| format!("http client: {e}"))
+        })
+        .clone()
+}
+
+/// The guarded client every agent-chosen fetch shares, one per distinct
+/// [`EgressPolicy`].
 ///
 /// A `reqwest::Client` owns a connection pool and a TLS configuration, and
 /// this used to be rebuilt per request — so `web_extract_assets`, which pulls
 /// up to `max_stylesheets` sub-resources from a single origin inside one call,
 /// paid a fresh pool and a fresh TLS handshake for each one instead of reusing
-/// the connection it had just opened to that very host.
+/// the connection it had just opened to that very host. Pooling by
+/// [`EgressPolicy::cache_key`] keeps that: a process has one `web_auth.toml`,
+/// hence one policy, hence one client — and `reqwest::Client` is
+/// `Arc`-internal, so handing out clones is free.
 ///
 /// The per-domain user agent was the only thing that varied between them, and
 /// it does not need to be baked into the client: [`fetch_url`] sends it as a
 /// per-request header, which overrides this default and, like the default,
 /// carries across redirects.
-fn shared_client() -> Result<reqwest::Client, String> {
-    static CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
-    CLIENT
-        .get_or_init(|| {
-            reqwest::Client::builder()
-                .connect_timeout(Duration::from_secs(10))
-                .timeout(Duration::from_secs(60))
-                .user_agent(DEFAULT_USER_AGENT)
-                .redirect(reqwest::redirect::Policy::limited(10))
-                .build()
-                .map_err(|e| format!("http client: {e}"))
-        })
-        .clone()
+fn client_for(policy: &Arc<EgressPolicy>) -> Result<reqwest::Client, String> {
+    static CLIENTS: OnceLock<Mutex<HashMap<String, reqwest::Client>>> = OnceLock::new();
+    let pool = CLIENTS.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = policy.cache_key();
+    // A poisoned lock here means a previous builder panicked; the map is a
+    // plain cache, so recovering the inner value is strictly better than
+    // taking every later fetch down with it.
+    let mut clients = pool.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(client) = clients.get(&key) {
+        return Ok(client.clone());
+    }
+    let client = build_guarded_client(policy)?;
+    clients.insert(key, client.clone());
+    Ok(client)
+}
+
+fn build_guarded_client(policy: &Arc<EgressPolicy>) -> Result<reqwest::Client, String> {
+    // Two mechanisms, because neither covers the other's half. The resolver
+    // filters the addresses a NAME resolves to (which is what closes DNS
+    // rebinding), but hyper-util skips the resolver entirely for a literal-IP
+    // host; the redirect policy checks each hop's URL, which is where a
+    // literal IP and the port fence are caught. See `crate::web_egress`.
+    let hop_policy = Arc::clone(policy);
+    // `Policy::limited`'s own hop counting is delegated to rather than
+    // re-implemented, so `TooManyRedirects` keeps reqwest's error identity.
+    let hop_limit = reqwest::redirect::Policy::limited(MAX_REDIRECT_HOPS);
+    client_builder()
+        .dns_resolver(Arc::new(GuardedResolver::new(Arc::clone(policy))))
+        .redirect(reqwest::redirect::Policy::custom(
+            move |attempt| match hop_policy.check_url(attempt.url()) {
+                Err(refusal) => attempt.error(refusal),
+                Ok(()) => hop_limit.redirect(attempt),
+            },
+        ))
+        .build()
+        .map_err(|e| format!("http client: {e}"))
 }
 
 /// A fetched response body, capped and annotated.
@@ -248,6 +354,14 @@ async fn fetch_raw(
         .host_str()
         .ok_or_else(|| format!("URL `{url_str}` has no host"))?
         .to_string();
+    // The URL half of the egress guard. It runs here rather than only in the
+    // client because a literal-IP host never reaches the resolver at all, and
+    // because a refusal caught at the entry point carries a clean message
+    // instead of an opaque connect failure.
+    let policy = auth.egress_policy();
+    policy
+        .check_url(&url)
+        .map_err(|r| r.message().to_string())?;
     // Cross-origin sub-resource: no cookie, no Authorization, no custom
     // headers — and no per-domain User-Agent either, since none of that
     // configuration was meant for a host the fetched page chose.
@@ -259,7 +373,7 @@ async fn fetch_raw(
         .and_then(|(_, a)| a.user_agent.as_deref())
         .or(auth.defaults.user_agent.as_deref())
         .unwrap_or(DEFAULT_USER_AGENT);
-    let client = shared_client()?;
+    let client = client_for(&policy)?;
     // The user agent rides per-request rather than per-client so every fetch can
     // share one connection pool regardless of which domain's UA it needs.
     let mut request = client
@@ -278,10 +392,13 @@ async fn fetch_raw(
         }
         authed_domain = Some(domain.to_string());
     }
-    let mut response = request
-        .send()
-        .await
-        .map_err(|e| format!("fetch of {url} failed: {e}"))?;
+    // A refusal raised inside the resolver or the redirect policy arrives here
+    // as an opaque reqwest error — its `Display` prints "error sending request
+    // for url (…)" and never walks its source chain — so dig the real message
+    // back out before reporting a connect failure that isn't one.
+    let mut response = request.send().await.map_err(|e| {
+        refusal_in_chain(&e).unwrap_or_else(|| format!("fetch of {url} failed: {e}"))
+    })?;
     let status = response.status();
     let final_url = response.url().clone();
     let content_type = response
@@ -519,7 +636,7 @@ async fn brave_search(
     query: &str,
     count: u64,
 ) -> Result<Vec<SearchHit>, String> {
-    let client = shared_client()?;
+    let client = search_client()?;
     let response = client
         .get(&backend.endpoint)
         .query(&[("q", query), ("count", &count.to_string())])
@@ -560,7 +677,7 @@ async fn tavily_search(
     query: &str,
     count: u64,
 ) -> Result<Vec<SearchHit>, String> {
-    let client = shared_client()?;
+    let client = search_client()?;
     let response = client
         .post(&backend.endpoint)
         .header(
