@@ -22,15 +22,17 @@
 //! policy chain (see `ToolRegistry::command_line_for`), which is why that chain
 //! enumerates them all — and, since #615, the text written into an already
 //! running interpreter as well. An operator who needs shell execution actually
-//! contained wants the OS sandbox below plus that chain, not the switch alone.
+//! contained wants that chain plus a boundary the whole process sits inside.
 //!
-//! Opt-in OS sandbox: `STELLA_BASH_SANDBOX=workspace-write|restricted` wraps
-//! the spawn in `sandbox-exec` (macOS, Seatbelt) or `bwrap` (Linux) — file
-//! writes confined to the workspace root + tmp dirs, `restricted` also
-//! denies network. Default (`off`/unset) is exactly the historical behavior.
-//! A requested sandbox that cannot be applied fails the call instead of
-//! silently running unsandboxed. See [`crate::sandbox`] for the full
-//! safety/capability tradeoff discussion.
+//! **There is no per-command OS confinement here.** `STELLA_BASH_SANDBOX` —
+//! the opt-in Seatbelt/`bwrap` wrapper that used to sit on this spawn — was
+//! removed (#1300). It wrapped this one tool while `build_project`,
+//! `run_tests`, `verify_done`, `run_script`, `start_process`, the `repo_*`
+//! and `ci_status` invocations, custom manifest tools, and hook actions all
+//! spawned around it, so "sandbox: on" claimed a session-wide bound it never
+//! had. Isolation belongs to the container the whole Stella process runs in,
+//! which no spawn path can step around — see
+//! `docs/design/remote-sandboxes.md` §2.
 
 use std::path::Path;
 use std::time::Duration;
@@ -224,32 +226,8 @@ impl Tool for Bash {
             command
         };
 
-        // Opt-in OS sandbox: the mode comes from the environment, argv
-        // construction is pure and unit-tested (crate::sandbox). Both an
-        // unknown mode and an unavailable backend fail the call — a
-        // requested sandbox that silently doesn't apply is worse than an
-        // error. `off` yields plain `bash -c <command>`, unchanged.
-        let mode = match crate::sandbox::SandboxMode::from_env_value(
-            std::env::var("STELLA_BASH_SANDBOX").ok().as_deref(),
-        ) {
-            Ok(mode) => mode,
-            Err(e) => {
-                return ToolOutput::Error {
-                    message: e.to_string(),
-                };
-            }
-        };
-        let (program, args) = match crate::sandbox::host_argv(mode, root, command) {
-            Ok(argv) => argv,
-            Err(e) => {
-                return ToolOutput::Error {
-                    message: e.to_string(),
-                };
-            }
-        };
-
-        let mut cmd = Command::new(program);
-        cmd.args(args);
+        let mut cmd = Command::new("bash");
+        cmd.args(["-c", command]);
         cmd.current_dir(root);
         // Full spawn policy, not just the credential scrub: a hook-exported
         // GIT_DIR or a forced-color override must not reach the shell either
@@ -703,47 +681,5 @@ mod tests {
         );
         assert!(!text.contains("graph_query"), "{text}");
         assert!(!text.contains("outside the session root"), "{text}");
-    }
-
-    /// End-to-end Seatbelt check — spawns real `sandbox-exec`. Ignored by
-    /// default so machines without a sandbox (and CI) still pass; run with:
-    /// `cargo test -p stella-tools -- --ignored --test-threads=1`
-    /// (single-threaded because env-var mutation is process-wide).
-    #[cfg(target_os = "macos")]
-    #[tokio::test]
-    #[ignore = "spawns sandbox-exec and mutates process env; run with --ignored --test-threads=1"]
-    async fn macos_workspace_write_confines_writes_to_workspace() {
-        let ws = tempfile::tempdir().unwrap();
-        // SAFETY: process-wide env mutation; this test is #[ignore]d and
-        // documented to run with --test-threads=1, so no concurrent reader.
-        unsafe { std::env::set_var("STELLA_BASH_SANDBOX", "workspace-write") };
-        let inside = Bash
-            .execute(
-                &serde_json::json!({"command": "echo confined > inside.txt && cat inside.txt"}),
-                ws.path(),
-            )
-            .await;
-        let home_probe = "stella_sandbox_e2e_probe.txt";
-        let outside = Bash
-            .execute(
-                &serde_json::json!({"command": format!("echo escape > \"$HOME/{home_probe}\"")}),
-                ws.path(),
-            )
-            .await;
-        // SAFETY: same single-threaded contract as the set_var above.
-        unsafe { std::env::remove_var("STELLA_BASH_SANDBOX") };
-
-        match inside {
-            ToolOutput::Ok { content } => assert!(content.contains("confined"), "{content}"),
-            ToolOutput::Error { message } => panic!("workspace write should succeed: {message}"),
-        }
-        let probe = std::path::PathBuf::from(std::env::var("HOME").unwrap()).join(home_probe);
-        let leaked = probe.exists();
-        std::fs::remove_file(&probe).ok(); // clean up even on assertion failure
-        assert!(outside.is_error(), "write outside workspace must fail");
-        if let ToolOutput::Error { message } = outside {
-            assert!(message.contains("Operation not permitted"), "{message}");
-        }
-        assert!(!leaked, "probe file must not exist outside the sandbox");
     }
 }

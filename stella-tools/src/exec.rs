@@ -6,9 +6,8 @@
 //! (`run_lint`, `format_code`, `diagnostics`, the `repo_*` tools).
 //!
 //! The `bash` tool (registered by default, switchable off) does NOT come
-//! through here — it spawns its own
-//! child so the [`crate::sandbox`] wrapper can replace the program (see
-//! `crate::bash`).
+//! through here — it spawns its own child so it can own its output cap and
+//! process-group policy (see `crate::bash`).
 
 use std::collections::VecDeque;
 use std::time::Duration;

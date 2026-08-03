@@ -1278,8 +1278,8 @@ impl<'a> Engine<'a> {
     ///   reopen the conversation at the checkpoint's step boundary, so the
     ///   completed steps' work is not re-run — see `stella-parity`'s
     ///   `turn.checkpoint_resume` row.
-    /// - **`stella-serve`** drives steps and would use this directly, but has
-    ///   no store to read a checkpoint back from (same row, API side).
+    /// - **`stella-serve`** stores one and hands it back on request but accepts
+    ///   none in return, so continuing is the host's call (same row, API side).
     ///
     /// So the production callers are embedders, and the in-tree exercise of it
     /// is `stella-engine`'s test suite. Anything that changes on either surface

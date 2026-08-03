@@ -466,10 +466,13 @@ per-step checkpoint and crash-resume. This is ADR-033 §6 item 1 and §4.3.
 
 The tools sweep found that turning `tools.bash: off` does **not** remove
 arbitrary shell execution — `build_project`, `run_tests`, `verify_done`, and
-`run_script` all shell out via `bash -c`, and the built-in OS sandbox
-(`STELLA_BASH_SANDBOX`) covers only the `bash` tool. The web tools are an
-unguarded SSRF primitive when enabled. Several credentials/config knobs are
-process-global (sandbox mode, web auth, provider keys), so **multi-tenant in one
+`run_script` all shell out via `bash -c`, and nothing confines any of them
+in-process. (The built-in OS sandbox, `STELLA_BASH_SANDBOX`, covered the
+`bash` tool alone and was removed in #1300 for exactly the reason this
+paragraph gives: it bounded one spawn path out of many. This section's
+conclusion is unchanged by that — it never rested on the sandbox.) The web
+tools are an unguarded SSRF primitive when enabled. Several credentials/config
+knobs are process-global (web auth, provider keys), so **multi-tenant in one
 process is a non-starter.**
 
 Therefore the serve model is **one engine process per trust boundary, run inside
