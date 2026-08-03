@@ -477,6 +477,16 @@ Every result exposes manifest-ready metadata keys:
   witness counters, which report what this trial's proof stream actually
   observed. Declared and observed are different claims, so both are recorded:
   a run must never disable a tier discoverably only by grepping trajectories.
+- `stella_self_verdict_state` (`passed` / `failed` / `not_reported`), plus
+  `self_verdict_passed`, `self_verdict_deterministic` and `self_verdict_count`
+  in `stella_stream` — **what Stella claimed about its own work** (#1284). The
+  trial is the only place that claim meets the verifier's reward, which the
+  agent never sees, and their disagreement (a task failed while reporting
+  success) is invisible to the score. `deterministic` distinguishes a verdict
+  the flip oracle decided from one a model opined; they are different
+  instruments and only the second is the judge's reliability.
+  `not_reported` is a third state on purpose: a trial killed before the ladder
+  closed made no claim, which is not the same datum as claiming failure.
 - `stella_workspace_git_baseline` — what the adapter did to the workspace
   before Stella started: `{"state": "created", "commit": <sha>}`,
   `preexisting`, `unavailable`, `failed`, `error`, or `not_attempted`. Also in
