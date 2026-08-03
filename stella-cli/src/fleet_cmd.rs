@@ -8,6 +8,11 @@
 //! a path another task (or another run) already claims fails that dispatch
 //! by name instead of letting two agents edit the same file.
 //!
+//! Wave dispatch is **cache-TTL-aware** (#1222): [`crate::fleet_warmth`]
+//! projects each task's last-attempt timestamp through the provider's
+//! prompt-cache TTL, so a ready wave resumes soonest-to-expire prefixes
+//! first — see that module for the signal's honest limits.
+//!
 //! Each worker is a full Stella engine turn (the raw step-loop) running in
 //! its task's workspace with the standard tool registry — headless: no MCP,
 //! no custom tools, no ask_user, so a worker can never block on stdin. The
@@ -56,7 +61,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::agent;
 use crate::config::Config;
-use crate::runtime::{SystemClock, TokioSleeper};
+use crate::runtime::{SystemClock, TokioSleeper, WallClock};
 use crate::tui;
 
 /// Cap on the per-task summary line so the report table stays a table.
@@ -171,7 +176,11 @@ pub async fn run_fleet(
         WorktreeManager::new(SystemGitCli, root.clone()).with_run_scope(&run_id),
         ledger,
         agent::build_budget_guard(budget_limit),
-        SystemClock::new(),
+        // Wall-anchored, NOT `SystemClock`: every stamp this clock feeds is
+        // a durable ledger row that must stay comparable across runs — the
+        // warmth projection (#1222) reads a PRIOR run's `finished_at_ms`.
+        // `SystemClock`'s per-process origin made every run start near zero.
+        WallClock,
         {
             let mut config =
                 FleetConfig::new(&run_id, &base_sha).with_max_concurrency(max_concurrency.max(1));
@@ -204,6 +213,8 @@ pub async fn run_fleet(
     } else {
         fleet
     };
+    // Cache-TTL-aware wave dispatch (#1222) — see `crate::fleet_warmth`.
+    let fleet = crate::fleet_warmth::install(fleet, cfg.provider.id, &ledger_path);
 
     let report = if live {
         // Paint the live grid over the alternate screen while `run_plan` fans
@@ -835,7 +846,7 @@ async fn run_task(
                 role_overrides: wiring.role_overrides.clone(),
                 headless: true,
                 headless_bypass_scope_review: agent::HEADLESS_SCOPE_REVIEW_BYPASS,
-                ..PipelineConfig::default()
+                ..agent::apply_pipeline_tuning(&cfg, PipelineConfig::default())
             };
             // The pause gate, honored on the pipeline path too: the pipeline
             // attaches it to every engine it builds (execute/revise turns,

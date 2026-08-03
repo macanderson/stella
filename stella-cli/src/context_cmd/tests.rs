@@ -489,6 +489,33 @@ fn propose_commit_makes_a_branch_and_a_local_commit() {
     assert!(err.contains("already exists"), "{err}");
 }
 
+/// The title is the statement's first sentence, and records name files —
+/// so the sentence terminator cannot be "any period". This repository's own
+/// first Context PR was titled `… the license allow-list in \`deny` before the
+/// fix, which reads as a different claim rather than a shortened one.
+#[test]
+fn a_title_is_not_cut_at_a_dot_inside_a_file_name() {
+    assert_eq!(
+        propose::first_clause(
+            "A dependency that `cargo deny` rejects must be dropped rather than admitted by \
+             widening the license allow-list in `deny.toml`."
+        ),
+        "A dependency that `cargo deny` rejects must be dropped rather than admitted by widening \
+         the license allow-list in `deny.toml`",
+        "a period inside `deny.toml` is not a sentence break; the trailing one is"
+    );
+    assert_eq!(
+        propose::first_clause("This repository uses pnpm exclusively; npm must not be used."),
+        "This repository uses pnpm exclusively",
+        "a real clause break still ends the title"
+    );
+    assert_eq!(
+        propose::first_clause("Pin the toolchain in rust-toolchain.toml"),
+        "Pin the toolchain in rust-toolchain.toml",
+        "a statement with no terminator at all is returned whole"
+    );
+}
+
 // #892 — explain
 
 #[test]

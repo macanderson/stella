@@ -739,7 +739,7 @@ pub async fn run(
     mut done: oneshot::Receiver<()>,
     control: tokio::sync::mpsc::UnboundedSender<FleetControl>,
 ) -> io::Result<FleetDashResult> {
-    let guard = TerminalGuard::enter(false)?;
+    let guard = TerminalGuard::enter(false, Screen::Alternate)?;
     let _hook = PanicHookGuard::install(None, &guard);
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     let color_mode = theme::detect_color_mode();

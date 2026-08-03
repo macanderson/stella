@@ -94,8 +94,10 @@
 //! [`PipelinePorts`]: ports::PipelinePorts
 
 pub mod candidate;
+pub(crate) mod candidate_fanout;
 pub(crate) mod candidate_narration;
 pub(crate) mod candidate_steering;
+pub mod flip_halt;
 pub(crate) mod mcp_prefetch;
 pub mod pipeline;
 pub mod plan;

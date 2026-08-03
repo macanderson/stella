@@ -62,6 +62,17 @@ Thumbs.db
 !/.stella/skills/
 !/.stella/skills/**
 
+# Published context records and their governance (#994, docs/context-pr.md).
+# These are the one part of `.stella/` that is deliberately NOT per-workspace
+# scratch: a record only steers a teammate's session if it travels with the
+# repository, and the promotion ledger's whole claim — "this grant is
+# accountable and its rewrites are self-evident" — rests on it being reviewed
+# through the same pull requests as the code. `private/` below stays ignored,
+# so evidence never follows the statement into Git (§10).
+!/.stella/rules/
+!/.stella/rules/**
+/.stella/rules/private/
+
 # Audit output directory written by the ultra-audit skill — never committed.
 # (The legacy .ultraudit/ path is deliberately not ignored here: a report is
 # already tracked under it, and adding the rule would orphan that file.)

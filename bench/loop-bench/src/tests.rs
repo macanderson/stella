@@ -280,3 +280,76 @@ fn a_corrupt_reward_file_names_itself() {
     std::fs::write(verifier.join("reward.txt"), "1.0\n").expect("write");
     assert_eq!(read_reward(dir.path()), (Some(1.0), None));
 }
+
+/// #873: the pass floor is a SECOND gate, independent of loop health. A run
+/// where every trial ran cleanly and solved nothing is `loop_broken == 0` —
+/// the case the nightly job's floor exists to notice.
+#[test]
+fn the_pass_floor_is_independent_of_loop_health() {
+    let healthy_unsolved = |task: &str| TrialReport {
+        task: task.into(),
+        tool_calls: 3,
+        terminal_event: true,
+        ..Default::default()
+    };
+    let reports = vec![
+        healthy_unsolved("a"),
+        healthy_unsolved("b"),
+        TrialReport {
+            reward: Some(1.0),
+            ..healthy_unsolved("c")
+        },
+    ];
+
+    let t = tally(&reports);
+    assert_eq!(t.total, 3);
+    assert_eq!(t.solved, 1);
+    assert_eq!(t.loop_broken, 0, "healthy loops, one pass");
+
+    assert!(
+        !below_pass_floor(&reports, 0),
+        "0 disables the floor — the default must never gate"
+    );
+    assert!(!below_pass_floor(&reports, 1), "1/3 clears a floor of 1");
+    assert!(below_pass_floor(&reports, 2), "1/3 is below a floor of 2");
+}
+
+/// A `NOT-RUN` row counts in the denominator. A run that asked for four tasks
+/// and launched one must not clear a floor by shrinking the task set — the
+/// silent under-measurement the whole `requested` mechanism exists to stop.
+#[test]
+fn a_not_run_task_still_counts_against_the_floor() {
+    let reports = vec![
+        TrialReport {
+            task: "ran".into(),
+            reward: Some(1.0),
+            tool_calls: 2,
+            ..Default::default()
+        },
+        TrialReport {
+            task: "never-launched".into(),
+            not_run: true,
+            ..Default::default()
+        },
+    ];
+    let t = tally(&reports);
+    assert_eq!(t.total, 2, "the denominator is what was asked for");
+    assert_eq!(t.solved, 1);
+    assert_eq!(t.loop_broken, 1, "NOT-RUN gates red on its own");
+    assert!(below_pass_floor(&reports, 2), "1/2 is below a floor of 2");
+}
+
+/// `passed()` is exactly the reward test the verdict already made — a partial
+/// reward is not a pass, and a missing one is not a failure.
+#[test]
+fn passed_is_reward_one_and_nothing_else() {
+    let with = |reward| TrialReport {
+        reward,
+        ..Default::default()
+    };
+    assert!(with(Some(1.0)).passed());
+    assert!(!with(Some(0.5)).passed(), "partial credit is not a pass");
+    assert!(!with(Some(0.0)).passed());
+    assert!(!with(None).passed(), "never verified is not a pass");
+    assert_eq!(tally(&[with(Some(0.5)), with(None)]).solved, 0);
+}

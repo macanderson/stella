@@ -242,8 +242,41 @@ pub(crate) fn pipeline_config_for_approval_capability(
         // Where this run's work happens. Resolved from settings here and asked
         // at triage, once the class says whether anything is going to change.
         create_worktrees: cfg.create_worktrees.policy(),
-        ..Default::default()
+        ..apply_pipeline_tuning(cfg, PipelineConfig::default())
     }
+}
+
+/// Overlay the settings-file pipeline tuning knobs (`pipeline_max_revisions`,
+/// `pipeline_candidates`) onto `config`, leaving each field at whatever it
+/// already held when the corresponding key is absent.
+///
+/// Applied as a *transform over a base* rather than as two accessors returning
+/// values, because the "absent" case has to mean **the pipeline's own default**
+/// and that default lives in `PipelineConfig::default()`. An accessor would
+/// have to restate `2` and `None` here, and a restated default drifts silently
+/// the day the pipeline changes its mind — the failure mode being a run tuned
+/// by a number nobody chose.
+///
+/// Every driver calls this, not just `stella run`. These are cost/quality
+/// knobs rather than safety gates, so unlike `headless_scope_bypass` — which
+/// `stella goal` and fleet workers deliberately hold hard-off because it
+/// governs whether unattended work may land unreviewed — there is no surface
+/// where honouring the user's setting is the unsafe choice.
+pub(crate) fn apply_pipeline_tuning(cfg: &Config, mut config: PipelineConfig) -> PipelineConfig {
+    let Some(engine) = cfg.engine_settings.as_ref() else {
+        return config;
+    };
+    if let Some(max_revisions) = engine.pipeline_max_revisions {
+        config.max_revisions = max_revisions;
+    }
+    if let Some(candidates) = engine.pipeline_candidates {
+        // Stored as written, including `0`. `PipelineConfig::candidate_count`
+        // floors at 1, so a zero reads as single-shot rather than as "run
+        // nothing" — the same reading `None` gets, and the only one that can
+        // produce a result at all.
+        config.candidates = Some(candidates);
+    }
+    config
 }
 
 /// EngineConfig for the goal loop's standalone judge engine — the JUDGE

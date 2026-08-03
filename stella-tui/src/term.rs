@@ -123,6 +123,30 @@ impl TermState {
     }
 }
 
+/// Which screen a shell draws on.
+///
+/// The distinction is an accessibility one, not a cosmetic one. The alternate
+/// screen is a separate grid that a full-repaint app owns and that vanishes on
+/// exit; a screen reader sees a rectangle of cells being rewritten wholesale
+/// every frame, with no notion of "a new line appeared", and most readers
+/// announce either nothing or everything. Drawing on the **normal** screen
+/// instead means finished transcript rows are ordinary terminal output — they
+/// scroll into scrollback, they are announced as they arrive, and every
+/// reader/terminal accessibility bridge already knows how to read them.
+///
+/// See [`crate::shell::RunOptions::screen_reader`] for the surface that
+/// selects [`Screen::Normal`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Screen {
+    /// A separate full-window grid, restored to the user's shell on exit.
+    /// What the deck and the full single-session REPL use.
+    Alternate,
+    /// The user's own screen, drawn inline beneath whatever came before.
+    /// Nothing is hidden and nothing is restored, so output that scrolls off
+    /// the viewport stays in scrollback.
+    Normal,
+}
+
 /// Restores the terminal (raw mode + alternate screen, and mouse capture if
 /// it was enabled) on drop — and, via [`PanicHookGuard`], on panic even in
 /// abort builds.
@@ -137,15 +161,17 @@ pub(crate) struct TerminalGuard {
 }
 
 impl TerminalGuard {
-    pub(crate) fn enter(mouse: bool) -> io::Result<Self> {
+    pub(crate) fn enter(mouse: bool, screen: Screen) -> io::Result<Self> {
         let guard = Self {
             state: Arc::new(TermState::default()),
         };
         let mut out = io::stdout();
         enable_raw_mode()?;
         guard.state.raw.store(true, Ordering::SeqCst);
-        execute!(out, EnterAlternateScreen)?;
-        guard.state.alt.store(true, Ordering::SeqCst);
+        if screen == Screen::Alternate {
+            execute!(out, EnterAlternateScreen)?;
+            guard.state.alt.store(true, Ordering::SeqCst);
+        }
         // Always on: without bracketed paste a multi-line paste arrives as
         // raw key events, so every newline acts as Enter — one paste becomes
         // N separate prompt submissions. With it, the whole paste arrives as

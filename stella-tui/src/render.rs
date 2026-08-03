@@ -102,9 +102,18 @@ pub fn render(model: &SessionModel, ui: &mut UiState, frame: &mut Frame) {
         render_hud(&model.hud, hud_area, buf)
     });
 
-    // Main: transcript (left) + files/diff (right).
-    let cols = Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)])
-        .split(main_area);
+    // Main: transcript (left) + files/diff (right) — stacked instead of split
+    // when a screen reader is listening, because a reader walks the grid row
+    // by row and a two-column row is two unrelated half-sentences spoken as
+    // one (see `UiState::screen_reader`). The panels, their contents, and
+    // every key that drives them are identical either way; only the axis
+    // changes, so `Tab`-to-files and the diff viewer keep working.
+    let cols = if ui.screen_reader {
+        Layout::vertical([Constraint::Percentage(70), Constraint::Percentage(30)]).split(main_area)
+    } else {
+        Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)])
+            .split(main_area)
+    };
     let transcript_area = cols[0];
     let right_area = cols[1];
 
@@ -190,12 +199,36 @@ pub fn render(model: &SessionModel, ui: &mut UiState, frame: &mut Frame) {
     // Slash-command popup, floating just above the composer (drawn last
     // so it sits over the transcript, Crush-style, instead of reflowing it).
     let slash = ui.composer.slash_menu(&ui.slash_commands);
+    let mut slash_open = false;
     if let Some(menu) = slash.filter(|m| !m.is_empty()) {
+        slash_open = true;
         let selected = ui.slash_selected.min(menu.matches.len().saturating_sub(1));
         let area = slash_popup_area(root, composer_area, menu.matches.len());
         guarded_panel(frame, area, "slash-menu", |buf| {
             render_slash_popup(&menu, selected, area, buf)
         });
+    }
+
+    // Put the *hardware* cursor where the caret is (#935). ratatui hides the
+    // terminal cursor on any frame that never positions it, and until this
+    // surface had a caller the fix landed on the deck alone — so the caret
+    // here was a reversed cell and nothing more. A reversed cell is invisible
+    // to everything that reads a terminal programmatically: screen readers
+    // have no insertion point to follow, and a CJK/IME candidate window
+    // anchors to the terminal cursor, so composition appeared in the wrong
+    // place or not at all.
+    //
+    // Suppressed while the slash popup owns the keyboard, mirroring the
+    // precedence `handle_key` already applies — the caret must not sit in the
+    // composer while keys are steering a menu. The scope and ask-user cards
+    // are deliberately NOT suppressors: both are answered *by typing into the
+    // composer* (see `render_scope_review`), so the composer still holds the
+    // insertion point while they are up.
+    if !slash_open
+        && ui.focus == PanelFocus::Composer
+        && let Some((x, y)) = composer_cursor_position(&c_layout, composer_area)
+    {
+        frame.set_cursor_position((x, y));
     }
 
     // Cache viewport sizes for the next keypress's scroll clamping.
@@ -623,6 +656,50 @@ pub(crate) fn render_slash_popup(menu: &SlashMenu, selected: usize, area: Rect, 
 /// to this, then scrolls to keep the cursor row in view.
 pub(crate) const COMPOSER_MAX_ROWS: usize = 8;
 
+/// Columns the `› ` prompt glyph (and the matching continuation indent)
+/// occupies before the composer's own text starts.
+const PROMPT_PREFIX_W: usize = 2;
+
+/// The first visible composer row for a viewport of `visible` rows. Factored
+/// out of [`render_composer`] so [`composer_cursor_position`] windows the
+/// buffer exactly the way the draw does, rather than by a second copy of the
+/// arithmetic that could drift from it.
+fn composer_scroll_first(cursor_row: usize, visible: usize) -> usize {
+    (cursor_row + 1).saturating_sub(visible)
+}
+
+/// The absolute terminal cell of the composer caret, or `None` when the
+/// composer band is too small to have drawn one.
+///
+/// `area` is the bordered band, so the interior — where [`render_composer`]
+/// writes — starts one row down and one column in, after which the `› `
+/// prefix takes [`PROMPT_PREFIX_W`] more columns. The blank-composer branch
+/// draws its cursor block at exactly that first interior text cell, and
+/// `ComposerLayout` reports `(0, 0)` for an empty buffer, so one formula
+/// covers both branches.
+pub(crate) fn composer_cursor_position(layout: &ComposerLayout, area: Rect) -> Option<(u16, u16)> {
+    // Under 3 rows / 3 columns the border leaves no interior and nothing was
+    // drawn — there is no caret cell to point at.
+    if area.width < 3 || area.height < 3 {
+        return None;
+    }
+    let visible = inner_height(area).max(1);
+    let first = composer_scroll_first(layout.cursor_row, visible);
+    let row_in_view = layout.cursor_row.checked_sub(first)?;
+    let y = area
+        .y
+        .checked_add(1)?
+        .checked_add(u16::try_from(row_in_view).ok()?)?;
+    let x = area
+        .x
+        .checked_add(1)?
+        .checked_add(u16::try_from(PROMPT_PREFIX_W + layout.cursor_col).ok()?)?;
+    // A caret scrolled past the band's right edge has no cell of its own; the
+    // terminal would clamp it onto a neighbouring panel's column, which is a
+    // worse lie than leaving the cursor where it was.
+    (x < area.right() && y < area.bottom()).then_some((x, y))
+}
+
 /// The multi-line composer panel. Rows come pre-wrapped from
 /// [`crate::composer::layout`]; this draws the capped window that keeps the
 /// cursor row visible, with a block cursor at the exact cursor column.
@@ -658,7 +735,7 @@ fn render_composer(
         lines.push(Line::from(spans));
     } else {
         let visible = inner_height(area).max(1);
-        let first = (layout.cursor_row + 1).saturating_sub(visible);
+        let first = composer_scroll_first(layout.cursor_row, visible);
         for (i, row) in layout.rows.iter().enumerate().skip(first).take(visible) {
             // The prompt glyph marks the first row; continuations align.
             let prefix = if i == 0 { "› " } else { "  " };

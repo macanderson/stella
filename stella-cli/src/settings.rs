@@ -378,6 +378,35 @@ pub struct AgentEngineConfig {
     /// scope thresholds (more than 5 steps by default) ends the run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headless_scope_bypass: Option<Toggle>,
+    /// Revision turns the pipeline may spend per candidate when verification
+    /// fails (`stella_pipeline::PipelineConfig::max_revisions`). Absent keeps
+    /// the pipeline's own default, which is what every run used before this
+    /// key existed.
+    ///
+    /// Raising it buys near-misses another attempt and nothing else: a
+    /// revision only happens on a *failed* verification, so a run that passes
+    /// first time costs the same at 2 as at 4. The ceiling that actually
+    /// bounds spend is the budget cap, not this number — but each revision is
+    /// a full execute turn, so on a task that cannot be fixed it is the
+    /// difference between failing cheaply and failing expensively.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_max_revisions: Option<u32>,
+    /// Best-of-N: how many candidate executions the pipeline generates before
+    /// selecting one (`stella_pipeline::PipelineConfig::candidates`). Absent
+    /// or `1` is single-shot, the default.
+    ///
+    /// Unlike `pipeline_max_revisions` this is paid *unconditionally* — n
+    /// candidates run whether or not the first one would have passed, so `2`
+    /// is a straight doubling of execution cost. Opt in where the tail matters
+    /// more than the bill.
+    ///
+    /// Wants candidate isolation to be meaningful: with a
+    /// `CandidateWorkspacePort` wired, each candidate runs in its own snapshot
+    /// and only the winner is adopted. Without one the pipeline warns and runs
+    /// them sequentially in the shared tree, where losing candidates' edits
+    /// stay behind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_candidates: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents: Option<AgentEngineAgents>,
 }
@@ -553,6 +582,8 @@ impl AgentEngineConfig {
         // review. Latent while nothing layered underneath the user's file;
         // load-bearing now that `provider_engine_baseline` does.
         take!(headless_scope_bypass);
+        take!(pipeline_max_revisions);
+        take!(pipeline_candidates);
         if let Some(agents) = &other.agents {
             let target = self.agents.get_or_insert_with(AgentEngineAgents::default);
             for kind in EngineAgentKind::ALL {

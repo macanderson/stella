@@ -25,6 +25,16 @@
 //! address. `STUCK-LOOP` outranks `BUDGET-CAP` because a loop that cycles
 //! until the cap trips is exactly the defect this harness exists to catch —
 //! the cap firing is a symptom there, not the cause.
+//!
+//! # The second gate: a pass-rate floor (#873)
+//!
+//! The nightly CI job also wants to notice the day the agent stops *solving*
+//! things, which `loop_broken()` says nothing about — every trial can run
+//! healthily and pass none of them. [`below_pass_floor`] is that check, kept
+//! as a separate predicate with its own exit code so a red run still names
+//! which of the two failed. It is off unless a floor is configured, because
+//! the pass rate this harness produces is a flash-tier model's under a cap:
+//! a floor is only meaningful once a job's own history has established one.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -122,7 +132,7 @@ impl TrialReport {
     /// crate docs for the ratified vocabulary and precedence.
     #[must_use]
     pub fn loop_verdict(&self) -> &'static str {
-        if self.reward == Some(1.0) {
+        if self.passed() {
             "solved"
         } else if self.not_run {
             "NOT-RUN"
@@ -143,12 +153,21 @@ impl TrialReport {
         }
     }
 
+    /// The verifier passed this trial. The reward is compared to exactly
+    /// `1.0` — the same test `loop_verdict` and `loop_broken` already make —
+    /// because Terminal-Bench rewards are binary; a partial-credit dataset
+    /// would need this predicate revisited, not silently rounded.
+    #[must_use]
+    pub fn passed(&self) -> bool {
+        self.reward == Some(1.0)
+    }
+
     /// The loop misbehaved — the red half of the gate. A pass is never
     /// broken; `UNREADABLE` and `BUDGET-CAP` are excluded (not loop
     /// evidence); `NOT-RUN`, `STUCK-LOOP`, and a zero-work non-pass gate red.
     #[must_use]
     pub fn loop_broken(&self) -> bool {
-        if self.reward == Some(1.0) {
+        if self.passed() {
             return false;
         }
         if self.not_run {
@@ -368,6 +387,48 @@ pub fn truncate(s: &str, n: usize) -> String {
     s.chars().take(n - 1).collect::<String>() + "…"
 }
 
+/// The run-level counts both gates read, and the header of the JSON report a
+/// CI consumer trends over time.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct Tally {
+    /// Rows in the report — including `NOT-RUN` ones, so the denominator is
+    /// the task set that was *asked for*, never the smaller set that ran.
+    pub total: usize,
+    /// Trials the verifier passed.
+    pub solved: usize,
+    /// Trials whose loop misbehaved ([`TrialReport::loop_broken`]).
+    pub loop_broken: usize,
+}
+
+/// Fold the per-trial reports into the run-level counts.
+#[must_use]
+pub fn tally(reports: &[TrialReport]) -> Tally {
+    Tally {
+        total: reports.len(),
+        solved: reports.iter().filter(|r| r.passed()).count(),
+        loop_broken: reports.iter().filter(|r| r.loop_broken()).count(),
+    }
+}
+
+/// The pass-rate floor (#873) — the *second*, opt-in gate, kept deliberately
+/// separate from [`TrialReport::loop_broken`].
+///
+/// This harness gates on loop health because pass rate is dominated by model
+/// quality, and the default model here is a flash tier under a $0.20 cap: a
+/// floor set by intuition rather than by an observed baseline is red every
+/// night for a reason no loop fix can address. So `min_pass` of **0 disables
+/// the check entirely**, which is the default, and a nightly job raises it
+/// only once its own history says what "normal" is.
+///
+/// The floor is an absolute count of solved trials rather than a percentage.
+/// With a pinned task list the two are the same statement, and the count
+/// cannot round: `min_pass = 2` over four tasks is unambiguous where
+/// "50%" over five is an argument about 2.5.
+#[must_use]
+pub fn below_pass_floor(reports: &[TrialReport], min_pass: usize) -> bool {
+    min_pass > 0 && tally(reports).solved < min_pass
+}
+
 /// Width of the rendered table, in columns: 24 (task) + 14 (verdict) + 6 + 6 +
 /// 5 + 4 + 4 for the counters + 7 for `$`, plus the nine separator spaces and
 /// the six of `reward`. The verdict column is exactly as wide as the longest
@@ -381,8 +442,6 @@ pub fn print_table(reports: &[TrialReport]) {
         "task", "verdict", "calls", "tools", "wr", "ov", "gq", "$"
     );
     println!("{}", "─".repeat(TABLE_WIDTH));
-    let mut solved = 0usize;
-    let mut loop_broken = 0usize;
     let mut overview_used = 0usize;
     let mut graph_used = 0usize;
     let mut spend = 0.0f64;
@@ -417,12 +476,6 @@ pub fn print_table(reports: &[TrialReport]) {
                 ""
             );
         }
-        if r.reward == Some(1.0) {
-            solved += 1;
-        }
-        if r.loop_broken() {
-            loop_broken += 1;
-        }
         if r.project_overview_calls > 0 {
             overview_used += 1;
         }
@@ -431,7 +484,14 @@ pub fn print_table(reports: &[TrialReport]) {
         }
         spend += r.spend_usd;
     }
-    let n = reports.len();
+    // One definition of "solved" and "broken" for the table, the JSON header,
+    // and both gates — the counts a CI job trends must be the counts the
+    // exit code was decided from, not a second tally that can drift from it.
+    let Tally {
+        total: n,
+        solved,
+        loop_broken,
+    } = tally(reports);
     println!("{}", "─".repeat(TABLE_WIDTH));
     println!(
         "LOOP: {loop_broken}/{n} broken (silent-death, zero-work, stuck-loop, or not-run)   \

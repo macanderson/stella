@@ -1,0 +1,45 @@
+# deck golden · tab_skills
+# the SKILLS tab over the scripted demo session
+# viewport 160×40 · rendered through render_deck, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
+
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ SKILLS │ MCP │ ISSUES │ SETTINGS                                                                                 │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Installed — 4 (user + project) ──────────────────────────────────────────────────────┐┌ Registry search ─────────────────────────────────────────────────────┐
+│  [x] release-checklist v3  (project·workspace)  Cut a release: version bump, change… ││find:                                                                 │
+│▸ [x] rust-review v2/4  (user·user)  Review Rust diffs for ownership, error handling… ││                                                                      │
+│  [ ] sql-tuning v1  (user·installed)  Read a query plan and propose indexes.         ││type a term and press ⏎ to search                                     │
+│  [x] bench-rig-access v1  (project·auto)  Reach the benchmark rig and read a run's … ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────────────────┘
+ space on/off · ctrl+o preview · ctrl+x×2 delete · e edit · p pin · n new · → search
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▸ stage  Refactor the automations store into a shared workspace package
+✓ plan  ▸ execute  · verify ██████████████████████████████████████████┊█████████████████████░░░░░░░░░░░░░░░░░░░░░┊░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 50%
+>>>
+ ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
+           │ AGENT │ STAGE     │ CPU         │ CONTEXT          │ SPEND │ CACHE                 │ SAVED │ WARMTH │ ENGINE   │ PIPELINE │ PR            │ INBOX
+ ✦ stella  │ lead  │ ● execute │ ▮▮▮▯▯▯  50% │ ▯▯▯▯▯▯ 8.2k/200k │ $0.05 │ 63% (18.0K rd · 0 wr) │ $0.00 │ —      │ 3 active │ OFF      │ ⇢ #981 open … │ —
+ MODELS  T·—  W·zai/glm-5.2-air  J·—

@@ -34,6 +34,8 @@ from stella_harbor import (  # noqa: E402 - after importorskip by design
     _benchmark_assurance_tiers,
     _benchmark_engine_posture,
     _stream_to_envelope,
+    resolve_candidates,
+    resolve_max_revisions,
 )
 
 
@@ -303,6 +305,137 @@ class TestWorkerEffortAndTriageArms:
         # Every pinned role is in the whitelist, or it cannot be resolved.
         for role_key in ("pipeline_judge_model", "pipeline_triage_model"):
             assert posture[role_key] in posture["allowed_models"]
+
+
+class TestAttemptCountArms:
+    """Revisions and best-of-N as selectable, hashed arms (#1211 §6.7, §6.8).
+
+    Before these existed the two knobs were unreachable rather than merely
+    unset: outside `stella-pipeline`'s own tests, `max_revisions` was written
+    once (to `2`) and `candidates` once (to `None`), so best-of-N was fully
+    implemented and had never run in production.
+    """
+
+    _MODEL = "openrouter/anthropic/claude-sonnet-5"
+
+    def test_unset_selectors_reproduce_the_frozen_posture(self) -> None:
+        """The keys must be ABSENT when unselected, not present-at-default.
+
+        The digest is taken over this dict, so writing `pipeline_max_revisions:
+        2` — the value every historical run actually had — would still change
+        every recorded hash, to describe a posture identical to the one they
+        already described. Absence is the only encoding of "the engine's
+        default" that keeps `bench/READINESS.md` honest.
+        """
+        default_posture, default_json, default_digest = _benchmark_engine_posture(
+            self._MODEL
+        )
+        explicit = _benchmark_engine_posture(
+            self._MODEL, max_revisions=None, candidates=None
+        )
+        assert default_json == explicit[1]
+        assert default_digest == explicit[2]
+        assert "pipeline_max_revisions" not in default_posture
+        assert "pipeline_candidates" not in default_posture
+
+    def test_the_registered_sonnet_digest_is_unchanged(self) -> None:
+        """The one digest an external gate already checks by prefix.
+
+        `bench/evidence/run/preflight_effort.sh` defaults `EXPECT_DIGEST` to
+        this value and `bench/READINESS.md` §8.4.3 registers it. Pinning it
+        here means a posture change is caught in unit tests rather than by a
+        preflight on the rig, where the feedback costs a run.
+        """
+        _posture, _normalized, digest = _benchmark_engine_posture(
+            "anthropic/claude-sonnet-5"
+        )
+        assert digest.startswith("3c428a22")
+
+    def test_each_selector_moves_the_digest_and_only_its_own_key(self) -> None:
+        """Two arms, two hashes — and neither disturbs the rest of the posture."""
+        base, _base_json, base_digest = _benchmark_engine_posture(self._MODEL)
+        revised, _revised_json, revised_digest = _benchmark_engine_posture(
+            self._MODEL, max_revisions=4
+        )
+        best_of, _best_json, best_digest = _benchmark_engine_posture(
+            self._MODEL, candidates=2
+        )
+        assert revised["pipeline_max_revisions"] == 4
+        assert "pipeline_candidates" not in revised
+        assert best_of["pipeline_candidates"] == 2
+        assert "pipeline_max_revisions" not in best_of
+        assert len({base_digest, revised_digest, best_digest}) == 3
+        # Model routing, effort and the ceilings are untouched by either — an
+        # attempt-count arm must not be a second, undeclared variable.
+        for arm in (revised, best_of):
+            for key in ("default_model", "allowed_models", "agents"):
+                assert arm[key] == base[key]
+
+    def test_selected_knobs_stay_inside_the_launcher_vocabulary(self) -> None:
+        """The fail-closed seam refuses the RUN on an unknown root key.
+
+        `config::trusted_engine_config_shape_is_strict` shares its vocabulary
+        with `settings::ENGINE_ROOT_FIELDS`, so an unrecognised key here is not
+        dropped — the trial dies at launch. This asserts against a literal copy
+        of that list on purpose: a shared constant would drift together with
+        the thing it is supposed to catch drifting.
+        """
+        posture, _normalized, _digest = _benchmark_engine_posture(
+            self._MODEL,
+            witness_author="openrouter/anthropic/claude-fable-5",
+            worker_effort="xhigh",
+            triage_model="openrouter/anthropic/claude-haiku-4.5",
+            max_revisions=4,
+            candidates=2,
+        )
+        allowed_roots = {
+            "default_model",
+            "pipeline_judge_model",
+            "pipeline_worker_model",
+            "pipeline_triage_model",
+            "allowed_models",
+            "auto_mode",
+            "effort_auto",
+            "reasoning_auto",
+            "headless_scope_bypass",
+            "pipeline_max_revisions",
+            "pipeline_candidates",
+            "agents",
+        }
+        assert set(posture) <= allowed_roots
+
+    def test_resolvers_treat_unset_as_inherit_and_refuse_a_lost_value(self) -> None:
+        """`None` inherits; empty is a refusal, not a second spelling of `None`.
+
+        An empty selector means a value was lost between the launcher and here.
+        Inheriting the default there would score the run under a configuration
+        nobody chose — the same failure the effort selector refuses.
+        """
+        assert resolve_max_revisions(None) is None
+        assert resolve_candidates(None) is None
+        assert resolve_max_revisions("4") == 4
+        assert resolve_candidates(" 2 ") == 2
+        for resolver in (resolve_max_revisions, resolve_candidates):
+            with pytest.raises(ValueError, match="must not be empty"):
+                resolver("   ")
+            with pytest.raises(ValueError, match="must be an integer"):
+                resolver("two")
+
+    def test_bounds_refuse_a_fat_fingered_digit_and_a_zero_candidate(self) -> None:
+        """The ceilings catch the typo whose cost is a bill, not a wrong answer.
+
+        `0` splits the two: no revisions is a real arm (one shot, no retry), so
+        it is admissible. Zero candidates is not — the pipeline floors it to 1
+        anyway, so accepting it would let two selector values describe the same
+        run under two different digests.
+        """
+        assert resolve_max_revisions("0") == 0
+        with pytest.raises(ValueError, match="candidates must be between 1"):
+            resolve_candidates("0")
+        with pytest.raises(ValueError, match="max revisions must be between"):
+            resolve_max_revisions("40")
+        with pytest.raises(ValueError, match="candidates must be between"):
+            resolve_candidates("20")
 
 
 class TestWitnessStreamObservation:

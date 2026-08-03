@@ -198,6 +198,26 @@ Implemented (#994) as the repository-visible promotion ledger
 - The policy version is the ledger length: an auditor citing "policy v12"
   means the verified 12-event prefix, reproducible from any checkout.
 
+**This repository runs under it.** `.stella/rules/` carries Stella's own
+published records, `governance.toml` sets the mode, and `promotions.jsonl`
+holds the grants — so every change to what steers an agent working here
+arrives as a reviewable diff, and CI re-verifies the chain on every pull
+request (§12). Two consequences of that directory layout are worth stating,
+because both were found by publishing the first records rather than by
+reading the design:
+
+- `.stella/` is otherwise per-workspace scratch and is gitignored wholesale.
+  `rules/` is re-included explicitly: a record only steers a teammate's
+  session if it travels with the repository, and the ledger's claim that
+  rewrites are self-evident rests on Git history being its anchor.
+  `.stella/private/` stays ignored, so evidence never follows a statement
+  into Git (§10).
+- `governance.toml` shares the directory with the records it governs but is
+  **not** a record, so the loader reserves the name. Parsed as a
+  `context-record/v0.1` document it reports as a malformed record on every
+  load — and a permanent false alarm is the one signal a genuinely broken
+  record file would have to compete with.
+
 ### 5.4 Solo-to-team transition
 
 When multiple active repository identities are detected: ask before changing
@@ -615,6 +635,10 @@ Aligned with the adaptive-context plan (lifecycle "Phase 4: team governance"):
 6. **Regulated / organization policy.** Accountable approval records,
    organization scope behind an explicit managed source, retention and
    residency controls. Blocking only for mature, owner-approved rules.
+   The repository half shipped in #994 — mode, hash-chained ledger, policy
+   versioning, proposer/approver separation, and `stella context validate`
+   as a live PR check over this repository's own records. Organization
+   scope, retention, and residency remain open.
 
 ## 17. Acceptance criteria
 
