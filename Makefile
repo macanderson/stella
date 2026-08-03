@@ -21,6 +21,16 @@ build: ## Build the full workspace (debug)
 build-release: ## Build the shipping binary (release, optimized)
 	cargo build --release -p stella-cli
 
+# Deliberately separate from `build-release`: this is the *release* build, with
+# $CARGO_HOME and the rustup sysroot remapped out of the binary so its SHA-256
+# is a property of the source and not of your home directory (#910). It costs a
+# full rebuild the first time because RUSTFLAGS is part of cargo's fingerprint,
+# which is exactly why the everyday target above does not set them.
+.PHONY: repro-build
+repro-build: ## Build the shipping binary reproducibly for TRIPLE=<target> and print its SHA-256
+	@test -n "$(TRIPLE)" || { echo "usage: make repro-build TRIPLE=x86_64-unknown-linux-gnu"; exit 2; }
+	@./scripts/repro-build.sh $(TRIPLE)
+
 .PHONY: smoke
 smoke: ## Compile check — runs `stella models` (no API key needed)
 	cargo run -p stella-cli -- models
@@ -98,6 +108,10 @@ cargo-install-pins: ## Assert every workflow `cargo install` names an exact vers
 license-allowlist-parity: ## Assert deny.toml and dependency-review.yml agree on allowed licenses (#920)
 	@./scripts/check-license-allowlist-parity.sh
 
+.PHONY: repro-wiring
+repro-wiring: ## Assert both release paths build through scripts/repro-build.sh (#910)
+	@./scripts/check-repro-wiring.sh
+
 .PHONY: doc-citations
 doc-citations: ## Assert docs citations resolve and none cite by line number (#652, #561)
 	@./scripts/check-doc-citations.sh
@@ -138,10 +152,10 @@ serve-image: ## Build the stella-serve image and smoke the container (needs Dock
 	@./scripts/smoke-serve-image.sh stella-serve:ci
 
 .PHONY: gate
-gate: no-scratch action-pins cargo-install-pins license-allowlist-parity shellcheck doc-citations invariants file-size wire-schema doc-warnings format-check lint test ## Full CI gate: no-scratch + action-pins + cargo-install-pins + license-allowlist-parity + shellcheck + doc-citations + invariants + file-size + wire-schema + rustdoc + fmt-check + clippy + test
+gate: no-scratch action-pins cargo-install-pins license-allowlist-parity repro-wiring shellcheck doc-citations invariants file-size wire-schema doc-warnings format-check lint test ## Full CI gate: no-scratch + action-pins + cargo-install-pins + license-allowlist-parity + repro-wiring + shellcheck + doc-citations + invariants + file-size + wire-schema + rustdoc + fmt-check + clippy + test
 
 .PHONY: check
-check: no-scratch action-pins cargo-install-pins license-allowlist-parity shellcheck invariants file-size format-check lint ## Fast pre-push check (scratch + pins + license parity + shellcheck + invariants + file-size + fmt + clippy, no tests)
+check: no-scratch action-pins cargo-install-pins license-allowlist-parity repro-wiring shellcheck invariants file-size format-check lint ## Fast pre-push check (scratch + pins + license parity + repro wiring + shellcheck + invariants + file-size + fmt + clippy, no tests)
 
 .PHONY: hooks
 hooks: ## Install the pre-push gate hook (runs `make gate` on every push)

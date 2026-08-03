@@ -131,10 +131,49 @@ That push starts the `Release` workflow, which:
   `x86_64`),
 - packs each as a `stella-<version>-<target>.tar.gz` with the licenses +
   README,
-- creates a GitHub Release with those tarballs and a `SHA256SUMS`,
+- rebuilds `x86_64-unknown-linux-gnu` on a second runner and refuses to publish
+  if the two binaries differ byte for byte (`verify-reproducible`),
+- creates a GitHub Release with those tarballs, a `SHA256SUMS` (tarballs) and a
+  `SHA256SUMS.bin` (bare binaries),
 - renders `Formula/stella.rb` from `.github/homebrew/stella.rb.tmpl` (real
   version + per-target SHA-256 sums) and commits it to the Homebrew tap
   (skipped if `HOMEBREW_TAP_TOKEN` is not configured).
+
+## Verify a published binary yourself
+
+Release builds are reproducible: the same tag, built on the pinned toolchain,
+produces the same bytes on your machine as on ours. That is what makes the
+published binary checkable against the published source rather than merely
+asserted to match it (#910).
+
+```bash
+git clone --depth 1 --branch v<version> https://github.com/macanderson/stella
+cd stella
+rustup show                       # must report the rust-toolchain.toml pin
+./scripts/repro-build.sh x86_64-unknown-linux-gnu
+
+curl -fsSLO https://github.com/macanderson/stella/releases/download/v<version>/SHA256SUMS.bin
+grep "stella-<version>-x86_64-unknown-linux-gnu" SHA256SUMS.bin
+```
+
+The last line of `repro-build.sh` and the matching line of `SHA256SUMS.bin` must
+be identical. Three things to know before you file a mismatch:
+
+- **Use `scripts/repro-build.sh`, not `cargo build --release`.** The remapping
+  that removes your `$CARGO_HOME` and rustup sysroot from the binary lives in
+  that script and nowhere else — a bare `cargo build` bakes your home directory
+  into the bytes and will never match.
+- **Compare against `SHA256SUMS.bin`, not `SHA256SUMS`.** The latter hashes the
+  tarballs; rebuilding gives you a binary, not our archive of it. (The tarballs
+  are reproducible too — `scripts/package-tarball.py` zeroes the mtimes, owners
+  and gzip timestamp — but only when packed the same way.)
+- **The toolchain pin is not advisory.** `repro-build.sh` refuses to build on
+  anything but the version in `rust-toolchain.toml`, because two rustc releases
+  inline different `std` and no amount of path remapping makes their output
+  agree.
+
+`cargo install --git` (install.sh's source fallback) is a different build path
+with no reproducibility promise — it does not go through this script.
 
 ## Cut a release locally (no CI) — the degraded path
 

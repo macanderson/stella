@@ -330,6 +330,42 @@ main() {
   src="${tmpdir}/stella-${version}-${TARGET}/${BIN}"
   [ -f "$src" ] || die "binary not found in archive: ${src}"
 
+  # Check the extracted binary against the release's published bare-binary
+  # checksums before anything is written to INSTALL_DIR (#910).
+  #
+  # This is not a second copy of the tarball check. SHA256SUMS.bin is the number
+  # a third party gets by rebuilding the tag themselves — release.yml remaps the
+  # builder's paths out of the binary and rebuilds it on a second runner to
+  # prove the number is reproducible — so it is the one value here that ties the
+  # thing about to be put on your PATH to the published *source*. Verifying it
+  # costs one request and means the bytes we execute are the bytes anyone can
+  # independently regenerate.
+  #
+  # Soft when the file is absent, fatal when it is present and disagrees: same
+  # shape as verify_provenance, and for the same reason — every release
+  # published before this landed has no SHA256SUMS.bin, and treating those as
+  # forged would break `curl | sh` for every existing version.
+  bin_sums_url="${DOWNLOAD_BASE}/${TAG}/SHA256SUMS.bin"
+  if curl -fsSL "$bin_sums_url" -o "${tmpdir}/SHA256SUMS.bin" 2>/dev/null; then
+    bin_expected="$(awk -v f="stella-${version}-${TARGET}" '$2 == f {print $1}' "${tmpdir}/SHA256SUMS.bin")"
+    if [ -n "$bin_expected" ]; then
+      bin_actual="$(sha256_of "$src")"
+      if [ "$bin_expected" != "$bin_actual" ]; then
+        die "binary checksum mismatch for stella-${version}-${TARGET}:
+     expected ${bin_expected}
+     got      ${bin_actual}
+     The tarball matched SHA256SUMS but the binary inside it does not match the
+     published build. Do not run it. Please report this at
+     https://github.com/${REPO}/security"
+      fi
+      info "binary checksum ok"
+    else
+      info "no binary checksum for this target in SHA256SUMS.bin — tarball checksum only"
+    fi
+  else
+    info "release ${TAG} publishes no SHA256SUMS.bin — tarball checksum only"
+  fi
+
   mkdir -p "$INSTALL_DIR"
   install_path="${INSTALL_DIR}/${BIN}"
   # Install atomically: copy to a temp file in the same dir, make it executable,

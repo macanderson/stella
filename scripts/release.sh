@@ -32,8 +32,8 @@ set -euo pipefail
 REPO="macanderson/stella"
 TAP_REPO="macanderson/homebrew-tap"   # repo the formula is pushed to (git)
 TAP="macanderson/tap"                 # brew tap name → maps to repo homebrew-tap
-BIN="stella"
-CRATE="stella-cli"
+BIN="stella"                          # the crate that produces it is
+                                      # scripts/repro-build.sh's business now
 MAC_TARGETS=(aarch64-apple-darwin x86_64-apple-darwin)
 LINUX_TARGETS=(aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu)
 GLIBC="2.17"   # build Linux against an old glibc so the binaries run broadly
@@ -202,23 +202,41 @@ ok "stamped workspace version ${VERSION}"
 # pick up a stale binary from an earlier non-isolated build.
 TARGET_ROOT="${CARGO_TARGET_DIR:-target}"
 DIST="$(mktemp -d)/dist"; mkdir -p "$DIST"
+# The tag will point at the stamped release commit, so that commit's time — not
+# HEAD's — is the timestamp the archives carry. Exported once for every build
+# and pack below; scripts/repro-build.sh honors an already-set value.
+SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct "$release_sha")"
+export SOURCE_DATE_EPOCH
 package() {  # <target-triple>
   local tgt="$1" stem="${BIN}-${VERSION}-$1"
   mkdir -p "$DIST/$stem"
   cp "${TARGET_ROOT}/${tgt}/release/${BIN}" "$DIST/$stem/${BIN}"
   # AGPL §4/§5 require the license text to travel with every distributed copy.
   cp LICENSE NOTICE LICENSING.md README.md "$DIST/$stem/"
-  tar -C "$DIST" -czf "$DIST/${stem}.tar.gz" "$stem"
+  # Deterministic tar.gz (#910): plain `tar -czf` bakes in mtimes, uid/gid and
+  # the gzip header timestamp, so the same binary packs to a different tarball
+  # every time and SHA256SUMS can never be reproduced.
+  scripts/package-tarball.py "$DIST/$stem" "$DIST/${stem}.tar.gz"
+  # The bare-binary checksum repro-build.sh emitted, collected here so this
+  # path publishes the same SHA256SUMS.bin the CI path does — otherwise
+  # install.sh silently skips its binary check for locally-cut releases.
+  cp "${TARGET_ROOT}/${tgt}/release/${BIN}.sha256" "$DIST/${stem}.sha256"
   rm -rf "$DIST/${stem:?}"
 }
+# Both loops build through scripts/repro-build.sh: it is the one place that
+# remaps $CARGO_HOME and the rustup sysroot out of the binary and asserts the
+# rust-toolchain.toml pin (#910). No `--locked` here — unlike CI, this builds
+# against a manifest just stamped to the new version that the lockfile has not
+# caught up to yet (see the .Cargo.lock.relbak note above), and `--locked`
+# would abort on exactly that expected drift.
 for t in "${MAC_TARGETS[@]}"; do
   info "building $t (native)"
-  cargo build --release --target "$t" --package "$CRATE" --bin "$BIN"
+  scripts/repro-build.sh "$t"
   package "$t"
 done
 for t in "${LINUX_TARGETS[@]}"; do
   info "building $t (zig cross-compile, glibc ${GLIBC})"
-  cargo zigbuild --release --target "${t}.${GLIBC}" --package "$CRATE" --bin "$BIN"
+  scripts/repro-build.sh --glibc "$GLIBC" "$t"
   package "$t"
 done
 restore_manifest; trap - EXIT   # manifest back to pristine now that builds are done
@@ -226,6 +244,10 @@ ok "built + packaged 4 targets"
 
 # ── Checksums + version sanity check on the native binary ───────────────────
 ( cd "$DIST" && shasum -a 256 "${BIN}"-"${VERSION}"-*.tar.gz > SHA256SUMS )
+# Bare-binary sums, sorted by stem so the file does not depend on glob order.
+# This is the number an independent rebuilder compares against — the tarball
+# hash cannot serve, since rebuilding gives them a binary, not our archive.
+( cd "$DIST" && cat ./*.sha256 | sort -k2 > SHA256SUMS.bin )
 native="${TARGET_ROOT}/$(rustc -vV | sed -n 's/host: //p')/release/${BIN}"
 if [ -x "$native" ]; then
   "$native" --version 2>/dev/null | grep -q "${VERSION}" || die "built binary reports the wrong version (expected ${VERSION}) — aborting before publish"
@@ -263,7 +285,7 @@ git push --no-verify origin "refs/tags/${TAG}" \
 info "creating GitHub Release ${TAG}"
 gh release create "$TAG" --repo "$REPO" --verify-tag \
   --title "$TAG" --notes-file "$notes" \
-  "$DIST"/"${BIN}"-"${VERSION}"-*.tar.gz "$DIST/SHA256SUMS"
+  "$DIST"/"${BIN}"-"${VERSION}"-*.tar.gz "$DIST/SHA256SUMS" "$DIST/SHA256SUMS.bin"
 ok "release: https://github.com/${REPO}/releases/tag/${TAG}"
 
 # ── Render + push the Homebrew formula ──────────────────────────────────────

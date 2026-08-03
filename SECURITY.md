@@ -51,13 +51,13 @@ that's the user's judgment call, not a boundary Stella claims to enforce.
 trust boundaries, and the attack paths that cross them — including the risks
 Stella knowingly does not defend against, and why. Read it before deciding
 whether a behavior you found is a vulnerability or a documented choice: several
-of the sharper edges (no SSRF guard on `web` tools, the sandbox covering
-`bash` only, materially weaker guarantees off Unix) are deliberate and recorded
-there.
+of the sharper edges (the sandbox covering `bash` only, the `web` egress guard
+being bypassed by an HTTP proxy, materially weaker guarantees off Unix) are
+deliberate and recorded there.
 
 ## Verifying a release
 
-Every artifact published by `.github/workflows/release.yml` carries two
+Every artifact published by `.github/workflows/release.yml` carries three
 independent guarantees, and they answer different questions:
 
 - **`SHA256SUMS`** proves the tarball was not corrupted or truncated. It is
@@ -69,9 +69,20 @@ independent guarantees, and they answer different questions:
   specific commit. It covers the tarballs *and* `SHA256SUMS`, and it cannot be
   reissued by whoever holds the release. No signing key is involved, so there
   is none to leak or rotate.
+- **A reproducible build** proves the artifact corresponds to the published
+  *source*. `scripts/repro-build.sh` remaps the builder's `$CARGO_HOME` and
+  rustup sysroot out of the binary and refuses to run on anything but the
+  `rust-toolchain.toml` pin, so anyone can rebuild a tag and get our bytes;
+  release.yml rebuilds one target on a second runner with a deliberately
+  different environment and blocks publication if the two disagree. The
+  per-target binary hashes are published as `SHA256SUMS.bin` — see
+  [RELEASING.md](RELEASING.md) for the recipe. This is the guarantee the other
+  two cannot give: an attestation proves *we* built it, not that what we built
+  is what we published the source for.
 
-`install.sh` checks the checksum always, and checks provenance whenever `gh` is
-on `PATH`. A verifier that runs and **rejects** an artifact is always fatal. A
+`install.sh` checks the tarball checksum always, checks the binary against
+`SHA256SUMS.bin` when the release publishes one, and checks provenance whenever
+`gh` is on `PATH`. A verifier that runs and **rejects** an artifact is always fatal. A
 verifier that cannot run (no `gh`, a `gh` too old, or a release predating
 provenance) is a warning — so to demand the strong guarantee, ask for it:
 
