@@ -48,11 +48,42 @@ fn tests_only_needs_no_test() {
 
 #[test]
 fn config_only_needs_no_test() {
-    let d = diff(&[".github/workflows/ci.yml"], "+  timeout-minutes: 30\n");
-    assert_eq!(
-        warrant(&d, 1),
-        WitnessWarrant::NotRequired(NoWitnessReason::ConfigOnly)
-    );
+    for path in [
+        ".github/workflows/ci.yml",
+        "Cargo.lock",
+        "web/yarn.lock",
+        "go.sum",
+        ".gitlab-ci.yml",
+    ] {
+        let d = diff(&[path], "+  timeout-minutes: 30\n");
+        assert_eq!(
+            warrant(&d, 1),
+            WitnessWarrant::NotRequired(NoWitnessReason::ConfigOnly),
+            "{path} is a build/CI/dependency manifest"
+        );
+    }
+}
+
+#[test]
+fn behavior_bearing_yaml_is_not_config() {
+    // The hole this closes: `is_config` matched every `*.yml`/`*.yaml`/`*.lock`
+    // by suffix, so a compose file, a Helm values file, or an app's own config
+    // completed with a PASS asserting "the build and gate verify these" while
+    // nothing had verified anything. Yaml is a syntax, not a category.
+    for path in [
+        "docker-compose.yml",
+        "deploy/values.yaml",
+        "config/database.yml",
+        "k8s/deployment.yaml",
+        "vendor/flock.lock",
+    ] {
+        let d = diff(&[path], "+  replicas: 3\n");
+        assert_eq!(
+            warrant(&d, 1),
+            WitnessWarrant::Required,
+            "{path} carries behavior and must keep its verification"
+        );
+    }
 }
 
 #[test]

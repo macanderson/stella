@@ -122,6 +122,15 @@ impl TaskAssessment {
     /// has to be an explicit call from triage — a class-derived default would
     /// silently drop the judge on exactly the path the zero-diff guard exists
     /// to catch (a "lookup" that turned out to touch files).
+    ///
+    /// An explicit `no` is a *request*, not a decision: by the time it is
+    /// consulted the ladder is inconclusive, which falsifies the premise the
+    /// triage prompt offered for saying no ("success is self-evident or a
+    /// test already proves it"). So the pipeline honors the waiver only when
+    /// the post-execution warrant agrees the change has nothing a reviewer
+    /// could catch (`Pipeline::judge_waiver_stands`) — the same
+    /// evidence-over-prediction rule `resolve_witness`'s ceiling applies in
+    /// the other direction.
     pub fn wants_judge(&self) -> bool {
         self.require_judge.unwrap_or(true)
     }
