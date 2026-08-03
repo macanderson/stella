@@ -22,6 +22,12 @@
 //! its failures: blessing without looking converts a regression detector into a
 //! changelog.
 //!
+//! Every test here is named `deck_render_snapshots_*` on purpose, so the
+//! filter form — `cargo test -p stella-tui deck_render_snapshots`, with no
+//! `--test` — selects them too. Cargo matches filters against test *names*, so
+//! under any other naming that command would match nothing, run zero tests, and
+//! still print `ok`: a bless that silently blesses nothing. Keep the prefix.
+//!
 //! ## What a golden does and does not pin
 //!
 //! Captured: every glyph, at every cell, at a fixed viewport — content,
@@ -74,7 +80,8 @@ const FIXTURE_PID: u32 = 424_242;
 ///
 /// 160 columns is above the AGENTS dashboard's compact threshold, so the dense
 /// column set renders in full — pinning the widest layout each tab has.
-/// `agents_dashboard_compact` snapshots the other side of that threshold.
+/// `deck_render_snapshots_pin_the_compact_agents_dashboard` takes the other
+/// side of that threshold.
 const W: u16 = 160;
 const H: u16 = 40;
 
@@ -512,7 +519,7 @@ fn tab_snapshot_name(tab: DeckTab) -> &'static str {
 /// fails until someone blesses one. A tab that has to be added to a test by
 /// hand is a tab that will be forgotten.
 #[test]
-fn every_tab_matches_its_golden_frame() {
+fn deck_render_snapshots_cover_every_tab() {
     let model = fixture_model();
     for tab in DeckTab::ALL {
         let mut ui = ui_for(tab);
@@ -535,7 +542,7 @@ fn every_tab_matches_its_golden_frame() {
 /// and `Goal` present, which stays true however badly the surviving columns are
 /// spaced. This pins the actual narrow layout.
 #[test]
-fn agents_dashboard_compact_matches_its_golden_frame() {
+fn deck_render_snapshots_pin_the_compact_agents_dashboard() {
     let model = fixture_model();
     let mut ui = ui_for(DeckTab::Agents);
     let frame = render_frame(&model, &mut ui, 120, 24);
@@ -554,7 +561,7 @@ fn agents_dashboard_compact_matches_its_golden_frame() {
 /// do, grouped by origin, with an org-locked row that must not render as a
 /// working switch.
 #[test]
-fn settings_tools_pane_matches_its_golden_frame() {
+fn deck_render_snapshots_pin_the_settings_tools_pane() {
     let model = fixture_model();
     let mut ui = ui_for(DeckTab::Settings);
     ui.settings_pane = SettingsPane::Tools;
@@ -573,7 +580,7 @@ fn settings_tools_pane_matches_its_golden_frame() {
 /// The overlay is context-aware — it lists the active tab's keys plus the
 /// deck-wide ones — so its content and its geometry both belong in a golden.
 #[test]
-fn help_overlay_matches_its_golden_frame() {
+fn deck_render_snapshots_pin_the_help_overlay() {
     let model = fixture_model();
     let mut ui = ui_for(DeckTab::Skills);
     ui.help_open = true;
@@ -592,7 +599,7 @@ fn help_overlay_matches_its_golden_frame() {
 /// A modal drawn over a populated list: the golden pins both the dialog and how
 /// much of the list it covers.
 #[test]
-fn skills_create_dialog_matches_its_golden_frame() {
+fn deck_render_snapshots_pin_the_skills_create_dialog() {
     let model = fixture_model();
     let mut ui = ui_for(DeckTab::Skills);
     ui.skills.prompt = Some(SkillPrompt::CreateDescription {
@@ -610,7 +617,7 @@ fn skills_create_dialog_matches_its_golden_frame() {
 
 /// The scope picker that follows the create dialog: project or user.
 #[test]
-fn skills_scope_picker_matches_its_golden_frame() {
+fn deck_render_snapshots_pin_the_skills_scope_picker() {
     let model = fixture_model();
     let mut ui = ui_for(DeckTab::Skills);
     ui.skills.prompt = Some(SkillPrompt::Scope {
@@ -639,7 +646,7 @@ fn skills_scope_picker_matches_its_golden_frame() {
 /// the diffs. This is the assertion that would have caught the live-pid CPU
 /// sample this fixture had to pin.
 #[test]
-fn rendering_is_reproducible() {
+fn deck_render_snapshots_are_reproducible() {
     for tab in DeckTab::ALL {
         let first = render_frame(&fixture_model(), &mut ui_for(tab), W, H);
         let second = render_frame(&fixture_model(), &mut ui_for(tab), W, H);
@@ -656,7 +663,7 @@ fn rendering_is_reproducible() {
 
 /// The differ has to be right, or every future failure reads as noise.
 #[test]
-fn describe_diff_locates_a_shifted_column() {
+fn deck_render_snapshots_diff_locates_a_shifted_column() {
     // A header row whose right border slipped one column. Characters 1–8
     // (`│ NAME  `) are identical; the ninth is where they part.
     let golden = "│ NAME  │";
@@ -679,7 +686,7 @@ fn describe_diff_locates_a_shifted_column() {
 /// A height change is called out on its own line: it explains why every
 /// following row looks different.
 #[test]
-fn describe_diff_reports_a_height_change() {
+fn deck_render_snapshots_diff_reports_a_height_change() {
     let report = describe_diff("a\nb\nc", "a\nb");
     assert!(
         report.contains("changed height: 3 lines → 2 lines"),
@@ -691,7 +698,7 @@ fn describe_diff_reports_a_height_change() {
 /// no differing line. The differ must name that rather than print an empty
 /// report — it is what an editor "helpfully" rewriting a golden looks like.
 #[test]
-fn describe_diff_explains_a_trailing_newline_only_change() {
+fn deck_render_snapshots_diff_explains_a_trailing_newline() {
     let report = describe_diff("frame\n", "frame");
     assert!(report.contains("trailing newlines"), "{report}");
     assert!(
