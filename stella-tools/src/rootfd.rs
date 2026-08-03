@@ -403,7 +403,7 @@ impl RootHandle {
     /// its target (#940).
     ///
     /// [`Self::remove_file`] cannot do this. `unlinkat` does not follow a
-    /// symlink, but [`Self::resolve_leaf`] already *expanded* one before the
+    /// symlink, but the walk behind it already *expanded* one before the
     /// syscall ran, so the name it unlinks is the target's name in the
     /// target's directory — deleting `vendor/config.toml` destroys
     /// `real.toml` and leaves the link dangling. This resolves the parent
