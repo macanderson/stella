@@ -322,9 +322,14 @@ fn runtime_effect(entry: &Entry, paths: &[String], conflicted: bool) -> String {
     let mut effect = String::new();
     if entry.is_enforced() {
         let guard = entry.guard.guard.as_ref();
-        let tool = guard
-            .and_then(|guard| guard.tool.clone())
-            .unwrap_or_else(|| "any tool".to_string());
+        // A guard with no `guard_tool` is not tool-scoped, which is a real and
+        // deliberate shape — a path guard that names no tool covers every tool
+        // that names a path. Rendering it as the tool literally called
+        // "any tool" both misread as a name and produced "A `any tool` call".
+        let subject = guard.and_then(|guard| guard.tool.clone()).map_or_else(
+            || "A call from any tool".to_string(),
+            |tool| format!("A `{tool}` call"),
+        );
         let pattern = guard
             .and_then(|guard| {
                 guard
@@ -334,7 +339,7 @@ fn runtime_effect(entry: &Entry, paths: &[String], conflicted: bool) -> String {
             })
             .unwrap_or_else(|| "*".to_string());
         effect.push_str(&format!(
-            "A `{tool}` call matching `{pattern}` is denied at the tool boundary and the record's \
+            "{subject} matching `{pattern}` is denied at the tool boundary and the record's \
              text is returned to the model. Nothing else is affected."
         ));
     } else if paths.is_empty() {
@@ -361,16 +366,33 @@ fn runtime_effect(entry: &Entry, paths: &[String], conflicted: bool) -> String {
 /// A one-line summary for the title — the statement's first clause, lowercased.
 fn summary(entry: &Entry) -> String {
     let statement = entry.record.record.statement.trim();
-    let first = statement
-        .split(['.', ';'])
-        .next()
-        .unwrap_or(statement)
-        .trim();
-    let mut chars = first.chars();
+    let mut chars = first_clause(statement).chars();
     match chars.next() {
         Some(first_char) => format!("{}{}", first_char.to_lowercase(), chars.as_str()),
         None => entry.record.handle.clone(),
     }
+}
+
+/// The statement up to its first sentence break.
+///
+/// A period only ends a sentence when what follows it is whitespace or nothing.
+/// Splitting on every `.` instead truncated the very first Context PR this repo
+/// opened — the statement ends `… widening the license allow-list in
+/// \`deny.toml\`.`, and the title came out at `… the license allow-list in
+/// \`deny`. Records name files, and file names have dots in them; a title cut
+/// mid-identifier is worse than a long one, because it reads as a different
+/// claim rather than an abbreviated one.
+pub(super) fn first_clause(statement: &str) -> &str {
+    for (i, ch) in statement.char_indices() {
+        if ch != '.' && ch != ';' {
+            continue;
+        }
+        let rest = &statement[i + ch.len_utf8()..];
+        if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+            return statement[..i].trim();
+        }
+    }
+    statement
 }
 
 /// The `CODEOWNERS` owners for `path`, when the file exists and a pattern matches.
