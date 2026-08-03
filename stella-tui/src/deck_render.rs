@@ -149,6 +149,24 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
             render_queue_popup(model, ui, area, b)
         });
     }
+    // The STATE overlay (`⌃s`): the expansion of the Session tab's one-row
+    // state strip. Drawn from the focused agent, so it says nothing at all
+    // when there is no agent to say it about.
+    if ui.state_open
+        && let Some(agent) = model.agents.get(ui.focused)
+    {
+        let sm = &agent.model;
+        let scroll = ui.state_scroll;
+        // Measured during render (where the popup's real height is known) and
+        // read by the next keypress's clamp — the same contract every other
+        // scrolling surface in the deck uses. A panic inside the guard leaves
+        // the previous frame's measure, which the next frame overwrites.
+        let mut rows = ui.state_rows;
+        guarded_overlay(buf, area, "state", |b| {
+            rows = views::work_rail::render_overlay(sm, scroll, area, b);
+        });
+        ui.state_rows = rows;
+    }
     if ui.graph_picker_open {
         guarded_overlay(buf, area, "graph picker", |b| {
             render_graph_picker(ui, area, b)
@@ -1792,6 +1810,10 @@ const GLOBAL_SHORTCUTS: &[(&str, &str)] = &[
     ("/", "slash commands — ↑↓ pick · tab completes · ⏎ runs"),
     ("ctrl-v", "paste — a copied image is attached to the prompt"),
     ("ctrl-t", "open the queue editor"),
+    (
+        "ctrl-s",
+        "STATE — the approved scope's steps, the task board, the proof rail",
+    ),
     (
         ">text",
         "steer the running turn — lands at the next step boundary",

@@ -8,10 +8,9 @@
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ Installed — 4 (user + project) ──────────────────────────────────────────────────────┐┌ Registry search ─────────────────────────────────────────────────────┐
 │  [x] release-checklist v3  (project·workspace)  Cut a release: version bump, change… ││find:                                                                 │
-│▸ [x] rust-review v2/4  (user·user)  Review Rust diffs for ownership, error handling… ││                                                                      │
-│  [ ] sql-tuning v1  (user·installed)  Read a┌ help — SKILLS · esc close ───────────────────────────────────────┐o search                                     │
-│  [x] bench-rig-access v1  (project·auto)  Re│                                                                  │                                             │
-│                                             │  SKILLS tab                                                      │                                             │
+│▸ [x] rust-review v2/4  (user·user)  Review R┌ help — SKILLS · esc close ───────────────────────────────────────┐                                             │
+│  [ ] sql-tuning v1  (user·installed)  Read a│                                                                  │o search                                     │
+│  [x] bench-rig-access v1  (project·auto)  Re│  SKILLS tab                                                      │                                             │
 │                                             │  ← →           switch panes                                      │                                             │
 │                                             │  ↑ ↓           select a skill                                    │                                             │
 │                                             │  space         enable / disable                                  │                                             │
@@ -30,6 +29,7 @@
 │                                             │  /             slash commands — ↑↓ pick · tab completes · ⏎ runs │                                             │
 │                                             │  ctrl-v        paste — a copied image is attached to the prompt  │                                             │
 │                                             │  ctrl-t        open the queue editor                             │                                             │
+│                                             │  ctrl-s        STATE — the approved scope's steps, the task board│                                             │
 │                                             │  >text         steer the running turn — lands at the next step bo│                                             │
 │                                             │  esc           soft-stop at the next step boundary — completed wo│                                             │
 │                                             │  esc esc       cancel NOW & hold — nothing runs until your next p│                                             │

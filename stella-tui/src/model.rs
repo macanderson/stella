@@ -87,6 +87,24 @@ pub struct SessionModel {
     /// (a non-scope-review `Stage`, `Complete`, or `Error`) — so the pending
     /// state is itself purely event-derived and reconstructs on replay.
     pub pending_scope_review: Option<ScopeProposal>,
+    /// The plan the engine actually went on to execute, kept for the rest of
+    /// the turn once its gate has closed.
+    ///
+    /// # Why this is retained rather than dropped
+    ///
+    /// [`Self::pending_scope_review`] is the *gate*, and it correctly clears
+    /// the moment the engine moves past it. But clearing it used to destroy the
+    /// only copy of the plan: the scrollback record
+    /// ([`TranscriptEntry::ScopeReview`]) keeps a summary and two counts, never
+    /// `ScopeProposal::steps`. So a user who approved five steps could not, one
+    /// minute later, recall what the third one was — the thing they had just
+    /// consented to was the one thing the session could no longer show them.
+    ///
+    /// Set only on the *approval* path (a non-`ScopeReview` stage, meaning the
+    /// gate was answered and work proceeded). A turn that died at the gate
+    /// leaves this `None`, because an abandoned proposal was never a plan.
+    /// Cleared when a new turn opens, alongside the proof rail.
+    pub approved_scope: Option<ScopeProposal>,
     /// An `ask_user` question awaiting the user's answer. Set by an `AskUser`
     /// event; cleared purely by events — the answer returns as the tool call's
     /// ordinary `ToolResult` (matched by `id`), so a `ToolResult` with the
@@ -395,16 +413,27 @@ impl SessionModel {
                 // one, and reconstructs identically on replay.
                 if self.hud.complete {
                     self.proof = crate::proof::ProofState::default();
+                    // The approved plan belongs to the turn that ran it. A new
+                    // turn starting under the previous turn's scope would be
+                    // the deck asserting consent that was never given for this
+                    // work.
+                    self.approved_scope = None;
                 }
                 self.hud.complete = false;
                 self.hud.final_cost_usd = None;
                 self.hud.stage = Some(*name);
                 // Any stage that isn't the scope-review gate itself means the
                 // engine has moved past a pending gate (approved → execute,
-                // or a later plan/verify stage) — clear it. Kept event-driven
+                // or a later plan/verify stage) — retire it. Kept event-driven
                 // so the pending state reconstructs on replay.
-                if *name != StageKind::ScopeReview {
-                    self.pending_scope_review = None;
+                //
+                // Retire, not discard: this transition IS the approval signal,
+                // so the proposal graduates to `approved_scope` and stays
+                // readable for the rest of the turn (`⌃S`).
+                if *name != StageKind::ScopeReview
+                    && let Some(approved) = self.pending_scope_review.take()
+                {
+                    self.approved_scope = Some(approved);
                 }
                 self.transcript.push(TranscriptEntry::Stage(*name));
             }
