@@ -567,6 +567,7 @@ fn auto_create_writes_when_absent_and_under_the_cap() {
         "/ws/.stella/skills",
         &[],
         0,
+        appraisal::EvalEvidence::MeasuredLift,
         &AutoCreateConfig::default(),
     );
     assert_eq!(
@@ -585,6 +586,7 @@ fn auto_create_refuses_to_clobber_an_existing_file() {
         "/ws/.stella/skills",
         &existing,
         0,
+        appraisal::EvalEvidence::MeasuredLift,
         &AutoCreateConfig::default(),
     );
     assert!(matches!(
@@ -602,6 +604,7 @@ fn auto_create_stops_at_the_session_cap() {
         "/ws/.stella/skills",
         &[],
         2, // already created 2 this session
+        appraisal::EvalEvidence::MeasuredLift,
         &AutoCreateConfig::default(),
     );
     assert_eq!(
