@@ -50,6 +50,33 @@ pub enum ServerFrame {
         request_id: String,
         request: CompletionRequest,
     },
+    /// The turn reached a step boundary and is **holding** there, because
+    /// `POST /v1/turns/{id}/pause` asked it to (#932).
+    ///
+    /// Emitted once per hold, from inside the pause gate, at the moment the
+    /// turn actually parks — which is not the moment the POST was accepted.
+    /// That difference is the whole point: the POST says "hold at the next
+    /// boundary", the frame says "the boundary was reached and nothing further
+    /// will happen until you release it".
+    ///
+    /// Because it is an ordinary numbered frame it lands in the retained ring
+    /// like any other, so a subscriber that drops during a hold and reconnects
+    /// with `?after=` re-learns the hold from the replay. Without it a
+    /// reconnecting host cannot tell a held turn from a slow one — the stream
+    /// is silent either way.
+    ///
+    /// `reason` is whatever the pausing host wrote on the POST body, and
+    /// `null` when it wrote none: the client that reconnects need not be the
+    /// process that paused.
+    TurnHeld { reason: Option<String> },
+    /// The hold announced by [`ServerFrame::TurnHeld`] is over and the turn is
+    /// proceeding (#932). Emitted once, paired with the `TurnHeld` before it.
+    ///
+    /// Carries nothing, deliberately: the gate is released by
+    /// `POST /resume`, by a cancel, and by the turn's entry being torn down,
+    /// and from inside the gate those are indistinguishable. A host learns
+    /// which it was from what follows — more frames, or `turn_complete`.
+    TurnReleased,
     /// Terminal frame: the turn ended. No further frames follow for this turn.
     TurnComplete { outcome: TurnOutcomeWire },
 }
@@ -293,6 +320,30 @@ mod tests {
         assert_eq!(
             event["event"]["type"], "text",
             "the agent event keeps its own `type`, nested under `event`"
+        );
+
+        let held = serde_json::to_value(ServerFrame::TurnHeld {
+            reason: Some("waiting on a human".to_string()),
+        })
+        .unwrap();
+        assert_eq!(held["type"], "turn_held");
+        assert_eq!(held["reason"], "waiting on a human");
+
+        // The reason is always *present*, null rather than absent, so a host
+        // reads one shape whether or not the pausing client wrote one.
+        let bare = serde_json::to_value(ServerFrame::TurnHeld { reason: None }).unwrap();
+        assert_eq!(bare["type"], "turn_held");
+        assert!(
+            bare.get("reason").is_some_and(serde_json::Value::is_null),
+            "a reasonless hold still carries the key: {bare}"
+        );
+
+        let released = serde_json::to_value(ServerFrame::TurnReleased).unwrap();
+        assert_eq!(released["type"], "turn_released");
+        assert_eq!(
+            released.as_object().map(serde_json::Map::len),
+            Some(1),
+            "a release says only that it happened: {released}"
         );
 
         let done = serde_json::to_value(ServerFrame::TurnComplete {

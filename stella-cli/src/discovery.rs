@@ -60,6 +60,16 @@ pub const LEAN_TOOLS_ENV: &str = "STELLA_LEAN_TOOLS";
 /// (file CRUD, exec, search, the definition of done, and asking the user).
 /// Everything else — issue tools, media, tasks, MCP, custom — is one
 /// `tool_search` away.
+///
+/// `graph_query` and `read_symbol` are core rather than searchable (#896).
+/// Search is a *retrieval* need, and the lean core already answers it three
+/// ways with text tools; hiding the two structural ones behind `tool_search`
+/// leaves the model with no reason to look for them — it does not know it is
+/// missing anything, so the discovery step never happens and lean mode
+/// silently pins every session to grep. The pair is also load-bearing
+/// together: `read_symbol` is what turns a `graph_query` hit into source
+/// without a guessed `read_file` offset, which is exactly what the shared
+/// tool steering tells the model to do.
 const DEFAULT_CORE_TOOLS: &[&str] = &[
     "read_file",
     "write_file",
@@ -67,6 +77,8 @@ const DEFAULT_CORE_TOOLS: &[&str] = &[
     "bash",
     "grep",
     "glob",
+    "graph_query",
+    "read_symbol",
     "gather_context",
     "verify_done",
     "build_project",
@@ -1016,6 +1028,25 @@ mod tests {
             names.contains(&"mcp__github__list_commits".to_string()),
             "a searched tool must be advertised afterwards: {names:?}"
         );
+    }
+
+    /// #896: lean mode used to advertise three text-search tools and hide both
+    /// structural ones behind `tool_search`. A model that does not know the
+    /// code graph exists has no reason to search for it, so the discovery step
+    /// never fires and lean sessions are pinned to grep by construction.
+    #[test]
+    fn the_lean_core_advertises_the_structural_retrieval_tools() {
+        let core = LeanConfig::default_core().core;
+        for name in ["graph_query", "read_symbol"] {
+            assert!(
+                core.contains(name),
+                "{name} must be advertised without a tool_search first: {core:?}"
+            );
+        }
+        // Still a *lean* core — the text tools it competes with stay, and the
+        // long tail stays behind discovery.
+        assert!(core.contains("grep") && core.contains("glob"));
+        assert!(!core.contains("screenshot"));
     }
 
     #[tokio::test]

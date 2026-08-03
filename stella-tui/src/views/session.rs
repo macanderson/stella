@@ -206,8 +206,15 @@ impl SessionFold {
             file_gen,
             plan.signature,
         );
+        // Invalidation CLEARS the key; the commit happens after the fold loop
+        // below. A panic inside `entry_lines` would otherwise leave `prefix`
+        // extended with no matching `entry_rows` range and no `settled` bump,
+        // and the next frame — key still matching — would resume at the same
+        // index and double-append. With the commit moved after the loop, a
+        // caught panic leaves `key = None` and the cache rebuilds from zero
+        // (see `crate::panel_guard` for why that matters).
         if self.key.as_ref() != Some(&key) || self.settled > transcript.len().saturating_sub(1) {
-            self.key = Some(key);
+            self.key = None;
             self.settled = 0;
             self.prefix.clear();
             self.entry_rows.clear();
@@ -244,9 +251,13 @@ impl SessionFold {
                     &mut self.prefix,
                 );
             }
+            // The tearing window: `prefix` is extended, `entry_rows` is not.
+            #[cfg(test)]
+            crate::panel_guard::fail_if_armed("session fold");
             self.entry_rows.push(start..self.prefix.len());
             self.settled += 1;
         }
+        self.key = Some(key);
         self.tail.clear();
         if let Some(last) = transcript.last() {
             // The tail obeys the same plan: a last entry inside a folded turn
@@ -1529,5 +1540,69 @@ mod tests {
             "the turn clock reads zero before any turn:\n{text}"
         );
         assert!(text.contains("running"), "status label intact:\n{text}");
+    }
+
+    /// Refresh must commit its cache key only after the fold loop finishes.
+    ///
+    /// Until #933 it committed *before*, so a panic between "extend `prefix`"
+    /// and "record the entry's row range" left a cache the next frame happily
+    /// resumed — same index, same lines appended a second time. The panel
+    /// panic boundary is what makes such a panic survivable at all, which is
+    /// precisely what turns a one-frame glitch into a permanent duplicate; the
+    /// two changes only make sense together.
+    #[test]
+    fn an_interrupted_fold_rebuilds_instead_of_resuming_a_torn_prefix() {
+        let transcript = vec![
+            TranscriptEntry::User("first prompt".into()),
+            TranscriptEntry::Text("alpha answer".into()),
+            TranscriptEntry::User("second prompt".into()),
+            TranscriptEntry::Text("omega answer".into()),
+        ];
+        let files: Vec<FileState> = Vec::new();
+        let expanded = HashSet::new();
+        let plan = FoldPlan::default();
+        let refresh = |fold: &mut SessionFold| {
+            fold.refresh(
+                "lead",
+                &transcript,
+                &files,
+                "",
+                false,
+                &expanded,
+                false,
+                0,
+                60,
+                &plan,
+            );
+        };
+
+        let mut fold = SessionFold::default();
+        let interrupted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _armed = crate::panel_guard::arm_panic("session fold");
+            refresh(&mut fold);
+        }));
+        assert!(interrupted.is_err(), "the fold really was interrupted");
+        assert!(
+            !fold.prefix.is_empty() && fold.entry_rows.is_empty(),
+            "and it really did leave a partial prefix with no row range"
+        );
+        assert!(
+            fold.key.is_none(),
+            "an interrupted fold leaves no key for the next frame to resume from"
+        );
+
+        // The next frame rebuilds from zero instead of folding entry 0 twice.
+        refresh(&mut fold);
+        let mut untorn = SessionFold::default();
+        refresh(&mut untorn);
+        assert_eq!(
+            fold.total(),
+            untorn.total(),
+            "the recovered fold is the same height as one that never tore"
+        );
+        assert_eq!(
+            fold.entry_rows, untorn.entry_rows,
+            "…and every entry occupies the same rows"
+        );
     }
 }

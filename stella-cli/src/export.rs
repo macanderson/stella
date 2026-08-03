@@ -120,7 +120,12 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
 /// too: an archive written 0600 into a 0755 directory is still listed by
 /// everyone, and a directory created by an older build is exactly the case
 /// that needs fixing.
-fn create_private_dir(dir: &Path) -> Result<(), String> {
+///
+/// Shared with `dataset_cmd` (#872), which writes redacted prompts and full
+/// tool outputs and needs exactly this posture. The messages name the
+/// directory rather than the caller's noun, so one helper can serve both
+/// without either error reading as the other's.
+pub(crate) fn create_private_dir(dir: &Path) -> Result<(), String> {
     let mut builder = std::fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
@@ -130,12 +135,12 @@ fn create_private_dir(dir: &Path) -> Result<(), String> {
     }
     builder
         .create(dir)
-        .map_err(|e| format!("create exports dir: {e}"))?;
+        .map_err(|e| format!("create {}: {e}", dir.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
-            .map_err(|e| format!("restrict exports dir: {e}"))?;
+            .map_err(|e| format!("restrict {}: {e}", dir.display()))?;
     }
     Ok(())
 }

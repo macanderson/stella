@@ -9,10 +9,12 @@ code today has no approval gate. Turn cancellation, a reverse-request
 deadline, — as of #1130 — the **DNS-rebinding `Host` guard**, — as of #1131 —
 the **SIGTERM drain and `GET /readyz`**, — as of #971 phase 2 —
 **resumable SSE streams** (`seq`, retained history, `?after=` /
-`Last-Event-ID`), — as of #932 — **mid-turn steering and pause/resume**, and —
-as of #931 — **server-owned sessions** (`/v1/sessions`, retained history,
-per-session budget) *have* shipped. Sections below flag the gaps individually;
-treat `stella-serve/src/` as the state and this doc as the destination.
+`Last-Event-ID`), — as of #932 — **mid-turn steering and pause/resume, and an
+observable hold** (`turn_held` / `turn_released` frames, `held` on the session
+view), and — as of #931 — **server-owned sessions** (`/v1/sessions`, retained
+history, per-session budget) *have* shipped. Sections below flag the gaps
+individually; treat `stella-serve/src/` as the state and this doc as the
+destination.
 
 **The two crates this document assumed did not exist now do (#971):**
 `stella-runtime` (phase 0 — the construction sequence, extracted from
@@ -63,10 +65,10 @@ not in this table is a 404.
 | `POST` | `/v1/turns/{id}/tool-result` | Answers a `tool_request` |
 | `POST` | `/v1/turns/{id}/cancel` | Step-boundary stop (#1129): the turn unwinds at its next step, keeping completed steps, and still emits `turn_complete`. Deregistered immediately, so a second cancel is a 404. There is no `DELETE` |
 | `POST` | `/v1/turns/{id}/steer` | `{"message": "…"}` — injected at the next step boundary, echoed as a `steered` event (#932) |
-| `POST` | `/v1/turns/{id}/pause` | Hold at the next step boundary. Idempotent; never mid-tool (#932) |
+| `POST` | `/v1/turns/{id}/pause` | Hold at the next step boundary. Idempotent; never mid-tool (#932). Body optional: `{"reason": "…"}` rides onto the `turn_held` frame. An empty body holds without a reason; a non-empty body that is not JSON is a 400 |
 | `POST` | `/v1/turns/{id}/resume` | Release a held turn. Idempotent (#932) |
 | `POST` | `/v1/sessions` | `{"system_prompt": "…", "budget": …}` → `{"session_id":"session-<32 hex>"}` (#931) |
-| `GET` | `/v1/sessions/{id}` | History, cost to date, live turn id. Always answers from the last settled state |
+| `GET` | `/v1/sessions/{id}` | History, cost to date, live turn id, and `held` — whether that live turn has been asked to hold (#932). Always answers from the last settled state |
 | `POST` | `/v1/sessions/{id}/turns` | `TurnRequest` minus `messages`/`budget`, plus `input` (this turn's new messages). Accepts the same optional `engine` object as `/v1/turns` (safe for the prompt-cache contract: no engine knob touches the transcript). Returns `{"turn_id", "session_id"}` plus the same `clamped` reporting; the turn is then an ordinary `/v1/turns/{id}` member. One live turn per session (else 409) |
 | `DELETE` | `/v1/sessions/{id}` | Ends the session and cancels its live turn. Also drops its resume point |
 | `GET` | `/v1/sessions/{id}/checkpoint` | The session's resume point, verbatim (a `stella_core::step::Checkpoint`). Read from the **store**, not the session registry — so a session this process never created still answers `200` if its bytes are there. `404` when there is none, when the id is not a legal key, or when no store is configured (#1198) |
@@ -252,7 +254,31 @@ the engine is structured as a headless library, not a terminal program:
    or whether the approval boundary moves down into the engine. That is a
    design question, not an increment, which is why the steering and
    pause/resume halves of #932 shipped on their own (#1056) and this one
-   did not.
+   did not. It stays out of the table until that decision is made.
+
+   **What *did* ship in its place — the hold, made observable.** The half of
+   the approval story that does not depend on that decision is the part the
+   issue's own sequencing note is about: "a client which drops during an
+   approval wait can come back and find the turn still holding". That works
+   now, for the pause gate rather than for a scope review. `wait_if_paused`
+   emits `turn_held` when it actually parks (later than the `POST /pause`
+   response, which only promises to hold at the *next* boundary) and
+   `turn_released` when it lets go — including on the release paths that
+   never touch `POST /resume`, namely a cancel and a torn-down entry. Both are
+   ordinary numbered frames, so they are retained and replayed like any other:
+   a subscriber that reconnects with `?after=` re-learns the hold.
+
+   Note the asymmetry against the reverse-request rule, because a client that
+   assumes the rules are the same parks forever: an outstanding
+   `tool_request` / `provider_request` is **not** re-announced on resume, but
+   a hold **is**. An obligation is something `?after=N` asserts you already
+   received; a hold is a state the turn is still in. A `turn_held` with no
+   `turn_released` after it in the replayed tail means the turn is waiting on
+   you.
+
+   `GET /v1/sessions/{id}` answers the same question without a stream, for a
+   host that restarted or that manages many sessions and subscribes to none:
+   `held` is `true` while the live turn is asked to hold.
 
 4. **Multi-workspace in one process already works.** `stella-fleet` runs N
    workers concurrently in one process, each with `cfg.workspace_root` overridden

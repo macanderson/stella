@@ -47,12 +47,23 @@ code nobody ships — the specific objection #909 raises.
 | Build stamp | `STELLA_BUILD_GIT_SHA=0eeb8d4d9272e7416d3ebf09286d67adf534c696` |
 | Verified in container | `stella --version` → `stella 0.6.10-dev.0eeb8d4d…`; the adapter re-verified both the uploaded binary SHA and the embedded source commit on every trial |
 
-> **Reproducibility:** release builds bake in the builder's rustup/cargo source
+> **Reproducibility:** this SUT build bakes in the builder's rustup/cargo source
 > paths (under `/Users/macanderson/…` here), so the byte-exact SHA above is
 > host-specific and will differ on another machine. It is a *reference* proving
 > the toolchain works and the stamp is correct — the authoritative binary
 > identity is the source-commit stamp plus the SHA the run manifest freezes for
 > the exact uploaded binary (the adapter re-verifies the upload SHA per trial).
+>
+> **Addendum 2026-08-02 ([#910](https://github.com/macanderson/stella/issues/910)):**
+> the sentence above used to read "release builds", and that generalisation is
+> no longer true. Release builds now go through `scripts/repro-build.sh`, which
+> remaps `$CARGO_HOME` and the rustup sysroot out of the binary, and
+> `release.yml` refuses to publish if a second runner produces different bytes.
+> `bench/evidence/run/build_sut.sh` deliberately does **not** route through it:
+> switching it would change the SUT's bytes and invalidate the frozen SHA
+> recorded above, which is the one number this freeze exists to pin. So the note
+> stands as written *for this artifact* — it is no longer a statement about how
+> Stella is released.
 | Toolchain | rustc/cargo 1.97.0 via `rustup which`; zig 0.16.0 + `cargo-zigbuild`; per-build Zig caches |
 
 ### Freeze decision (maintainer-approved)

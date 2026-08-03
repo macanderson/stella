@@ -16,7 +16,7 @@
 //! | `POST /v1/turns/{id}/provider-result` | answer a `provider_request` (`ProviderResultIn`) |
 //! | `POST /v1/turns/{id}/cancel` | end an in-flight turn → `{ "status": "cancelled" }` |
 //! | `POST /v1/turns/{id}/steer` | inject a mid-turn user message (#932) |
-//! | `POST /v1/turns/{id}/pause` | hold the turn at its next step boundary (#932) |
+//! | `POST /v1/turns/{id}/pause` | hold the turn at its next step boundary; optional `{"reason"}` (#932) |
 //! | `POST /v1/turns/{id}/resume` | release a held turn (#932) |
 //! | `POST /v1/sessions` | open a server-owned conversation (#931) → `{ "session_id": … }` |
 //! | `GET /v1/sessions/{id}` | history, cost to date, live turn |
@@ -1085,11 +1085,6 @@ async fn route(
             return routes::handle_cancel(res, state, member_id.as_deref().unwrap_or_default())
                 .await;
         }
-        ("POST", Route::TurnPause) => {
-            discard_body(res.stream_mut(), &mut req).await;
-            return routes::handle_pause(res, state, member_id.as_deref().unwrap_or_default())
-                .await;
-        }
         ("POST", Route::TurnResume) => {
             discard_body(res.stream_mut(), &mut req).await;
             return routes::handle_resume(res, state, member_id.as_deref().unwrap_or_default())
@@ -1142,6 +1137,9 @@ async fn route(
             | Route::TurnProviderResult
             | Route::TurnProviderDelta
             | Route::TurnSteer
+            // Body-bearing but not body-*requiring*: an empty pause is the
+            // shape the route shipped with and stays valid (#932).
+            | Route::TurnPause
             | Route::SessionsCreate
             | Route::SessionTurns,
         ) => {}
@@ -1175,6 +1173,7 @@ async fn route(
         }
         Route::TurnProviderDelta => routes::handle_provider_delta(res, state, id, &req.body).await,
         Route::TurnSteer => routes::handle_steer(res, state, id, &req.body).await,
+        Route::TurnPause => routes::handle_pause(res, state, id, &req.body).await,
         Route::SessionsCreate => routes::handle_session_create(res, state, &req.body).await,
         Route::SessionTurns => routes::handle_session_turn(res, state, id, &req.body).await,
         // Unreachable: the match above admits exactly the body-bearing

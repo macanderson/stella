@@ -71,49 +71,55 @@ impl Tool for DeleteFile {
                 message: "missing required field `path`".into(),
             };
         };
-        let Some(full) = resolve_entry_within_root(root, path) else {
-            return ToolOutput::Error {
-                message: format!("path `{path}` escapes the workspace root"),
-            };
-        };
-        // lstat, not `is_file()`: the whole point is to see the link rather
-        // than what it points at.
-        let file_type = match tokio::fs::symlink_metadata(&full).await {
-            Ok(meta) => meta.file_type(),
-            Err(_) => {
+        let handle = match crate::rootfd::RootHandle::open(root) {
+            Ok(handle) => std::sync::Arc::new(handle),
+            Err(e) => {
                 return ToolOutput::Error {
-                    message: format!(
-                        "`{path}` is not a file (directories and missing paths are not deletable \
-                         with this tool)"
-                    ),
+                    message: format!("cannot open workspace root: {e}"),
                 };
             }
         };
-        if !file_type.is_file() && !file_type.is_symlink() {
-            return ToolOutput::Error {
+        // Classify and unlink on one blocking worker. `unlinkat` never follows
+        // a symlink, so nothing planted between the two can redirect the
+        // removal — the check and the act see the same directory descriptor.
+        let outcome = tokio::task::spawn_blocking({
+            let (handle, path) = (std::sync::Arc::clone(&handle), path.to_string());
+            move || -> Result<bool, crate::rootfd::RootError> {
+                if !handle.stat(&path)?.is_file() {
+                    return Ok(false);
+                }
+                handle.remove_file(&path)?;
+                Ok(true)
+            }
+        })
+        .await;
+        match outcome {
+            Ok(Ok(true)) => ToolOutput::Ok {
+                content: format!("deleted {path}"),
+            },
+            Ok(Ok(false)) => ToolOutput::Error {
                 message: format!(
                     "`{path}` is not a file (directories and missing paths are not deletable \
                      with this tool)"
                 ),
-            };
-        }
-        // Read the target BEFORE unlinking so the report can name what was
-        // spared — the model otherwise cannot tell a link deletion from a
-        // file deletion, which is the whole ambiguity this fixes.
-        let target = if file_type.is_symlink() {
-            tokio::fs::read_link(&full).await.ok()
-        } else {
-            None
-        };
-        match tokio::fs::remove_file(&full).await {
-            Ok(()) => ToolOutput::Ok {
-                content: match target {
-                    Some(target) => format!(
-                        "deleted symlink {path} — the link only; its target `{}` is untouched",
-                        target.display()
+            },
+            Ok(Err(e)) if e.is_escape() => ToolOutput::Error {
+                message: format!("path `{path}` escapes the workspace root ({e})"),
+            },
+            // A missing path reaches here as the `stat` failing, and must read
+            // as the same refusal a directory gets — this tool deletes files.
+            Ok(Err(crate::rootfd::RootError::Io(e)))
+                if e.kind() == std::io::ErrorKind::NotFound =>
+            {
+                ToolOutput::Error {
+                    message: format!(
+                        "`{path}` is not a file (directories and missing paths are not deletable \
+                         with this tool)"
                     ),
-                    None => format!("deleted {path}"),
-                },
+                }
+            }
+            Ok(Err(e)) => ToolOutput::Error {
+                message: format!("could not delete `{path}`: {e}"),
             },
             Err(e) => ToolOutput::Error {
                 message: format!("could not delete `{path}`: {e}"),

@@ -349,6 +349,11 @@ cookie = "session=…; csrftoken=…"   # paste from your logged-in browser sess
 authorization = "Bearer …"
 [domains."internal.corp".headers]
 X-Tenant = "acme"
+
+# Optional: re-open destinations the egress guard denies by default (below).
+# Entries are `host` or `host:port`, matched exactly — not by subdomain.
+[egress]
+allow = ["localhost:3000", "127.0.0.1:3000"]
 ```
 
 ```bash
@@ -361,7 +366,11 @@ chmod 600 ~/.stella/web_auth.toml
 </Callout>
 
 <Callout type="warn">
-**No network allowlist.** The agent can fetch any `http(s)` URL the host can reach — including `localhost`, private ranges, and cloud metadata endpoints. This is deliberate: it is what makes *"read my internal tool"* or *"scrape my localhost dev server"* work. There is no per-URL filter, so be aware that a page the agent fetches could try to steer it toward an internal URL (prompt injection). Turn the family off with `"tools": {"web": "off"}`, or constrain destinations with [`PreToolUse` hooks or `guard-tool` rules](/docs/agent-tools/permissions).
+**Internal destinations are denied by default.** A page the agent fetches can contain instructions — so can a README, an issue body, or a CI log — and prompt injection is the normal condition for a tool that fetches, not an edge case. So `web_fetch`, `web_extract_assets` and `web_download` refuse loopback, private (RFC1918) ranges, link-local `169.254.0.0/16` and `fe80::/10`, IPv6 unique-local `fc00::/7`, carrier-grade NAT, and the `localhost` / `.internal` / `.local` name families. The check runs three times over: on the URL, on **the addresses DNS returns** for it (so a public hostname pointed at `127.0.0.1` is caught too), and on **every redirect hop** (so a public URL that 302s to the metadata endpoint is caught).
+
+To fetch your own dev server, name it in the `[egress] allow` list above — `"localhost:3000"` for one port, `"localhost"` for all of them, `"*"` to switch the guard off entirely. It lives in `web_auth.toml` rather than `settings.json` on purpose: a project's `settings.json` is untrusted repo input, and a checked-in file must not be able to re-open loopback.
+
+Two things it does **not** cover. If `HTTP_PROXY`/`HTTPS_PROXY` is set, requests are resolved and connected by the proxy, so the post-DNS half of the check does not see the real destination. And it bounds *where* a request may go, not *which* credentials ride it — that fence is the same-origin rule above. For anything narrower, constrain destinations with [`PreToolUse` hooks or `guard-tool` rules](/docs/agent-tools/permissions), or turn the family off with `"tools": {"web": "off"}`.
 </Callout>
 
 ### Session tools

@@ -52,9 +52,12 @@ jobs:
             os: ubuntu-latest
           # Built natively on GitHub's arm64 runner (free for public repos).
           # Cross-compiling this target via `cross` fails: its default docker
-          # image ships g++ 5, far too old for libduckdb-sys's bundled C++.
-          # The native runner uses the same modern toolchain that already
-          # builds duckdb fine on x86_64 ubuntu-latest.
+          # image ships g++ 5, far too old for the bundled C/C++ this workspace
+          # compiles. (The dep that first hit this, libduckdb-sys, is no longer
+          # in the graph — `rg '^name = "libduckdb-sys"' Cargo.lock` finds
+          # nothing — but rusqlite's bundled SQLite and the tree-sitter grammars
+          # keep the constraint alive.) The native runner uses the same modern
+          # toolchain that already builds them on x86_64 ubuntu-latest.
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
     steps:
@@ -92,19 +95,25 @@ jobs:
           grep -m1 '^version = ' Cargo.toml | grep -q "\"${version}\"" \
             || { echo "::error::Cargo.toml workspace version does not match tag ${GITHUB_REF_NAME} — the tag was not cut by the current auto-tag.yml (see #786)."; exit 1; }
 
-      - name: Build stella
+      # Every target builds natively: the two Apple targets share one universal
+      # Apple toolchain, and aarch64-linux builds on ubuntu-24.04-arm. `cross`
+      # was tried and abandoned (see the matrix comments above) and is installed
+      # by no step here.
+      #
+      # The build goes through scripts/repro-build.sh rather than calling cargo
+      # inline, and that indirection is the whole of #910: the script is the one
+      # place that remaps $CARGO_HOME and the rustup sysroot out of the emitted
+      # paths (a release binary used to carry 553 absolute builder paths, so its
+      # SHA-256 described the builder's home directory rather than the source),
+      # asserts that the rust-toolchain.toml pin is what actually ran, exports
+      # SOURCE_DATE_EPOCH for the packaging step, and writes the per-target
+      # binary checksum. `--locked` is preserved from #786: the tagged tree's
+      # lockfile is synced to its own version, same as install.sh's from-source
+      # build. scripts/check-repro-wiring.sh fails if this step ever goes back
+      # to a bare `cargo build`.
+      - name: Build stella (reproducible)
         shell: bash
-        run: |
-          set -euo pipefail
-          # Every target builds with plain cargo: the two Apple targets share
-          # one universal Apple toolchain, and aarch64-linux builds natively on
-          # ubuntu-24.04-arm. `cross` was tried and abandoned (see the matrix
-          # comments above) and is installed by no step here.
-          # `--locked` is back since #786: the tagged tree's lockfile is synced
-          # to its own version, same as install.sh's from-source build.
-          cargo build --release --locked \
-            --target ${{ matrix.target }} \
-            --package stella-cli --bin stella
+        run: ./scripts/repro-build.sh --locked "${{ matrix.target }}"
 
       - name: Package tarball
         id: package
@@ -125,21 +134,151 @@ jobs:
           cp "${bin}" "dist/${stem}/stella"
           # AGPL §4/§5: the license text ships with every distributed copy.
           cp LICENSE NOTICE LICENSING.md README.md "dist/${stem}/"
-          tar -C dist -czf "${stem}.tar.gz" "${stem}"
+
+          # Not `tar -czf`: tar records mtimes, uid/gid and traversal order and
+          # gzip stamps its header with the current time, so two runners that
+          # produce a byte-identical *binary* still produce different
+          # *tarballs* — and SHA256SUMS, which is what install.sh and the
+          # Homebrew formula check, would diverge anyway. The macOS runners
+          # have bsdtar and the Linux ones GNU tar, whose determinism flags do
+          # not overlap, hence a script rather than flags.
+          SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
+          export SOURCE_DATE_EPOCH
+          ./scripts/package-tarball.py "dist/${stem}" "${stem}.tar.gz"
+
+          # The bare-binary checksum, written by repro-build.sh in
+          # `sha256sum` format with the artifact stem as its name column, so
+          # the four of them concatenate into SHA256SUMS.bin below. This is the
+          # number an independent rebuilder compares against — the tarball hash
+          # cannot serve that purpose, since rebuilding gives them a binary and
+          # not our archive of it.
+          cp "target/${target}/release/stella.sha256" "${stem}.sha256"
+          cat "${stem}.sha256"
 
           echo "asset=${stem}.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "sums=${stem}.sha256" >> "$GITHUB_OUTPUT"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: stella-${{ matrix.target }}
-          path: ${{ steps.package.outputs.asset }}
+          path: |
+            ${{ steps.package.outputs.asset }}
+            ${{ steps.package.outputs.sums }}
           if-no-files-found: error
           retention-days: 7
 
+  # Rebuild one target on a second runner and refuse to publish if the bytes
+  # differ (#910, acceptance clause). This is the check that keeps
+  # reproducibility fixed; scripts/check-repro-wiring.sh only keeps the plumbing
+  # in place.
+  #
+  # THE VARIATION IS THE TEST. Two GitHub-hosted runners of the same image share
+  # $HOME=/home/runner and $CARGO_HOME=/home/runner/.cargo, so the obvious
+  # reading of "build twice on different runners and diff the SHA" would have
+  # passed green on the *unfixed* code and proved nothing — a permanently-green
+  # gate is worse than no gate. So this arm deliberately differs from the build
+  # job in every host-shaped input that used to leak into the binary:
+  #
+  #   CARGO_HOME     different -> exercises the $CARGO_HOME remap (506 of the
+  #                  553 absolute paths a release binary used to carry)
+  #   RUSTUP_HOME    different -> exercises the sysroot remap (the other 47)
+  #   rust-src       installed -> the subtle one. rustc emits std's paths as
+  #                  the virtual /rustc/<hash>/… but translates them back to the
+  #                  real sysroot path when rust-src is present, so the same
+  #                  source on the same pinned toolchain produces different
+  #                  bytes depending on whether the builder happens to have the
+  #                  component. The build job does not install it; this one does.
+  #   checkout path  different -> nothing should depend on the workspace root
+  #   TMPDIR         different -> nor on where the bundled C deps compile
+  #   no rust-cache  -> nothing is restored from the first arm
+  #
+  # One linux target, not four: this doubles a full-LTO build (budgeted at 90
+  # minutes) and every target shares the same remapping. Runs on the tag push
+  # that would publish the artifact, where a divergence blocks the release, and
+  # on workflow_dispatch for checking between releases. Deliberately NOT on
+  # pull_request — an hour of LTO per PR is not a cost this repo should carry
+  # for a property that can only change in release.yml or repro-build.sh, both
+  # of which the toolchain-free wiring guard already watches on every PR.
+  #
+  # `needs: build` costs a release one extra build's wall time, because this arm
+  # cannot start until the first arm's checksum artifact exists. That is the
+  # deliberate trade: running the two in parallel and comparing inside the
+  # `release` job would be faster, but then no job owns the verdict and a green
+  # "reproducible build" check would mean only that a build finished.
+  verify-reproducible:
+    name: reproducible build (independent rebuild)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      REPRO_TARGET: x86_64-unknown-linux-gnu
+    steps:
+      # Before the toolchain step, not after: rustup installs toolchains into
+      # RUSTUP_HOME and shims into CARGO_HOME at the moment it runs, so setting
+      # these later would leave the arm building out of the runner's default
+      # directories and silently make this job a copy of the first one.
+      - name: Move cargo, rustup and TMPDIR somewhere the first arm never used
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/arm-b/tmp"
+          {
+            echo "CARGO_HOME=${RUNNER_TEMP}/arm-b/cargo"
+            echo "RUSTUP_HOME=${RUNNER_TEMP}/arm-b/rustup"
+            echo "TMPDIR=${RUNNER_TEMP}/arm-b/tmp"
+          } >> "$GITHUB_ENV"
+          echo "${RUNNER_TEMP}/arm-b/cargo/bin" >> "$GITHUB_PATH"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: arm-b
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      # Inside the checkout, so rustup honors rust-toolchain.toml and installs
+      # the pin (not `stable`). rust-src is the deliberate difference described
+      # above; repro-build.sh refuses to run on anything but the pin, which is
+      # also how #910 point 3 ("confirm the release job uses the pinned
+      # toolchain") stops being a comment and becomes a check.
+      - name: Install the pinned toolchain WITH rust-src
+        working-directory: arm-b
+        run: |
+          set -euo pipefail
+          rustup component add rust-src
+          rustc -vV
+
+      - name: Rebuild
+        working-directory: arm-b
+        run: ./scripts/repro-build.sh --locked "${REPRO_TARGET}"
+
+      - name: Download the first arm's checksum
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: stella-x86_64-unknown-linux-gnu
+          path: arm-a
+
+      - name: Compare
+        run: |
+          set -euo pipefail
+          a="$(cat arm-a/*.sha256)"
+          b="$(cat "arm-b/target/${REPRO_TARGET}/release/stella.sha256")"
+          echo "arm A (build job):        ${a}"
+          echo "arm B (this job):         ${b}"
+          if [ "$a" != "$b" ]; then
+            echo "::error::release build is NOT reproducible — two runners produced different bytes for ${REPRO_TARGET}."
+            echo "Arm B differs from arm A only in CARGO_HOME, RUSTUP_HOME, TMPDIR, the checkout path and the presence of rust-src." >&2
+            echo "Something the build reads from the host is still reaching the binary. Compare with:" >&2
+            echo "  strings <binary> | grep -E '^/(home|Users|tmp)/'" >&2
+            exit 1
+          fi
+          echo "reproducible: both arms produced ${b%% *}"
+
   release:
     name: publish GitHub Release
-    needs: build
+    needs: [build, verify-reproducible]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
@@ -164,14 +303,31 @@ jobs:
           pattern: stella-*
           merge-multiple: true
 
+      # Two sums files, because they answer two different questions.
+      #
+      #   SHA256SUMS      hashes the tarballs. It is what install.sh and the
+      #                   Homebrew formula check: "the thing I downloaded is the
+      #                   thing that was published".
+      #   SHA256SUMS.bin  hashes the bare binaries, one line per target, as
+      #                   written by scripts/repro-build.sh. It is what an
+      #                   independent rebuilder checks: rebuilding the tag gives
+      #                   them a binary, not our archive of it, so without this
+      #                   file the reproducibility work is unverifiable from
+      #                   outside no matter how reproducible the build became
+      #                   (#910 point 5). RELEASING.md documents the recipe.
       - name: Generate SHA256SUMS
         shell: bash
         run: |
           set -euo pipefail
           cd artifacts
           sha256sum stella-*.tar.gz > SHA256SUMS
+          # Sorted by the stem in the name column so the file's own bytes do
+          # not depend on which target's job finished first.
+          cat stella-*.sha256 | sort -k2 > SHA256SUMS.bin
           echo "----- SHA256SUMS -----"
           cat SHA256SUMS
+          echo "----- SHA256SUMS.bin (bare binaries) -----"
+          cat SHA256SUMS.bin
 
       # Attest the tarballs *and* SHA256SUMS. Attesting the sums file is the
       # point: install.sh trusts it to vouch for the tarball, but it was
@@ -188,6 +344,7 @@ jobs:
           subject-path: |
             artifacts/stella-*.tar.gz
             artifacts/SHA256SUMS
+            artifacts/SHA256SUMS.bin
 
       # Draft the release notes from the diff since the previous tag using the
       # AI Gateway. Falls back to a plain commit list if the key is unset or the
@@ -240,6 +397,7 @@ jobs:
           files: |
             artifacts/stella-*.tar.gz
             artifacts/SHA256SUMS
+            artifacts/SHA256SUMS.bin
           fail_on_unmatched_files: true
           body_path: notes.md
 

@@ -14,9 +14,38 @@ stella doctor --repair                           # also quarantine a corrupt sto
 
 ## What it does
 
-Today it runs exactly one check — **`store integrity`**, the soundness of this workspace's session store at `<workspace>/.stella/private/store.db`, verified with SQLite's own `quick_check` and `integrity_check` pragmas. The list is built to hold more, but one check is what currently ships; the command is worth what it actually verifies.
+Four checks ship today:
+
+- **`store integrity`** — the soundness of this workspace's session store at `<workspace>/.stella/private/store.db`, verified with SQLite's own `quick_check` and `integrity_check` pragmas.
+- **`fleet ledger`** — rows in `.stella/private/fleet.db` naming a run that is no longer recorded. Report-only: removing them would delete fleet history, and nothing reads them.
+- **`session sidecars`** — sidecar directories whose session record is gone. `--repair` reaps them; a *damaged* record is never treated as an orphan.
+- **`model config`** — the model your next run would actually send, and the endpoint it would send it to. See below.
 
 A verdict is deliberately binary. There is no "warn": a check that cannot say *this is fine* has failed, and a third maybe-state would only be an invitation to ignore it.
+
+## The `model config` check
+
+A default model your provider cannot serve does not break one command — it breaks *every* one, and it used to surface only as a provider `400` in the middle of whatever you were doing. This check answers it up front, and its failure message is the point: it names the setting, the value, what is wrong with it, and all three ways out.
+
+```text
+  ✗ model config — 1 model setting(s) name something the provider will reject
+      default_model: `openrouter/auto` — missing the vendor namespace — `openrouter`
+      model ids carry a `vendor/` prefix, so the wire slug should be e.g.
+      `openrouter/auto`, not the bare `auto`
+      → `stella models list --provider openrouter` prints every slug that will be accepted
+      → `stella models refresh` re-syncs the catalog — try this first if the model shipped recently
+      → set the default with `/model <provider>/<slug>` in the deck, or on its SETTINGS tab
+```
+
+It resolves the default with the same precedence a run does — `--model` (and its `STELLA_MODEL` alias) beats `agents.default.model`, which beats `default_model`, which beats auto-detection — so `stella --model <x> doctor` diagnoses exactly what `stella --model <x> run` would send. It also flags a `--base-url` pointed at a *different* known provider's host, which is the configuration that returns a 401 mislabeled as the wrong provider's rejection.
+
+It keeps the command's no-network promise: validation runs against the built-in seed plus whatever `stella models refresh` has already put on disk, and nothing is fetched. The consequence is stated in the output rather than hidden — a provider with no synced model list (OpenRouter, a custom gateway) can only have the *shape* of its slug checked, and the pass says so.
+
+A pass also names the model and where it came from, which is half of what people open the doctor for:
+
+```text
+  ✓ model config — zai/glm-5.2 — from default_model
+```
 
 <CardGrid size="md">
   <OptionCard name="✓ pass">
@@ -45,7 +74,7 @@ Diagnosis never writes. The check opens the database immutably — no locks, no 
 
 ## Exit codes
 
-`0` when every check passed — including a `--repair` that repaired. `1` when any check failed, with `stella: 1 of 1 doctor check failed` on stderr. That is the whole contract, which is what makes the command usable as a gate:
+`0` when every check passed — including a `--repair` that repaired. `1` when any check failed, with `stella: 1 of 4 doctor checks failed` on stderr. That is the whole contract, which is what makes the command usable as a gate:
 
 ```bash
 stella doctor || echo "local state needs attention"

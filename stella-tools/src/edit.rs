@@ -202,17 +202,26 @@ impl Tool for EditFile {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let full_path = match crate::resolve_within_root(root, path) {
-            Some(p) => p,
-            None => {
+        // One held root descriptor for both halves of the edit: the read below
+        // and the write at the end walk the same descriptors rather than
+        // resolving `path` twice against a filesystem that can move under
+        // them (#938).
+        let handle = match crate::rootfd::RootHandle::open(root) {
+            Ok(handle) => std::sync::Arc::new(handle),
+            Err(e) => {
                 return ToolOutput::Error {
-                    message: format!("path `{path}` escapes workspace root"),
+                    message: format!("cannot open workspace root: {e}"),
                 };
             }
         };
 
-        let content = match tokio::fs::read_to_string(&full_path).await {
+        let content = match crate::rootfd::read_to_string_async(&handle, path).await {
             Ok(c) => c,
+            Err(e) if e.is_escape() => {
+                return ToolOutput::Error {
+                    message: format!("path `{path}` escapes workspace root ({e})"),
+                };
+            }
             Err(e) => {
                 return ToolOutput::Error {
                     message: format!("failed to read `{path}`: {e}"),
@@ -285,9 +294,11 @@ impl Tool for EditFile {
             content.replacen(old_string, new_string, 1)
         };
 
-        match crate::durable_write::write_file_durably(
-            full_path.clone(),
+        match crate::durable_write::write_file_durably_at(
+            handle,
+            path.to_string(),
             new_content.as_bytes().to_vec(),
+            false,
         )
         .await
         {

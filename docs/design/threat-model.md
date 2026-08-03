@@ -9,8 +9,8 @@ written down *together*: the project trust boundary is argued in
 `stella-cli/src/settings/merge.rs`, the authority ceiling in
 `settings/authority.rs`, the subprocess scrub in
 `stella-tools/src/subprocess_env.rs`, the sandbox's scope in
-`stella-tools/src/sandbox.rs`, the deliberate absence of an SSRF guard in
-`stella-tools/src/web.rs`, the filesystem identity checks in
+`stella-tools/src/sandbox.rs`, the web egress denylist in
+`stella-tools/src/web_egress.rs`, the filesystem identity checks in
 `stella-store/src/private.rs`, and the dotenv refusals in
 `stella-cli/src/env_files.rs`. Each is careful. None of them can tell you
 whether the set is *complete*, because none of them enumerates the assets or
@@ -154,11 +154,36 @@ refuses to ever apply `LD_*`, `DYLD_*`, `PATH`, `NODE_OPTIONS`, `BASH_ENV`,
 
 ### B5 — Workspace root → filesystem
 
-`stella_tools::resolve_within_root` canonicalizes and rejects escapes, using
-`symlink_metadata` rather than `exists()` so a dangling symlink is caught.
-#695 extended this to workspace-member patterns read from `Cargo.toml`,
+Every file tool that **opens** — read, write, edit, apply_edits, delete,
+download, and the content hashing behind exploration and context packs — is
+confined by `stella_tools::rootfd::RootHandle`, which holds the workspace
+root's directory descriptor and walks each component `openat(dirfd, name,
+O_DIRECTORY | O_NOFOLLOW)` off the one before it. `..` pops the descriptor
+stack rather than opening `".."`; a symlink is read with `readlinkat` and
+re-confined rather than followed; expansion is bounded. The boundary is
+therefore the descriptor chain, not a string comparison, and a name is
+resolved exactly once — by the kernel, at the moment it is used.
+
+That replaced a string resolution (#938). `resolve_within_root` canonicalizes
+and rejects escapes, using `symlink_metadata` rather than `exists()` so a
+dangling symlink is caught, and it is still correct about a filesystem that
+holds still. It could not be correct about one that does not: it approves a
+path whose interior directories do not exist yet without validating them, and
+everything downstream re-resolves those names, so a symlink planted in between
+by the model's own `bash` tool or by a `build.rs` under audit was followed.
+`O_NOFOLLOW` on the final component did not close it — the final component is
+not the one that moves. It survives for the callers that need a *name* rather
+than a descriptor: an argument to `rg` or `fd`, a subprocess working
+directory, the shadow worktree in `verify_done`, the file-touch ledger. #695
+extended it to workspace-member patterns read from `Cargo.toml`,
 `package.json`, and `pnpm-workspace.yaml`, and made out-of-root skips counted
 and surfaced rather than silent.
+
+This confines Stella's own tools, not the subprocesses they spawn: `bash` can
+still write anywhere the user's account can, and isolating that is structural
+(a container), not a matter of path resolution. Off Unix there is no `openat`,
+so the descriptor walk degrades to the string resolver — see
+[R5](#r5--non-unix-platforms-are-materially-weaker).
 
 ### B6 — Stella's private state → other local processes
 
@@ -199,7 +224,7 @@ HTTPS endpoint allowlist.
 | P7 | Workspace member pattern escapes root via `../` or glob | B5 | Mitigated (#695) |
 | P8 | Injected instruction in a read file drives `bash` to exfiltrate | B3 | Partial — sandbox is opt-in |
 | P9 | Injected instruction drives `run_script` / `start_process` | B3 | **Not mitigated by the sandbox** — see R2, R3 |
-| P10 | Injected instruction drives `web_fetch` at cloud metadata / localhost | B3 | **Deliberately not mitigated** — see R4 |
+| P10 | Injected instruction drives `web_fetch` at cloud metadata / localhost | B3 | Mitigated (#939 egress denylist, post-DNS and per redirect hop) — proxy residual in R4 |
 | P11 | Co-tenant plants a symlink at a private-state path | B6 | Mitigated on Unix; not off it |
 | P12 | SVG `data:` URI smuggled past the sanitizer | — | Mitigated (#695 replaced the `//` substring test with a real scheme test) |
 | P13 | Partial-read defeats the MCP OAuth `state` CSRF check | — | Mitigated (#696 read-until-CRLFCRLF) |
@@ -245,24 +270,36 @@ tool. `start_process`, `run_script`, custom tools, and hooks run unconfined.
 The sandbox's own doc names prompt injection as the threat it mitigates — that
 mitigation therefore has a shape the threat does not.
 
-### R4 — No SSRF guard on web tools, by design
+### R4 — The web egress guard is bypassed by an HTTP proxy
 
-Any session can fetch any http(s) URL the host can reach, including `localhost`
-and cloud metadata endpoints. It is required for the "fetch my internal dev
-server" use case, and there is no network allowlist.
+#615 is ruled (#939, option A): `web_fetch`, `web_extract_assets` and
+`web_download` refuse loopback, RFC1918, link-local (`169.254.0.0/16`), IPv6
+unique-local (`fc00::/7`) and link-local (`fe80::/10`), carrier-grade NAT, and
+the `localhost` / `.internal` / `.local` name families by default. The check
+runs on the URL, on **the addresses DNS returns** (the resolver filters them,
+which is what closes DNS rebinding), and again on **every redirect hop**. An
+operator re-opens a specific destination with `[egress] allow` in
+`~/.stella/web_auth.toml` — user scope, deliberately not `settings.json`, which
+a repo can write.
 
-**The compensating control this decision rested on is gone.** The exposure was
-accepted because the web family was opt-in, so reaching a metadata endpoint
-took a deliberate host action. Since #710 the three key-free web tools are
-registered by default and the only gate is an operator who knows to set
-`"web": "off"`. Whether that remains acceptable, or whether the default surface
-needs a loopback/metadata denylist, is an open ruling (#615) — R4 should not be
-read as a still-current risk acceptance.
+Two residuals remain, both recorded in `stella-tools/src/web_egress.rs`:
+
+- **Proxies.** With `HTTP_PROXY`/`HTTPS_PROXY` set, reqwest resolves and
+  connects to the *proxy*; the real destination travels in the `CONNECT` line
+  and never reaches the guarded resolver. The URL-level check still refuses
+  literal-IP and denied-name targets on every hop, but a public name that
+  resolves to a private address goes unchecked behind a proxy. Disabling proxy
+  support would break every corporate user's fetch, which is the worse trade.
+- **Port granularity at the resolver.** `reqwest::dns::Name` carries no port, so
+  `allow = ["dev.internal:8080"]` is honoured host-wide by the resolver and
+  port-exactly by the URL check. Every request passes the URL check first, so
+  the port fence holds; the resolver half of it cannot express one.
 
 One sharp edge is recorded in `web.rs`: reqwest strips `Cookie` and
 `Authorization` across a cross-host redirect, but a secret placed in a custom
 `[domains.x.headers]` entry is not in reqwest's sensitive set and **will**
-follow the redirect.
+follow the redirect. The egress guard does not cover it — that guard bounds
+*where* a request may go, not *which* credentials ride it.
 
 ### R5 — Non-Unix platforms are materially weaker
 

@@ -1,0 +1,167 @@
+---
+title: stella dataset
+description: Curate a redacted, provenance-stamped training dataset from this workspace's own receipts — one JSONL record per accepted turn, plus a manifest stating the exact filter that selected them.
+---
+
+`stella dataset` turns the receipts a workspace has already accumulated into a training-ready trajectory set: one JSONL record per **accepted** turn, every string scrubbed by the secret redactor, and a `manifest.json` beside it that states the extraction rule in full.
+
+Offline: reads `.stella/private/store.db` only, needs no API key, and never writes to the store. The export stays on the machine.
+
+<Callout type="warn">
+  Human sign-off is required before any dataset is used for training. The manifest exists so that review is possible — read it before you ship the JSONL anywhere.
+</Callout>
+
+## Synopsis
+
+```bash
+stella dataset export --output <dir> \
+    [--format jsonl] [--since <timestamp>] [--until <timestamp>] [--require-verdict]
+```
+
+## What it does
+
+```bash
+stella dataset export --format jsonl --output ./trajectories
+```
+
+writes two files into `./trajectories`, both owner-only (`0600`) inside an owner-only directory (`0700`):
+
+| File | What it is |
+| --- | --- |
+| `dataset.jsonl` | One JSON record per accepted turn, ascending by execution id |
+| `manifest.json` | The extraction filter, the redactor's fingerprint, and the store watermark |
+
+### `stella dataset export`
+
+<CardGrid size="md">
+  <OptionCard name="--output <dir>" required>
+    Directory to write `dataset.jsonl` and `manifest.json` into. Created owner-only if missing.
+  </OptionCard>
+  <OptionCard name="--format <jsonl>" defaultValue="jsonl">
+    Record encoding.
+  </OptionCard>
+  <OptionCard name="--since <timestamp>">
+    Keep only turns started at or after this timestamp. Compared lexicographically against
+    `executions.started_at`, which SQLite writes as UTC `YYYY-MM-DD HH:MM:SS`, so a bare date works.
+  </OptionCard>
+  <OptionCard name="--until <timestamp>">
+    Keep only turns started strictly before this timestamp. The window is half-open.
+  </OptionCard>
+  <OptionCard name="--require-verdict" defaultValue="off">
+    Additionally require a judge verdict of `passed`. Off by default — a turn the deterministic
+    ladder cleared never reaches a judge at all.
+  </OptionCard>
+</CardGrid>
+
+## What counts as an accepted turn
+
+The store has no "accepted" column, so the rule is named, applied in one place, and echoed verbatim into the manifest:
+
+> `executions.outcome` in {`completed`, `goal_met`} **and** at least one mutating `file_change` event
+
+Both halves matter. A turn that reported success but changed nothing is a real outcome and a poor training example — there is no diff to learn from. Every other outcome the engine writes (`goal_unmet`, `verification_failed`, `aborted`, `cancelled`, `failed`, `error`, `interrupted`) is excluded.
+
+`--require-verdict` adds a third clause and rewrites the predicate in the manifest to match.
+
+## The record
+
+Every record carries the same keys — absence is spelled `null`, never omitted — so a consumer never has to distinguish "missing" from "not applicable".
+
+```json
+{
+  "schema": 1,
+  "execution_id": 412,
+  "session_id": "ses-9f2c",
+  "repo": "3a7e1c04b9d2f5e8",
+  "timestamp": "2026-08-02 14:30:00",
+  "turn_instance": 0,
+  "kind": "run",
+  "provider": "zai",
+  "model": "glm-5.2",
+  "outcome": "completed",
+  "cost_usd": 0.0143,
+  "prompt": "make the flaky retry test deterministic",
+  "tool_calls": [
+    {
+      "seq": 12,
+      "turn_instance": 0,
+      "name": "edit",
+      "call_id": "call_3",
+      "arguments": { "path": "src/retry.rs", "old_string": "…", "new_string": "…" },
+      "output": "edited src/retry.rs",
+      "is_error": false,
+      "duration_ms": 31
+    }
+  ],
+  "changes": [
+    {
+      "path": "src/retry.rs",
+      "kind": "modified",
+      "added": 6,
+      "removed": 2,
+      "diff": "@@ …",
+      "diff_truncated": false
+    }
+  ],
+  "verdict": { "passed": true, "deterministic": true, "summary": "cargo test flipped fail -> pass" },
+  "redacted": false
+}
+```
+
+### Provenance
+
+`session_id`, `repo`, `timestamp`, and `turn_instance` make every record traceable back to the episode it came from, which is what makes a distilled adapter auditable.
+
+`repo` is a hash of the workspace's normalized `origin` URL — the same identity telemetry scoping uses — so the dataset is attributable to a repository without carrying the URL. A workspace with no remote falls back to the path-derived project id. `session_id` is `null` for a one-shot `stella run`, which never stamps one; that is a fact about the turn, not missing data.
+
+### What `changes` can honestly claim
+
+There is no unified diff anywhere in the store. `diff` is the recorder's changed-region hunk, bounded at 200 lines per side; `added` and `removed` are the recorder's own counts and are **authoritative** — do not re-derive them by counting `+`/`-` lines. `diff_truncated` is `true` when the hunk demonstrably shows fewer changed lines than were counted; `false` means "no evidence of truncation", not "provably complete". The exact bytes the model produced survive in the edit and write tool `arguments`.
+
+## Redaction
+
+Every string leaf of every record — and of the manifest — passes through the same secret redactor the rest of the workspace uses, **after** the record is assembled rather than field by field, so a field added later cannot route around it. A synthetic API key planted in a prompt or in a tool argument does not reach the output.
+
+`redacted` on each record reports whether anything was actually replaced, so "this was scrubbed" is a visible fact rather than an assumption.
+
+The manifest's `redaction.behavior_digest` fingerprints the redactor by its **decisions** on a fixed probe corpus, so it moves when a threshold, a matcher, or a rule list changes. Its one limit, stated plainly: a rule added for a vendor no probe exercises leaves the digest unchanged.
+
+## The manifest
+
+```json
+{
+  "schema": 1,
+  "format": "jsonl",
+  "file": "dataset.jsonl",
+  "records": 37,
+  "repo": "3a7e1c04b9d2f5e8",
+  "filter": {
+    "acceptance_predicate": "executions.outcome in {completed, goal_met} AND at least one mutating file_change event",
+    "since": null,
+    "until": null,
+    "require_verdict": false,
+    "executions_scanned": 214,
+    "executions_in_window": 214,
+    "executions_accepted": 37
+  },
+  "redaction": {
+    "function": "stella_core::redact::redact_secrets",
+    "placeholder": "[redacted]",
+    "behavior_digest": "9c1f0a4b7e2d6538"
+  },
+  "store_watermark": "2026-08-02 15:02:11",
+  "execution_id_range": [178, 412]
+}
+```
+
+`store_watermark` is the store's own newest timestamp, not the wall clock: the extraction reads no clock anywhere, so re-running it against the same store produces byte-identical files.
+
+## Determinism
+
+The same store and the same filter produce byte-identical output on every run. Executions are ordered by id, tool calls and changes by journal sequence, and the record is serialized from its typed struct so the key order is the declaration order rather than a JSON map's. Nothing in the pipeline reads the clock or iterates a hash map into the output.
+
+## See also
+
+- [`stella inspect`](/docs/commands/inspect) — the exact context one past model call was sent
+- [`stella tune`](/docs/commands/tune) — A/B one policy knob and promote the winner
+- [`stella stats`](/docs/commands/stats) — what the receipts cost

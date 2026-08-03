@@ -3,6 +3,9 @@
 //! table — and everything derived from them.
 //!
 //! What lives here:
+//! - **`ensure_catalog_store`** — the network-free half of `bootstrap`
+//!   (open `catalog.db`, lay the seed floor, publish the handle), for the
+//!   callers that must not fetch: `stella doctor` and the provider factory.
 //! - **`bootstrap`** — open the user-tier `catalog.db`, lay the seed floor,
 //!   auto-sync each configured provider's own live `/models` listing
 //!   (BYOK-clean: traffic to the provider the user already keyed, which is
@@ -510,15 +513,24 @@ fn tool_dialect_for(dialect: Dialect) -> ToolDialect {
     }
 }
 
-/// Open the catalog, lay the seed floor, auto-sync each configured
-/// provider's native listing plus (once armed) a stale models.dev master
-/// list — see [`maybe_auto_refresh`] for the two sources' distinct rules —
-/// and install the merged runtime catalog. Called once at startup, before
-/// any provider is resolved; every failure degrades silently to today's
-/// seed-only behavior (the catalog is an upgrade, never a new way to break
-/// a turn).
-pub fn bootstrap() {
-    let store = match CatalogStore::open(&catalog_db_path()) {
+/// Open the catalog and lay the seed floor — the half of [`bootstrap`] that
+/// touches only the disk. **Never fetches anything**, which is what lets the
+/// two callers that must not (or cannot) reach the network use it: `stella
+/// doctor`, whose contract is "no provider, no API key, no network", and
+/// `build_provider_parts`, which runs inside a tokio runtime where
+/// [`maybe_auto_refresh`]'s `block_on` would panic.
+///
+/// Idempotent, and latched on its OWN flag rather than on `STORE` being set:
+/// [`store_for_command`] publishes a bare handle without laying the seed
+/// floor, so "a store exists" is not the same question as "the catalog is
+/// installed". Every failure degrades to seed-only behavior — the catalog is
+/// an upgrade, never a new way to break a turn.
+pub fn ensure_catalog_store() {
+    static INSTALLED: OnceLock<()> = OnceLock::new();
+    if INSTALLED.set(()).is_err() {
+        return;
+    }
+    let store = catalog_store().or_else(|| match CatalogStore::open(&catalog_db_path()) {
         Ok(store) => Some(Arc::new(store)),
         Err(e) => {
             eprintln!(
@@ -527,13 +539,24 @@ pub fn bootstrap() {
             );
             None
         }
-    };
+    });
     if let Some(store) = &store {
         ensure_seed_floor(store);
-        maybe_auto_refresh(store);
-        install_runtime_catalog(store);
     }
     let _ = STORE.set(store);
+}
+
+/// [`ensure_catalog_store`] plus the network half: auto-sync each configured
+/// provider's native listing and (once armed) a stale models.dev master list
+/// — see [`maybe_auto_refresh`] for the two sources' distinct rules — then
+/// install the merged runtime catalog every pricing consumer resolves
+/// through. Called once at startup, before any provider is resolved.
+pub fn bootstrap() {
+    ensure_catalog_store();
+    if let Some(store) = catalog_store() {
+        maybe_auto_refresh(&store);
+        install_runtime_catalog(&store);
+    }
 }
 
 /// Whether a NATIVE listing's staleness clock says it needs a fetch:

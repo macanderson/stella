@@ -80,6 +80,22 @@ pub enum StatsCmd {
     /// calls, context blocks, receipts. Replication-safe by default — never
     /// drops an execution whose telemetry has not reached the usage hub
     Prune(PruneArgs),
+
+    /// Code-graph retrieval health: how often graph_query is reached for,
+    /// and what share of those queries actually resolve
+    Graph(GraphArgs),
+}
+
+/// Flags for `stella stats graph`.
+#[derive(clap::Args, Debug, Clone)]
+pub struct GraphArgs {
+    /// Output format: table (default), json, or csv
+    #[arg(long, value_enum, default_value = "table")]
+    pub format: StatsFormat,
+
+    /// How many recent graph_query answers to classify
+    #[arg(long, value_name = "N", default_value_t = 500)]
+    pub limit: usize,
 }
 
 /// Flags for `stella stats prune` and its alias `stella storage prune`.
@@ -118,12 +134,14 @@ pub struct PruneArgs {
     pub dry_run: bool,
 }
 
-/// Output format for `stella stats`.
+/// Output format, shared by `stella stats` and `stella stats graph` — the two
+/// reports differ in their rows, not in how a row is rendered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum StatsFormat {
     /// Aligned human-readable columns with a TOTAL row (default).
     Table,
-    /// Pretty-printed JSON array of per-(provider, model) rows.
+    /// Pretty-printed JSON: per-(provider, model) rows for the cost report,
+    /// one health object for `stats graph`.
     Json,
     /// RFC-4180-style CSV with a header row.
     Csv,
@@ -761,6 +779,258 @@ fn render_csv(rows: &[StatsRow]) -> String {
     out
 }
 
+// ---------------------------------------------------------------------------
+// `stella stats graph` — the code-graph retrieval health metric (#896)
+//
+// The issue's acceptance criterion is "a measurable rise in graph-backed
+// retrieval, with resolved-query rate as a health metric". A rise nobody can
+// measure cannot be validated, so the number has to exist before the change
+// that is supposed to move it can be judged. This is that number, read from
+// the same local telemetry the rest of `stella stats` reads.
+//
+// Two halves, and they answer different questions:
+//
+//   * **adoption** — is `graph_query` reached for at all, next to the text
+//     tools it competes with. This is the one telemetry showed near zero.
+//   * **resolved-query rate** — of the queries that WERE made, what share
+//     came back with frames rather than a miss. This is the health metric:
+//     a tool that answers "nothing found" teaches the model to stop asking,
+//     so a rising adoption number on top of a falling resolve rate is a
+//     regression wearing a win's clothes.
+//
+// Classification comes from `stella_tools::graph::classify_answer`, which owns
+// the exact literals every miss branch emits — the report never pattern-matches
+// prose of its own.
+// ---------------------------------------------------------------------------
+
+/// Tool names counted as the text-search alternatives to the code graph, for
+/// the adoption denominator. `bash` is deliberately absent: most bash calls
+/// are builds and git, not searches, so folding it in would drown the ratio.
+const TEXT_SEARCH_TOOLS: &[&str] = &["grep", "glob"];
+
+/// One `op`'s answer breakdown.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GraphOpRow {
+    pub op: String,
+    pub calls: u64,
+    pub resolved: u64,
+    pub unresolved: u64,
+    pub out_of_root: u64,
+    pub not_indexed: u64,
+    /// Calls that came back as `ToolOutput::Error` — a broken query, not an
+    /// empty one. Excluded from `resolved` and reported separately so a store
+    /// fault cannot masquerade as a retrieval miss.
+    pub failed: u64,
+    /// `resolved / calls`, or 0.0 for an op with no calls.
+    pub resolved_rate: f64,
+}
+
+impl GraphOpRow {
+    fn new(op: &str) -> Self {
+        Self {
+            op: op.to_string(),
+            calls: 0,
+            resolved: 0,
+            unresolved: 0,
+            out_of_root: 0,
+            not_indexed: 0,
+            failed: 0,
+            resolved_rate: 0.0,
+        }
+    }
+
+    fn finish(&mut self) {
+        self.resolved_rate = if self.calls == 0 {
+            0.0
+        } else {
+            self.resolved as f64 / self.calls as f64
+        };
+    }
+}
+
+/// The whole report.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GraphHealth {
+    /// Per-op rows, busiest first.
+    pub ops: Vec<GraphOpRow>,
+    /// The same counts summed — the headline resolved-query rate.
+    pub total: GraphOpRow,
+    /// Lifetime `graph_query` call count from the projection (not the
+    /// classified window, which is capped by `--limit`).
+    pub graph_query_calls: i64,
+    /// Lifetime calls of the text-search tools it competes with.
+    pub text_search_calls: i64,
+    /// `graph_query / (graph_query + text search)`.
+    pub adoption_rate: f64,
+}
+
+/// Fold classified answers plus lifetime call counts into the report. Pure, so
+/// the arithmetic is testable without a store.
+fn graph_health(answers: &[stella_store::ToolCallAnswer], counts: &[(String, i64)]) -> GraphHealth {
+    use stella_tools::graph::{GraphAnswer, classify_answer};
+
+    let mut by_op: HashMap<String, GraphOpRow> = HashMap::new();
+    let mut total = GraphOpRow::new("TOTAL");
+    for answer in answers {
+        let op = serde_json::from_str::<serde_json::Value>(&answer.args_json)
+            .ok()
+            .and_then(|v| v.get("op").and_then(|o| o.as_str()).map(str::to_string))
+            .unwrap_or_else(|| "(unknown)".to_string());
+        let row = by_op
+            .entry(op.clone())
+            .or_insert_with(|| GraphOpRow::new(&op));
+        for target in [row, &mut total] {
+            target.calls += 1;
+            if !answer.ok {
+                target.failed += 1;
+                continue;
+            }
+            match classify_answer(&answer.content) {
+                GraphAnswer::Resolved => target.resolved += 1,
+                GraphAnswer::Unresolved => target.unresolved += 1,
+                GraphAnswer::OutOfRoot => target.out_of_root += 1,
+                GraphAnswer::NotIndexed => target.not_indexed += 1,
+            }
+        }
+    }
+    let mut ops: Vec<GraphOpRow> = by_op.into_values().collect();
+    for row in &mut ops {
+        row.finish();
+    }
+    ops.sort_by(|a, b| b.calls.cmp(&a.calls).then_with(|| a.op.cmp(&b.op)));
+    total.finish();
+
+    let lookup = |name: &str| {
+        counts
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, c)| *c)
+            .unwrap_or(0)
+    };
+    let graph_query_calls = lookup("graph_query");
+    let text_search_calls: i64 = TEXT_SEARCH_TOOLS.iter().map(|n| lookup(n)).sum();
+    let denominator = graph_query_calls + text_search_calls;
+    GraphHealth {
+        ops,
+        total,
+        graph_query_calls,
+        text_search_calls,
+        adoption_rate: if denominator == 0 {
+            0.0
+        } else {
+            graph_query_calls as f64 / denominator as f64
+        },
+    }
+}
+
+fn render_graph_table(health: &GraphHealth) -> String {
+    let mut out = String::from("graph_query retrieval health (from .stella/private/store.db)\n\n");
+    out.push_str(&format!(
+        "{:<14} {:>6} {:>9} {:>11} {:>12} {:>12} {:>7} {:>10}\n",
+        "OP",
+        "CALLS",
+        "RESOLVED",
+        "UNRESOLVED",
+        "OUT-OF-ROOT",
+        "NOT-INDEXED",
+        "FAILED",
+        "RESOLVED%"
+    ));
+    let line = |row: &GraphOpRow| {
+        format!(
+            "{:<14} {:>6} {:>9} {:>11} {:>12} {:>12} {:>7} {:>9.1}%\n",
+            row.op,
+            row.calls,
+            row.resolved,
+            row.unresolved,
+            row.out_of_root,
+            row.not_indexed,
+            row.failed,
+            row.resolved_rate * 100.0
+        )
+    };
+    for row in &health.ops {
+        out.push_str(&line(row));
+    }
+    out.push_str(&line(&health.total));
+    out.push('\n');
+    out.push_str(&format!(
+        "adoption: graph_query {} of {} structural searches (graph_query + {}) = {:.1}%\n",
+        health.graph_query_calls,
+        health.graph_query_calls + health.text_search_calls,
+        TEXT_SEARCH_TOOLS.join(" + "),
+        health.adoption_rate * 100.0
+    ));
+    out.push_str(
+        "out-of-root and not-indexed are answers re-indexing cannot fix — a session rooted \
+         on the wrong tree, or a file type the graph does not carry.\n",
+    );
+    out
+}
+
+fn render_graph_csv(health: &GraphHealth) -> String {
+    let mut out =
+        String::from("op,calls,resolved,unresolved,out_of_root,not_indexed,failed,resolved_rate\n");
+    for row in health.ops.iter().chain(std::iter::once(&health.total)) {
+        out.push_str(&format!(
+            "{},{},{},{},{},{},{},{:.4}\n",
+            row.op,
+            row.calls,
+            row.resolved,
+            row.unresolved,
+            row.out_of_root,
+            row.not_indexed,
+            row.failed,
+            row.resolved_rate
+        ));
+    }
+    out
+}
+
+/// Entry point for `stella stats graph`. Read-only, keyless, and — like the
+/// main report — refuses to create `.stella/` just to read it.
+pub fn run_stats_graph(args: &GraphArgs) -> Result<(), String> {
+    let workspace_root =
+        std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
+    let present = stella_store::existing_workspace_private_sqlite_path(&workspace_root, "store.db")
+        .map_err(|e| format!("cannot resolve local store: {e}"))?
+        .is_some();
+    let health = if present {
+        let store =
+            Store::open(&workspace_root).map_err(|e| format!("cannot open local store: {e}"))?;
+        let answers = store
+            .tool_call_answers("graph_query", args.limit)
+            .map_err(|e| format!("cannot read graph_query answers: {e}"))?;
+        let counts = store
+            .tool_call_counts()
+            .map_err(|e| format!("cannot read tool call counts: {e}"))?;
+        graph_health(&answers, &counts)
+    } else {
+        graph_health(&[], &[])
+    };
+
+    match args.format {
+        StatsFormat::Table => {
+            if health.total.calls == 0 {
+                println!(
+                    "no graph_query calls recorded in this workspace yet — \
+                     adoption is {} of {} structural searches",
+                    health.graph_query_calls,
+                    health.graph_query_calls + health.text_search_calls
+                );
+                return Ok(());
+            }
+            print!("{}", render_graph_table(&health));
+        }
+        StatsFormat::Json => println!(
+            "{}",
+            serde_json::to_string_pretty(&health).map_err(|e| e.to_string())?
+        ),
+        StatsFormat::Csv => print!("{}", render_graph_csv(&health)),
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1033,6 +1303,156 @@ mod tests {
         // Leading blank line (the block's own `\n` separator) + title +
         // column header + 5 capped rows (each 1-turn -> no diagnosis lines).
         assert_eq!(out.lines().count(), 3 + 5, "header lines + capped rows");
+    }
+
+    // ----------------------------------------------------------------
+    // #896: the resolved-query-rate health metric.
+    // ----------------------------------------------------------------
+
+    fn answer(op: &str, content: &str, ok: bool) -> stella_store::ToolCallAnswer {
+        stella_store::ToolCallAnswer {
+            args_json: format!("{{\"op\":\"{op}\",\"target\":\"x\"}}"),
+            content: content.into(),
+            ok,
+        }
+    }
+
+    /// The whole point of the metric: an empty answer is a successful call, so
+    /// counting calls says nothing about whether the graph is working. This
+    /// splits the same `state = 'ok'` calls into resolved and the three
+    /// distinct ways a query fails to land.
+    #[test]
+    fn graph_health_splits_successful_calls_into_resolved_and_the_ways_they_miss() {
+        use stella_tools::graph::{
+            AMBIGUOUS_MARKER, NOT_INDEXED_MARKER, OUT_OF_ROOT_MARKER, UNRESOLVED_MARKER,
+        };
+
+        let answers = vec![
+            answer("definitions", "- lib.rs::greet\n  pub fn greet()", true),
+            answer(
+                "definitions",
+                &format!("{UNRESOLVED_MARKER} definitions for `nope`"),
+                true,
+            ),
+            answer(
+                "neighbors",
+                &format!("`../other/x.rs` is {OUT_OF_ROOT_MARKER} `/w`"),
+                true,
+            ),
+            answer(
+                "neighbors",
+                &format!("`README.md` {NOT_INDEXED_MARKER} (rust, …)"),
+                true,
+            ),
+            answer(
+                "neighbors",
+                &format!("`x.rs` {AMBIGUOUS_MARKER}: `a/x.rs`"),
+                true,
+            ),
+            answer("imports", "code-graph query failed: boom", false),
+        ];
+        let counts = vec![
+            ("grep".to_string(), 30),
+            ("glob".to_string(), 10),
+            ("graph_query".to_string(), 10),
+            ("bash".to_string(), 900),
+        ];
+
+        let health = graph_health(&answers, &counts);
+        assert_eq!(health.total.calls, 6);
+        assert_eq!(health.total.resolved, 1);
+        assert_eq!(health.total.unresolved, 2, "generic miss + ambiguous");
+        assert_eq!(health.total.out_of_root, 1);
+        assert_eq!(health.total.not_indexed, 1);
+        assert_eq!(health.total.failed, 1, "an errored call is not a miss");
+        assert!((health.total.resolved_rate - 1.0 / 6.0).abs() < 1e-9);
+
+        // Busiest op first, and each op keeps its own rate.
+        assert_eq!(health.ops[0].op, "neighbors");
+        assert_eq!(health.ops[0].calls, 3);
+        assert_eq!(health.ops[0].resolved_rate, 0.0);
+
+        // Adoption is measured against the text tools it competes with —
+        // `bash` is excluded, or builds and git would drown the ratio.
+        assert_eq!(health.graph_query_calls, 10);
+        assert_eq!(health.text_search_calls, 40);
+        assert!((health.adoption_rate - 0.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn an_empty_store_reports_zeroes_rather_than_dividing_by_zero() {
+        let health = graph_health(&[], &[]);
+        assert_eq!(health.total.calls, 0);
+        assert_eq!(health.total.resolved_rate, 0.0);
+        assert_eq!(health.adoption_rate, 0.0);
+        assert!(health.ops.is_empty());
+    }
+
+    /// End to end over a real store: record the same `tool_start` /
+    /// `tool_result` pairs the agent loop records, read them back, and check
+    /// the rate. This is what makes the metric a *measurement* of the running
+    /// agent rather than of a fixture.
+    #[test]
+    fn a_seeded_store_reports_a_real_resolved_query_rate() {
+        use stella_protocol::{AgentEvent, ToolCall, ToolOutput};
+        use stella_tools::graph::OUT_OF_ROOT_MARKER;
+
+        let store = Store::in_memory().expect("store");
+        let id = store
+            .begin_execution("run", "prompt", "anthropic", "opus")
+            .expect("begin");
+        let call = |call_id: &str, name: &str, op: &str| AgentEvent::ToolStart {
+            call: ToolCall {
+                call_id: call_id.into(),
+                name: name.into(),
+                input: serde_json::json!({ "op": op, "target": "t" }),
+            },
+        };
+        let result = |call_id: &str, content: &str| AgentEvent::ToolResult {
+            call_id: call_id.into(),
+            output: ToolOutput::Ok {
+                content: content.into(),
+            },
+            duration_ms: 1,
+            speculated: false,
+        };
+
+        let events = [
+            call("c1", "graph_query", "definitions"),
+            result("c1", "- lib.rs::greet\n  pub fn greet()"),
+            call("c2", "graph_query", "neighbors"),
+            result(
+                "c2",
+                &format!("`../sibling/x.rs` is {OUT_OF_ROOT_MARKER} `/w`"),
+            ),
+            call("c3", "grep", ""),
+            result("c3", "lib.rs:1:greet"),
+        ];
+        for (seq, event) in events.iter().enumerate() {
+            store.record_event(id, seq as u64, event).expect("record");
+        }
+
+        let answers = store
+            .tool_call_answers("graph_query", 100)
+            .expect("answers");
+        let counts = store.tool_call_counts().expect("counts");
+        let health = graph_health(&answers, &counts);
+
+        assert_eq!(health.total.calls, 2);
+        assert_eq!(health.total.resolved, 1);
+        assert_eq!(health.total.out_of_root, 1);
+        assert_eq!(health.total.resolved_rate, 0.5);
+        assert_eq!(health.graph_query_calls, 2);
+        assert_eq!(health.text_search_calls, 1);
+
+        let table = render_graph_table(&health);
+        assert!(table.contains("50.0%"), "{table}");
+        assert!(
+            table.contains("definitions") && table.contains("neighbors"),
+            "{table}"
+        );
+        let csv = render_graph_csv(&health);
+        assert!(csv.contains("TOTAL,2,1,0,1,0,0,0.5000"), "{csv}");
     }
 
     #[test]

@@ -586,6 +586,148 @@ impl Store {
         }
         Ok(out)
     }
+
+    /// How many times each tool was called in this workspace, busiest first.
+    ///
+    /// The projection's whole point is that this is an index scan rather than
+    /// a JSON walk of `events`. Used by the graph-adoption report to put
+    /// `graph_query`'s call count next to the text-search tools it competes
+    /// with — a resolved-query rate means little without knowing whether the
+    /// tool is being reached for at all.
+    pub fn tool_call_counts(&self) -> Result<Vec<(String, i64)>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT name, COUNT(*) FROM tool_calls GROUP BY name ORDER BY 2 DESC, 1 ASC",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// The most recent calls of one tool **with the answer each produced**,
+    /// newest first, capped at `limit`.
+    ///
+    /// `tool_calls` deliberately stores `bytes_out` rather than the output
+    /// itself, so a caller that must judge *what a tool answered* — not just
+    /// that it answered — has to go back to the log. That is the case for any
+    /// health metric whose numerator is semantic: "did this `graph_query`
+    /// actually resolve" is indistinguishable from "did it return" in the
+    /// projection, because an empty answer is a perfectly successful call
+    /// (#896).
+    ///
+    /// Bounded by construction: only the `limit` most recent executions that
+    /// contain a call of `name` are scanned (each holds at least one, so the
+    /// window can never be short), and their `tool_start`/`tool_result` pairs
+    /// are correlated by `call_id` — the same fold shape
+    /// [`Store::materialize_tool_calls`] uses.
+    pub fn tool_call_answers(&self, name: &str, limit: usize) -> Result<Vec<ToolCallAnswer>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let rows: Vec<(i64, String)> = {
+            let conn = self.lock();
+            let mut stmt = conn.prepare(
+                "SELECT e.execution_id, e.payload FROM events e \
+                 WHERE e.event_type IN ('tool_start', 'tool_result') \
+                   AND e.execution_id IN ( \
+                       SELECT execution_id FROM tool_calls WHERE name = ?1 \
+                       GROUP BY execution_id ORDER BY execution_id DESC LIMIT ?2) \
+                 ORDER BY e.execution_id ASC, e.seq ASC",
+            )?;
+            let mapped = stmt.query_map(params![name, limit as i64], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+            })?;
+            let mut out = Vec::new();
+            for row in mapped {
+                out.push(row?);
+            }
+            out
+        };
+
+        use std::collections::HashMap;
+        // Correlate within one execution at a time: `call_id` is unique per
+        // execution, not globally (the `tool_calls_by_call_id` index is on the
+        // pair), so folding the whole window in one map could cross-attach a
+        // result from a later turn to an earlier turn's call.
+        let mut answers: Vec<ToolCallAnswer> = Vec::new();
+        let mut execution = None;
+        let mut order: Vec<String> = Vec::new();
+        let mut starts: HashMap<String, String> = HashMap::new();
+        let mut results: HashMap<String, (bool, String)> = HashMap::new();
+        let flush = |order: &mut Vec<String>,
+                     starts: &mut HashMap<String, String>,
+                     results: &mut HashMap<String, (bool, String)>,
+                     answers: &mut Vec<ToolCallAnswer>| {
+            for call_id in order.drain(..) {
+                let Some(args_json) = starts.remove(&call_id) else {
+                    continue;
+                };
+                // A call with no result never produced an answer to judge —
+                // an abandoned turn is not an unresolved query.
+                let Some((ok, content)) = results.remove(&call_id) else {
+                    continue;
+                };
+                answers.push(ToolCallAnswer {
+                    args_json,
+                    content,
+                    ok,
+                });
+            }
+            starts.clear();
+            results.clear();
+        };
+
+        for (execution_id, payload) in rows {
+            if execution != Some(execution_id) {
+                flush(&mut order, &mut starts, &mut results, &mut answers);
+                execution = Some(execution_id);
+            }
+            let Ok(event) = serde_json::from_str::<AgentEvent>(&payload) else {
+                continue;
+            };
+            match event {
+                AgentEvent::ToolStart { call } if call.name == name => {
+                    if !starts.contains_key(&call.call_id) {
+                        order.push(call.call_id.clone());
+                    }
+                    let args_json =
+                        serde_json::to_string(&call.input).unwrap_or_else(|_| "{}".into());
+                    starts.insert(call.call_id, args_json);
+                }
+                AgentEvent::ToolResult {
+                    call_id, output, ..
+                } => {
+                    let entry = match output {
+                        ToolOutput::Ok { content } => (true, content),
+                        ToolOutput::Error { message } => (false, message),
+                    };
+                    results.insert(call_id, entry);
+                }
+                _ => {}
+            }
+        }
+        flush(&mut order, &mut starts, &mut results, &mut answers);
+
+        answers.reverse();
+        answers.truncate(limit);
+        Ok(answers)
+    }
+}
+
+/// One recorded tool call paired with the answer it produced — what
+/// [`Store::tool_call_answers`] returns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolCallAnswer {
+    /// The call's input, as recorded on `tool_start`.
+    pub args_json: String,
+    /// The rendered `ToolOutput` body: the content on success, the message on
+    /// failure.
+    pub content: String,
+    /// Whether the output was `ToolOutput::Ok`.
+    pub ok: bool,
 }
 
 #[cfg(test)]

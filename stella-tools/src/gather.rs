@@ -229,13 +229,13 @@ async fn load_pack(root: &Path, slug: &str) -> Option<ContextPack> {
 /// model- or repository-supplied path: one naming a location outside the
 /// workspace is never read, and counts as stale.
 async fn stale_paths(root: &Path, manifest: &BTreeMap<String, String>) -> Vec<String> {
+    let Ok(handle) = crate::rootfd::RootHandle::open(root) else {
+        return manifest.keys().cloned().collect();
+    };
+    let handle = std::sync::Arc::new(handle);
     let mut stale = Vec::new();
     for (path, saved_hash) in manifest {
-        let Some(resolved) = crate::resolve_within_root(root, path) else {
-            stale.push(path.clone());
-            continue;
-        };
-        match tokio::fs::read(&resolved).await {
+        match crate::rootfd::read_async(&handle, path).await {
             Ok(bytes) if &hex_sha256(&bytes) == saved_hash => {}
             _ => stale.push(path.clone()),
         }
@@ -677,14 +677,28 @@ async fn gather(
     let mut manifest: BTreeMap<String, String> = BTreeMap::new();
     let mut excerpt_body = String::new();
     let mut skipped: Vec<String> = Vec::new();
+    // One held root descriptor for every excerpt read and every manifest hash
+    // below: the paths are model- and sub-tool-derived, and a resolved string
+    // can be re-pointed between the confinement check and the read (#938).
+    let handle = match crate::rootfd::RootHandle::open(root) {
+        Ok(handle) => std::sync::Arc::new(handle),
+        Err(e) => {
+            return ToolOutput::Error {
+                message: format!("cannot open workspace root: {e}"),
+            };
+        }
+    };
     for (path, mut lines) in excerpt_targets {
-        let Some(resolved) = crate::resolve_within_root(root, &path) else {
-            skipped.push(format!("{path} (escapes workspace root)"));
-            continue;
-        };
-        let Ok(bytes) = tokio::fs::read(&resolved).await else {
-            skipped.push(format!("{path} (unreadable)"));
-            continue;
+        let bytes = match crate::rootfd::read_async(&handle, &path).await {
+            Ok(bytes) => bytes,
+            Err(e) if e.is_escape() => {
+                skipped.push(format!("{path} (escapes workspace root)"));
+                continue;
+            }
+            Err(_) => {
+                skipped.push(format!("{path} (unreadable)"));
+                continue;
+            }
         };
         manifest.insert(path.clone(), hex_sha256(&bytes));
         let Ok(content) = String::from_utf8(bytes) else {
@@ -719,11 +733,10 @@ async fn gather(
             break;
         }
         // Confined like the excerpt loop above: these keys are derived from a
-        // sub-tool's rendered output, so they go through the same gate rather
-        // than a bare join.
+        // sub-tool's rendered output, so they go through the same held root
+        // descriptor rather than a bare join.
         if !manifest.contains_key(path)
-            && let Some(resolved) = crate::resolve_within_root(root, path)
-            && let Ok(bytes) = tokio::fs::read(&resolved).await
+            && let Ok(bytes) = crate::rootfd::read_async(&handle, path).await
         {
             manifest.insert(path.clone(), hex_sha256(&bytes));
         }

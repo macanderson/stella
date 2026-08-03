@@ -757,6 +757,17 @@ fn build_provider_parts(
     // own live smoke tests — still cannot construct a phantom-slug provider.
     // Running it here first is what buys the synced-catalog escalation and its
     // suggestions, which need the on-disk catalog this crate owns.
+    //
+    // PRECONDITION: the catalog is installed by the COMMAND, not lazily here
+    // (#895). `model_catalog::STORE` is documented as never opened implicitly
+    // by a reader, so that tests and library-style callers cannot reach the
+    // user's real `~/.stella/catalog.db` — installing it from this factory
+    // would break that, and would let one unit test's on-disk catalog decide
+    // another's assertions. So every command that can reach here installs it
+    // first: `main` via `model_catalog::bootstrap`, and `stella ingest
+    // <paths>`, which dispatches earlier, via its own call. Without that the
+    // ladder silently drops to its seed-only rung and a catalog-provable bad
+    // slug dies at the provider instead — the exact #895 report.
     crate::model_catalog::validate_model_slug(provider_config, model_id)?;
 
     // The dialect match itself is `stella_runtime::build_provider`, so the

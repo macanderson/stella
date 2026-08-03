@@ -501,3 +501,94 @@ async fn a_steered_session_turn_retains_the_injected_message() {
         session["messages"]
     );
 }
+
+/// A held turn has to be readable without replaying a stream (#932).
+///
+/// The frames say when the hold started and ended, which is what a subscriber
+/// needs. But a host process that restarted, or one that manages many sessions
+/// and streams none of them, has no stream to read — and from the outside a
+/// held turn and a thinking turn are both silence. `GET /v1/sessions/{id}`
+/// answers it in one request: `held` is the difference between waiting longer
+/// and posting a resume.
+#[tokio::test]
+async fn a_session_reports_whether_its_live_turn_is_held() {
+    let addr = common::start_server().await;
+    let session_id = create_session(addr, "sys").await;
+    let turn_id = create_session_turn(addr, &session_id, "start", false).await;
+    let mut sse = open_sse(addr, &format!("/v1/turns/{turn_id}/events"), TOKEN).await;
+    let request = loop {
+        let frame = tokio::time::timeout(Duration::from_secs(10), next_event(&mut sse))
+            .await
+            .expect("a provider_request must arrive")
+            .expect("stream must not end early");
+        if frame["type"] == "provider_request" {
+            break frame;
+        }
+    };
+
+    let running = get_session(addr, &session_id).await;
+    assert_eq!(running["live_turn"], turn_id.as_str());
+    assert_eq!(
+        running["held"], false,
+        "a turn nobody paused is not held: {running}"
+    );
+
+    let (status, body) = post_json(
+        addr,
+        &format!("/v1/turns/{turn_id}/pause"),
+        Some(TOKEN),
+        &json!({ "reason": "waiting on a human" }).to_string(),
+    )
+    .await;
+    assert!(status.contains("200"), "pause: {status} {body}");
+    let held = get_session(addr, &session_id).await;
+    assert_eq!(
+        held["held"], true,
+        "the session must report the hold on its live turn: {held}"
+    );
+
+    let (status, _) = post_json(
+        addr,
+        &format!("/v1/turns/{turn_id}/resume"),
+        Some(TOKEN),
+        "",
+    )
+    .await;
+    assert!(status.contains("200"), "resume: {status}");
+    let released = get_session(addr, &session_id).await;
+    assert_eq!(
+        released["held"], false,
+        "the release must be readable the same way the hold was: {released}"
+    );
+
+    // Let the turn settle so the session is not left holding a live slot.
+    let answer = json!({
+        "request_id": request["request_id"],
+        "status": "ok",
+        "result": model_result("done"),
+    })
+    .to_string();
+    let (status, _) = post_json(
+        addr,
+        &format!("/v1/turns/{turn_id}/provider-result"),
+        Some(TOKEN),
+        &answer,
+    )
+    .await;
+    assert!(status.contains("200"));
+    loop {
+        let frame = tokio::time::timeout(Duration::from_secs(10), next_event(&mut sse))
+            .await
+            .expect("the terminal frame must arrive")
+            .expect("the stream must reach turn_complete");
+        if frame["type"] == "turn_complete" {
+            break;
+        }
+    }
+    let settled = get_session(addr, &session_id).await;
+    assert!(settled["live_turn"].is_null());
+    assert_eq!(
+        settled["held"], false,
+        "a session with no live turn is not held: {settled}"
+    );
+}

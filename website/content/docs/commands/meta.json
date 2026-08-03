@@ -30,6 +30,7 @@
     "calibration",
     "usage",
     "tune",
+    "dataset",
     "---Set up---",
     "auth",
     "models",

@@ -161,6 +161,10 @@ pub(super) fn extract_all(
     base_url: Option<&str>,
 ) -> Result<(), String> {
     let cfg = crate::config::Config::load(model, api_key, base_url)?;
+    // The same advisory pass `main` runs after `Config::load` — ingest
+    // resolves its own config, so without this it was the one model-calling
+    // command with no settings warnings at all (#895).
+    crate::settings_check::report_at_launch(&cfg);
     let provider = crate::agent::build_provider(&cfg)?;
 
     let runtime = tokio::runtime::Builder::new_current_thread()

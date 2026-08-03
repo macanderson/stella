@@ -131,6 +131,24 @@ fn code_map_for(
     )
 }
 
+/// The empty-result answer, carrying the `graph_query` pointer when the
+/// pattern was a symbol hunt and the workspace has an index.
+///
+/// A symbol-shaped search that matched nothing is the single strongest moment
+/// to steer (#896): the agent has just been told the text does not exist
+/// anywhere, and the graph is the one surface that can still answer — under a
+/// different spelling, or by pointing at the definition the text search
+/// missed. Before this the answer was a bare "(no matches)", so the steer that
+/// the issue calls one-shot never even fired there.
+fn no_matches(enabled: bool, show_tip: bool, root: &std::path::Path) -> ToolOutput {
+    let mut content = String::from("(no matches)");
+    if enabled && show_tip && matches!(crate::graph::graph_available(root), Ok(true)) {
+        content.push_str("\n\n");
+        content.push_str(crate::code_map::GRAPH_QUERY_TIP);
+    }
+    ToolOutput::Ok { content }
+}
+
 pub struct Grep {
     /// Whether results carry the code-map footer. Off for the embedded sweeps
     /// in `gather_context`, whose packs run their own graph queries — a
@@ -286,9 +304,7 @@ impl Tool for Grep {
                         message: format!("rg error: {}", first_error_line(&stderr)),
                     };
                 }
-                ToolOutput::Ok {
-                    content: "(no matches)".into(),
-                }
+                no_matches(self.footer, show_tip, root)
             }
             crate::exec::Captured::Unavailable => {
                 // rg not installed — fall back to grep
@@ -344,9 +360,7 @@ impl Tool for Grep {
                                 message: format!("grep error: {}", first_error_line(&stderr)),
                             };
                         }
-                        ToolOutput::Ok {
-                            content: "(no matches)".into(),
-                        }
+                        no_matches(self.footer, show_tip, root)
                     }
                     crate::exec::Captured::Unavailable => ToolOutput::Error {
                         message: "grep failed: neither `rg` nor `grep` is available".into(),
@@ -651,6 +665,48 @@ mod tests {
                 );
             }
             ToolOutput::Error { message } => panic!("expected matches, got: {message}"),
+        }
+    }
+
+    /// #896: a symbol hunt that matched NOTHING is the moment the steer is
+    /// worth most — the agent has just been told the text is absent and the
+    /// graph is the only surface that can still answer (a different spelling,
+    /// or the definition the text scan missed). The answer used to be a bare
+    /// "(no matches)" with no pointer at all.
+    #[tokio::test]
+    async fn a_symbol_hunt_with_no_matches_still_points_at_the_graph() {
+        let dir = indexed_workspace();
+        let result = Grep::default()
+            .execute(
+                &serde_json::json!({"pattern": "NoSuchSymbolHere"}),
+                dir.path(),
+            )
+            .await;
+        match result {
+            ToolOutput::Ok { content } => {
+                assert!(content.contains("no matches"), "{content}");
+                assert!(
+                    content.contains("graph_query"),
+                    "an empty symbol hunt steers at the graph: {content}"
+                );
+            }
+            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+        }
+
+        // A free-text scan that finds nothing stays bare — the nudge must not
+        // decay into a footer on every empty search.
+        let text = Grep::default()
+            .execute(
+                &serde_json::json!({"pattern": "no.*such.*thing"}),
+                dir.path(),
+            )
+            .await;
+        match text {
+            ToolOutput::Ok { content } => assert!(
+                !content.contains("graph_query"),
+                "no nudge on an empty text scan: {content}"
+            ),
+            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
         }
     }
 

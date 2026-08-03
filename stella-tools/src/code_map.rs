@@ -128,7 +128,12 @@ fn branch_is_symbol(branch: &str) -> bool {
 /// is written. Each segment starts alphabetic/underscore and is otherwise
 /// alphanumeric/underscore; the whole must contain at least one letter, so a
 /// bare number never counts as a symbol.
-fn is_identifier_or_path(s: &str) -> bool {
+///
+/// Shared with `graph`'s qualified-name retry (#896): the segment rules that
+/// decide "this grep looks like a symbol hunt" are the same ones that decide
+/// "`Greeter::greet` is a qualified name whose last segment is worth trying",
+/// and two copies would drift.
+pub(crate) fn is_identifier_or_path(s: &str) -> bool {
     if s.is_empty() {
         return false;
     }
@@ -140,10 +145,19 @@ fn is_identifier_or_path(s: &str) -> bool {
 }
 
 /// Render the code-map footer for the files a search touched, or `None`
-/// when there is nothing to say (no index, store unopenable, or none of the
-/// candidates are in the graph). `candidates` may repeat and may mix
-/// absolute and root-relative paths — both resolve; order of first
-/// appearance is kept, so the map follows the result's own ranking.
+/// when there is nothing to say (no index, or store unopenable). `candidates`
+/// may repeat and may mix absolute and root-relative paths — both resolve;
+/// order of first appearance is kept, so the map follows the result's own
+/// ranking.
+///
+/// When `show_tip` is set and none of the candidates are in the graph, the
+/// pointer at `graph_query` still rides alone (#896). That case is not "no
+/// signal" — it is a symbol hunt whose text matches landed in files the graph
+/// does not carry (docs, config, a path the index has under another spelling),
+/// which is precisely when asking the graph beats scrolling grep output. The
+/// `bash` advisory has always steered here unconditionally; the native search
+/// tools used to go silent exactly when the map was empty, so the steer that
+/// the issue calls one-shot was in practice map-shaped.
 pub fn for_files<'a, I>(root: &Path, candidates: I, show_tip: bool) -> Option<String>
 where
     I: IntoIterator<Item = &'a str>,
@@ -178,7 +192,7 @@ where
     graph.shutdown();
 
     if lines.is_empty() {
-        return None;
+        return show_tip.then(|| format!("\n\n{GRAPH_QUERY_TIP}"));
     }
     let mut out = String::from("\n\ncode map (from the code graph):\n");
     out.push_str(&lines.join("\n"));
@@ -317,9 +331,26 @@ mod tests {
     fn unknown_files_are_skipped_not_rendered_empty() {
         let dir = indexed_workspace();
         assert_eq!(
-            for_files(dir.path(), ["README.md", "no/such/file.rs"], true),
+            for_files(dir.path(), ["README.md", "no/such/file.rs"], false),
             None,
-            "files the graph doesn't know produce no footer at all"
+            "files the graph doesn't know produce no map at all"
+        );
+    }
+
+    /// #896: a symbol-shaped search whose matches all landed in files the
+    /// graph does not carry used to get NOTHING — no map and, because the tip
+    /// rode the map, no steer either. That silence hit exactly the searches
+    /// `graph_query` answers best, and it is the "the steer is one-shot"
+    /// symptom the issue reports. The tip now rides alone.
+    #[test]
+    fn a_symbol_hunt_over_unmapped_files_still_gets_the_graph_pointer() {
+        let dir = indexed_workspace();
+        let footer = for_files(dir.path(), ["README.md", "no/such/file.rs"], true)
+            .expect("a symbol-shaped search still gets the pointer");
+        assert!(footer.contains("graph_query"), "{footer}");
+        assert!(
+            !footer.contains("code map"),
+            "no map to show, so none is claimed: {footer}"
         );
     }
 

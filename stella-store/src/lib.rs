@@ -212,7 +212,7 @@ pub use receipts::{
 pub use reconstruct::Reconstruction;
 pub use sessions::{SessionRecord, SessionRegistry, SessionStatus};
 pub use telemetry::{SourceTelemetryRow, TelemetryRow};
-pub use tool_calls::{ToolCallRow, ToolCallState};
+pub use tool_calls::{ToolCallAnswer, ToolCallRow, ToolCallState};
 
 /// FNV-1a/64 hex — a stable, dependency-free digest for prompt hashes and
 /// tool-arg fingerprints (loop detection, not security). Also the

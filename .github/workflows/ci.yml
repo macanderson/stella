@@ -120,6 +120,16 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-license-allowlist-parity.sh
 
+      # Also toolchain-free. The path remapping that makes a release binary
+      # reproducible lives in scripts/repro-build.sh, and is worth nothing the
+      # moment release.yml goes back to calling cargo directly — a regression
+      # with no symptom until someone tries to rebuild a published tag (#910).
+      # The bytes themselves are checked by release.yml's verify-reproducible
+      # job, which needs two runners and an hour of LTO and so cannot run here.
+      - name: release builds go through the reproducible builder
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-repro-wiring.sh
+
       # Also toolchain-free. Three fleet plans asserted a 1500-line file ratchet
       # that nothing enforced, so it decayed into decoration while the worst
       # offender grew past 4x the limit (#629). Existing offenders are

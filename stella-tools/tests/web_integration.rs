@@ -15,7 +15,25 @@ use stella_tools::web::{
 use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+/// No per-domain credentials, but the loopback exemption an operator pointing
+/// Stella at a local dev server would write.
+///
+/// Every mock server here binds `127.0.0.1`, which the shipping default
+/// refuses (#939). The tests that are not ABOUT the egress guard therefore
+/// carry the opt-out rather than the guard being weakened for them — the
+/// shipping posture is exercised by [`shipping_default_auth`] below.
 fn no_auth() -> Arc<WebAuthState> {
+    auth_from(
+        r#"
+        [egress]
+        allow = ["127.0.0.1"]
+        "#,
+    )
+}
+
+/// `web_auth.toml` exactly as it ships when nobody has written one: no
+/// credentials, no egress exemptions.
+fn shipping_default_auth() -> Arc<WebAuthState> {
     Arc::new(Ok(WebAuthConfig::default()))
 }
 
@@ -89,6 +107,8 @@ async fn web_fetch_sends_configured_domain_auth_and_reports_it_by_name_only() {
         cookie = "session=secret-cookie-value"
         [domains."127.0.0.1".headers]
         X-Client = "stella-test"
+        [egress]
+        allow = ["127.0.0.1"]
         "#,
     );
     let root = tempfile::tempdir().unwrap();
@@ -309,6 +329,8 @@ async fn a_page_named_cross_origin_stylesheet_gets_no_stored_credentials() {
         r#"
         [domains."127.0.0.1"]
         cookie = "session=secret-cookie-value"
+        [egress]
+        allow = ["127.0.0.1"]
         "#,
     );
     let root = tempfile::tempdir().unwrap();
@@ -386,4 +408,239 @@ async fn web_fetch_names_the_auth_file_hint_on_a_401() {
     );
     assert!(message.contains("HTTP 401"), "{message}");
     assert!(message.contains("web_auth.toml"), "{message}");
+}
+
+/// The shipping default refuses a loopback destination — the acceptance
+/// clause of #939, for both tools it names.
+///
+/// The mock server exists so the failure mode is unambiguous: the URL is a
+/// real, live, reachable page. Before the egress guard both calls succeeded
+/// and `web_download` landed the body in the workspace.
+#[tokio::test]
+async fn web_fetch_and_web_download_refuse_loopback_under_the_shipping_default() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/secret"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "<html><body><p>INTERNAL-SERVICE-BODY</p></body></html>",
+            "text/html",
+        ))
+        .mount(&server)
+        .await;
+
+    let root = tempfile::tempdir().unwrap();
+    let url = format!("{}/secret", server.uri());
+
+    let message = expect_error(
+        WebFetch(shipping_default_auth())
+            .execute(&json!({"url": url}), root.path())
+            .await,
+    );
+    assert!(message.contains("loopback"), "{message}");
+    assert!(
+        message.contains("[egress] allow"),
+        "the refusal must name its own opt-out: {message}"
+    );
+    assert!(
+        !message.contains("INTERNAL-SERVICE-BODY"),
+        "the body must never be reached: {message}"
+    );
+
+    let message = expect_error(
+        WebDownload(shipping_default_auth())
+            .execute(
+                &json!({"url": url, "path": ".stella/artifacts/web/secret.html"}),
+                root.path(),
+            )
+            .await,
+    );
+    assert!(message.contains("loopback"), "{message}");
+    assert!(
+        !root
+            .path()
+            .join(".stella/artifacts/web/secret.html")
+            .exists(),
+        "a refused download must not land in the workspace"
+    );
+}
+
+/// The metadata endpoints the issue names, refused before a packet leaves.
+///
+/// Every case asserts the guard's own sentinel as well as the class, because
+/// a machine that simply cannot route to `169.254.169.254` also produces an
+/// error — and an error for the wrong reason is not the property under test.
+/// The guard must refuse these on a host where they *are* reachable.
+#[tokio::test]
+async fn web_fetch_refuses_the_metadata_name_families_by_name() {
+    let root = tempfile::tempdir().unwrap();
+    for (url, expected) in [
+        (
+            "http://metadata.google.internal/computeMetadata/v1/",
+            ".internal",
+        ),
+        ("http://169.254.169.254/latest/meta-data/", "link-local"),
+        ("http://[fd00:ec2::254]/latest/meta-data/", "unique-local"),
+        ("http://localhost:3000/", "loopback"),
+        ("http://[::ffff:127.0.0.1]:3000/", "loopback"),
+        ("http://10.1.2.3/admin", "private"),
+    ] {
+        let message = expect_error(
+            WebFetch(shipping_default_auth())
+                .execute(&json!({ "url": url }), root.path())
+                .await,
+        );
+        assert!(
+            message.starts_with("stella egress guard: "),
+            "{url} must be refused BY THE GUARD, not by the network: {message}"
+        );
+        assert!(
+            message.contains(expected),
+            "{url} must be refused as {expected}: {message}"
+        );
+    }
+}
+
+/// The redirect-hop witness, and the reason `host:port` allow entries exist.
+///
+/// Both servers are on `127.0.0.1`; only the first one's PORT is exempted. A
+/// guard that checked the original URL only would follow the 302 straight into
+/// the destination it was built to refuse — which is exactly what a public URL
+/// 302ing to the metadata endpoint does.
+#[tokio::test]
+async fn a_redirect_to_a_denied_destination_is_refused_at_the_hop() {
+    let denied = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/metadata"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("SHOULD-NEVER-BE-READ", "text/plain"))
+        // Verified when the server drops: the denied hop is never requested,
+        // so the refusal happened before the connection, not after the read.
+        .expect(0)
+        .mount(&denied)
+        .await;
+
+    let allowed = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/hop"))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header("Location", format!("{}/metadata", denied.uri()).as_str()),
+        )
+        // …and the first hop IS requested, so the refusal is the redirect
+        // policy's and not the entry-point check refusing the whole fetch.
+        .expect(1)
+        .mount(&allowed)
+        .await;
+
+    let allowed_port = allowed.address().port();
+    let auth = auth_from(&format!(
+        r#"
+        [egress]
+        allow = ["127.0.0.1:{allowed_port}"]
+        "#
+    ));
+
+    let root = tempfile::tempdir().unwrap();
+    let message = expect_error(
+        WebFetch(auth)
+            .execute(
+                &json!({"url": format!("{}/hop", allowed.uri())}),
+                root.path(),
+            )
+            .await,
+    );
+    assert!(
+        !message.contains("SHOULD-NEVER-BE-READ"),
+        "the denied hop's body must never be reached: {message}"
+    );
+    assert!(message.contains("loopback"), "{message}");
+    assert!(
+        message.contains("[egress] allow"),
+        "the refusal must survive reqwest's opaque redirect error: {message}"
+    );
+}
+
+/// The exempted host still works — the guard is a fence, not a wall.
+#[tokio::test]
+async fn an_allow_listed_loopback_host_still_fetches() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/dev"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "<html><body><p>my dev server</p></body></html>",
+            "text/html",
+        ))
+        .mount(&server)
+        .await;
+
+    let port = server.address().port();
+    let auth = auth_from(&format!(
+        r#"
+        [egress]
+        allow = ["127.0.0.1:{port}"]
+        "#
+    ));
+    let root = tempfile::tempdir().unwrap();
+    let content = expect_ok(
+        WebFetch(auth)
+            .execute(
+                &json!({"url": format!("{}/dev", server.uri())}),
+                root.path(),
+            )
+            .await,
+    );
+    assert!(content.contains("my dev server"), "{content}");
+}
+
+/// The same fence via a NAME rather than a literal address — the one path in
+/// this file that actually runs the guarded DNS resolver end to end.
+///
+/// `localhost` is refused by name under the default; allow-listing it lets the
+/// URL check through, and the request then only completes if the guarded
+/// resolver returns usable addresses for it. The resolver's REFUSAL half is
+/// unit-tested in `web_egress` (it needs a name that resolves privately while
+/// passing the URL check, which no offline hostname provides).
+#[tokio::test]
+async fn an_allow_listed_name_resolves_through_the_guarded_resolver() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/dev"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "<html><body><p>named dev server</p></body></html>",
+            "text/html",
+        ))
+        .mount(&server)
+        .await;
+
+    let port = server.address().port();
+    let auth = auth_from(
+        r#"
+        [egress]
+        allow = ["localhost"]
+        "#,
+    );
+    let root = tempfile::tempdir().unwrap();
+    let content = expect_ok(
+        WebFetch(auth)
+            .execute(
+                &json!({"url": format!("http://localhost:{port}/dev")}),
+                root.path(),
+            )
+            .await,
+    );
+    assert!(content.contains("named dev server"), "{content}");
+}
+
+/// A malformed `[egress] allow` entry is a loud parse failure, like every
+/// other key in `web_auth.toml` — never a silently inert exemption that
+/// leaves the operator believing their dev server is reachable.
+#[test]
+fn a_malformed_egress_allow_entry_fails_the_whole_file() {
+    let error = toml::from_str::<WebAuthConfig>(
+        r#"
+        [egress]
+        allow = ["127.0.0.1:not-a-port"]
+        "#,
+    )
+    .expect_err("a bad port must not parse");
+    assert!(error.to_string().contains("not a number"), "{error}");
 }

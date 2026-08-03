@@ -9,14 +9,19 @@
 //! cancelled) unwind instead. Every await that would hang on a regression is
 //! bounded by an explicit timeout so a failure reads as an assertion, not as
 //! a stuck suite.
+//!
+//! The last two tests cover the half of #932 that shipped later: a hold has to
+//! be *observable*. Parking silently is indistinguishable, from a subscriber's
+//! side, from a turn that is merely slow — and a subscriber that drops during
+//! a hold used to reconnect to a stream that never mentioned it.
 
 mod common;
 
 use std::time::Duration;
 
 use common::{
-    TOKEN, create_turn, model_result, model_wants_echo, next_event, open_sse, post_json,
-    start_observed_server_with, start_server,
+    TOKEN, await_parked_after_disconnect, create_turn, model_result, model_wants_echo, next_event,
+    next_event_with_id, open_sse, post_json, start_observed_server_with, start_server,
 };
 use serde_json::json;
 use stella_serve::observe::ServeEvent;
@@ -54,6 +59,24 @@ async fn answer_tool(addr: std::net::SocketAddr, turn_id: &str, request_id: &str
     )
     .await;
     assert!(status.contains("200"), "tool-result: {status} {body}");
+}
+
+/// POST with no `Content-Length` header at all, returning the status line.
+///
+/// `post_json` always declares one, so it cannot express the request a client
+/// written against a body-less route actually sends.
+async fn post_without_content_length(addr: std::net::SocketAddr, path: &str) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {TOKEN}\r\n\
+         Connection: close\r\n\r\n"
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.unwrap();
+    response.lines().next().unwrap_or_default().to_string()
 }
 
 /// Read frames until the next `provider_request`, returning it.
@@ -335,11 +358,31 @@ async fn control_endpoints_answer_honestly_at_the_edges() {
     .await;
     assert!(status.contains("400"), "empty steer: {status}");
 
+    // An empty pause body is the shape this route shipped with and stays
+    // valid; a body that is *present* and unparseable is a 400, not a silently
+    // reasonless hold.
     for _ in 0..2 {
         let (status, _) =
             post_json(addr, &format!("/v1/turns/{turn_id}/pause"), Some(TOKEN), "").await;
         assert!(status.contains("200"), "pause is idempotent: {status}");
     }
+    let (status, _) = post_json(
+        addr,
+        &format!("/v1/turns/{turn_id}/pause"),
+        Some(TOKEN),
+        "not json",
+    )
+    .await;
+    assert!(status.contains("400"), "malformed pause body: {status}");
+    // …and a request with no `Content-Length` at all — the literal shape a
+    // client written against the no-body route sends — must still be a 200,
+    // not a 408 waiting for a body that is never coming. Making `/pause`
+    // body-*bearing* must not make a body mandatory.
+    let status = post_without_content_length(addr, &format!("/v1/turns/{turn_id}/pause")).await;
+    assert!(
+        status.contains("200"),
+        "a pause with no Content-Length: {status}"
+    );
     for _ in 0..2 {
         let (status, _) = post_json(
             addr,
@@ -538,4 +581,249 @@ async fn a_turn_survives_pause_steer_resume_with_its_transcript_intact() {
             break;
         }
     }
+}
+
+/// Drive a freshly created tool turn to its first step boundary: answer the
+/// opening model call with a tool call, then answer the tool. The turn is then
+/// at the boundary where pause, steer and the gate all act.
+async fn drive_to_first_boundary(
+    addr: std::net::SocketAddr,
+    turn_id: &str,
+    sse: &mut tokio::io::BufReader<tokio::net::TcpStream>,
+    first_request_id: &str,
+) {
+    answer_provider(addr, turn_id, first_request_id, model_wants_echo()).await;
+    let tool = loop {
+        let frame = tokio::time::timeout(Duration::from_secs(10), next_event(sse))
+            .await
+            .expect("a tool_request must arrive")
+            .expect("stream must not end before the tool_request");
+        if frame["type"] == "tool_request" {
+            break frame;
+        }
+    };
+    answer_tool(addr, turn_id, tool["request_id"].as_str().unwrap()).await;
+}
+
+/// **The hold has to survive the connection that asked for it.**
+///
+/// This is the property the issue's "worth doing after resumable streams land"
+/// sentence is about, applied to the half that could be built: a host that
+/// pauses a turn for a human to look at it, and whose laptop lid then closes,
+/// must be able to reconnect and find the turn *still holding* — and be able
+/// to tell that it is holding rather than thinking.
+///
+/// Before `turn_held`, `wait_if_paused` parked in silence. The stream carried
+/// nothing about the hold, so nothing about the hold was retained, so a
+/// reconnect replayed a turn that looked identical to a slow one. The
+/// assertion that fails on the old code is the first one: no `turn_held` frame
+/// is ever produced, so the read below times out.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_held_turn_is_still_holding_after_a_reconnect() {
+    // A window wide enough that the reconnect is comfortably inside it — the
+    // turn must be *parked* across the disconnect, not reclaimed.
+    let (addr, capture) = start_observed_server_with(Duration::from_secs(30)).await;
+    let turn_id = create_tool_turn(addr).await;
+    let events_path = format!("/v1/turns/{turn_id}/events");
+    let mut sse = open_sse(addr, &events_path, TOKEN).await;
+
+    let first = next_provider_request(&mut sse).await;
+    let (status, body) = post_json(
+        addr,
+        &format!("/v1/turns/{turn_id}/pause"),
+        Some(TOKEN),
+        &json!({ "reason": "waiting on a human" }).to_string(),
+    )
+    .await;
+    assert!(status.contains("200"), "pause: {status} {body}");
+    drive_to_first_boundary(
+        addr,
+        &turn_id,
+        &mut sse,
+        first["request_id"].as_str().unwrap(),
+    )
+    .await;
+
+    // The gate parks and says so — with the reason the pausing client wrote,
+    // because the client that reads it may not be that one.
+    let held_seq = loop {
+        let (id, frame) = tokio::time::timeout(
+            Duration::from_secs(10),
+            next_event_with_id(&mut sse),
+        )
+        .await
+        .expect("a held turn must announce itself, or a subscriber cannot tell it from a slow one")
+        .expect("the stream must not end while the turn is held");
+        assert_ne!(
+            frame["type"], "turn_complete",
+            "a held turn must not finish: {frame}"
+        );
+        if frame["type"] == "turn_held" {
+            assert_eq!(frame["reason"], "waiting on a human");
+            break id.expect("every frame carries an SSE id");
+        }
+    };
+
+    // The lid closes. The turn parks for its resume window with the hold still
+    // in force and nobody attached.
+    drop(sse);
+    await_parked_after_disconnect(&capture).await;
+
+    // Reconnecting one frame short of the hold must replay it. This is the
+    // whole point of routing the frame through the sequencing funnel rather
+    // than announcing the hold out of band.
+    let mut sse = open_sse(
+        addr,
+        &format!("{events_path}?after={}", held_seq - 1),
+        TOKEN,
+    )
+    .await;
+    let (_, replayed) = tokio::time::timeout(Duration::from_secs(10), next_event_with_id(&mut sse))
+        .await
+        .expect("the replay must arrive")
+        .expect("the replay must carry a frame");
+    assert_eq!(
+        replayed["type"], "turn_held",
+        "the reconnect must re-learn the hold from the retained tail: {replayed}"
+    );
+    assert_eq!(replayed["seq"].as_u64(), Some(held_seq));
+    assert_eq!(replayed["reason"], "waiting on a human");
+
+    // And it really is still holding: nothing follows until the host releases
+    // it, least of all a terminal frame.
+    let quiet_until = tokio::time::Instant::now() + Duration::from_millis(300);
+    loop {
+        let remaining = quiet_until.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match tokio::time::timeout(remaining, next_event(&mut sse)).await {
+            Err(_) => break, // quiet — exactly what a hold looks like
+            Ok(Some(frame)) => assert!(
+                frame["type"] != "turn_complete" && frame["type"] != "provider_request",
+                "a reconnected-into hold must still be holding: {frame}"
+            ),
+            Ok(None) => panic!("the stream must not end while the turn is held"),
+        }
+    }
+
+    // Release it. The paired frame closes the hold on the stream, and the turn
+    // finishes with the transcript it was holding.
+    let (status, body) = post_json(
+        addr,
+        &format!("/v1/turns/{turn_id}/resume"),
+        Some(TOKEN),
+        "",
+    )
+    .await;
+    assert!(status.contains("200"), "resume: {status} {body}");
+
+    let mut released = false;
+    let second = loop {
+        let frame = tokio::time::timeout(Duration::from_secs(10), next_event(&mut sse))
+            .await
+            .expect("the released turn must proceed")
+            .expect("the stream must not end before the released turn's model call");
+        if frame["type"] == "turn_released" {
+            released = true;
+        }
+        if frame["type"] == "provider_request" {
+            break frame;
+        }
+    };
+    assert!(
+        released,
+        "the release must close the hold it opened, or a host that replays the \
+         tail parks on a hold that is already over"
+    );
+    let messages = second["request"]["messages"].as_array().unwrap();
+    assert_eq!(
+        messages[0]["content"], "hi",
+        "the transcript survived the hold and the reconnect: {messages:?}"
+    );
+
+    answer_provider(
+        addr,
+        &turn_id,
+        second["request_id"].as_str().unwrap(),
+        model_result("done"),
+    )
+    .await;
+    loop {
+        let frame = tokio::time::timeout(Duration::from_secs(10), next_event(&mut sse))
+            .await
+            .expect("the stream must reach its terminal frame")
+            .expect("the terminal frame must arrive");
+        if frame["type"] == "turn_complete" {
+            assert_eq!(frame["outcome"]["status"], "completed");
+            break;
+        }
+    }
+}
+
+/// A cancel releases the gate without going through `POST /resume`, and that
+/// release must still close the hold on the stream. It is the arm a naive
+/// implementation forgets — the obvious place to emit `turn_released` is the
+/// resume handler, which this path never reaches — and forgetting it leaves a
+/// host that replays the tail believing a turn that is already over is waiting
+/// on it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_a_held_turn_closes_the_hold_on_the_stream() {
+    let addr = start_server().await;
+    let turn_id = create_tool_turn(addr).await;
+    let mut sse = open_sse(addr, &format!("/v1/turns/{turn_id}/events"), TOKEN).await;
+
+    let first = next_provider_request(&mut sse).await;
+    let (status, _) = post_json(addr, &format!("/v1/turns/{turn_id}/pause"), Some(TOKEN), "").await;
+    assert!(status.contains("200"), "pause: {status}");
+    drive_to_first_boundary(
+        addr,
+        &turn_id,
+        &mut sse,
+        first["request_id"].as_str().unwrap(),
+    )
+    .await;
+
+    let held = loop {
+        let frame = tokio::time::timeout(Duration::from_secs(10), next_event(&mut sse))
+            .await
+            .expect("the hold must be announced")
+            .expect("the stream must not end while the turn is held");
+        if frame["type"] == "turn_held" {
+            break frame;
+        }
+    };
+    assert!(
+        held["reason"].is_null(),
+        "a pause with no body holds without a reason: {held}"
+    );
+
+    let (status, _) = post_json(
+        addr,
+        &format!("/v1/turns/{turn_id}/cancel"),
+        Some(TOKEN),
+        "",
+    )
+    .await;
+    assert!(status.contains("200"), "cancel: {status}");
+
+    let mut released = false;
+    loop {
+        let frame = tokio::time::timeout(Duration::from_secs(10), next_event(&mut sse))
+            .await
+            .expect("a cancelled hold must unwind")
+            .expect("the terminal frame must arrive");
+        if frame["type"] == "turn_released" {
+            released = true;
+        }
+        if frame["type"] == "turn_complete" {
+            assert_eq!(frame["outcome"]["status"], "aborted");
+            break;
+        }
+    }
+    assert!(
+        released,
+        "the cancel released the gate, so the hold must be closed on the stream \
+         too — every hold announced is a hold a replaying host waits on"
+    );
 }

@@ -2,6 +2,11 @@
 //! composer + a status bar, with the splash as a full-frame overlay until it
 //! finishes. This is the tab dispatcher and the one place the deck's chrome is
 //! drawn.
+//!
+//! Every band drawn here — chrome row, active-tab content, floating overlay —
+//! goes through `panel_guard`, so a panic inside one view becomes an
+//! error card in that band instead of unwinding out of `terminal.draw` and
+//! ending the session.
 
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
@@ -18,6 +23,7 @@ use crate::cache_panel;
 use crate::composer::{ComposerLayout, layout as composer_layout, split_row_at};
 use crate::deck::{DeckTab, PrInfo, WorkspaceModel};
 use crate::deck_ui::{DeckUi, InstalledMode, IssuesMode};
+use crate::panel_guard::{guarded_band, guarded_overlay};
 use crate::render::{render_slash_popup, scroll_window_start, slash_popup_area};
 use crate::role_panel;
 use crate::textline::{self, pr_status_label, stage_label};
@@ -50,7 +56,10 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
 
     // The splash owns the whole frame until it finishes / is skipped.
     if !ui.splash.is_done() {
-        splash::render(&ui.splash, model.latest_model(), area, buf);
+        let splash_model = model.latest_model();
+        guarded_band(buf, area, "splash", |b| {
+            splash::render(&ui.splash, splash_model, area, b)
+        });
         return;
     }
 
@@ -89,27 +98,39 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     ])
     .split(area);
 
-    render_tab_bar(ui.tab, bands[0], buf);
+    let tab = ui.tab;
+    guarded_band(buf, bands[0], "tab bar", |b| {
+        render_tab_bar(tab, bands[0], b)
+    });
 
     let content = bands[1];
-    let tab = ui.tab;
-    match tab {
-        DeckTab::Session => views::session::render(model, ui, content, buf),
-        DeckTab::Agents => views::agents::render(model, ui, content, buf),
-        DeckTab::Traces => views::traces::render(model, ui, content, buf),
-        DeckTab::Graph => views::graph::render(model, ui, content, buf),
-        DeckTab::Files => views::files::render(model, ui, content, buf),
-        DeckTab::Skills => views::skills::render(model, ui, content, buf),
-        DeckTab::Mcp => views::mcp::render(model, ui, content, buf),
-        DeckTab::Issues => views::issues::render(model, ui, content, buf),
-        DeckTab::Settings => views::settings::render(model, ui, content, buf),
-    }
+    guarded_band(buf, content, tab.title(), |b| match tab {
+        DeckTab::Session => views::session::render(model, ui, content, b),
+        DeckTab::Agents => views::agents::render(model, ui, content, b),
+        DeckTab::Traces => views::traces::render(model, ui, content, b),
+        DeckTab::Graph => views::graph::render(model, ui, content, b),
+        DeckTab::Files => views::files::render(model, ui, content, b),
+        DeckTab::Skills => views::skills::render(model, ui, content, b),
+        DeckTab::Mcp => views::mcp::render(model, ui, content, b),
+        DeckTab::Issues => views::issues::render(model, ui, content, b),
+        DeckTab::Settings => views::settings::render(model, ui, content, b),
+    });
 
-    render_trace_strip(model, bands[2], buf);
-    crate::progress::render(model, ui, bands[3], buf);
-    render_composer(&c_layout, bands[4], buf);
-    render_composer_footer(model, ui, &c_layout, bands[5], buf);
-    render_status_bar(model, ui, bands[6], buf);
+    guarded_band(buf, bands[2], "traces", |b| {
+        render_trace_strip(model, bands[2], b)
+    });
+    guarded_band(buf, bands[3], "progress", |b| {
+        crate::progress::render(model, ui, bands[3], b)
+    });
+    guarded_band(buf, bands[4], "composer", |b| {
+        render_composer(&c_layout, bands[4], b)
+    });
+    guarded_band(buf, bands[5], "footer", |b| {
+        render_composer_footer(model, ui, &c_layout, bands[5], b)
+    });
+    guarded_band(buf, bands[6], "statline", |b| {
+        render_status_bar(model, ui, bands[6], b)
+    });
     let composer_cursor = composer_cursor_position(&c_layout, bands[4]);
 
     // Floating popups sit above the chrome: the slash menu anchors to the
@@ -119,38 +140,56 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     if let Some(menu) = slash.filter(|m| !m.is_empty()) {
         let selected = ui.slash_selected.min(menu.matches.len().saturating_sub(1));
         let popup = slash_popup_area(area, bands[4], menu.matches.len());
-        render_slash_popup(&menu, selected, popup, buf);
+        guarded_band(buf, popup, "slash menu", |b| {
+            render_slash_popup(&menu, selected, popup, b)
+        });
     }
     if ui.queue_open {
-        render_queue_popup(model, ui, area, buf);
+        guarded_overlay(buf, area, "queue", |b| {
+            render_queue_popup(model, ui, area, b)
+        });
     }
     if ui.graph_picker_open {
-        render_graph_picker(ui, area, buf);
+        guarded_overlay(buf, area, "graph picker", |b| {
+            render_graph_picker(ui, area, b)
+        });
     }
     // The transcript-page overlays (SESSIONS / INBOX / CONTEXT) center over
     // the whole frame like the queue editor; help (below) still wins the top.
     if ui.sessions_open {
-        render_sessions_overlay(model, ui, area, buf);
+        guarded_overlay(buf, area, "sessions", |b| {
+            render_sessions_overlay(model, ui, area, b)
+        });
     }
     if ui.inbox_open {
-        render_inbox_overlay(model, ui, area, buf);
+        guarded_overlay(buf, area, "inbox", |b| {
+            render_inbox_overlay(model, ui, area, b)
+        });
     }
     if ui.context_open {
-        render_context_overlay(ui, area, buf);
+        guarded_overlay(buf, area, "context", |b| {
+            render_context_overlay(ui, area, b)
+        });
     }
     if ui.inspect_open {
-        render_inspect_overlay(ui, area, buf);
+        guarded_overlay(buf, area, "inspect", |b| {
+            render_inspect_overlay(ui, area, b)
+        });
     }
     // (The former ENGINE overlay is gone: the engine panel is the full-width
     // body of the SETTINGS tab — see `views::settings::render`.)
 
     // Startup system notifications: a transient dialog over the deck, drawn
     // last but one so help — which the user asked for — still wins the top.
-    // It is a no-op once dismissed or expired, so it costs a branch per frame.
-    notice::render(&ui.notice, area, buf);
+    // It is a no-op once dismissed or expired — asked here rather than left to
+    // `notice::render`'s own early return, so the guard's scratch copy is paid
+    // for only on the frames a notice is actually up.
+    if ui.notice.is_visible() {
+        guarded_overlay(buf, area, "notice", |b| notice::render(&ui.notice, area, b));
+    }
 
     if ui.help_open {
-        render_help(ui, area, buf);
+        guarded_overlay(buf, area, "help", |b| render_help(ui, area, b));
     }
 
     // Position the hardware cursor at the composer caret so the terminal (and
@@ -650,11 +689,13 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
             "  reconstructing the call's context from the recorded receipt…",
             theme::muted(),
         )));
-    } else if let Some(view) = ui.inspect_view.take() {
-        // Moved out rather than cloned: a reconstructed context is a whole
-        // prompt (up to a full window of messages) and the deck redraws on a
-        // ~30 fps tick, so cloning it here copied megabytes per second for a
-        // read-only walk. It goes straight back at the end of this arm.
+    } else if let Some(view) = ui.inspect_view.as_ref() {
+        // Borrowed, never cloned and never moved out: a reconstructed context
+        // is a whole prompt (up to a full window of messages) and the deck
+        // redraws on a ~30 fps tick, so cloning it here copied megabytes per
+        // second for a read-only walk. A take-and-restore avoided the clone
+        // but not the tear — a panic between the two lost the view for good
+        // (see `crate::panel_guard`); a shared borrow avoids both.
         title = " inspect · context sent ";
         let call = &view.call;
         lines.push(Line::from(Span::styled(
@@ -724,7 +765,6 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
             " ↑/↓ pgup/pgdn scroll · esc/← back to calls · q close",
             theme::muted(),
         )));
-        ui.inspect_view = Some(view);
     } else {
         title = " inspect · recorded calls ";
         lines.push(Line::from(Span::styled(

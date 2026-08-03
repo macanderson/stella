@@ -46,7 +46,8 @@ use stella_protocol::{AgentEvent, FileChangeKind, ToolOutput};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::oneshot;
 
-use crate::term::{PanicHookGuard, Screen, TerminalGuard};
+use crate::panel_guard::guarded_band;
+use crate::term::{PanicHookGuard, TerminalGuard};
 use crate::theme;
 
 /// How often the dashboard repaints even when no event lands, so the clocks
@@ -782,7 +783,14 @@ pub async fn run(
     'run: loop {
         let now = Instant::now();
         terminal.draw(|f| {
-            render(&board, &view, now, f.area(), f.buffer_mut());
+            // The fleet dashboard is one band, and `render` reads only shared
+            // refs — so unlike the deck it needs no recoverability argument at
+            // all (see `crate::panel_guard`): a caught panic leaves nothing
+            // behind but the error card.
+            let area = f.area();
+            guarded_band(f.buffer_mut(), area, "fleet", |b| {
+                render(&board, &view, now, area, b)
+            });
             theme::apply_theme(f.buffer_mut(), color_mode);
             theme::degrade_buffer(f.buffer_mut(), color_mode);
         })?;

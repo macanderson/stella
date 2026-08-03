@@ -47,16 +47,21 @@ pub fn hex_sha256(bytes: &[u8]) -> String {
 /// record that is then shared through the tree — an out-of-root read and a
 /// content oracle (the re-check reports "changed" whenever those bytes move).
 /// An escaping path is dropped exactly like a nonexistent one.
+///
+/// The confinement is a held root descriptor, not a resolved string, so a
+/// directory swapped between the check and the read cannot redirect the hash
+/// at a file outside the workspace (#938).
 pub async fn build_manifest(
     root: &Path,
     paths: impl IntoIterator<Item = String>,
 ) -> BTreeMap<String, String> {
     let mut manifest = BTreeMap::new();
+    let Ok(handle) = crate::rootfd::RootHandle::open(root) else {
+        return manifest;
+    };
+    let handle = std::sync::Arc::new(handle);
     for path in paths {
-        let Some(resolved) = crate::resolve_within_root(root, &path) else {
-            continue;
-        };
-        if let Ok(bytes) = tokio::fs::read(&resolved).await {
+        if let Ok(bytes) = crate::rootfd::read_async(&handle, &path).await {
             manifest.insert(path, hex_sha256(&bytes));
         }
     }
@@ -130,16 +135,20 @@ pub async fn freshness(
     {
         return Freshness::Fresh;
     }
+    // A record travels with the tree and is hand-editable, so a manifest key
+    // naming a path outside the workspace must not be read here either — the
+    // held root descriptor refuses it, and it counts as missing, the same as
+    // a deleted file.
+    let Ok(handle) = crate::rootfd::RootHandle::open(root) else {
+        return Freshness::Drifted {
+            changed: Vec::new(),
+            missing: manifest.keys().cloned().collect(),
+        };
+    };
+    let handle = std::sync::Arc::new(handle);
     let (mut changed, mut missing) = (Vec::new(), Vec::new());
     for (path, saved_hash) in manifest {
-        // A record travels with the tree and is hand-editable, so a manifest
-        // key naming a path outside the workspace must not be read here
-        // either — it counts as missing, the same as a deleted file.
-        let Some(resolved) = crate::resolve_within_root(root, path) else {
-            missing.push(path.clone());
-            continue;
-        };
-        match tokio::fs::read(&resolved).await {
+        match crate::rootfd::read_async(&handle, path).await {
             Ok(bytes) if &hex_sha256(&bytes) == saved_hash => {}
             Ok(_) => changed.push(path.clone()),
             Err(_) => missing.push(path.clone()),
@@ -173,14 +182,16 @@ pub fn freshness_sync(
     {
         return Freshness::Fresh;
     }
+    // Same confinement as the async path above.
+    let Ok(handle) = crate::rootfd::RootHandle::open(root) else {
+        return Freshness::Drifted {
+            changed: Vec::new(),
+            missing: manifest.keys().cloned().collect(),
+        };
+    };
     let (mut changed, mut missing) = (Vec::new(), Vec::new());
     for (path, saved_hash) in manifest {
-        // Same confinement as the async path above.
-        let Some(resolved) = crate::resolve_within_root(root, path) else {
-            missing.push(path.clone());
-            continue;
-        };
-        match std::fs::read(&resolved) {
+        match handle.read(path) {
             Ok(bytes) if &hex_sha256(&bytes) == saved_hash => {}
             Ok(_) => changed.push(path.clone()),
             Err(_) => missing.push(path.clone()),

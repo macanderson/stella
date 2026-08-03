@@ -143,13 +143,15 @@ That is the whole surface.
 A **turn** is the top-level resource. There is no session object, so your app
 owns conversation history and sends it with each turn.
 
-Four frame types arrive on the event stream, tagged by a `type` field:
+Six frame types arrive on the event stream, tagged by a `type` field:
 
 | `type` | Meaning | You respond? |
 |---|---|---|
 | `event` | A UI event (`text`, `tool_start`, `step_usage`, and about 27 more). Stream it to your frontend | No |
 | `provider_request` | Run a model completion. Carries `request_id` and the assembled conversation | Yes, `provider-result` |
 | `tool_request` | Run a tool. Carries `request_id`, `name`, and `input` | Yes, `tool-result` |
+| `turn_held` | The turn reached a step boundary and is holding there, because you paused it. Carries the `reason` you gave, or `null` | Yes, eventually — `resume` or `cancel` |
+| `turn_released` | The hold is over and the turn is proceeding | No |
 | `turn_complete` | Terminal. Exactly one per turn, always last | No |
 
 <Callout type="warn">
@@ -408,9 +410,13 @@ Re-verified absent as of 0.6.10, so design around them rather than discovering t
   Persist frames on receipt if you need durability.
 - **No server-side conversation state.** One turn per request. Your app owns
   history and replays it.
-- **No steering, pause, or approval routes.** The `scope_review` and `ask_user`
-  events have no reverse endpoint yet, so an approval gate has to live in your
-  app, in front of the turn.
+- **No approval route.** Steering and pause/resume *have* shipped since this
+  list was written — `POST /v1/turns/{id}/steer`, `/pause` and `/resume`, with
+  the hold announced on the stream as `turn_held` / `turn_released` so a
+  client that reconnects mid-hold still knows the turn is waiting on it. What
+  is still absent is `/approve`: the `scope_review` and `ask_user` events have
+  no reverse endpoint, so an approval gate has to live in your app, in front
+  of the turn.
 - **No token-level streaming from the engine.** It forwards whole completions.
   To stream tokens to your users, stream them from your own provider call, which
   you already control.

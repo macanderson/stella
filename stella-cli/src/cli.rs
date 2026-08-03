@@ -15,8 +15,8 @@ use clap::{Parser, Subcommand};
 pub(crate) mod help;
 
 use crate::{
-    OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, ingest_cmd, inspect,
-    memory_cmd, proposals_cmd, scripts_cmd, stats, storage_cmd, tune_cmd, usage_cmd,
+    OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, dataset_cmd, ingest_cmd,
+    inspect, memory_cmd, proposals_cmd, scripts_cmd, stats, storage_cmd, tune_cmd, usage_cmd,
 };
 
 #[derive(Parser)]
@@ -491,6 +491,20 @@ pub(crate) enum Command {
     Tune {
         #[command(subcommand)]
         cmd: tune_cmd::TuneCmd,
+    },
+
+    /// Curate a redacted training dataset from this workspace's receipts
+    ///
+    /// Curate a redacted training dataset from this workspace's receipts
+    /// (#872): one JSONL record per accepted turn — prompt, tool calls with
+    /// arguments and outputs, the change that landed, the judge's verdict —
+    /// with a manifest stating the exact filter that selected them. Every
+    /// string passes through the secret redactor, and the output is written
+    /// owner-only. Offline: reads .stella/private/store.db only, needs no API
+    /// key. Human sign-off is required before a dataset is used for training.
+    Dataset {
+        #[command(subcommand)]
+        cmd: dataset_cmd::DatasetCmd,
     },
 
     /// Show the exact context a past model call was sent

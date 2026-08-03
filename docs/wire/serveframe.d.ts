@@ -1569,6 +1569,11 @@ export type ServerFrame = {
   request_id: string;
   type: "provider_request";
 } | {
+  reason?: string | null;
+  type: "turn_held";
+} | {
+  type: "turn_released";
+} | {
   outcome: TurnOutcomeWire;
   type: "turn_complete";
 };
@@ -1581,6 +1586,8 @@ export type KnownTypeTag =
   | "event"
   | "tool_request"
   | "provider_request"
+  | "turn_held"
+  | "turn_released"
   | "turn_complete";
 
 // ── the envelope ────────────────────────────────────────────────────────────
@@ -1617,6 +1624,17 @@ export interface ReplayTruncated {
 
 /** Anything a `data:` line can carry. */
 export type StellaSseFrame = StellaWireFrame | ReplayTruncated;
+
+// ── holds ARE re-learned by replay ──────────────────────────────────────────
+//
+// `turn_held` / `turn_released` are ordinary numbered frames, so a resumed
+// stream replays them like any other and a client reconnecting mid-hold
+// rediscovers that the turn is waiting on it. This is the OPPOSITE of the
+// reverse-request rule stated below, and the difference is deliberate: an
+// obligation is not re-announced because `?after=N` asserts you already have
+// it, whereas a hold is a *state* the turn is still in. Read the tail from a
+// `turn_held` with no matching `turn_released` after it and the turn is still
+// held; post /resume to release it.
 
 // ── inbound: answering a reverse request ────────────────────────────────────
 //

@@ -241,33 +241,48 @@ impl Tool for ApplyEdits {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
+        // One held root descriptor for the whole batch: every read below and
+        // every write and rollback in phase 2 walks descriptors from it rather
+        // than re-resolving a path string per operation (#938).
+        let handle = match crate::rootfd::RootHandle::open(root) {
+            Ok(handle) => std::sync::Arc::new(handle),
+            Err(e) => {
+                return ToolOutput::Error {
+                    message: format!("cannot open workspace root: {e}"),
+                };
+            }
+        };
+
         // ---- Phase 1: validate everything against an in-memory simulation.
-        // `files` maps normalized-path key → (display path, full path,
-        // original bytes, simulated current bytes). Edits to one file
-        // compose: edit 3 sees edit 1's result, exactly as the apply will.
-        let mut files: HashMap<String, (String, std::path::PathBuf, String, String)> =
-            HashMap::new();
+        // `files` maps normalized-path key → (workspace-relative path,
+        // original bytes, simulated current bytes). The path is the one the
+        // batch first named the file by, and is what every later read, write
+        // and rollback for that file uses — so the whole batch resolves each
+        // file exactly one way. Edits to one file compose: edit 3 sees edit
+        // 1's result, exactly as the apply will.
+        let mut files: HashMap<String, (String, String, String)> = HashMap::new();
         let mut order: Vec<String> = Vec::new(); // first-touch order, for stable output
         let mut verdicts: Vec<EditVerdict> = Vec::new();
         let mut failures = 0usize;
 
         for edit in &edits {
             let verdict = 'verdict: {
-                let Some(full) = crate::resolve_within_root(root, &edit.path) else {
-                    break 'verdict EditVerdict::Failed {
-                        reason: format!("path `{}` escapes workspace root", edit.path),
-                    };
-                };
                 let key = crate::file_touch::normalize_workspace_path(root, &edit.path)
                     .unwrap_or_else(|| edit.path.clone());
                 if !files.contains_key(&key) {
-                    match tokio::fs::read_to_string(&full).await {
+                    match crate::rootfd::read_to_string_async(&handle, &edit.path).await {
                         Ok(content) => {
                             order.push(key.clone());
-                            files.insert(
-                                key.clone(),
-                                (edit.path.clone(), full.clone(), content.clone(), content),
-                            );
+                            files
+                                .insert(key.clone(), (edit.path.clone(), content.clone(), content));
+                        }
+                        Err(e) if e.is_escape() => {
+                            break 'verdict EditVerdict::Failed {
+                                reason: format!(
+                                    "path `{}` escapes workspace root ({e})",
+                                    edit.path
+                                ),
+                            };
                         }
                         Err(e) => {
                             break 'verdict EditVerdict::Failed {
@@ -276,7 +291,7 @@ impl Tool for ApplyEdits {
                         }
                     }
                 }
-                let (_, _, original, simulated) = files.get_mut(&key).expect("inserted above");
+                let (_, original, simulated) = files.get_mut(&key).expect("inserted above");
                 // A needle copied out of `read_file`'s render carries LF
                 // newlines even for a CRLF file — see
                 // [`crate::edit::crlf_promoted`].
@@ -380,10 +395,12 @@ impl Tool for ApplyEdits {
         // written to its original bytes so the tree never stays half-applied.
         let mut written: Vec<String> = Vec::new();
         for key in &order {
-            let (path, full, _, simulated) = &files[key];
-            if let Err(e) = crate::durable_write::write_file_durably(
-                full.clone(),
+            let (path, _, simulated) = &files[key];
+            if let Err(e) = crate::durable_write::write_file_durably_at(
+                std::sync::Arc::clone(&handle),
+                path.clone(),
                 simulated.as_bytes().to_vec(),
+                false,
             )
             .await
             {
@@ -395,15 +412,17 @@ impl Tool for ApplyEdits {
                 // tree was intact. Only rewritten when the bytes actually
                 // moved, so a pre-write failure (open denied) stays silent
                 // rather than raising a false "restore manually" alarm.
-                let (fail_path, fail_full, fail_original, _) = &files[key];
-                let needs_restore = match tokio::fs::read(fail_full).await {
+                let (fail_path, fail_original, _) = &files[key];
+                let needs_restore = match crate::rootfd::read_async(&handle, fail_path).await {
                     Ok(now) => now != fail_original.as_bytes(),
                     Err(_) => true,
                 };
                 if needs_restore
-                    && crate::durable_write::write_file_durably(
-                        fail_full.clone(),
+                    && crate::durable_write::write_file_durably_at(
+                        std::sync::Arc::clone(&handle),
+                        fail_path.clone(),
                         fail_original.as_bytes().to_vec(),
+                        false,
                     )
                     .await
                     .is_err()
@@ -413,7 +432,26 @@ impl Tool for ApplyEdits {
                          the content you last read"
                     ));
                 }
-                rollback_note.push_str(&roll_back_prior_writes(&files, &written).await);
+                for prior in &written {
+                    let (prior_path, original, _) = &files[*prior];
+                    // The rollback especially must not truncate: a failed
+                    // rollback with a truncating write turns a partial batch
+                    // into a destroyed file.
+                    if crate::durable_write::write_file_durably_at(
+                        std::sync::Arc::clone(&handle),
+                        prior_path.clone(),
+                        original.as_bytes().to_vec(),
+                        false,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        rollback_note.push_str(&format!(
+                            "\n  ROLLBACK FAILED for `{prior_path}` — restore it manually from \
+                             the content you last read"
+                        ));
+                    }
+                }
                 if rollback_note.is_empty() {
                     rollback_note = format!(
                         "\n  every touched file (including `{path}`) holds its original \
@@ -432,7 +470,7 @@ impl Tool for ApplyEdits {
         // The model knows the bytes it just produced (#331) — record every
         // final content so these writes are never misattributed as drift.
         for key in &order {
-            let (path, _, _, simulated) = &files[key];
+            let (path, _, simulated) = &files[key];
             self.ledger.record_known(root, path, simulated);
         }
 

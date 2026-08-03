@@ -60,8 +60,68 @@
 //! one thing the previous rename-based implementation could not promise.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use crate::rootfd::{RootError, RootHandle};
+
+/// Replace `rel`'s contents with `bytes`, durably and in place, through a
+/// **held root descriptor** rather than a resolved path string (#938).
+///
+/// This is the form every model-steered write uses. The path is walked
+/// component by component off `handle`, each one opened relative to the one
+/// above it, so there is no interval in which a name this function already
+/// approved can be re-pointed at something else. `create_parents` makes the
+/// walk create the interior directories as it goes — the replacement for a
+/// `create_dir_all` that would re-resolve the whole prefix.
+///
+/// Runs the blocking filesystem work on a blocking worker, for the same
+/// reason [`write_file_durably`] does.
+pub async fn write_file_durably_at(
+    handle: Arc<RootHandle>,
+    rel: String,
+    bytes: Vec<u8>,
+    create_parents: bool,
+) -> Result<(), RootError> {
+    tokio::task::spawn_blocking(move || write_blocking_at(&handle, &rel, &bytes, create_parents))
+        .await
+        .map_err(|error| {
+            RootError::Io(std::io::Error::other(format!("write task failed: {error}")))
+        })?
+}
+
+fn write_blocking_at(
+    handle: &RootHandle,
+    rel: &str,
+    bytes: &[u8],
+    create_parents: bool,
+) -> Result<(), RootError> {
+    use std::io::Write as _;
+
+    // The same sequence as `write_blocking` below, and for the same reasons —
+    // the only difference is where the descriptor came from. `open_write`
+    // opens without `O_TRUNC` and reports whether it created the entry.
+    let target = handle.open_write(rel, create_parents)?;
+    let mut file = &target.file;
+    let mode_before = captured_mode(file)?;
+    file.write_all(bytes)?;
+    file.set_len(bytes.len() as u64)?;
+    restore_mode(file, mode_before)?;
+    file.sync_all()?;
+    if target.created {
+        // The parent descriptor the walk already holds — re-opening the parent
+        // by path would be the second resolution this whole change removes.
+        target.sync_parent();
+    }
+    Ok(())
+}
 
 /// Replace `path`'s contents with `bytes`, durably and in place.
+///
+/// The path form, for the callers that do not resolve against a workspace
+/// root at all: `save_memory` writes into `root/.stella/` from constants.
+/// Anything taking a model- or repository-supplied path wants
+/// [`write_file_durably_at`], which cannot be raced between the resolve and
+/// the open.
 ///
 /// Returns `Err` with a message shaped for the tools' existing
 /// `ToolOutput::Error { message }`. Runs the blocking filesystem work on a
@@ -86,9 +146,10 @@ fn write_blocking(path: &Path, bytes: &[u8]) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
-        // Callers resolve through `resolve_within_root`, which canonicalizes,
-        // so a symlink has already been followed to its in-root target; this
-        // must not re-follow one that appeared since.
+        // This form is only reached for paths Stella built itself out of
+        // constants, but a symlink can still be planted at the final name;
+        // refuse to follow one. (Interior components are why the model-steered
+        // path goes through `write_file_durably_at` instead — see #938.)
         options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
     }
 
@@ -96,7 +157,8 @@ fn write_blocking(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut file = options
         .open(path)
         .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
-    let mode_before = captured_mode(&file, path)?;
+    let mode_before = captured_mode(&file)
+        .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
     file.write_all(bytes)
         .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
     // After the write, never before: this is what makes a crash leave the new
@@ -107,7 +169,8 @@ fn write_blocking(path: &Path, bytes: &[u8]) -> Result<(), String> {
     // kernel clears set-user-ID and set-group-ID on write by an unprivileged
     // process. Restore the captured mode — before the fsync, so the metadata
     // change is covered by it.
-    restore_mode(&file, path, mode_before)?;
+    restore_mode(&file, mode_before)
+        .map_err(|error| format!("cannot restore mode on {}: {error}", path.display()))?;
     file.sync_all()
         .map_err(|error| format!("cannot fsync {}: {error}", path.display()))?;
     if !existed {
@@ -122,18 +185,16 @@ fn write_blocking(path: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 /// The file's mode before the write, so the set-user-ID/set-group-ID bits the
-/// kernel strips can be put back.
+/// kernel strips can be put back. Asked of the open descriptor, not of the
+/// path, so both write forms can share it.
 #[cfg(unix)]
-fn captured_mode(file: &std::fs::File, path: &Path) -> Result<u32, String> {
+fn captured_mode(file: &std::fs::File) -> std::io::Result<u32> {
     use std::os::unix::fs::PermissionsExt as _;
-    let metadata = file
-        .metadata()
-        .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
-    Ok(metadata.permissions().mode() & 0o7777)
+    Ok(file.metadata()?.permissions().mode() & 0o7777)
 }
 
 #[cfg(not(unix))]
-fn captured_mode(_file: &std::fs::File, _path: &Path) -> Result<u32, String> {
+fn captured_mode(_file: &std::fs::File) -> std::io::Result<u32> {
     Ok(0)
 }
 
@@ -141,23 +202,17 @@ fn captured_mode(_file: &std::fs::File, _path: &Path) -> Result<u32, String> {
 /// setgid script it is the difference between preserving the mode and
 /// silently clearing the bit that makes the script work.
 #[cfg(unix)]
-fn restore_mode(file: &std::fs::File, path: &Path, mode: u32) -> Result<(), String> {
+fn restore_mode(file: &std::fs::File, mode: u32) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt as _;
-    let now = file
-        .metadata()
-        .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?
-        .permissions()
-        .mode()
-        & 0o7777;
+    let now = file.metadata()?.permissions().mode() & 0o7777;
     if now == mode {
         return Ok(());
     }
     file.set_permissions(std::fs::Permissions::from_mode(mode))
-        .map_err(|error| format!("cannot restore mode on {}: {error}", path.display()))
 }
 
 #[cfg(not(unix))]
-fn restore_mode(_file: &std::fs::File, _path: &Path, _mode: u32) -> Result<(), String> {
+fn restore_mode(_file: &std::fs::File, _mode: u32) -> std::io::Result<()> {
     Ok(())
 }
 

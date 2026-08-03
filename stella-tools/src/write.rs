@@ -64,26 +64,25 @@ impl Tool for WriteFile {
             }
         };
 
-        let full_path = match crate::resolve_within_root(root, path) {
-            Some(p) => p,
-            None => {
+        // The root is opened once and held; every component of `path` is then
+        // opened relative to the one above it, and the parent directories are
+        // created *during* that walk. There is no `create_dir_all` here any
+        // more, because a `create_dir_all` re-resolves the whole prefix from a
+        // string — the window #938 is about.
+        let handle = match crate::rootfd::RootHandle::open(root) {
+            Ok(handle) => Arc::new(handle),
+            Err(e) => {
                 return ToolOutput::Error {
-                    message: format!("path `{path}` escapes workspace root"),
+                    message: format!("cannot open workspace root: {e}"),
                 };
             }
         };
 
-        if let Some(parent) = full_path.parent() {
-            if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                return ToolOutput::Error {
-                    message: format!("failed to create dirs: {e}"),
-                };
-            }
-        }
-
-        match crate::durable_write::write_file_durably(
-            full_path.clone(),
+        match crate::durable_write::write_file_durably_at(
+            handle,
+            path.to_string(),
             content.as_bytes().to_vec(),
+            true,
         )
         .await
         {
@@ -94,6 +93,9 @@ impl Tool for WriteFile {
                     content: format!("wrote {bytes} bytes to {path}"),
                 }
             }
+            Err(e) if e.is_escape() => ToolOutput::Error {
+                message: format!("path `{path}` escapes workspace root ({e})"),
+            },
             Err(e) => ToolOutput::Error {
                 message: format!("failed to write `{path}`: {e}"),
             },
