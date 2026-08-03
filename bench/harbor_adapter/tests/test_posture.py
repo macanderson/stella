@@ -550,6 +550,98 @@ class TestModelTimeoutArm:
         assert sorted(capped) == ["default", "judge", "worker"]
 
 
+class TestFableCeilingSet:
+    """The approved Fable ceiling set (#1211 §6.2): 128,000 output, 1,572s.
+
+    Both ceilings are properties of the model now, not one shared constant.
+    One shared number was only ever right by coincidence — it is the model's
+    own ceiling, and models differ. Fable 5 answers up to 128,000 output
+    tokens, so capping its trials at Sonnet's 64,000 stopped it at half the
+    height the comparator is allowed to fill, and the score reported that as
+    a capability difference rather than as our own ceiling.
+    """
+
+    def test_fable_gets_both_approved_ceilings(self) -> None:
+        posture, _normalized, _digest = _benchmark_engine_posture(
+            "anthropic/claude-fable-5"
+        )
+        for role in ("default", "worker", "judge"):
+            assert posture["agents"][role]["params"]["max_tokens"] == 128_000
+        assert posture["model_timeout_secs"] == 1_572
+
+    def test_the_timeout_is_never_left_behind_when_the_cap_moves(self) -> None:
+        """The two ceilings ship together or the raise does nothing.
+
+        Raising the cap alone relocates the cliff instead of removing it: the
+        step stops on the timeout rather than the cap, which looks the same in
+        the results and is just as much us stopping first. This is the
+        recorded history of this posture — 16384 -> 32000 -> 64000 each moved
+        one ceiling while the others held — so it gets a test, not a comment.
+        """
+        for model in ("anthropic/claude-fable-5", "openrouter/anthropic/claude-fable-5"):
+            posture, _normalized, _digest = _benchmark_engine_posture(model)
+            raised = posture["agents"]["worker"]["params"]["max_tokens"] > 64_000
+            assert raised, f"{model} should carry the raised cap"
+            assert posture.get("model_timeout_secs") is not None, (
+                f"{model} raised its output cap without raising the silence "
+                "ceiling that has to absorb it"
+            )
+
+    def test_sonnet_is_untouched_and_its_registered_digest_holds(self) -> None:
+        """The approval covered Fable. Sonnet's arm must be bit-identical.
+
+        Its comparator stops at 64,000 — Claude Code landed steps on exactly
+        that number twice and still emitted the tool call — so parity says
+        Sonnet stays. `3c428a22…` is registered in `bench/READINESS.md` and
+        defaulted by `preflight_effort.sh`, so moving it would silently
+        invalidate an already-published number.
+        """
+        posture, _normalized, digest = _benchmark_engine_posture(
+            "anthropic/claude-sonnet-5"
+        )
+        assert posture["agents"]["worker"]["params"]["max_tokens"] == 64_000
+        assert "model_timeout_secs" not in posture
+        assert digest.startswith("3c428a22")
+
+    def test_the_booking_route_is_not_a_model_property(self) -> None:
+        """Direct and gateway reach the same model, so the ceilings match.
+
+        They still hash differently, because `default_model` differs and the
+        digest describes the whole posture — but a model must not get a
+        different ceiling for having been reached through OpenRouter.
+        """
+        direct, _dj, direct_digest = _benchmark_engine_posture(
+            "anthropic/claude-fable-5"
+        )
+        gateway, _gj, gateway_digest = _benchmark_engine_posture(
+            "openrouter/anthropic/claude-fable-5"
+        )
+        assert direct["agents"] == gateway["agents"]
+        assert direct["model_timeout_secs"] == gateway["model_timeout_secs"]
+        assert direct_digest != gateway_digest
+
+    def test_an_explicit_selector_still_overrides_the_models_default(self) -> None:
+        """The table is the default, not a lock — an arm can still say otherwise."""
+        posture, _normalized, _digest = _benchmark_engine_posture(
+            "anthropic/claude-fable-5", model_timeout_secs=900
+        )
+        assert posture["model_timeout_secs"] == 900
+
+    def test_the_registered_fable_digests(self) -> None:
+        """Pinned so a ceiling cannot move without this test naming it.
+
+        These are the values `bench/READINESS.md` registers for the Fable arm.
+        A posture change that does not update them is a run whose digest
+        describes a configuration nobody registered.
+        """
+        assert _benchmark_engine_posture("anthropic/claude-fable-5")[2] == (
+            "5d42e2364755534c5632189ca988b892d108f54c30901d988fc88037407b2bfe"
+        )
+        assert _benchmark_engine_posture("openrouter/anthropic/claude-fable-5")[2] == (
+            "18a1ba22e2ffef7fb8634504a0d6aff39c3117a52e48dd0f22159693641fd572"
+        )
+
+
 class TestWitnessStreamObservation:
     """Folding `AgentEvent::Proof` into a field an analysis can read."""
 
