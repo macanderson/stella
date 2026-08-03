@@ -46,7 +46,7 @@ use std::time::Duration;
 use std::sync::Arc;
 
 use futures_util::StreamExt as _;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use stella_core::hooks::{HookRunner, Hooks};
 use stella_core::receipts::RECEIPT_SEQ_ALLOCATED_BASE;
@@ -94,6 +94,7 @@ use crate::witness::{
     witness_prompt, witness_repair_prompt,
 };
 mod disclosure;
+mod judge_stage;
 mod raw_usage;
 mod run_error;
 mod scope_stage;
@@ -524,6 +525,12 @@ struct ResolvedRole<'a> {
     model_ref: ModelRef,
     provider: &'a dyn Provider,
     fallback: Option<FallbackInfo>,
+    /// The router's resolution-quality caveat (L-M8) — today, only the judge
+    /// degrading to the worker's own provider family because no second family
+    /// is healthy. Surfaced by [`Pipeline::warn_judge_caveat`] at the calls
+    /// whose independence it undermines; dropping it silently is exactly the
+    /// "fallback is always visible" rule (L-M7) applied to a softer signal.
+    caveat: Option<String>,
 }
 
 /// The outcome of running one candidate (execute + verify + bounded revise).
@@ -751,6 +758,9 @@ pub struct Pipeline<'a> {
     /// other. Starts at [`RECEIPT_SEQ_ALLOCATED_BASE`], above the seats the
     /// engine's worker and summarizer reserve.
     raw_call_seq: AtomicU64,
+    /// Whether the judge's same-family degradation caveat (L-M8) has been
+    /// surfaced this run — see [`Pipeline::warn_judge_caveat`].
+    judge_caveat_warned: AtomicBool,
 }
 
 impl<'a> Pipeline<'a> {
@@ -787,6 +797,7 @@ impl<'a> Pipeline<'a> {
             config,
             configured_test,
             raw_call_seq: AtomicU64::new(RECEIPT_SEQ_ALLOCATED_BASE),
+            judge_caveat_warned: AtomicBool::new(false),
         }
     }
 
@@ -1607,6 +1618,16 @@ impl<'a> Pipeline<'a> {
         // solo-provider setups do) previously aborted here after one model
         // call, having done no work at all. Degrade to the unauthored verify
         // ladder instead, and say so once.
+        // Whether this is the `create_worktrees` caller — a plain single-shot
+        // run the operator asked to happen in a worktree — as opposed to
+        // best-of-N or an authored witness. Read from the CALLER's argument,
+        // before the degradation below shadows it, because a requested-then-
+        // degraded authored witness is still not this caller.
+        //
+        // Exact by construction: `run` takes the direct path when
+        // `n == 1 && !authored_witness && !isolate`, so reaching here with
+        // `n == 1 && !author_witness` means `isolate` was the only reason.
+        let single_shot_isolation = n == 1 && !author_witness;
         // `can_author_independent_witness` already gated `author_witness` and
         // announced any degradation, so this is the invariant guard for that
         // decision — silent on purpose, never a second warning.
@@ -1764,6 +1785,28 @@ impl<'a> Pipeline<'a> {
                     // conflicting files; the winning work stays recoverable.
                     Err(e) => adopt_failure = Some(e),
                 }
+            } else if single_shot_isolation {
+                // The `create_worktrees` run that did not pass. Discarding is
+                // right for best-of-N — the operator asked for the best of
+                // several and none was good, and the losers were never meant to
+                // survive. It is also right for an authored-witness abort,
+                // where the candidate is *poisoned* rather than merely
+                // unverified (a tampered artifact, an author that edited
+                // production code) and `witness_isolation`'s tests pin its
+                // removal.
+                //
+                // It is wrong for this third caller. That operator asked where
+                // the work should *happen*, not that it be thrown away unless
+                // it verified — and without this they end up strictly worse off
+                // than with isolation off, where a failed run at least leaves
+                // its changes in the tree to look at. So keep the snapshot and
+                // name it: the same posture as the adopt-failure arm just
+                // above, and for the same reason — unverified is not worthless.
+                self.warn(format!(
+                    "this run's changes did not verify, so they were not adopted into your \
+                     working tree — they are kept at {} for you to inspect or salvage",
+                    ws.root()
+                ));
             } else {
                 ws.remove().await;
             }
@@ -2426,7 +2469,7 @@ impl<'a> Pipeline<'a> {
                     // ask it before buying a judge call to confirm the absence
                     // of a test that was never warranted
                     // (docs/design/witness-protocol.md §7).
-                    if let Some(evidence) = self.warranted_completion(&state) {
+                    if let Some(evidence) = self.warranted_completion(&state, &snapshot) {
                         return state.into_verified(
                             true,
                             &evidence,
@@ -2702,108 +2745,6 @@ impl<'a> Pipeline<'a> {
         Ok(probe)
     }
 
-    // Stage: judge
-
-    /// One distress-guidance call ([`guidance_prompt`]): best-effort and
-    /// never a verdict — the failure it reacts to is already deterministic,
-    /// so the judge's job here is *steering*, not re-judging. A failed call
-    /// (or an unresolvable judge) degrades to evidence-only revision.
-    async fn judge_guidance(
-        &self,
-        goal: &str,
-        diff: &str,
-        evidence_summary: &str,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
-    ) -> Result<Option<String>, PipelineBudgetAbort> {
-        let resolved = match self.resolve_provider(Role::Judge) {
-            Ok(resolved) => resolved,
-            Err(_) => return Ok(None),
-        };
-        if let Some(fb) = &resolved.fallback {
-            self.emit_fallback(fb);
-        }
-        self.emit(AgentEvent::Stage {
-            name: StageKind::Judge,
-        });
-        let prompt = guidance_prompt(goal, diff, evidence_summary);
-        match self
-            .metered_raw_call(
-                RawCall {
-                    role: ModelCallRole::DistressGuidance,
-                    resolved: &resolved,
-                    messages: vec![CompletionMessage::user(prompt)],
-                    policy: RetryPolicy::deterministic(),
-                    overrides: &self.config.role_overrides.judge,
-                    timeout: None,
-                },
-                budget,
-                total,
-            )
-            .await
-        {
-            Ok(result) => {
-                let text = result.text.trim().to_string();
-                if text.is_empty() {
-                    Ok(None)
-                } else {
-                    Ok(Some(text))
-                }
-            }
-            Err(RawCallError::Budget(abort)) => Err(abort),
-            Err(RawCallError::Provider | RawCallError::Timeout) => Ok(None),
-        }
-    }
-
-    async fn judge(
-        &self,
-        goal: &str,
-        diff: &str,
-        evidence_summary: &str,
-        inputs: &LadderInputs,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
-    ) -> Result<ModelJudgeVerdict, PipelineBudgetAbort> {
-        self.emit(AgentEvent::Stage {
-            name: StageKind::Judge,
-        });
-        let resolved = match self.resolve_provider(Role::Judge) {
-            Ok(r) => r,
-            // Judge unresolvable → conservative heuristic verdict (L-E11).
-            Err(_) => return Ok(heuristic_fallback(inputs)),
-        };
-        if let Some(fb) = &resolved.fallback {
-            self.emit_fallback(fb);
-        }
-
-        let prompt = judge_prompt(goal, diff, evidence_summary);
-        // Deterministic policy: a judge call that fails must not hang; it falls
-        // back to the heuristic verdict rather than retrying.
-        match self
-            .metered_raw_call(
-                RawCall {
-                    role: ModelCallRole::Judge,
-                    resolved: &resolved,
-                    messages: vec![CompletionMessage::user(prompt)],
-                    policy: RetryPolicy::deterministic(),
-                    overrides: &self.config.role_overrides.judge,
-                    timeout: None,
-                },
-                budget,
-                total,
-            )
-            .await
-        {
-            Ok(result) => {
-                let verdict = parse_judge_response(&result.text)
-                    .unwrap_or_else(|| heuristic_fallback(inputs));
-                Ok(verdict)
-            }
-            Err(RawCallError::Budget(abort)) => Err(abort),
-            Err(RawCallError::Provider | RawCallError::Timeout) => Ok(heuristic_fallback(inputs)),
-        }
-    }
-
     // Shared helpers
 
     /// Resolve a role to a concrete provider via the router + provider
@@ -2823,6 +2764,7 @@ impl<'a> Pipeline<'a> {
             model_ref: decision.model_ref,
             provider,
             fallback: decision.fallback,
+            caveat: decision.caveat,
         })
     }
 
@@ -3021,7 +2963,12 @@ impl<'a> Pipeline<'a> {
                 .await;
             for (path, added) in counted {
                 lines += added;
-                text.push_str(&format!("\n+ untracked change: {path} (+{added} lines)"));
+                // The shared builder, so `witness::warrant` can parse these
+                // paths back out and hold them to the same path rules as
+                // tracked changes — a hand-rolled format here silently
+                // blinded the warrant to every untracked file.
+                text.push('\n');
+                text.push_str(&crate::witness::warrant::untracked_change_line(path, added));
             }
         }
         DiffProbe {

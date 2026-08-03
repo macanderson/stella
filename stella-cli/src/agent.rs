@@ -315,10 +315,11 @@ async fn run_pipeline_one_shot(
         )
         .await,
     )];
-    let mut memory = SessionMemory::open_with_authority(
+    let mut memory = SessionMemory::open_for_session(
         &cfg.workspace_root,
         format == OutputFormat::Text,
         &cfg.authority,
+        &active_rules,
     );
     if let Some(m) = &mut memory {
         // External CGP providers join the host before the first recall, so a
@@ -326,7 +327,6 @@ async fn run_pipeline_one_shot(
         // is refused with a reason (#453).
         m.register_external_providers(|message| eprintln!("  {} {message}", "!".yellow()))
             .await;
-        prompt::attach_record_channel(m, &active_rules);
         // Tell memory which execution this run reflects on, before the turn
         // runs — the post-turn self-review is stored 1:1 with an execution,
         // so a path that skips this files id-less reflection rows (NULL
@@ -770,13 +770,13 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     )
     .await;
     let mut messages = vec![CompletionMessage::system(system_prompt.clone())];
-    let mut memory = SessionMemory::open_with_authority(&cfg.workspace_root, true, &cfg.authority);
+    let mut memory =
+        SessionMemory::open_for_session(&cfg.workspace_root, true, &cfg.authority, &active_rules);
     if let Some(m) = &mut memory {
         // Conformance-gated external CGP providers join before the first
         // recall, or are refused with a reason (#453).
         m.register_external_providers(|message| println!("  {} {message}", "!".yellow()))
             .await;
-        prompt::attach_record_channel(m, &active_rules);
     }
     // Custom extensions: ⚡ commands/skills invocable as `/name args`, custom
     // agents behind `/agents`. Reloaded after `/init`, which may adopt new
@@ -907,16 +907,15 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                     }
                     // Re-open memory so recall/reflection use the taxonomy
                     // `/init` just wrote — otherwise the cached domains stay
-                    // stale until the next launch.
-                    memory = SessionMemory::open_with_authority(
+                    // stale until the next launch. The re-open carries the
+                    // record channel with it, because the constructor is where
+                    // the channel is attached.
+                    memory = SessionMemory::open_for_session(
                         &cfg.workspace_root,
                         true,
                         &cfg.authority,
+                        &active_rules,
                     );
-                    // The re-opened session loses the channel with its other state.
-                    if let Some(m) = &mut memory {
-                        prompt::attach_record_channel(m, &active_rules);
-                    }
                     // `/init` may also have adopted new custom
                     // commands/skills/agents — make them invocable now, and
                     // report anything that failed to load.
@@ -2013,6 +2012,11 @@ pub(crate) struct SessionPresence {
     registry: stella_store::SessionRegistry,
     record: stella_store::SessionRecord,
     name: String,
+    /// This session's durable record, carried so [`Self::finish`] can compact
+    /// it. Cloning the handle rather than re-opening the record keeps the
+    /// compaction pointed at the session that was actually bound, whatever the
+    /// driver did in between.
+    durability: crate::durability::SessionDurability,
 }
 
 impl SessionPresence {
@@ -2052,6 +2056,7 @@ impl SessionPresence {
             registry,
             record,
             name,
+            durability: cfg.durability.clone(),
         }
     }
 
@@ -2095,6 +2100,11 @@ impl SessionPresence {
             stella_store::SessionStatus::Error
         };
         let _ = self.registry.upsert(&self.record);
+        // The headless counterpart of the deck's exit compaction. A one-shot
+        // run writes fewer objects than a long deck session, but it is also the
+        // shape that runs a hundred times in a loop from a script — which is
+        // exactly how a workspace accumulates loose objects nobody is watching.
+        self.durability.compact();
         if let Some((title, body)) = notify {
             let _ = stella_store::NotificationStore::open_default().push(
                 &stella_store::Notification::new(title, body, self.record.id.clone())
