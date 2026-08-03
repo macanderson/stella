@@ -54,6 +54,7 @@ import re
 import shlex
 import sys
 import uuid
+from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as distribution_version
 from pathlib import Path
@@ -144,6 +145,12 @@ _HANDOFF_TARGET_ENV = "STELLA_CREDENTIAL_HANDOFF_TARGET"
 _DURABLE_STREAM_ENV = "STELLA_DURABLE_STREAM_JSON_PATH"
 _ENGINE_CONFIG_ENV = "STELLA_ENGINE_CONFIG_JSON"
 _HANDOFF_MODE = "anonymous-fd"
+
+#: Signature of an engine-posture builder: ``(model, *, witness_author)`` ->
+#: ``(posture, canonical_json, sha256)``. `_benchmark_engine_posture` is the
+#: frozen claim implementation; `StellaAgent._build_engine_posture` is the seam
+#: a non-claim harness may override with another frozen configuration.
+PostureBuilder = Callable[..., "tuple[dict[str, Any], str, str]"]
 
 # Apply these *after* every ambient/Harbor-provided extra. A benchmark task is
 # untrusted input: it must not load a repository .env, opt itself into trusted
@@ -539,6 +546,7 @@ async def _secure_exec_with_credential_fd(
     credential: str,
     witness_author: str | None = None,
     expected_posture_json: str | None = None,
+    posture_builder: PostureBuilder | None = None,
 ) -> ExecResult:
     """Execute in Harbor Docker with the credential only on anonymous stdin.
 
@@ -573,9 +581,16 @@ async def _secure_exec_with_credential_fd(
     # whose metadata records the treatment arm — a silently disabled tier,
     # which is the whole of #1007. The equality check makes that divergence a
     # refused run instead of an unlabelled one.
-    _, normalized_posture, _ = _benchmark_engine_posture(
-        command_model, witness_author=witness_author
-    )
+    #
+    # `posture_builder` is the agent class's own canonical builder, not a value
+    # the call site computed: a non-claim subclass may declare a different
+    # frozen posture (see `StellaAgent._build_engine_posture`), and the boundary
+    # must recompute from *that* declaration or it would reject every such run.
+    # The property being preserved is "recompute independently, never trust a
+    # passed-in string", and it is untouched — the builder is pinned by the
+    # class, and the claim launcher pins the class.
+    builder = posture_builder or _benchmark_engine_posture
+    _, normalized_posture, _ = builder(command_model, witness_author=witness_author)
     if (
         expected_posture_json is not None
         and normalized_posture != expected_posture_json
@@ -1308,7 +1323,7 @@ class StellaAgent(BaseInstalledAgent):
             self._engine_posture,
             self._engine_posture_json,
             self._engine_posture_sha256,
-        ) = _benchmark_engine_posture(configured_model, witness_author=witness_author)
+        ) = self._build_engine_posture(configured_model, witness_author=witness_author)
         (
             self._assurance_tiers,
             self._assurance_tiers_json,
@@ -1351,6 +1366,7 @@ class StellaAgent(BaseInstalledAgent):
             credential=credential,
             witness_author=witness_author,
             expected_posture_json=self._engine_posture_json,
+            posture_builder=self._build_engine_posture,
         )
 
         stdout = getattr(result, "stdout", None)
@@ -1403,6 +1419,29 @@ class StellaAgent(BaseInstalledAgent):
             or self._configured_value("STELLA_MODEL")
             or _DEFAULT_MODEL
         )
+
+    def _build_engine_posture(
+        self, model: str, *, witness_author: str | None
+    ) -> tuple[dict[str, Any], str, str]:
+        """Return ``(posture, canonical_json, sha256)`` for this trial.
+
+        The single seam a *non-claim* harness may override to run a different
+        frozen engine configuration — a head-to-head that varies effort or
+        reasoning across arms, for instance, which the benchmark posture
+        deliberately holds constant.
+
+        Overriding is safe by construction rather than by convention. The claim
+        launcher pins ``--agent-import-path`` to the canonical
+        ``stella_harbor:StellaAgent`` and rejects any other agent, so a subclass
+        cannot reach a claim run; and whatever a subclass returns is hashed and
+        published through the same ``stella_engine_posture*`` metadata keys, so
+        a changed posture is a changed digest and is visible in the manifest
+        rather than discoverable only by diffing trajectories.
+
+        The base implementation is the frozen benchmark posture and must stay
+        that way: a claim run's posture is part of its identity.
+        """
+        return _benchmark_engine_posture(model, witness_author=witness_author)
 
     def _witness_author_model(self) -> str | None:
         """Return the pinned witness/judge author, or ``None`` for the control arm.
