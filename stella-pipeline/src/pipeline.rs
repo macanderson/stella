@@ -1162,7 +1162,15 @@ impl<'a> Pipeline<'a> {
         // because a bare greeting is deterministic and should never depend on a
         // model answer. `resolve_conversational` also applies the floor veto to
         // an over-eager model `chat` — a goal with real task signal is work.
-        let model_says_chat = assessment.map(|a| a.conversational).unwrap_or(false);
+        //
+        // A headless run never routes to chat on the model's opinion: its goal
+        // arrived from a script, a CI job, or a benchmark harness, so there is
+        // nobody chatting, and the chat path is terminal no-work — a misroute
+        // there silently drops the task with no revision possible. The
+        // deterministic greeting arm above stays (`stella run "thanks"` is
+        // still not a task); only the model's say is withheld.
+        let model_says_chat =
+            !self.config.headless && assessment.map(|a| a.conversational).unwrap_or(false);
         let conversational = resolve_conversational(model_says_chat, goal);
         // The witness decision is resolved here for the same reason as the
         // conversational one: it must hold even when the triage call failed or
