@@ -42,6 +42,8 @@ mod context_records;
 mod contextgraph;
 mod credential_handoff;
 mod credential_status;
+// #872, the first slice of #836: the redacted training-trajectory exporter.
+mod dataset_cmd;
 mod deck_mcp;
 mod diag_boot;
 mod diag_bridge;
@@ -531,6 +533,11 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         Some(Command::Tune { cmd }) => {
             return tune_cmd::run_tune(cmd);
         }
+        // #872. Folds .stella/private/store.db into a redacted trajectory
+        // dataset and writes it owner-only. No provider, no API key.
+        Some(Command::Dataset { cmd }) => {
+            return dataset_cmd::run_dataset(cmd);
+        }
         Some(Command::Calibration { format }) => {
             // Reads the local event journal only — no provider, no API key.
             return inspect::run_calibration(*format);
@@ -938,6 +945,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         | Command::Context { .. }
         // #831 first slice
         | Command::Tune { .. }
+        // #872
+        | Command::Dataset { .. }
         | Command::Stats { .. }
         | Command::Usage { .. }
         | Command::Cloud { .. }
