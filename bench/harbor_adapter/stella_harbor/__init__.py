@@ -75,6 +75,7 @@ from .credential_bundle import (
     HOST_CREDENTIAL_SOURCE,
     read_bundle_from_environment,
 )
+from .git_baseline import run_git_baseline
 from .portability import raise_for_loader_failure
 from .posture import (
     _ASSURANCE_TIERS_VERSION,
@@ -1255,6 +1256,9 @@ class StellaAgent(BaseInstalledAgent):
         if version_line:
             self._version = version_line
 
+        # Baseline before the code graph, so `.stella/` is excluded before
+        # `stella init` writes its DB into the workspace (see git_baseline).
+        await run_git_baseline(self, environment)
         await self._build_code_graph(environment)
 
     async def _build_code_graph(self, environment: BaseEnvironment) -> None:
