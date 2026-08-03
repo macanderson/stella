@@ -105,7 +105,16 @@ impl Pipeline<'_> {
     /// The verdict records *why* no test was written rather than leaving an
     /// unexplained absence — the pipeline's half of the contract contributors
     /// are already held to.
-    pub(super) fn warranted_completion(&self, state: &CandidateState) -> Option<JudgeEvidence> {
+    ///
+    /// `snapshot` is the same decision-time provenance every other verdict
+    /// carries (#865) — this one used to ship `ladder: None`, leaving the one
+    /// verdict that waives evidence as the one verdict `replay` could not
+    /// explain.
+    pub(super) fn warranted_completion(
+        &self,
+        state: &CandidateState,
+        snapshot: &stella_protocol::LadderSnapshot,
+    ) -> Option<JudgeEvidence> {
         let reason = warrant(&state.diff_text, state.file_changes).reason()?;
         if reason.warrants_independent_review() {
             return None;
@@ -114,7 +123,7 @@ impl Pipeline<'_> {
             summary: format!("no witness test warranted: {}", reason.sentence()),
             deterministic: true,
             evidence_refs: vec![format!("warrant:{reason:?}")],
-            ladder: None,
+            ladder: Some(Box::new(snapshot.clone())),
         };
         self.emit(AgentEvent::JudgeVerdict {
             passed: true,

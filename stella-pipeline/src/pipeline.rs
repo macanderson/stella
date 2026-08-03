@@ -46,7 +46,7 @@ use std::time::Duration;
 use std::sync::Arc;
 
 use futures_util::StreamExt as _;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use stella_core::hooks::{HookRunner, Hooks};
 use stella_core::receipts::RECEIPT_SEQ_ALLOCATED_BASE;
@@ -524,6 +524,12 @@ struct ResolvedRole<'a> {
     model_ref: ModelRef,
     provider: &'a dyn Provider,
     fallback: Option<FallbackInfo>,
+    /// The router's resolution-quality caveat (L-M8) — today, only the judge
+    /// degrading to the worker's own provider family because no second family
+    /// is healthy. Surfaced by [`Pipeline::warn_judge_caveat`] at the calls
+    /// whose independence it undermines; dropping it silently is exactly the
+    /// "fallback is always visible" rule (L-M7) applied to a softer signal.
+    caveat: Option<String>,
 }
 
 /// The outcome of running one candidate (execute + verify + bounded revise).
@@ -751,6 +757,9 @@ pub struct Pipeline<'a> {
     /// other. Starts at [`RECEIPT_SEQ_ALLOCATED_BASE`], above the seats the
     /// engine's worker and summarizer reserve.
     raw_call_seq: AtomicU64,
+    /// Whether the judge's same-family degradation caveat (L-M8) has been
+    /// surfaced this run — see [`Pipeline::warn_judge_caveat`].
+    judge_caveat_warned: AtomicBool,
 }
 
 impl<'a> Pipeline<'a> {
@@ -787,6 +796,7 @@ impl<'a> Pipeline<'a> {
             config,
             configured_test,
             raw_call_seq: AtomicU64::new(RECEIPT_SEQ_ALLOCATED_BASE),
+            judge_caveat_warned: AtomicBool::new(false),
         }
     }
 
@@ -2418,7 +2428,7 @@ impl<'a> Pipeline<'a> {
                     // ask it before buying a judge call to confirm the absence
                     // of a test that was never warranted
                     // (docs/design/witness-protocol.md §7).
-                    if let Some(evidence) = self.warranted_completion(&state) {
+                    if let Some(evidence) = self.warranted_completion(&state, &snapshot) {
                         return state.into_verified(
                             true,
                             &evidence,
@@ -2715,6 +2725,7 @@ impl<'a> Pipeline<'a> {
         if let Some(fb) = &resolved.fallback {
             self.emit_fallback(fb);
         }
+        self.warn_judge_caveat(&resolved);
         self.emit(AgentEvent::Stage {
             name: StageKind::Judge,
         });
@@ -2767,6 +2778,7 @@ impl<'a> Pipeline<'a> {
         if let Some(fb) = &resolved.fallback {
             self.emit_fallback(fb);
         }
+        self.warn_judge_caveat(&resolved);
 
         let prompt = judge_prompt(goal, diff, evidence_summary);
         // Deterministic policy: a judge call that fails must not hang; it falls
@@ -2815,7 +2827,25 @@ impl<'a> Pipeline<'a> {
             model_ref: decision.model_ref,
             provider,
             fallback: decision.fallback,
+            caveat: decision.caveat,
         })
+    }
+
+    /// Surface the judge's resolution-quality caveat — same-family
+    /// degradation (L-M8) — as a warning, once per run.
+    ///
+    /// Once, because the judge role is resolved on every escalation and every
+    /// guidance call, and the caveat describes the *configuration*, not the
+    /// call: repeating it each round would bury the transcript in copies of a
+    /// fact that cannot change mid-run. Emitted at the verdict/guidance call
+    /// sites rather than inside `resolve_provider`, which independence
+    /// *checks* also call and which must stay silent (its doc contract).
+    fn warn_judge_caveat(&self, resolved: &ResolvedRole<'_>) {
+        if let Some(caveat) = &resolved.caveat
+            && !self.judge_caveat_warned.swap(true, Ordering::Relaxed)
+        {
+            self.warn(caveat.clone());
+        }
     }
 
     /// Run one engine turn, forwarding every event to the consumer **live**
@@ -3013,7 +3043,12 @@ impl<'a> Pipeline<'a> {
                 .await;
             for (path, added) in counted {
                 lines += added;
-                text.push_str(&format!("\n+ untracked change: {path} (+{added} lines)"));
+                // The shared builder, so `witness::warrant` can parse these
+                // paths back out and hold them to the same path rules as
+                // tracked changes — a hand-rolled format here silently
+                // blinded the warrant to every untracked file.
+                text.push('\n');
+                text.push_str(&crate::witness::warrant::untracked_change_line(path, added));
             }
         }
         DiffProbe {
