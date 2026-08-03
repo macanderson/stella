@@ -46,6 +46,7 @@ use std::time::Duration;
 use std::sync::Arc;
 
 use futures_util::StreamExt as _;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use stella_core::hooks::{HookRunner, Hooks};
@@ -61,7 +62,10 @@ use stella_protocol::{
 use crate::candidate::{
     CandidateScore, CandidateSummary, score_from_verification, select_best_candidate,
 };
-use crate::candidate_narration::{candidate_start_notice, candidate_winner_notice};
+use crate::candidate_fanout::fan_out_width;
+use crate::candidate_narration::{
+    candidate_fanout_notice, candidate_start_notice, candidate_winner_notice,
+};
 use crate::candidate_steering::SteeringFanOut;
 use crate::plan::{PlanStep, build_planner_prompt, parse_plan, plan_repair_prompt};
 use crate::ports::{
@@ -78,6 +82,10 @@ use crate::triage::{
     TaskAssessment, TaskClass, parse_triage_response, resolve_conversational, resolve_task_class,
     resolve_witness, triage_prompt,
 };
+use stella_core::driver::TurnHalt;
+use stella_protocol::ToolOutput;
+
+use crate::flip_halt::{FlipHalt, command_of};
 use crate::verify::{
     FlipOracle, JudgeVerdict as ModelJudgeVerdict, LadderDecision, LadderInputs,
     deterministic_fail_evidence, deterministic_pass_evidence, guidance_prompt, heuristic_fallback,
@@ -94,6 +102,7 @@ use crate::witness::{
     witness_prompt, witness_repair_prompt,
 };
 mod disclosure;
+mod fanout_stage;
 mod judge_stage;
 mod raw_usage;
 mod run_error;
@@ -101,6 +110,7 @@ mod scope_stage;
 mod stage_budget;
 mod verify_probes;
 mod witness_stage;
+use fanout_stage::SerialCreates;
 use raw_usage::{RawCall, RawCallError};
 pub use run_error::{PipelineError, PipelineRunError};
 use run_error::{RoleResolveError, WitnessAuthorIndependence};
@@ -346,8 +356,27 @@ pub struct PipelineConfig {
     /// snapshot of the current tree state when a
     /// [`crate::ports::CandidateWorkspacePort`] is wired — and selects the
     /// best, adopting only the winner's changes into the real tree. Paid for
-    /// with n× the execution cost — opt-in only.
+    /// with n× the execution *cost* — opt-in only. Not n× the wall clock: see
+    /// [`Self::candidate_concurrency`].
     pub candidates: Option<u32>,
+    /// How many **isolated** candidates execute at once (#1215).
+    ///
+    /// `None` — the default — runs the whole fan-out together, so
+    /// `candidates = Some(n)` costs the slowest candidate in wall clock rather
+    /// than the sum of all n. `Some(1)` is the strictly sequential behaviour
+    /// that predates concurrency, and is the setting for a host that needs one
+    /// candidate's events to arrive without a sibling's interleaved on the
+    /// same stream.
+    ///
+    /// Only the isolated path is ever concurrent. The shared-tree degradation
+    /// (`candidates > 1` with no [`crate::ports::CandidateWorkspacePort`]
+    /// wired) stays sequential whatever this says: those candidates execute
+    /// into one working tree and would overwrite each other's files.
+    ///
+    /// The budget is divided rather than shared — see
+    /// `crate::candidate_fanout` for the aggregate bound this keeps and the
+    /// one-window overshoot it accepts.
+    pub candidate_concurrency: Option<u32>,
     /// Whether this run does its work in a throwaway worktree rather than the
     /// user's checkout. Consulted once — after planning, before execution,
     /// using the task class triage resolved — and only when the run is going
@@ -384,6 +413,7 @@ impl Default for PipelineConfig {
             max_revisions: 2,
             require_independent_witness: false,
             candidates: None,
+            candidate_concurrency: None,
             create_worktrees: crate::ports::WorktreePolicy::default(),
         }
     }
@@ -516,7 +546,9 @@ pub struct PipelineOutcome {
     /// This is what RAN, not what was configured: a candidate that aborted in
     /// setup — no isolation port, a tree that could not be snapshotted, no
     /// independent witness author — never dispatched a model call, and is not
-    /// counted. A `--candidates 4` run where three failed isolation reports 1.
+    /// counted. A `candidates = 4` run where three failed isolation reports 1.
+    /// (Named for a `--candidates` flag that was never built; the knob is set
+    /// through `agent_engine_config.pipeline_candidates` — #1211 §6.8.)
     pub candidates_run: u32,
 }
 
@@ -623,6 +655,14 @@ struct CandidateState {
     /// engine's own `ToolStart` stream rather than probed for, which is what
     /// lets `0` mean "never tried" instead of "could not tell".
     mutating_actions: u32,
+    /// Ends the execute turn as soon as the tracked test goes fail→pass.
+    ///
+    /// `None` whenever there is nothing to watch: no configured test command,
+    /// or a baseline that was already passing (which can never flip, so a
+    /// halt on it would end turns that had work left). See
+    /// [`crate::flip_halt`] for why stopping is a separate question from
+    /// crediting.
+    flip_halt: Option<Arc<FlipHalt>>,
     oracle: FlipOracle,
     /// The oracle's observations in the order they were made (#864) —
     /// baseline (only for a configured `--test-command`; the authored-witness
@@ -765,6 +805,17 @@ pub struct Pipeline<'a> {
     /// Whether the judge's same-family degradation caveat (L-M8) has been
     /// surfaced this run — see [`Pipeline::warn_judge_caveat`].
     judge_caveat_warned: AtomicBool,
+    /// Whether more than one candidate is currently writing to [`Self::events`]
+    /// — set for the duration of a concurrent best-of-N fan-out and false
+    /// everywhere else.
+    ///
+    /// Read only by [`Pipeline::run_engine_turn`], to mute the two event kinds
+    /// the wire contract already calls best-effort previews (`TextDelta`,
+    /// `Reasoning`). Interleaving those from N models produces one paragraph
+    /// of spliced sentences; every durable event — including each candidate's
+    /// authoritative `Text` — still goes out live. See
+    /// `pipeline::fanout_stage`'s module doc.
+    shared_event_lane: AtomicBool,
 }
 
 impl<'a> Pipeline<'a> {
@@ -803,6 +854,7 @@ impl<'a> Pipeline<'a> {
             configured_test,
             raw_call_seq: AtomicU64::new(RECEIPT_SEQ_ALLOCATED_BASE),
             judge_caveat_warned: AtomicBool::new(false),
+            shared_event_lane: AtomicBool::new(false),
         }
     }
 
@@ -1684,94 +1736,44 @@ impl<'a> Pipeline<'a> {
             }
         };
 
-        let mut candidates: Vec<CandidateResult> = Vec::with_capacity(n as usize);
-        // Index-aligned with `candidates` — every path below pushes to both, so
-        // adoption can pair a workspace with the result that produced it (and
-        // with the witness paths that result carries). `None` marks a candidate
-        // that never got a workspace.
-        let mut workspaces: Vec<Option<Box<dyn CandidateWorkspace>>> =
-            Vec::with_capacity(n as usize);
-        // One mirror, one cursor per candidate — see `candidate_steering`.
-        let fan = self.steering.map(SteeringFanOut::new);
-        for i in 0..n {
-            self.emit_text(candidate_start_notice(i, n, true));
-            let ws = match port.create().await {
-                Ok(ws) => ws,
-                Err(e) => {
-                    // Isolation was promised, so a candidate that cannot be
-                    // isolated is never run in the shared tree instead: it
-                    // scores as aborted and the remaining candidates go on.
-                    self.warn(format!("candidate {}/{n} skipped: {e}", i + 1));
-                    candidates.push(CandidateResult::setup_aborted(
-                        base_messages.to_vec(),
-                        format!("candidate isolation failed: {e}"),
-                    ));
-                    workspaces.push(None);
-                    continue;
-                }
-            };
-            let result = {
-                let bound_hook_runner = self.hooks.map(|(_, runner)| BoundHookRunner {
-                    inner: runner,
-                    cwd: ws.root(),
-                });
-                let surface = CandidateSurface {
-                    diagnostics: ws.diagnostics(),
-                    tests: ws.tests(),
-                    lint: self.lint,
-                    mutation: self.mutation,
-                    repo_status: ws.repo_status(),
-                    cwd: Some(ws.root()),
-                    hook_runner: bound_hook_runner
-                        .as_ref()
-                        .map(|runner| runner as &dyn HookRunner),
-                    workspace: Some(ws.as_ref()),
-                };
-                // Handed to the candidate rather than spent here: whether this
-                // run buys a witness is not knowable until the candidate has
-                // executed and its diff can be read.
-                let authoring = author_witness.then(|| WitnessAuthoring {
-                    port,
-                    author: witness_author
-                        .as_ref()
-                        .expect("authored witness identity is resolved before dispatch"),
-                    frames,
-                });
-                let mut engine = Engine::with_sleeper(
-                    worker.provider,
-                    ws.tools(),
-                    self.engine_config_for(surface),
-                    self.sleeper,
-                );
-                if let Some((hooks, runner)) = self.hooks {
-                    engine = engine.with_hooks(hooks, surface.hook_runner.unwrap_or(runner));
-                }
-                if let Some(gate) = self.turn_gate {
-                    engine = engine.with_gate(gate);
-                }
-                let view = fan.as_ref().map(|fan| fan.candidate());
-                if let Some(view) = view.as_ref() {
-                    engine = engine.with_steering(view);
-                }
-                self.run_candidate(
-                    goal,
-                    base_messages,
-                    plan,
-                    assessment,
-                    authoring,
-                    &engine,
-                    surface,
-                    budget,
-                    total,
-                )
-                .await
-            };
-            // Pushed together, always: adoption pairs `candidates[i]` with
-            // `workspaces[i]`, and the witness paths now ride on the result,
-            // so a candidate can never be matched to another one's artifact.
-            candidates.push(result);
-            workspaces.push(Some(ws));
-        }
+        // Isolation is created in index order even when the candidates then
+        // run together, and so is the second snapshot a witness author needs —
+        // `SerialCreates` is what makes the second one obey too. See
+        // `fanout_stage`'s module doc for why git, and not the model calls, is
+        // the thing worth serializing.
+        let serialized = SerialCreates::new(port);
+        let port: &dyn CandidateWorkspacePort = &serialized;
+        let width = fan_out_width(n, self.config.candidate_concurrency);
+        self.emit_text(candidate_fanout_notice(n, width));
+        // Index-aligned with the results below, so adoption can pair a
+        // workspace with the result that produced it (and with the witness
+        // paths that result carries). `Err` marks a candidate that never got a
+        // workspace, and carries the reason it will be scored with.
+        let workspaces = self.create_candidate_workspaces(port, n).await;
+        // Handed to the candidate rather than spent here: whether a run buys a
+        // witness is not knowable until the candidate has executed and its diff
+        // can be read.
+        let authoring = author_witness.then(|| WitnessAuthoring {
+            port,
+            author: witness_author
+                .as_ref()
+                .expect("authored witness identity is resolved before dispatch"),
+            frames,
+        });
+        let candidates = self
+            .dispatch_isolated_candidates(
+                goal,
+                base_messages,
+                plan,
+                assessment,
+                &worker,
+                authoring,
+                &workspaces,
+                width,
+                budget,
+                total,
+            )
+            .await;
 
         let best_idx = best_index(&candidates);
         // Counted before the winner is moved out — the report is about the
@@ -1782,7 +1784,7 @@ impl<'a> Pipeline<'a> {
         // aborted best-of-N run leaves the real tree untouched.
         let mut adopt_failure: Option<WorkspaceError> = None;
         for (i, slot) in workspaces.into_iter().enumerate() {
-            let Some(ws) = slot else {
+            let Ok(ws) = slot else {
                 continue;
             };
             if i == best_idx
@@ -1889,6 +1891,10 @@ impl<'a> Pipeline<'a> {
         // pristine snapshot of this same pre-execution tree.
         let mut oracle = FlipOracle::new();
         let mut oracle_trace = Vec::new();
+        // Armed below, and only by a baseline that actually FAILED. A command
+        // that was already green cannot flip, so arming on it would hand the
+        // engine a stop signal for work the turn never did.
+        let mut flip_halt: Option<Arc<FlipHalt>> = None;
         if assessment.class.verifies_unconditionally()
             && let Some(cmd) = self.effective_test_command(None)
         {
@@ -1913,6 +1919,9 @@ impl<'a> Pipeline<'a> {
                     passed,
                     tree: ProofTree::Baseline,
                 });
+                if !passed {
+                    flip_halt = Some(Arc::new(FlipHalt::new(cmd.command)));
+                }
             }
         }
 
@@ -1948,6 +1957,7 @@ impl<'a> Pipeline<'a> {
             final_text: String::new(),
             file_changes: 0,
             mutating_actions: 0,
+            flip_halt,
             oracle,
             oracle_trace,
             untracked_before,
@@ -2053,6 +2063,7 @@ impl<'a> Pipeline<'a> {
                     budget,
                     &mut state.file_changes,
                     &mut state.mutating_actions,
+                    state.flip_halt.clone(),
                 )
                 .await
             {
@@ -2081,6 +2092,7 @@ impl<'a> Pipeline<'a> {
                         budget,
                         &mut state.file_changes,
                         &mut state.mutating_actions,
+                        state.flip_halt.clone(),
                     )
                     .await
                 {
@@ -2749,7 +2761,7 @@ impl<'a> Pipeline<'a> {
             name: StageKind::Execute,
         });
         match self
-            .run_engine_turn(engine, messages, budget, file_changes, mutating_actions)
+            .run_engine_turn(engine, messages, budget, file_changes, mutating_actions, None)
             .await
         {
             TurnOutcome::Completed { text, cost_usd } => {
@@ -2811,6 +2823,7 @@ impl<'a> Pipeline<'a> {
         budget: &mut BudgetGuard,
         file_changes: &mut u32,
         mutating_actions: &mut u32,
+        flip_halt: Option<Arc<FlipHalt>>,
     ) -> TurnOutcome {
         // The filtered sender is SYNCHRONOUS on purpose: when the outer
         // sender carries a durability boundary, a paid StepUsage cannot
@@ -2823,12 +2836,34 @@ impl<'a> Pipeline<'a> {
         let mutating = seen_mutating.clone();
         let read_only = self.read_only_tool_names();
         let consumer = self.events.clone();
+        // Correlate a shell call's command line (carried on `ToolStart`) with
+        // its exit status (carried in the `ToolResult` content), because
+        // neither event has both. Keyed by `call_id` rather than a
+        // last-command slot: a step dispatches up to eight calls
+        // concurrently, so "the most recent command" is genuinely ambiguous.
+        let pending_commands: Arc<Mutex<HashMap<String, String>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let halt_for_events = flip_halt.clone();
+        let commands = pending_commands.clone();
+        // Read once per turn, not per event: a turn belongs to one candidate,
+        // and the fan-out sets this before dispatching any of them.
+        let shared_lane = self.shared_event_lane.load(Ordering::Relaxed);
         let filtered = EventSender::from_fn(move |event| {
             match &event {
                 // The pipeline is the sole authority for stage boundaries and
                 // the terminal event of an outcome-producing run — drop the
                 // engine's per-turn copies.
                 AgentEvent::Stage { .. } | AgentEvent::Complete { .. } => Ok(()),
+                // Concurrent candidates share this stream, and these two are
+                // the only events whose meaning depends on arriving
+                // uninterrupted: `TextDelta` is a preview its own `Text` event
+                // supersedes, and `Reasoning` is accumulated by the consumer.
+                // Three models' fragments spliced together is not a preview of
+                // anything. Everything durable still goes out live — see
+                // `Pipeline::shared_event_lane`.
+                AgentEvent::TextDelta { .. } | AgentEvent::Reasoning { .. } if shared_lane => {
+                    Ok(())
+                }
                 AgentEvent::FileChange { kind, .. } => {
                     // Reads ride the same event for the files panel but are
                     // not changes — counting them would defeat the zero-diff
@@ -2846,11 +2881,56 @@ impl<'a> Pipeline<'a> {
                     if !read_only.contains(&call.name) {
                         mutating.fetch_add(1, Ordering::Relaxed);
                     }
+                    // Remember the command line so its result can be scored
+                    // against the tracked test. Only when a halt is armed —
+                    // otherwise this map is pure overhead on every turn.
+                    if halt_for_events.is_some()
+                        && let Some(command) = command_of(&call.input)
+                        && let Ok(mut pending) = commands.lock()
+                    {
+                        pending.insert(call.call_id.clone(), command.to_string());
+                    }
+                    consumer.send(event)
+                }
+                AgentEvent::ToolResult { call_id, output, .. } => {
+                    // The agent running the tracked test itself is the
+                    // earliest moment anyone can know the goal is met — and
+                    // before this, it was the one observation the oracle
+                    // never saw (it watched only a pre-execute baseline and
+                    // post-execute verification). Feeding it here is what
+                    // lets the engine stop at the next step boundary instead
+                    // of running until a limit fires.
+                    if let Some(halt) = halt_for_events.as_ref() {
+                        let command = commands
+                            .lock()
+                            .ok()
+                            .and_then(|mut pending| pending.remove(call_id));
+                        if let Some(command) = command
+                            && let ToolOutput::Ok { content } = output
+                        {
+                            // Nothing is emitted on the transition: this is a
+                            // success, and the only event available in this
+                            // closure is `Error`, which a TUI renders as a
+                            // failure. The reason reaches the transcript as
+                            // the halted turn's own text (`TurnHalt`).
+                            halt.observe(&command, content);
+                        }
+                    }
                     consumer.send(event)
                 }
                 _ => consumer.send(event),
             }
         });
+        // A halted engine only when there is something to watch, so a turn
+        // with no armed flip runs on exactly the engine it always did.
+        let halted;
+        let engine = match flip_halt {
+            Some(halt) => {
+                halted = engine.with_turn_halt(halt as Arc<dyn TurnHalt>);
+                &halted
+            }
+            None => engine,
+        };
         let outcome = engine
             .run_turn_with_sender(messages, budget, &filtered)
             .await;

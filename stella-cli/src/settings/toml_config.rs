@@ -155,6 +155,10 @@ pub struct AgentsSection {
     pub reasoning_auto: Option<Toggle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headless_scope_bypass: Option<Toggle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_max_revisions: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_candidates: Option<u32>,
 
     // The four built-in agents, as tables. Serialized LAST so the flat scalars
     // above are not stranded after a table header — TOML would then read them
@@ -541,6 +545,8 @@ pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection) {
         effort_auto: cfg.effort_auto,
         reasoning_auto: cfg.reasoning_auto,
         headless_scope_bypass: cfg.headless_scope_bypass,
+        pipeline_max_revisions: cfg.pipeline_max_revisions,
+        pipeline_candidates: cfg.pipeline_candidates,
         default: per_agent.default,
         worker: per_agent.worker,
         judge: per_agent.judge,
@@ -603,6 +609,8 @@ fn lower_agents(agents: AgentsSection, models: ModelsSection) -> Option<AgentEng
         effort_auto: agents.effort_auto,
         reasoning_auto: agents.reasoning_auto,
         headless_scope_bypass: agents.headless_scope_bypass,
+        pipeline_max_revisions: agents.pipeline_max_revisions,
+        pipeline_candidates: agents.pipeline_candidates,
         agents: agents_field,
     })
 }

@@ -102,6 +102,7 @@ def sigkill_verdict(
     *,
     container_state: dict[str, Any] | None,
     memory_events: dict[str, int],
+    container_absent: bool = False,
 ) -> tuple[str, str]:
     """Return ``(verdict, detail)`` for a 137 exit.
 
@@ -114,9 +115,19 @@ def sigkill_verdict(
     * ``external-teardown`` — the container is exited, dead, or already gone,
       with no OOM evidence: something outside stopped it (a ``docker stop``,
       the harness reclaiming the trial).
-    * ``unattributed`` — the container is alive and healthy with zero OOM
-      events: the SIGKILL came from somewhere this probe cannot see. Still
-      recorded, because "we looked and found nothing" beats silence.
+    * ``unattributed`` — no evidence either way. Either the container is alive
+      and healthy with zero OOM events, or the probe could not observe it at
+      all. Still recorded, because "we looked and found nothing" beats silence.
+
+    ``container_state`` is ``None`` for two very different reasons, and only
+    the caller can tell them apart, so it must: ``container_absent=True`` means
+    *the probe looked and the container was genuinely gone* — that is
+    ``external-teardown``. ``container_absent=False`` with no state means *the
+    probe could not see* (the daemon refused, ``inspect`` failed, the enumerate
+    step errored). That is ``unattributed``, never a teardown: reporting a
+    failed measurement as an affirmative cause would erase a real OOM from the
+    record whenever Docker happens to be unwell, and the reader of the artifact
+    has no way to tell the guess from an observation.
     """
     state = container_state or {}
     if state.get("OOMKilled") is True:
@@ -132,11 +143,18 @@ def sigkill_verdict(
             "killed a process inside (the agent, as the largest resident) "
             "while the container itself kept running",
         )
-    if not state:
+    if container_absent:
         return (
             "external-teardown",
             "the task container no longer exists — it was removed while the "
             "agent was still running",
+        )
+    if not state:
+        return (
+            "unattributed",
+            "the probe could not observe the task container (see "
+            "probe_errors); with no observation there is no evidence of a "
+            "teardown or an OOM either way",
         )
     if state.get("Running") is not True:
         status = state.get("Status", "unknown")
@@ -195,6 +213,7 @@ async def probe_sigkill_cause(
 
     errors: list[str] = []
     container_state: dict[str, Any] | None = None
+    container_absent = False
     memory_events_text: str | None = None
     try:
         compose = compose_base_argv(environment)
@@ -212,6 +231,9 @@ async def probe_sigkill_cause(
         if return_code != 0:
             errors.append("could not enumerate the project's containers")
         elif not container_ids:
+            # An answered question, not a failed one: the project was
+            # enumerated and it is empty.
+            container_absent = True
             errors.append("the compose project lists no containers")
         else:
             return_code, output = await captured_process(
@@ -220,7 +242,7 @@ async def probe_sigkill_cause(
             if return_code != 0:
                 errors.append("docker inspect failed for the project containers")
             else:
-                container_state = _main_container_state(
+                container_state, container_absent = _main_container_state(
                     json.loads(output), service_label=service_label, errors=errors
                 )
         if container_state is not None and container_state.get("Running") is True:
@@ -239,6 +261,7 @@ async def probe_sigkill_cause(
         errors.append(f"exit-cause probe failed: {exc}")
     return {
         "container_state": container_state,
+        "container_absent": container_absent,
         "memory_events_text": memory_events_text,
         "errors": errors,
     }
@@ -246,11 +269,17 @@ async def probe_sigkill_cause(
 
 def _main_container_state(
     inspected: Any, *, service_label: str, errors: list[str]
-) -> dict[str, Any] | None:
-    """Pick the main service container's ``State`` out of ``docker inspect``."""
+) -> tuple[dict[str, Any] | None, bool]:
+    """Pick the main service container's ``State`` out of ``docker inspect``.
+
+    Returns ``(state, absent)``. ``absent`` is ``True`` only when the inspect
+    succeeded and genuinely showed no main container — an observation. A
+    malformed payload is a probe failure, not an absence, and leaves ``absent``
+    ``False`` so the verdict stays ``unattributed``.
+    """
     if not isinstance(inspected, Sequence):
         errors.append("docker inspect returned a non-list")
-        return None
+        return None, False
     for container in inspected:
         if not isinstance(container, dict):
             continue
@@ -258,9 +287,12 @@ def _main_container_state(
         labels = (config or {}).get("Labels") or {}
         if labels.get(service_label) == "main":
             state = container.get("State")
-            return state if isinstance(state, dict) else None
+            if isinstance(state, dict):
+                return state, False
+            errors.append("the main service container reported no State object")
+            return None, False
     errors.append("no main service container found to inspect")
-    return None
+    return None, True
 
 
 def build_exit_cause_report(
@@ -270,6 +302,7 @@ def build_exit_cause_report(
     memory_events_text: str | None,
     events: list[dict[str, Any]] | None,
     probe_errors: list[str],
+    container_absent: bool = False,
 ) -> dict[str, Any]:
     """Assemble the ``stella-exit-cause.json`` artifact for one 137 exit.
 
@@ -281,6 +314,7 @@ def build_exit_cause_report(
     verdict, detail = sigkill_verdict(
         container_state=container_state,
         memory_events=memory_events,
+        container_absent=container_absent,
     )
     return {
         "return_code": return_code,
@@ -288,6 +322,7 @@ def build_exit_cause_report(
         "verdict": verdict,
         "detail": detail,
         "container_state": container_state,
+        "container_absent": container_absent,
         "memory_events": memory_events or None,
         "stream_end": classify_stream_end(events),
         "probe_errors": probe_errors,

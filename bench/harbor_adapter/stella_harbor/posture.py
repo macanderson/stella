@@ -63,6 +63,95 @@ _ADMISSIBLE_WORKER_EFFORTS = ("high", "xhigh", "max")
 # selector existed still describes the posture that produced it.
 _TRIAGE_MODEL_ENV = "STELLA_TRIAGE_MODEL"
 
+# Host-side selectors for the two pipeline knobs that decide how many times a
+# task may be attempted: revision turns after a *failed* verification, and
+# best-of-N candidate executions. Both were fully implemented in the pipeline
+# and reachable from nothing — outside tests, `max_revisions` was written once
+# (to 2) and `candidates` once (to `None`), so best-of-N had never run in
+# production at all. `agent_engine_config` now carries both, which is what lets
+# a benchmark arm select them (#1211 §6.7, §6.8).
+#
+# Unset is the historical posture in both cases, and that is the whole point:
+# a tree that merely carries this code reproduces every digest recorded before
+# the selectors existed. Choosing a value adds a root key, changes the digest,
+# and therefore declares itself in the manifest.
+_MAX_REVISIONS_ENV = "STELLA_MAX_REVISIONS"
+_CANDIDATES_ENV = "STELLA_CANDIDATES"
+
+# Refusal ceilings, not clamps. Unlike the effort tier there is no enum to
+# validate an integer against, so a bound is the only check available beyond
+# "parses as a number" — and the failure it catches is a fat-fingered extra
+# digit, which on these two knobs is a runaway bill rather than a wrong answer.
+# Both sit comfortably above the values #1211 actually proposes (3-4 revisions,
+# 2 candidates), so hitting one means a typo rather than an ambitious arm.
+_MAX_REVISIONS_CEILING = 10
+_CANDIDATES_CEILING = 5
+
+
+def _validated_attempt_count(
+    value: str, *, label: str, floor: int, ceiling: int
+) -> int:
+    """Parse a host-side attempt-count selector, or refuse it with the reason.
+
+    Fails closed on every non-value — empty, non-numeric, out of range — for
+    the same reason `_validated_worker_effort` does: silently inheriting the
+    default would attribute a run to a configuration nobody chose, and the
+    digest would then agree with the typo rather than with reality.
+    """
+    text = value.strip()
+    if not text:
+        raise ValueError(
+            f"benchmark {label} must not be empty: an empty selector means a "
+            f"value was lost on its way here, and inheriting the default would "
+            f"score the run under a configuration nobody chose"
+        )
+    try:
+        parsed = int(text)
+    except ValueError as exc:
+        raise ValueError(
+            f"benchmark {label} must be an integer; got `{value}`"
+        ) from exc
+    if parsed < floor or parsed > ceiling:
+        raise ValueError(
+            f"benchmark {label} must be between {floor} and {ceiling}; "
+            f"got {parsed}"
+        )
+    return parsed
+
+
+def resolve_max_revisions(value: str | None) -> int | None:
+    """Resolve the per-candidate revision budget, or ``None`` to inherit.
+
+    ``0`` is admissible and meaningful — one shot, no retry — so the floor is
+    zero rather than one. Revisions are only ever spent on a verification that
+    already *failed*, so raising this costs nothing on tasks that pass first
+    time; it is the tail it changes.
+    """
+    if value is None:
+        return None
+    return _validated_attempt_count(
+        value, label="max revisions", floor=0, ceiling=_MAX_REVISIONS_CEILING
+    )
+
+
+def resolve_candidates(value: str | None) -> int | None:
+    """Resolve the best-of-N candidate count, or ``None`` for single-shot.
+
+    Floored at 1, not 0: the pipeline floors a zero to one anyway
+    (``PipelineConfig::candidate_count``), so accepting one here would let two
+    different selector values produce the same run under two different digests
+    — the exact ambiguity these selectors exist to remove.
+
+    Note the cost shape differs from revisions: candidates are paid
+    *unconditionally*, so ``2`` doubles execution cost across every task,
+    including the ones a single shot would have solved.
+    """
+    if value is None:
+        return None
+    return _validated_attempt_count(
+        value, label="candidates", floor=1, ceiling=_CANDIDATES_CEILING
+    )
+
 
 def resolve_worker_effort(value: str | None) -> str:
     """Resolve the worker's effort tier from its host-side selector.
@@ -177,6 +266,8 @@ def _benchmark_engine_posture(
     witness_author: str | None = None,
     worker_effort: str = "xhigh",
     triage_model: str | None = None,
+    max_revisions: int | None = None,
+    candidates: int | None = None,
 ) -> tuple[dict[str, Any], str, str]:
     """Return a canonical Terminal-Bench engine posture and its hash.
 
@@ -204,6 +295,12 @@ def _benchmark_engine_posture(
     decision that changes ``digest``, and therefore the registered SUT; the
     point of having both is that the choice is made in the manifest instead of
     being discovered by grepping a trajectory for a warning line.
+
+    ``max_revisions`` and ``candidates`` follow the same rule and exist for the
+    same reason (#1211 §6.7, §6.8). Both are ``None`` by default, which omits
+    the key rather than writing the engine's default into it — so this function
+    still returns byte-identical JSON, and therefore an identical digest, for
+    every posture recorded before the knobs were reachable at all.
     """
     selected_model = model.strip()
     if not selected_model or "/" not in selected_model:
@@ -350,6 +447,16 @@ def _benchmark_engine_posture(
         if triage not in allowed:
             allowed.append(triage)
         posture["allowed_models"] = allowed
+    # The attempt-count knobs are omitted entirely when unselected rather than
+    # written at their default value, and that is load-bearing: the digest is
+    # taken over this dict, so emitting `"pipeline_max_revisions": 2` would
+    # change every hash in the tree to describe a posture identical to the one
+    # they already described. Absent means "the engine's default", which is
+    # exactly what the historical runs had.
+    if max_revisions is not None:
+        posture["pipeline_max_revisions"] = max_revisions
+    if candidates is not None:
+        posture["pipeline_candidates"] = candidates
     normalized = json.dumps(
         posture,
         sort_keys=True,

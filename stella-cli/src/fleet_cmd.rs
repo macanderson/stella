@@ -846,7 +846,7 @@ async fn run_task(
                 role_overrides: wiring.role_overrides.clone(),
                 headless: true,
                 headless_bypass_scope_review: agent::HEADLESS_SCOPE_REVIEW_BYPASS,
-                ..PipelineConfig::default()
+                ..agent::apply_pipeline_tuning(&cfg, PipelineConfig::default())
             };
             // The pause gate, honored on the pipeline path too: the pipeline
             // attaches it to every engine it builds (execute/revise turns,

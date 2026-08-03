@@ -279,6 +279,43 @@ pub struct EngineConfig {
     /// reasoning that puts [`Self::cwd`] here rather than making the engine
     /// sniff it.
     pub checkpoint_sink: Option<Arc<dyn crate::step::CheckpointSink>>,
+    /// A host-supplied "the goal is already met — stop now" signal, consulted
+    /// at every step boundary.
+    ///
+    /// `None` — the default — is exactly the behaviour every caller had
+    /// before: the turn runs until the model stops asking for tools, the
+    /// budget bites, or the step cap does.
+    ///
+    /// This exists because those are all *external* stopping conditions, and
+    /// an agent that has already met its goal will happily keep spending
+    /// against them. Measured on Terminal-Bench 2.1 (run `or1`, task
+    /// `pypi-server`): Stella wrote a correct solution, then spent its
+    /// remaining wall clock re-litigating whether the verifier could see its
+    /// commits, and the harness killed it mid-sentence. The trial scored 1.0
+    /// only because the grader reads files on disk after the agent phase —
+    /// the same behaviour on a task where the late flailing *edits* the
+    /// answer converts a pass into a failure.
+    ///
+    /// The host owns the predicate because only the host knows what "done"
+    /// means. `stella-pipeline` supplies one that fires when its flip oracle
+    /// observes the tracked test go fail→pass.
+    pub turn_halt: Option<Arc<dyn TurnHalt>>,
+}
+
+/// A caller's answer to "is the goal already met?", asked once per step
+/// boundary.
+///
+/// Debug is a supertrait for the same reason [`crate::step::CheckpointSink`]
+/// carries it: [`EngineConfig`] derives `Debug`, and a config that cannot be
+/// printed is a config nobody can diagnose.
+pub trait TurnHalt: Send + Sync + std::fmt::Debug {
+    /// `Some(reason)` ends the turn cleanly at the next step boundary;
+    /// `None` lets it continue.
+    ///
+    /// Called once per committed step, so it must be cheap and must not
+    /// block. It is asked *between* steps and never mid-tool, which is what
+    /// lets the turn end with a well-paired transcript.
+    fn halt_reason(&self) -> Option<String>;
 }
 
 impl Default for EngineConfig {
@@ -316,6 +353,12 @@ impl Default for EngineConfig {
             // belongs, and a default location invented here would write one
             // process's turns into another's session.
             checkpoint_sink: None,
+            // Off by default: a turn with no host-supplied notion of "done"
+            // must behave exactly as it always has. Only a caller holding a
+            // real completion signal — the pipeline's flip oracle — can say
+            // the goal is met, and inventing one here would end turns that
+            // had more to do.
+            turn_halt: None,
         }
     }
 }
@@ -456,6 +499,27 @@ pub fn step_cap_reason(max_steps: usize) -> String {
     )
 }
 
+/// The most recent non-empty assistant text in a turn's transcript.
+///
+/// Used only by the halt path ([`TurnHalt`]), which ends a turn at a step
+/// boundary and therefore has no "final" model text of its own to report. An
+/// assistant message that only made tool calls carries empty `content`, so
+/// this walks back to the last thing the model actually *said* rather than
+/// reporting a blank answer for a turn that did real work.
+///
+/// `None` when the model has said nothing yet — a turn halted after a first
+/// step of pure tool calls — which the caller renders as the halt reason.
+fn last_assistant_text(state: &crate::step::TurnState) -> Option<String> {
+    state
+        .messages
+        .iter()
+        .rev()
+        .find(|message| {
+            message.role == MessageRole::Assistant && !message.content.trim().is_empty()
+        })
+        .map(|message| message.content.clone())
+}
+
 /// Upper bound on tool calls from one step executing concurrently. Tools
 /// are I/O-bound (process spawns, file reads), so this caps descriptor and
 /// process pressure, not CPU.
@@ -554,6 +618,39 @@ impl<'a> Engine<'a> {
             sleeper: self.sleeper,
             config: EngineConfig {
                 turn_instance,
+                ..self.config.clone()
+            },
+            call_role: self.call_role,
+            hooks: self.hooks,
+            calibration: self.calibration,
+            gate: self.gate,
+            steering: self.steering,
+            bus: self.bus,
+        }
+    }
+
+    /// A shallow copy of this engine that consults `halt` at every step
+    /// boundary and ends the turn as [`TurnOutcome::Completed`] when it
+    /// fires.
+    ///
+    /// Takes `&self` and returns a new engine — the [`Self::with_turn_instance`]
+    /// shape rather than the consuming-builder shape — because the caller that
+    /// knows the goal is met is `stella-pipeline`, which is handed an
+    /// `&Engine` it does not own and needs a per-candidate variant of it.
+    ///
+    /// Deliberately NOT expressed through [`crate::ports::TurnSteering`]'s
+    /// soft stop, which is the other step-boundary exit: that one is a *user*
+    /// asking to stop and returns `Aborted`, which reaches the CLI as a
+    /// non-zero exit and is scored by benchmark harnesses as the agent
+    /// crashing. "The goal is met" is a success, and has to end the turn as
+    /// one.
+    pub fn with_turn_halt(&self, halt: Arc<dyn TurnHalt>) -> Engine<'a> {
+        Engine {
+            provider: self.provider,
+            tools: self.tools,
+            sleeper: self.sleeper,
+            config: EngineConfig {
+                turn_halt: Some(halt),
                 ..self.config.clone()
             },
             call_role: self.call_role,
@@ -735,6 +832,45 @@ impl<'a> Engine<'a> {
             // nowhere else is what makes a resumed turn indistinguishable from
             // one that was never interrupted.
             self.persist_checkpoint(&turn.state);
+
+            // "The goal is already met" — the one stopping condition that is
+            // not a limit being hit. Asked here, at a committed step
+            // boundary, for the same reason the checkpoint is written here:
+            // `StepOutcome::Continue` is the moment the transcript is
+            // guaranteed well-paired, so ending now can never orphan a
+            // `tool_use` from its `tool_result`. Asking mid-step could.
+            //
+            // Placed AFTER the first step rather than at the top of the loop
+            // so a turn always does something: a halt predicate that is
+            // already true on entry describes a goal met before this turn
+            // began, which is the caller's business to notice, not a reason
+            // to return an empty turn.
+            //
+            // `Completed`, never `Aborted`. This turn did its work; `Aborted`
+            // is the failure arm and reaches the CLI as a non-zero exit,
+            // which Harbor — and any other host that reads exit codes —
+            // scores identically to the agent crashing.
+            if let Some(reason) = self
+                .config
+                .turn_halt
+                .as_ref()
+                .and_then(|halt| halt.halt_reason())
+            {
+                // Prefer the model's own last words; fall back to the
+                // predicate's reason when the final step was pure tool calls
+                // (an assistant message that only called tools has empty
+                // `content`), so the turn never reports an empty answer.
+                let text = last_assistant_text(&turn.state).unwrap_or_else(|| reason.clone());
+                let outcome = TurnOutcome::Completed {
+                    text,
+                    cost_usd: turn.state.total_cost_usd,
+                };
+                self.emit_lifecycle(bus::names::AGENT_TURN_COMPLETED, || {
+                    turn_outcome_payload(&outcome, turn.state.step)
+                });
+                self.discard_checkpoint();
+                return outcome;
+            }
         }
 
         let reason = step_cap_reason(self.config.max_steps);

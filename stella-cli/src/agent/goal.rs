@@ -716,7 +716,7 @@ async fn run_goal_pipeline_turn(
                 role_overrides: wiring.role_overrides.clone(),
                 headless: true,
                 headless_bypass_scope_review: HEADLESS_SCOPE_REVIEW_BYPASS,
-                ..PipelineConfig::default()
+                ..apply_pipeline_tuning(cfg, PipelineConfig::default())
             };
             let ports = PipelinePorts {
                 router: &router,

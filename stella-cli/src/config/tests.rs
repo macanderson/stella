@@ -955,6 +955,42 @@ fn the_benchmark_witness_arm_posture_survives_the_trusted_launcher_seam() {
     assert!(parsed.headless_scope_bypass_on());
 }
 
+/// The same seam again, for the attempt-count arms (#1211 §6.7, §6.8).
+///
+/// `pipeline_max_revisions` and `pipeline_candidates` are the two knobs that
+/// decide how many times a task may be attempted, and until they joined
+/// `settings::ENGINE_ROOT_FIELDS` a posture naming either was not *ignored* — this
+/// seam fails closed, so the trial died at launch. Numbers, not strings, and
+/// the round trip has to preserve them: a dropped `pipeline_candidates` is a
+/// best-of-N arm that costs 2x and measures single-shot.
+#[test]
+fn the_benchmark_attempt_count_posture_survives_the_trusted_launcher_seam() {
+    let posture = serde_json::json!({
+        "default_model": "openrouter/z-ai/glm-5.2",
+        "allowed_models": ["openrouter/z-ai/glm-5.2"],
+        "auto_mode": "off",
+        "effort_auto": "off",
+        "reasoning_auto": "off",
+        "headless_scope_bypass": "on",
+        "pipeline_max_revisions": 4,
+        "pipeline_candidates": 2,
+        "agents": {
+            "default": {"effort": "xhigh", "reasoning": "on"},
+            "worker": {"effort": "xhigh", "reasoning": "on"},
+            "judge": {"effort": "xhigh", "reasoning": "on"},
+            "triage": {"effort": "low", "reasoning": "off"},
+        },
+    });
+    assert!(
+        super::trusted_engine_config_shape_is_strict(&posture),
+        "the attempt-count posture must pass the strict seam"
+    );
+    let parsed: crate::settings::AgentEngineConfig =
+        serde_json::from_value(posture).expect("and deserialize into the settings type");
+    assert_eq!(parsed.pipeline_max_revisions, Some(4));
+    assert_eq!(parsed.pipeline_candidates, Some(2));
+}
+
 /// Witness for the first-run error rewrite: it used to join all thirteen
 /// `PROVIDERS` rows into ~400 characters that hard-wrap into an unreadable
 /// block, and pointed the user at hand-editing `~/.stella/credentials.toml`

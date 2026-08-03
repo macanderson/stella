@@ -35,15 +35,28 @@ use crate::{diff, theme};
 /// in-flight streaming preview (`SessionModel::streaming_text`) renders as a
 /// live trailing agent entry — it is not a transcript entry, so the
 /// authoritative `Text` event replaces it without leaving a duplicate row.
+/// `skip` names how many leading entries the caller has already put somewhere
+/// else and must not draw again. The screen-reader shell
+/// (`crate::shell::RunOptions::screen_reader`) moves each settled entry into
+/// the terminal's own scrollback as it settles, so its live pane renders only
+/// what is *not* already there — otherwise every line is written twice and a
+/// reader announces the conversation twice. It is an entry count, not a line
+/// count, because the flush is per-entry: half an entry can never be in
+/// scrollback. Every other caller passes 0.
+///
+/// `skip` past the end yields just the streaming preview, which is right: the
+/// whole settled transcript is in scrollback and the only thing left to show
+/// live is the sentence still being written.
 pub(crate) fn transcript_lines(
     model: &SessionModel,
+    skip: usize,
     expand_thinking: bool,
     width: usize,
 ) -> Vec<Line<'static>> {
     let mut out = Vec::new();
     let live = reasoning_is_live(&model.transcript, &model.streaming_text);
     let last = model.transcript.len().saturating_sub(1);
-    for (i, entry) in model.transcript.iter().enumerate() {
+    for (i, entry) in model.transcript.iter().enumerate().skip(skip) {
         entry_lines(
             entry,
             &model.files,

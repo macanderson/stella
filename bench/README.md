@@ -58,10 +58,14 @@ verdict (`solved` / `ran (unsolved)` / `ZERO-WORK` / `SILENT-DEATH` /
 `STUCK-LOOP` / `BUDGET-CAP` / `UNREADABLE` / `NOT-RUN`) plus tool, context-tool,
 and spend counts. It **exits non-zero when the loop misbehaved** (zero-work,
 silent-death, stuck-loop, or a requested task that never ran) even if some
-tasks passed — a gate on loop health, not pass rate, for whoever invokes it.
-No CI job runs it today (it needs Docker, `harbor`, and a provider key); the
-exit-code contract is documented in `loop-bench/src/main.rs` for the day one
-does. Set `STELLA_BINARY` to a linux build for the amd64 containers.
+tasks passed — a gate on loop health, not pass rate.
+[`.github/workflows/nightly-bench.yml`](../.github/workflows/nightly-bench.yml)
+is the CI consumer of that contract (#873): a nightly schedule over a pinned
+task list, the table in the run log and the JSON report as an artifact. It is
+schedule- and dispatch-only because it needs Docker, `harbor`, a provider key,
+and real money. The full exit-code contract is documented in
+`loop-bench/src/main.rs`. Set `STELLA_BINARY` to a linux build for the amd64
+containers.
 
 ## Harbor (Terminal-Bench 2.x, containerized head-to-head)
 
