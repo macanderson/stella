@@ -2070,4 +2070,13 @@ export interface EngineOverrides {
    * to [`MAX_TEMPERATURE`].
    */
   temperature?: number | null;
+  /**
+   * Age-based tool-result retention horizon, in tool-bearing steps
+   * (`EngineConfig::tool_result_horizon_steps`): results older than this
+   * many steps are middle-out aged on every step, independent of the
+   * compaction budget (#1285). Clamped to
+   * [`MAX_TOOL_RESULT_HORIZON_STEPS`]; `0` disables the pass, restoring
+   * pure budget-triggered compaction.
+   */
+  tool_result_horizon_steps?: number | null;
 }}

@@ -164,6 +164,7 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                         "input_tokens": r.input_tokens,
                         "output_tokens": r.output_tokens,
                         "cache_read_tokens": r.cache_read_tokens,
+                        "cache_write_tokens": r.cache_write_tokens,
                         "cost_usd": r.cost_usd,
                         "projects": r.projects,
                     })
@@ -176,7 +177,8 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
         }
         StatsFormat::Csv => {
             println!(
-                "org_id,provider,model,calls,input_tokens,output_tokens,cache_read_tokens,cost_usd,projects"
+                "org_id,provider,model,calls,input_tokens,output_tokens,cache_read_tokens,\
+                 cache_write_tokens,cost_usd,projects"
             );
             for r in &rows {
                 // The three text columns are config- and catalog-supplied, so
@@ -184,7 +186,7 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                 // — an org id or model slug carrying a comma must not silently
                 // shift every following column.
                 println!(
-                    "{},{},{},{},{},{},{},{},{}",
+                    "{},{},{},{},{},{},{},{},{},{}",
                     crate::stats::csv_escape(r.org_id.as_deref().unwrap_or("")),
                     crate::stats::csv_escape(&r.provider),
                     crate::stats::csv_escape(&r.model),
@@ -192,6 +194,7 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                     r.input_tokens,
                     r.output_tokens,
                     r.cache_read_tokens,
+                    r.cache_write_tokens,
                     r.cost_usd,
                     r.projects,
                 );
@@ -206,7 +209,7 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                 return Ok(());
             }
             println!(
-                "{:<14} {:<10} {:<28} {:>8} {:>12} {:>12} {:>12} {:>10} {:>9}",
+                "{:<14} {:<10} {:<28} {:>8} {:>12} {:>12} {:>12} {:>12} {:>10} {:>9}",
                 "ORG",
                 "PROVIDER",
                 "MODEL",
@@ -214,13 +217,14 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                 "INPUT",
                 "OUTPUT",
                 "CACHE-READ",
+                "CACHE-WRITE",
                 "COST",
                 "PROJECTS"
             );
-            let mut totals = (0i64, 0i64, 0i64, 0i64, 0f64);
+            let mut totals = (0i64, 0i64, 0i64, 0i64, 0i64, 0f64);
             for r in &rows {
                 println!(
-                    "{:<14} {:<10} {:<28} {:>8} {:>12} {:>12} {:>12} {:>10.4} {:>9}",
+                    "{:<14} {:<10} {:<28} {:>8} {:>12} {:>12} {:>12} {:>12} {:>10.4} {:>9}",
                     r.org_id.as_deref().unwrap_or("(local)"),
                     r.provider,
                     r.model,
@@ -228,6 +232,7 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                     r.input_tokens,
                     r.output_tokens,
                     r.cache_read_tokens,
+                    r.cache_write_tokens,
                     r.cost_usd,
                     r.projects,
                 );
@@ -235,11 +240,12 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                 totals.1 += r.input_tokens;
                 totals.2 += r.output_tokens;
                 totals.3 += r.cache_read_tokens;
-                totals.4 += r.cost_usd;
+                totals.4 += r.cache_write_tokens;
+                totals.5 += r.cost_usd;
             }
             println!(
-                "{:<14} {:<10} {:<28} {:>8} {:>12} {:>12} {:>12} {:>10.4} {:>9}",
-                "TOTAL", "", "", totals.0, totals.1, totals.2, totals.3, totals.4, ""
+                "{:<14} {:<10} {:<28} {:>8} {:>12} {:>12} {:>12} {:>12} {:>10.4} {:>9}",
+                "TOTAL", "", "", totals.0, totals.1, totals.2, totals.3, totals.4, totals.5, ""
             );
         }
     }

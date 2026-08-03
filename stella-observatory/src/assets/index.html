@@ -942,7 +942,8 @@ function renderModels(rows) {
     <th scope="col">model</th><th scope="col" class="num">runs</th>
     <th scope="col" class="num">resolve&nbsp;%</th><th scope="col" class="num">cost&nbsp;USD</th>
     <th scope="col" class="num">USD/resolved</th>
-    <th scope="col" class="num">tok&nbsp;in</th><th scope="col" class="num">tok&nbsp;out</th></tr></thead><tbody>` +
+    <th scope="col" class="num">tok&nbsp;in</th><th scope="col" class="num">tok&nbsp;out</th>
+    <th scope="col" class="num">cache&nbsp;%</th></tr></thead><tbody>` +
     rows.map(r => `<tr>
       <td class="main" title="${esc(r.provider)}/${esc(r.model)}${r.division !== "-" ? " · " + esc(r.division) : ""}">
         ${esc(r.provider)}/${esc(r.model)}${r.division !== "-" ? ` <span class="badge dim">${esc(r.division)}</span>` : ""}</td>
@@ -950,7 +951,8 @@ function renderModels(rows) {
       <td class="num">${fmtUsd(r.total_cost_usd)}</td>
       <td class="num">${r.cost_per_resolved_usd == null ? "—" : fmtUsd(r.cost_per_resolved_usd)}</td>
       <td class="num">${fmtTok(r.input_tokens)}</td>
-      <td class="num">${fmtTok(r.output_tokens)}</td></tr>`).join("") +
+      <td class="num">${fmtTok(r.output_tokens)}</td>
+      <td class="num">${r.input_tokens > 0 ? pct(r.cache_read_tokens / r.input_tokens) : "—"}</td></tr>`).join("") +
     `</tbody></table>`;
 }
 

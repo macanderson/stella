@@ -49,12 +49,43 @@ skip the roll) were re-inserted the same way.
   cursor-position request still gets a deck — it degrades to a full-screen draw
   on your own screen, and says so. (#1258)
 
+- The engine now ages old tool results **during** a long turn, not only near
+  the context ceiling: results older than 8 tool-bearing steps are middle-out
+  truncated to head+tail (batched, so the provider prompt-cache prefix is
+  rewritten once per several steps, never per step). On the measured
+  head-to-head this growth pattern was the dominant share of a 6.4× input-token
+  gap. Tune or disable it with `agent_engine_config.tool_result_horizon_steps`
+  (`0` disables); the compaction trigger itself is now also settable as
+  `agent_engine_config.compaction_budget_tokens`, and both ride
+  `stella serve`'s per-turn `engine` object too. (#1285)
+- `stella usage report` now shows cache **writes** beside cache reads (the
+  cost side of the cache ledger), the Observatory's models table gained a
+  `cache %` column, and the benchmark live feed carries each trial's
+  cached/uncached input split instead of dropping it. (#1285)
+
 ### Fixed
 
 - Messages the deck itself speaks are now marked `▸`, so the transcript no longer
   reads as though the model said "conversation cleared". The rail glyph that used
   to carry that distinction is visual, and visual distinctions do not survive
   being read aloud. (#1258)
+
+- A turn that ends (or proceeds) holding a length-truncated partial no longer
+  retains the whole cut-off scratchpad in its transcript: the spent-allowance,
+  out-of-time, budget-abort, and truncated-with-tool-calls paths now keep the
+  same middle-elided form the continuation path always kept. What you see is
+  unchanged — only what the model re-reads (and re-pays for) every later step
+  shrinks. (#1285)
+- Prompt-cache opt-ins across every provider that needs one: the Anthropic
+  adapter's conversation-tail cache breakpoint no longer silently no-ops when
+  the last content block is an image or document (it now stamps the newest
+  stampable block); a settings-defined custom provider whose base URL points
+  at openrouter.ai now gets OpenRouter's `cache_control` + `session_id`
+  markers instead of silently running Claude with zero caching; and Bedrock's
+  cache-point gate recognizes any Anthropic-vendored model id, not only ones
+  spelling "claude". Implicit-cache providers (OpenAI, Gemini/Vertex, Z.ai,
+  xAI, DeepSeek) need no marker — their cached-token telemetry is parsed and
+  now witnessed per identity in the parity matrix. (#1285)
 ## [0.6.79] — 2026-08-03
 
 ## [0.6.78] — 2026-08-03

@@ -56,8 +56,16 @@ fn tuned_engine_config(
     // Compaction must fire BEFORE the provider's context window overflows:
     // the engine default (150k) exceeds some catalog windows (deepseek-chat
     // is 128k), where provider-side overflow would land before compaction
-    // ever triggered. The window only ever LOWERS the default — 3/4 leaves
+    // ever triggered. The window only ever LOWERS the budget — 3/4 leaves
     // headroom for the estimator's error band plus the next step's output.
+    // A settings override lands FIRST so the clamp applies to it too: an
+    // operator can shape context handling per arm (#1285), never schedule a
+    // provider-side overflow.
+    if let Some(settings) = &cfg.engine_settings
+        && let Some(budget) = settings.compaction_budget_tokens
+    {
+        engine.compaction_budget_tokens = budget;
+    }
     if let Ok(entry) = stella_model::catalog::Catalog::current().resolve_for(provider_id, model_id)
     {
         let window = entry.context_window as u64;
@@ -107,6 +115,12 @@ fn tuned_engine_config(
         // and the two are genuinely different requests.
         if let Some(secs) = settings.model_timeout_secs {
             engine.model_timeout = (secs > 0).then(|| std::time::Duration::from_secs(secs));
+        }
+        // `0` disables the retention pass (the same "0 opts out" convention
+        // as `model_timeout_secs` above), restoring pure budget-triggered
+        // compaction.
+        if let Some(steps) = settings.tool_result_horizon_steps {
+            engine.tool_result_horizon_steps = (steps > 0).then_some(steps as usize);
         }
     }
     // Capability clamp: a catalog-confirmed non-reasoning model must not

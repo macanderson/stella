@@ -96,6 +96,8 @@ pub(crate) const ENGINE_ROOT_FIELDS: &[&str] = &[
     "pipeline_max_revisions",
     "pipeline_candidates",
     "model_timeout_secs",
+    "compaction_budget_tokens",
+    "tool_result_horizon_steps",
     "agents",
 ];
 

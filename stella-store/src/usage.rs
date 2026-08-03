@@ -484,7 +484,8 @@ impl UsageStore {
         let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT org_id, provider, model, COUNT(*), SUM(input_tokens), SUM(output_tokens), \
-                    SUM(cache_read_tokens), SUM(cost_usd), COUNT(DISTINCT project_id) \
+                    SUM(cache_read_tokens), SUM(cache_write_tokens), SUM(cost_usd), \
+                    COUNT(DISTINCT project_id) \
              FROM telemetry \
              WHERE (?1 IS NULL OR org_id = ?1) \
              GROUP BY org_id, provider, model \
@@ -499,8 +500,9 @@ impl UsageStore {
                 input_tokens: r.get(4)?,
                 output_tokens: r.get(5)?,
                 cache_read_tokens: r.get(6)?,
-                cost_usd: r.get(7)?,
-                projects: r.get(8)?,
+                cache_write_tokens: r.get(7)?,
+                cost_usd: r.get(8)?,
+                projects: r.get(9)?,
             })
         })?;
         let mut out = Vec::new();
@@ -1035,6 +1037,11 @@ pub struct GlobalTelemetryRow {
     pub input_tokens: i64,
     pub output_tokens: i64,
     pub cache_read_tokens: i64,
+    /// Cache writes are the cost side of the cache ledger: without them a
+    /// report can show a read count but never net savings (writes bill at a
+    /// premium on opt-in providers). The column was always in the hub table;
+    /// only this rollup dropped it.
+    pub cache_write_tokens: i64,
     pub cost_usd: f64,
     pub projects: i64,
 }
@@ -1271,7 +1278,7 @@ mod tests {
                 output_tokens: 100,
                 cache_read_tokens: 500,
                 cache_miss_tokens: 500,
-                cache_write_tokens: 0,
+                cache_write_tokens: 40,
                 cost_usd: cost,
                 duration_ms: 1200,
                 retries: 0,
@@ -1297,6 +1304,11 @@ mod tests {
         assert_eq!(totals[0].calls, 2);
         assert_eq!(totals[0].org_id, None, "unregistered rows carry NULL org");
         assert!((totals[0].cost_usd - 0.03).abs() < 1e-9);
+        // Both sides of the cache ledger survive the rollup: reads are the
+        // savings side, writes the cost side — without the writes a report
+        // can show a hit count but never net savings.
+        assert_eq!(totals[0].cache_read_tokens, 1000);
+        assert_eq!(totals[0].cache_write_tokens, 80);
     }
 
     #[test]

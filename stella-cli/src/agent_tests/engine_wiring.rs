@@ -757,6 +757,79 @@ fn a_zero_model_timeout_disables_the_backstop_rather_than_tripping_instantly() {
     );
 }
 
+/// The context-handling pair (#1285): the compaction budget and the
+/// tool-result retention horizon were engine constants a benchmark arm could
+/// not move without a rebuild — the same promotion-to-SUT-change shape
+/// `model_timeout_secs` closed for the timeout ceiling.
+#[test]
+fn the_context_shaping_settings_reach_the_engine() {
+    let mut cfg = cfg_with_engine(
+        "anthropic",
+        r#"{ "default_model": "anthropic/claude-sonnet-5",
+             "compaction_budget_tokens": 40000,
+             "tool_result_horizon_steps": 6 }"#,
+    );
+    cfg.model_id = "claude-sonnet-5".to_string();
+
+    let engine = crate::agent::engine_config_for(&cfg);
+    assert_eq!(engine.compaction_budget_tokens, 40_000);
+    assert_eq!(engine.tool_result_horizon_steps, Some(6));
+}
+
+/// The settings budget rides under the same window clamp as the default:
+/// whatever an operator writes, compaction still fires before the provider's
+/// context window would overflow.
+#[test]
+fn a_settings_budget_cannot_exceed_the_model_window_clamp() {
+    let mut cfg = cfg_with_engine(
+        "anthropic",
+        r#"{ "default_model": "anthropic/claude-sonnet-5",
+             "compaction_budget_tokens": 100000000 }"#,
+    );
+    cfg.model_id = "claude-sonnet-5".to_string();
+
+    let window = stella_model::catalog::Catalog::current()
+        .resolve_for("anthropic", "claude-sonnet-5")
+        .expect("seeded model resolves")
+        .context_window as u64;
+    assert!(window > 0, "the seeded row must carry a window");
+    assert_eq!(
+        crate::agent::engine_config_for(&cfg).compaction_budget_tokens,
+        window.saturating_mul(3) / 4,
+        "an oversized budget clamps to 3/4 of the window"
+    );
+}
+
+/// `0` disables the retention pass — a deliberate opt-out, distinct from
+/// absent (the engine default) exactly as `model_timeout_secs: 0` is.
+#[test]
+fn a_zero_horizon_disables_retention_and_absent_keeps_the_default() {
+    let mut cfg = cfg_with_engine(
+        "anthropic",
+        r#"{ "default_model": "anthropic/claude-sonnet-5",
+             "tool_result_horizon_steps": 0 }"#,
+    );
+    cfg.model_id = "claude-sonnet-5".to_string();
+    assert_eq!(
+        crate::agent::engine_config_for(&cfg).tool_result_horizon_steps,
+        None
+    );
+
+    let mut absent = cfg_with_engine(
+        "anthropic",
+        r#"{ "default_model": "anthropic/claude-sonnet-5" }"#,
+    );
+    absent.model_id = "claude-sonnet-5".to_string();
+    assert_eq!(
+        crate::agent::engine_config_for(&absent).tool_result_horizon_steps,
+        EngineConfig::default().tool_result_horizon_steps,
+    );
+    assert!(
+        EngineConfig::default().tool_result_horizon_steps.is_some(),
+        "the default must retain, or the disable test proves nothing"
+    );
+}
+
 #[test]
 fn the_models_own_output_ceiling_replaces_the_global_default() {
     // `EngineConfig::default()` carries one `max_output_tokens` (16384) for
