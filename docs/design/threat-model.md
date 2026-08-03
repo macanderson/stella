@@ -8,8 +8,8 @@ Stella's security reasoning has always been written down. It was just never
 written down *together*: the project trust boundary is argued in
 `stella-cli/src/settings/merge.rs`, the authority ceiling in
 `settings/authority.rs`, the subprocess scrub in
-`stella-tools/src/subprocess_env.rs`, the sandbox's scope in
-`stella-tools/src/sandbox.rs`, the web egress denylist in
+`stella-tools/src/subprocess_env.rs`, the shell tool's scope in
+`stella-tools/src/bash.rs`, the web egress denylist in
 `stella-tools/src/web_egress.rs`, the filesystem identity checks in
 `stella-store/src/private.rs`, and the dotenv refusals in
 `stella-cli/src/env_files.rs`. Each is careful. None of them can tell you
@@ -222,8 +222,8 @@ HTTPS endpoint allowlist.
 | P5 | Repo ships `.env` with `GIT_SSH_COMMAND` → RCE on first git subprocess | B4 | Mitigated (refused, never applied) |
 | P6 | Repo sets `GIT_CONFIG_KEY_n` in the environment a tool inherits | B4 | Mitigated (prefix-scrubbed) |
 | P7 | Workspace member pattern escapes root via `../` or glob | B5 | Mitigated (#695) |
-| P8 | Injected instruction in a read file drives `bash` to exfiltrate | B3 | Partial — sandbox is opt-in |
-| P9 | Injected instruction drives `run_script` / `start_process` | B3 | **Not mitigated by the sandbox** — see R2, R3 |
+| P8 | Injected instruction in a read file drives `bash` to exfiltrate | B3 | **Not mitigated in-process** — gated by the `command.started` chain, bounded only by the container Stella runs in; see R3 |
+| P9 | Injected instruction drives `run_script` / `start_process` | B3 | **Not mitigated in-process** — same posture as P8; see R2, R3 |
 | P10 | Injected instruction drives `web_fetch` at cloud metadata / localhost | B3 | Mitigated (#939 egress denylist, post-DNS and per redirect hop) — proxy residual in R4 |
 | P11 | Co-tenant plants a symlink at a private-state path | B6 | Mitigated on Unix; not off it |
 | P12 | SVG `data:` URI smuggled past the sanitizer | — | Mitigated (#695 replaced the `//` substring test with a real scheme test) |
@@ -262,13 +262,29 @@ defaults false. `run_script` and `start_process` are not gated that way — they
 route through the `command.started` policy chain, which is a policy-handler
 seam rather than an interactive confirmation.
 
-### R3 — The sandbox wraps `bash` only
+### R3 — Nothing confines a spawned command in-process
 
-`STELLA_BASH_SANDBOX` (`workspace-write` / `restricted`, Seatbelt on macOS,
-`bwrap` on Linux) is off by default and, when on, confines only the `bash`
-tool. `start_process`, `run_script`, custom tools, and hooks run unconfined.
-The sandbox's own doc names prompt injection as the threat it mitigates — that
-mitigation therefore has a shape the threat does not.
+Every path that starts a process — `bash`, `build_project`/`run_tests`'s
+`command` override, `verify_done`'s `test_cmd`, `run_script`, `start_process`,
+the `repo_*`/`ci_status` `git` and `gh` invocations, custom manifest tools,
+and hook actions — runs with the privileges of the Stella process itself. A
+command the model was injected into writing can reach anything the operator's
+account can reach.
+
+This used to read "the sandbox wraps `bash` only": `STELLA_BASH_SANDBOX`
+(`workspace-write` / `restricted`, Seatbelt on macOS, `bwrap` on Linux) was an
+opt-in confinement on that one tool. It was removed (#1300). The removal did
+not widen the exposure — every path in the list above was already unconfined,
+and the setting was off by default — it removed a mitigation whose shape did
+not match the threat it named, and with it the impression that "sandbox: on"
+bounded a session.
+
+What is left in-process is a *gate*, not a boundary: the `command.started`
+policy chain sees every model-authored command line before anything spawns
+(`ToolRegistry::command_line_for` enumerates every member). A boundary has to
+come from outside the process — run Stella in a container, where no spawn path
+can step around the isolation because the isolation is not on the spawn path.
+See `docs/design/remote-sandboxes.md` §2.
 
 ### R4 — The web egress guard is bypassed by an HTTP proxy
 
@@ -360,8 +376,11 @@ available today is retention — `stella stats prune` — not redaction.
 ## What would change this model
 
 - An interactive or persisted trust decision would retire R1.
-- Extending the sandbox to `start_process` / `run_script` / hooks would close
-  the gap between R3 and the threat it names.
+- Container-based isolation — the whole process inside a boundary rather than
+  a wrapper on one spawn path — would close R3 for every path at once. That is
+  the direction of record (`docs/design/remote-sandboxes.md`); the per-command
+  sandbox was removed rather than extended precisely because extending it
+  would have had to be repeated for every future spawn site.
 - Gating `run_script` behind an authority flag would narrow R2.
 - A secret detector — if one could be made accurate enough to not be
   false assurance — would narrow R9.

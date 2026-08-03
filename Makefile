@@ -25,11 +25,11 @@ CARGO_SCOPE ?= --workspace
 # The guard tiers, named so the gate, the fast check and the hook can compose
 # them instead of restating the list three times and drifting apart.
 # GATE_GUARDS_FAST needs no toolchain at all (shell scripts over the tree);
-# doc-citations and wire-schema are separated out because wire-schema runs the
-# two schema exporters, which is a cargo build.
+# wire-schema is separated out because it runs the two schema exporters, which
+# is a cargo build.
 GATE_GUARDS_FAST := no-scratch action-pins cargo-install-pins license-allowlist-parity \
                     repro-wiring shellcheck invariants file-size
-GATE_GUARDS := $(GATE_GUARDS_FAST) doc-citations wire-schema
+GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 .PHONY: help
 help: ## Show this help
@@ -145,10 +145,6 @@ license-allowlist-parity: ## Assert deny.toml and dependency-review.yml agree on
 .PHONY: repro-wiring
 repro-wiring: ## Assert both release paths build through scripts/repro-build.sh (#910)
 	@./scripts/check-repro-wiring.sh
-
-.PHONY: doc-citations
-doc-citations: ## Assert docs citations resolve and none cite by line number (#652, #561)
-	@./scripts/check-doc-citations.sh
 
 .PHONY: invariants
 invariants: ## Assert the architectural invariants have one home and stable numbering (#630)

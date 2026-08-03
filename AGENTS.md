@@ -59,25 +59,23 @@ A red gate is an automatic "not yet":
 ```bash
 make gate                # = no-scratch + action-pins + cargo-install-pins
                          #   + license-allowlist-parity + shellcheck
-                         #   + doc-citations + invariants + file-size
+                         #   + invariants + file-size
                          #   + wire-schema + rustdoc -D warnings + fmt --check
                          #   + clippy -D warnings + test --workspace
 ```
 
-CI enforces the same thirteen steps split across two workflows:
-`/.github/workflows/ci.yml`'s required job runs everything except
-`doc-citations` and `invariants` and adds a release smoke build (thin LTO);
-`normative-home.yml` runs those two plus `check-normative-home.sh`.
-(`check-normative-home.sh` was written to assert the CGP revision pinned in
-`docs/**` matches the `contextgraph-*` dependency; since #819 moved those to
-exact-version registry deps there is no git rev to read and the script
-self-skips — it is kept for the day a git pin returns.) It needs no Rust
-toolchain and is the one check the gate does not cover, so run it by hand
-after touching a `NORMATIVE-HOME:` document.
+CI enforces the same twelve steps split across two workflows:
+`/.github/workflows/ci.yml`'s required job runs everything except `invariants`
+and adds a release smoke build (thin LTO); `invariants.yml` runs that one on its
+own, because it triggers on `docs/**` and `*.md` paths that `ci.yml` ignores.
 
-`doc-citations` is the guard that keeps a rustdoc comment from citing a
-`docs/**.md` path — or a `§N` inside one — that does not exist (#652). Adding
-a citation to a document you have not written yet fails the build, by design.
+**Doc citations are not gated.** Cite the public docs site by path and anything
+internal — a design spec, an ADR, an upstream contract — by URL. See
+`docs/README.md § How to cite a document`. Two guards used to enforce a
+repo-relative citation style here (`check-normative-home.sh`, which matched a
+`NORMATIVE-HOME:` header against the `contextgraph-*` git rev, and
+`check-doc-citations.sh`, which required every cited `docs/**.md` path and `§N`
+to resolve); both were retired with the style they enforced.
 
 Three rungs, each a superset of the one above:
 

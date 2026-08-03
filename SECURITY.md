@@ -51,7 +51,8 @@ that's the user's judgment call, not a boundary Stella claims to enforce.
 trust boundaries, and the attack paths that cross them — including the risks
 Stella knowingly does not defend against, and why. Read it before deciding
 whether a behavior you found is a vulnerability or a documented choice: several
-of the sharper edges (the sandbox covering `bash` only, the `web` egress guard
+of the sharper edges (no in-process confinement on any spawned command since
+the per-command sandbox was removed, the `web` egress guard
 being bypassed by an HTTP proxy, materially weaker guarantees off Unix) are
 deliberate and recorded there.
 

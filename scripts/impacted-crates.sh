@@ -64,7 +64,7 @@
 # `cargo metadata` that will not resolve, an unreadable diff, a path this
 # script cannot place, or a change to the scoping machinery itself all print
 # `--workspace` and say why. The cheap global guards (`no-scratch`,
-# `action-pins`, `file-size`, `invariants`, `wire-schema`, `doc-citations`, …)
+# `action-pins`, `file-size`, `invariants`, `wire-schema`, …)
 # are unscoped by construction — they are not this script's business, and
 # `make gate` runs them on every push regardless of what is printed here.
 #

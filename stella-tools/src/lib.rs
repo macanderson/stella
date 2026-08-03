@@ -45,7 +45,6 @@ pub mod read_symbol;
 pub mod registry;
 pub mod repo;
 pub mod rootfd;
-pub mod sandbox;
 pub mod schema_gate;
 pub mod screenshot;
 pub mod scripts;

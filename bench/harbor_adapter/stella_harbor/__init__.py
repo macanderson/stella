@@ -2079,6 +2079,16 @@ class StellaAgent(BaseInstalledAgent):
             if isinstance(stream_view, dict)
             else None
         ) or "not_reported"
+        # Stella's own verdict on its own work, as a top-level field for the
+        # same reason the witness state is one: the A/B this exists for (#1284)
+        # compares it against the external grader's reward, and a comparison
+        # that has to reach into a nested blob is one an analysis quietly skips.
+        # A trial with no stream made no claim — "not_reported", never "failed".
+        self_verdict_state = (
+            stream_view.get("self_verdict_state")
+            if isinstance(stream_view, dict)
+            else None
+        ) or "not_reported"
         # Absent (adapter predates install, or install never ran) is a real
         # state and must not be conflated with a step that ran and reported.
         workspace_git_baseline = getattr(
@@ -2139,6 +2149,7 @@ class StellaAgent(BaseInstalledAgent):
             "stella_assurance_tiers_sha256": assurance_tiers_sha256,
             "stella_witness_author_model": witness_author_model,
             "stella_witness_authored_state": witness_authored_state,
+            "stella_self_verdict_state": self_verdict_state,
             "stella_workspace_git_baseline": workspace_git_baseline,
         }
         if envelope is not None:

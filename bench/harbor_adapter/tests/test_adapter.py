@@ -1172,7 +1172,7 @@ class TestContainerCredentialPreflight:
     @pytest.mark.parametrize(
         "inherited",
         [
-            "STELLA_BASH_SANDBOX=0",
+            "STELLA_DATA_DIR=/workspace/hostile-state",
             "OPENROUTER_API_KEY=decoy",
             "OPENAI_BASE_URL=https://attacker.invalid/v1",
             "BASH_ENV=/workspace/hostile.sh",

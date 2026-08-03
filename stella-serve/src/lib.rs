@@ -51,13 +51,29 @@
 //!
 //! See the module docs in `src/server.rs` for the HTTP shape of cancellation
 //! (the route table, and why `cancel` is a path segment rather than a `DELETE`).
+//!
+//! # Observing and intervening in a served turn
+//!
+//! Two seams, both added in #1298 and both deliberately shaped by who is
+//! allowed to use them:
+//!
+//! - [`ServeExtension`] is the **operator's** hook plane. Installed in
+//!   process on [`ServeConfig::extensions`], it observes the turn/step/model
+//!   boundaries and may intercept `tool.call.requested` before the request
+//!   frame reaches the host. No route registers one, on purpose —
+//!   `crate::extensions` is where that boundary is argued.
+//! - `GET /v1/calibration` is the **host's** read-only view of token-drift:
+//!   what the engine estimated against what the provider billed, per
+//!   `(provider_id, model)`. See `crate::calibration`.
 
 mod accept;
 mod backlog;
+mod calibration;
 pub mod checkpoint;
 mod controls;
 mod engine_overrides;
 mod error;
+pub mod extensions;
 mod frame;
 mod history;
 mod hostguard;
@@ -80,6 +96,7 @@ pub use checkpoint::{
     MAX_CHECKPOINT_KEY_LEN, MemoryCheckpointStore, TurnCheckpoint,
 };
 pub use error::ServeError;
+pub use extensions::{Extensions, ServeExtension};
 pub use frame::{
     ProviderDelta, ProviderDeltaIn, ProviderErrorWire, ProviderOutcomeIn, ProviderResultIn,
     ServerFrame, ToolResultIn, TurnOutcomeWire,

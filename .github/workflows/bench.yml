@@ -58,7 +58,7 @@ jobs:
             exit 0
           fi
           if git diff --name-only "$BASE_SHA"...HEAD \
-            | grep -Eq '^(bench/harbor_adapter/|bench/terminal_bench_analysis/|bench/telemetry_store/|bench/evidence/frontier/|arenabench/|\.github/workflows/bench\.yml$)'; then
+            | grep -Eq '^(bench/harbor_adapter/|bench/terminal_bench_analysis/|bench/telemetry_store/|bench/evidence/|arenabench/|\.github/workflows/bench\.yml$)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -92,6 +92,18 @@ jobs:
       - name: telemetry_store — pytest
         if: steps.scope.outputs.changed == 'true'
         run: uv run --with pytest --no-project pytest -q bench/telemetry_store/tests
+
+      # The development-baseline evidence tooling: the scorer, the manifest
+      # builder and the witness A/B comparison — the three scripts that decide
+      # what a published number *is*. Their tests existed and nothing ran them:
+      # the scope filter above named `bench/evidence/frontier/` and no other
+      # path under `bench/evidence/`, so this suite gated nothing at all. Same
+      # `--no-project` reasoning as the two below — the scripts are
+      # standard-library only, which is what makes recomputing a published
+      # score from committed evidence possible without the harness installed.
+      - name: evidence tooling — pytest
+        if: steps.scope.outputs.changed == 'true'
+        run: uv run --with pytest --no-project pytest -q bench/evidence/tests
 
       # The Frontier-Bench run planner. No project to sync and no Harbor to
       # install: plan.py imports nothing outside the standard library, which is

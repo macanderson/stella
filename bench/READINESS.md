@@ -505,6 +505,19 @@ SUT — that is intended. Two arms over the same 89 tasks on the same SUT is a
 direct, falsifiable test of whether the ladder's witness rung improves outcomes;
 one arm alone cannot answer it in either direction.
 
+**That test is now a procedure rather than a suggestion** ([#1284](https://github.com/macanderson/stella/issues/1284)):
+`bench/evidence/run/witness_ab.sh` runs one arm with the arm named as an
+argument and the task list pinned across both, and
+`bench/evidence/compare_arms.py` turns the two into the answer — tasks gained
+and lost, wrong "this passed" calls fixed and introduced, spend per additional
+task passed — under a decision rule fixed in
+[`bench/evidence/witness-ab/`](evidence/witness-ab/) before any data exists.
+The comparison refuses two runs that are not one experiment, and refuses a
+treatment arm whose trials authored no witness: the #1147 failure below is
+detectable only from the run's own proof stream, never from the posture that
+claims the tier. **The run has not been executed.** Everything up to the
+credential is in the tree.
+
 Constraints, each enforced fail-closed by `_validated_witness_author`:
 
 - The author must differ from the worker model (otherwise the tier is still off,

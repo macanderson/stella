@@ -96,6 +96,12 @@ pub enum Route {
     Readyz,
     #[serde(rename = "/v1/metrics")]
     Metrics,
+    /// The token-drift report (#1298): what the engine estimated against what
+    /// the provider billed, per `(provider_id, model)`. Read-only, and
+    /// authenticated like `/v1/metrics` for the same reason — it describes the
+    /// host's traffic.
+    #[serde(rename = "/v1/calibration")]
+    Calibration,
     #[serde(rename = "/v1/turns")]
     TurnsCreate,
     #[serde(rename = "/v1/turns/{id}/events")]
@@ -145,6 +151,7 @@ impl Route {
             Self::Healthz => "/healthz",
             Self::Readyz => "/readyz",
             Self::Metrics => "/v1/metrics",
+            Self::Calibration => "/v1/calibration",
             Self::TurnsCreate => "/v1/turns",
             Self::TurnEvents => "/v1/turns/{id}/events",
             Self::TurnToolResult => "/v1/turns/{id}/tool-result",
@@ -174,10 +181,11 @@ impl Route {
     /// method's exhaustive match until the author classifies it, and the
     /// tests assert `ALL` contains exactly the `is_real` variants it names —
     /// so the array cannot silently lag the enum.
-    pub const ALL: [Route; 17] = [
+    pub const ALL: [Route; 18] = [
         Route::Healthz,
         Route::Readyz,
         Route::Metrics,
+        Route::Calibration,
         Route::TurnsCreate,
         Route::TurnEvents,
         Route::TurnToolResult,
@@ -205,6 +213,7 @@ impl Route {
             Route::Healthz
             | Route::Readyz
             | Route::Metrics
+            | Route::Calibration
             | Route::TurnsCreate
             | Route::TurnEvents
             | Route::TurnToolResult
