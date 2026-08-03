@@ -217,7 +217,7 @@ impl RootHandle {
     /// crosses the wire); the authority remains the walk performed by the
     /// operation itself.
     pub fn is_confined(&self, rel: &str) -> Result<(), RootError> {
-        match self.resolve_leaf(rel, false) {
+        match self.resolve_leaf(rel, false, true) {
             Ok(_) => Ok(()),
             Err(RootError::Escapes(reason)) => Err(RootError::Escapes(reason)),
             Err(RootError::Io(_)) => Ok(()),
@@ -345,7 +345,7 @@ impl RootHandle {
 
     /// Open `rel` for reading.
     pub fn open_read(&self, rel: &str) -> Result<std::fs::File, RootError> {
-        let (parent, name) = self.resolve_leaf(rel, false)?;
+        let (parent, name) = self.resolve_leaf(rel, false, true)?;
         let flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
         let fd = openat(parent.as_fd(), &name, flags, 0).map_err(RootError::Io)?;
         Ok(std::fs::File::from(fd))
@@ -356,7 +356,7 @@ impl RootHandle {
     /// walk*, so each one is created relative to the descriptor above it
     /// rather than by a `create_dir_all` that re-resolves the whole prefix.
     pub fn open_write(&self, rel: &str, create_parents: bool) -> Result<WriteTarget, RootError> {
-        let (parent, name) = self.resolve_leaf(rel, create_parents)?;
+        let (parent, name) = self.resolve_leaf(rel, create_parents, true)?;
         let flags = libc::O_WRONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
         // `O_EXCL` first: it makes the kernel answer "did this open create the
         // file", which decides whether the directory entry needs its own
@@ -384,16 +384,44 @@ impl RootHandle {
         }
     }
 
-    /// `lstat` `rel` through the confined walk.
+    /// `lstat` `rel` through the confined walk, expanding a symlink at the leaf
+    /// — so this answers "what does `rel` name", the question a read or a write
+    /// is asking.
     pub fn stat(&self, rel: &str) -> Result<EntryStat, RootError> {
-        let (parent, name) = self.resolve_leaf(rel, false)?;
+        let (parent, name) = self.resolve_leaf(rel, false, true)?;
         fstatat(parent.as_fd(), &name).map_err(RootError::Io)
     }
 
-    /// Unlink `rel`. `unlinkat` never follows a symlink, so the leaf cannot be
-    /// swapped into one between the walk and the removal.
+    /// `lstat` the leaf **itself**, without expanding a symlink there — the
+    /// `symlink_metadata` to [`stat`](Self::stat)'s `metadata`.
+    ///
+    /// Callers that are about to act on the *name* rather than on what it
+    /// points at need this one. `delete_file` is the whole reason it exists:
+    /// classifying through an expanded leaf reports a link as its target, and a
+    /// dangling link as missing.
+    pub fn symlink_stat(&self, rel: &str) -> Result<EntryStat, RootError> {
+        let (parent, name) = self.resolve_leaf(rel, false, false)?;
+        fstatat(parent.as_fd(), &name).map_err(RootError::Io)
+    }
+
+    /// Where the symlink at `rel` points, verbatim — the stored target, not a
+    /// resolution of it. Errors if the leaf is not a symlink.
+    pub fn read_link(&self, rel: &str) -> Result<std::path::PathBuf, RootError> {
+        let (parent, name) = self.resolve_leaf(rel, false, false)?;
+        readlinkat(parent.as_fd(), &name)
+            .map(std::path::PathBuf::from)
+            .map_err(RootError::Io)
+    }
+
+    /// Unlink `rel`, removing **the name itself**.
+    ///
+    /// The leaf is not expanded: unlinking is an operation on a directory
+    /// entry, so following a link here would delete the file it points at and
+    /// leave the link — silent data loss in any tree with in-tree symlinks
+    /// (#940, #1230). `unlinkat` then never follows either, so the leaf also
+    /// cannot be swapped into a link between the walk and the removal.
     pub fn remove_file(&self, rel: &str) -> Result<(), RootError> {
-        let (parent, name) = self.resolve_leaf(rel, false)?;
+        let (parent, name) = self.resolve_leaf(rel, false, false)?;
         // SAFETY: `parent` is an open directory descriptor and `name` is a
         // NUL-terminated C string that outlives the call.
         let rc = unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), 0) };
@@ -408,10 +436,24 @@ impl RootHandle {
     ///
     /// The leaf is deliberately *not* opened here: which flags it wants is the
     /// caller's business, and the leaf is the one component `O_NOFOLLOW`
-    /// already protected. What this does guarantee about it is that it is not
-    /// a symlink *as of the `readlinkat` below* — a link is expanded, so the
-    /// name returned is the real name in the real directory.
-    fn resolve_leaf(&self, rel: &str, create_dirs: bool) -> Result<(OwnedFd, CString), RootError> {
+    /// already protected.
+    ///
+    /// `follow_leaf` decides what the returned name means. With it set — the
+    /// case for every read and write — a symlink at the leaf is expanded, so
+    /// the name is the real name in the real directory. With it clear, the leaf
+    /// is returned as written, which is what an operation on the *entry* rather
+    /// than on its contents needs: `unlinkat`, `readlinkat`, and the `lstat`
+    /// behind [`symlink_stat`](Self::symlink_stat).
+    ///
+    /// Containment does not depend on the choice. Every interior component is
+    /// opened `O_NOFOLLOW` either way, so a link cannot redirect the walk
+    /// itself; only the final name's own indirection is at stake.
+    fn resolve_leaf(
+        &self,
+        rel: &str,
+        create_dirs: bool,
+        follow_leaf: bool,
+    ) -> Result<(OwnedFd, CString), RootError> {
         let mut queue: std::collections::VecDeque<Step> = std::collections::VecDeque::new();
         splice(&mut queue, Path::new(rel), rel)?;
 
@@ -443,6 +485,12 @@ impl RootHandle {
             let here = stack.last().expect("the root is never popped").as_fd();
 
             if queue.is_empty() {
+                // The caller wants the entry, not what it points at, so the
+                // name stands as written — no `readlinkat`, nothing expanded.
+                if !follow_leaf {
+                    let parent = stack.pop().expect("the root is never popped");
+                    return Ok((parent, cname));
+                }
                 // The leaf. `readlinkat` asks "is this a symlink" without
                 // opening anything, which is the whole point: opening it is
                 // exactly what must not happen until we know where it goes.
@@ -733,6 +781,20 @@ impl RootHandle {
         })
     }
 
+    /// Off Unix [`stat`](Self::stat) is already a `symlink_metadata`, and the
+    /// string resolver has no leaf-expansion step to skip, so the two answer
+    /// the same question here.
+    pub fn symlink_stat(&self, rel: &str) -> Result<EntryStat, RootError> {
+        self.stat(rel)
+    }
+
+    pub fn read_link(&self, rel: &str) -> Result<PathBuf, RootError> {
+        let full = self.resolve_leaf(rel, false)?;
+        std::fs::read_link(full).map_err(RootError::Io)
+    }
+
+    /// `std::fs::remove_file` unlinks the name, never the symlink's target, so
+    /// the link-not-target contract holds here without an `unlinkat`.
     pub fn remove_file(&self, rel: &str) -> Result<(), RootError> {
         let full = self.resolve_leaf(rel, false)?;
         std::fs::remove_file(full).map_err(RootError::Io)
