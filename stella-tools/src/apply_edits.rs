@@ -13,7 +13,10 @@
 //!    full, permissions), every touched file — the one that failed included —
 //!    is **rolled back** to its original bytes so the tree is never left
 //!    half-applied; a file that cannot be restored is named loudly in the
-//!    error instead of being reported clean.
+//!    error instead of being reported clean. The rollback restores only what
+//!    the batch still owns: a file whose bytes no longer match what this batch
+//!    wrote belongs to whoever wrote it last, and is reported rather than
+//!    reverted (see `roll_back_prior_writes`).
 //!
 //! One transactional call also fits the engine's concurrency model better
 //! than N serial `edit_file` barriers: mutating tools are never
@@ -114,6 +117,52 @@ fn parse_edits(input: &Value) -> Result<Vec<ParsedEdit>, String> {
             Ok(parsed)
         })
         .collect()
+}
+
+/// One touched file: (display path, full path, original bytes, final bytes).
+type TouchedFile = (String, std::path::PathBuf, String, String);
+
+/// Restore every file this batch already wrote back to its pre-batch bytes,
+/// returning the lines the caller appends to its error.
+///
+/// A file is rolled back only while the batch still owns it. Between our write
+/// and the failure that triggered this, something else — a formatter, a
+/// watcher, the user's editor — may have rewritten the file; restoring the
+/// pre-batch bytes over that silently reverts THEIR change under the banner of
+/// a clean abort. Ownership is decided by comparing the bytes on disk to the
+/// bytes we wrote, which are already in memory, so an exact comparison costs no
+/// more than a hash and cannot collide. A file we cannot read is not evidence
+/// of foreign ownership, so it still rolls back.
+///
+/// An empty return means every already-written file is back to its original
+/// content.
+async fn roll_back_prior_writes(
+    files: &HashMap<String, TouchedFile>,
+    written: &[String],
+) -> String {
+    let mut note = String::new();
+    for key in written {
+        let (path, full, original, ours) = &files[key];
+        if matches!(tokio::fs::read(full).await, Ok(now) if now != ours.as_bytes()) {
+            note.push_str(&format!(
+                "\n  NOT ROLLED BACK: `{path}` was changed by something else after this batch \
+                 wrote it — its current content was left alone; reconcile it by hand"
+            ));
+            continue;
+        }
+        // The rollback especially must not truncate: a failed rollback with a
+        // truncating write turns a partial batch into a destroyed file.
+        if crate::durable_write::write_file_durably(full.clone(), original.as_bytes().to_vec())
+            .await
+            .is_err()
+        {
+            note.push_str(&format!(
+                "\n  ROLLBACK FAILED for `{path}` — restore it manually from the content you \
+                 last read"
+            ));
+        }
+    }
+    note
 }
 
 /// The batch's composed post-edit content for one `path` — the SAME
@@ -329,7 +378,7 @@ impl Tool for ApplyEdits {
         // ---- Phase 2: apply — one write per touched file, in first-touch
         // order. On a mid-batch write failure, roll back every file already
         // written to its original bytes so the tree never stays half-applied.
-        let mut written: Vec<&String> = Vec::new();
+        let mut written: Vec<String> = Vec::new();
         for key in &order {
             let (path, full, _, simulated) = &files[key];
             if let Err(e) = crate::durable_write::write_file_durably(
@@ -364,24 +413,7 @@ impl Tool for ApplyEdits {
                          the content you last read"
                     ));
                 }
-                for prior in &written {
-                    let (prior_path, prior_full, original, _) = &files[*prior];
-                    // The rollback especially must not truncate: a failed
-                    // rollback with a truncating write turns a partial batch
-                    // into a destroyed file.
-                    if crate::durable_write::write_file_durably(
-                        prior_full.clone(),
-                        original.as_bytes().to_vec(),
-                    )
-                    .await
-                    .is_err()
-                    {
-                        rollback_note.push_str(&format!(
-                            "\n  ROLLBACK FAILED for `{prior_path}` — restore it manually from \
-                             the content you last read"
-                        ));
-                    }
-                }
+                rollback_note.push_str(&roll_back_prior_writes(&files, &written).await);
                 if rollback_note.is_empty() {
                     rollback_note = format!(
                         "\n  every touched file (including `{path}`) holds its original \
@@ -395,7 +427,7 @@ impl Tool for ApplyEdits {
                     ),
                 };
             }
-            written.push(key);
+            written.push(key.clone());
         }
         // The model knows the bytes it just produced (#331) — record every
         // final content so these writes are never misattributed as drift.
@@ -784,6 +816,98 @@ mod tests {
         assert!(
             !message.contains("ROLLBACK FAILED"),
             "an intact failing file must not raise a manual-restore alarm: {message}"
+        );
+    }
+
+    /// One entry of the rollback's view of a touched file: the bytes it found
+    /// before the batch, and the bytes the batch wrote.
+    fn touched(
+        key: &str,
+        full: &std::path::Path,
+        original: &str,
+        ours: &str,
+    ) -> (String, TouchedFile) {
+        (
+            key.to_string(),
+            (
+                key.to_string(),
+                full.to_path_buf(),
+                original.to_string(),
+                ours.to_string(),
+            ),
+        )
+    }
+
+    /// The audit witness. The rollback restored the bytes captured during
+    /// validation unconditionally, so a write that landed from ANOTHER process
+    /// between our write and the abort was silently reverted — a third party's
+    /// change destroyed, and the error still read as a clean all-or-nothing
+    /// abort. A file whose bytes are no longer ours is left alone and named.
+    #[tokio::test]
+    async fn a_foreign_write_after_ours_is_reported_not_reverted() {
+        let dir = tempfile::tempdir().unwrap();
+        let full = dir.path().join("a.rs");
+        std::fs::write(&full, "someone else wrote this\n").unwrap();
+
+        let files: HashMap<String, TouchedFile> = HashMap::from([touched(
+            "a.rs",
+            &full,
+            "before the batch\n",
+            "the batch wrote this\n",
+        )]);
+        let note = roll_back_prior_writes(&files, &["a.rs".to_string()]).await;
+
+        assert!(note.contains("NOT ROLLED BACK"), "{note}");
+        assert!(note.contains("a.rs"), "{note}");
+        assert_eq!(
+            std::fs::read_to_string(&full).unwrap(),
+            "someone else wrote this\n",
+            "the rollback must not revert a write this batch does not own"
+        );
+    }
+
+    /// The other side of the same rule: bytes still matching what the batch
+    /// wrote are the batch's to undo, and the note stays empty.
+    #[tokio::test]
+    async fn the_rollback_restores_a_file_the_batch_still_owns() {
+        let dir = tempfile::tempdir().unwrap();
+        let full = dir.path().join("a.rs");
+        std::fs::write(&full, "the batch wrote this\n").unwrap();
+
+        let files: HashMap<String, TouchedFile> = HashMap::from([touched(
+            "a.rs",
+            &full,
+            "before the batch\n",
+            "the batch wrote this\n",
+        )]);
+        let note = roll_back_prior_writes(&files, &["a.rs".to_string()]).await;
+
+        assert!(note.is_empty(), "{note}");
+        assert_eq!(
+            std::fs::read_to_string(&full).unwrap(),
+            "before the batch\n"
+        );
+    }
+
+    /// A file we cannot read tells us nothing about who owns it, so the
+    /// all-or-nothing contract wins and it is restored.
+    #[tokio::test]
+    async fn an_unreadable_file_is_still_rolled_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let full = dir.path().join("vanished.rs");
+
+        let files: HashMap<String, TouchedFile> = HashMap::from([touched(
+            "vanished.rs",
+            &full,
+            "before the batch\n",
+            "the batch wrote this\n",
+        )]);
+        let note = roll_back_prior_writes(&files, &["vanished.rs".to_string()]).await;
+
+        assert!(note.is_empty(), "{note}");
+        assert_eq!(
+            std::fs::read_to_string(&full).unwrap(),
+            "before the batch\n"
         );
     }
 }
