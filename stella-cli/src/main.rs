@@ -57,6 +57,7 @@ mod env_files;
 mod export;
 mod extensions;
 mod fleet_cmd;
+mod fleet_warmth;
 mod ingest_cmd;
 mod init_fx;
 mod inspect;
