@@ -519,6 +519,17 @@
               "minimum": 0,
               "type": "integer"
             },
+            "finish_reason": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/FinishReason"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Why generation stopped, as the provider reported it\n([`stella_protocol::completion::FinishReason`]). `Length` is the\nonly *ground truth* a consumer has that this step was cut off at\nthe output ceiling — the \"we stopped first\" event.\n\nIt is here because it was previously nowhere: the engine knew the\nreason and dropped it at this boundary, so every downstream reader\nhad to *infer* truncation from step shape. The benchmark harness\ninferred it as \"≥16384 output tokens and no tool call\", which was\nright when the output ceiling was 16K and became a false positive\nthe moment the ceiling moved to 64K — the reading behind the\nunexplained `cap_hits: 106` in the GLM-5.2 head-to-head. An\ninferred cap hit cannot be told from a long answer; a reported one\ncan.\n\n`None` means the provider did not report a reason (or the stream\npredates this field — hence `serde(default)`), and must never be\nread as \"not truncated\": absence of the signal is not evidence of\na clean stop."
+            },
             "input_tokens": {
               "format": "uint64",
               "minimum": 0,
@@ -1747,6 +1758,31 @@
         {
           "const": "deleted",
           "description": "The file was removed.",
+          "type": "string"
+        }
+      ]
+    },
+    "FinishReason": {
+      "description": "Why the model stopped generating, normalized across providers. Lets the\nengine tell a natural stop from a truncation (`Length`) so an empty or\ncut-off turn is surfaced to the user instead of being recorded as a clean\ncompletion (the \"turn ends with no feedback\" defect).",
+      "oneOf": [
+        {
+          "const": "stop",
+          "description": "Natural end of the response.",
+          "type": "string"
+        },
+        {
+          "const": "length",
+          "description": "Output was cut off at the token limit (OpenAI-compatible `length`).",
+          "type": "string"
+        },
+        {
+          "const": "tool_calls",
+          "description": "The model stopped in order to make tool calls.",
+          "type": "string"
+        },
+        {
+          "const": "content_filter",
+          "description": "A provider content filter halted generation.",
           "type": "string"
         }
       ]

@@ -112,6 +112,7 @@ fn full_deck_frame_grows_a_third_statline_row_for_a_diagnosed_agent() {
                 retries: 0,
                 tool_calls: 0,
                 complete: true,
+                finish_reason: None,
             },
         });
     }
@@ -534,6 +535,7 @@ fn step_usage(input: u64, cached: u64) -> AgentEvent {
         retries: 0,
         tool_calls: 0,
         complete: true,
+        finish_reason: None,
     }
 }
 

@@ -228,6 +228,14 @@ export interface ContextUsage {
 export type FileChangeKind = "read" | "created" | "modified" | "deleted";
 
 /**
+ * Why the model stopped generating, normalized across providers. Lets the
+ * engine tell a natural stop from a truncation (`Length`) so an empty or
+ * cut-off turn is surfaced to the user instead of being recorded as a clean
+ * completion (the "turn ends with no feedback" defect).
+ */
+export type FinishReason = "stop" | "length" | "tool_calls" | "content_filter";
+
+/**
  * Evidence backing a `JudgeVerdict`. `deterministic` distinguishes the
  * flip-oracle/tests ladder from a model judge's opinion — the two are
  * never conflated (L-E11).
@@ -1004,6 +1012,28 @@ export type AgentEvent = {
    * so old streams still parse).
    */
   estimated_input_tokens?: number;
+  /**
+   * Why generation stopped, as the provider reported it
+   * ([`stella_protocol::completion::FinishReason`]). `Length` is the
+   * only *ground truth* a consumer has that this step was cut off at
+   * the output ceiling — the "we stopped first" event.
+   *
+   * It is here because it was previously nowhere: the engine knew the
+   * reason and dropped it at this boundary, so every downstream reader
+   * had to *infer* truncation from step shape. The benchmark harness
+   * inferred it as "≥16384 output tokens and no tool call", which was
+   * right when the output ceiling was 16K and became a false positive
+   * the moment the ceiling moved to 64K — the reading behind the
+   * unexplained `cap_hits: 106` in the GLM-5.2 head-to-head. An
+   * inferred cap hit cannot be told from a long answer; a reported one
+   * can.
+   *
+   * `None` means the provider did not report a reason (or the stream
+   * predates this field — hence `serde(default)`), and must never be
+   * read as "not truncated": absence of the signal is not evidence of
+   * a clean stop.
+   */
+  finish_reason?: FinishReason | null;
   input_tokens: number;
   model: string;
   /**

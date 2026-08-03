@@ -480,6 +480,7 @@ def envelope_to_trajectory(
     assurance_tiers_sha256: str | None = None,
     witness_author_model: str | None = None,
     witness_authored_state: str | None = None,
+    workspace_git_baseline: dict[str, str] | None = None,
 ) -> Trajectory:
     """Build and validate an ATIF-v1.7 trajectory from a Stella envelope."""
     events = envelope.get("events")
@@ -653,6 +654,12 @@ def envelope_to_trajectory(
     # (It shipped guarded like its neighbours once — exactly the ambiguity
     # this comment promised away.)
     agent_extra["witness_authored_state"] = witness_authored_state or "not_reported"
+    # Also unconditional, and for the same reason: the workspace baseline is
+    # an in-container action a public trajectory reviewer must be able to see
+    # (or see was not attempted), never infer from a missing key.
+    agent_extra["workspace_git_baseline"] = dict(
+        workspace_git_baseline or {"state": "not_attempted"}
+    )
 
     return Trajectory(
         schema_version="ATIF-v1.7",

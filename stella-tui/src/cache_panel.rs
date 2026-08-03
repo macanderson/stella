@@ -377,6 +377,7 @@ mod tests {
             retries: 0,
             tool_calls: 0,
             complete: true,
+            finish_reason: None,
         }
     }
 

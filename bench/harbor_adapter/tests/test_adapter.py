@@ -15,6 +15,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -31,14 +33,17 @@ from stella_harbor import (  # noqa: E402 - after importorskip by design
     _ADAPTER_VERSION,
     _ENGINE_CONFIG_ENV,
     _ENGINE_POSTURE_VERSION,
+    _GIT_BASELINE_MARKER,
     _INSTALL_PATH,
     HOST_CREDENTIAL_BUNDLE_FD_ENV,
     StellaAgent,
     _benchmark_engine_posture,
     _cached_binary,
     _extract_metrics,
+    _git_baseline_script,
     _is_truthy,
     _load_json_object,
+    _parse_git_baseline_report,
     _secure_exec_with_credential_fd,
     _sha256_file,
     _source_tree_sha256,
@@ -1904,6 +1909,241 @@ class TestAtifTrajectory:
         assert validated.agent.extra["host_credential_name"] == ("OPENROUTER_API_KEY")
         assert validated.agent.extra["host_credential_bundle_count"] == 1
         assert validated.agent.extra["container_credential_absence_verified"] is True
+
+
+_GIT_AVAILABLE = shutil.which("git") is not None
+
+
+def _run_baseline_script(workdir: Path, env: dict[str, str] | None = None) -> str:
+    """Execute the generated baseline script exactly as the container would."""
+    result = subprocess.run(
+        ["/bin/sh", "-c", _git_baseline_script(str(workdir))],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    # The script's contract: it never fails the exec, whatever it found.
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+def _git(workdir: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(workdir), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+class TestWorkspaceGitBaseline:
+    """#1211 §6 item 4: task dirs get a git baseline before Stella starts."""
+
+    @pytest.mark.skipif(not _GIT_AVAILABLE, reason="requires git on the host")
+    def test_creates_baseline_commit_and_excludes_stella_state(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "task.py").write_text("def solve(): ...\n")
+        (tmp_path / ".stella" / "private").mkdir(parents=True)
+        (tmp_path / ".stella" / "private" / "codegraph.db").write_bytes(b"db")
+
+        report = _parse_git_baseline_report(_run_baseline_script(tmp_path))
+
+        assert report["state"] == "created"
+        assert report["commit"] == _git(tmp_path, "rev-parse", "HEAD")
+        # Every task file is in the baseline; Stella's own state is not, and
+        # the tree the verifier enumerates gained no entries (the exclusion
+        # lives in .git/info/exclude, not a tracked .gitignore).
+        tracked = _git(tmp_path, "ls-files").splitlines()
+        assert "task.py" in tracked
+        assert not any(entry.startswith(".stella") for entry in tracked)
+        assert not (tmp_path / ".gitignore").exists()
+        assert _git(tmp_path, "status", "--porcelain") == ""
+        subject = _git(tmp_path, "log", "-1", "--format=%s")
+        assert subject == "stella-harbor: task workspace baseline"
+
+    @pytest.mark.skipif(not _GIT_AVAILABLE, reason="requires git on the host")
+    def test_empty_workspace_still_gets_a_baseline_commit(
+        self, tmp_path: Path
+    ) -> None:
+        report = _parse_git_baseline_report(_run_baseline_script(tmp_path))
+        assert report["state"] == "created"
+        # --allow-empty: "repository with no HEAD" is not a reachable state.
+        assert report["commit"] == _git(tmp_path, "rev-parse", "HEAD")
+
+    @pytest.mark.skipif(not _GIT_AVAILABLE, reason="requires git on the host")
+    def test_preexisting_repository_is_left_untouched(self, tmp_path: Path) -> None:
+        (tmp_path / "app.py").write_text("app\n")
+        _git(tmp_path, "init", "-q")
+        _git(tmp_path, "add", "-A")
+        _git(
+            tmp_path,
+            "-c",
+            "user.name=task",
+            "-c",
+            "user.email=task@example.com",
+            "commit",
+            "-q",
+            "-m",
+            "task-owned history",
+        )
+        head_before = _git(tmp_path, "rev-parse", "HEAD")
+        (tmp_path / "untracked.txt").write_text("dirty\n")
+
+        report = _parse_git_baseline_report(_run_baseline_script(tmp_path))
+
+        # Committing on top of task-owned history would change the task, so
+        # HEAD and the dirty working tree must both survive verbatim.
+        assert report == {"state": "preexisting"}
+        assert _git(tmp_path, "rev-parse", "HEAD") == head_before
+        assert "untracked.txt" in _git(tmp_path, "status", "--porcelain")
+
+    def test_missing_git_reports_unavailable_and_exits_zero(
+        self, tmp_path: Path
+    ) -> None:
+        stdout = _run_baseline_script(tmp_path, env={"PATH": "/nonexistent"})
+        assert _parse_git_baseline_report(stdout) == {
+            "state": "unavailable",
+            "detail": "git-not-installed",
+        }
+
+    def test_missing_workdir_reports_error_and_exits_zero(
+        self, tmp_path: Path
+    ) -> None:
+        stdout = _run_baseline_script(tmp_path / "gone")
+        assert _parse_git_baseline_report(stdout) == {
+            "state": "error",
+            "detail": "workdir-unavailable",
+        }
+
+    def test_report_parser_takes_last_marker_and_drops_empty_values(self) -> None:
+        stdout = (
+            "unrelated diagnostics\n"
+            f"{_GIT_BASELINE_MARKER} state=failed detail=git-command-failed\n"
+            f"{_GIT_BASELINE_MARKER} state=created commit=\n"
+        )
+        # Last marker wins; the empty commit= token (a failed rev-parse) must
+        # yield no key rather than an empty string a reader could mistake for
+        # a digest.
+        assert _parse_git_baseline_report(stdout) == {"state": "created"}
+        assert _parse_git_baseline_report("no marker here") == {"state": "unreported"}
+        assert _parse_git_baseline_report(None) == {"state": "unreported"}
+        assert _parse_git_baseline_report("") == {"state": "unreported"}
+
+    def test_establish_runs_in_task_workdir_and_records_report(self) -> None:
+        agent = _bare_agent()
+        commands: list[tuple[str, int]] = []
+
+        class _Environment:
+            task_env_config = SimpleNamespace(workdir="/app")
+
+        async def _exec_as_agent(
+            environment: object, *, command: str, timeout_sec: int
+        ) -> SimpleNamespace:
+            commands.append((command, timeout_sec))
+            return SimpleNamespace(
+                return_code=0,
+                stdout=f"{_GIT_BASELINE_MARKER} state=created commit={'a' * 40}\n",
+            )
+
+        agent.exec_as_agent = _exec_as_agent
+        asyncio.run(agent._establish_workspace_git_baseline(_Environment()))
+
+        assert agent._workspace_git_baseline == {
+            "state": "created",
+            "commit": "a" * 40,
+        }
+        assert len(commands) == 1
+        command, timeout_sec = commands[0]
+        assert command.startswith("cd /app || ")
+        assert "git init" in command
+        assert "git add -A" in command
+        assert "--allow-empty" in command
+        assert ".git/info/exclude" in command
+        assert timeout_sec == 180
+
+    def test_establish_never_raises_and_records_exec_failure(self) -> None:
+        agent = _bare_agent()
+
+        class _Environment:
+            task_env_config = SimpleNamespace(workdir="/app")
+
+        async def _exec_as_agent(
+            environment: object, *, command: str, timeout_sec: int
+        ) -> SimpleNamespace:
+            raise RuntimeError("compose exec unavailable")
+
+        agent.exec_as_agent = _exec_as_agent
+        asyncio.run(agent._establish_workspace_git_baseline(_Environment()))
+
+        assert agent._workspace_git_baseline == {
+            "state": "error",
+            "detail": "compose exec unavailable",
+        }
+
+    def test_metadata_and_trajectory_disclose_the_baseline_state(
+        self, tmp_path: Path
+    ) -> None:
+        agent = _bare_agent()
+        agent.logs_dir = tmp_path
+        agent.model_name = "openrouter/anthropic/claude-sonnet-5"
+        agent._version = "stella 0.4.43"
+        agent._instruction = "Fix the benchmark task."
+        agent._session_id = "session-baseline"
+        agent._return_code = 0
+        agent._envelope = _trajectory_envelope()
+        agent._metrics = _extract_metrics(json.dumps(agent._envelope))
+        agent._workspace_git_baseline = {"state": "created", "commit": "b" * 40}
+
+        class _Ctx:
+            cost_usd = None
+            n_input_tokens = None
+            n_output_tokens = None
+            n_cache_tokens = None
+            metadata = None
+
+        ctx = _Ctx()
+        agent.populate_context_post_run(ctx)
+
+        assert ctx.metadata["stella_workspace_git_baseline"] == {
+            "state": "created",
+            "commit": "b" * 40,
+        }
+        validated = Trajectory.model_validate_json(
+            (tmp_path / "trajectory.json").read_text(encoding="utf-8")
+        )
+        assert validated.agent.extra["workspace_git_baseline"] == {
+            "state": "created",
+            "commit": "b" * 40,
+        }
+
+    def test_absent_baseline_is_disclosed_as_not_attempted(self) -> None:
+        agent = _bare_agent()
+        agent._metrics = {
+            "cost_usd": None,
+            "n_input_tokens": None,
+            "n_output_tokens": None,
+            "n_cache_tokens": None,
+            "status": "completed",
+            "model": None,
+            "steps": None,
+        }
+        agent._return_code = 0
+
+        class _Ctx:
+            cost_usd = None
+            n_input_tokens = None
+            n_output_tokens = None
+            n_cache_tokens = None
+            metadata = None
+
+        ctx = _Ctx()
+        agent.populate_context_post_run(ctx)
+
+        assert ctx.metadata["stella_workspace_git_baseline"] == {
+            "state": "not_attempted"
+        }
 
 
 if __name__ == "__main__":
