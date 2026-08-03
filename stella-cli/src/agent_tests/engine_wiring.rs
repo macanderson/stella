@@ -888,3 +888,130 @@ fn the_models_own_output_ceiling_replaces_the_global_default() {
         stella_core::driver::EngineConfig::default().max_output_tokens,
     );
 }
+
+/// The default is the MODEL'S maximum, with nothing configured (#1290).
+///
+/// Asserted against the number the provider actually reports rather than
+/// "whatever the seed happens to say", and against both of the wrong answers
+/// this has historically been: the engine's global 16384, and the 64,000 this
+/// row carried for months — which was the comparator's measured stopping
+/// point, not Sonnet 5's ceiling.
+#[test]
+fn an_unconfigured_run_asks_for_the_models_whole_output_budget() {
+    let mut cfg = cfg_for("anthropic");
+    cfg.model_id = "claude-sonnet-5".to_string();
+
+    let resolved = crate::agent::engine_config_for(&cfg).max_output_tokens;
+    assert_eq!(
+        resolved,
+        Some(128_000),
+        "Anthropic's own /v1/models reports max_tokens=128000 for this model",
+    );
+    assert_ne!(
+        resolved,
+        stella_core::driver::EngineConfig::default().max_output_tokens,
+        "the global default must not be what a catalogued model gets",
+    );
+}
+
+/// Spending LESS than the model can write is the one direction an operator
+/// actually needs, and `[models.output_caps]` is how they ask for it by name.
+#[test]
+fn a_per_model_cap_lowers_the_ceiling_but_only_for_the_model_named() {
+    let mut cfg = cfg_with_engine(
+        "anthropic",
+        r#"{ "default_model": "anthropic/claude-sonnet-5",
+             "model_output_caps": { "anthropic/claude-sonnet-5": 64000 } }"#,
+    );
+    cfg.model_id = "claude-sonnet-5".to_string();
+    assert_eq!(
+        crate::agent::engine_config_for(&cfg).max_output_tokens,
+        Some(64_000),
+    );
+
+    // Same settings, different model: an entry naming one model says nothing
+    // about any other, so Fable keeps its own 128,000. A map that leaked
+    // across models would be a global cap wearing a per-model spelling.
+    let mut other = cfg_with_engine(
+        "anthropic",
+        r#"{ "default_model": "anthropic/claude-fable-5",
+             "model_output_caps": { "anthropic/claude-sonnet-5": 64000 } }"#,
+    );
+    other.model_id = "claude-fable-5".to_string();
+    assert_eq!(
+        crate::agent::engine_config_for(&other).max_output_tokens,
+        Some(128_000),
+    );
+}
+
+/// An override ABOVE the model's ceiling clamps instead of being forwarded.
+///
+/// Asking a provider for more than the model can write is not a longer answer,
+/// it is a rejection on every step. The operator who typed an extra digit
+/// meant "as much as possible", and the catalog number already is that.
+#[test]
+fn a_per_model_cap_above_the_models_ceiling_clamps_to_the_ceiling() {
+    let mut cfg = cfg_with_engine(
+        "anthropic",
+        r#"{ "default_model": "anthropic/claude-sonnet-5",
+             "model_output_caps": { "anthropic/claude-sonnet-5": 999999 } }"#,
+    );
+    cfg.model_id = "claude-sonnet-5".to_string();
+    assert_eq!(
+        crate::agent::engine_config_for(&cfg).max_output_tokens,
+        Some(128_000),
+        "clamped to what the model can actually emit",
+    );
+}
+
+/// A bare slug pins the model on every route; a qualified key pins it on one.
+/// Both are real requests — capping a model only on the gateway you pay
+/// per-token for is a thing people want — so the qualified form wins when both
+/// are present rather than one silently shadowing the other.
+#[test]
+fn a_bare_slug_caps_every_route_and_a_qualified_key_outranks_it() {
+    let mut bare = cfg_with_engine(
+        "anthropic",
+        r#"{ "default_model": "anthropic/claude-sonnet-5",
+             "model_output_caps": { "claude-sonnet-5": 32000 } }"#,
+    );
+    bare.model_id = "claude-sonnet-5".to_string();
+    assert_eq!(
+        crate::agent::engine_config_for(&bare).max_output_tokens,
+        Some(32_000),
+    );
+
+    let mut both = cfg_with_engine(
+        "anthropic",
+        r#"{ "default_model": "anthropic/claude-sonnet-5",
+             "model_output_caps": {
+                 "claude-sonnet-5": 32000,
+                 "anthropic/claude-sonnet-5": 48000
+             } }"#,
+    );
+    both.model_id = "claude-sonnet-5".to_string();
+    assert_eq!(
+        crate::agent::engine_config_for(&both).max_output_tokens,
+        Some(48_000),
+        "the provider-qualified entry is the more specific request",
+    );
+}
+
+/// `0` is a mistake here, not an opt-out — unlike `model_timeout_secs`, where
+/// it spells "no ceiling". The field's ABSENCE already means "the model's own
+/// maximum", so zero has no meaning left to carry, and honoring it literally
+/// would ask the provider for an empty completion on every step.
+#[test]
+fn a_zero_per_model_cap_is_ignored_rather_than_sent() {
+    let mut cfg = cfg_with_engine(
+        "anthropic",
+        r#"{ "default_model": "anthropic/claude-sonnet-5",
+             "model_output_caps": { "anthropic/claude-sonnet-5": 0 } }"#,
+    );
+    cfg.model_id = "claude-sonnet-5".to_string();
+    assert_eq!(
+        crate::agent::engine_config_for(&cfg).max_output_tokens,
+        Some(128_000),
+        "a zero cap falls back to the model's own maximum",
+    );
+}

@@ -66,6 +66,12 @@ fn tuned_engine_config(
     {
         engine.compaction_budget_tokens = budget;
     }
+    // What the model itself can write, once the catalog has answered — kept
+    // so the per-model override below can be clamped to it rather than
+    // trusted to be sane. `None` means the catalog has no ceiling for this
+    // row, which is the case the seed and provider discovery exist to make
+    // rare (#1290).
+    let mut model_ceiling: Option<u32> = None;
     if let Ok(entry) = stella_model::catalog::Catalog::current().resolve_for(provider_id, model_id)
     {
         let window = entry.context_window as u64;
@@ -90,9 +96,31 @@ fn tuned_engine_config(
         // so an explicit `params.max_tokens` overrides it.
         if let Some(ceiling) = entry.max_output_tokens.filter(|c| *c > 0) {
             engine.max_output_tokens = Some(ceiling);
+            model_ceiling = Some(ceiling);
         }
     }
     if let Some(settings) = &cfg.engine_settings {
+        // The operator's deliberate per-model cap (`[models.output_caps]`),
+        // between the model's own ceiling above and the per-agent tuning
+        // below. That ordering is the whole design: the DEFAULT is always the
+        // model's maximum, and spending less than it is something someone has
+        // to ask for by name. Nothing here can make the default lower.
+        //
+        // Clamped to the model's ceiling rather than obeyed blindly. Asking
+        // for more than the model can write is not a bigger answer, it is a
+        // provider-side rejection on every step — and the operator who typed
+        // an extra digit meant "as much as possible", which is what the
+        // catalog number already is. Clamping grants that; forwarding it
+        // breaks the run. When the ceiling is unknown the entry is honored
+        // as written: there is nothing to clamp against, and refusing it
+        // would leave the engine's global default in place, which is lower
+        // than anything the operator would have been typing here.
+        if let Some(cap) = settings.model_output_cap(provider_id, model_id) {
+            engine.max_output_tokens = Some(match model_ceiling {
+                Some(ceiling) => cap.min(ceiling),
+                None => cap,
+            });
+        }
         let tuning = crate::engine_config::tuning_for(settings, kind);
         if tuning.temperature.is_some() {
             engine.temperature = tuning.temperature;
