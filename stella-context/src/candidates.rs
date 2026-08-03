@@ -46,7 +46,7 @@ pub(crate) const NODE_AS_OF: &str = "(?1 IS NULL OR n.recorded_at <= ?1) \
 ///
 /// Every signal recall fuses over the whole corpus — recency, domain overlap,
 /// hash dedup, and the `L-C5` drop report — reads only identity, time, hash,
-/// and *size*. Only the ≤`MMR_CANDIDATE_MULTIPLE × max_frames` candidates that
+/// and *size*. Only the ≤`mmr_candidate_multiple × max_frames` candidates that
 /// survive the cut need the bytes, and those are fetched by id
 /// ([`nodes_by_ids`]). Loading `content` for the whole corpus meant a 5-frame
 /// recall pulled every body a workspace had ever written across the SQLite
@@ -314,7 +314,7 @@ pub(crate) fn vectors_for_ids(
 ///
 /// An unscoped recall needs domains for exactly the frames it mints (they ride
 /// provenance so a citation view can show them), which is at most
-/// `max_frames × MMR_CANDIDATE_MULTIPLE` nodes. It was calling
+/// `max_frames × mmr_candidate_multiple` nodes. It was calling
 /// [`domains_by_node`] instead — a full `node_domains ⋈ domain ⋈ node` scan
 /// building a `HashMap` entry per tagged node in the workspace — and then
 /// looking up 20 of them. A domain-*scoped* recall still needs the whole map,

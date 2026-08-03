@@ -36,7 +36,7 @@
 //! [`handle_conn`] is a fold, not a router: it opens a `RequestRecord` before
 //! the first byte is parsed, delegates to [`route`], and emits the terminal
 //! record on the way out — including when the peer hung up unanswered, and
-//! including when the connection failed. The router's sixteen exits do not know
+//! including when the connection failed. The router's twenty-odd exits do not know
 //! a record exists. See `src/observe/record.rs` for why that indirection is
 //! load-bearing rather than decorative.
 //!
@@ -816,7 +816,7 @@ pub async fn serve_until(
 /// returns, so there is no path — malformed request, oversized head, timeout,
 /// silent hangup, I/O failure mid-response — that produces no record. That is
 /// the whole reason [`route`] exists as a separate function: distributing
-/// "remember to report" across its sixteen exits is one refactor away from
+/// "remember to report" across its twenty-odd exits is one refactor away from
 /// being silently false, which is exactly how the PROOF rail (#901) shipped a
 /// surface that reported only on the happy path.
 pub(crate) async fn handle_conn(

@@ -207,11 +207,19 @@ impl Settings {
             self.ui = Some(ui.clone());
         }
         // Adaptive-context config: whole-block last-wins (a higher-precedence
-        // scope that declares `context` replaces a lower one's). Inert in
-        // Phase 0 — nothing reads it — so no trust restoration is needed (it
-        // carries no credential or egress authority).
+        // scope that declares `context` replaces a lower one's). Read by
+        // `memory::tuning` (retrieval budgets, the lifecycle switch, promotion
+        // and efficacy thresholds). It carries no credential or egress
+        // authority, so no trust restoration is needed — but it IS honored
+        // from an untrusted project scope; revisit if a knob ever gains one.
         if let Some(context) = &scope.context {
             self.context = Some(context.clone());
+        }
+        // Same explicit-listing rule as `enable_recap` above: omit this and
+        // the policy parses everywhere yet merges to `None`, leaving
+        // `create_worktrees()` at `Ask` no matter what any file said.
+        if let Some(worktrees) = scope.create_worktrees {
+            self.create_worktrees = Some(worktrees);
         }
         // External CGP providers merge per-ENTRY (like `providers`), so a
         // project scope can enable an entry the user scope declared without
@@ -484,8 +492,10 @@ impl Settings {
         Ok(merged)
     }
 
-    /// Read the same three scope files [`Settings::load`] reads, but keep
-    /// their `tools` sections apart — see [`ToolScopePolicies`] for why the
+    /// Read the user/managed/project `settings.json` files, keeping their
+    /// `tools` sections apart. Does NOT yet honour `stella.toml`: a
+    /// TOML-migrated scope reports an empty policy here even though
+    /// [`Settings::load`] reads it — see [`ToolScopePolicies`] for why the
     /// merged answer is not enough.
     ///
     /// Cheap local reads, and deliberately re-read on every call rather than

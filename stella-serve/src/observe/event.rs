@@ -85,8 +85,8 @@ impl LevelFilter {
 
 /// Which endpoint a request reached, as a **template**.
 ///
-/// The raw path is never recorded, because for five of these it contains the
-/// turn id. Serde renames each variant to its template so a record reads like
+/// The raw path is never recorded, because for seven of these it contains
+/// the turn id (and two more carry a session id). Serde renames each variant to its template so a record reads like
 /// an access log without any rendering step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Route {

@@ -174,9 +174,11 @@ pub fn warrant(diff: &str, file_changes: u32) -> WitnessWarrant {
     WitnessWarrant::Required
 }
 
-/// Post-image paths from a unified diff (`+++ b/path`), with `/dev/null`
-/// dropped and the `b/` prefix stripped. Falls back to the pre-image path so a
-/// deletion still reports what it removed.
+/// Both the post-image (`+++ b/path`) and pre-image (`--- a/path`) paths from
+/// a unified diff, with `/dev/null` dropped and the `a/`/`b/` prefixes
+/// stripped — a deletion still reports what it removed, and a rename
+/// contributes both its old and new path to the "every path must agree"
+/// rules.
 fn changed_paths(diff: &str) -> Vec<String> {
     let mut paths = Vec::new();
     for line in diff.lines() {

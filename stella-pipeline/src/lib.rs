@@ -72,8 +72,9 @@
 //! The always-present ports each have a no-op default here
 //! ([`NoContextRecall`], [`NoRepoStructure`], [`NoRepoStatus`],
 //! [`AlwaysAbortGate`]) so the pipeline runs before every
-//! subsystem is wired; the two *optional* ones — candidate isolation and MCP
-//! pre-fetch — are `Option` fields on [`PipelinePorts`] instead, because
+//! subsystem is wired; the *optional* ones — lint, mutation, hooks, candidate
+//! isolation, MCP pre-fetch, and steering — are `Option` fields on
+//! [`PipelinePorts`] instead, because
 //! "unavailable" changes what the run does (it degrades) rather than being a
 //! port that answers with nothing.
 //!

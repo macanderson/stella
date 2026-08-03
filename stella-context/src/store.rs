@@ -119,7 +119,8 @@ pub struct MemoryLineageStats {
 ///
 /// - The fused candidate list is cut to a multiple of the query's `max_frames`
 ///   before the MMR pass and before any frame is built
-///   (`retrieval::MMR_CANDIDATE_MULTIPLE`), so the diversity fold is quadratic in
+///   (`RecallTuning::mmr_candidate_multiple`, default
+///   `retrieval::DEFAULT_MMR_CANDIDATE_MULTIPLE`), so the diversity fold is quadratic in
 ///   the budget, not in lifetime memory size.
 /// - **No content body crosses the SQLite boundary for a non-candidate.** The
 ///   corpus-wide passes read a metadata projection — identity, time, hash, and

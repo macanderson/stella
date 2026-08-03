@@ -234,9 +234,10 @@ pub fn suspicious_substring(key: &str) -> Option<&'static str> {
 ///
 /// Deliberately format-agnostic: `bytes` is substring-searched for sentinels
 /// (works for JSON, protobuf, or anything else), and `keys` is the flattened
-/// name set compared against the allowlist. A future OTLP encoder (#427) that
-/// emits protobuf supplies its attribute names as `keys` and the wire frame as
-/// `bytes` — it does not have to be JSON to be guarded.
+/// name set compared against the allowlist. The OTLP encoder (#427,
+/// `OtelDrainGuard`) does exactly this — OTLP/HTTP JSON puts attribute names
+/// in string *values*, so it folds them into `keys` explicitly; a future
+/// protobuf encoding would be guarded the same way.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EncodedSample {
     /// Exactly the bytes this encoder would put on the network.

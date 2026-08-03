@@ -12,10 +12,12 @@
 //!
 //! Scope note: one [`Session`] drives one turn. Multi-turn sessions (retaining
 //! the message history across turns) layer on top of this without changing the
-//! transport; per-step checkpointing happens here (see [`drive_turn`]) through
-//! the `CheckpointSink` the host attaches to `EngineConfig`, so a served turn
-//! interrupted mid-flight resumes from its last step boundary rather than
-//! being re-run from the prompt.
+//! transport; [`drive_turn`] calls the checkpoint seams, but nothing in
+//! this crate installs a `CheckpointSink` — an embedder that owns a workspace
+//! supplies one via `SessionSpec`'s engine config, and only then does a
+//! served turn interrupted mid-flight resume from its last step boundary
+//! rather than being re-run from the prompt (the API surface's row in
+//! `stella-parity` records this as deferred).
 
 use std::sync::Arc;
 use std::thread::JoinHandle;

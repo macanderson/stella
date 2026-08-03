@@ -128,7 +128,7 @@ chasing the citations in the same PR.
 
 ## Where does my change go? — a workspace tour
 
-Eighteen crates sounds like a lot; the rule of thumb is one sentence each:
+Nineteen crates sounds like a lot; the rule of thumb is one sentence each:
 
 | You want to… | Go to |
 |---|---|

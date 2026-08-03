@@ -100,7 +100,11 @@ pub struct Scoreboard {
     /// number to watch — a task that took one message is better than one that
     /// took nine, whatever the nine were for.
     pub follow_ups: u32,
-    /// Follow-ups that stopped the agent mid-flight. The unambiguous subset.
+    /// Human inputs that stopped the agent mid-flight. NOT a strict subset of
+    /// `follow_ups`: an opening request that is itself an interrupt counts
+    /// here (it stopped the *previous* task's work) while counting as no
+    /// follow-up of the task it begins — so a board can read one-shot with
+    /// `interrupts == 1` (see `an_opening_interrupt_is_not_a_follow_up`).
     pub interrupts: u32,
     /// What a person thought, and how that was established.
     pub verdict: Option<(Verdict, VerdictSource)>,

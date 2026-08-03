@@ -30,7 +30,8 @@
 //! - Output (stdout + stderr, interleaved by arrival) accumulates in a
 //!   capped ring buffer per process; when the cap overflows the oldest
 //!   bytes are dropped and the drop is FLAGGED on the next read.
-//! - `read_output` returns everything buffered since the last read and
+//! - `read_output` returns the output buffered since the last read —
+//!   middle-truncated at the shared 30 KB page cap, with the cut named — and
 //!   reports `running` / `exited (code N)`; `clear: true` discards the
 //!   buffered output instead of returning it. Once a process has exited,
 //!   both its pipes are at EOF, and its buffer has been drained, the entry

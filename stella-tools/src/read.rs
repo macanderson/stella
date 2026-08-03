@@ -9,9 +9,10 @@
 //! is clipped at `MAX_LINE_BYTES` and the whole rendered payload at
 //! `MAX_RENDER_BYTES`, both with a loud `[… N bytes elided …]` marker and
 //! both named in the trailing footer so the model knows to narrow its range
-//! rather than assume it saw the file. The *memory* half is unchanged — the
-//! file is still read into memory in full before anything is capped — so a
-//! pathologically large file still costs its own size in RAM once.
+//! rather than assume it saw the file. A file within `MAX_FILE_BYTES` is
+//! still read into memory in full before anything is capped; anything larger
+//! is refused from metadata before the load, so a pathologically large file
+//! costs a `stat`, not its own size in RAM.
 //!
 //! The tool also keeps the session's read-state ledger ([`ReadLedger`]): every
 //! successful read records a per-file tally (reported in the tool output) and

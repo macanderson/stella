@@ -280,14 +280,19 @@ impl UsageStore {
             params![r.project_id, r.project_name, r.project_root, r.started_at],
         )?;
         // Was this execution already rolled up? If so, its tool counts were too
-        // — skip the additive fold to stay idempotent.
-        let already: bool = tx
-            .query_row(
-                "SELECT 1 FROM execution_rollup WHERE project_id = ?1 AND execution_id = ?2",
-                params![r.project_id, r.execution_id],
-                |_| Ok(()),
-            )
-            .is_ok();
+        // — skip the additive fold to stay idempotent. NoRows is the only
+        // "not yet" answer: `.is_ok()` read a genuine query error as "not
+        // rolled up" and re-ran the additive tool-histogram fold, breaking
+        // the documented never-double-counts contract.
+        let already: bool = match tx.query_row(
+            "SELECT 1 FROM execution_rollup WHERE project_id = ?1 AND execution_id = ?2",
+            params![r.project_id, r.execution_id],
+            |_| Ok(()),
+        ) {
+            Ok(()) => true,
+            Err(rusqlite::Error::QueryReturnedNoRows) => false,
+            Err(e) => return Err(e.into()),
+        };
         tx.execute(
             "INSERT OR REPLACE INTO execution_rollup \
              (project_id, execution_id, kind, prompt_digest, prompt_preview, model, provider, \
@@ -760,14 +765,22 @@ impl UsageStore {
             //    set whose checkout is missing; we drop only those with no
             //    org-scoped rows (all-NULL-org → never drained → safe).
             for pid in &policy.gc_project_ids {
-                let registered = tx
-                    .query_row(
-                        "SELECT 1 FROM telemetry \
-                         WHERE project_id = ?1 AND org_id IS NOT NULL LIMIT 1",
-                        params![pid],
-                        |_| Ok(()),
-                    )
-                    .is_ok();
+                // NoRows is the only "not registered" answer. `.is_ok()`
+                // collapsed every other error (I/O, corrupt page, interrupt)
+                // into `false` too — and `false` is the branch that DELETEs
+                // an org's un-drained rows, so a transient read fault became
+                // permanent data loss the prunable-predicate guard exists to
+                // prevent.
+                let registered = match tx.query_row(
+                    "SELECT 1 FROM telemetry \
+                     WHERE project_id = ?1 AND org_id IS NOT NULL LIMIT 1",
+                    params![pid],
+                    |_| Ok(()),
+                ) {
+                    Ok(()) => true,
+                    Err(rusqlite::Error::QueryReturnedNoRows) => false,
+                    Err(e) => return Err(e.into()),
+                };
                 if registered {
                     continue;
                 }

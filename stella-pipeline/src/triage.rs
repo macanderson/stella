@@ -530,7 +530,9 @@ pub fn deterministic_floor(goal: &str) -> TaskClass {
 }
 
 /// Combine the model's triage classification with the deterministic floor,
-/// taking the more-planning-heavy of the two (L-E2 "errs toward planning").
+/// taking the more-planning-heavy of the two — except that the model may
+/// lower the floor by at most one level (L-E2 "errs toward planning":
+/// raising is unbounded, lowering is capped at one rung; see the body).
 /// When the model call failed or its response didn't parse (`model_class`
 /// is `None`), the floor stands alone.
 pub fn resolve_task_class(model_class: Option<TaskClass>, goal: &str) -> TaskClass {
