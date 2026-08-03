@@ -119,9 +119,9 @@ cargo build --release
 
 The `stella-*` crates are **not published to crates.io** — `publish = false` is
 set once at `[workspace.package]` in the root `Cargo.toml` and inherited by every
-member. The blocker is structural: `stella-context` and `stella-graph` depend on
-the [Context Graph Protocol](https://github.com/macanderson/context-graph-protocol)
-crates by git rev, and crates.io forbids git dependencies in a published crate.
+member. (The [Context Graph Protocol](https://github.com/macanderson/context-graph-protocol)
+crates are now exact-version registry dependencies, so the old git-dependency
+blocker is gone; the workspace simply is not published as a crate set.)
 The `cargo install --git …` command above is therefore the only supported cargo
 path — dropping `--git` does **not** install this project.
 
@@ -669,10 +669,11 @@ most people want to know first.
 
 ## Workspace layout
 
-Fifteen `stella-*` crates make up the workspace. The Context Graph Protocol
+Nineteen `stella-*` crates make up the workspace. The Context Graph Protocol
 (CGP) —
 the retrieval abstraction Stella's recall routes through — now lives in its own
-repository and is pulled in as a pinned git dependency, not as workspace members.
+repository and is pulled in as registry crates pinned to exact versions in the
+root `[workspace.dependencies]`, not as workspace members.
 
 Every crate carries its own `README.md` — linked from the table below — with its
 file layout, the invariants it enforces, its gotchas, and the recipe for
@@ -695,7 +696,11 @@ extending it.
 | [`stella-tui`](stella-tui/README.md)                 | The Command Deck — a pure event-fold core + thin crossterm shell                                                                                                                                                                       |
 | [`stella-observatory`](stella-observatory/README.md) | The Observatory — `stella observe`'s loopback-only telemetry dashboard over the local SQLite stores                                                                                                                                    |
 | [`stella-serve`](stella-serve/README.md)             | A separate headless binary (not part of the `stella` CLI): drives the engine over a wire protocol so a host process runs the Rust core, remoting every model and tool call back — the engine holds no ambient authority                |
-| Context Graph Protocol                               | Its own project now: [macanderson/context-graph-protocol](https://github.com/macanderson/context-graph-protocol) — wire types, host runtime, and the public conformance suite. Stella is its reference host and depends on it via git. |
+| `stella-diag`                                        | The diagnostics plane: typed, content-free records explaining *why* the program did something — a `serde`-only leaf every crate may depend on                                                                                          |
+| `stella-engine`                                      | Step-scoped facade over `stella-core` for durable hosts: `run_step` + checkpoint/resume, re-exports only — consumed by `stella-serve`, never linked by the CLI                                                                          |
+| `stella-runtime`                                     | The shared engine-assembly bottom half (`RuntimeSpec` → `SessionRuntime`): provider, registry, store, budget — construction only, and it reads no ambient environment by contract                                                       |
+| `stella-parity`                                      | The CLI-vs-API capability matrix: every engine capability declares a witnessed posture on both surfaces, so a feature cannot ship on one and silently miss the other                                                                    |
+| Context Graph Protocol                               | Its own project now: [macanderson/context-graph-protocol](https://github.com/macanderson/context-graph-protocol) — wire types, host runtime, and the public conformance suite. Stella is its reference host and depends on it as exact-version registry crates. |
 
 Alongside the Rust workspace, the documentation site
 ([stella.oxagen.sh](https://stella.oxagen.sh)) lives at `website/` (Next.js +

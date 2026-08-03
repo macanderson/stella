@@ -57,26 +57,30 @@ make watch-lint          # re-run clippy on every save
 A red gate is an automatic "not yet":
 
 ```bash
-make gate                # = no-scratch + action-pins + doc-citations + invariants
-                         #   + file-size + rustdoc -D warnings + fmt --check
+make gate                # = no-scratch + action-pins + cargo-install-pins
+                         #   + license-allowlist-parity + shellcheck
+                         #   + doc-citations + invariants + file-size
+                         #   + wire-schema + rustdoc -D warnings + fmt --check
                          #   + clippy -D warnings + test --workspace
 ```
 
-CI enforces the same nine steps split across two workflows:
+CI enforces the same thirteen steps split across two workflows:
 `/.github/workflows/ci.yml`'s required job runs everything except
 `doc-citations` and `invariants` and adds a release smoke build (thin LTO);
-`normative-home.yml` runs those two plus `check-normative-home.sh`, which
-asserts the CGP revision pinned in `docs/**` still matches the
-`contextgraph-*` git rev in `stella-cli/Cargo.toml`. `check-normative-home.sh`
-needs no Rust toolchain and is the one check the gate does not cover, so run
-it by hand after touching a `NORMATIVE-HOME:` document.
+`normative-home.yml` runs those two plus `check-normative-home.sh`.
+(`check-normative-home.sh` was written to assert the CGP revision pinned in
+`docs/**` matches the `contextgraph-*` dependency; since #819 moved those to
+exact-version registry deps there is no git rev to read and the script
+self-skips — it is kept for the day a git pin returns.) It needs no Rust
+toolchain and is the one check the gate does not cover, so run it by hand
+after touching a `NORMATIVE-HOME:` document.
 
 `doc-citations` is the guard that keeps a rustdoc comment from citing a
 `docs/**.md` path — or a `§N` inside one — that does not exist (#652). Adding
 a citation to a document you have not written yet fails the build, by design.
 
 For a faster pre-push sanity check (no tests): `make check` — scratch + pins +
-invariants + file-size + fmt + clippy.
+license parity + shellcheck + invariants + file-size + fmt + clippy.
 
 `no-scratch` runs first because it costs milliseconds: it asserts no tracked
 file matches a `.gitignore` rule. **Session scratch must never reach the
@@ -235,7 +239,7 @@ loop, and the `/pipeline` deck toggle.
 
 ## Workspace layout — where a change goes
 
-Eighteen crates. The one-sentence rule of thumb below routes you to the right
+Nineteen crates. The one-sentence rule of thumb below routes you to the right
 one; **each crate's own `README.md`** (linked from the table) then covers its
 layout, invariants, gotchas, and extension recipe in depth. Read that before
 changing code inside a crate you don't already know.
@@ -258,7 +262,10 @@ changing code inside a crate you don't already know.
 | Multi-agent fan-out, worktree isolation | [`stella-fleet`](stella-fleet/README.md) | |
 | The Observatory telemetry dashboard (`stella observe`) | [`stella-observatory`](stella-observatory/README.md) | Loopback-only, read-only, embedded HTML. |
 | The headless engine server a host process drives over the wire | [`stella-serve`](stella-serve/README.md) | Its **own binary**, not linked into [`stella-cli`](stella-cli/README.md). Every model/tool call is remoted back to the host; the engine holds no ambient authority. Design: [`docs/design/serve-surface.md`](docs/design/serve-surface.md). |
-| Context Graph Protocol (wire types / host / conformance) | external repo: [`context-graph-protocol`](https://github.com/macanderson/context-graph-protocol) | Split out of this workspace; Stella depends on it directly via git as `contextgraph-types`/`contextgraph-host` at a pinned rev. Stays dependency-light by contract. |
+| Drive the engine one step at a time from a durable host (checkpoint/resume) | `stella-engine` | Re-export-only facade over `stella-core`'s step loop (#971); no logic, no I/O. Consumed by [`stella-serve`](stella-serve/README.md) and external hosts — `stella-cli` does not link it. |
+| Share the engine-assembly bottom half (provider, registry, store, budget) | `stella-runtime` | `RuntimeSpec` → `RuntimeBuilder` → `SessionRuntime`, construction only. Reads no ambient environment by contract (`tests/no_ambient_reads.rs`). |
+| Declare CLI-vs-API capability parity (witnessed, ratcheted) | `stella-parity` | The cross-surface capability matrix: every engine capability carries a posture + named witness test per surface, so a feature cannot ship on one surface and silently miss the other. |
+| Context Graph Protocol (wire types / host / conformance) | external repo: [`context-graph-protocol`](https://github.com/macanderson/context-graph-protocol) | Split out of this workspace; Stella depends on it as registry crates (`contextgraph-*`) pinned with exact `=` version requirements in the root `[workspace.dependencies]`. Stays dependency-light by contract. |
 
 **Status — what ships.** The live runtime path is
 `stella-cli` → `stella-core` → `stella-model` / `stella-tools` / `stella-store` /

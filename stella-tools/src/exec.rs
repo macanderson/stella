@@ -5,7 +5,8 @@
 //! `run_argv` execs an argv vector directly with NO shell anywhere
 //! (`run_lint`, `format_code`, `diagnostics`, the `repo_*` tools).
 //!
-//! The opt-in `bash` tool does NOT come through here — it spawns its own
+//! The `bash` tool (registered by default, switchable off) does NOT come
+//! through here — it spawns its own
 //! child so the [`crate::sandbox`] wrapper can replace the program (see
 //! `crate::bash`).
 
@@ -116,8 +117,9 @@ pub(crate) async fn run_github(
 }
 
 /// Run `program` with `args` DIRECTLY — argv exec, no shell anywhere — in
-/// `dir`. The runner for the manifest-verb tools (`run_script`, `run_lint`,
-/// `format_code`): arguments reach the child exactly as given, so no
+/// `dir`. The runner for the argv-exec tools (`run_lint`, `format_code`,
+/// `diagnostics`, the `repo_*` family — `run_script` composes shell text and
+/// goes through [`run`] instead): arguments reach the child exactly as given, so no
 /// model-supplied string is ever shell-interpreted. Same process-group
 /// spawn, timeout kill, and truncation as `run`.
 pub(crate) async fn run_argv(
@@ -163,7 +165,9 @@ pub(crate) async fn run_argv_untruncated(
 pub(crate) enum Captured {
     /// Ran to completion inside the deadline.
     Done(std::process::Output),
-    /// Could not be spawned at all — in practice, the program is absent.
+    /// Could not be spawned — in practice the program is absent. Also covers
+    /// a post-spawn pipe/wait failure, which callers treat the same way
+    /// (falling back to the next program).
     Unavailable,
     /// Still running at the deadline; the child has been killed.
     TimedOut,

@@ -10,7 +10,7 @@ removes it: it reuses the launcher's OWN functions —
   stella_harbor.secure_launcher._canonical_payload_sha256   (the exact intent digest)
   stella_harbor.secure_launcher._validate_current_intent    (the exact launch contract)
   stella_harbor.secure_launcher._expected_stage_dataset     (frozen dataset identity)
-  stella_harbor.__init__._benchmark_engine_posture          (the 0.5.1 posture hashes)
+  stella_harbor.posture._benchmark_engine_posture           (the frozen posture hashes)
   ... plus the frozen constants (study id, key label/limit, budget)
 
 so every digest it emits is exactly what the launcher recomputes at preflight, and

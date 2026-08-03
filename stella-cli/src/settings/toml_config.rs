@@ -7,8 +7,10 @@
 //! The two shapes genuinely differ — the TOML document flattens
 //! `agent_engine_config.agents.<name>` to `[agents.<name>]`, moves
 //! `allowed_models` to `[models].allowed`, gives the bare `enable_recap` root
-//! scalar a table home at `[run].recap`, and folds the whole of
-//! `.stella/mcp.toml` in under `[mcp.servers]`.
+//! scalar a table home at `[run].recap`, and reserves a home for
+//! `.stella/mcp.toml` under `[mcp.servers]` (parsed but NOT yet consumed —
+//! see `mcp_servers_not_yet_read`; `agent::load_mcp_plan` still reads only
+//! `.stella/mcp.toml`).
 //!
 //! Teaching one type to deserialize from both shapes would mean serde
 //! attributes that are correct for one format and misleading for the other.

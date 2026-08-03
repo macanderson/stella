@@ -1017,6 +1017,11 @@ pub(crate) async fn handle_session_delete(
         // session's own locks are not held here (`live_turn_id` returned).
         let removed = { state.turns().remove(&turn_id) };
         if let Some(entry) = removed {
+            // Same three signals as `handle_cancel`: without the step-boundary
+            // latch (#1129), a turn deleted mid-compaction kept computing until
+            // it next parked on a reverse request and only unwound when
+            // `Pending` refused the registration.
+            entry.cancel.cancel();
             entry.pending.cancel();
             entry.controls.resume();
         }

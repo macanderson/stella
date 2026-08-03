@@ -74,8 +74,8 @@
 //! # Event plane
 //!
 //! A child's events must be attributable without being mistaken for the
-//! parent's stage boundaries. Rather than adding an agent field to all 36
-//! [`AgentEvent`] variants, one
+//! parent's stage boundaries. Rather than adding an agent field to every
+//! [`AgentEvent`] variant, one
 //! [`SubAgentPhase::Started`]/[`Finished`](SubAgentPhase::Finished) bracket
 //! carries the attribution and the child's own `Stage`/`Complete` (plus its
 //! narration and its carve-scoped `BudgetTick`) are dropped at the boundary.

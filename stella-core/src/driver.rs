@@ -203,13 +203,17 @@ pub struct EngineConfig {
     /// once per retry, which would multiply the very window the deadline
     /// exists to close.
     ///
-    /// 13.6 minutes, and the number is measured rather than chosen. It was 10
-    /// (matching `UNARY_READ_TIMEOUT`) on the reasoning that no generation a
-    /// caller still wants runs longer. That premise is false at high effort
-    /// against a large output ceiling: on the Terminal-Bench 2.1 gate a
-    /// comparator on the same model, same API and same effort earned reward
-    /// `1.0` on single steps of 624s and 756s. A 600s bound kills exactly
-    /// those steps — and kills them *after* paying for them.
+    /// 13.6 minutes of SILENCE, not of elapsed time: `bounded_generation`
+    /// measures idle gaps between stream fragments, so a generation that
+    /// keeps producing is never cut however long it runs. The number is
+    /// measured rather than chosen. It was 10 minutes (matching
+    /// `UNARY_READ_TIMEOUT`) on the reasoning that no generation a caller
+    /// still wants goes longer without progress. Context for the size: on
+    /// the Terminal-Bench 2.1 gate a comparator on the same model, same API
+    /// and same effort earned reward `1.0` on single steps of 624s and 756s
+    /// — steps that stream throughout and are untouched by an idle bound,
+    /// but that shaped the margin chosen here for a provider that has
+    /// genuinely stopped answering.
     ///
     /// The rule fixing the constant is "never be the side that stops first":
     /// 60s above the longest single step the comparator was ever rewarded for
@@ -283,8 +287,10 @@ impl Default for EngineConfig {
             // 16k, not 8k: reasoning models (e.g. glm-5.2) can spend their whole
             // output budget on chain-of-thought and get cut off before emitting
             // any answer. 16k gives the answer room to land after reasoning and
-            // is within every seeded catalog model's output ceiling. Per-model
-            // caps in the catalog are the eventual refinement.
+            // is within every seeded catalog model's output ceiling — and it is
+            // only the fallback: a model whose catalog entry declares its own
+            // output ceiling overrides this at engine assembly
+            // (stella-cli::agent::engine::tuned_engine_config).
             max_output_tokens: Some(16384),
             temperature: Some(0.0),
             effort: None,

@@ -1,9 +1,10 @@
 //! Tool-registry options and workspace port adapters.
 //!
-//! `registry_options` is the single translation point from settings to
-//! `RegistryOptions` — every session driver builds its registry through it,
-//! so no path can quietly re-enable the shell. The rest are the pipeline's
-//! filesystem/VCS/command ports.
+//! `registry_options` translates the host/media half of settings into
+//! `RegistryOptions`. Tool on/off policy no longer rides here — it is
+//! enforced above the whole session stack by `PolicyToolSet` (see
+//! `session_tool_policy`). The rest are the pipeline's filesystem/VCS/command
+//! ports.
 
 use super::*;
 use stella_pipeline::{
@@ -19,7 +20,9 @@ fn scrub_model_subprocess(command: &mut tokio::process::Command) {
 }
 
 /// The single filesystem-isolation seam for developer script-tool discovery.
-/// Both the session stack and candidate workspaces use this exact report.
+/// The session stack goes through this report; candidate workspaces still
+/// call `discover_in_scopes` directly (see `workspace_ports`) and therefore
+/// miss the isolation gate.
 #[cfg(test)]
 pub(crate) fn custom_tool_report_for_workspace(
     root: &std::path::Path,

@@ -56,10 +56,10 @@ pub use toml_config::ConfigScope;
 pub(crate) use unknown::{
     ENGINE_AGENT_FIELDS, ENGINE_AGENT_NAMES, ENGINE_PARAM_FIELDS, ENGINE_ROOT_FIELDS,
 };
-// Only `ContextSettings` is consumed today (the inert `Settings::context`
-// field). The nested types (`LearningMode`, `GovernanceMode`, …) live in
-// `settings::context`; a later phase re-exports them here as it wires them in.
-// Phase 3 (#714) adds the promotion knobs, which now have a reader.
+// `ContextSettings`, `RetrievalSettings`, and `InferredDirectivePromotion`
+// all have readers now (`memory::tuning` — retrieval budgets, the lifecycle
+// switch, promotion thresholds). The remaining nested types (`LearningMode`,
+// `GovernanceMode`, …) live in `settings::context` until wired.
 pub use context::{ContextSettings, InferredDirectivePromotion, RetrievalSettings};
 pub use context_providers::{ContextProviderSettings, ExternalContextProvider, ProviderEndpoint};
 pub use merge::ToolScopePolicies;
@@ -366,8 +366,9 @@ pub struct AgentEngineConfig {
     /// default, off for triage), overriding any per-agent `reasoning`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_auto: Option<Toggle>,
-    /// `on` = a headless run proceeds past scope review instead of stopping
-    /// at `ScopeReviewRequiredHeadless`.
+    /// `on` = a headless `stella run` proceeds past scope review instead of
+    /// stopping at `ScopeReviewRequiredHeadless`. Only `stella run` reads it:
+    /// `stella goal` and fleet workers keep the hard-off constant.
     ///
     /// Off by default, and deliberately so: scope review is the gate that
     /// keeps a large blast radius from landing unattended, and a headless
@@ -998,8 +999,10 @@ impl Settings {
 /// Which project-scope trust boundaries are open this process.
 ///
 /// `STELLA_TRUST_PROJECT=1` opens both; `STELLA_PROJECT_HOOKS=1` is the
-/// legacy hooks-only flag kept working for back-compat. A value of `0` or
-/// empty does not count as set.
+/// legacy hooks-only flag kept working for back-compat. Only a truthy value
+/// (`1`/`true`/`yes`/`on`, case-insensitive) counts as set — an explicit
+/// `false`/`no`/`off`/`0` means what it says. Trust gates must not open on a
+/// value spelled to close them.
 #[derive(Clone, Copy)]
 struct ProjectTrust {
     hooks: bool,
@@ -1007,7 +1010,22 @@ struct ProjectTrust {
 }
 
 fn env_flag(name: &str) -> bool {
-    std::env::var_os(name).is_some_and(|v| !v.is_empty() && v != "0")
+    std::env::var_os(name).is_some_and(|v| truthy_flag(&v))
+}
+
+/// The pure predicate behind [`env_flag`], split out so it is testable
+/// without mutating the process environment (POSIX setenv/getenv races are
+/// undefined under the concurrent test runner). Same truthy vocabulary as
+/// `agent::output::is_truthy_env_value`: before this existed, `env_flag`
+/// treated any non-`"0"` value as set, so `STELLA_TRUST_PROJECT=false`
+/// opened the project-trust boundary it was written to keep closed.
+fn truthy_flag(value: &std::ffi::OsStr) -> bool {
+    value.to_str().is_some_and(|v| {
+        matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
 }
 
 /// Whether the trusted launcher enabled the benchmark's filesystem-isolation

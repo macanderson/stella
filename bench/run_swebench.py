@@ -316,7 +316,12 @@ def build_stella_cmd(
     ]
     if base_url:
         cmd.extend(["--base-url", base_url])
-    cmd.extend(["run", prompt])
+    # `--` terminates option parsing: a problem statement that begins with a
+    # dash (a markdown bullet, a quoted CLI transcript) otherwise parses as a
+    # flag and Stella exits 2 before the turn starts — the Harbor adapter
+    # fixed exactly this after a trial scored 0 that way (2026-07-31,
+    # pytorch-model-recovery).
+    cmd.extend(["run", "--", prompt])
     return cmd
 
 

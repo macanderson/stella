@@ -961,7 +961,8 @@ render_table! {
     }
 }
 
-/// Pull the first double-quoted run out of a node's text.
+/// Pull the first quoted run (double first, then single) out of a node's
+/// text.
 ///
 /// Go, C, and PHP all name their target inside quotes, and the surrounding
 /// syntax differs enough (`import ( … )`, `#include "x.h"`, `require '…';`)

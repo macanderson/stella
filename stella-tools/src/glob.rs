@@ -81,6 +81,17 @@ impl Tool for Glob {
                 };
             }
         };
+        // A typo'd `path` is caught here, deterministically, rather than by
+        // parsing backend stderr: fd and find phrase a missing search dir
+        // differently, and find's phrasing ("No such file or directory") is
+        // byte-identical to the noise an entry vanishing mid-walk produces.
+        // With existence settled up front, backend_failure can treat every
+        // vanished-entry complaint as the race it is.
+        if !search_dir.is_dir() {
+            return ToolOutput::Error {
+                message: format!("search path `{search_path}` is not a directory"),
+            };
+        }
         // Results are rendered relative to the (canonical) workspace root, per
         // this tool's advertised contract.
         let canon_root = root.canonicalize().ok();
@@ -98,6 +109,15 @@ impl Tool for Glob {
             crate::exec::Captured::Done(output) => {
                 let text = String::from_utf8_lossy(&output.stdout);
                 if text.is_empty() {
+                    // A backend failure must surface as an error, not be
+                    // swallowed as "(no files found)" — same rule as grep's
+                    // pattern guard: a typo'd `path` or malformed glob makes
+                    // fd exit non-zero with empty stdout, and reporting that
+                    // as an empty tree sends the agent off recreating files
+                    // that exist.
+                    if let Some(message) = backend_failure("fd", &output) {
+                        return ToolOutput::Error { message };
+                    }
                     return ToolOutput::Ok {
                         content: "(no files found)".into(),
                     };
@@ -124,6 +144,10 @@ impl Tool for Glob {
                     crate::exec::Captured::Done(output) => {
                         let text = String::from_utf8_lossy(&output.stdout);
                         if text.is_empty() {
+                            // Same backend-failure guard as the fd arm.
+                            if let Some(message) = backend_failure("find", &output) {
+                                return ToolOutput::Error { message };
+                            }
                             ToolOutput::Ok {
                                 content: "(no files found)".into(),
                             }
@@ -159,6 +183,33 @@ impl Tool for Glob {
 /// to the `find` fallback ([`find_command`]) so both backends answer alike.
 /// `.gitignore` pruning stays on — that one is a feature, and it is the
 /// documented difference between the two backends.
+/// A zero-match result that is really a backend failure: non-zero exit with
+/// nothing on stdout and a reason on stderr. `None` for the benign shape
+/// (a genuine empty result, or noise-free non-zero exits from unreadable
+/// subtrees that printed nothing).
+fn backend_failure(program: &str, output: &std::process::Output) -> Option<String> {
+    if output.status.success() {
+        return None;
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Per-entry traversal noise is benign: a walk that brushes an unreadable
+    // directory (systemd-private tempdirs on a shared /tmp) or an entry that
+    // vanishes between enumeration and stat (another process cleaning its
+    // tempdir) makes find/fd exit non-zero while the empty result is still
+    // the honest answer — the same tolerance grep's pattern guard applies.
+    // "No such file or directory" can only be that race here: the search dir
+    // itself was verified in `execute` before the backend ran. Only a
+    // complaint outside these shapes makes the empty result a lie worth
+    // surfacing (malformed pattern, unlaunchable backend).
+    let first = stderr.lines().map(str::trim).find(|line| {
+        !line.is_empty()
+            && !line.contains("Permission denied")
+            && !line.contains("Operation not permitted")
+            && !line.contains("No such file or directory")
+    })?;
+    Some(format!("{program} error: {first}"))
+}
+
 fn fd_command(search_dir: &std::path::Path, pattern: &str) -> Command {
     let mut fd = Command::new("fd");
     fd.arg("--glob");
@@ -468,6 +519,77 @@ mod tests {
         match result {
             ToolOutput::Ok { content } => assert!(content.contains("no files")),
             ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+        }
+    }
+
+    #[test]
+    fn a_backend_failure_is_an_error_not_an_empty_result() {
+        use std::os::unix::process::ExitStatusExt;
+        // Non-zero exit + empty stdout + a reason on stderr = failure.
+        let failed = std::process::Output {
+            status: std::process::ExitStatus::from_raw(256),
+            stdout: Vec::new(),
+            stderr: b"[fd error]: Search path 'srcc' is not a directory\n".to_vec(),
+        };
+        let message = backend_failure("fd", &failed).expect("failure must surface");
+        assert!(
+            message.contains("srcc"),
+            "the reason must be named: {message}"
+        );
+
+        // A genuine empty result (exit 0) stays quiet, and so does a silent
+        // non-zero exit (nothing to report).
+        let empty = std::process::Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        };
+        assert_eq!(backend_failure("fd", &empty), None);
+        let silent = std::process::Output {
+            status: std::process::ExitStatus::from_raw(256),
+            stdout: Vec::new(),
+            stderr: b"   \n".to_vec(),
+        };
+        assert_eq!(backend_failure("fd", &silent), None);
+
+        // Per-entry traversal noise stays quiet: a walk brushing another
+        // user's unreadable directory, or an entry deleted mid-walk by a
+        // concurrent process, exits non-zero while the empty result is
+        // still the honest answer.
+        let traversal_noise = std::process::Output {
+            status: std::process::ExitStatus::from_raw(256),
+            stdout: Vec::new(),
+            stderr: b"find: '/tmp/systemd-private-abc': Permission denied\nfind: '/tmp/vanished_mid_walk': No such file or directory\n"
+                .to_vec(),
+        };
+        assert_eq!(backend_failure("find", &traversal_noise), None);
+
+        // ...but a real complaint after the noise still surfaces.
+        let mixed = std::process::Output {
+            status: std::process::ExitStatus::from_raw(256),
+            stdout: Vec::new(),
+            stderr: b"find: '/tmp/systemd-private-abc': Permission denied\nfind: paths must precede expression: `src[`\n"
+                .to_vec(),
+        };
+        let message = backend_failure("find", &mixed).expect("real failure must surface");
+        assert!(message.contains("precede expression"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn a_typod_search_path_is_a_named_error_before_any_backend_runs() {
+        let dir = std::env::temp_dir();
+        let result = Glob::default()
+            .execute(
+                &serde_json::json!({"pattern": "*.rs", "path": "srcc"}),
+                &dir,
+            )
+            .await;
+        match result {
+            ToolOutput::Error { message } => {
+                assert!(message.contains("srcc"), "{message}");
+                assert!(message.contains("not a directory"), "{message}");
+            }
+            ToolOutput::Ok { content } => panic!("expected error, got: {content}"),
         }
     }
 }

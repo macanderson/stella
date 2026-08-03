@@ -115,7 +115,7 @@ wire-schema-update: ## Regenerate docs/wire/ after an AgentEvent change (commit 
 	@./scripts/export-agentevent-schema.sh
 
 .PHONY: file-size
-file-size: ## Assert no new .rs file exceeds the 1500-line ratchet (#629)
+file-size: ## Assert no new Rust or Python file exceeds the 1500-line ratchet (#629, #825)
 	@./scripts/check-file-size.sh
 
 .PHONY: file-size-update

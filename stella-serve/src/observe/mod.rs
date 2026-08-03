@@ -17,7 +17,7 @@
 //! scores on `AgentEvent`: a typed event at every boundary, with discarded work
 //! named rather than dropped. That is what is copied here.
 //!
-//! - **What is emitted** — [`event::ServeEvent`], 18 variants, serde-first.
+//! - **What is emitted** — [`event::ServeEvent`], serde-first.
 //!   Testable, because a test asserts on a typed value instead of scraping text.
 //! - **Where it goes** — the [`Observer`] port. This is the part that would cost
 //!   a dependency, and keeping it a trait is what makes that decision

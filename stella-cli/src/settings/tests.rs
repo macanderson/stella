@@ -1087,6 +1087,35 @@ fn enable_recap_defaults_off_when_no_scope_sets_it() {
     assert!(!merged.recap_enabled(), "recap defaults off");
 }
 
+/// `create_worktrees` must survive the scope merge — the `enable_recap`
+/// lesson, repeated.
+///
+/// It did not: `overlay_scope` copied `enable_recap`, `trace_capture`, `ui`
+/// and `context` explicitly and silently dropped this one, so
+/// `"create_worktrees": "never"` in any settings.json parsed fine, merged to
+/// `None`, and `create_worktrees()` answered `Ask` no matter what any file
+/// said. The direct-deserialization tests below never caught it because the
+/// merge is the only place the field was lost. This test goes through
+/// `Settings::load`, the way the binary does.
+#[test]
+fn create_worktrees_survives_the_scope_merge() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let workspace = dir.path();
+    std::fs::create_dir_all(workspace.join(".stella")).expect("mkdir .stella");
+    std::fs::write(
+        workspace.join(".stella/settings.json"),
+        r#"{"create_worktrees": "never"}"#,
+    )
+    .expect("write settings");
+
+    let merged = Settings::load(workspace).expect("settings load");
+    assert_eq!(
+        merged.create_worktrees(),
+        CreateWorktrees::Never,
+        "a scope that sets `create_worktrees: never` must reach the merged settings"
+    );
+}
+
 /// Every spelling of "no opinion" resolves to `ask`, and a typo is loud.
 ///
 /// The three quiet spellings matter because they are how a scope says "I have
@@ -1123,4 +1152,28 @@ fn create_worktrees_reads_every_spelling_of_no_opinion_as_ask() {
         err.to_string().contains("always"),
         "the error should name the accepted values: {err}"
     );
+}
+
+/// `env_flag`'s predicate opens a trust gate only on a truthy spelling.
+///
+/// Before `truthy_flag` existed, any non-empty value other than `"0"` counted
+/// as set — so `STELLA_TRUST_PROJECT=false` (a user being explicit about
+/// distrust) opened project hooks, credentials, and mcp.toml execution, and
+/// `STELLA_NO_SETTINGS=false` engaged benchmark isolation. Pure-value test:
+/// no environment mutation, so it cannot race the concurrent test runner.
+#[test]
+fn env_flag_accepts_only_truthy_spellings() {
+    use std::ffi::OsStr;
+    for value in ["1", "true", "TRUE", "yes", "on", " on ", "On"] {
+        assert!(
+            super::truthy_flag(OsStr::new(value)),
+            "{value:?} should count as set"
+        );
+    }
+    for value in ["", "0", "false", "no", "off", "FALSE", "No", "2", "enabled"] {
+        assert!(
+            !super::truthy_flag(OsStr::new(value)),
+            "{value:?} must not open a trust gate"
+        );
+    }
 }

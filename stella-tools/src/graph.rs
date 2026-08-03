@@ -35,7 +35,8 @@ pub fn graph_db_path(root: &Path) -> PathBuf {
     root.join(".stella").join("private").join("codegraph.db")
 }
 
-/// Whether the workspace has an index — the registration condition. Resolver
+/// Whether the workspace has an index — the condition for the code-map
+/// footers and graph advisories (registration itself is unconditional). Resolver
 /// failures stay distinct from absence so security errors cannot disable
 /// graph-backed governance by masquerading as an uninitialized workspace.
 pub fn graph_available(root: &Path) -> Result<bool, String> {

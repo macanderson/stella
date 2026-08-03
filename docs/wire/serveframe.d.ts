@@ -19,7 +19,7 @@
  * associated functions instead of the trait impls, so the hand-written
  * [`Serialize`]/[`Deserialize`] impls below can delegate to it after routing
  * [`AgentEvent::Unknown`] around it. Without that indirection the forward-
- * compat fallback would mean hand-writing a visitor for all 34 variants.
+ * compat fallback would mean hand-writing a visitor for every variant.
  */
 export type AgentEvent = {
   name: StageKind;
@@ -1149,9 +1149,11 @@ export type PrStatus = "draft" | "open" | "merged" | "closed";
  * One step of the proof a turn builds for its own work, in the order the
  * pipeline makes the observation. Carried by [`AgentEvent::Proof`].
  *
- * Additive to the wire contract in both directions: an older reader sees the
- * whole event as [`AgentEvent::Unknown`], and a reader that knows `Proof` but
- * not a future step tags it `Unknown` at the step level rather than guessing.
+ * Additive in one direction only: an older reader that does not know the
+ * `proof` type tag preserves the whole event via [`AgentEvent::Unknown`],
+ * but a reader that knows `Proof` and meets a future `kind` fails the whole
+ * event — this nested enum is closed, with no `Unknown` step (see the
+ * module docs on nested vocabularies).
  */
 export type ProofStep = {
   /**
@@ -1571,7 +1573,9 @@ export type StellaWireFrame = ServerFrame & { seq: number };
  * Deliberately has no `seq`: it describes what the transport can no longer
  * supply, not something that happened in the turn. Receiving it means the
  * frames between `requested_after` and `oldest_retained` are unrecoverable —
- * reconnect with `?after=0` to replay what is still held, or abandon the turn.
+ * reconnect with `?after=` one less than `oldest_retained` to replay what is
+ * still held (an `?after=0` resume just re-answers `replay_truncated` unless
+ * the ring still holds seq 1), or abandon the turn.
  */
 export interface ReplayTruncated {
   type: "replay_truncated";
@@ -1593,7 +1597,9 @@ export type StellaSseFrame = StellaWireFrame | ReplayTruncated;
 // An outstanding reverse request is NOT re-announced on resume: asking for
 // `?after=N` asserts you received everything through N, obligations included.
 // A client that persisted its seq but not its in-flight request ids must
-// resume from `?after=0` and replay to rediscover what it owes.
+// replay from the start — `?after=0`, or after a `replay_truncated`, one less
+// than `oldest_retained` — to rediscover what it owes; obligations announced
+// in frames the ring has already evicted cannot be re-learned this way.
 
 /**
  * The output of running a tool — success or a typed, named failure. Never a
@@ -1670,7 +1676,8 @@ export interface CompletionUsage {
    * `cacheWriteInputTokens`). Unlike `cached_input_tokens` this is NOT a
    * subset of `input_tokens` — providers report writes separately, and
    * folding them into `input_tokens` would change cost accounting
-   * (`Pricing::cost_usd` carries no cache-write rate). 0 for providers
+   * (`Pricing::cost_usd` bills them on their own line at the catalog's
+   * `cache_write_usd_per_mtok`, so folding would double-charge). 0 for providers
    * that never report cache writes (the OpenAI-compatible dialects).
    * `serde(default)` so envelopes serialized before this field existed
    * still parse.

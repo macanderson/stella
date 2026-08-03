@@ -359,7 +359,8 @@ pub struct CompletionUsage {
     /// `cacheWriteInputTokens`). Unlike `cached_input_tokens` this is NOT a
     /// subset of `input_tokens` — providers report writes separately, and
     /// folding them into `input_tokens` would change cost accounting
-    /// (`Pricing::cost_usd` carries no cache-write rate). 0 for providers
+    /// (`Pricing::cost_usd` bills them on their own line at the catalog's
+    /// `cache_write_usd_per_mtok`, so folding would double-charge). 0 for providers
     /// that never report cache writes (the OpenAI-compatible dialects).
     /// `serde(default)` so envelopes serialized before this field existed
     /// still parse.

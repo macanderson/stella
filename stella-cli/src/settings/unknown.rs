@@ -33,6 +33,7 @@ const ROOT_FIELDS: &[&str] = &[
     "tools",
     "enable_recap",
     "trace_capture",
+    "create_worktrees",
     "ui",
     "context",
     "context_providers",
@@ -151,7 +152,7 @@ const TOML_ROOT_FIELDS: &[&str] = &[
 ];
 
 const META_FIELDS: &[&str] = &["schema_version", "scope"];
-const RUN_FIELDS: &[&str] = &["recap", "trace_capture"];
+const RUN_FIELDS: &[&str] = &["recap", "trace_capture", "create_worktrees"];
 const MODELS_FIELDS: &[&str] = &["allowed"];
 const TOML_MCP_FIELDS: &[&str] = &["registry_url", "servers"];
 

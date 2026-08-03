@@ -113,6 +113,17 @@ fn a_command_naming_the_sealed_test_tightens_the_grain() {
     assert!(brief.grain < DisclosureGrain::Reproduction);
     assert_eq!(brief.reproduction, None);
     assert!(!brief.message().contains("witness_balance_stays_consistent"));
+    // The step-down keeps the symptom: it is a classification, safe by
+    // construction, and this is the realistic authored-witness shape — the
+    // command always names its sealed selector, so demoting all the way to
+    // `Outcome` here meant every authored-witness failure disclosed nothing
+    // and the worker revised blind for its whole budget.
+    assert_eq!(brief.grain, DisclosureGrain::Symptom);
+    assert!(
+        brief.symptom.is_some(),
+        "an unscannable command must not silence the symptom classification"
+    );
+    assert_eq!(brief.command, None);
 }
 
 #[test]

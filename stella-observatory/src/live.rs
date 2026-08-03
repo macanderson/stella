@@ -21,8 +21,9 @@
 //! process boundaries. So something must ask.
 //!
 //! The move is to make *asking* cheap and *answering* rare.
-//! [`Observatory::cursor`] is four index/metadata probes — no join, no scan —
-//! so the server can run it several times a second for nothing. It pushes a
+//! [`Observatory::cursor`] is five small probes — no join, and only one scan
+//! (`count(*) FROM tool_calls`) —
+//! so the server can run it several times a second for little. It pushes a
 //! frame only when that fingerprint actually moves. Net effect: the browser
 //! stops polling entirely, total query work drops (idle workspaces cost a
 //! handful of probes instead of twelve aggregates), and latency improves from
