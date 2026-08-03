@@ -1,6 +1,6 @@
 //! Ephemeral deck state and the pure deck-level key→action mapping.
 //!
-//! Mirrors the single-session [`crate::ui`] split: [`DeckUi`] holds everything
+//! The pure-core / thin-shell split: [`DeckUi`] holds everything
 //! *not* derived from the event log (active tab, the one global composer,
 //! per-tab scroll/selection, the splash, the out-of-band graph snapshot), and
 //! [`handle_deck_key`] is a pure function of `(key, model, &mut ui)` returning a

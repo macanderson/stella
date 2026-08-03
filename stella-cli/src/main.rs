@@ -83,7 +83,6 @@ mod session_persist;
 mod settings;
 mod settings_check;
 mod signals;
-mod simple_session;
 mod skill_manager;
 mod stats;
 mod storage_cmd;
@@ -867,12 +866,11 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             )?;
         }
         Command::Chat => {
-            // Three surfaces, one decision (see `term_policy::chat_surface`):
-            // the Command Deck by default on a real terminal, the accessible
-            // single-pane surface on `--simple` / STELLA_SIMPLE, and the
-            // line-based REPL on `--plain` / STELLA_PLAIN / a non-TTY stream.
-            match term_policy::resolve_chat_surface(cli.globals.plain, cli.globals.simple) {
-                term_policy::ChatSurface::Deck => {
+            // The Command Deck (tabbed TUI) is the default chat surface on a
+            // real terminal; `--plain` / STELLA_PLAIN=1 / a non-TTY stream
+            // falls back to the line-based REPL.
+            match term_policy::plain_fallback(cli.globals.plain) {
+                None => {
                     signals::block_on_interruptible(
                         rt()?,
                         command_deck::run_deck_session(
@@ -883,13 +881,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                         ),
                     )?;
                 }
-                term_policy::ChatSurface::Simple => {
-                    signals::block_on_interruptible(
-                        rt()?,
-                        simple_session::run_simple_session(&cfg, cli.globals.budget),
-                    )?;
-                }
-                term_policy::ChatSurface::Plain(reason) => {
+                Some(reason) => {
                     // Say which surface this is and why, BEFORE the REPL's
                     // banner — which otherwise looks enough like a normal
                     // start that the missing features read as breakage. The
@@ -916,11 +908,11 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // actual reopen, which is a full deck session (durable state is
             // a deck feature — the plain REPL has no session to restore).
             debug_assert!(!list, "handled before provider resolution");
-            if !term_policy::use_deck(cli.globals.plain, cli.globals.simple) {
+            if !term_policy::use_deck(cli.globals.plain) {
                 return Err(
                     "`stella resume` reopens a Command Deck session and needs a real \
-                     terminal (it cannot combine with --plain / --simple / STELLA_PLAIN / \
-                     STELLA_SIMPLE / a piped stream). `stella resume --list` works anywhere."
+                     terminal (it cannot combine with --plain / STELLA_PLAIN / a piped \
+                     stream). `stella resume --list` works anywhere."
                         .to_string(),
                 );
             }

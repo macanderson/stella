@@ -165,14 +165,14 @@ fn system_notice(text: String) -> Inbound {
 }
 
 /// `STELLA_DEBUG=1` → the structured deck log path (L-T8), mirroring the
-/// location `stella_tui::shell::RunOptions` documents. `None` otherwise, and
+/// location `stella_tui::DeckOptions` documents. `None` otherwise, and
 /// on any failure to create the directory — a lost debug log never gates the
 /// session.
 ///
 /// `OXAGEN_DEBUG` is accepted as a deprecated alias for one release: the
 /// user-facing env surface is `STELLA_*` everywhere else (88 names), and this
 /// was the only runtime toggle stranded in the pre-rename namespace.
-pub(crate) fn debug_log_path() -> Option<PathBuf> {
+fn debug_log_path() -> Option<PathBuf> {
     let requested = std::env::var_os("STELLA_DEBUG").or_else(|| std::env::var_os("OXAGEN_DEBUG"));
     if requested.is_none_or(|v| v.is_empty() || v == "0") {
         return None;
