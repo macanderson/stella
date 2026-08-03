@@ -137,6 +137,15 @@ pub enum EntryKind {
     Other,
 }
 
+/// What [`RootHandle::remove_entry`] unlinked, so the caller can report a
+/// link as a link rather than as an ordinary file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Removed {
+    File,
+    /// The link was unlinked; this is where it pointed, untouched.
+    Symlink(std::ffi::OsString),
+}
+
 impl EntryStat {
     pub fn kind(&self) -> EntryKind {
         self.kind
@@ -390,6 +399,42 @@ impl RootHandle {
         fstatat(parent.as_fd(), &name).map_err(RootError::Io)
     }
 
+    /// Unlink `rel` **as itself**: a symlink is removed as the LINK, never as
+    /// its target (#940).
+    ///
+    /// [`Self::remove_file`] cannot do this. `unlinkat` does not follow a
+    /// symlink, but [`Self::resolve_leaf`] already *expanded* one before the
+    /// syscall ran, so the name it unlinks is the target's name in the
+    /// target's directory — deleting `vendor/config.toml` destroys
+    /// `real.toml` and leaves the link dangling. This resolves the parent
+    /// under the same rules and then stops, leaving the final component
+    /// unexpanded.
+    ///
+    /// Containment still holds: the leaf is a single path component in a
+    /// directory the walk already proved is inside the root, so unlinking it
+    /// by name cannot reach outside.
+    ///
+    /// `Ok(None)` means `rel` is not a deletable entry (a directory or
+    /// anything else); the caller decides how to phrase that refusal.
+    pub fn remove_entry(&self, rel: &str) -> Result<Option<Removed>, RootError> {
+        let (parent, name, link) = self.resolve_leaf_mode(rel, false, false)?;
+        // A link is deletable whether or not its target exists — a dangling
+        // link is still a link the agent asked to remove.
+        if link.is_none() && !fstatat(parent.as_fd(), &name)?.is_file() {
+            return Ok(None);
+        }
+        // SAFETY: `parent` is an open directory descriptor and `name` is a
+        // NUL-terminated C string that outlives the call.
+        let rc = unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), 0) };
+        if rc < 0 {
+            return Err(RootError::Io(io::Error::last_os_error()));
+        }
+        Ok(Some(match link {
+            Some(target) => Removed::Symlink(target),
+            None => Removed::File,
+        }))
+    }
+
     /// Unlink `rel`. `unlinkat` never follows a symlink, so the leaf cannot be
     /// swapped into one between the walk and the removal.
     pub fn remove_file(&self, rel: &str) -> Result<(), RootError> {
@@ -412,6 +457,26 @@ impl RootHandle {
     /// a symlink *as of the `readlinkat` below* — a link is expanded, so the
     /// name returned is the real name in the real directory.
     fn resolve_leaf(&self, rel: &str, create_dirs: bool) -> Result<(OwnedFd, CString), RootError> {
+        let (parent, name, _) = self.resolve_leaf_mode(rel, create_dirs, true)?;
+        Ok((parent, name))
+    }
+
+    /// [`Self::resolve_leaf`], plus the choice of whether a symlink *leaf* is
+    /// expanded.
+    ///
+    /// With `follow_leaf` the behaviour is unchanged: a link is expanded and
+    /// the name returned is the real name in the real directory, which is what
+    /// every reader and writer wants. Without it the walk stops at the link
+    /// and returns the link's own name alongside its target — the form a
+    /// delete needs, since expanding first is what silently destroys the
+    /// target. Interior components are resolved identically either way, so
+    /// containment does not depend on this flag.
+    fn resolve_leaf_mode(
+        &self,
+        rel: &str,
+        create_dirs: bool,
+        follow_leaf: bool,
+    ) -> Result<(OwnedFd, CString, Option<OsString>), RootError> {
         let mut queue: std::collections::VecDeque<Step> = std::collections::VecDeque::new();
         splice(&mut queue, Path::new(rel), rel)?;
 
@@ -448,6 +513,10 @@ impl RootHandle {
                 // exactly what must not happen until we know where it goes.
                 match readlinkat(here, &cname) {
                     Ok(target) => {
+                        if !follow_leaf {
+                            let parent = stack.pop().expect("the root is never popped");
+                            return Ok((parent, cname, Some(target)));
+                        }
                         self.expand(&mut queue, &mut stack, &mut expansions, &target, rel)?;
                         continue;
                     }
@@ -455,7 +524,7 @@ impl RootHandle {
                     // the ordinary create case). Either way this is the name.
                     Err(_) => {
                         let parent = stack.pop().expect("the root is never popped");
-                        return Ok((parent, cname));
+                        return Ok((parent, cname, None));
                     }
                 }
             }
@@ -736,6 +805,24 @@ impl RootHandle {
     pub fn remove_file(&self, rel: &str) -> Result<(), RootError> {
         let full = self.resolve_leaf(rel, false)?;
         std::fs::remove_file(full).map_err(RootError::Io)
+    }
+
+    /// The non-Unix form of [the Unix `remove_entry`](RootHandle::remove_entry)
+    /// — same contract, over the string resolver and so with the same weaker
+    /// guarantees the module header describes.
+    pub fn remove_entry(&self, rel: &str) -> Result<Option<Removed>, RootError> {
+        let full = self.resolve_leaf(rel, false)?;
+        let meta = std::fs::symlink_metadata(&full).map_err(RootError::Io)?;
+        if meta.file_type().is_symlink() {
+            let target = std::fs::read_link(&full).map_err(RootError::Io)?;
+            std::fs::remove_file(&full).map_err(RootError::Io)?;
+            return Ok(Some(Removed::Symlink(target.into_os_string())));
+        }
+        if !meta.is_file() {
+            return Ok(None);
+        }
+        std::fs::remove_file(&full).map_err(RootError::Io)?;
+        Ok(Some(Removed::File))
     }
 
     /// Off Unix there is no `openat`, so this is the old string resolution

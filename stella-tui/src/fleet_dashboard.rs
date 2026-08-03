@@ -47,7 +47,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::oneshot;
 
 use crate::panel_guard::guarded_band;
-use crate::term::{PanicHookGuard, TerminalGuard};
+use crate::term::{PanicHookGuard, Screen, TerminalGuard};
 use crate::theme;
 
 /// How often the dashboard repaints even when no event lands, so the clocks

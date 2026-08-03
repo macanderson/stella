@@ -3,16 +3,18 @@
 //! the Files Touched tracker; agents should prefer this over `bash rm`
 //! (which the tracker cannot attribute).
 //!
-//! A **symlink is removed as the link**, never as its target. That takes its
-//! own resolver (`resolve_entry_within_root`) because
-//! [`crate::resolve_within_root`] canonicalizes, which is right for every
-//! other tool — read/edit/write all want the real file — and exactly wrong
-//! here: canonicalizing `vendor/config.toml → ../../real/config.toml` and
-//! then `remove_file`-ing the result deletes the real file and leaves the
-//! link dangling. Silent data loss on any repository carrying in-tree
-//! symlinks (vendored configs, `node_modules/.bin`).
-
-use std::path::{Path, PathBuf};
+//! A **symlink is removed as the link**, never as its target. That rules out
+//! [`crate::resolve_within_root`], which canonicalizes — right for every other
+//! tool, since read/edit/write all want the real file, and exactly wrong here:
+//! canonicalizing `vendor/config.toml → ../../real/config.toml` and then
+//! `remove_file`-ing the result deletes the real file and leaves the link
+//! dangling. Silent data loss on any repository carrying in-tree symlinks
+//! (vendored configs, `node_modules/.bin`).
+//!
+//! The removal therefore goes through [`crate::rootfd::RootHandle`], whose
+//! `unlinkat` against a held directory descriptor never follows a final
+//! symlink — and lets the classify and the unlink share one descriptor, so
+//! nothing planted between them can redirect the removal.
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -21,30 +23,6 @@ use stella_protocol::tool::{ToolOutput, ToolSchema};
 use crate::registry::Tool;
 
 pub struct DeleteFile;
-
-/// Resolve `path` to the entry to remove **without following a final
-/// symlink**.
-///
-/// The parent goes through [`crate::resolve_within_root`], so containment is
-/// enforced exactly as everywhere else (including through intermediate
-/// symlinked directories); only the last component is re-joined verbatim.
-/// `file_name` returns `None` for `""`, `.`, and any path ending in `..`, so
-/// those are rejected here rather than resolving to a directory.
-///
-/// `None` means the path escapes the workspace root. A path whose parent does
-/// not exist resolves fine and then fails the caller's own existence check
-/// with the missing-path message.
-fn resolve_entry_within_root(root: &Path, path: &str) -> Option<PathBuf> {
-    let relative = Path::new(path);
-    let name = relative.file_name()?;
-    let parent = relative.parent().unwrap_or_else(|| Path::new(""));
-    let parent_full = if parent.as_os_str().is_empty() {
-        root.canonicalize().ok()?
-    } else {
-        crate::resolve_within_root(root, parent.to_str()?)?
-    };
-    Some(parent_full.join(name))
-}
 
 #[async_trait]
 impl Tool for DeleteFile {
@@ -79,25 +57,27 @@ impl Tool for DeleteFile {
                 };
             }
         };
-        // Classify and unlink on one blocking worker. `unlinkat` never follows
-        // a symlink, so nothing planted between the two can redirect the
-        // removal — the check and the act see the same directory descriptor.
+        // Classify and unlink on one blocking worker, through the walk that
+        // leaves a final symlink unexpanded — so the check and the act see the
+        // same directory descriptor AND the same entry.
         let outcome = tokio::task::spawn_blocking({
             let (handle, path) = (std::sync::Arc::clone(&handle), path.to_string());
-            move || -> Result<bool, crate::rootfd::RootError> {
-                if !handle.stat(&path)?.is_file() {
-                    return Ok(false);
-                }
-                handle.remove_file(&path)?;
-                Ok(true)
-            }
+            move || handle.remove_entry(&path)
         })
         .await;
         match outcome {
-            Ok(Ok(true)) => ToolOutput::Ok {
+            Ok(Ok(Some(crate::rootfd::Removed::File))) => ToolOutput::Ok {
                 content: format!("deleted {path}"),
             },
-            Ok(Ok(false)) => ToolOutput::Error {
+            // Naming the target is the whole report: it is the file the agent
+            // may have believed it was deleting, and it is still there.
+            Ok(Ok(Some(crate::rootfd::Removed::Symlink(target)))) => ToolOutput::Ok {
+                content: format!(
+                    "deleted symlink {path} — the link was removed; its target {} was left alone",
+                    std::path::Path::new(&target).display()
+                ),
+            },
+            Ok(Ok(None)) => ToolOutput::Error {
                 message: format!(
                     "`{path}` is not a file (directories and missing paths are not deletable \
                      with this tool)"
@@ -229,6 +209,35 @@ mod tests {
             .await;
         assert!(out.is_error(), "{out:?}");
         assert!(outside.path().join("secret.txt").exists());
+    }
+
+    /// Leaving the leaf unexpanded must not become a way OUT of the workspace.
+    /// A link inside the root that points at a file outside it is removed as
+    /// the link — one name in a directory the walk already confined — and the
+    /// file it pointed at is never touched.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_link_pointing_outside_the_root_is_unlinked_without_touching_its_target() {
+        let outside = tempfile::tempdir().unwrap();
+        let secret = outside.path().join("secret.txt");
+        std::fs::write(&secret, "private").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(&secret, dir.path().join("leak")).unwrap();
+
+        let out = DeleteFile
+            .execute(&serde_json::json!({"path": "leak"}), dir.path())
+            .await;
+
+        assert!(!out.is_error(), "{out:?}");
+        assert!(
+            dir.path().join("leak").symlink_metadata().is_err(),
+            "the link itself must be gone"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&secret).unwrap(),
+            "private",
+            "a file outside the workspace must never be removed"
+        );
     }
 
     /// `file_name()` is `None` for these, so they can never resolve to the
