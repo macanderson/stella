@@ -307,15 +307,31 @@ pub static CAPABILITIES: &[Capability] = &[
             witness: "an_interrupted_turn_resumes_at_the_step_boundary_not_the_turn_boundary",
         },
         // Deliberately phrased to AGREE with `turn.checkpoint` above rather
-        // than restate it differently: serve does reach both write seams, so
-        // the gap here is not the seam and not the writing. It is that there is
-        // nowhere to read one back FROM, and nothing to key it on.
+        // than restate it differently. #1198 closed the two things this row
+        // used to name — serve had no store, and `SessionSpec` had no identity
+        // to key one on — so the gap is no longer the seam, the writing, the
+        // durability, or the read-back: a served turn writes the versioned
+        // `Checkpoint` at every step boundary and a host reads it back byte
+        // for byte. What is missing is the OTHER direction. Nothing accepts
+        // one: no route takes a checkpoint, and `Engine::resume_turn` still
+        // has zero production callers on either surface.
+        //
+        // That serve does not re-drive a turn itself is a decision, not an
+        // omission (`stella-serve/src/checkpoint.rs`, "Resume is
+        // host-initiated"): a resumed turn's first act is a reverse request
+        // only a host can answer, so a server that resumed on restart would
+        // park a thread on a request nobody is listening for. The declared gap
+        // is therefore the *verb*, not the mechanism — an API host holding a
+        // valid resume point today can only continue it by driving
+        // `stella-engine` in its own process.
         api: SurfacePosture::Deferred {
-            waiting_on: "somewhere for a served session to read a resume point back from: serve \
-                         reaches the write seams (see turn.checkpoint) but has no store, and \
-                         SessionSpec carries no session identity to key one on — so nothing \
-                         survives the process to resume. Note stella-serve/tests/resume.rs is SSE \
-                         stream resumption, a different resume entirely",
+            waiting_on: "a way to hand a resume point back: serve writes one and returns it (see \
+                         turn.checkpoint), and the artifact does reconstitute the turn it came \
+                         from — a_served_resume_point_reconstitutes_the_turn_it_came_from — but \
+                         no route accepts one and nothing calls Engine::resume_turn, so an API \
+                         host cannot ask the server to continue from where it crashed. Note \
+                         stella-serve/tests/resume.rs is SSE stream resumption, a different \
+                         resume entirely",
         },
     },
     Capability {
@@ -566,6 +582,39 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A `Deferred` row may name a test too, and when it does the name is
+    /// checked like a witness — because the risk it guards is the one this
+    /// row already realized once (#1302).
+    ///
+    /// `turn.checkpoint_resume`'s API deferral turns on a distinction that is
+    /// easy to state backwards: serve *does* write the versioned `Checkpoint`
+    /// and *does* hand it back, and the artifact really does reconstitute the
+    /// turn — the gap is that nothing accepts one. A reader who takes "not
+    /// shipped" to mean "nothing is written" rebuilds what exists, which is
+    /// exactly what a stale row costs. So the row cites the test that pins the
+    /// resumable half, and this keeps that citation from decaying into a name
+    /// nothing answers to.
+    #[test]
+    fn the_deferred_resume_row_cites_a_test_that_exists() {
+        let row = capability("turn.checkpoint_resume").expect("the row is declared");
+        let SurfacePosture::Deferred { waiting_on } = row.api else {
+            panic!(
+                "turn.checkpoint_resume's API posture moved — if serve now accepts a resume point \
+                 back, this row is Shipped and needs a witness, not a citation"
+            );
+        };
+        let cited = "a_served_resume_point_reconstitutes_the_turn_it_came_from";
+        assert!(
+            waiting_on.contains(cited),
+            "the deferral no longer cites {cited} — say what proves the artifact is resumable, or \
+             the row is back to asserting the gap without evidence"
+        );
+        assert!(
+            witness_exists(&api_sources(), cited),
+            "the deferral cites {cited}, which no swept serve source defines"
+        );
     }
 
     /// The unwitnessed-claims ratchet: exact equality, so witnessing a row
