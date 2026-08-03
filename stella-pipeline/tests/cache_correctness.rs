@@ -308,10 +308,8 @@ fn every_stable_prefix_block_shares_one_content_address() {
 
     for manifest in manifests() {
         for block in &manifest.blocks {
-            if block.cache_zone == CacheZone::StablePrefix {
-                if ids.insert(block.block_id.clone()) {
-                    witnesses.push(format!("{} -> {}", manifest.at(), block.block_id));
-                }
+            if block.cache_zone == CacheZone::StablePrefix && ids.insert(block.block_id.clone()) {
+                witnesses.push(format!("{} -> {}", manifest.at(), block.block_id));
             }
         }
     }

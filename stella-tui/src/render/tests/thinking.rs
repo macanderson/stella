@@ -27,7 +27,7 @@ fn thinking_is_collapsed_by_default_and_expands_with_the_toggle() {
     );
     // Collapsed = header + 3 preview lines (all 3 fit within preview count),
     // then the spacer every block-closing entry ends on.
-    let c_lines = transcript_lines(&model, false, 0);
+    let c_lines = transcript_lines(&model, 0, false, 0);
     assert_eq!(c_lines.len(), 5, "header + 3 preview lines + block spacer");
     // Preview shows the reasoning content.
     let c_text: String = c_lines
@@ -47,7 +47,7 @@ fn thinking_is_collapsed_by_default_and_expands_with_the_toggle() {
         "expanded shows the full reasoning:\n{expanded}"
     );
     // Expanded = header + 3 content lines + the same block spacer.
-    assert_eq!(transcript_lines(&model, true, 0).len(), 5);
+    assert_eq!(transcript_lines(&model, 0, true, 0).len(), 5);
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn collapsed_thinking_shows_preview_lines_not_the_full_wall() {
     let mut model = SessionModel::new();
     let long = format!("{}THE-TAIL", "reasoning noise ".repeat(20));
     model.apply(&AgentEvent::Reasoning { delta: long });
-    let lines = transcript_lines(&model, false, 0);
+    let lines = transcript_lines(&model, 0, false, 0);
     // 1 line of text → header + 1 preview, then the block spacer.
     assert_eq!(lines.len(), 3);
     // The preview should be visible.
@@ -73,11 +73,11 @@ fn collapsed_thinking_preview_updates_as_deltas_stream() {
     model.apply(&AgentEvent::Reasoning {
         delta: "planning the refactor".into(),
     });
-    let before = transcript_lines(&model, false, 0);
+    let before = transcript_lines(&model, 0, false, 0);
     model.apply(&AgentEvent::Reasoning {
         delta: " now checking tests".into(),
     });
-    let after = transcript_lines(&model, false, 0);
+    let after = transcript_lines(&model, 0, false, 0);
     // Both produce header + 1 preview + the block spacer.
     assert_eq!(before.len(), 3);
     assert_eq!(after.len(), 3, "still header + 1 preview line");
@@ -134,7 +134,7 @@ fn a_live_thought_follows_its_tail_and_ends_on_the_newest_row() {
         reasoning_is_live(&model.transcript, &model.streaming_text),
         "nothing has landed after it"
     );
-    let rows = row_texts(&transcript_lines(&model, false, 0));
+    let rows = row_texts(&transcript_lines(&model, 0, false, 0));
     // header + fold hint + 5 tail rows + block spacer.
     assert_eq!(rows.len(), 8, "rows:\n{rows:#?}");
     assert!(rows[0].contains("9 lines"), "header counts them all");
@@ -155,11 +155,11 @@ fn the_live_tail_scrolls_as_each_new_line_arrives() {
     model.apply(&AgentEvent::Reasoning {
         delta: numbered_thought(9),
     });
-    let before = row_texts(&transcript_lines(&model, false, 0));
+    let before = row_texts(&transcript_lines(&model, 0, false, 0));
     model.apply(&AgentEvent::Reasoning {
         delta: "\nstep-10".into(),
     });
-    let after = row_texts(&transcript_lines(&model, false, 0));
+    let after = row_texts(&transcript_lines(&model, 0, false, 0));
     assert_eq!(before.len(), after.len(), "same height");
     assert_eq!(
         after[after.len() - 2],
@@ -184,7 +184,7 @@ fn a_settled_thought_reverts_to_its_head() {
         !reasoning_is_live(&model.transcript, &model.streaming_text),
         "the answer displaced it"
     );
-    let rows = row_texts(&transcript_lines(&model, false, 0));
+    let rows = row_texts(&transcript_lines(&model, 0, false, 0));
     assert_eq!(rows[1], "step-1", "the head is back:\n{rows:#?}");
     assert_eq!(rows[5], "step-5");
     assert!(
@@ -233,7 +233,7 @@ fn the_collapsed_row_budget_survives_a_single_paragraph_thought() {
     // One logical line, far wider than the pane.
     let para = format!("{}THE-TAIL", "reasoning noise ".repeat(40));
     model.apply(&AgentEvent::Reasoning { delta: para });
-    let live = row_texts(&transcript_lines(&model, false, 60));
+    let live = row_texts(&transcript_lines(&model, 0, false, 60));
     let live_block = first_block(&live).to_vec();
     assert_eq!(live_block.len(), 7, "header + hint + 5 rows:\n{live:#?}");
     assert!(
@@ -244,7 +244,7 @@ fn the_collapsed_row_budget_survives_a_single_paragraph_thought() {
     model.apply(&AgentEvent::Text {
         delta: "done".into(),
     });
-    let settled = row_texts(&transcript_lines(&model, false, 60));
+    let settled = row_texts(&transcript_lines(&model, 0, false, 60));
     let settled_block = first_block(&settled);
     assert_eq!(
         settled_block.len(),
@@ -265,10 +265,10 @@ fn a_thought_inside_the_budget_renders_whole_either_way() {
     model.apply(&AgentEvent::Reasoning {
         delta: "alpha\nbeta".into(),
     });
-    let live = row_texts(&transcript_lines(&model, false, 0));
+    let live = row_texts(&transcript_lines(&model, 0, false, 0));
     assert_eq!(live, vec!["⏵ thinking  2 lines", "alpha", "beta", ""]);
     model.apply(&AgentEvent::Text { delta: "x".into() });
-    let settled = row_texts(&transcript_lines(&model, false, 0));
+    let settled = row_texts(&transcript_lines(&model, 0, false, 0));
     assert_eq!(&settled[..4], &live[..4], "no marker, no reflow");
 }
 
@@ -280,7 +280,7 @@ fn expanding_a_live_thought_still_shows_all_of_it() {
     model.apply(&AgentEvent::Reasoning {
         delta: numbered_thought(9),
     });
-    let rows = row_texts(&transcript_lines(&model, true, 0));
+    let rows = row_texts(&transcript_lines(&model, 0, true, 0));
     assert!(rows[0].contains("⏶"), "chevron flips:\n{rows:#?}");
     assert_eq!(rows[1], "step-1");
     assert_eq!(rows[9], "step-9");
