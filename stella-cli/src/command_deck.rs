@@ -341,7 +341,8 @@ pub async fn run_deck_session(
     let mut messages = vec![CompletionMessage::system(system_prompt.clone())];
     // `warn: false`: past this point diagnostics would land on the alternate
     // screen; a memory-less session degrades silently here.
-    let mut memory = SessionMemory::open_with_authority(&cfg.workspace_root, false, &cfg.authority);
+    let mut memory =
+        SessionMemory::open_for_session(&cfg.workspace_root, false, &cfg.authority, &active_rules);
     // Custom extensions: ⚡ commands/skills in the slash menu, custom agents
     // behind `/agents`. Reloaded after `/init`, which may adopt new ones.
     let mut custom = crate::extensions::CustomExtensions::load_with_authority(
@@ -1269,8 +1270,12 @@ pub async fn run_deck_session(
                 // `/init` changed the taxonomy and rebuilt the index. Re-open
                 // memory so recall/reflection use the new domains this session
                 // (not just the next), and push a fresh Graph-tab snapshot.
-                memory =
-                    SessionMemory::open_with_authority(&cfg.workspace_root, false, &cfg.authority);
+                memory = SessionMemory::open_for_session(
+                    &cfg.workspace_root,
+                    false,
+                    &cfg.authority,
+                    &active_rules,
+                );
                 if let Some(snapshot) = agent::graph_snapshot(&cfg.workspace_root) {
                     let _ = in_tx.send(Inbound::GraphSnapshot(snapshot));
                 }

@@ -315,10 +315,11 @@ async fn run_pipeline_one_shot(
         )
         .await,
     )];
-    let mut memory = SessionMemory::open_with_authority(
+    let mut memory = SessionMemory::open_for_session(
         &cfg.workspace_root,
         format == OutputFormat::Text,
         &cfg.authority,
+        &active_rules,
     );
     if let Some(m) = &mut memory {
         // External CGP providers join the host before the first recall, so a
@@ -326,7 +327,6 @@ async fn run_pipeline_one_shot(
         // is refused with a reason (#453).
         m.register_external_providers(|message| eprintln!("  {} {message}", "!".yellow()))
             .await;
-        prompt::attach_record_channel(m, &active_rules);
         // Tell memory which execution this run reflects on, before the turn
         // runs — the post-turn self-review is stored 1:1 with an execution,
         // so a path that skips this files id-less reflection rows (NULL
@@ -770,13 +770,13 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     )
     .await;
     let mut messages = vec![CompletionMessage::system(system_prompt.clone())];
-    let mut memory = SessionMemory::open_with_authority(&cfg.workspace_root, true, &cfg.authority);
+    let mut memory =
+        SessionMemory::open_for_session(&cfg.workspace_root, true, &cfg.authority, &active_rules);
     if let Some(m) = &mut memory {
         // Conformance-gated external CGP providers join before the first
         // recall, or are refused with a reason (#453).
         m.register_external_providers(|message| println!("  {} {message}", "!".yellow()))
             .await;
-        prompt::attach_record_channel(m, &active_rules);
     }
     // Custom extensions: ⚡ commands/skills invocable as `/name args`, custom
     // agents behind `/agents`. Reloaded after `/init`, which may adopt new
@@ -907,16 +907,15 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                     }
                     // Re-open memory so recall/reflection use the taxonomy
                     // `/init` just wrote — otherwise the cached domains stay
-                    // stale until the next launch.
-                    memory = SessionMemory::open_with_authority(
+                    // stale until the next launch. The re-open carries the
+                    // record channel with it, because the constructor is where
+                    // the channel is attached.
+                    memory = SessionMemory::open_for_session(
                         &cfg.workspace_root,
                         true,
                         &cfg.authority,
+                        &active_rules,
                     );
-                    // The re-opened session loses the channel with its other state.
-                    if let Some(m) = &mut memory {
-                        prompt::attach_record_channel(m, &active_rules);
-                    }
                     // `/init` may also have adopted new custom
                     // commands/skills/agents — make them invocable now, and
                     // report anything that failed to load.
