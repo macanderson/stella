@@ -280,6 +280,82 @@ fn scope_review_sets_then_clears_on_next_stage() {
         name: StageKind::Execute,
     });
     assert!(model.pending_scope_review.is_none());
+    // …but the plan itself survives: the gate closing is the approval, and the
+    // approved steps have to stay recallable for the rest of the turn.
+    let approved = model.approved_scope.as_ref().expect("the plan is kept");
+    assert_eq!(approved.steps, vec!["s1".to_string(), "s2".to_string()]);
+}
+
+/// The reported defect, isolated: the steps a user consented to were the one
+/// thing the session could no longer show them one minute later. The scrollback
+/// record keeps a summary and two counts — never the steps — so dropping the
+/// proposal destroyed the only copy.
+#[test]
+fn an_approved_plan_outlives_the_gate_that_carried_it() {
+    let mut model = SessionModel::new();
+    model.apply(&AgentEvent::ScopeReview {
+        proposal: ScopeProposal {
+            summary: "collapse the panels".into(),
+            steps: vec!["gate on relevance".into(), "pin the scope".into()],
+            estimated_files: 9,
+            estimated_cost_usd: Some(1.4),
+        },
+    });
+    model.apply(&AgentEvent::Stage {
+        name: StageKind::Execute,
+    });
+    model.apply(&AgentEvent::Complete {
+        model: "glm".into(),
+        cost_usd: 0.5,
+    });
+    let approved = model
+        .approved_scope
+        .as_ref()
+        .expect("the plan survives the whole turn, not just the gate");
+    assert_eq!(approved.summary, "collapse the panels");
+    assert_eq!(approved.steps.len(), 2);
+
+    // And it belongs to *that* turn: the next one starts unapproved rather
+    // than inheriting consent it was never given.
+    model.apply(&AgentEvent::Stage {
+        name: StageKind::Execute,
+    });
+    assert!(
+        model.approved_scope.is_none(),
+        "a new turn inherited the previous turn's approval"
+    );
+}
+
+/// A turn that died at the gate was never approved, and must not be recorded
+/// as though it were — an abandoned proposal is not a plan.
+#[test]
+fn a_turn_that_dies_at_the_gate_records_no_approval() {
+    for terminal in [
+        AgentEvent::Error {
+            message: "aborted".into(),
+            retryable: false,
+        },
+        AgentEvent::Complete {
+            model: "glm".into(),
+            cost_usd: 0.01,
+        },
+    ] {
+        let mut model = SessionModel::new();
+        model.apply(&AgentEvent::ScopeReview {
+            proposal: ScopeProposal {
+                summary: "never approved".into(),
+                steps: vec!["s1".into()],
+                estimated_files: 1,
+                estimated_cost_usd: None,
+            },
+        });
+        model.apply(&terminal);
+        assert!(model.pending_scope_review.is_none());
+        assert!(
+            model.approved_scope.is_none(),
+            "an abandoned proposal was promoted to an approved plan"
+        );
+    }
 }
 
 #[test]

@@ -192,6 +192,16 @@
             "null"
           ]
         },
+        "model_timeout_secs": {
+          "default": null,
+          "description": "Seconds of provider silence that end a single generation\n(`EngineConfig::model_timeout`). Clamped to\n[`MAX_MODEL_TIMEOUT_SECS`]; `0` disables the backstop.\n\nThe partner of `max_output_tokens`, and unusable without it: the two are\none budget, so a host that raises the cap and leaves this at the default\nhas moved where its steps die rather than stopped them dying. Exposed\nfor that reason — before this, a host could pin the output cap over the\nwire but not the timeout that has to scale with it (#1211 §6.2).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "params": {
           "anyOf": [
             {

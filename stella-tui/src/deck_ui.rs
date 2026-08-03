@@ -625,6 +625,23 @@ pub struct DeckUi {
     /// Whether the queue editor popup is open (`ctrl+t`, or `↑` from an empty
     /// composer on the Session tab while prompts are queued).
     pub queue_open: bool,
+    /// Whether the STATE overlay is open (`ctrl+s`): the approved scope's
+    /// steps, the whole task board, and the full proof rail — the expansion of
+    /// the one-row state strip. Modal while open (Esc or ctrl+s closes).
+    ///
+    /// Read-only and scroll-free by design: it is a recall surface, not a
+    /// second place to act on any of the three. Anything actionable —
+    /// approving a scope, answering a question — stays on its own card where
+    /// the keys that answer it are advertised.
+    pub state_open: bool,
+    /// Scroll offset (content rows) for the STATE overlay. A long board or a
+    /// many-step plan outruns a 24-row terminal, and an overlay that dropped
+    /// the overflow would re-create, inside the fix, the very defect it exists
+    /// to remove. Clamped during render against what actually fit.
+    pub state_scroll: usize,
+    /// Rows the STATE overlay last measured, so the key handler can clamp the
+    /// next scroll against what was drawn rather than guessing.
+    pub state_rows: usize,
     /// Selected row in the queue editor.
     pub queue_sel: usize,
     /// Armed by the first `ctrl+d` in the queue editor; the second one clears
@@ -800,6 +817,9 @@ impl Default for DeckUi {
             slash_selected: 0,
             thinking_expanded: false,
             queue_open: false,
+            state_open: false,
+            state_scroll: 0,
+            state_rows: 0,
             queue_sel: 0,
             queue_confirm_clear: false,
             enter_submits: false,
@@ -1681,6 +1701,39 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
         && let Some(action) = handle_skills_key(key, ui, composer_empty)
     {
         return action;
+    }
+
+    // Ctrl-S opens the STATE overlay: the approved scope, the whole task board,
+    // and the full five-row proof rail — everything the one-row state strip
+    // compressed. `s` for state (and for scope, the half of it that had no way
+    // back at all once its gate closed). Free at the deck level: ctrl+s is a
+    // save chord only inside the modal SETTINGS/SKILLS editors, which claim the
+    // keyboard before this line is reached.
+    if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('s')) {
+        ui.state_open = !ui.state_open;
+        // Always open at the top: a stale offset from a previous look would
+        // hide the SCOPE section, which is the section it exists for.
+        ui.state_scroll = 0;
+        return DeckAction::Handled;
+    }
+
+    // Modal while open, like every other overlay: Esc or a second ctrl+s
+    // closes, and nothing behind it moves.
+    if ui.state_open {
+        // A recall surface, so the only verbs are move and leave.
+        let page = 10usize;
+        let max = ui.state_rows.saturating_sub(1);
+        match key.code {
+            KeyCode::Esc => ui.state_open = false,
+            KeyCode::Down => ui.state_scroll = (ui.state_scroll + 1).min(max),
+            KeyCode::Up => ui.state_scroll = ui.state_scroll.saturating_sub(1),
+            KeyCode::PageDown => ui.state_scroll = (ui.state_scroll + page).min(max),
+            KeyCode::PageUp => ui.state_scroll = ui.state_scroll.saturating_sub(page),
+            KeyCode::Home => ui.state_scroll = 0,
+            KeyCode::End => ui.state_scroll = max,
+            _ => {}
+        }
+        return DeckAction::Handled;
     }
 
     // Deck-global tab navigation (Tab / Shift-Tab only — digits never switch
@@ -3394,10 +3447,10 @@ fn handle_agents_key(
         }
         // Agent controls — only when the composer is empty (else they type).
         // `s` stop · `p` pause/resume toggle (by the row's current status) ·
-        // `r` restart. The driver honors all three on worker lanes
-        // (`req:`/`sub:`): pause parks the worker at its next step boundary
-        // (never mid-tool), restart respawns the lane from its retained
-        // spec. On the lead they are no-ops (Esc is the lead's interrupt).
+        // `r` restart. `s` and `p` work on every lane — pause parks the turn at
+        // its next step boundary, never mid-tool, sub-agents included (#1219).
+        // `r` respawns a worker from its retained spec; on the lead it is a
+        // no-op, since restarting it is just re-submitting the prompt.
         KeyCode::Char('s') if composer_empty => model.agents.get(ui.focused).map(|entry| {
             DeckAction::Send(WorkspaceInput::Control {
                 agent: entry.meta.id.clone(),

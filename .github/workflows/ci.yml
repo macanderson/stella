@@ -190,6 +190,24 @@ jobs:
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo fmt --check
 
+      # DELIBERATELY UNSCOPED, and it must stay that way (#1135).
+      #
+      # The pre-push hook narrows these same three tiers — clippy, rustdoc,
+      # test — to the crates a diff can reach, via scripts/impacted-crates.sh.
+      # That is safe precisely because THIS job does not: the local gate can
+      # afford to be clever because something unclever still compiles the whole
+      # tree before anything merges.
+      #
+      # Scoping here too would leave no run anywhere that builds every member
+      # pre-merge, and would make a bug in the impact graph invisible until
+      # `main` goes red — the failure mode this repo pays for most often. The
+      # graph has real escape hatches to get wrong: `include_str!` across crate
+      # boundaries, and tests that climb out of CARGO_MANIFEST_DIR to read
+      # `website/` or `docs/wire/` at run time.
+      #
+      # The cost argument does not apply here either. Runner time is parallel
+      # and rust-cache keeps it warm, so it is not what blocks an author; the
+      # two minutes the hook used to burn on every push is.
       - name: cargo clippy -D warnings
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo clippy --workspace --all-targets -- -D warnings

@@ -682,6 +682,81 @@ fn absent_attempt_count_settings_leave_the_pipeline_defaults_alone() {
     assert_eq!(config.candidates, defaults.candidates);
 }
 
+/// The third of the three coupled ceilings, and until #1211 §6.2 the only one
+/// reachable from no configuration at all: the output cap rides
+/// `agents.<role>.params.max_tokens` and the turn budget is a CLI flag, but
+/// `model_timeout` was an `EngineConfig` constant, so moving it meant a
+/// rebuild. On the benchmark protocol that promoted a timeout change into a
+/// system-under-test change — a re-freeze of the registered commit rather than
+/// a line in a posture.
+///
+/// Every role, not just the worker: what it bounds belongs to the process, so
+/// a judge left at the default while the worker's cap tripled would stop first
+/// on exactly the runs the raise was for.
+#[test]
+fn the_model_timeout_setting_reaches_every_roles_engine() {
+    let mut cfg = cfg_with_engine(
+        "anthropic",
+        r#"{ "default_model": "anthropic/claude-sonnet-5",
+             "model_timeout_secs": 1572 }"#,
+    );
+    cfg.model_id = "claude-sonnet-5".to_string();
+    let worker = ModelRef::new("anthropic", "claude-sonnet-5");
+
+    let expected = Some(std::time::Duration::from_secs(1572));
+    for (role, engine) in [
+        ("default", crate::agent::engine_config_for(&cfg)),
+        ("judge", crate::agent::judge_engine_config_for(&cfg)),
+        (
+            "worker",
+            crate::agent::pipeline_engine_config_for(&cfg, &worker),
+        ),
+    ] {
+        assert_eq!(
+            engine.model_timeout, expected,
+            "{role} must carry the selected silence ceiling"
+        );
+    }
+}
+
+/// An absent key leaves the engine's own default in place — asserted against
+/// `EngineConfig::default()` rather than the literal `816`, so the day the
+/// engine changes its mind this test follows it instead of pinning the CLI to
+/// a default the engine had already abandoned.
+#[test]
+fn an_absent_model_timeout_leaves_the_engine_default_alone() {
+    let mut cfg = cfg_with_engine(
+        "anthropic",
+        r#"{ "default_model": "anthropic/claude-sonnet-5" }"#,
+    );
+    cfg.model_id = "claude-sonnet-5".to_string();
+
+    assert_eq!(
+        crate::agent::engine_config_for(&cfg).model_timeout,
+        EngineConfig::default().model_timeout,
+    );
+}
+
+/// `0` is a third state, not a spelling of "absent": it asks for no backstop at
+/// all, which is the engine's `None`. Reading it as "time out immediately"
+/// would fail every generation instantly, and reading it as "unset" would make
+/// a deliberate choice indistinguishable from having made none.
+#[test]
+fn a_zero_model_timeout_disables_the_backstop_rather_than_tripping_instantly() {
+    let mut cfg = cfg_with_engine(
+        "anthropic",
+        r#"{ "default_model": "anthropic/claude-sonnet-5",
+             "model_timeout_secs": 0 }"#,
+    );
+    cfg.model_id = "claude-sonnet-5".to_string();
+
+    assert_eq!(crate::agent::engine_config_for(&cfg).model_timeout, None);
+    assert!(
+        EngineConfig::default().model_timeout.is_some(),
+        "the default must be bounded, or this test proves nothing"
+    );
+}
+
 #[test]
 fn the_models_own_output_ceiling_replaces_the_global_default() {
     // `EngineConfig::default()` carries one `max_output_tokens` (16384) for

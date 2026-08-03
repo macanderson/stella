@@ -75,7 +75,7 @@ pub(crate) async fn run_raw_one_shot(
             )
             .await,
         ),
-        crate::attachments::user_message(prompt),
+        crate::attachments::user_message_in(prompt, &cfg.workspace_root),
     ];
 
     // The self-improvement loop (memory.rs): recall relevant memories +

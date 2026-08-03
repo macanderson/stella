@@ -93,6 +93,20 @@ red gate costs you thirty seconds locally instead of a review round-trip. It is
 advisory and per-clone (`SKIP_GATE=1 git push` bypasses it), not a substitute
 for the server-side checks.
 
+The hook scopes the three compile tiers — clippy, rustdoc, test — to the crates
+your diff can actually reach, so a change confined to one crate no longer pays
+for all 21 members (#1135). It falls back to the whole workspace for a push to
+`main`, a tag, a diff touching a workspace-root manifest / `Cargo.lock` / a
+build script / the gate machinery, and for anything it cannot narrow with
+confidence. See what it would choose with `make impacted`. Under time pressure,
+step down a rung rather than switching the gate off:
+
+```bash
+GATE=fast git push       # guards + fmt + clippy — no rustdoc, no tests
+GATE=full git push       # the whole workspace, whatever the diff says
+SKIP_GATE=1 git push     # nothing at all (emergencies)
+```
+
 `check-no-scratch.sh` asserts that no tracked file matches a `.gitignore` rule —
 agent-session scratch (repro trees, plans, memory files) must never reach the
 remote (#448). If it fails, either untrack the path with

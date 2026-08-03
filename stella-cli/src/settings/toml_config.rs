@@ -159,6 +159,8 @@ pub struct AgentsSection {
     pub pipeline_max_revisions: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_candidates: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_timeout_secs: Option<u64>,
 
     // The four built-in agents, as tables. Serialized LAST so the flat scalars
     // above are not stranded after a table header — TOML would then read them
@@ -547,6 +549,7 @@ pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection) {
         headless_scope_bypass: cfg.headless_scope_bypass,
         pipeline_max_revisions: cfg.pipeline_max_revisions,
         pipeline_candidates: cfg.pipeline_candidates,
+        model_timeout_secs: cfg.model_timeout_secs,
         default: per_agent.default,
         worker: per_agent.worker,
         judge: per_agent.judge,
@@ -611,6 +614,7 @@ fn lower_agents(agents: AgentsSection, models: ModelsSection) -> Option<AgentEng
         headless_scope_bypass: agents.headless_scope_bypass,
         pipeline_max_revisions: agents.pipeline_max_revisions,
         pipeline_candidates: agents.pipeline_candidates,
+        model_timeout_secs: agents.model_timeout_secs,
         agents: agents_field,
     })
 }

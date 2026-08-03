@@ -2034,6 +2034,18 @@ export interface EngineOverrides {
    */
   max_output_tokens?: number | null;
   /**
+   * Seconds of provider silence that end a single generation
+   * (`EngineConfig::model_timeout`). Clamped to
+   * [`MAX_MODEL_TIMEOUT_SECS`]; `0` disables the backstop.
+   *
+   * The partner of `max_output_tokens`, and unusable without it: the two are
+   * one budget, so a host that raises the cap and leaves this at the default
+   * has moved where its steps die rather than stopped them dying. Exposed
+   * for that reason — before this, a host could pin the output cap over the
+   * wire but not the timeout that has to scale with it (#1211 §6.2).
+   */
+  model_timeout_secs?: number | null;
+  /**
    * Sampling/routing overrides (`CompletionRequest::params` semantics —
    * the host's adapter forwards the subset its dialect supports).
    */
