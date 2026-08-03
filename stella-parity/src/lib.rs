@@ -135,25 +135,28 @@ pub static CAPABILITIES: &[Capability] = &[
                         so every role gets it; the sink writes the work journal's CHECKPOINT_BLOB",
             witness: "a_bound_session_checkpoints_from_every_role",
         },
-        // The plumbing is present and correct on this surface — `drive_turn`
-        // calls both entry points at the same seams the CLI driver does — but
-        // nothing sets `checkpoint_sink`, so a served turn is not durable.
-        // That is a design decision, not an omission: in the reverse-RPC model
-        // the workspace lives on the HOST side, so serve has no filesystem
-        // location it could honestly checkpoint against (and no `stella-store`
-        // dependency, and no workspace root or session id in `SessionSpec`).
-        // `SessionSpec::config` is `pub`, so an embedder that owns a workspace
-        // supplies its own sink today.
+        // Promoted in #1198, and precisely within ADR 0013's line rather than
+        // across it. What that ADR refuses is giving *the server* a
+        // filesystem: the workspace stays the host's, so serve must never
+        // pick a location to write to. It does not. `ServeConfig::checkpoints`
+        // is `None` by default and this crate names no path; what ships is the
+        // port (`CheckpointStore`) plus the durable identity to key it
+        // (`SessionSpec::checkpoint`), which is the same ADR's other half —
+        // "gives an embedder a defined artifact to persist".
         //
-        // ADR 0013 settles the boundary this was waiting on and does NOT
-        // promote this row: it decides that the workspace stays the host's, so
-        // a server-side sink is not the destination. What it unblocks is the
-        // artifact an embedder's sink produces and the contract it must meet.
-        api: SurfacePosture::Deferred {
-            waiting_on: "ADR 0013 (docs/adr/0013-session-artifact-boundary.md) — the workspace \
-                         stays the host's, so serve gets no server-side sink; what is deferred is \
-                         the artifact contract an embedder's own sink writes (bundle shape, \
-                         provenance fingerprint, Checkpoint as a versioned wire contract)",
+        // The reference implementations (`MemoryCheckpointStore`,
+        // `FileCheckpointStore`) are library types an embedder may choose.
+        // Deliberately NOT exposed as a flag on the `stella-serve` binary:
+        // that would be the server choosing, which is the act ADR 0013 lists
+        // under "what this does not commit us to", and it is one line to add
+        // once that ADR is ratified.
+        api: SurfacePosture::Shipped {
+            mechanism: "SessionSpec::checkpoint keys an embedder-supplied CheckpointStore \
+                        (ServeConfig::with_checkpoint_store); a session turn keys on the session \
+                        id and a stateless one on its turn id; \
+                        GET|DELETE /v1/sessions/{id}/checkpoint and \
+                        GET|DELETE /v1/turns/{id}/checkpoint read one back or reclaim it",
+            witness: "a_served_turn_writes_a_resume_point_at_every_step_boundary",
         },
     },
     Capability {
@@ -471,9 +474,10 @@ mod tests {
 
     /// API sources a witness may live in: the serve crate's unit tests plus
     /// its end-to-end suites.
-    fn api_sources() -> [&'static str; 9] {
+    fn api_sources() -> [&'static str; 10] {
         [
             include_str!("../../stella-serve/src/server.rs"),
+            include_str!("../../stella-serve/tests/checkpoint.rs"),
             include_str!("../../stella-serve/tests/bridge.rs"),
             include_str!("../../stella-serve/tests/control.rs"),
             include_str!("../../stella-serve/tests/sessions.rs"),

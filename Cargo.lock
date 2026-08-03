@@ -3342,6 +3342,7 @@ dependencies = [
  "stella-core",
  "stella-engine",
  "stella-protocol",
+ "tempfile",
  "thiserror 2.0.19",
  "tokio",
 ]

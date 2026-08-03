@@ -91,6 +91,7 @@ pub struct Metrics {
     connections_failed_total: AtomicU64,
     accept_backoff_total: AtomicU64,
     accept_gave_up_total: AtomicU64,
+    checkpoints_failed_total: AtomicU64,
 }
 
 /// The serializable shape of `GET /v1/metrics`.
@@ -152,6 +153,10 @@ pub struct Snapshot {
     pub connections_failed_total: u64,
     pub accept_backoff_total: u64,
     pub accept_gave_up_total: u64,
+    /// Turns whose resume point could not be written or cleared. One per
+    /// *turn*, matching `ServeEvent::CheckpointFailed`'s own budget — so a
+    /// non-zero value counts undurable turns, not failed syscalls.
+    pub checkpoints_failed_total: u64,
 }
 
 impl Metrics {
@@ -219,6 +224,7 @@ impl Metrics {
             connections_failed_total: self.connections_failed_total.load(ORDER),
             accept_backoff_total: self.accept_backoff_total.load(ORDER),
             accept_gave_up_total: self.accept_gave_up_total.load(ORDER),
+            checkpoints_failed_total: self.checkpoints_failed_total.load(ORDER),
         }
     }
 }
@@ -370,6 +376,9 @@ impl Observer for Metrics {
             }
             ServeEvent::AcceptGaveUp { .. } => {
                 self.accept_gave_up_total.fetch_add(1, ORDER);
+            }
+            ServeEvent::CheckpointFailed { .. } => {
+                self.checkpoints_failed_total.fetch_add(1, ORDER);
             }
 
             ServeEvent::DrainCompleted { cancelled, .. } => {
