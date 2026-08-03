@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde_json::Value;
+use stella_core::bus::{self, HookBus, HookDecision, HookEventDraft, names as hook_names};
 use stella_core::ports::ToolExecutor;
 use stella_core::retry::Sleeper;
 use stella_protocol::{
@@ -290,6 +291,15 @@ pub(crate) struct RemoteToolExecutor {
     pending: Pending,
     counter: AtomicU64,
     timeout: Duration,
+    /// This turn's operator hook plane (#1298), `None` when the deployment
+    /// installed no extensions.
+    ///
+    /// The port owns it rather than the engine because the interception point
+    /// has to be *before the request frame leaves*: a `Deny` that arrived
+    /// after the host had already been asked to run the tool would be a veto
+    /// of the answer, not of the act. Same placement, and same reason, as
+    /// `ToolRegistry`'s gate on the CLI side.
+    bus: Option<HookBus>,
 }
 
 impl RemoteToolExecutor {
@@ -298,6 +308,7 @@ impl RemoteToolExecutor {
         frames: crate::backlog::FrameSink,
         pending: Pending,
         timeout: Duration,
+        bus: Option<HookBus>,
     ) -> Self {
         Self {
             schemas,
@@ -305,7 +316,80 @@ impl RemoteToolExecutor {
             pending,
             counter: AtomicU64::new(0),
             timeout,
+            bus,
         }
+    }
+
+    /// Run the `tool.call.requested` blocking chain before the request frame
+    /// is built.
+    ///
+    /// `Ok(None)`: allowed unchanged. `Ok(Some(input))`: allowed with a
+    /// policy-rewritten input, which is what the host is then asked to run.
+    /// `Err(output)`: refused — the model sees this error instead of a result,
+    /// and the host is never asked at all.
+    ///
+    /// The chain receives the RAW input: the blocking path is the explicitly
+    /// privileged interception point (`stella_core::bus`), and a policy that
+    /// cannot see the shell command it is judging cannot judge it. Observable
+    /// events below carry `sanitize_tool_input`'d copies instead.
+    ///
+    /// Deliberately the same decision handling as the CLI's `ToolRegistry`,
+    /// down to the dropped-`input` case: two surfaces answering one `Deny`
+    /// differently is exactly the drift `stella-parity` exists to catch.
+    fn gate_tool_call(
+        bus: &HookBus,
+        name: &str,
+        input: &Value,
+    ) -> Result<Option<Value>, ToolOutput> {
+        let outcome = bus.emit_blocking(HookEventDraft::new(
+            hook_names::TOOL_CALL_REQUESTED,
+            serde_json::json!({ "tool": name, "input": input }),
+        ));
+        match outcome.decision {
+            HookDecision::Deny { reason } => Err(ToolOutput::Error {
+                message: format!("`{name}` was denied by an extension policy: {reason}"),
+            }),
+            HookDecision::RequireApproval { reason } => Err(ToolOutput::Error {
+                message: format!("`{name}` requires approval before it can run: {reason}"),
+            }),
+            _ => {
+                if !outcome.modified {
+                    return Ok(None);
+                }
+                match outcome.event.payload.get("input") {
+                    Some(new_input) => Ok(Some(new_input.clone())),
+                    None => {
+                        // A `modify` that dropped `input` is a broken policy
+                        // handler. Surface it and keep the original rather
+                        // than asking the host to run garbage.
+                        bus.emit_named(
+                            hook_names::EXTENSION_ERROR,
+                            serde_json::json!({
+                                "failed_event": hook_names::TOOL_CALL_REQUESTED,
+                                "error": "modify decision dropped the `input` field; original input kept",
+                            }),
+                        );
+                        Ok(None)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Announce how the host answered, on the observable channel.
+    fn report_tool_outcome(bus: &HookBus, name: &str, output: &ToolOutput, duration_ms: u64) {
+        match output {
+            ToolOutput::Error { message } => bus.emit_named(
+                hook_names::TOOL_CALL_FAILED,
+                serde_json::json!({
+                    "tool": name, "error": message, "duration_ms": duration_ms,
+                }),
+            ),
+            ToolOutput::Ok { .. } => bus.emit_named(
+                hook_names::TOOL_CALL_COMPLETED,
+                serde_json::json!({ "tool": name, "duration_ms": duration_ms }),
+            ),
+        };
     }
 }
 
@@ -325,6 +409,25 @@ impl ToolExecutor for RemoteToolExecutor {
                 message: "turn cancelled before the tool call could be dispatched".to_string(),
             };
         }
+        // Operator policy, before anything is dispatched (#1298). A refusal
+        // returns here, so a denied tool costs the host nothing: no frame is
+        // sent, no reverse request is registered, and no deadline is armed.
+        let mut gated = None;
+        if let Some(bus) = &self.bus {
+            match Self::gate_tool_call(bus, name, input) {
+                Ok(replacement) => gated = replacement,
+                Err(refused) => return refused,
+            }
+            bus.emit_named(
+                hook_names::TOOL_CALL_STARTED,
+                serde_json::json!({
+                    "tool": name,
+                    "input": bus::sanitize_tool_input(gated.as_ref().unwrap_or(input)),
+                }),
+            );
+        }
+        let input = gated.as_ref().unwrap_or(input);
+        let started_at = Instant::now();
         let request_id = format!("tool-{}", self.counter.fetch_add(1, Ordering::Relaxed));
         let (tx, rx) = oneshot::channel();
         // Same refused-registration handling as the provider port: a cancel
@@ -351,7 +454,7 @@ impl ToolExecutor for RemoteToolExecutor {
             };
         }
         let started = dispatched(&self.pending, &request_id, ReverseKind::Tool);
-        match tokio::time::timeout(self.timeout, rx).await {
+        let output = match tokio::time::timeout(self.timeout, rx).await {
             Ok(Ok(output)) => {
                 answered(&self.pending, &request_id, ReverseKind::Tool, started);
                 output
@@ -373,6 +476,13 @@ impl ToolExecutor for RemoteToolExecutor {
                     ),
                 }
             }
+        };
+        // Reported on every exit above, including the ones the host never
+        // answered: an observer that pairs `started` with an outcome must not
+        // be left holding an open call precisely when the host wedged.
+        if let Some(bus) = &self.bus {
+            Self::report_tool_outcome(bus, name, &output, millis(started_at.elapsed()));
         }
+        output
     }
 }

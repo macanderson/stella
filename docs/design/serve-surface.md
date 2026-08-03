@@ -58,6 +58,7 @@ not in this table is a 404.
 | `GET` | `/healthz` | Unauthenticated. Liveness — is the process alive. `{"status":"ok"}` |
 | `GET` | `/readyz` | Unauthenticated. Readiness — is it safe to send new work. `200 {"state":"ready"}`, or `503` with `"starting"` / `"draining"` (#1131) |
 | `GET` | `/v1/metrics` | Counters as a flat JSON object of integers. Authenticated like every other route, and **pull-only** — see [serve-observability.md](./serve-observability.md) |
+| `GET` | `/v1/calibration` | Token-drift report (#1298): `{"models":[{provider_id, model, samples, estimated_input_tokens, actual_input_tokens, drift_ratio, applied_factor}]}` — what the engine estimated against what the provider billed. Read-only and authenticated, same reasoning as `/v1/metrics`. Empty `models` before any turn has committed a step. State is process memory keyed by `(provider_id, model)`; nothing is persisted, so a redeployed sidecar re-converges — which is why every row carries `samples` |
 | `POST` | `/v1/turns` | Body is `TurnRequest`; returns `{"turn_id":"turn-<32 hex>"}`. Optional `engine` object (#1167) carries per-turn caller-policy knobs (`max_output_tokens`, `temperature`, `effort`, `reasoning`, `params`, `compaction_budget_tokens`, `summarize_overflow`, `summarize_keep_recent`) lowered onto the defaults — omitted/empty is a no-op; unusable values are 400s naming the knob; values past an operator ceiling are clamped and reported in the response's `clamped` array (`{knob, requested, effective}`, absent when nothing was lowered). `retry_policy`/`loop_detection` are operator policy and not settable |
 | `GET` | `/v1/turns/{id}/events` | SSE `id: <seq>` + `data: <ServerFrame>`. Resumable via `?after=<seq>` or `Last-Event-ID`. One concurrent subscriber; a second gets 409 |
 | `POST` | `/v1/turns/{id}/provider-result` | Answers a `provider_request` |
@@ -128,6 +129,51 @@ replay the retained stream to rediscover what it owes.
 Also: the tool surface is selected by the `STELLA_SERVE_TOOLS=remote`
 environment variable, not a `--tools remote` flag — the binary parses no flags
 beyond `healthcheck`, `--version` and `--help`.
+
+## Hooks — who may register one (#1298)
+
+A served turn crosses the same boundaries a local one does, and an operator can
+now observe and intervene at them. **Only an operator can.**
+
+`stella-core` ships two hook systems and the sidecar attaches exactly one:
+
+- `stella_core::hooks`, the settings-declared **shell command** engine, is
+  deliberately unreachable from `stella-serve`. The containment posture below
+  is that the engine holds no ambient authority — every model and tool call is
+  remoted to the host. A hook system that spawned shells inside the sidecar
+  would hand back through a side door precisely the local execution the front
+  door refuses.
+- `stella_core::bus`, the **in-process** hook bus, is what a turn attaches, via
+  the `ServeExtension` trait.
+
+A `ServeExtension` is Rust code compiled into whatever binary calls
+`stella_serve::serve`, installed on `ServeConfig::extensions` before the
+listener binds. **No route registers, uploads, names or configures one**, and
+adding such a route would be a security change rather than a feature: the
+bearer token authenticates a *host*, not the operator, and a host that could
+install a handler could read every tool call's raw input — file contents and
+shell command lines included — and `Deny` its way into steering the engine.
+`stella-serve/tests/hooks.rs` pins that rule as a sweep over the route table,
+so the reversal fails a test rather than passing review.
+
+What an extension may do follows the bus's own split:
+
+| Kind | Registered with | Power |
+|---|---|---|
+| Observer | `HookBus::on` | Watches `agent.turn.*`, `agent.step.*`, `model.request.*`, `tool.call.*`, `policy.*`. Cannot veto, delay or fail the turn; a handler that errors is isolated, and one that keeps overrunning its latency budget is quarantined |
+| Policy | `HookBus::on_blocking` | Runs on `tool.call.requested` **before** the `tool_request` frame leaves. May `Deny` (the model sees a named error; the host is never asked), `RequireApproval`, or `Modify` the input the host is asked to run |
+
+The bus is minted per turn and dropped with it, keyed on the truncated
+`TurnRef` — so the hook plane inherits the record plane's posture: enough to
+correlate a turn, never enough to address one. A deployment that installs no
+extensions mints no bus at all, and every engine emit site stays behind its
+`if let Some(bus)`, so the shipping binary's behavior is unchanged.
+
+The turn boundaries are worth one note. `stella-serve` drives `run_step`
+itself rather than calling `run_turn`, so `agent.turn.started` /
+`agent.turn.completed` are framing this crate owns — it emits them through
+`run_turn`'s own payload shapers (`stella_core::driver::lifecycle`) so the two
+drivers cannot describe the same boundary differently.
 
 ## Durability — what a served turn survives (#1198)
 

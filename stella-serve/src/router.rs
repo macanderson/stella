@@ -39,6 +39,7 @@ pub(crate) fn classify<'a>(segs: &[&'a str]) -> (Route, Option<&'a str>) {
         ["healthz"] => (Route::Healthz, None),
         ["readyz"] => (Route::Readyz, None),
         ["v1", "metrics"] => (Route::Metrics, None),
+        ["v1", "calibration"] => (Route::Calibration, None),
         ["v1", "turns"] => (Route::TurnsCreate, None),
         ["v1", "turns", id, "events"] => (Route::TurnEvents, Some(id)),
         ["v1", "turns", id, "tool-result"] => (Route::TurnToolResult, Some(id)),
@@ -93,7 +94,11 @@ pub(crate) fn resume_point(query: &str, req: &crate::http::Request) -> Option<u6
 /// The `Allow` header value for a known route.
 pub(crate) fn allowed(route: Route) -> &'static str {
     match route {
-        Route::Healthz | Route::Readyz | Route::Metrics | Route::TurnEvents => "GET",
+        Route::Healthz
+        | Route::Readyz
+        | Route::Metrics
+        | Route::Calibration
+        | Route::TurnEvents => "GET",
         Route::TurnsCreate
         | Route::TurnToolResult
         | Route::TurnProviderResult
