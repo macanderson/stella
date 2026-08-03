@@ -1,11 +1,17 @@
-# Design: Remote workspaces — running a session's tree in a third-party sandbox
+# Design: Remote sandboxes — one sandbox type, on your disk or someone else's
 
 **Status:** Proposed · **Date:** 2026-08-02 · **Nothing here is built.**
 This document describes a destination, not the code. Where it names a
 file or a type that exists today (`stella-tools/src/registry.rs`,
 `Tool::execute`, `stella-fleet`'s worktree port), that is the *current*
-state being generalized; where it names `Workspace`, `WorkspaceProvider`,
-or the wire protocol, that is new surface to build.
+state being generalized; where it names the `Sandbox` trait, its two
+implementations, or the provider protocol, that is new surface to build.
+
+**This document also proposes deleting `stella-tools/src/sandbox.rs`** —
+the opt-in Seatbelt/bubblewrap confinement that today wraps the `bash`
+tool and nothing else. §2 makes that case from the module's own
+documentation and from `threat-model.md`, and §12 sequences the removal
+behind its replacement.
 
 ---
 
@@ -37,33 +43,114 @@ that maps each design decision back to the invariant it protects.
 
 ---
 
-## 2. A naming problem to settle first
+## 2. Delete the local sandbox; isolation becomes structural
 
-**`sandbox` is already a word in this codebase, and it means something
-else.** `stella-tools/src/sandbox.rs` implements *local OS confinement*:
-`SandboxMode` is `off | workspace-write | restricted`, lowered to a
-seatbelt SBPL profile on macOS and a `bwrap` argv on Linux. It answers
-"how much authority does this command get on the machine it is already
-running on."
+`stella-tools/src/sandbox.rs` exists today and appears to occupy this
+space. **It should be deleted, not generalized.** The case is short, and
+it is made almost entirely out of the module's own documentation and the
+project's own threat model.
 
-The feature in this document answers a different question: "*which
-machine* is the tree on." Those are orthogonal — you can and should be
-able to run `restricted` confinement *inside* a Modal container — and
-naming them the same thing would put `sandbox_mode` and `sandbox
-provider` two unrelated concepts apart in the same config file.
+What it is: `SandboxMode` = `off | workspace-write | restricted`, lowered
+to a Seatbelt SBPL profile on macOS and a `bwrap` argv on Linux. It is
+read from **one environment variable** (`STELLA_BASH_SANDBOX`) at
+**exactly one call site** (`bash.rs`). No `Settings` field, no config
+key, no CLI flag. The default is `off`.
 
-So, for the rest of this document and for the code:
+What it admits about itself, under a heading titled *"Scope, stated
+honestly"*:
 
-- **workspace** — where the tree lives and where workspace-bound tools
-  execute. Its `location` is `local` (today's behavior, the default) or
-  the name of a configured provider.
-- **sandbox** — unchanged, the existing confinement policy. It composes:
-  confinement mode is a pure function of `(mode, root)`, and that
-  function does not care whose kernel it lands on.
+> Every other path to a subprocess — `build_project`/`run_tests`'s
+> `command` override, `verify_done`'s `test_cmd`, the `run_script`
+> index-composed line, `start_process` with a shell `argv[0]`, the
+> `repo_*`/`ci_status`/issue-tool `git` and `gh` invocations, custom
+> manifest tools, and hook actions — goes through `exec` or its own spawn
+> and runs UNSANDBOXED even when this is set. […] `STELLA_BASH_SANDBOX`
+> is a bound on one tool, not on the session.
 
-Users will keep saying "sandbox" for the new thing, and that is fine —
-`stella sandbox` can be a documented alias for `stella workspace`. The
-*internal* vocabulary is what must stay unambiguous.
+and, on the macOS backend:
+
+> Treat it as blast-radius reduction for accidental and prompt-injected
+> writes, **not as a boundary that holds against a command written to
+> break it.**
+
+What `threat-model.md` already grades it: P8 (injected instruction drives
+`bash` to exfiltrate) is *"Partial — sandbox is opt-in"*; P9
+(`run_script` / `start_process`) is *"**Not mitigated by the sandbox**"*;
+and R3 is titled *"The sandbox wraps `bash` only."*
+
+So: it is off by default, covers one of the many ways Stella starts a
+process, rests on an API Apple has carried a deprecation notice on for
+years, is graded partial-or-nothing by our own threat model, and — per
+its own tradeoff section — breaks ordinary work when enabled (`cargo`
+writing `~/.cargo`, `npm`/`pip` caches, `git push` under `restricted`).
+A half-boundary that users believe in is worse than a clearly absent one.
+
+### 2.1 Isolation becomes binary and structural
+
+Delete `sandbox.rs`, and there is no strength dial anywhere. A session is
+in exactly one of two states:
+
+```rust
+#[async_trait]
+pub trait Sandbox: Send + Sync { /* §4 */ }
+
+/// Your actual tree, your actual privileges — today's shipped default,
+/// which is what essentially every session runs today.
+pub struct LocalSandbox  { root: PathBuf }
+
+/// A real kernel or hypervisor boundary, reached through a provider.
+pub struct RemoteSandbox { provider: ProviderId, handle: SandboxHandle }
+```
+
+There is no "sort of confined" state to document, reason about, or leak
+through. You are either working in your own tree, or you are working in
+a sandbox — and when you are, the boundary is the container's or the
+VM's, enforced by something other than a policy file that starts with
+`(allow default)`.
+
+This is a simplification of the design as well as of the product:
+`strength` no longer has to be plumbed to every exec path, which was real
+work in service of a mechanism nobody should rely on.
+
+### 2.2 Local isolation still exists — as a provider
+
+Deleting the seatbelt path does not mean "isolation requires a cloud
+account." A `docker` / `podman` provider (driven by argv, not by a crate)
+is a sandbox whose host happens to be localhost. It runs offline, costs
+nothing, needs no vendor, and reaches the user through the *same*
+interface as Modal and E2B.
+
+So the replacement for `STELLA_BASH_SANDBOX=restricted` is
+`[sandbox] location = "docker"` — a stronger boundary, covering every
+tool instead of one, through one concept instead of two. §7.1 promotes
+this from a nice-to-have to the thing that makes the removal safe.
+
+### 2.3 The honest cost
+
+Turning on `STELLA_BASH_SANDBOX` today costs nothing: no daemon, no
+image, no pull. Requiring a container runtime for local isolation raises
+that floor, and someone on a laptop with no Docker who wants *some*
+blast-radius reduction on `bash` does lose an option.
+
+What they lose is mostly the feeling of it — the threat model already
+grades that option "Partial", and the module already says it does not
+hold against a command written to break it. But it is a real removal and
+belongs in a release note, not in a footnote (§11).
+
+### 2.4 What the removal touches
+
+| Site | Change |
+|---|---|
+| `stella-tools/src/sandbox.rs` | delete (597 lines: ~358 implementation, ~239 tests) |
+| `stella-tools/src/bash.rs` | drop the `host_argv` call site and the module docs describing it |
+| `stella-cli/src/enterprise_telemetry.rs` | drop `STELLA_BASH_SANDBOX` from the reported-env allowlist |
+| `website/content/docs/agent-tools/permissions.mdx` | replace *"Sandboxing the shell tool"* with the sandbox-location docs |
+| `README.md`, `stella-tools/README.md` | drop the env-var mentions |
+| `docs/design/threat-model.md` | retire R3 and re-grade P8/P9 — the mitigation is now all-or-nothing rather than bash-only |
+| `bench/harbor_adapter/tests/test_adapter.py` | drop the env passthrough assertion |
+
+Nothing else calls `host_argv`; the seam is one function reached from one
+place, which is what makes the deletion clean.
 
 ---
 
@@ -148,7 +235,7 @@ This is what makes remote workspaces viable, and it is testable — see
 
 ---
 
-## 4. The `Workspace` port
+## 4. The `Sandbox` port
 
 New trait, in `stella-core` alongside the other ports (`ports.rs` already
 holds `ToolExecutor`, `Clock`, `TurnGate`, `TurnSteering` — this belongs
@@ -157,37 +244,37 @@ someone else implements it).
 
 ```rust
 #[async_trait]
-pub trait Workspace: Send + Sync {
-    /// Identity and location — for the deck chip, the session record,
+pub trait Sandbox: Send + Sync {
+    /// Location and provider — for the deck chip, the session record,
     /// and error messages that must say *where* something failed.
-    fn descriptor(&self) -> WorkspaceDescriptor;
+    fn descriptor(&self) -> SandboxDescriptor;
 
     // ---- path-scoped: one call, one path (or a batch of them) --------
-    async fn read(&self, path: &WsPath, range: Option<LineRange>) -> WsResult<FileRead>;
+    async fn read(&self, path: &SbPath, range: Option<LineRange>) -> SbResult<FileRead>;
     /// Batched deliberately: `code_map` and `overview` want tens of files
     /// and must not pay tens of round trips for them.
-    async fn read_many(&self, paths: &[WsPath]) -> WsResult<Vec<WsResult<FileRead>>>;
-    async fn write(&self, path: &WsPath, bytes: &[u8], mode: WriteMode) -> WsResult<WriteReceipt>;
-    async fn remove(&self, path: &WsPath, recursive: bool) -> WsResult<RemoveReceipt>;
-    async fn stat_many(&self, paths: &[WsPath]) -> WsResult<Vec<Option<Stat>>>;
+    async fn read_many(&self, paths: &[SbPath]) -> SbResult<Vec<SbResult<FileRead>>>;
+    async fn write(&self, path: &SbPath, bytes: &[u8], mode: WriteMode) -> SbResult<WriteReceipt>;
+    async fn remove(&self, path: &SbPath, recursive: bool) -> SbResult<RemoveReceipt>;
+    async fn stat_many(&self, paths: &[SbPath]) -> SbResult<Vec<Option<Stat>>>;
 
     // ---- tree-scoped: the loop runs on the far side ------------------
-    async fn glob(&self, q: &GlobQuery) -> WsResult<GlobResult>;
-    async fn grep(&self, q: &GrepQuery) -> WsResult<GrepResult>;
+    async fn glob(&self, q: &GlobQuery) -> SbResult<GlobResult>;
+    async fn grep(&self, q: &GrepQuery) -> SbResult<GrepResult>;
     /// The `WorkspaceProbe` fingerprint, computed in place. See §6.2 —
     /// this one verb is the difference between "usable" and "unusable".
-    async fn fingerprint(&self, scope: &ProbeScope) -> WsResult<TreeFingerprint>;
+    async fn fingerprint(&self, scope: &ProbeScope) -> SbResult<TreeFingerprint>;
 
     // ---- process -----------------------------------------------------
-    async fn exec(&self, req: ExecRequest) -> WsResult<ExecStream>;   // one-shot, streaming
-    async fn spawn(&self, req: ExecRequest) -> WsResult<ProcHandle>;  // long-lived
-    async fn proc_read(&self, h: &ProcHandle, clear: bool) -> WsResult<ProcOutput>;
-    async fn proc_stdin(&self, h: &ProcHandle, text: &str) -> WsResult<()>;
-    async fn proc_stop(&self, h: &ProcHandle) -> WsResult<ProcExit>;
+    async fn exec(&self, req: ExecRequest) -> SbResult<ExecStream>;   // one-shot, streaming
+    async fn spawn(&self, req: ExecRequest) -> SbResult<ProcHandle>;  // long-lived
+    async fn proc_read(&self, h: &ProcHandle, clear: bool) -> SbResult<ProcOutput>;
+    async fn proc_stdin(&self, h: &ProcHandle, text: &str) -> SbResult<()>;
+    async fn proc_stop(&self, h: &ProcHandle) -> SbResult<ProcExit>;
 
     // ---- bulk transfer ------------------------------------------------
-    async fn push_tree(&self, spec: &TransferSpec) -> WsResult<TransferReceipt>;
-    async fn pull_tree(&self, spec: &TransferSpec) -> WsResult<TransferReceipt>;
+    async fn push_tree(&self, spec: &TransferSpec) -> SbResult<TransferReceipt>;
+    async fn pull_tree(&self, spec: &TransferSpec) -> SbResult<TransferReceipt>;
 }
 ```
 
@@ -196,7 +283,7 @@ provider implements sixteen things, not fifty-nine**, and the ratio is
 what keeps third-party adapters small enough that people actually write
 them.
 
-### 4.1 `LocalWorkspace` must be the *same code*, moved
+### 4.1 `LocalSandbox` must be the *same code*, moved
 
 The local implementation is not a new local implementation. It is the
 `std::fs` and `tokio::process` code that lives in the tools today, cut
@@ -230,7 +317,7 @@ diff text.
 Not every tool is workspace-bound, and getting this table wrong is how
 credentials end up in a vendor's container. Three classes:
 
-### Workspace-bound — execute against the workspace, wherever it is
+### Sandbox-bound — execute against the tree, wherever it is
 
 `read_file` · `write_file` · `edit_file` · `apply_edits` · `delete_file`
 · `glob_files` · `grep_files` · `read_symbol` · `bash` · `run_script` ·
@@ -271,7 +358,7 @@ oversight, and there are two answers:
 - **Opt-in, scoped, and loud:**
 
   ```toml
-  [workspace.credentials]
+  [sandbox.credentials]
   forward = ["git"]        # nothing else, ever, without naming it
   ttl = "30m"
   ```
@@ -339,26 +426,29 @@ answer, no second protocol.
 **I1** says no vendor may appear in a shipped `Cargo.toml`. The mechanism
 already has a precedent in this repo: **MCP**. `stella-mcp` spawns
 third-party stdio children and speaks a small JSON protocol to them, and
-no MCP server's code is in this tree. Workspace providers work the same
+no MCP server's code is in this tree. Sandbox providers work the same
 way.
 
-A **workspace provider** is an executable that speaks the Workspace
-Provider Protocol — newline-delimited JSON-RPC over stdio, one method per
-verb in §4, plus the lifecycle verbs in §7.1.
+A **sandbox provider** is an executable that speaks the Sandbox Provider
+Protocol — newline-delimited JSON-RPC over stdio, one method per verb in
+§4, plus the lifecycle verbs in §7.1.
+
+There is exactly one knob, and it is `location`. No strength, no mode —
+see §2.1.
 
 ```toml
-[workspace]
-location = "modal"          # "local" is the default and always available
+[sandbox]
+location = "modal"          # "local" is the default: your tree, your privileges
 max_concurrent = 4
 
-[workspace.providers.modal]
+[sandbox.providers.modal]
 transport = "stdio"
-command   = "stella-ws-modal"
+command   = "stella-sb-modal"
 args      = ["--app", "stella-dev"]
 env       = { MODAL_TOKEN_ID = "${env:MODAL_TOKEN_ID}" }
 # Passed through opaquely. Stella does not parse, validate, or understand
 # these — they are the vendor's vocabulary, not Stella's.
-[workspace.providers.modal.options]
+[sandbox.providers.modal.options]
 image  = "ghcr.io/acme/dev:2026-08"
 cpu    = 4
 region = "us-east"
@@ -379,16 +469,21 @@ shape (the centralized `contextgraph-*` declaration test), and **I1** is
 the kind of invariant that erodes through one well-meaning convenience
 dependency.
 
-### 7.1 Two in-tree providers that are not vendors
+### 7.1 Three in-tree providers, none of them vendors
 
-Ship `local` and `ssh` in-tree. SSH is a protocol, not a vendor, so it
-costs nothing against **I1**, and it earns its place three times over: it
-proves the protocol is implementable, it is a free option for users with
-a dev box, and it is an offline CI target so the remote path is tested
-on every PR without a paid account.
-
-A `container` provider driving the `docker`/`podman` CLI (by argv, not
-by crate) is a strong second candidate for the same reasons.
+- **`local`** — your tree, your privileges. The default, and the only one
+  that is not really a provider.
+- **`docker`** (also `podman`) — drives the CLI by argv, never a crate.
+  **This one is load-bearing**, because it is what makes deleting
+  `sandbox.rs` (§2) a net improvement rather than a net loss: it is the
+  offline, free, no-account answer to "I want isolation on my own
+  machine," and it is a real kernel boundary rather than a filesystem
+  policy. It must ship in the same release that removes the seatbelt
+  path — see §12.
+- **`ssh`** — a protocol, not a vendor, so it costs nothing against
+  **I1**. It proves the protocol is implementable against a genuinely
+  remote host, serves users with a dev box, and is an offline CI target
+  so the remote path is exercised on every PR without a paid account.
 
 Vendor adapters — Modal, E2B, Daytona — live **outside this repo**, in
 the style of `stella-examples`.
@@ -399,7 +494,7 @@ the style of `stella-examples`.
 
 **I2** in mechanism form. Stella's entire relationship with a sandbox:
 
-- **`acquire(spec) -> WorkspaceHandle`** — the provider returns something
+- **`acquire(spec) -> SandboxHandle`** — the provider returns something
   running with the tree in place. Stella does not build images, choose
   CPU counts, install packages, or know what any of those words mean for
   a given vendor; `options` (§7) passes through opaquely.
@@ -427,7 +522,7 @@ Three declared modes:
 ### 8.2 Harvesting
 
 Symmetric, and this is where **I2** pays off: **the deliverable is a
-diff, not a sandbox.** `stella workspace pull` produces the same artifact
+diff, not a sandbox.** `stella sandbox pull` produces the same artifact
 `candidate_ws` adoption produces — a patch applied to the local tree —
 or the agent commits and pushes from inside and the diff arrives through
 git. Either way the sandbox is disposable at every moment, which is the
@@ -468,8 +563,8 @@ daemon, no sync loop.
 
 ### 9.2 The round-trip regression witness
 
-The rule in §3.4 is only real if it is enforced. A `CountingWorkspace`
-test double wraps any `Workspace` and counts verbs per tool call; a test
+The rule in §3.4 is only real if it is enforced. A `CountingSandbox`
+test double wraps any `Sandbox` and counts verbs per tool call; a test
 asserts the ceiling for each workspace-bound tool (`write_file` ≤ 1,
 `bash` ≤ 3 including both probe fingerprints, `grep_files` = 1, and so
 on). A future change that reintroduces a client-side loop fails a test
@@ -482,7 +577,7 @@ unreachable, the diff probe and the `file_change_events` channel must
 report `NothingAttempted` / `Unverifiable` — **never `passed: false`.**
 A network partition is not a failed verification, and collapsing the two
 is exactly the distinction the abstain rung exists to preserve. Every new
-`WsError` path that feeds the ladder needs a test pinning it to the
+`SandboxError` path that feeds the ladder needs a test pinning it to the
 abstain rung.
 
 ---
@@ -503,13 +598,13 @@ What has to be true for N sessions in N sandboxes:
   and get a child each.
 - **`stella-fleet` gets this nearly free.** Fleet already hands each task
   an isolated git worktree behind the `GitCli` port; that becomes "hands
-  each task a `Workspace`," which may be a local worktree or a remote
+  each task a `Sandbox`," which may be a local worktree or a remote
   container. Cooperative file locking stays necessary *within* a
   workspace and becomes redundant *across* sandboxes, which are
   physically isolated.
 - **Bounded and visible.** `max_concurrent` caps paid containers against
   a runaway fan-out, and idle-timeout / max-lifetime are requested of the
-  provider at `acquire`. The deck shows a **workspace chip** per session:
+  provider at `acquire`. The deck shows a **sandbox chip** per session:
   a session whose tree is in a Modal container must be visibly labeled,
   or someone will eventually reason about the wrong filesystem.
 
@@ -521,29 +616,50 @@ What has to be true for N sessions in N sandboxes:
 |---|---|---|
 | I1 | No vendor dependency | §7 out-of-process providers; CI manifest denylist; vendor adapters live outside the repo |
 | I2 | No interest in the sandbox | §5 host-bound tool class; §8 three-verb lifecycle; §8.3 durability table; §8.2 diff-not-sandbox harvest |
-| I3 | Identical behavior | §4.1 `LocalWorkspace` is the same code moved; §10 Phase 0 as a pure refactor proven by the existing suite; §4.2 single-emitter `FileChange` preserved |
+| I3 | Identical behavior | §4.1 `LocalSandbox` is the same code moved; §12 Phase 0 as a pure refactor proven by the existing suite; §4.2 single-emitter `FileChange` preserved |
 | I4 | Concurrent sessions | §10 session-scoped handles, no global CWD, multiplexed adapters, fleet integration |
+
+**One deliberate exception to I3, which must not hide inside it.**
+Removing `sandbox.rs` (§2) is a real behavior change for the small set of
+users who set `STELLA_BASH_SANDBOX`: that variable stops doing anything.
+`location = "docker"` is a stronger replacement covering every tool
+rather than one, but it is not a drop-in — it needs a container runtime
+and an image. This belongs in a release note and a migration line in
+`permissions.mdx`, not in a changelog footnote. **I3 covers the refactor;
+it does not cover the removal**, and the two should ship as separate,
+separately-reviewable changes (§12).
 
 ---
 
 ## 12. Phasing
 
-- **Phase 0 — the refactor, alone.** `Workspace` trait plus
-  `LocalWorkspace`; `Tool::execute` takes `&dyn Workspace` instead of
-  `&Path`. No protocol, no provider, no config, no feature flag. The
-  existing test suite is the proof of **I3**. *This is the phase that
-  de-risks everything*: if the trait cannot express today's 59 tools
-  without behavior change, the design is wrong, and that is much cheaper
-  to discover here than after a wire protocol exists.
-- **Phase 1 — the protocol.** WPP over stdio, the in-tree `ssh`
-  provider, and the `CountingWorkspace` round-trip assertions (§9.2).
+The ordering constraint that matters: **the seatbelt path is not deleted
+until a replacement ships.** Phase 3 removes it, Phase 2 provides
+`docker`. Landing them in the other order would leave a release where
+local isolation is simply gone.
+
+- **Phase 0 — the refactor, alone.** `Sandbox` trait plus `LocalSandbox`;
+  `Tool::execute` takes `&dyn Sandbox` instead of `&Path`. No protocol,
+  no provider, no remote config, no feature flag, and **no change to
+  `sandbox.rs`** — `bash` keeps calling `host_argv` exactly as it does
+  today. The existing test suite is the proof of **I3**. *This is the
+  phase that de-risks everything*: if the trait cannot express today's 59
+  tools without behavior change, the design is wrong, and that is far
+  cheaper to discover here than after a wire protocol exists.
+- **Phase 1 — the protocol.** SPP over stdio, the in-tree `ssh`
+  provider, and the `CountingSandbox` round-trip assertions (§9.2).
   Feature-flagged.
-- **Phase 2 — lifecycle.** `acquire`/`bind`/`release`, seeding and
-  harvesting, session binding and resume, the deck chip, the
-  `stella workspace` command surface.
-- **Phase 3 — concurrency.** Adapter multiplexing, fleet integration,
+- **Phase 2 — lifecycle and the local container.** `acquire`/`bind`/
+  `release`, seeding and harvesting, session binding and resume, the deck
+  chip, the `stella sandbox` command surface, and the **`docker`
+  provider** (§7.1) — the replacement that Phase 3 depends on.
+- **Phase 3 — remove `sandbox.rs`.** The deletion in §2.4, as its own
+  reviewable change, with the release note and the `permissions.mdx`
+  migration line. Deliberately *after* Phase 2, and deliberately not
+  bundled with a refactor, so it can be judged and reverted on its own.
+- **Phase 4 — concurrency.** Adapter multiplexing, fleet integration,
   limits and cost guards.
-- **Phase 4 — vendors.** Reference Modal and E2B adapters published
+- **Phase 5 — vendors.** Reference Modal and E2B adapters published
   outside this repo, plus docs.
 
 ---
@@ -562,10 +678,15 @@ What has to be true for N sessions in N sandboxes:
   but a hook that lints changed files needs the tree. Proposal: hooks run
   host-side, receive the *receipt*, and may call back through the
   workspace.
-- **Confinement inside a container** — `bwrap` under an unprivileged
-  container may not have the namespaces it needs. Does `restricted` mode
-  degrade, fail closed, or become the provider's responsibility to
-  declare?
+- **Network policy inside a sandbox** — §2 removes the `restricted`
+  network denial along with the rest of `sandbox.rs`. A container is a
+  filesystem and process boundary but is online by default, so a tree
+  holding your source can still reach the network from inside one. Is
+  "deny egress" a provider option (`options.network = "none"`, the
+  vendor's own vocabulary), or the one policy knob Stella keeps in its
+  own vocabulary because it is the exfiltration control? Leaning toward
+  the former, to hold the line that Stella does not model vendor
+  capabilities — but this is the strongest candidate for an exception.
 - **Ownership of `.stella/` inside the tree** — project-scoped settings
   and staged tool proposals live in the tree, which is now remote, while
   the store is host-side. Which of those files are read through the
