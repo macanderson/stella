@@ -41,11 +41,25 @@ from typing import Any
 _EVENTS = "agent/stella-events.jsonl"
 _TRAJECTORY = "agent/trajectory.json"
 
-# Signature of a step cut off at the output-token limit (the zero-tool
-# failure class): the step spent its whole output allowance. Matches on the
-# reported count rather than a config lookup so archived bundles from other
-# configurations still classify.
+# A step cut off at the output-token limit, by two routes.
+#
+# `finish_reason: "length"` is the provider's own account of the truncation
+# and is authoritative wherever it appears (#1211 §6.5). Streams written
+# before `StepUsage` carried it have no such field, so the heuristic below
+# stays as the fallback: a step that spent this much output and asked for no
+# tool is the zero-tool truncation shape.
+#
+# The fallback is a *guess*, and its threshold is only meaningful against the
+# ceiling that was in force when the bundle was recorded — 16K was the ceiling
+# when this constant was written, and the posture has since moved to 64K, so
+# on a current bundle it fires on long answers that were never truncated.
+# That is precisely how an unexplained `cap_hits: 106` (against Claude Code's
+# 0) entered the published GLM-5.2 head-to-head. Applying it only when the
+# truthful field is absent confines the error to archived data, and
+# `cap_hits_source` says which route produced the count so a reader never has
+# to wonder which number they are looking at.
 _CAP_HIT_MIN_OUTPUT = 16384
+_TRUNCATED_FINISH_REASON = "length"
 
 
 def _load_json(path: Path) -> dict[str, Any] | None:
@@ -83,6 +97,7 @@ class _EventsCache:
         tools = steps = reasoning = cap_hits = 0
         in_tok = out_tok = 0
         cost = 0.0
+        reported_finish = False
         judge_passed: bool | None = None
         complete = False
         last_type = ""
@@ -106,7 +121,16 @@ class _EventsCache:
                         in_tok += int(event.get("input_tokens") or 0)
                         out_tok += int(event.get("output_tokens") or 0)
                         cost += float(event.get("cost_usd") or 0.0)
-                        if (
+                        finish_reason = event.get("finish_reason")
+                        if isinstance(finish_reason, str):
+                            # Reported: the provider said so. Note the route on
+                            # the first such step — one truthful step makes the
+                            # whole trial's count truthful, because the
+                            # heuristic is then never consulted again.
+                            reported_finish = True
+                            if finish_reason == _TRUNCATED_FINISH_REASON:
+                                cap_hits += 1
+                        elif not reported_finish and (
                             int(event.get("output_tokens") or 0) >= _CAP_HIT_MIN_OUTPUT
                             and not event.get("tool_calls")
                         ):
@@ -126,6 +150,11 @@ class _EventsCache:
             "output_tokens": out_tok,
             "cost_usd": round(cost, 4),
             "cap_hits": cap_hits,
+            # Which route produced `cap_hits`. A reader comparing arms or
+            # bundles has to know: "reported" is the provider's own truncation
+            # signal, "inferred" is the output-size heuristic and carries its
+            # false positives.
+            "cap_hits_source": "reported" if reported_finish else "inferred",
             "judge_passed": judge_passed,
             "complete": complete,
             "last_type": last_type,
@@ -151,6 +180,9 @@ def trial_view(trial_dir: Path, events_cache: _EventsCache) -> dict[str, Any]:
         "wall_s": None,
         "age_s": None,
         "cap_hits": 0,
+        # None until an event stream is read: a trial with no telemetry has no
+        # cap-hit count, by either route, and must not read as a truthful zero.
+        "cap_hits_source": None,
         "judge_passed": None,
     }
 
@@ -165,8 +197,14 @@ def trial_view(trial_dir: Path, events_cache: _EventsCache) -> dict[str, Any]:
             )
         metrics = trajectory.get("final_metrics")
         if isinstance(metrics, dict):
-            view["input_tokens"] = metrics.get("total_input_tokens", view["input_tokens"])
-            view["output_tokens"] = metrics.get("total_output_tokens", view["output_tokens"])
+            # ATIF spells these `total_prompt_tokens`/`total_completion_tokens`
+            # (see `FinalMetrics` in atif.py) — the `total_input_tokens`
+            # spellings read here before never existed, so every archived
+            # bundle rendered 0k tokens on the trajectory-only path.
+            view["input_tokens"] = metrics.get("total_prompt_tokens", view["input_tokens"])
+            view["output_tokens"] = metrics.get(
+                "total_completion_tokens", view["output_tokens"]
+            )
             view["cost_usd"] = metrics.get("total_cost_usd", view["cost_usd"])
 
     if events is not None:
@@ -180,6 +218,7 @@ def trial_view(trial_dir: Path, events_cache: _EventsCache) -> dict[str, Any]:
             cost_usd=events["cost_usd"] or view["cost_usd"],
             age_s=events["age_s"],
             cap_hits=events["cap_hits"],
+            cap_hits_source=events["cap_hits_source"],
             judge_passed=events["judge_passed"],
         )
         view["status"] = "done" if events["complete"] else "running"
@@ -253,7 +292,20 @@ def _totals(rows: list[dict[str, Any]], arm: str) -> dict[str, Any]:
         "cost_usd": round(sum(v["cost_usd"] or 0.0 for v in views), 4),
         "wall_s": sum(v["wall_s"] or 0 for v in views),
         "cap_hits": sum(v["cap_hits"] or 0 for v in views),
+        # A total summed across both routes is neither claim, so name it
+        # "mixed" rather than picking the flattering one.
+        "cap_hits_source": _summed_cap_hits_source(views),
     }
+
+
+def _summed_cap_hits_source(views: list[dict[str, Any]]) -> str | None:
+    """Describe how a summed ``cap_hits`` was produced across trials."""
+    sources = {v["cap_hits_source"] for v in views if v["cap_hits_source"]}
+    if not sources:
+        return None
+    if len(sources) == 1:
+        return sources.pop()
+    return "mixed"
 
 
 def state(jobs_root: Path, job_a: str, job_b: str, events_cache: _EventsCache) -> dict[str, Any]:
@@ -297,11 +349,18 @@ def render(snapshot: dict[str, Any]) -> str:
     lines.append("-" * 110)
     for arm in ("a", "b"):
         totals = snapshot["totals"][arm]
+        # The cap-hit count is qualified in place: an inferred count and a
+        # reported one are different claims and comparing them across arms
+        # without saying so is how 106-vs-0 read as a finding.
+        cap_source = totals["cap_hits_source"]
+        cap_hits = f"{totals['cap_hits']}"
+        if cap_source:
+            cap_hits += f" ({cap_source})"
         lines.append(
             f"{arm.upper()} totals: {totals['passed']}/{totals['done']} passed "
             f"(of {totals['trials']}), tools {totals['tools']}, "
             f"out {totals['output_tokens'] // 1000}k tok, ${totals['cost_usd']:.2f}, "
-            f"wall {totals['wall_s']}s, cap-hits {totals['cap_hits']}"
+            f"wall {totals['wall_s']}s, cap-hits {cap_hits}"
         )
     return "\n".join(lines)
 

@@ -936,6 +936,14 @@ impl DeckUi {
             }
             return;
         }
+        // The TOOLS panel is modal the same way while focused, and draws no
+        // text input at all — so a paste is swallowed. Falling through here
+        // put the clipboard into the hidden global composer, where the next
+        // bare `⏎` dispatched it as a prompt (the exact leak this method's
+        // contract forbids).
+        if self.tab == DeckTab::Settings && self.tools.focused {
+            return;
+        }
 
         // 3. The SKILLS tab is keyboard-owning: its overlays and search query
         //    claim keys ahead of the composer, so a paste must too.
@@ -1401,7 +1409,7 @@ fn push_single_line(buf: &mut String, text: &str) {
 /// 2. help overlay open — Esc/`q`/`?` close it; other keys scroll it
 /// 3. queue editor open — Esc closes the editor
 /// 4. slash popup active — Esc dismisses the popup (clears the composer)
-/// 5. scope-review gate pending, composer empty — Esc aborts the plan
+/// 5. scope-review gate pending — Esc aborts the plan (claimed even with a note typed)
 /// 6. Files tab with the diff open — Esc closes the diff
 /// 7. Session tab with a message highlighted — Esc clears the highlight
 /// 8. Session tab with the ctrl+o expand-ALL overlay on — Esc collapses it
@@ -1436,8 +1444,9 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
 
     // The routing card owns every key while it is up — it is holding the
     // user's words, and the only way out is to say where they go (or Esc,
-    // which hands them back to the composer). Checked before Ctrl-C so quit
-    // still wins, which the caller handles above this function.
+    // which hands them back to the composer). The one exception is Ctrl-C:
+    // `dispatch::handle_key` deliberately declines it so the quit branch
+    // below still fires while a card is up.
     if let Some(action) = dispatch::handle_key(key, ui) {
         return action;
     }
@@ -1654,7 +1663,11 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
         return handle_inspect_key(key, ui);
     }
 
-    let composer_empty = ui.composer.buffer().is_empty();
+    // FULL emptiness — chips included (`Composer::is_empty`), matching the
+    // `↑` queue-editor gate below. The bare-buffer check let letter hotkeys
+    // fire while a `[pasted: N lines]` chip sat in the composer: on AGENTS,
+    // typing `s` to start a sentence sent `AgentControl::Stop` instead.
+    let composer_empty = ui.composer.is_empty();
 
     // The SKILLS tab is a keyboard-owning manager: it claims the keys for its
     // list, search query, and overlays *ahead* of tab-nav and the global

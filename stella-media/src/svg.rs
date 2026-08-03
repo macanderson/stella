@@ -93,19 +93,16 @@
 //! outright or refusing relative references, and that is a separate ruling
 //! about how much a same-directory reference is worth (tracked on #615).
 //!
-//! Rule 6 only inspects the *static* value an attribute is serialized with.
-//! SVG's SMIL animation elements (`<animate>`, `<set>`, `<animateTransform>`,
-//! `<animateMotion>`) are not in `is_dropped_element`, and their `to`,
-//! `from`, `by`, `values`, and `attributeName` attributes are not in
-//! `is_resource_reference_attribute`, so `<animate attributeName="href"
-//! to="javascript:…">` (or `to="url(https://…)"` on `fill`/`filter`/etc.)
-//! survives untouched: the target attribute starts safe and is retargeted at
-//! render time, after this pass already ran. Whether that executes depends on
-//! the renderer honoring SMIL and `javascript:` at all — many modern
-//! consumers do neither — but nothing here defends against it either way.
-//! Closing it means deciding whether to drop the animation elements outright
-//! or scan their value attributes the same way rule 6 scans a static one;
-//! recorded rather than fixed for the same reason xml:base is above.
+//! Rule 6 only inspects the *static* value an attribute is serialized with —
+//! which is why SVG's SMIL animation elements (`<animate>`, `<set>`,
+//! `<animateTransform>`, `<animateMotion>`, `<animateColor>`) are dropped
+//! outright, subtree and all (`is_dropped_element`, #821): they retarget
+//! another attribute at render time, after this pass already ran, so
+//! `<animate attributeName="href" to="javascript:…">` could smuggle a
+//! payload past a purely static scan. A sanitized static artifact needs no
+//! animation, and the witness test
+//! `smil_animation_elements_are_dropped_including_href_smuggling` pins the
+//! smuggling shapes.
 
 use async_trait::async_trait;
 use roxmltree::{Document, Node};

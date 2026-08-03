@@ -96,6 +96,7 @@ fn persist_event_records_cache_write_tokens_from_step_usage() {
         retries: 0,
         tool_calls: 1,
         complete: true,
+        finish_reason: None,
     };
 
     assert!(persist_event(&store, execution_id, 0, &event, "anthropic"));
@@ -1342,6 +1343,7 @@ fn reflection_json_preserves_full_paid_call_envelope_and_cost() {
             retries: 1,
             tool_calls: 0,
             complete: true,
+            finish_reason: None,
         }],
     };
 
@@ -1464,79 +1466,8 @@ mod usage_completeness;
 #[path = "agent_tests/engine_wiring.rs"]
 mod engine_wiring;
 
-/// Issue #272: `stella init`'s summary line must surface generated/minified
-/// exclusion count, not let excluded files silently vanish from the totals.
-/// Tested on the pure builder/output functions, never a live TTY.
-#[test]
-fn format_graph_stats_reports_generated_skip_count_when_nonzero() {
-    let summary = GraphSummary {
-        total_symbols: 12,
-        total_imports: 4,
-        total_files: 3,
-        files_parsed: 2,
-        files_unchanged: 1,
-        files_skipped_generated: 5,
-    };
-    let line = format_graph_stats(&summary);
-    assert!(
-        line.contains("skipped 5 generated files"),
-        "line should surface the skip count: {line}"
-    );
-    assert!(line.contains("12 symbols"), "{line}");
-}
-
-#[test]
-fn format_graph_stats_omits_the_skip_clause_when_nothing_was_skipped() {
-    let summary = GraphSummary {
-        total_symbols: 1,
-        total_imports: 0,
-        total_files: 1,
-        files_parsed: 1,
-        files_unchanged: 0,
-        files_skipped_generated: 0,
-    };
-    let line = format_graph_stats(&summary);
-    assert!(
-        !line.contains("skipped"),
-        "no skip clause when nothing was excluded: {line}"
-    );
-}
-
-#[test]
-fn format_graph_stats_uses_singular_file_for_a_count_of_one() {
-    let summary = GraphSummary {
-        total_symbols: 0,
-        total_imports: 0,
-        total_files: 0,
-        files_parsed: 0,
-        files_unchanged: 0,
-        files_skipped_generated: 1,
-    };
-    let line = format_graph_stats(&summary);
-    assert!(line.contains("skipped 1 generated file"), "{line}");
-    assert!(
-        !line.contains("generated files"),
-        "singular, not plural, for a count of one: {line}"
-    );
-}
-
-/// End-to-end through the real builder `stella init` calls
-/// ([`index_workspace_graph_blocking`]): a `*.min.*` file sitting at the
-/// workspace root (no denied directory involved) must be excluded and
-/// counted, while an ordinary file alongside it indexes normally.
-#[test]
-fn index_workspace_graph_blocking_reports_generated_skips_end_to_end() {
-    let ws = tempfile::tempdir().unwrap();
-    std::fs::write(ws.path().join("app.min.js"), "function refresh(){}\n").unwrap();
-    std::fs::write(ws.path().join("main.rs"), "pub fn run() {}\n").unwrap();
-
-    let summary = index_workspace_graph_blocking(ws.path()).expect("index build succeeds");
-    assert_eq!(summary.total_files, 1, "the minified file is never indexed");
-    assert_eq!(summary.files_skipped_generated, 1);
-
-    let line = format_graph_stats(&summary);
-    assert!(line.contains("skipped 1 generated file"), "{line}");
-}
+#[path = "agent_tests/code_graph.rs"]
+mod code_graph;
 
 /// Issue #644: the machine-readable envelope declares its contract version, and
 /// declares the *same* one on both arms. A version present on the success shape
@@ -1791,4 +1722,22 @@ async fn a_customer_registered_tool_is_covered_by_the_policy() {
         ToolOutput::Error { message } => assert!(message.contains("unknown tool"), "{message}"),
         other => panic!("a disabled custom tool must be refused, got {other:?}"),
     }
+}
+
+/// The SessionStart hook budget: within it, bytes pass through untouched
+/// (the prefix stays exactly what the hook wrote); past it, the cut is
+/// marked in-band — the same never-silent posture as every other budgeted
+/// prompt section.
+#[test]
+fn session_hook_context_is_clamped_with_a_visible_marker() {
+    let small = "export STAGING_URL=https://stage.example";
+    assert_eq!(crate::agent::clamp_hook_context(small), small);
+
+    let big = "x".repeat(crate::agent::SESSION_HOOK_CONTEXT_BUDGET_CHARS + 500);
+    let clamped = crate::agent::clamp_hook_context(&big);
+    assert!(clamped.contains("hook output truncated"));
+    assert!(
+        clamped.chars().count() < crate::agent::SESSION_HOOK_CONTEXT_BUDGET_CHARS + 200,
+        "the clamp bounds the section, not the hook's appetite"
+    );
 }

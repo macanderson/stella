@@ -54,7 +54,7 @@ link this crate** — it writes its own `.stella/private/codegraph.db`.
 ## Key concepts
 
 **Vectors are keyed `(content_hash, fingerprint)`, never by node.** A
-fingerprint is `model_id@revision/dims/normalization` (`hash-ngram@1/256/l2` for
+fingerprint is `model_id@revision/dims/normalization` (`hash-ngram@2/256/l2` for
 the default). Retrieval reads only vectors under the *active* fingerprint, so
 swapping embedders is a new fingerprint plus an incremental re-embed on next
 touch — old vectors go invisible, they are never invalidated in place. Identical

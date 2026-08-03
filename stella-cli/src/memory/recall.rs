@@ -37,12 +37,26 @@ impl RecalledBlock {
     }
 }
 
+/// How many characters of volatile records ride the recall block.
+///
+/// Bounded for the same reason the baked prefix bounds memories, and it lives
+/// here rather than beside that budget because this one bounds the *recall
+/// block* — the thing rendered a few lines below — not the system prompt. The
+/// volatile channel competes with recalled memories and skills for one turn's
+/// attention, so a records set that grew without bound would crowd out the
+/// recall it sits beside. Records over the budget are reported as dropped
+/// rather than silently lost — that gap is `MissingContextKind::NotRendered`.
+pub(super) const RECORD_CHANNEL_BUDGET: usize = 2_000;
+
 impl SessionMemory {
     /// Hand this session the volatile record channel resolved at assembly.
     ///
-    /// Called once, from the session driver that already has the rule registry, so
-    /// recall never re-walks the rule directories or re-runs the truth sweep.
-    pub(crate) fn set_record_channel(&mut self, block: String) {
+    /// Private to the memory module, and reachable only through
+    /// [`SessionMemory::open_for_session`], which renders the channel from the
+    /// rule registry the driver already resolved — so recall never re-walks the
+    /// rule directories or re-runs the truth sweep, and no session surface can
+    /// open a memory that skips this step.
+    pub(super) fn set_record_channel(&mut self, block: String) {
         self.record_channel = (!block.trim().is_empty()).then_some(block);
     }
 
@@ -133,6 +147,50 @@ impl SessionMemory {
                 .then(|| format!("{RECALL_MARKER}\n\n{}", sections.join("\n\n"))),
             recall,
         }
+    }
+
+    /// The volatile block for a turn the *pipeline* will drive: skills, draft
+    /// claims, and the record channel — every section of
+    /// [`Self::recall_block_reported`] EXCEPT the recalled frames.
+    ///
+    /// The pipeline recalls frames itself through its [`ContextRecallPort`]
+    /// (this very store, on the one-shot path) and renders them into the
+    /// goal message, then feeds the same frames to the planner and the
+    /// witness author. A caller that injected the full block *and* handed
+    /// the pipeline the port recalled twice per turn — two store/embedding
+    /// round trips — and billed the same frame content into the prompt
+    /// twice, once as "Relevant context" here and once as "## Recalled
+    /// context" there. The deck guards the same duplication by dropping the
+    /// whole block on pipeline turns; that guard threw away skills, drafts,
+    /// and records with it. This keeps exactly the sections the pipeline
+    /// has no channel for.
+    ///
+    /// No telemetry rides with it, deliberately: the one `ContextRecall`
+    /// event for a pipeline turn is the pipeline's own, and this block does
+    /// no frame recall to report.
+    pub async fn pipeline_recall_block(&self, prompt: &str) -> Option<String> {
+        if self.ab_suppressed {
+            return None;
+        }
+        let mut sections: Vec<String> = Vec::new();
+        let all_skills = self.load_skills();
+        let selected = skills::select_skills(
+            &all_skills,
+            prompt,
+            &self.domains.names(),
+            &SelectionConfig::default(),
+        );
+        if !selected.is_empty() {
+            sections.push(skills::render_skills_section(&selected));
+        }
+        if let Some(section) = stella_tools::exploration::render_draft_claims(&self.workspace_root)
+        {
+            sections.push(section);
+        }
+        if let Some(section) = self.record_channel.as_deref().filter(|s| !s.is_empty()) {
+            sections.push(section.trim_start().to_string());
+        }
+        (!sections.is_empty()).then(|| format!("{RECALL_MARKER}\n\n{}", sections.join("\n\n")))
     }
 
     /// A/B recall control (Proposal 4): suppress recall for this turn on a

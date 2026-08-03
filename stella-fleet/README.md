@@ -143,11 +143,14 @@ table-tested with an injected `Clock` instead of a real wait (L-E4).
   for review. The slug hashes the run scope *and* the task id, so re-running a
   plan with the same task ids does not collide with what the last run kept.
 - **Some of this crate's surface has no product caller yet.**
-  `WorktreeManager::remove`/`list`/`commit_paths` and the whole warmest-first
-  path (`Fleet::with_cache_warmth`, `cache_schedule`) are exercised only by
-  this crate's own tests — `fleet_cmd` never calls them. They are API and
-  tests, not shipped behavior; treat their coverage as a contract for the
-  wiring still to come, not as evidence the feature is live.
+  `WorktreeManager::remove`/`list`/`commit_paths` are exercised only by this
+  crate's own tests — `fleet_cmd` never calls them. They are API and tests,
+  not shipped behavior; treat their coverage as a contract for the wiring
+  still to come, not as evidence the feature is live. (The warmest-first path
+  — `Fleet::with_cache_warmth`, `cache_schedule` — used to be on this list;
+  since #1222 `stella fleet` installs a ledger-backed warmth lookup, keyed by
+  `Ledger::last_attempt_finish_ms` and projected through the provider cache
+  TTL in `stella-cli/src/fleet_warmth.rs`.)
 - **`WatchConfig::run_list_limit` (default 50) is a truncation point.** A
   branch with more CI runs than the limit can report `AllCompleted` while older
   runs go unobserved.

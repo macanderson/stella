@@ -48,11 +48,42 @@ fn tests_only_needs_no_test() {
 
 #[test]
 fn config_only_needs_no_test() {
-    let d = diff(&[".github/workflows/ci.yml"], "+  timeout-minutes: 30\n");
-    assert_eq!(
-        warrant(&d, 1),
-        WitnessWarrant::NotRequired(NoWitnessReason::ConfigOnly)
-    );
+    for path in [
+        ".github/workflows/ci.yml",
+        "Cargo.lock",
+        "web/yarn.lock",
+        "go.sum",
+        ".gitlab-ci.yml",
+    ] {
+        let d = diff(&[path], "+  timeout-minutes: 30\n");
+        assert_eq!(
+            warrant(&d, 1),
+            WitnessWarrant::NotRequired(NoWitnessReason::ConfigOnly),
+            "{path} is a build/CI/dependency manifest"
+        );
+    }
+}
+
+#[test]
+fn behavior_bearing_yaml_is_not_config() {
+    // The hole this closes: `is_config` matched every `*.yml`/`*.yaml`/`*.lock`
+    // by suffix, so a compose file, a Helm values file, or an app's own config
+    // completed with a PASS asserting "the build and gate verify these" while
+    // nothing had verified anything. Yaml is a syntax, not a category.
+    for path in [
+        "docker-compose.yml",
+        "deploy/values.yaml",
+        "config/database.yml",
+        "k8s/deployment.yaml",
+        "vendor/flock.lock",
+    ] {
+        let d = diff(&[path], "+  replicas: 3\n");
+        assert_eq!(
+            warrant(&d, 1),
+            WitnessWarrant::Required,
+            "{path} carries behavior and must keep its verification"
+        );
+    }
 }
 
 #[test]
@@ -184,6 +215,53 @@ fn block_and_sql_comments_still_read_as_comments() {
 fn an_unrecognized_path_buys_the_test() {
     let d = diff(&["some/unknown/thing.zz"], "+data\n");
     assert_eq!(warrant(&d, 1), WitnessWarrant::Required);
+}
+
+#[test]
+fn an_untracked_source_file_beside_a_docs_edit_is_a_source_change() {
+    // The hole this closes: `git diff` cannot see untracked files, so a NEW
+    // source file arrives only as the synthetic marker line — which is not a
+    // diff header, so no path rule ever saw it. The change classified as
+    // DocsOnly and skipped both the witness and the reviewer while shipping
+    // new code.
+    let d = format!(
+        "{}{}\n",
+        diff(&["README.md"], "+Some new prose.\n"),
+        untracked_change_line("src/backdoor.rs", 42)
+    );
+    assert_eq!(
+        warrant(&d, 2),
+        WitnessWarrant::Required,
+        "an untracked source file must count as a source change"
+    );
+}
+
+#[test]
+fn an_untracked_docs_file_beside_a_docs_edit_stays_docs_only() {
+    let d = format!(
+        "{}{}\n",
+        diff(&["README.md"], "+Some new prose.\n"),
+        untracked_change_line("docs/notes.md", 8)
+    );
+    assert_eq!(
+        warrant(&d, 2),
+        WitnessWarrant::NotRequired(NoWitnessReason::DocsOnly)
+    );
+}
+
+#[test]
+fn an_untracked_only_change_still_buys_the_test() {
+    // No diff headers at all: the marker names a path but shows no content,
+    // so the warrant cannot read the change and must not waive it — even for
+    // a docs-shaped path.
+    for path in ["src/new_module.rs", "docs/new_page.md"] {
+        let d = format!("{}\n", untracked_change_line(path, 12));
+        assert_eq!(
+            warrant(&d, 1),
+            WitnessWarrant::Required,
+            "{path}: an untracked-only change is unreadable and must fail closed"
+        );
+    }
 }
 
 #[test]

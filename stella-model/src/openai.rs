@@ -705,7 +705,9 @@ async fn aggregate_openai_stream(
     let mut truncated_at_limit = false;
     let mut stream = response.bytes_stream();
 
-    while let Some(chunk) = http::next_with_timeout(&mut stream, http::STREAM_IDLE_TIMEOUT).await? {
+    'stream: while let Some(chunk) =
+        http::next_with_timeout(&mut stream, http::STREAM_IDLE_TIMEOUT).await?
+    {
         decoder
             .push_bytes(&chunk)
             .map_err(|e| ProviderError::Malformed(e.to_string()))?;
@@ -797,6 +799,18 @@ async fn aggregate_openai_stream(
                     return Err(classify_openai_stream_error(code.as_deref(), &message));
                 }
                 OpenAiStreamEvent::Incomplete { response } => {
+                    // An incomplete response still carries the final usage
+                    // envelope, and a cap-hit turn is the MOST expensive kind
+                    // (the whole output budget was spent). Dropping it here
+                    // billed every truncated turn as $0 — invisible to the
+                    // budget guard and `stella stats` alike.
+                    if let Some(u) = response.usage {
+                        usage.reported = true;
+                        usage.input_tokens = u.input_tokens;
+                        usage.output_tokens = u.output_tokens;
+                        usage.cached_input_tokens =
+                            u.input_tokens_details.map(|d| d.cached_tokens).unwrap_or(0);
+                    }
                     let reason = response
                         .incomplete_details
                         .and_then(|d| d.reason)
@@ -814,7 +828,11 @@ async fn aggregate_openai_stream(
                     if reason == "max_output_tokens" {
                         truncated_at_limit = true;
                         completed_seen = true;
-                        break;
+                        // Exit the STREAM, not just this chunk's events: a
+                        // plain `break` left the outer read loop waiting on a
+                        // keep-alive connection for the full idle timeout
+                        // after the terminal event had already arrived.
+                        break 'stream;
                     }
                     // Every other incompletion (content filters, and whatever
                     // OpenAI adds later) stays terminal: those are not

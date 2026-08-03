@@ -307,17 +307,20 @@ mod tests {
     /// is a false alarm rather than the rotted proof it exists to catch. The
     /// parent `tests.rs` is over the file-size ratchet, so those splits keep
     /// happening — the list has to follow them.
-    fn adapter_sources() -> [&'static str; 9] {
+    fn adapter_sources() -> [&'static str; 12] {
         [
             include_str!("anthropic/tests.rs"),
+            include_str!("anthropic/tests/thinking.rs"),
             include_str!("bedrock/tests.rs"),
             include_str!("openai.rs"),
             include_str!("gemini/tests.rs"),
             include_str!("vertex.rs"),
             include_str!("zai/tests.rs"),
+            include_str!("zai/tests/error_classify_tests.rs"),
             include_str!("zai/tests/openrouter_effort_tests.rs"),
             include_str!("zai/tests/openrouter_stream_tests.rs"),
             include_str!("zai/tests/stream_frame_tests.rs"),
+            include_str!("zai/vision_tests.rs"),
         ]
     }
 

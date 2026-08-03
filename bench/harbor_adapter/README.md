@@ -318,7 +318,19 @@ claim analyzer requires these exact values.
    `STELLA_SOURCE_COMMIT` is only an assertion and a mismatch aborts setup.
    Deterministic hashes of the executable adapter and Harbor Python source trees
    are recorded separately from their human-readable versions.
-4. **Holds** exactly one provider key in an unlinked, owner-only, seekable host
+4. **Baselines** the task workspace in git before Stella starts (#1211). After
+   `stella init` indexes the workspace for the code graph, the adapter runs one
+   in-container `git init && git add -A && git commit` as the task user —
+   Terminal-Bench images are plain directories, and without a repository the
+   diff probe, candidate isolation, the witness author's snapshot, and the
+   mutation audit are all structurally blind (#973). Stella's `.stella/` state
+   is excluded via `.git/info/exclude` (never a tracked file), an already-
+   versioned workspace is left untouched, and the outcome — `created` (with
+   the baseline commit), `preexisting`, `unavailable`, `failed`, or `error` —
+   is disclosed in trial metadata and the public ATIF trajectory. The step can
+   never fail a trial: a workspace it could not baseline runs exactly as the
+   witness-off control arm always did, and says so.
+5. **Holds** exactly one provider key in an unlinked, owner-only, seekable host
    temporary-file descriptor, then execs Harbor with every named or aliased
    copy of either OpenRouter credential removed from its environment. The
    distinct management key is used only by the host launcher's control-plane
@@ -329,20 +341,29 @@ claim analyzer requires these exact values.
    Docker `Config` before binary upload and again before handing that one key to
    Stella through Compose exec's anonymous stdin pipe. The key is never put in
    container argv/environment or a benchmark log.
-5. **Runs** Stella one-shot as a direct Compose argv: `main`,
+6. **Runs** Stella one-shot as a direct Compose argv: `main`,
    `/usr/local/bin/stella`, global
    flags, `run`, and the complete task instruction as one final argument.
    Stella itself appends and flushes every completed event to
    `/logs/agent/stella-events.jsonl`; no launcher shell or `tee` process exists.
-6. **Reports** cost, tokens, model, status, and accounting completeness back to
+7. **Reports** cost, tokens, model, status, and accounting completeness back to
    Harbor. It reconstructs a strict envelope from JSONL even when diagnostics
    are interleaved. On timeout/cancellation it recovers only durable events and
    marks the stream/accounting incomplete rather than inventing terminal data.
-7. **Classifies** a real nonzero Stella exit as Harbor's
+8. **Classifies** a real nonzero Stella exit as Harbor's
    `NonZeroAgentExitCodeError`, but only after output, metrics, and ATIF have
    been persisted. Harbor still runs the canonical benchmark verifier, which
    independently determines task correctness.
-8. **Writes** a validated ATIF-v1.7 trace to
+8. **Diagnoses** an exit 137 (SIGKILL — never a Stella exit path, #1178)
+   before raising, while the trial container still exists: it inspects the
+   container's Docker `State`, reads the cgroup `memory.events` counters from
+   a still-running container, and classifies where the event stream stopped
+   (mid-step vs step boundary). The verdict — `oom-kill`,
+   `external-teardown`, or `unattributed` — lands in the exception message
+   (so `exception.txt` explains itself) and the full evidence in
+   `stella-exit-cause.json` beside the event stream. Best-effort by
+   construction: a broken probe never displaces the scored error.
+9. **Writes** a validated ATIF-v1.7 trace to
    `<trial>/agent/trajectory.json` for later post-scan publication.
 
 ## Public trajectory (ATIF v1.7)
@@ -354,6 +375,9 @@ event, including an interrupted run, the adapter writes:
   preserving completed-call telemetry across an outer timeout;
 - `stella-run.stdout.txt`: the exact captured process stdout on normal return;
 - `stella-run.json`: the strict synthetic envelope parsed from the stream;
+- `stella-exit-cause.json` (exit 137 only): the SIGKILL post-mortem — Docker
+  container `State`, cgroup `memory.events`, stream-end classification, and
+  the derived verdict (#1178);
 - `trajectory.json`: Harbor's public Agent Trajectory Interchange Format.
 
 The ATIF trace includes the rendered benchmark instruction as its first user
@@ -407,10 +431,11 @@ For every selected model, the normalized posture is:
   "auto_mode": "off",
   "effort_auto": "off",
   "reasoning_auto": "off",
+  "headless_scope_bypass": "on",
   "agents": {
-    "default": {"effort": "high", "reasoning": "on"},
-    "worker": {"effort": "high", "reasoning": "on"},
-    "judge": {"effort": "high", "reasoning": "on"},
+    "default": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
+    "worker": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
+    "judge": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
     "triage": {"effort": "low", "reasoning": "off"}
   }
 }
@@ -452,6 +477,11 @@ Every result exposes manifest-ready metadata keys:
   witness counters, which report what this trial's proof stream actually
   observed. Declared and observed are different claims, so both are recorded:
   a run must never disable a tier discoverably only by grepping trajectories.
+- `stella_workspace_git_baseline` — what the adapter did to the workspace
+  before Stella started: `{"state": "created", "commit": <sha>}`,
+  `preexisting`, `unavailable`, `failed`, `error`, or `not_attempted`. Also in
+  ATIF `agent.extra.workspace_git_baseline`, unconditionally, so a trajectory
+  reviewer sees the in-container baseline action (or its absence) first-hand.
 
 ## Configuration
 
@@ -465,6 +495,7 @@ Every result exposes manifest-ready metadata keys:
 | `STELLA_DISABLE_REFLECTION` | Disable post-turn reflection for ephemeral trials. The claim launcher requires exact `1`; development can explicitly set `0`/`false` to enable. |
 | `STELLA_CATALOG_AUTO_REFRESH` | Forced to `0` by the adapter so benchmark startup cannot make an unmetered model-list request or drift the frozen catalog. |
 | `STELLA_WITNESS_AUTHOR_MODEL` | Host-only. Unset = the control arm, in which every role inherits `--model` and the authored-witness tier cannot run. Set to a second `provider/model` **on the worker's provider** to run the witness arm; it reaches Stella only as `pipeline_judge_model` inside the hashed posture and is never forwarded into the container. An author equal to the worker, on another provider, or not a `provider/model` spec is refused fail-closed. The author must also be a slug Stella's **offline seed catalog** carries for that provider: `STELLA_CATALOG_AUTO_REFRESH` is forced to `0`, so an unlisted slug fails model validation and the judge pin is dropped. That used to leave the run executing the control arm under a witness-arm digest (#1147); since then a trusted posture naming a judge other than the worker refuses the run outright when no independent author resolves, so an unreachable author costs the trial rather than corrupting it. |
+| `STELLA_TB_GIT_BASELINE` | Host-only, default **on**. Before the agent starts, the adapter gives a bare task workspace a git baseline (`git init` + one `--allow-empty` commit under a synthetic per-invocation identity, with `.stella/` excluded via `.git/info/exclude`). Terminal-Bench images are plain directories, and on a plain directory Stella's diff probe is structurally blind (#973) while isolation, witness authoring, and the mutation audit all degrade — the baseline turns those channels on. Guarded in the shell and best-effort by construction: skipped when the image has no `git`, when any repository is already present (`fix-git`'s broken one included), or when the workspace exceeds 512 MiB; a skip prints its reason and can never fail a trial. Set `0`/`false` to restore the bare-directory posture — a scored-behavior change either way, so a claim run states which posture it used. |
 | `STELLA_ENGINE_CONFIG_JSON` | Internal trusted-launcher seam. The adapter discards ambient/extra values and authoritatively supplies the canonical posture above. |
 | selected provider key (`OPENROUTER_API_KEY`, etc.) | Consumed by the secure host launcher; one selected key is bundled, then delivered to Stella through inherited anonymous stdin. |
 

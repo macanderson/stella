@@ -103,8 +103,9 @@ One of STELLA_SERVE_TOKEN_FILE / STELLA_SERVE_TOKEN is required.
 
 The server exposes GET /healthz and GET /readyz unauthenticated, and GET /v1/metrics,
 POST /v1/turns, GET /v1/turns/{id}/events,
-POST /v1/turns/{id}/{provider-result,tool-result,cancel} behind the bearer
-token. See docs/design/serve-surface.md and docs/design/serve-observability.md.
+POST /v1/turns/{id}/{provider-result,provider-delta,tool-result,cancel} behind
+the bearer token. See docs/design/serve-surface.md and
+docs/design/serve-observability.md.
 ";
 
 /// `stella-serve <version>` — the line `--version` prints.

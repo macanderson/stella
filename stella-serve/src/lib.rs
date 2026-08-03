@@ -53,7 +53,9 @@
 //! (the route table, and why `cancel` is a path segment rather than a `DELETE`).
 
 mod accept;
+pub mod checkpoint;
 mod controls;
+mod engine_overrides;
 mod error;
 mod frame;
 mod history;
@@ -63,6 +65,7 @@ mod lifecycle;
 pub mod observe;
 mod pending;
 mod remote;
+mod router;
 mod routes;
 #[cfg(feature = "schema")]
 pub mod schema_export;
@@ -71,10 +74,14 @@ mod session;
 mod sessions;
 mod throttle;
 
+pub use checkpoint::{
+    CheckpointKey, CheckpointStore, CheckpointStoreError, FileCheckpointStore,
+    MAX_CHECKPOINT_KEY_LEN, MemoryCheckpointStore, TurnCheckpoint,
+};
 pub use error::ServeError;
 pub use frame::{
-    ProviderErrorWire, ProviderOutcomeIn, ProviderResultIn, ServerFrame, ToolResultIn,
-    TurnOutcomeWire,
+    ProviderDelta, ProviderDeltaIn, ProviderErrorWire, ProviderOutcomeIn, ProviderResultIn,
+    ServerFrame, ToolResultIn, TurnOutcomeWire,
 };
 pub use hostguard::HostMode;
 pub use observe::{Metrics, Observer, ServeEvent, SharedObserver};

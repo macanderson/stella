@@ -66,9 +66,9 @@ pub(super) fn handle_focused_gates(
                     && !ui.composer.buffer().trim_start().starts_with('!') =>
             {
                 match ui.composer.take_submission() {
-                    // A plain `⏎` is NOT claimed above (`classify_enter` only
-                    // answers Submit for the submit chord), so a note can span
-                    // lines before it is sent.
+                    // A *modified* `⏎` is NOT claimed above (`classify_enter`
+                    // answers Newline for it), so a note can span lines
+                    // before a bare `⏎` sends it.
                     Some(submission) => Some(ScopeDecision::from_typed(&submission.text)),
                     // An empty submit while a card is pending: force an
                     // explicit answer rather than sending a blank note.
@@ -112,8 +112,8 @@ pub(super) fn handle_focused_gates(
                     }));
                 }
             }
-            // The submit chord dispatches the typed free text as the answer.
-            // A plain `⏎` is NOT claimed — it falls through to composer
+            // A bare `⏎` dispatches the typed free text as the answer.
+            // A *modified* `⏎` is NOT claimed — it falls through to composer
             // editing, so the answer can span lines. A `!` line is a shell
             // command even while a question is pending — it must run
             // immediately, not be swallowed as the answer.

@@ -490,19 +490,21 @@ impl Store {
     ///    point: a turn killed mid-flight has every one of its events safely
     ///    in `events`, and before this the rows derived from them simply
     ///    never appeared. Replaying the log recovers them exactly.
-    /// 2. **Close any call still marked `running`.** A process that is gone
-    ///    is not going to deliver those results, and a call left `running`
-    ///    forever would keep counting as in-flight on every future dashboard
-    ///    load.
+    /// 2. **Close any call still marked `running`** — an emergent effect of
+    ///    the re-fold, not a separate pass: a `tool_start` with no
+    ///    `tool_result` in the log folds to an abandoned error. A process
+    ///    that is gone is not going to deliver those results, and a call
+    ///    left `running` forever would keep counting as in-flight on every
+    ///    future dashboard load.
     ///
     /// What it deliberately does **not** do is stamp an outcome on the
     /// execution. This runs at store open, and a second session opening the
     /// same workspace must not declare a *live* turn dead — the caller who
     /// knows the process is gone
-    /// ([`Store::mark_execution_interrupted`]) makes that call. Both steps
-    /// here are safe to run against a live execution: re-folding writes what
-    /// the live projection already wrote, and a call that is genuinely still
-    /// running is re-opened by its own `tool_result` when it lands.
+    /// ([`Store::mark_execution_interrupted`]) makes that call. The re-fold
+    /// is safe against a live execution with one visible wrinkle: an
+    /// announced-but-unreturned call temporarily folds to that abandoned
+    /// error, and is re-opened by its own `tool_result` when it lands.
     ///
     /// Best-effort per execution: one that fails to re-fold does not stop the
     /// rest, because a single unreadable stream must not block recovery of

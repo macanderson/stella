@@ -13,9 +13,12 @@
 //! Scope note: one [`Session`] drives one turn. Multi-turn sessions (retaining
 //! the message history across turns) layer on top of this without changing the
 //! transport; per-step checkpointing happens here (see [`drive_turn`]) through
-//! the `CheckpointSink` the host attaches to `EngineConfig`, so a served turn
-//! interrupted mid-flight resumes from its last step boundary rather than
-//! being re-run from the prompt.
+//! the `CheckpointSink` on `EngineConfig`, so a served turn interrupted
+//! mid-flight resumes from its last step boundary rather than being re-run
+//! from the prompt. That sink comes from one of two places:
+//! [`SessionSpec::checkpoint`], which names a key in the server's
+//! [`crate::checkpoint::CheckpointStore`], or an embedder setting
+//! `config.checkpoint_sink` itself.
 
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -85,6 +88,23 @@ pub struct SessionSpec {
     /// session-owned turn uses that to release its live-turn slot rather than
     /// wedge the session forever (see `crate::sessions`).
     pub on_settled: Option<SettleHook>,
+    /// Where this turn's resume point is written, and under what key
+    /// (`crate::checkpoint`).
+    ///
+    /// This is the durable identity whose absence is why a served turn used to
+    /// die with the process: `drive_turn` has always reached both write
+    /// seams, but with nothing to key a store on there was nowhere for the
+    /// bytes to go and nowhere to read them back from.
+    ///
+    /// `None` is the pre-#1198 behavior and the default — `config
+    /// .checkpoint_sink` stays unset, so `Engine::persist_checkpoint` returns
+    /// before serializing anything and a non-durable turn pays nothing per
+    /// step.
+    ///
+    /// Ignored when `config.checkpoint_sink` is already set: an embedder that
+    /// named a sink outright has said exactly where its checkpoints go, and
+    /// this field is the server's convenience, not an override of it.
+    pub checkpoint: Option<crate::checkpoint::TurnCheckpoint>,
 }
 
 /// The settlement callback a session owner installs on a turn — see
@@ -270,6 +290,23 @@ impl Session {
         self.pending.resolve_provider(request_id, Ok(result))
     }
 
+    /// Feed streamed fragments to an in-flight
+    /// [`ServerFrame::ProviderRequest`] (#1165), ahead of the terminating
+    /// [`Session::resolve_provider`] / [`Session::fail_provider`].
+    ///
+    /// Optional and advisory: a host that cannot stream never calls this, and
+    /// the aggregated result stays authoritative. Fragments surface on the
+    /// frame stream as `AgentEvent::TextDelta` / `AgentEvent::Reasoning`
+    /// events, so every subscriber — not just the caller running the model —
+    /// sees text as it arrives, and a resuming client replays it.
+    pub fn resolve_provider_delta(
+        &self,
+        request_id: &str,
+        deltas: Vec<crate::frame::ProviderDelta>,
+    ) -> Result<(), ServeError> {
+        self.pending.resolve_provider_delta(request_id, deltas)
+    }
+
     /// Answer a [`ServerFrame::ProviderRequest`] with a classified failure.
     pub fn fail_provider(&self, request_id: &str, error: ProviderError) -> Result<(), ServeError> {
         self.pending.resolve_provider(request_id, Err(error))
@@ -383,11 +420,21 @@ struct DrivenTurn {
 /// - **A checkpoint seam.** `StepOutcome::Continue` is the one moment the
 ///   transcript is guaranteed well-paired (no `tool_use` without its
 ///   `tool_result`), which is exactly where a durable runner would persist
-///   `state.to_checkpoint()`. It does: when the host attaches a
-///   `CheckpointSink` to `EngineConfig`, every step boundary of a served turn
-///   writes a resume point, exactly as a CLI turn does — the two drivers call
-///   the same `Engine::persist_checkpoint`, so an HTTP turn and a local turn
-///   are equally recoverable rather than merely similar.
+///   `state.to_checkpoint()`. It does: given a `CheckpointSink` on
+///   `EngineConfig`, every step boundary of a served turn writes a resume
+///   point, exactly as a CLI turn does — the two drivers call the same
+///   `Engine::persist_checkpoint`, so an HTTP turn and a local turn are
+///   equally recoverable rather than merely similar.
+///
+///   That parity is load-bearing in the other direction too, which is why the
+///   terminal arms below discard unconditionally instead of keeping the
+///   resume point of a turn that was *cancelled*. Retaining it is arguable —
+///   a cancelled turn was interrupted, not finished — but it is a change to
+///   what a checkpoint means, and making it here alone would leave a served
+///   turn and a CLI turn recoverable under different rules while this comment
+///   claimed otherwise. The consequence, stated so it is not discovered:
+///   what survives is the turn that died *without* unwinding (a `SIGKILL`, a
+///   panic, a lost machine), not the tail of a graceful drain.
 async fn drive_turn(
     engine: &Engine<'_>,
     messages: Vec<CompletionMessage>,
@@ -471,6 +518,15 @@ fn run_session(
     let observer = spec.observer.clone();
     let turn = spec.turn.clone();
     let on_settled = spec.on_settled.take();
+    // Lower the durable identity into the sink the engine actually reads.
+    // Here rather than at the call sites so `routes` never has to know what a
+    // `CheckpointSink` is, and after the `is_none` check so an embedder's own
+    // sink always wins (see `SessionSpec::checkpoint`).
+    if let Some(checkpoint) = spec.checkpoint.take()
+        && spec.config.checkpoint_sink.is_none()
+    {
+        spec.config.checkpoint_sink = Some(checkpoint.sink(observer.clone(), turn.clone()));
+    }
     let started = Instant::now();
     let runtime = match Builder::new_current_thread().enable_time().build() {
         Ok(runtime) => runtime,

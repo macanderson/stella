@@ -872,6 +872,83 @@ async fn single_task_with_a_flip_submits_fast_and_skips_the_judge() {
     )));
 }
 
+/// A pause gate that counts its polls — proof the pipeline actually consults
+/// the seam, from both kinds of call site.
+struct CountingGate(std::sync::atomic::AtomicU32);
+
+#[async_trait::async_trait]
+impl stella_core::ports::TurnGate for CountingGate {
+    async fn wait_if_paused(&self) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// `Pipeline::with_turn_gate` is the seam that lets a supervisor's pause
+/// reach a pipeline-driven worker (the raw step-loop always had one; the
+/// pipeline path silently ignored pause). The gate must be polled by BOTH
+/// kinds of spend: the management chokepoint (triage here) and the engine
+/// turns the pipeline builds — otherwise a paused worker keeps buying calls
+/// on whichever side was missed.
+#[tokio::test]
+async fn the_turn_gate_is_polled_by_management_calls_and_engine_turns() {
+    let provider = ScriptedProvider::new(vec![text_result("single"), text_result("done")]);
+    let resolver = OneProvider(&provider);
+    let runner = ScriptedRunner::new(vec![false, true], "@@ -1 +1 @@\n-old\n+new");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let gate = CountingGate(std::sync::atomic::AtomicU32::new(0));
+
+    let config = PipelineConfig {
+        test_command: Some("cargo test -p x".into()),
+        diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
+        ..PipelineConfig::default()
+    };
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        config,
+    )
+    .with_turn_gate(&gate);
+
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    pipeline
+        .run("Fix the failing test", &mut messages, &mut budget)
+        .await
+        .expect("run succeeds");
+
+    let polls = gate.0.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        polls >= 2,
+        "the gate must be consulted by the triage call AND the worker's engine \
+         turn — saw {polls} poll(s)"
+    );
+}
+
 /// A context-recall port that never answers — a wedged embedding call or an
 /// unresponsive CGP host.
 struct WedgedRecall;
@@ -1509,7 +1586,7 @@ fn assemble_user_message_puts_recall_before_the_task() {
         id: None,
         content_digest: None,
     }];
-    let msg = assemble_user_message("do the thing", &frames);
+    let msg = assemble_user_message("do the thing", &frames, None);
     let recall_idx = msg.find("Recalled context").unwrap();
     let task_idx = msg.find("do the thing").unwrap();
     assert!(recall_idx < task_idx, "recall rides before the goal");
@@ -1517,7 +1594,25 @@ fn assemble_user_message_puts_recall_before_the_task() {
 
 #[test]
 fn assemble_user_message_is_just_the_goal_when_no_recall() {
-    assert_eq!(assemble_user_message("hello", &[]), "hello");
+    assert_eq!(assemble_user_message("hello", &[], None), "hello");
+}
+
+/// The configured test command is the run's actual oracle, so the worker is
+/// told it up front instead of discovering it from the first failure's
+/// disclosure. Only the operator-configured command ever rides here — an
+/// authored witness's command is airlocked, and does not exist at assembly
+/// time anyway.
+#[test]
+fn assemble_user_message_states_the_configured_verification_contract() {
+    let msg = assemble_user_message("fix the parser", &[], Some("cargo test -p parser"));
+    let task_idx = msg.find("fix the parser").unwrap();
+    let contract_idx = msg.find("`cargo test -p parser`").unwrap();
+    assert!(
+        task_idx < contract_idx,
+        "the task leads; the contract qualifies it"
+    );
+    assert!(msg.contains("failing before your change and passing after it"));
+    assert!(msg.contains("Do not modify the tests it runs"));
 }
 
 /// With no `--test-command`, the witness author arms the flip oracle: its
@@ -1580,11 +1675,18 @@ async fn witness_authored_command_arms_the_flip_oracle_and_submits_fast() {
 /// bought a plan, an authored witness, and a judge no matter what triage said.
 /// An independent judge model IS available here, so a skipped witness proves
 /// triage's call was honored rather than independence being unavailable.
+///
+/// The judge is the one ceremony triage does NOT get to decline outright: its
+/// `JUDGE: no` was a prompt-time guess, this fixture's diff is behavioral, and
+/// nothing proved it — so the waiver does not stand (`judge_waiver_stands`)
+/// and the reviewer runs. Cheaper-than-the-floor still holds: no plan turn,
+/// no witness author, no baseline runs.
 #[tokio::test]
 async fn triage_can_route_work_onto_a_cheaper_path_than_the_keyword_floor() {
     let provider = ScriptedProvider::new(vec![
         text_result("CLASS: single\nWITNESS: no\nJUDGE: no"),
         text_result("done"),
+        text_result("PASS looks right"),
     ]);
     let (outcome, events, _) = run_unisolated_with_router(
         &provider,
@@ -1607,12 +1709,18 @@ async fn triage_can_route_work_onto_a_cheaper_path_than_the_keyword_floor() {
         !s.contains(&StageKind::Witness),
         "triage said no witness: {s:?}"
     );
-    // Two paid calls: triage and the worker. No witness author, no judge.
+    assert!(
+        s.contains(&StageKind::Judge),
+        "a behavioral diff keeps its reviewer, whatever triage guessed: {s:?}"
+    );
+    // Three paid calls: triage, the worker, and the judge the evidence
+    // demanded. The plan and witness-author ceremony triage declined is
+    // never bought.
     let calls = events
         .iter()
         .filter(|e| matches!(e, AgentEvent::StepUsage { .. }))
         .count();
-    assert_eq!(calls, 2, "ceremony triage declined is never bought: {s:?}");
+    assert_eq!(calls, 3, "no plan or witness-author call is bought: {s:?}");
 }
 
 /// The observed failure, end to end at the seam that actually decides it.
@@ -1628,6 +1736,9 @@ async fn a_chat_classification_on_a_files_request_still_reaches_execute() {
     let provider = ScriptedProvider::new(vec![
         text_result("CLASS: chat\nWITNESS: no\nJUDGE: no"),
         text_result("done"),
+        // The zero-diff guard revokes the lookup's judge-skip and the diff is
+        // behavioral, so the `JUDGE: no` waiver does not stand.
+        text_result("PASS looks right"),
     ]);
     let (outcome, events, _) = run_unisolated_with_router(
         &provider,
@@ -1645,6 +1756,42 @@ async fn a_chat_classification_on_a_files_request_still_reaches_execute() {
         s.contains(&StageKind::Execute),
         "a request to explore and organize files must reach the tool-bound \
          execute turn, not the tool-less chat path: {s:?}"
+    );
+    assert_eq!(outcome.status, PipelineStatus::Completed);
+}
+
+/// A headless run never takes the chat route on the model's opinion: its goal
+/// arrived from a script, a CI job, or a benchmark harness, the chat path is
+/// terminal no-work, and a misroute there reports an untouched task as
+/// complete. Only the model's say is withheld — the deterministic greeting arm
+/// (exercised above) still routes.
+#[tokio::test]
+async fn headless_runs_ignore_a_model_chat_call_and_reach_execute() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("CLASS: chat\nWITNESS: no\nJUDGE: no"),
+        text_result("done"),
+        // Behavioral diff → the `JUDGE: no` waiver does not stand.
+        text_result("PASS looks right"),
+    ]);
+    let (outcome, events, _) = run_unisolated_with_router(
+        &provider,
+        PipelineConfig {
+            headless: true,
+            ..PipelineConfig::default()
+        },
+        // Short, and free of every deterministic vocabulary veto — an
+        // interactive run WOULD route this to chat; headless must not.
+        "how would you approach the thing we discussed",
+        router(),
+    )
+    .await;
+    let outcome = outcome.expect("run succeeds");
+
+    let s = stages(&events);
+    assert!(
+        s.contains(&StageKind::Execute),
+        "a headless goal must reach the tool-bound execute turn even when \
+         triage called it chat: {s:?}"
     );
     assert_eq!(outcome.status, PipelineStatus::Completed);
 }
@@ -1893,11 +2040,14 @@ async fn run_isolated(
 /// execution on the working tree — not end the turn having done nothing.
 #[tokio::test]
 async fn a_setup_failure_degrades_to_a_bare_execution_instead_of_aborting() {
-    // triage → single; worker → done. No witness-author turn: the failure is
-    // pure isolation setup, and the bare fallback runs the worker once.
+    // triage → single; worker → done; judge → verdict. No witness-author
+    // turn: the failure is pure isolation setup, and the bare fallback runs
+    // the worker once. The judge runs despite `JUDGE: no` — the diff is
+    // behavioral, so the waiver does not stand (`judge_waiver_stands`).
     let provider = ScriptedProvider::new(vec![
         text_result("CLASS: single\nWITNESS: no\nJUDGE: no"),
         text_result("done"),
+        text_result("PASS looks right"),
     ]);
     let resolver = OneProvider(&provider);
     let runner = ScriptedRunner::new(vec![], "@@ -1 +1 @@\n-a\n+b");

@@ -12,8 +12,18 @@
 //!
 //! Net effect: quit, Ctrl-C, a killed terminal, a dropped connection, or a
 //! power cut — the session reopens where it stood (`stella resume`, or ⏎ in
-//! the SESSIONS overlay), with at most the in-flight turn's streamed tail to
-//! re-run (its prompt comes back at the front of the queue).
+//! the SESSIONS overlay), with the in-flight turn's prompt back at the front
+//! of the queue.
+//!
+//! # The other store, and when it wins
+//!
+//! The sidecar is not the only place a resumed conversation can come from. A
+//! turn checkpoints into the workspace's git-backed work journal at every STEP
+//! boundary, which is finer than `history.json`'s turn boundary, so an
+//! interrupted turn's completed steps survive too and are not re-run.
+//! [`restore_conversation`] is the one place that choice is made; the table in
+//! `stella_store::journal`'s module docs says which store is canonical for
+//! what, and why converging them is not the goal.
 //!
 //! Everything here is best-effort by the store's own contract: persistence
 //! failure degrades to a one-time transcript warning, never a work stoppage.
@@ -577,6 +587,74 @@ pub fn snapshot_history(dir: &Path, messages: &[CompletionMessage]) -> Option<St
     })
 }
 
+/// The transcript a resumed session reopens with, and what to tell the
+/// operator about where it came from.
+pub struct RestoredConversation {
+    /// The conversation to reopen with, system prompt already regenerated.
+    pub messages: Vec<CompletionMessage>,
+    /// One line of boot narration naming the granularity actually used. A
+    /// resume that silently picks a different one than the operator expects
+    /// is the kind of thing that gets debugged for an hour.
+    pub note: String,
+    /// Session spend the checkpoint knows about, when one was adopted. The
+    /// checkpoint's meter is a step-boundary snapshot of the same instant as
+    /// its transcript, so it can be ahead of the journal's last `BudgetTick`;
+    /// the caller takes the larger of the two, because spend is monotone and
+    /// under-counting it is what quietly loosens a session budget.
+    pub spent_usd: Option<f64>,
+}
+
+/// Choose which durable store a resumed conversation comes back from.
+///
+/// Two stores hold a conversation and they are not competing formats. The
+/// sidecar's `history.json` is written at each **turn** boundary; the work
+/// journal's checkpoint is written at each **step** boundary *inside* a turn.
+/// Because every terminal path discards the checkpoint, its mere presence
+/// means a turn was interrupted — so whenever there is one it is strictly
+/// fresher, and that is the whole selection rule.
+///
+/// A checkpoint this build cannot read is NOT preferred: [`Checkpoint::from_json`]
+/// refuses a version it does not understand, and the honest degradation is the
+/// turn-boundary history with the reason said out loud, not an aborted resume.
+/// The session is then exactly as recoverable as it was before checkpoints
+/// existed, which is the same posture the sink itself takes.
+///
+/// [`Checkpoint::from_json`]: stella_core::step::Checkpoint::from_json
+pub fn restore_conversation(
+    checkpoint: Option<&str>,
+    history: Option<Vec<CompletionMessage>>,
+    system_prompt: &str,
+) -> RestoredConversation {
+    let from_history = |note: String| RestoredConversation {
+        messages: restore_messages(history.clone().unwrap_or_default(), system_prompt),
+        note,
+        spent_usd: None,
+    };
+    let Some(json) = checkpoint else {
+        return from_history(
+            "session restored at the last completed turn — no turn was interrupted.".to_string(),
+        );
+    };
+    match stella_core::step::Checkpoint::from_json(json) {
+        Ok(checkpoint) => {
+            let step = checkpoint.step;
+            let spent_usd = checkpoint.budget.session_spent_usd;
+            RestoredConversation {
+                messages: restore_messages(checkpoint.messages, system_prompt),
+                note: format!(
+                    "session restored mid-turn at step {step} — the interrupted turn's completed \
+                     steps are in the transcript and will not be re-run."
+                ),
+                spent_usd: Some(spent_usd),
+            }
+        }
+        Err(e) => from_history(format!(
+            "a resume point from an interrupted turn could not be read ({e}) — restored at the \
+             last completed turn instead, so that turn's steps re-run."
+        )),
+    }
+}
+
 /// Rebuild `messages` for a resumed conversation: the stored history with
 /// the system prompt regenerated fresh (rules/config may have changed since
 /// the session first started; the stable prefix must reflect today's).
@@ -887,6 +965,120 @@ mod tests {
         assert_eq!(restored[0].role, stella_protocol::MessageRole::System);
     }
 
+    /// A checkpoint holding a turn that had already read a file, plus the
+    /// turn-boundary history that predates that turn entirely — the exact
+    /// disagreement a resume has to resolve.
+    fn interrupted_turn() -> (String, Vec<CompletionMessage>) {
+        let history = vec![
+            CompletionMessage::system("old prompt"),
+            CompletionMessage::user("the turn before"),
+            CompletionMessage::assistant("done"),
+        ];
+        let mut mid_turn = history.clone();
+        mid_turn.push(CompletionMessage::user("fix the parser"));
+        mid_turn.push(CompletionMessage::assistant("reading parser.rs"));
+        let checkpoint = stella_core::step::Checkpoint {
+            version: stella_core::step::CHECKPOINT_VERSION,
+            step: 3,
+            messages: mid_turn,
+            budget: stella_core::step::BudgetSnapshot {
+                mode: stella_protocol::BudgetMode::Observed,
+                turn_limit_usd: None,
+                session_limit_usd: None,
+                turn_spent_usd: 0.25,
+                session_spent_usd: 4.5,
+            },
+            total_cost_usd: 0.25,
+            calibration_model: None,
+            loop_steered: false,
+            transcript_rewrites: 0,
+        };
+        (checkpoint.to_json().expect("encode"), history)
+    }
+
+    /// THE resume-granularity witness: an interrupted turn comes back at its
+    /// last STEP boundary, not at the turn boundary before it. The work the
+    /// completed steps did is in the restored transcript, which is what stops
+    /// it from being re-run — and the money those steps cost comes back with
+    /// it, so a resumed session's budget is not quietly reset.
+    #[test]
+    fn an_interrupted_turn_resumes_at_the_step_boundary_not_the_turn_boundary() {
+        let (checkpoint, history) = interrupted_turn();
+
+        let restored = restore_conversation(Some(&checkpoint), Some(history.clone()), "today");
+        assert_eq!(
+            restored.messages.last().map(|m| m.content.as_str()),
+            Some("reading parser.rs"),
+            "the completed steps' work must survive the interruption: {:?}",
+            restored.messages
+        );
+        assert!(
+            restored
+                .messages
+                .iter()
+                .any(|m| m.content == "fix the parser"),
+            "and so must the prompt they were serving"
+        );
+        assert_eq!(
+            restored.messages[0].content, "today",
+            "system prefix is regenerated either way"
+        );
+        assert_eq!(
+            restored.spent_usd,
+            Some(4.5),
+            "the step-boundary meter comes back too"
+        );
+        assert!(
+            restored.note.contains("step 3"),
+            "and says so: {}",
+            restored.note
+        );
+
+        // No checkpoint at all — every terminal path discards one, so this is
+        // a session that was not interrupted mid-turn. The turn boundary is
+        // then the freshest thing there is.
+        let clean = restore_conversation(None, Some(history), "today");
+        assert_eq!(
+            clean.messages.last().map(|m| m.content.as_str()),
+            Some("done")
+        );
+        assert_eq!(clean.spent_usd, None);
+    }
+
+    /// A checkpoint this build cannot read must not take the resume down with
+    /// it. `from_json` refuses an unknown version; the fallback is the turn
+    /// boundary, said out loud rather than silently.
+    #[test]
+    fn an_unreadable_checkpoint_degrades_to_the_turn_boundary_visibly() {
+        let (checkpoint, history) = interrupted_turn();
+        let future = checkpoint.replace(
+            &format!("\"version\":{}", stella_core::step::CHECKPOINT_VERSION),
+            "\"version\":9999",
+        );
+        assert_ne!(
+            future, checkpoint,
+            "the version field must actually have moved"
+        );
+
+        for bytes in [future.as_str(), "not json at all"] {
+            let restored = restore_conversation(Some(bytes), Some(history.clone()), "today");
+            assert_eq!(
+                restored.messages.last().map(|m| m.content.as_str()),
+                Some("done"),
+                "an unreadable resume point falls back to the turn boundary, it does not abort"
+            );
+            assert!(
+                restored.note.contains("could not be read"),
+                "and the operator is told which granularity they got: {}",
+                restored.note
+            );
+            assert_eq!(
+                restored.spent_usd, None,
+                "no meter is claimed from bytes we could not read"
+            );
+        }
+    }
+
     /// THE durability witness: a live envelope stream folded directly vs.
     /// the same stream journaled to disk (coalescing, torn-tail handling and
     /// all), read back, and replayed through the same fold — the deck state
@@ -963,6 +1155,7 @@ mod tests {
                     retries: 0,
                     tool_calls: 1,
                     complete: true,
+                    finish_reason: None,
                 },
             },
             Inbound::Event {

@@ -91,6 +91,159 @@ async fn a_docs_only_change_completes_without_buying_a_judge_call() {
     );
 }
 
+const SOURCE_DIFF: &str = "\
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1 +1,2 @@
+ fn a() {}
++fn b() { run(); }
+";
+
+/// Triage's `JUDGE: no` is a prompt-time guess, and this arm is only reached
+/// when the ladder came back inconclusive — the state that falsifies the
+/// waiver's own premise ("success is self-evident or a test already proves
+/// it"). On a behavioral diff nothing proved, the waiver must not stand: the
+/// third scripted call IS the judge, and the run must spend it.
+#[tokio::test]
+async fn a_judge_waiver_on_a_behavioral_diff_still_buys_the_judge() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("CLASS: single\nWITNESS: no\nJUDGE: no"),
+        text_result("done"),
+        text_result("PASS — the change is sound"),
+    ]);
+    let resolver = OneProvider(&provider);
+    let runner = ScriptedRunner::new(vec![], SOURCE_DIFF);
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig {
+            witness_writer: false,
+            ..PipelineConfig::default()
+        },
+    );
+
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let outcome = pipeline
+        .run("Add the b() helper", &mut messages, &mut budget)
+        .await
+        .expect("run succeeds");
+
+    assert!(
+        provider.script.lock().await.is_empty(),
+        "the judge call must be spent: a waived judge here would leave the third result unserved"
+    );
+    assert!(
+        stages(&drain(&mut rx)).contains(&StageKind::Judge),
+        "a behavioral diff keeps its reviewer, whatever triage guessed"
+    );
+    let verdict = outcome.verdict.expect("a judged verdict");
+    assert!(
+        !verdict.summary.contains("waived"),
+        "the verdict must be the judge's, not the waiver's: {}",
+        verdict.summary
+    );
+}
+
+/// The half that keeps the waiver useful: where the warrant AGREES nothing
+/// needs a reviewer (a docs-only change), triage's `JUDGE: no` is honored
+/// exactly as before — two provider calls, no judge stage, and a verdict that
+/// says the review was deliberately waived rather than broken.
+#[tokio::test]
+async fn a_judge_waiver_stands_where_the_warrant_agrees() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("CLASS: single\nWITNESS: no\nJUDGE: no"),
+        text_result("done"),
+    ]);
+    let resolver = OneProvider(&provider);
+    let runner = ScriptedRunner::new(vec![], DOCS_DIFF);
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig {
+            witness_writer: false,
+            ..PipelineConfig::default()
+        },
+    );
+
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let outcome = pipeline
+        .run("Rewrite the README opening", &mut messages, &mut budget)
+        .await
+        .expect("run succeeds");
+
+    assert_eq!(outcome.status, PipelineStatus::Completed);
+    assert!(
+        provider.script.lock().await.is_empty(),
+        "exactly triage + worker were spent"
+    );
+    assert!(
+        !stages(&drain(&mut rx)).contains(&StageKind::Judge),
+        "the waiver stands where the warrant agrees there is nothing to review"
+    );
+    let verdict = outcome.verdict.expect("a reasoned verdict");
+    assert!(
+        verdict.summary.contains("waived"),
+        "the verdict must state the review was deliberately waived: {}",
+        verdict.summary
+    );
+}
+
 /// The witness: a diff probe that FAILED must never complete as "nothing
 /// changed".
 ///

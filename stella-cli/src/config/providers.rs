@@ -226,7 +226,7 @@ pub(crate) const COMMON_KEY_ENV_VARS: &[&str] = &[
 /// set` writes `~/.stella/credentials.toml` safely (masked prompt, `--stdin`
 /// mode, owner-only perms) and `stella models` tabulates every provider with
 /// its key status — instead of telling the user to hand-edit TOML and then
-/// hard-wrapping all thirteen provider rows across their terminal.
+/// hard-wrapping every provider row across their terminal.
 pub(crate) fn no_api_key_error() -> String {
     format!(
         "no API key found.\n\n\

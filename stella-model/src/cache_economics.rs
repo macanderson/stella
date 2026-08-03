@@ -24,11 +24,10 @@
 //! The **write premium** (what a cache write costs *over* the base input rate)
 //! is provider policy, not arithmetic: today only the opt-in providers
 //! (Anthropic, Bedrock, OpenRouter-Claude) report cache writes, and their
-//! 5-minute cache writes bill at 1.25x input. The catalog carries no
-//! cache-write rate column yet (the staged follow-up to issue #97), so
-//! [`cache_write_premium_multiplier`] holds that factor here, keyed by
-//! provider — merge-later into the pricing/parity matrix once the column
-//! lands.
+//! 5-minute cache writes bill at 1.25x input. The catalog now carries the
+//! per-model rate (`Pricing::cache_write_usd_per_mtok`, landed with #97);
+//! [`cache_write_premium_multiplier`] remains as the seed-time derivation
+//! and the fallback for gateway-priced (all-zero) rows.
 
 use stella_protocol::{CacheCause, CompletionUsage};
 

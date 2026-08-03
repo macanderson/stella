@@ -23,7 +23,8 @@ use stella_core::{BudgetGuard, EngineConfig};
 use stella_protocol::{BudgetMode, CompletionMessage, ToolSchema};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::frame::{ProviderOutcomeIn, ProviderResultIn, ToolResultIn};
+use crate::engine_overrides::{ClampedKnob, EngineOverrides, apply_engine_overrides};
+use crate::frame::{ProviderDeltaIn, ProviderOutcomeIn, ProviderResultIn, ToolResultIn};
 use crate::history::{FrameHistory, Replay};
 use crate::http::{Request, discard_body, write_sse_event, write_sse_frame};
 use crate::observe::event::{ServeEvent, StreamEndReason, TurnRef};
@@ -47,6 +48,10 @@ struct TurnRequest {
     /// [`SessionSpec::DEFAULT_REVERSE_REQUEST_TIMEOUT`].
     #[serde(default)]
     reverse_request_timeout_ms: Option<u64>,
+    /// Per-turn engine knobs (#1167), lowered onto the server's defaults.
+    /// Omitted — or an empty object — reproduces today's behavior exactly.
+    #[serde(default)]
+    engine: Option<EngineOverrides>,
 }
 
 /// Spend policy for a turn — the serializable projection of a [`BudgetGuard`].
@@ -78,6 +83,10 @@ fn budget_mode_off() -> BudgetMode {
 #[derive(Debug, Serialize)]
 struct TurnCreated<'a> {
     turn_id: &'a str,
+    /// Engine knobs the server lowered below what was asked (#1167). Absent
+    /// when nothing was clamped, so pre-existing clients parse unchanged.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    clamped: Vec<ClampedKnob>,
 }
 
 /// Ceiling on a host-supplied [`TurnRequest::max_steps`].
@@ -201,6 +210,15 @@ pub(crate) async fn handle_create(
     };
 
     let mut config = EngineConfig::default();
+    let clamped = match &turn.engine {
+        Some(engine) => match apply_engine_overrides(&mut config, engine) {
+            Ok(clamped) => clamped,
+            Err(message) => {
+                return res.json("400 Bad Request", &error_body(&message)).await;
+            }
+        },
+        None => Vec::new(),
+    };
     if let Some(max_steps) = turn.max_steps {
         let Some(effective) = validate_max_steps(max_steps) else {
             return res
@@ -231,6 +249,11 @@ pub(crate) async fn handle_create(
     // will emit: the id has to exist before the session starts, and only the
     // registry can mint it.
     let observer = state.observer().clone();
+    // A stateless turn keys on its own id: the only name it will ever have,
+    // and one the host is holding as soon as this call returns. Minted inside
+    // the closure because only `register_turn` — under the registry lock —
+    // can mint it.
+    let checkpoint_state = Arc::clone(state);
     let registered = state.register_turn(move |turn_id| {
         Session::start(SessionSpec {
             provider_id: turn.provider_id,
@@ -246,6 +269,7 @@ pub(crate) async fn handle_create(
             turn: TurnRef::new(turn_id),
             observer,
             on_settled: None,
+            checkpoint: checkpoint_state.checkpoint_for(turn_id),
         })
     });
     let Some(id) = registered else {
@@ -258,7 +282,11 @@ pub(crate) async fn handle_create(
             .await;
     };
 
-    let body = serde_json::to_vec(&TurnCreated { turn_id: &id }).unwrap_or_default();
+    let body = serde_json::to_vec(&TurnCreated {
+        turn_id: &id,
+        clamped,
+    })
+    .unwrap_or_default();
     res.json("200 OK", &body).await
 }
 
@@ -605,6 +633,60 @@ pub(crate) async fn handle_provider_result(
     }
 }
 
+/// `POST /v1/turns/{id}/provider-delta` — streamed fragments for an in-flight
+/// provider request (#1165), ahead of its terminating `provider-result`.
+///
+/// Optional: a host that cannot stream never calls this and keeps its old
+/// behavior. Batched: one POST carries any number of fragments, because a
+/// per-token HTTP request would cost more than the latency it buys. The
+/// fragments surface on `/events` as `TextDelta` / `Reasoning` frames, so a
+/// second subscriber sees text as it arrives and a resuming client replays it
+/// — and each batch resets the reverse-request deadline, which is what makes
+/// that deadline an idle bound for a host that streams.
+pub(crate) async fn handle_provider_delta(
+    res: &mut Responder<'_>,
+    state: &Arc<ServerState>,
+    id: &str,
+    body: &[u8],
+) -> std::io::Result<()> {
+    let Some(entry) = state.lookup(id) else {
+        return res.json("404 Not Found", &error_body("unknown turn")).await;
+    };
+    let posted: ProviderDeltaIn = match serde_json::from_slice(body) {
+        Ok(posted) => posted,
+        Err(err) => {
+            return res
+                .json(
+                    "400 Bad Request",
+                    &error_body(&format!("invalid provider delta: {err}")),
+                )
+                .await;
+        }
+    };
+    if posted.deltas.is_empty() {
+        // Refused rather than accepted as a keepalive: an empty batch sends
+        // nothing through the feed, so it would NOT reset the idle deadline —
+        // accepting it would let a host believe it was proving liveness while
+        // the clock ran out.
+        return res
+            .json(
+                "400 Bad Request",
+                &error_body("deltas must carry at least one fragment"),
+            )
+            .await;
+    }
+    match entry
+        .pending
+        .resolve_provider_delta(&posted.request_id, posted.deltas)
+    {
+        Ok(()) => res.json("200 OK", br#"{"status":"ok"}"#).await,
+        Err(err) => {
+            res.json("409 Conflict", &error_body(&err.to_string()))
+                .await
+        }
+    }
+}
+
 /// `POST /v1/turns/{id}/cancel` — end an in-flight turn.
 ///
 /// Answers once the turn is *signalled*, not once it has unwound: the parked
@@ -790,6 +872,12 @@ struct SessionTurnRequest {
     max_steps: Option<usize>,
     #[serde(default)]
     reverse_request_timeout_ms: Option<u64>,
+    /// Per-turn engine knobs (#1167), applied on top of the defaults exactly
+    /// as on the stateless route. Safe for the session's prompt-cache
+    /// contract: none of these knobs touch the transcript, so the byte-stable
+    /// prefix survives a turn that runs at a different temperature.
+    #[serde(default)]
+    engine: Option<EngineOverrides>,
 }
 
 /// Response to `POST /v1/sessions/{id}/turns`. The turn is an ordinary member
@@ -799,6 +887,10 @@ struct SessionTurnRequest {
 struct SessionTurnCreated<'a> {
     turn_id: &'a str,
     session_id: &'a str,
+    /// Engine knobs the server lowered below what was asked (#1167). Absent
+    /// when nothing was clamped, so pre-existing clients parse unchanged.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    clamped: Vec<ClampedKnob>,
 }
 
 /// Response to `GET /v1/sessions/{id}` — the last settled state, served even
@@ -895,6 +987,15 @@ pub(crate) async fn handle_session_turn(
             .await;
     }
     let mut config = EngineConfig::default();
+    let clamped = match &request.engine {
+        Some(engine) => match apply_engine_overrides(&mut config, engine) {
+            Ok(clamped) => clamped,
+            Err(message) => {
+                return res.json("400 Bad Request", &error_body(&message)).await;
+            }
+        },
+        None => Vec::new(),
+    };
     if let Some(max_steps) = request.max_steps {
         let Some(effective) = validate_max_steps(max_steps) else {
             return res
@@ -931,6 +1032,11 @@ pub(crate) async fn handle_session_turn(
     messages.extend(request.input);
 
     let observer = state.observer().clone();
+    // Keyed on the **session** id, not the turn's. Two reasons, and both are
+    // about who is asking after the crash: the session id is the name the host
+    // kept, and a session admits one live turn at a time, so the key has one
+    // writer and each turn's resume point cleanly supersedes the last.
+    let checkpoint = state.checkpoint_for(id);
     // The settle hook is minted *inside* the closure, not before the
     // `register_turn` call: a capacity-refused registration drops the closure
     // uncalled, and a hook minted early would fire its died-without-settling
@@ -948,6 +1054,7 @@ pub(crate) async fn handle_session_turn(
             turn: TurnRef::new(turn_id),
             observer,
             on_settled: Some(hook_sess.settle_hook(token)),
+            checkpoint,
         })
     });
     let Some(turn_id) = registered else {
@@ -966,6 +1073,7 @@ pub(crate) async fn handle_session_turn(
     let body = serde_json::to_vec(&SessionTurnCreated {
         turn_id: &turn_id,
         session_id: id,
+        clamped,
     })
     .unwrap_or_default();
     res.json("200 OK", &body).await
@@ -1017,11 +1125,129 @@ pub(crate) async fn handle_session_delete(
         // session's own locks are not held here (`live_turn_id` returned).
         let removed = { state.turns().remove(&turn_id) };
         if let Some(entry) = removed {
+            // Same three signals as `handle_cancel`: without the step-boundary
+            // latch (#1129), a turn deleted mid-compaction kept computing until
+            // it next parked on a reverse request and only unwound when
+            // `Pending` refused the registration.
+            entry.cancel.cancel();
             entry.pending.cancel();
             entry.controls.resume();
         }
     }
+    // The conversation is gone, so its resume point is unreachable work: the
+    // key is the session id, and that id now answers `404` everywhere else.
+    // Leaving it would make `DELETE` the one operation that grows the store.
+    if let Some(store) = state.checkpoints()
+        && let Ok(key) = crate::checkpoint::CheckpointKey::new(id)
+    {
+        let _ = store.remove(&key);
+    }
     res.json("200 OK", br#"{"status":"deleted"}"#).await
+}
+
+/// `GET /v1/sessions/{id}/checkpoint` and `GET /v1/turns/{id}/checkpoint` —
+/// read back a resume point (#1198).
+///
+/// # Why this does not consult either registry
+///
+/// The id is looked up in the **store**, not in `state.sessions()` or
+/// `state.turns()`, and the difference is the entire point: the interesting
+/// caller is one whose session object died with the process it was living in.
+/// A `GET` gated on the registry would answer `404` exactly when the answer
+/// matters and `200` only while the in-memory copy made it redundant.
+///
+/// So `200` here does not mean "this session exists" — it means "this id has a
+/// resume point", and those are deliberately different questions. A live
+/// session and a crashed one are indistinguishable on this route, which is
+/// what lets a host recover without first knowing whether it needs to.
+///
+/// # The body is the stored bytes, verbatim
+///
+/// Not re-encoded, not wrapped in an envelope. `stella_core::step::Checkpoint`
+/// is a struct precisely so its JSON key order is its declaration order —
+/// this workspace's `serde_json` has no `preserve_order`, so parsing the
+/// stored text into a `Value` and re-serializing it would come back
+/// **alphabetized**, breaking the byte-identity that
+/// `checkpoint_round_trips_byte_identically` pins in `stella-core`. Passing
+/// the bytes through is both cheaper and the only version that cannot corrupt
+/// a resume point on the way out.
+pub(crate) async fn handle_checkpoint_get(
+    res: &mut Responder<'_>,
+    state: &Arc<ServerState>,
+    id: &str,
+) -> std::io::Result<()> {
+    match read_checkpoint(state, id) {
+        Ok(Some(json)) => res.json("200 OK", json.as_bytes()).await,
+        Ok(None) => {
+            res.json("404 Not Found", &error_body("no checkpoint for this id"))
+                .await
+        }
+        Err(err) => {
+            res.json(
+                "500 Internal Server Error",
+                &error_body(&format!("checkpoint could not be read: {err}")),
+            )
+            .await
+        }
+    }
+}
+
+/// `DELETE /v1/sessions/{id}/checkpoint` and `DELETE /v1/turns/{id}/checkpoint`
+/// — reclaim a resume point a host is finished with.
+///
+/// This exists because nothing else can do it. A turn that reaches a terminal
+/// outcome discards its own resume point, so the only entries a store retains
+/// are the turns that died *without* ending — and no timer can tell one whose
+/// host is coming back from one whose host is gone. That judgment belongs to
+/// the host, so it gets a verb.
+///
+/// Idempotent, like the `discard` half of the sink contract it mirrors:
+/// deleting what is not there is a `200`, because a host recovering from a
+/// crash cannot be expected to know which of its turns got far enough to write
+/// one.
+pub(crate) async fn handle_checkpoint_delete(
+    res: &mut Responder<'_>,
+    state: &Arc<ServerState>,
+    id: &str,
+) -> std::io::Result<()> {
+    let Some(store) = state.checkpoints() else {
+        return res
+            .json(
+                "404 Not Found",
+                &error_body("this server is not storing checkpoints"),
+            )
+            .await;
+    };
+    // An unkeyable id has no entry by construction, so "deleted" is true.
+    let Ok(key) = crate::checkpoint::CheckpointKey::new(id) else {
+        return res.json("200 OK", br#"{"status":"deleted"}"#).await;
+    };
+    match store.remove(&key) {
+        Ok(()) => res.json("200 OK", br#"{"status":"deleted"}"#).await,
+        Err(err) => {
+            res.json(
+                "500 Internal Server Error",
+                &error_body(&format!("checkpoint could not be removed: {err}")),
+            )
+            .await
+        }
+    }
+}
+
+/// The store read behind [`handle_checkpoint_get`], with "durability is off"
+/// and "that is not a key" both folded into "nothing stored" — neither is a
+/// server fault, and both are honestly `404`.
+fn read_checkpoint(
+    state: &Arc<ServerState>,
+    id: &str,
+) -> Result<Option<String>, crate::checkpoint::CheckpointStoreError> {
+    let Some(store) = state.checkpoints() else {
+        return Ok(None);
+    };
+    let Ok(key) = crate::checkpoint::CheckpointKey::new(id) else {
+        return Ok(None);
+    };
+    store.get(&key)
 }
 
 pub(crate) fn error_body(message: &str) -> Vec<u8> {

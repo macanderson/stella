@@ -143,7 +143,7 @@ CREATE INDEX IF NOT EXISTS code_graph_storage_parent ON code_graph_storage_objec
 /// indexing rather than to the file.
 ///
 /// 4 MiB sits far above any hand-written source file (the largest file in this
-/// workspace is ~100 KiB) while capping the peak at a few tens of MiB. A file
+/// workspace is ~210 KiB) while capping the peak at a few tens of MiB. A file
 /// over it is counted in [`IndexStats::files_skipped_too_large`] and skipped —
 /// never an error, matching every other per-file failure mode here (L-L1).
 pub(crate) const MAX_INDEXABLE_BYTES: u64 = 4 * 1024 * 1024;

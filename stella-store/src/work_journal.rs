@@ -373,23 +373,80 @@ impl WorkJournal {
 
     /// Mark `commit` as the state at the end of `turn`, so it can be replayed
     /// by turn number rather than by commit id.
+    ///
+    /// Called at every deck turn's end, through
+    /// `stella_cli::durability::SessionDurability::mark_turn_end`, which
+    /// derives `turn` from [`Self::last_marked_turn`] rather than from a
+    /// counter — see there for why that distinction has teeth across a resume.
     pub fn mark_turn(&self, turn: u32, commit: &str) -> Result<()> {
         self.git(&["update-ref", &turn_ref(&self.session, turn), commit])?;
         Ok(())
     }
 
+    /// The highest turn this session has marked, or `None` when it has marked
+    /// none.
+    ///
+    /// The point of asking the refs rather than keeping a counter: a counter
+    /// lives in one process and a session outlives its processes. A resumed
+    /// session that started counting again at 1 would re-mark turn 3 over the
+    /// turn 3 that ran before the interruption — silently, and destroying the
+    /// only record of the earlier one. The namespace already knows, so this
+    /// reads it.
+    ///
+    /// A ref whose trailing segment is not a number is skipped rather than
+    /// treated as an error: this answers "what is the largest turn safely past"
+    /// and an unparseable neighbour does not change that answer.
+    pub fn last_marked_turn(&self) -> Option<u32> {
+        let prefix = format!("refs/stella/{}/turn/", self.session);
+        let pattern = format!("{prefix}*");
+        let out = self
+            .git(&["for-each-ref", "--format=%(refname)", &pattern])
+            .ok()?;
+        out.lines()
+            .filter_map(|line| line.trim().strip_prefix(prefix.as_str()))
+            .filter_map(|turn| turn.parse::<u32>().ok())
+            .max()
+    }
+
     /// The content of `path` as it stood at the end of `turn`.
+    ///
+    /// # No production caller yet, and why it is still here
+    ///
+    /// The refs this reads through are written by every real session as of the
+    /// change that wired [`Self::mark_turn`] — before that they existed only in
+    /// this module's own tests, which made this genuinely unreachable API.
+    /// It now has data; what it does not yet have is a *consumer*. Answering
+    /// "show me the workspace as it stood three turns ago" needs a surface to
+    /// ask it from, and neither a CLI verb nor the cross-machine transport work
+    /// that would want this granularity is built.
+    ///
+    /// Kept rather than deleted because the write side is now load-bearing and
+    /// costs one `update-ref` per turn: retiring the reader would leave the
+    /// marks being written for nothing, which is the worse of the two shapes.
+    /// If the transport work is dropped, delete the pair together.
     pub fn read_at_turn(&self, turn: u32, path: &str) -> Result<String> {
         self.git(&["show", &format!("{}:{path}", turn_ref(&self.session, turn))])
     }
 
     /// One of the reserved journal blobs as it stood at the end of `turn`.
+    ///
+    /// Same standing as [`Self::read_at_turn`]: real refs, no consumer yet.
     pub fn blob_at_turn(&self, turn: u32, name: &str) -> Result<String> {
         self.read_at_turn(turn, &format!(".stella-journal/{name}"))
     }
 
     /// Compact the object store. The end-of-session step: everything stays
     /// replayable, it simply stops being loose objects.
+    ///
+    /// Called from the deck's exit path and from the one-shot drivers'
+    /// `SessionPresence::finish`, both through
+    /// `stella_cli::durability::SessionDurability::compact`, and best-effort at
+    /// both — housekeeping must never delay or fail an exit.
+    ///
+    /// `--auto` is what makes calling it unconditionally reasonable: git checks
+    /// the loose-object count against its own `gc.auto` threshold and returns
+    /// immediately when it is under, so a short session pays one subprocess and
+    /// a long-lived workspace gets packed without anyone having to decide when.
     pub fn compact(&self) -> Result<()> {
         self.git(&["gc", "--quiet", "--auto"])?;
         Ok(())
@@ -474,6 +531,72 @@ mod tests {
         assert_eq!(
             journal.blob_at_turn(7, CHECKPOINT_BLOB).unwrap(),
             r#"{"version":1,"step":3}"#
+        );
+    }
+
+    #[test]
+    fn the_turn_namespace_is_its_own_high_water_mark_across_a_restart() {
+        // Why the turn ordinal is read from the refs and not from a counter: a
+        // counter belongs to a process and a session outlives its processes.
+        // The second handle below is the resumed session — a different
+        // `WorkJournal` over the same store and session id, exactly as a
+        // restart produces — and it must not re-mark a turn the first one
+        // already used.
+        let (_guard, ws, store) = scratch();
+        let before = WorkJournal::open_in(&store, &ws, "ses-restart").unwrap();
+        assert_eq!(
+            before.last_marked_turn(),
+            None,
+            "a session that has marked nothing is at no turn"
+        );
+
+        std::fs::write(ws.join("a.txt"), "turn one\n").unwrap();
+        let c1 = before.record(&["a.txt".into()], &[], "turn 1").unwrap();
+        before.mark_turn(1, &c1).unwrap();
+        std::fs::write(ws.join("a.txt"), "turn two\n").unwrap();
+        let c2 = before.record(&["a.txt".into()], &[], "turn 2").unwrap();
+        before.mark_turn(2, &c2).unwrap();
+        assert_eq!(before.last_marked_turn(), Some(2));
+
+        // …the process dies here, and the session is resumed.
+        let after = WorkJournal::open_in(&store, &ws, "ses-restart").unwrap();
+        assert_eq!(
+            after.last_marked_turn(),
+            Some(2),
+            "the resumed session picks up where the marks left off"
+        );
+        std::fs::write(ws.join("a.txt"), "turn three\n").unwrap();
+        let c3 = after.record(&["a.txt".into()], &[], "turn 3").unwrap();
+        after
+            .mark_turn(after.last_marked_turn().unwrap() + 1, &c3)
+            .unwrap();
+
+        assert_eq!(after.last_marked_turn(), Some(3));
+        assert_eq!(
+            after.read_at_turn(2, "a.txt").unwrap(),
+            "turn two\n",
+            "and turn 2 still names turn 2's work, rather than having been overwritten"
+        );
+        assert_eq!(after.read_at_turn(3, "a.txt").unwrap(), "turn three\n");
+    }
+
+    #[test]
+    fn another_sessions_turn_marks_are_not_this_ones() {
+        // The ordinal is per-session by construction (`refs/stella/<session>/
+        // turn/<n>`), and two sessions share one workspace store. A high-water
+        // mark that saw across sessions would make one session's turn numbering
+        // jump whenever a neighbour ran.
+        let (_guard, ws, store) = scratch();
+        std::fs::write(ws.join("a.txt"), "shared\n").unwrap();
+        let theirs = WorkJournal::open_in(&store, &ws, "ses-neighbour").unwrap();
+        let c = theirs.record(&["a.txt".into()], &[], "their turn").unwrap();
+        theirs.mark_turn(9, &c).unwrap();
+
+        let mine = WorkJournal::open_in(&store, &ws, "ses-mine").unwrap();
+        assert_eq!(
+            mine.last_marked_turn(),
+            None,
+            "a neighbour's turn 9 is not this session's turn 9"
         );
     }
 

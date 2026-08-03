@@ -525,8 +525,42 @@ _POSTURE, _POSTURE_JSON, _POSTURE_SHA256 = analysis_module.canonical_engine_post
     _READINESS_POSTURE_SHA256,
 ) = analysis_module.canonical_engine_posture(_READINESS_MODEL)
 assert _POSTURE_SHA256 == (
-    "98511188b8338637afe0f2ffde1998c26f048db2f9c936549f75bd222600cf76"
+    "8530a36f8fe064d59a64b6b732d57d9e9d9613c0fee27da9b5a6f1501551ffe9"
 )
+
+
+def test_posture_matches_the_adapters() -> None:
+    """The analyzer's posture copy is byte-identical to the adapter's.
+
+    ``stella_harbor/posture.py`` is the normative home; the analyzer keeps a
+    stdlib-only copy so claim analysis has no package dependency. The copy has
+    drifted before — the adapter moved to xhigh/64000 + ``headless_scope_bypass``
+    while this module still hashed the effort-``high`` posture, which would have
+    failed every current trial's posture gate at claim time. Loading the adapter
+    module by path (it is pure stdlib) pins the two together so the next drift
+    fails here, in CI, instead.
+    """
+    import importlib.util
+
+    posture_path = (
+        Path(__file__).resolve().parents[2]
+        / "harbor_adapter"
+        / "stella_harbor"
+        / "posture.py"
+    )
+    spec = importlib.util.spec_from_file_location("stella_harbor_posture", posture_path)
+    assert spec is not None and spec.loader is not None
+    adapter_posture = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(adapter_posture)
+
+    for model in (analysis_module.PRIMARY_MODEL, *CALIBRATION_MODEL_ORDER):
+        ours, ours_json, ours_sha = analysis_module.canonical_engine_posture(model)
+        theirs, theirs_json, theirs_sha = adapter_posture._benchmark_engine_posture(
+            model
+        )
+        assert ours == theirs, f"posture body drifted for {model}"
+        assert ours_json == theirs_json, f"normalized JSON drifted for {model}"
+        assert ours_sha == theirs_sha, f"posture digest drifted for {model}"
 
 
 def _study_manifest(

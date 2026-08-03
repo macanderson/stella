@@ -37,7 +37,8 @@
 use serde_json::Value;
 use stella_protocol::schema_export::{UnsupportedSchema, typescript_declarations_with_header};
 
-use crate::frame::{ProviderResultIn, ServerFrame, ToolResultIn};
+use crate::engine_overrides::EngineOverrides;
+use crate::frame::{ProviderDeltaIn, ProviderResultIn, ServerFrame, ToolResultIn};
 
 /// The JSON Schema (2020-12) for one outbound frame.
 #[must_use]
@@ -57,12 +58,25 @@ pub fn provider_result_schema() -> Value {
     schemars::schema_for!(ProviderResultIn).to_value()
 }
 
-/// Both inbound bodies in one document, as a `$defs` container.
+/// The JSON Schema for the provider-delta body a streaming host POSTs (#1165).
+#[must_use]
+pub fn provider_delta_schema() -> Value {
+    schemars::schema_for!(ProviderDeltaIn).to_value()
+}
+
+/// The JSON Schema for the optional `engine` object on `POST /v1/turns` and
+/// `POST /v1/sessions/{id}/turns` (#1167).
+#[must_use]
+pub fn engine_overrides_schema() -> Value {
+    schemars::schema_for!(EngineOverrides).to_value()
+}
+
+/// Every inbound body in one document, as a `$defs` container.
 ///
-/// A container rather than a `oneOf`: these are the bodies of **two different
-/// endpoints**, not two arms of one tagged union, and neither carries a
+/// A container rather than a `oneOf`: these are the bodies of **different
+/// endpoints**, not arms of one tagged union, and none carries a
 /// discriminant. Publishing them as a union would tell a client it may send
-/// either shape to either route, which is false — and the shared TypeScript
+/// any shape to any route, which is false — and the shared TypeScript
 /// printer rejected exactly that framing when it was tried, because a `oneOf`
 /// with no `type` const is not something it can print an honest discriminated
 /// union from. The printer was right; the modeling was wrong.
@@ -74,13 +88,20 @@ pub fn inbound_schema() -> Value {
         "description":
             "Bodies a host POSTs back to answer a reverse request. ToolResultIn \
              answers POST /v1/turns/{id}/tool-result; ProviderResultIn answers \
-             POST /v1/turns/{id}/provider-result. Each is keyed by the \
-             request_id carried on the frame it answers. This document is a \
-             definitions container, not a union: the two are not \
-             interchangeable and carry no discriminant.",
+             POST /v1/turns/{id}/provider-result; ProviderDeltaIn optionally \
+             streams fragments of an in-flight provider answer to \
+             POST /v1/turns/{id}/provider-delta ahead of its ProviderResultIn. \
+             Each is keyed by the request_id carried on the frame it answers. \
+             EngineOverrides is not a reverse-request answer at all: it is the \
+             optional `engine` object on POST /v1/turns and \
+             POST /v1/sessions/{id}/turns, published here because it is wire \
+             contract. This document is a definitions container, not a union: \
+             the bodies are not interchangeable and carry no discriminant.",
         "$defs": {
             "ToolResultIn": tool_result_schema(),
             "ProviderResultIn": provider_result_schema(),
+            "ProviderDeltaIn": provider_delta_schema(),
+            "EngineOverrides": engine_overrides_schema(),
         },
     })
 }
@@ -107,6 +128,14 @@ pub fn artifacts() -> Result<Vec<(&'static str, String)>, UnsupportedSchema> {
     ts.push_str(&typescript_declarations_with_header(
         &provider_result_schema(),
         "",
+    )?);
+    ts.push_str(&typescript_declarations_with_header(
+        &provider_delta_schema(),
+        DELTA_HEADER,
+    )?);
+    ts.push_str(&typescript_declarations_with_header(
+        &engine_overrides_schema(),
+        ENGINE_HEADER,
     )?);
 
     let mut json =
@@ -160,7 +189,9 @@ export type StellaWireFrame = ServerFrame & { seq: number };
  * Deliberately has no `seq`: it describes what the transport can no longer
  * supply, not something that happened in the turn. Receiving it means the
  * frames between `requested_after` and `oldest_retained` are unrecoverable —
- * reconnect with `?after=0` to replay what is still held, or abandon the turn.
+ * reconnect with `?after=` one less than `oldest_retained` to replay what is
+ * still held (an `?after=0` resume just re-answers `replay_truncated` unless
+ * the ring still holds seq 1), or abandon the turn.
  */
 export interface ReplayTruncated {
   type: \"replay_truncated\";
@@ -174,6 +205,39 @@ export interface ReplayTruncated {
 export type StellaSseFrame = StellaWireFrame | ReplayTruncated;
 ";
 
+/// Rides above `ProviderDeltaIn` in the printed `.d.ts`: the streaming half is
+/// optional and advisory, which is a contract the schema cannot express.
+const DELTA_HEADER: &str = "
+// ── inbound, optional: streaming a provider answer ──────────────────────────
+//
+// A host that streams its model call MAY POST batches of fragments to
+// `POST /v1/turns/{id}/provider-delta` while the provider_request is in
+// flight, keyed by the same request_id its eventual ProviderResultIn answers.
+// Fragments surface on /events as text_delta / reasoning frames (so second
+// subscribers and resuming clients see them) and each batch resets the
+// reverse-request deadline. Strictly advisory: the definitive text is the
+// CompletionResult on the terminating provider-result POST — a retried call
+// re-streams from the start with no reset marker. A host that cannot stream
+// simply never uses this route.
+";
+
+/// Rides above `EngineOverrides` in the printed `.d.ts`: this is a request
+/// sub-object, not a reverse-request answer, and its clamp semantics live
+/// outside what the schema can say.
+const ENGINE_HEADER: &str = "
+// ── request-side: the optional `engine` object on POST /v1/turns ────────────
+//
+// Per-turn engine knobs (#1167), also accepted on
+// POST /v1/sessions/{id}/turns. Lowered onto the server's defaults: an
+// omitted field keeps the default, an empty object is a no-op. Unusable
+// values (a zero cap, a NaN temperature) are refused with a 400 naming the
+// knob; values past an operator ceiling are clamped, and every clamp is
+// reported in the create response's `clamped` array as
+// {knob, requested, effective} — a request is never silently honored at a
+// value it did not get. retry_policy and loop_detection are operator policy
+// and are deliberately not on this object.
+";
+
 const INBOUND_HEADER: &str = "
 // ── inbound: answering a reverse request ────────────────────────────────────
 //
@@ -184,5 +248,7 @@ const INBOUND_HEADER: &str = "
 // An outstanding reverse request is NOT re-announced on resume: asking for
 // `?after=N` asserts you received everything through N, obligations included.
 // A client that persisted its seq but not its in-flight request ids must
-// resume from `?after=0` and replay to rediscover what it owes.
+// replay from the start — `?after=0`, or after a `replay_truncated`, one less
+// than `oldest_retained` — to rediscover what it owes; obligations announced
+// in frames the ring has already evicted cannot be re-learned this way.
 ";

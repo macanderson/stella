@@ -182,7 +182,7 @@ const CALIBRATION_SAMPLE_MAX_RATIO: f64 = CALIBRATION_MAX_FACTOR * 2.0;
 /// Drift correction for one provider/model: an EWMA of the observed
 /// actual/estimated input-token ratio, fed by `(estimated, actual)` pairs
 /// from committed steps (`AgentEvent::StepUsage`) and applied as a bounded
-/// multiplicative factor on the char-heuristic estimate.
+/// multiplicative factor on the byte-heuristic estimate.
 ///
 /// The ratio also absorbs systematic per-request overhead the heuristic
 /// cannot see (tool schemas, provider framing): those inflate `actual`

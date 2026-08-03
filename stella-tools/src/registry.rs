@@ -381,9 +381,6 @@ impl ToolRegistry {
                 read_ledger.clone(),
             )),
             Arc::new(crate::delete::DeleteFile),
-            // Search results carry a code-map footer; a symbol-shaped grep
-            // pattern additionally carries the graph_query pointer, decided
-            // per-call from the pattern (crate::code_map::is_symbol_shaped).
             Arc::new(crate::memory::SaveMemory),
             Arc::new(crate::memory::CiteMemory(citations.clone())),
             Arc::new(crate::scripts::ListScripts),
@@ -406,6 +403,9 @@ impl ToolRegistry {
         // child processes, so the isolation mode keeps this omission literal.
         if !process_free {
             entries.push(Arc::new(crate::gather::GatherContext));
+            // Search results carry a code-map footer; a symbol-shaped grep
+            // pattern additionally carries the graph_query pointer, decided
+            // per-call from the pattern (crate::code_map::is_symbol_shaped).
             entries.push(Arc::new(crate::grep::Grep::with_code_map()));
             entries.push(Arc::new(crate::glob::Glob::with_code_map()));
             entries.push(Arc::new(crate::exploration::Explorations));
@@ -1617,19 +1617,6 @@ impl ToolRegistry {
         Some(PendingTouch { path, full, op })
     }
 
-    /// Record one SUCCESSFUL file touch: derive the event's line delta per
-    /// the counting rules (R: zero; C: full new line count; U: line diff of
-    /// pre vs post content; D: full pre-deletion line count), attach the
-    /// model-supplied `reason` (or a per-op default), and append it to the
-    /// ledger. The append and its aggregate updates happen under one lock,
-    /// so concurrent tool completions never lose or interleave an event.
-    ///
-    /// With a bus attached, the touch also emits its `file.*` fact event
-    /// (path + reason + line deltas, never contents) and a
-    /// `files_touched.updated` carrying the changed record plus the ledger
-    /// `revision` assigned under the lock — concurrent touches may deliver
-    /// out of order, but consumers keep the highest revision and stay
-    /// consistent.
     /// Record what this session now knows `path` to hold, hashed from disk.
     ///
     /// Called for every successful touch, reads included: a read is how an
@@ -1681,8 +1668,9 @@ impl ToolRegistry {
     /// was ever read — waves the overwrite through. That is the one combination
     /// the guard exists to prevent.
     ///
-    /// Merges rather than replaces. Anything this session has already seen is
-    /// newer than the snapshot by construction, so it wins.
+    /// Replaces rather than merges: the restored map is this session's
+    /// complete belief about the tree, so a departing session's observations
+    /// must not survive into it (the body says why in full).
     pub fn restore_observed(&self, json: &str) -> usize {
         let Ok(restored) = serde_json::from_str::<HashMap<String, String>>(json) else {
             return 0;
@@ -1781,6 +1769,19 @@ impl ToolRegistry {
         );
     }
 
+    /// Record one SUCCESSFUL file touch: derive the event's line delta per
+    /// the counting rules (R: zero; C: full new line count; U: line diff of
+    /// pre vs post content; D: full pre-deletion line count), attach the
+    /// model-supplied `reason` (or a per-op default), and append it to the
+    /// ledger. The append and its aggregate updates happen under one lock,
+    /// so concurrent tool completions never lose or interleave an event.
+    ///
+    /// With a bus attached, the touch also emits its `file.*` fact event
+    /// (path + reason + line deltas, never contents) and a
+    /// `files_touched.updated` carrying the changed record plus the ledger
+    /// `revision` assigned under the lock — concurrent touches may deliver
+    /// out of order, but consumers keep the highest revision and stay
+    /// consistent.
     fn record_touch(
         &self,
         pending: PendingTouch,

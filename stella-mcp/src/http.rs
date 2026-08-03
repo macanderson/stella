@@ -294,7 +294,13 @@ impl HttpTransport {
                     Ok(message) => message,
                     Err(_) => continue,
                 };
-                if message.correlated_id() == Some(expected_id) {
+                // `is_response()` matters as much as the id: a server-initiated
+                // request may reuse a number that collides with our own id
+                // space (both sides start counting at 1), and returning it
+                // here would hand `into_result()` a message with neither
+                // `result` nor `error` — failing the whole handshake. The
+                // stdio transport guards the same way.
+                if message.is_response() && message.correlated_id() == Some(expected_id) {
                     return Ok(message);
                 }
                 if fallback.is_none() && (message.result.is_some() || message.error.is_some()) {

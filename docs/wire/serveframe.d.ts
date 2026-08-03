@@ -19,7 +19,7 @@
  * associated functions instead of the trait impls, so the hand-written
  * [`Serialize`]/[`Deserialize`] impls below can delegate to it after routing
  * [`AgentEvent::Unknown`] around it. Without that indirection the forward-
- * compat fallback would mean hand-writing a visitor for all 34 variants.
+ * compat fallback would mean hand-writing a visitor for every variant.
  */
 export type AgentEvent = {
   name: StageKind;
@@ -260,6 +260,28 @@ export type AgentEvent = {
    * so old streams still parse).
    */
   estimated_input_tokens?: number;
+  /**
+   * Why generation stopped, as the provider reported it
+   * ([`stella_protocol::completion::FinishReason`]). `Length` is the
+   * only *ground truth* a consumer has that this step was cut off at
+   * the output ceiling — the "we stopped first" event.
+   *
+   * It is here because it was previously nowhere: the engine knew the
+   * reason and dropped it at this boundary, so every downstream reader
+   * had to *infer* truncation from step shape. The benchmark harness
+   * inferred it as "≥16384 output tokens and no tool call", which was
+   * right when the output ceiling was 16K and became a false positive
+   * the moment the ceiling moved to 64K — the reading behind the
+   * unexplained `cap_hits: 106` in the GLM-5.2 head-to-head. An
+   * inferred cap hit cannot be told from a long answer; a reported one
+   * can.
+   *
+   * `None` means the provider did not report a reason (or the stream
+   * predates this field — hence `serde(default)`), and must never be
+   * read as "not truncated": absence of the signal is not evidence of
+   * a clean stop.
+   */
+  finish_reason?: FinishReason | null;
   input_tokens: number;
   model: string;
   /**
@@ -843,6 +865,14 @@ export interface ContextUsage {
 export type FileChangeKind = "read" | "created" | "modified" | "deleted";
 
 /**
+ * Why the model stopped generating, normalized across providers. Lets the
+ * engine tell a natural stop from a truncation (`Length`) so an empty or
+ * cut-off turn is surfaced to the user instead of being recorded as a clean
+ * completion (the "turn ends with no feedback" defect).
+ */
+export type FinishReason = "stop" | "length" | "tool_calls" | "content_filter";
+
+/**
  * Optional sampling/routing parameter overrides riding a
  * [`CompletionRequest`]. Every field is independently optional —
  * "include" semantics: `None` leaves the provider's own default in place,
@@ -1149,9 +1179,11 @@ export type PrStatus = "draft" | "open" | "merged" | "closed";
  * One step of the proof a turn builds for its own work, in the order the
  * pipeline makes the observation. Carried by [`AgentEvent::Proof`].
  *
- * Additive to the wire contract in both directions: an older reader sees the
- * whole event as [`AgentEvent::Unknown`], and a reader that knows `Proof` but
- * not a future step tags it `Unknown` at the step level rather than guessing.
+ * Additive in one direction only: an older reader that does not know the
+ * `proof` type tag preserves the whole event via [`AgentEvent::Unknown`],
+ * but a reader that knows `Proof` and meets a future `kind` fails the whole
+ * event — this nested enum is closed, with no `Unknown` step (see the
+ * module docs on nested vocabularies).
  */
 export type ProofStep = {
   /**
@@ -1571,7 +1603,9 @@ export type StellaWireFrame = ServerFrame & { seq: number };
  * Deliberately has no `seq`: it describes what the transport can no longer
  * supply, not something that happened in the turn. Receiving it means the
  * frames between `requested_after` and `oldest_retained` are unrecoverable —
- * reconnect with `?after=0` to replay what is still held, or abandon the turn.
+ * reconnect with `?after=` one less than `oldest_retained` to replay what is
+ * still held (an `?after=0` resume just re-answers `replay_truncated` unless
+ * the ring still holds seq 1), or abandon the turn.
  */
 export interface ReplayTruncated {
   type: "replay_truncated";
@@ -1593,7 +1627,9 @@ export type StellaSseFrame = StellaWireFrame | ReplayTruncated;
 // An outstanding reverse request is NOT re-announced on resume: asking for
 // `?after=N` asserts you received everything through N, obligations included.
 // A client that persisted its seq but not its in-flight request ids must
-// resume from `?after=0` and replay to rediscover what it owes.
+// replay from the start — `?after=0`, or after a `replay_truncated`, one less
+// than `oldest_retained` — to rediscover what it owes; obligations announced
+// in frames the ring has already evicted cannot be re-learned this way.
 
 /**
  * The output of running a tool — success or a typed, named failure. Never a
@@ -1670,7 +1706,8 @@ export interface CompletionUsage {
    * `cacheWriteInputTokens`). Unlike `cached_input_tokens` this is NOT a
    * subset of `input_tokens` — providers report writes separately, and
    * folding them into `input_tokens` would change cost accounting
-   * (`Pricing::cost_usd` carries no cache-write rate). 0 for providers
+   * (`Pricing::cost_usd` bills them on their own line at the catalog's
+   * `cache_write_usd_per_mtok`, so folding would double-charge). 0 for providers
    * that never report cache writes (the OpenAI-compatible dialects).
    * `serde(default)` so envelopes serialized before this field existed
    * still parse.
@@ -1763,4 +1800,202 @@ export interface ToolCall {
 export interface ProviderResultIn {
 {
   request_id: string;
+}}
+
+// ── inbound, optional: streaming a provider answer ──────────────────────────
+//
+// A host that streams its model call MAY POST batches of fragments to
+// `POST /v1/turns/{id}/provider-delta` while the provider_request is in
+// flight, keyed by the same request_id its eventual ProviderResultIn answers.
+// Fragments surface on /events as text_delta / reasoning frames (so second
+// subscribers and resuming clients see them) and each batch resets the
+// reverse-request deadline. Strictly advisory: the definitive text is the
+// CompletionResult on the terminating provider-result POST — a retried call
+// re-streams from the start with no reset marker. A host that cannot stream
+// simply never uses this route.
+
+/**
+ * One streamed fragment of an in-flight model completion.
+ *
+ * Text and thinking are distinct variants rather than one string because the
+ * two must never be confused downstream: thinking renders as collapsible,
+ * visibly-secondary content while answer text is the reply — the same
+ * separation `ToolCallObserver` keeps between `text_delta` and
+ * `reasoning_delta`, carried across the wire.
+ */
+export type ProviderDelta = {
+  kind: "text";
+  text: string;
+} | {
+  kind: "reasoning";
+  text: string;
+};
+
+/**
+ * Host → engine: a batch of streamed fragments for an in-flight
+ * [`ServerFrame::ProviderRequest`] — the incremental half of a provider
+ * answer (#1165), POSTed to `POST /v1/turns/{id}/provider-delta` and keyed by
+ * the same `request_id` the terminating [`ProviderResultIn`] answers.
+ *
+ * Strictly optional: a host that cannot stream never POSTs one and keeps
+ * exactly its old behavior. Strictly advisory, with the same contract as
+ * `ToolCallObserver::text_delta`: the definitive text is the
+ * `CompletionResult` on the eventual provider result — a retried model call
+ * re-streams from the start with no reset marker, and consumers replace the
+ * preview with the authoritative `Text` event when it lands.
+ *
+ * A batch rather than one fragment per POST, because a per-token HTTP
+ * request would cost more than the latency it buys: the host accumulates
+ * whatever chunking its own stream hands it and flushes on its own cadence.
+ */
+export interface ProviderDeltaIn {
+{
+  /**
+   * The fragments, in stream order. Must not be empty — an empty batch
+   * carries no information and is refused at the route.
+   */
+  deltas: ProviderDelta[];
+  request_id: string;
+}}
+
+// ── request-side: the optional `engine` object on POST /v1/turns ────────────
+//
+// Per-turn engine knobs (#1167), also accepted on
+// POST /v1/sessions/{id}/turns. Lowered onto the server's defaults: an
+// omitted field keeps the default, an empty object is a no-op. Unusable
+// values (a zero cap, a NaN temperature) are refused with a 400 naming the
+// knob; values past an operator ceiling are clamped, and every clamp is
+// reported in the create response's `clamped` array as
+// {knob, requested, effective} — a request is never silently honored at a
+// value it did not get. retry_policy and loop_detection are operator policy
+// and are deliberately not on this object.
+
+/**
+ * Optional sampling/routing parameter overrides riding a
+ * [`CompletionRequest`]. Every field is independently optional —
+ * "include" semantics: `None` leaves the provider's own default in place,
+ * `Some` puts the value on the wire. Each adapter forwards the subset its
+ * dialect supports and silently drops the rest (a param the provider
+ * can't express must never fail the request).
+ */
+export interface GenerationParams {
+  /**
+   * Penalize tokens by their frequency in the text so far.
+   */
+  frequency_penalty?: number | null;
+  /**
+   * Penalize tokens that have appeared at all in the text so far.
+   */
+  presence_penalty?: number | null;
+  /**
+   * Multiplicative repetition penalty (>1 discourages, <1 encourages).
+   */
+  repetition_penalty?: number | null;
+  /**
+   * Random seed for deterministic outputs, where supported.
+   */
+  seed?: number | null;
+  /**
+   * Which capacity tier to route to ([`ServiceTier`]).
+   */
+  service_tier?: ServiceTier | null;
+  /**
+   * Limit sampling to the k highest-probability tokens.
+   */
+  top_k?: number | null;
+  /**
+   * Nucleus sampling: cumulative-probability cutoff.
+   */
+  top_p?: number | null;
+  /**
+   * How much detail to ask for ([`Verbosity`]).
+   */
+  verbosity?: Verbosity | null;
+}
+
+/**
+ * Reasoning effort forwarded to models with a thinking/extended-reasoning
+ * mode. One enum, mapped per-adapter to the provider's own parameter name
+ * ("reasoning_param").
+ */
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+/**
+ * Provider service tier: `Priority` routes to faster paid-tier capacity,
+ * `Flex` to cheaper capacity with slower response times. Only applied by
+ * providers that support tiered service; others use their default tier.
+ */
+export type ServiceTier = "auto" | "default" | "flex" | "priority";
+
+/**
+ * Response-detail level for providers with a verbosity parameter (OpenAI's
+ * `text.verbosity`). Adapters whose wire has no equivalent ignore it — the
+ * same never-fail contract as [`ReasoningEffort`].
+ */
+export type Verbosity = "low" | "medium" | "high";
+
+/**
+ * The caller-policy slice of `EngineConfig`, settable per turn (#1167) as
+ * the optional `engine` object on `POST /v1/turns` and
+ * `POST /v1/sessions/{id}/turns`.
+ *
+ * Every field is independently optional with "lower onto defaults" semantics:
+ * `None` keeps the server's configured default, `Some` overrides it for this
+ * turn only. What is deliberately **not** here: `retry_policy` and
+ * `loop_detection` are operator policy — they bound what a single request can
+ * cost this process, and a caller who could widen them could make a turn
+ * effectively unbounded — and `max_steps` / `reverse_request_timeout_ms`
+ * already ride the request top-level.
+ *
+ * Unknown fields are refused rather than ignored: a typoed knob that parses
+ * is a knob silently *not* honored, the same illegibility the ceilings exist
+ * to avoid on the other side.
+ *
+ * Session note: none of these knobs touch the message transcript, so a
+ * per-turn override on `POST /v1/sessions/{id}/turns` cannot perturb the
+ * byte-stable prompt prefix the session's cache contract depends on.
+ */
+export interface EngineOverrides {
+{
+  /**
+   * Compaction trigger, in estimated tokens. Rejected at 0; clamped to
+   * [`MAX_COMPACTION_BUDGET_TOKENS`].
+   */
+  compaction_budget_tokens?: number | null;
+  /**
+   * Reasoning-effort tier (`CompletionRequest::effort` semantics).
+   */
+  effort?: ReasoningEffort | null;
+  /**
+   * Output-token cap forwarded on every completion of this turn. Rejected
+   * at 0; clamped to [`MAX_OUTPUT_TOKENS_CEILING`]. Effort tier and this
+   * cap are one budget — raising effort against a small cap is how a model
+   * spends its tokens thinking and gets truncated before its tool call.
+   */
+  max_output_tokens?: number | null;
+  /**
+   * Sampling/routing overrides (`CompletionRequest::params` semantics —
+   * the host's adapter forwards the subset its dialect supports).
+   */
+  params?: GenerationParams | null;
+  /**
+   * Thinking-mode enable/disable (`CompletionRequest::reasoning`
+   * semantics; `None` = provider default).
+   */
+  reasoning?: boolean | null;
+  /**
+   * Messages at the tail the summarizer never touches. Clamped to
+   * [`MAX_SUMMARIZE_KEEP_RECENT`].
+   */
+  summarize_keep_recent?: number | null;
+  /**
+   * Whether overflow beyond the compaction budget may be summarized away
+   * by a model call (`EngineConfig::summarize_overflow`).
+   */
+  summarize_overflow?: boolean | null;
+  /**
+   * Sampling temperature. Rejected unless finite and non-negative; clamped
+   * to [`MAX_TEMPERATURE`].
+   */
+  temperature?: number | null;
 }}

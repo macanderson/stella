@@ -266,7 +266,7 @@ fn retries_exhausted_retryable_default() -> bool {
 /// associated functions instead of the trait impls, so the hand-written
 /// [`Serialize`]/[`Deserialize`] impls below can delegate to it after routing
 /// [`AgentEvent::Unknown`] around it. Without that indirection the forward-
-/// compat fallback would mean hand-writing a visitor for all 34 variants.
+/// compat fallback would mean hand-writing a visitor for every variant.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "snake_case", remote = "Self")]
@@ -559,6 +559,27 @@ pub enum AgentEvent {
         /// legacy values fail closed to `false`.
         #[serde(default)]
         complete: bool,
+        /// Why generation stopped, as the provider reported it
+        /// ([`stella_protocol::completion::FinishReason`]). `Length` is the
+        /// only *ground truth* a consumer has that this step was cut off at
+        /// the output ceiling — the "we stopped first" event.
+        ///
+        /// It is here because it was previously nowhere: the engine knew the
+        /// reason and dropped it at this boundary, so every downstream reader
+        /// had to *infer* truncation from step shape. The benchmark harness
+        /// inferred it as "≥16384 output tokens and no tool call", which was
+        /// right when the output ceiling was 16K and became a false positive
+        /// the moment the ceiling moved to 64K — the reading behind the
+        /// unexplained `cap_hits: 106` in the GLM-5.2 head-to-head. An
+        /// inferred cap hit cannot be told from a long answer; a reported one
+        /// can.
+        ///
+        /// `None` means the provider did not report a reason (or the stream
+        /// predates this field — hence `serde(default)`), and must never be
+        /// read as "not truncated": absence of the signal is not evidence of
+        /// a clean stop.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        finish_reason: Option<crate::completion::FinishReason>,
     },
     /// A provider call failed or timed out after dispatch, so local accounting
     /// cannot prove that no billable work occurred. Content-free by design.
@@ -1222,9 +1243,11 @@ pub enum ProofTree {
 /// One step of the proof a turn builds for its own work, in the order the
 /// pipeline makes the observation. Carried by [`AgentEvent::Proof`].
 ///
-/// Additive to the wire contract in both directions: an older reader sees the
-/// whole event as [`AgentEvent::Unknown`], and a reader that knows `Proof` but
-/// not a future step tags it `Unknown` at the step level rather than guessing.
+/// Additive in one direction only: an older reader that does not know the
+/// `proof` type tag preserves the whole event via [`AgentEvent::Unknown`],
+/// but a reader that knows `Proof` and meets a future `kind` fails the whole
+/// event — this nested enum is closed, with no `Unknown` step (see the
+/// module docs on nested vocabularies).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -2171,6 +2194,7 @@ mod tests {
             retries: 1,
             tool_calls: 4,
             complete: true,
+            finish_reason: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"step_usage\""), "{json}");

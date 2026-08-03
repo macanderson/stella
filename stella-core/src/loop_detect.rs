@@ -225,11 +225,11 @@ fn same_record(a: &CallRecord<'_>, b: &CallRecord<'_>) -> bool {
 /// both checks only look at the trailing run.
 ///
 /// Checks, in order:
-/// 1. **Exact repeat** (see the module docs). Checked first: an exact
-///    repeat of length `>= 2 * short_cycle_repeats` would otherwise also
-///    satisfy a degenerate "cycle" of one call repeating against itself,
-///    so exact-repeat takes precedence and the caller never has to
-///    disentangle two overlapping classifications of the same evidence.
+/// 1. **Exact repeat** (see the module docs). Checked first so the tightest
+///    classification of the evidence wins — `detect_short_cycle`'s all-same
+///    guard already refuses to report a run of identical calls as a cycle,
+///    so this ordering decides which verdict the caller sees, not how two
+///    overlapping classifications get disentangled.
 /// 2. **Short cycle** (see the module docs), shortest period first so the
 ///    tightest description of the evidence wins (a period-2 loop is never
 ///    reported as the period-4 loop it also technically is).

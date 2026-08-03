@@ -103,7 +103,16 @@ impl<'a> Pipeline<'a> {
                             passed,
                             tree: ProofTree::Candidate,
                         });
-                        (Some(passed), post.stderr_tail, None)
+                        // The same combined output the oracle saw: this tail
+                        // becomes `SealedFailure::output`, the sole input to
+                        // the failure fingerprint and the symptom class.
+                        // Runners like `cargo test` put the assertion diff on
+                        // STDOUT, so a stderr-only tail made two different
+                        // failures fingerprint as repeats — tightening
+                        // disclosure on a worker that was actually making
+                        // progress — and classified plain assertion failures
+                        // as bare exit failures.
+                        (Some(passed), output, None)
                     }
                     // No proof step: an infra run is not an oracle
                     // observation, and recording one either way would put a

@@ -315,10 +315,11 @@ async fn run_pipeline_one_shot(
         )
         .await,
     )];
-    let mut memory = SessionMemory::open_with_authority(
+    let mut memory = SessionMemory::open_for_session(
         &cfg.workspace_root,
         format == OutputFormat::Text,
         &cfg.authority,
+        &active_rules,
     );
     if let Some(m) = &mut memory {
         // External CGP providers join the host before the first recall, so a
@@ -326,18 +327,24 @@ async fn run_pipeline_one_shot(
         // is refused with a reason (#453).
         m.register_external_providers(|message| eprintln!("  {} {message}", "!".yellow()))
             .await;
-        prompt::attach_record_channel(m, &active_rules);
+        // Tell memory which execution this run reflects on, before the turn
+        // runs — the post-turn self-review is stored 1:1 with an execution,
+        // so a path that skips this files id-less reflection rows (NULL
+        // `self_rating`), which is exactly what happened on this, the primary
+        // headless surface, while only the deck was wired.
+        if let Some((_, id)) = &execution {
+            m.set_execution_id(*id);
+        }
     }
     if let Some(m) = &memory {
-        // Phase 2 (#713): the one-shot path recalled and reported nothing, so
-        // `stella run` — the primary surface — left no record of what context
-        // it was given. The stream is already live here, so the event goes
-        // straight out.
-        let recalled = m.recall_block_reported(prompt).await;
-        if let Some(event) = recalled.telemetry_event() {
-            let _ = tx.send(event);
-        }
-        inject_recall_block(&mut messages, recalled.text);
+        // Frames ride the pipeline's own recall port below (`recall:` in the
+        // ports), which recalls once, renders them into the goal message, and
+        // emits the turn's one `ContextRecall` event. Injecting the *full*
+        // block here too — the shape this path had — recalled twice per turn
+        // and billed the same frame content into the prompt twice. The
+        // pipeline block carries only the sections the port has no channel
+        // for: skills, draft claims, and the volatile record channel.
+        inject_recall_block(&mut messages, m.pipeline_recall_block(prompt).await);
     }
     let mut budget = build_budget_guard(budget_limit);
     budget.begin_turn();
@@ -762,13 +769,13 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     )
     .await;
     let mut messages = vec![CompletionMessage::system(system_prompt.clone())];
-    let mut memory = SessionMemory::open_with_authority(&cfg.workspace_root, true, &cfg.authority);
+    let mut memory =
+        SessionMemory::open_for_session(&cfg.workspace_root, true, &cfg.authority, &active_rules);
     if let Some(m) = &mut memory {
         // Conformance-gated external CGP providers join before the first
         // recall, or are refused with a reason (#453).
         m.register_external_providers(|message| println!("  {} {message}", "!".yellow()))
             .await;
-        prompt::attach_record_channel(m, &active_rules);
     }
     // Custom extensions: ⚡ commands/skills invocable as `/name args`, custom
     // agents behind `/agents`. Reloaded after `/init`, which may adopt new
@@ -899,16 +906,15 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                     }
                     // Re-open memory so recall/reflection use the taxonomy
                     // `/init` just wrote — otherwise the cached domains stay
-                    // stale until the next launch.
-                    memory = SessionMemory::open_with_authority(
+                    // stale until the next launch. The re-open carries the
+                    // record channel with it, because the constructor is where
+                    // the channel is attached.
+                    memory = SessionMemory::open_for_session(
                         &cfg.workspace_root,
                         true,
                         &cfg.authority,
+                        &active_rules,
                     );
-                    // The re-opened session loses the channel with its other state.
-                    if let Some(m) = &mut memory {
-                        prompt::attach_record_channel(m, &active_rules);
-                    }
                     // `/init` may also have adopted new custom
                     // commands/skills/agents — make them invocable now, and
                     // report anything that failed to load.
@@ -997,6 +1003,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 goal,
                 Some(presence.id()),
                 recall_event,
+                memory.as_mut(),
             )
             .await;
             presence.needs_input();
@@ -1085,6 +1092,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             Some(presence.id()),
             &repl_activation,
             recall_event,
+            memory.as_mut(),
         )
         .await;
         presence.needs_input();
@@ -1942,7 +1950,7 @@ pub(crate) fn settle_reflection_budget(report: &mut ReflectionReport, guard: &mu
 pub(crate) fn open_store(workspace_root: &std::path::Path) -> Option<Arc<Store>> {
     // Persisted telemetry can feed calibration and extension-authored rules
     // back into later sessions. Claim-mode trials are isolated and ephemeral:
-    // do not read that state or create `.stella/store.db` in the task — which
+    // do not read that state or create `.stella/private/store.db` in the task — which
     // is what `session_persistence()` answers.
     //
     // The open itself is `stella_runtime::open_store`, which *returns* the
@@ -2003,6 +2011,11 @@ pub(crate) struct SessionPresence {
     registry: stella_store::SessionRegistry,
     record: stella_store::SessionRecord,
     name: String,
+    /// This session's durable record, carried so [`Self::finish`] can compact
+    /// it. Cloning the handle rather than re-opening the record keeps the
+    /// compaction pointed at the session that was actually bound, whatever the
+    /// driver did in between.
+    durability: crate::durability::SessionDurability,
 }
 
 impl SessionPresence {
@@ -2042,6 +2055,7 @@ impl SessionPresence {
             registry,
             record,
             name,
+            durability: cfg.durability.clone(),
         }
     }
 
@@ -2085,6 +2099,11 @@ impl SessionPresence {
             stella_store::SessionStatus::Error
         };
         let _ = self.registry.upsert(&self.record);
+        // The headless counterpart of the deck's exit compaction. A one-shot
+        // run writes fewer objects than a long deck session, but it is also the
+        // shape that runs a hundred times in a loop from a script — which is
+        // exactly how a workspace accumulates loose objects nobody is watching.
+        self.durability.compact();
         if let Some((title, body)) = notify {
             let _ = stella_store::NotificationStore::open_default().push(
                 &stella_store::Notification::new(title, body, self.record.id.clone())
@@ -2128,10 +2147,18 @@ async fn run_turn(
     // there yet. Passed rather than re-derived: re-running recall to report it
     // would double the retrieval cost of every interactive turn.
     recall_event: Option<AgentEvent>,
+    // The caller's session memory, borrowed for the duration of the turn so
+    // this execution's id can be stamped before the turn runs — the caller
+    // reflects with the same memory afterwards, and a reflection that cannot
+    // name its execution files an id-less row (NULL `self_rating`).
+    session_memory: Option<&mut SessionMemory>,
 ) -> Result<(), String> {
     budget.begin_turn();
     let turn_start = Instant::now();
     let execution = begin_execution(store, kind, prompt, cfg, session);
+    if let (Some((_, id)), Some(m)) = (&execution, session_memory) {
+        m.set_execution_id(*id);
+    }
     let files_before = registry.files_touched().len();
 
     let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();

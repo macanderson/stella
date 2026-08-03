@@ -46,6 +46,92 @@ _ASSURANCE_TIERS_VERSION = "stella-tb21-assurance-tiers-v1"
 # trial ran cannot disagree with the arm its digest records (#1007).
 _WITNESS_AUTHOR_ENV = "STELLA_WITNESS_AUTHOR_MODEL"
 
+# Host-side selector for the worker's effort tier. The rule that sets it has
+# not changed — spend what the comparator spends — but the comparator is no
+# longer fixed, so the tier stops being a constant and becomes an arm. Both
+# admissible values are leaderboard-meaningful tiers rather than free text, and
+# the choice lands in the posture hash, so two runs at different efforts can
+# never share a digest.
+_WORKER_EFFORT_ENV = "STELLA_WORKER_EFFORT"
+_ADMISSIBLE_WORKER_EFFORTS = ("high", "xhigh", "max")
+
+# Host-side selector for the triage author. Triage classifies the request and
+# builds a prompt; it never edits the workspace and never decides the outcome,
+# so it is the one role where a cheaper, faster, non-reasoning model is a
+# design choice rather than a handicap. Unset keeps the historical behaviour
+# (triage inherits `default_model`), so every digest recorded before this
+# selector existed still describes the posture that produced it.
+_TRIAGE_MODEL_ENV = "STELLA_TRIAGE_MODEL"
+
+
+def resolve_worker_effort(value: str | None) -> str:
+    """Resolve the worker's effort tier from its host-side selector.
+
+    ``None`` (unset) reproduces every posture hash recorded before the tier
+    became selectable. An explicitly *empty* value is refused rather than
+    quietly treated as unset: it means an operator meant to select an arm and
+    the value was lost somewhere, which is exactly the case where inheriting
+    the frozen default would attribute the run to a tier nobody chose.
+    """
+    if value is None:
+        return "xhigh"
+    return _validated_worker_effort(value)
+
+
+def resolve_triage_model(value: str | None) -> str | None:
+    """Resolve the triage author pin, or ``None`` to inherit the worker.
+
+    Same shape as the witness author: the pin has to be asked for, so a tree
+    that merely carries this code keeps producing the historical posture.
+    Whitespace-only is treated as unset here because, unlike the effort tier,
+    "no pin" is a meaningful and previously-default configuration.
+    """
+    if value is None:
+        return None
+    return value.strip() or None
+
+
+def _validated_role_model(model: str, candidate: str, role: str) -> str:
+    """Return a validated per-role model pin, or refuse it with the reason.
+
+    The provider rule is the same one `_validated_witness_author` enforces and
+    it is enforced separately rather than shared, because the two roles fail
+    differently: an unreachable judge silently degrades the *claim* (the run
+    proceeds with the worker as its own author), while an unreachable triage
+    model fails the *call*. Both are refusals here, before anything is spent.
+    """
+    pin = candidate.strip()
+    if not pin or "/" not in pin:
+        raise ValueError(
+            f"benchmark {role} model must be a non-empty provider/model spec"
+        )
+    worker_provider = model.split("/", 1)[0].strip().lower()
+    pin_provider = pin.split("/", 1)[0].strip().lower()
+    if worker_provider != pin_provider:
+        raise ValueError(
+            f"benchmark {role} model must share the worker's provider "
+            f"(`{worker_provider}`): a trial carries exactly one provider "
+            f"credential over the anonymous FD, so a {role} model on "
+            f"`{pin_provider}` would authenticate against nothing"
+        )
+    return pin
+
+
+def _validated_worker_effort(worker_effort: str) -> str:
+    """Return the worker effort tier, or refuse an unrecognised one.
+
+    Fails closed rather than falling back to a default: a typo that silently
+    became `xhigh` would produce a number attributed to an effort the run never
+    used, and the digest would agree with the typo rather than with reality.
+    """
+    effort = worker_effort.strip().lower()
+    if effort not in _ADMISSIBLE_WORKER_EFFORTS:
+        raise ValueError(
+            f"benchmark worker effort must be one of "
+            f"{', '.join(_ADMISSIBLE_WORKER_EFFORTS)}; got `{worker_effort}`"
+        )
+    return effort
+
 
 def _validated_witness_author(model: str, witness_author: str) -> str:
     """Return the pinned witness/judge author, or refuse it with the reason.
@@ -89,6 +175,8 @@ def _benchmark_engine_posture(
     model: str,
     *,
     witness_author: str | None = None,
+    worker_effort: str = "xhigh",
+    triage_model: str | None = None,
 ) -> tuple[dict[str, Any], str, str]:
     """Return a canonical Terminal-Bench engine posture and its hash.
 
@@ -120,6 +208,7 @@ def _benchmark_engine_posture(
     selected_model = model.strip()
     if not selected_model or "/" not in selected_model:
         raise ValueError("benchmark model must be a non-empty provider/model spec")
+    selected_effort = _validated_worker_effort(worker_effort)
     posture: dict[str, Any] = {
         "default_model": selected_model,
         "allowed_models": [selected_model],
@@ -203,8 +292,13 @@ def _benchmark_engine_posture(
                 "reasoning": "on",
                 "params": {"max_tokens": 64000},
             },
+            # Only the worker's tier moves with the arm. `default` stays at
+            # `xhigh` deliberately: it governs roles with no explicit entry
+            # below, and letting it track the worker would silently retune
+            # those roles too — a second, undeclared variable inside a digest
+            # that claims to describe one.
             "worker": {
-                "effort": "xhigh",
+                "effort": selected_effort,
                 "reasoning": "on",
                 "params": {"max_tokens": 64000},
             },
@@ -242,6 +336,20 @@ def _benchmark_engine_posture(
         # number this digest misdescribes.
         posture["pipeline_judge_model"] = author
         posture["allowed_models"] = [selected_model, author]
+    if triage_model is not None:
+        # Same flat-key reasoning as the judge pin above: `settings_check` and
+        # `stella config` report the flat key as the role's origin, so the
+        # disclosed posture and the engine's own account of its wiring name the
+        # same field. `allowed_models` has to widen with it — the vocabulary is
+        # a whitelist, and a triage pin outside it is refused at resolve time,
+        # which would drop triage back onto the worker and bill the expensive
+        # model for the cheap role while the digest claimed otherwise.
+        triage = _validated_role_model(selected_model, triage_model, "triage")
+        posture["pipeline_triage_model"] = triage
+        allowed = list(posture["allowed_models"])
+        if triage not in allowed:
+            allowed.append(triage)
+        posture["allowed_models"] = allowed
     normalized = json.dumps(
         posture,
         sort_keys=True,

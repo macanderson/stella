@@ -119,6 +119,44 @@ enum LineRole {
     Code,
 }
 
+/// The synthetic diff line `Pipeline::gather_diff` appends for a file the
+/// turn created or modified outside git's view (`git diff` cannot see
+/// untracked files). Built and parsed through the two functions below so the
+/// writer and this module's reader can never drift apart.
+pub(crate) const UNTRACKED_CHANGE_PREFIX: &str = "+ untracked change: ";
+
+/// Render one untracked-change marker line (no trailing newline).
+pub(crate) fn untracked_change_line(path: &str, added_lines: u32) -> String {
+    format!("{UNTRACKED_CHANGE_PREFIX}{path} (+{added_lines} lines)")
+}
+
+/// The paths named by untracked-change markers in `diff`.
+///
+/// These exist because an untracked file has no `+++`/`---` header for
+/// [`changed_paths`] to read — so before this parser, a turn that edited
+/// `README.md` *and created a new source file* classified as
+/// [`NoWitnessReason::DocsOnly`]: the marker line carried the source file
+/// but no path rule ever saw it, and the change skipped both the witness and
+/// the reviewer with a verdict asserting prose-only. Feeding these paths into
+/// the same "every path must agree" rules closes that hole.
+fn untracked_marker_paths(diff: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    for line in diff.lines() {
+        let Some(rest) = line.strip_prefix(UNTRACKED_CHANGE_PREFIX) else {
+            continue;
+        };
+        // `{path} (+{n} lines)` — strip the trailing size note.
+        let path = rest
+            .rsplit_once(" (+")
+            .map_or(rest, |(path, _)| path)
+            .trim();
+        if !path.is_empty() && !paths.iter().any(|seen| seen == path) {
+            paths.push(path.to_string());
+        }
+    }
+    paths
+}
+
 /// Decide from the change what the prompt could never tell us.
 ///
 /// `file_changes` is the count of `FileChange` events the turn emitted. It is
@@ -128,16 +166,27 @@ enum LineRole {
 /// produced no readable diff is [`WitnessWarrant::Required`], never
 /// [`NoWitnessReason::NothingChanged`].
 pub fn warrant(diff: &str, file_changes: u32) -> WitnessWarrant {
-    let paths = changed_paths(diff);
+    let mut paths = changed_paths(diff);
 
     if paths.is_empty() {
         // A blind diff over a turn that demonstrably touched files is the one
-        // case that must not read as "nothing happened".
+        // case that must not read as "nothing happened". An untracked-only
+        // change lands here too (its markers are not diff headers) and stays
+        // `Required`: the marker names a path but shows no content, and a
+        // change this module cannot read is one it does not waive.
         return if file_changes == 0 && diff.trim().is_empty() {
             WitnessWarrant::NotRequired(NoWitnessReason::NothingChanged)
         } else {
             WitnessWarrant::Required
         };
+    }
+    // Untracked files the turn created or modified join the same
+    // every-path-must-agree rules: a new source file riding beside a docs
+    // edit makes the change a source change, exactly as a tracked one would.
+    for path in untracked_marker_paths(diff) {
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
     }
 
     // Every path must agree. A change that touches docs *and* source is a
@@ -174,9 +223,11 @@ pub fn warrant(diff: &str, file_changes: u32) -> WitnessWarrant {
     WitnessWarrant::Required
 }
 
-/// Post-image paths from a unified diff (`+++ b/path`), with `/dev/null`
-/// dropped and the `b/` prefix stripped. Falls back to the pre-image path so a
-/// deletion still reports what it removed.
+/// Both the post-image (`+++ b/path`) and pre-image (`--- a/path`) paths from
+/// a unified diff, with `/dev/null` dropped and the `a/`/`b/` prefixes
+/// stripped — a deletion still reports what it removed, and a rename
+/// contributes both its old and new path to the "every path must agree"
+/// rules.
 fn changed_paths(diff: &str) -> Vec<String> {
     let mut paths = Vec::new();
     for line in diff.lines() {
@@ -295,19 +346,42 @@ fn is_test(path: &str) -> bool {
 }
 
 /// Build, CI, and dependency manifests: verified by the build and the gate.
+///
+/// A CLOSED list of names, on purpose. This used to also match every `*.yml`,
+/// `*.yaml`, and `*.lock` — but "yaml" is a syntax, not a category, and most
+/// yaml in the wild is behavior: a `docker-compose.yml`, a Helm values file,
+/// or an app's own config changes what runs, and each was completing with a
+/// PASS asserting "the build and gate verify these" while no build, gate, test
+/// or reviewer had seen it. A name this list has never heard of falls through
+/// to `Required`, exactly like every other rule here — when in doubt, the
+/// module buys the test.
 fn is_config(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     let name = lower.rsplit('/').next().unwrap_or(&lower);
-    lower.starts_with(".github/")
-        || name == "cargo.lock"
-        || name == "cargo.toml"
-        || name == "package-lock.json"
-        || name == "pnpm-lock.yaml"
-        || name == "makefile"
-        || name == ".gitignore"
-        || lower.ends_with(".yml")
-        || lower.ends_with(".yaml")
-        || lower.ends_with(".lock")
+    // Dependency manifests and lockfiles (verified by the build), the build's
+    // own entry points, and CI pipeline definitions (verified by the gate
+    // itself running). Each entry names a file whose format has exactly one
+    // consumer; anything reusable-syntax lands on `Required`.
+    const MANIFESTS: &[&str] = &[
+        "cargo.toml",
+        "cargo.lock",
+        "go.mod",
+        "go.sum",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "bun.lock",
+        "bun.lockb",
+        "poetry.lock",
+        "uv.lock",
+        "gemfile.lock",
+        "composer.lock",
+        "makefile",
+        ".gitignore",
+        ".gitlab-ci.yml",
+        "azure-pipelines.yml",
+    ];
+    lower.starts_with(".github/") || MANIFESTS.contains(&name)
 }
 
 #[cfg(test)]

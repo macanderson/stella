@@ -4,8 +4,11 @@
 //! Stella needs provider credentials in its own process, but tools do not.
 //! Passing the full inherited environment to a shell, project script, hook,
 //! or long-running server lets ordinary repository code print or exfiltrate
-//! the credential that pays for the agent. Apply [`crate::subprocess_env::scrub_sensitive_env`] as
-//! the final environment mutation before every such spawn.
+//! the credential that pays for the agent. Apply
+//! [`crate::subprocess_env::scrub_spawn_env`] as the final environment
+//! mutation before every such spawn;
+//! [`crate::subprocess_env::scrub_sensitive_env`] is the credential-only
+//! subset, for fixed helper probes that never run repository code.
 //!
 //! Two families are removed, and they are removed for different reasons:
 //!
@@ -15,15 +18,17 @@
 //! * **Ambient authority** ([`crate::subprocess_env::is_ambient_authority_env_name`]) — the value is
 //!   not a secret, but possessing the variable hands the child authority it
 //!   should not inherit, or redirects what a program it runs will execute.
-//!   `SSH_AUTH_SOCK` (a live agent socket signs for the user's keys) and the
+//!   `SSH_AUTH_SOCK` (a live agent socket signs for the user's keys), the
 //!   git config/command-injection family (`GIT_CONFIG_COUNT` +
 //!   `GIT_CONFIG_KEY_0` + `GIT_CONFIG_VALUE_0` sets *any* git config key for
 //!   every `git` the subprocess runs; `GIT_SSH_COMMAND`, `GIT_EXTERNAL_DIFF`
-//!   and `GIT_PROXY_COMMAND` each name a program git execs) live here. This
-//!   is the same family `stella-cli`'s `.env`-file loader refuses to import,
-//!   applied at the other end of the pipe. It lives here rather than in
-//!   `stella-fleet`'s `SystemGitCli` so `stella-tools`' and `stella-cli`'s
-//!   own git invocations get identical treatment from one list.
+//!   and `GIT_PROXY_COMMAND` each name a program git execs), and
+//!   `RIPGREP_CONFIG_PATH` (a file of default `rg` arguments that silently
+//!   redacts what the `grep` tool returns) live here. This is the same family
+//!   `stella-cli`'s `.env`-file loader refuses to import, applied at the other
+//!   end of the pipe. It lives here rather than in `stella-fleet`'s
+//!   `SystemGitCli` so `stella-tools`' and `stella-cli`'s own git invocations
+//!   get identical treatment from one list.
 //!
 //! # Re-admitting one variable: `STELLA_SUBPROCESS_ENV_ALLOW`
 //!
@@ -134,6 +139,13 @@ const CREDENTIAL_ENV_SUFFIXES: &[&str] = &[
 /// `GIT_CONFIG_SYSTEM` repoint git at an attacker-written config file, and
 /// `GIT_SSH_COMMAND` / `GIT_EXTERNAL_DIFF` / `GIT_PROXY_COMMAND` name a
 /// program git will exec.
+///
+/// `RIPGREP_CONFIG_PATH` is the same shape as `GIT_CONFIG_GLOBAL`, one layer
+/// out: it repoints `rg` at a file of default arguments. The `grep` tool
+/// shells out to `rg`, so a planted config (`--max-count=1`, a `--glob`
+/// hiding a directory, `--fixed-strings` defeating a regex) silently changes
+/// what a search returns — and the agent reads the difference as fact rather
+/// than as a redacted result. Scrubbed for the same reason git's is.
 const AMBIENT_AUTHORITY_ENV_VARS: &[&str] = &[
     "SSH_AUTH_SOCK",
     "GIT_CONFIG_COUNT",
@@ -143,6 +155,7 @@ const AMBIENT_AUTHORITY_ENV_VARS: &[&str] = &[
     "GIT_EXTERNAL_DIFF",
     "GIT_PROXY_COMMAND",
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "RIPGREP_CONFIG_PATH",
 ];
 
 /// The numbered halves of git's `GIT_CONFIG_COUNT` protocol
@@ -625,7 +638,7 @@ mod tests {
     }
 
     #[test]
-    fn git_injection_family_and_agent_socket_are_ambient_authority_not_credentials() {
+    fn config_injection_family_and_agent_socket_are_ambient_authority_not_credentials() {
         for name in [
             "GIT_CONFIG_COUNT",
             "GIT_CONFIG_KEY_0",
@@ -636,6 +649,7 @@ mod tests {
             "GIT_EXTERNAL_DIFF",
             "GIT_PROXY_COMMAND",
             "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "RIPGREP_CONFIG_PATH",
             "SSH_AUTH_SOCK",
         ] {
             assert!(
@@ -665,6 +679,23 @@ mod tests {
                 "{benign} must remain available to task subprocesses"
             );
         }
+    }
+
+    /// The `grep` tool shells out to `rg`, which reads default arguments from
+    /// the file `RIPGREP_CONFIG_PATH` names. A planted config (`--max-count=1`,
+    /// a `--glob` hiding a directory) silently truncates what a search returns
+    /// and the agent reads the shortfall as fact — the `GIT_CONFIG_GLOBAL`
+    /// hazard, one layer out. An INHERITED value must not reach the child.
+    #[tokio::test]
+    async fn an_inherited_ripgrep_config_path_never_reaches_a_scrubbed_child() {
+        let _planted = test_support::ScopedEnvVar::set("RIPGREP_CONFIG_PATH", "/tmp/planted-rgrc");
+        let mut command = tokio::process::Command::new("sh");
+        command.args(["-c", "printf '%s' \"${RIPGREP_CONFIG_PATH-unset}\""]);
+        scrub_sensitive_env(&mut command);
+
+        let output = command.output().await.expect("spawn shell");
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "unset");
     }
 
     #[tokio::test]

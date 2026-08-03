@@ -101,8 +101,11 @@ impl Record {
     ///
     /// An estimate on purpose: the crash ring needs a *bound*, and serializing
     /// every record twice to get an exact one would double the cost of the
-    /// plane to buy precision nobody consumes. It is deliberately generous, so
-    /// the ring under-fills rather than over-runs its ceiling.
+    /// plane to buy precision nobody consumes. It is NOT an upper bound,
+    /// though: every field is charged a flat 24 bytes plus its key, so a wide
+    /// value (a `Reviewed` note, a long `&'static str`, a `List`/`Map`)
+    /// renders larger than it is charged and the ring can exceed its byte
+    /// ceiling — `MAX_RECORDS` is the backstop that actually binds then.
     #[must_use]
     pub fn estimated_bytes(&self) -> usize {
         /// `ts`, `level`, the punctuation, and the four `cx` keys.

@@ -46,7 +46,7 @@ use std::time::Duration;
 use std::sync::Arc;
 
 use futures_util::StreamExt as _;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use stella_core::hooks::{HookRunner, Hooks};
 use stella_core::receipts::RECEIPT_SEQ_ALLOCATED_BASE;
@@ -94,6 +94,7 @@ use crate::witness::{
     witness_prompt, witness_repair_prompt,
 };
 mod disclosure;
+mod judge_stage;
 mod raw_usage;
 mod run_error;
 mod scope_stage;
@@ -348,8 +349,9 @@ pub struct PipelineConfig {
     /// with n× the execution cost — opt-in only.
     pub candidates: Option<u32>,
     /// Whether this run does its work in a throwaway worktree rather than the
-    /// user's checkout. Consulted once, at triage, and only when the run is
-    /// going to change files.
+    /// user's checkout. Consulted once — after planning, before execution,
+    /// using the task class triage resolved — and only when the run is going
+    /// to change files.
     ///
     /// The precedence is: a run that changes nothing is never isolated; a
     /// workspace with no candidate isolation cannot offer it (and an `Always`
@@ -523,6 +525,12 @@ struct ResolvedRole<'a> {
     model_ref: ModelRef,
     provider: &'a dyn Provider,
     fallback: Option<FallbackInfo>,
+    /// The router's resolution-quality caveat (L-M8) — today, only the judge
+    /// degrading to the worker's own provider family because no second family
+    /// is healthy. Surfaced by [`Pipeline::warn_judge_caveat`] at the calls
+    /// whose independence it undermines; dropping it silently is exactly the
+    /// "fallback is always visible" rule (L-M7) applied to a softer signal.
+    caveat: Option<String>,
 }
 
 /// The outcome of running one candidate (execute + verify + bounded revise).
@@ -617,7 +625,9 @@ struct CandidateState {
     mutating_actions: u32,
     oracle: FlipOracle,
     /// The oracle's observations in the order they were made (#864) —
-    /// baseline, per-iteration candidate runs, the pre-submit confirmation.
+    /// baseline (only for a configured `--test-command`; the authored-witness
+    /// baseline feeds the flip oracle directly without a trace entry),
+    /// per-iteration candidate runs, the pre-submit confirmation.
     /// Mirrors the emitted `ProofStep::Oracle` events, accumulated here so
     /// the verdict can carry its own trace without replaying the stream.
     oracle_trace: Vec<OracleObservation>,
@@ -738,6 +748,10 @@ pub struct Pipeline<'a> {
     candidate_workspaces: Option<&'a dyn CandidateWorkspacePort>,
     mcp_prefetch: Option<&'a dyn McpPrefetchPort>,
     steering: Option<&'a dyn stella_core::ports::TurnSteering>,
+    /// Boundary pause gate ([`Pipeline::with_turn_gate`]): attached to every
+    /// engine this pipeline builds and consulted before every management
+    /// call, so a paused pipeline-driven worker parks instead of spending.
+    turn_gate: Option<&'a dyn stella_core::ports::TurnGate>,
     events: EventSender,
     config: PipelineConfig,
     configured_test: Result<Option<TestInvocation>, crate::witness::TestInvocationError>,
@@ -748,6 +762,9 @@ pub struct Pipeline<'a> {
     /// other. Starts at [`RECEIPT_SEQ_ALLOCATED_BASE`], above the seats the
     /// engine's worker and summarizer reserve.
     raw_call_seq: AtomicU64,
+    /// Whether the judge's same-family degradation caveat (L-M8) has been
+    /// surfaced this run — see [`Pipeline::warn_judge_caveat`].
+    judge_caveat_warned: AtomicBool,
 }
 
 impl<'a> Pipeline<'a> {
@@ -780,11 +797,29 @@ impl<'a> Pipeline<'a> {
             candidate_workspaces: ports.candidate_workspaces,
             mcp_prefetch: ports.mcp_prefetch,
             steering: ports.steering,
+            turn_gate: None,
             events: events.into(),
             config,
             configured_test,
             raw_call_seq: AtomicU64::new(RECEIPT_SEQ_ALLOCATED_BASE),
+            judge_caveat_warned: AtomicBool::new(false),
         }
+    }
+
+    /// Attach a boundary pause gate. Every engine the pipeline builds — the
+    /// worker's execute/revise turns and the witness author's — parks at its
+    /// step boundaries while the gate holds, and every management call
+    /// (triage, judge, guidance) parks before dispatch: the same safe
+    /// boundary as budget aborts, never mid-tool.
+    ///
+    /// This is the seam that lets a supervisor's pause reach a
+    /// pipeline-driven worker at all. Without it only the raw step-loop path
+    /// held a gate, so `Fleet::pause_task` on a pipeline worker silently did
+    /// nothing — the named follow-up in `fleet_cmd`.
+    #[must_use]
+    pub fn with_turn_gate(mut self, gate: &'a dyn stella_core::ports::TurnGate) -> Self {
+        self.turn_gate = Some(gate);
+        self
     }
 
     /// Drive one prompt through the full staged flow. `messages` is the
@@ -866,9 +901,20 @@ impl<'a> Pipeline<'a> {
         };
         let task_class = assessment.class;
         // The volatile recall+goal message rides AFTER the stable system
-        // prefix (L-E8) — see assemble_user_message.
+        // prefix (L-E8) — see assemble_user_message. The verification
+        // contract rides only on turns that will actually be verified: a
+        // conversational turn has no oracle, and a simple lookup is verified
+        // only if it unexpectedly touches files — telling either "make this
+        // test pass" would invent work.
+        let verified_by = self
+            .config
+            .test_command
+            .as_deref()
+            .filter(|_| !assessment.conversational && task_class.verifies_unconditionally());
         messages.push(CompletionMessage::user(assemble_user_message(
-            goal, &frames,
+            goal,
+            &frames,
+            verified_by,
         )));
 
         // --- Conversational fast path. -------------------------------------
@@ -1159,7 +1205,15 @@ impl<'a> Pipeline<'a> {
         // because a bare greeting is deterministic and should never depend on a
         // model answer. `resolve_conversational` also applies the floor veto to
         // an over-eager model `chat` — a goal with real task signal is work.
-        let model_says_chat = assessment.map(|a| a.conversational).unwrap_or(false);
+        //
+        // A headless run never routes to chat on the model's opinion: its goal
+        // arrived from a script, a CI job, or a benchmark harness, so there is
+        // nobody chatting, and the chat path is terminal no-work — a misroute
+        // there silently drops the task with no revision possible. The
+        // deterministic greeting arm above stays (`stella run "thanks"` is
+        // still not a task); only the model's say is withheld.
+        let model_says_chat =
+            !self.config.headless && assessment.map(|a| a.conversational).unwrap_or(false);
         let conversational = resolve_conversational(model_says_chat, goal);
         // The witness decision is resolved here for the same reason as the
         // conversational one: it must hold even when the triage call failed or
@@ -1476,6 +1530,9 @@ impl<'a> Pipeline<'a> {
             if let Some((hooks, runner)) = self.hooks {
                 engine = engine.with_hooks(hooks, runner);
             }
+            if let Some(gate) = self.turn_gate {
+                engine = engine.with_gate(gate);
+            }
             let view = fan.as_ref().map(|fan| fan.candidate());
             if let Some(view) = view.as_ref() {
                 engine = engine.with_steering(view);
@@ -1596,6 +1653,16 @@ impl<'a> Pipeline<'a> {
         // solo-provider setups do) previously aborted here after one model
         // call, having done no work at all. Degrade to the unauthored verify
         // ladder instead, and say so once.
+        // Whether this is the `create_worktrees` caller — a plain single-shot
+        // run the operator asked to happen in a worktree — as opposed to
+        // best-of-N or an authored witness. Read from the CALLER's argument,
+        // before the degradation below shadows it, because a requested-then-
+        // degraded authored witness is still not this caller.
+        //
+        // Exact by construction: `run` takes the direct path when
+        // `n == 1 && !authored_witness && !isolate`, so reaching here with
+        // `n == 1 && !author_witness` means `isolate` was the only reason.
+        let single_shot_isolation = n == 1 && !author_witness;
         // `can_author_independent_witness` already gated `author_witness` and
         // announced any degradation, so this is the invariant guard for that
         // decision — silent on purpose, never a second warning.
@@ -1679,6 +1746,9 @@ impl<'a> Pipeline<'a> {
                 if let Some((hooks, runner)) = self.hooks {
                     engine = engine.with_hooks(hooks, surface.hook_runner.unwrap_or(runner));
                 }
+                if let Some(gate) = self.turn_gate {
+                    engine = engine.with_gate(gate);
+                }
                 let view = fan.as_ref().map(|fan| fan.candidate());
                 if let Some(view) = view.as_ref() {
                     engine = engine.with_steering(view);
@@ -1753,6 +1823,28 @@ impl<'a> Pipeline<'a> {
                     // conflicting files; the winning work stays recoverable.
                     Err(e) => adopt_failure = Some(e),
                 }
+            } else if single_shot_isolation {
+                // The `create_worktrees` run that did not pass. Discarding is
+                // right for best-of-N — the operator asked for the best of
+                // several and none was good, and the losers were never meant to
+                // survive. It is also right for an authored-witness abort,
+                // where the candidate is *poisoned* rather than merely
+                // unverified (a tampered artifact, an author that edited
+                // production code) and `witness_isolation`'s tests pin its
+                // removal.
+                //
+                // It is wrong for this third caller. That operator asked where
+                // the work should *happen*, not that it be thrown away unless
+                // it verified — and without this they end up strictly worse off
+                // than with isolation off, where a failed run at least leaves
+                // its changes in the tree to look at. So keep the snapshot and
+                // name it: the same posture as the adopt-failure arm just
+                // above, and for the same reason — unverified is not worthless.
+                self.warn(format!(
+                    "this run's changes did not verify, so they were not adopted into your \
+                     working tree — they are kept at {} for you to inspect or salvage",
+                    ws.root()
+                ));
             } else {
                 ws.remove().await;
             }
@@ -2101,7 +2193,8 @@ impl<'a> Pipeline<'a> {
             // it — gated on the DECISION, not on the flip transition, so
             // paths already headed to the judge pay nothing extra and the
             // cost is bounded to one lint pass + one suite run per
-            // candidate, exactly where the credit is spent.
+            // verification round (a revised candidate re-enters the audit),
+            // paid only where a credit is about to be spent.
             let mut lint_sample = String::new();
             if matches!(ladder_decision(&inputs), LadderDecision::SubmitFast)
                 && let Some(cmd) = effective_cmd
@@ -2333,8 +2426,14 @@ impl<'a> Pipeline<'a> {
                     // failure means the evidence alone didn't steer the
                     // worker — spend one judge call on course-correction
                     // (event-triggered, never a fixed midpoint checkpoint).
+                    // Counted from the deterministic-failure ledger
+                    // (`deterministic_disclosure` just recorded this round's
+                    // fingerprint), not from `revisions`: a prior model-judge
+                    // FAIL also increments `revisions`, and gating on it paid
+                    // a guidance call on the FIRST deterministic red while
+                    // telling the judge the agent had "failed twice in a row".
                     let mut reason = brief.message();
-                    if self.config.distress_guidance && state.revisions >= 1 {
+                    if self.config.distress_guidance && state.failures.len() >= 2 {
                         match self
                             .judge_guidance(
                                 goal,
@@ -2367,33 +2466,18 @@ impl<'a> Pipeline<'a> {
                         return CandidateResult::aborted(state.messages, reason);
                     }
                 }
-                // Triage judged this result not worth a separate reviewer.
-                // Record exactly that: a pass carrying no independent
-                // evidence. Falling through to `heuristic_fallback` would
-                // report "judge unavailable", which describes a judge that
-                // broke — not one that was deliberately waived — and would
-                // turn a task triage called simple into a verification
-                // failure. The summary states plainly what was not done.
-                LadderDecision::ModelJudge if !assessment.wants_judge() => {
-                    let evidence = JudgeEvidence {
-                        summary: "model review waived by triage; no independent \
-                                  verification was performed"
-                            .to_string(),
-                        deterministic: false,
-                        evidence_refs: vec![],
-                        ladder: Some(Box::new(snapshot.clone())),
-                    };
-                    self.emit(AgentEvent::JudgeVerdict {
-                        passed: true,
-                        evidence: evidence.clone(),
-                    });
-                    // Scored `Unverified`, NOT `DeterministicPass`: the run
-                    // passes, but no evidence was gathered for it. Claiming
-                    // the ladder's strongest score here would let a
-                    // review-waived candidate tie a genuinely flip-verified
-                    // sibling in best-of-N and then win the smaller-diff
-                    // tiebreak — selection would prefer the candidate that
-                    // proved the least.
+                // Triage judged this result not worth a separate reviewer,
+                // and the warrant AGREES from the change itself
+                // (`judge_waiver_stands`) — the guard is load-bearing, because
+                // this arm is only reached when the ladder came back
+                // inconclusive, which falsifies the waiver's own premise. A
+                // prompt-time `JUDGE: no` must not strip the last reviewer
+                // from a behavioral change nothing proved (§7.1:
+                // predict-then-commit is the bug).
+                LadderDecision::ModelJudge
+                    if !assessment.wants_judge() && Self::judge_waiver_stands(&state) =>
+                {
+                    let evidence = self.waived_completion(&snapshot);
                     return state.into_verified(
                         true,
                         &evidence,
@@ -2408,7 +2492,7 @@ impl<'a> Pipeline<'a> {
                     // ask it before buying a judge call to confirm the absence
                     // of a test that was never warranted
                     // (docs/design/witness-protocol.md §7).
-                    if let Some(evidence) = self.warranted_completion(&state) {
+                    if let Some(evidence) = self.warranted_completion(&state, &snapshot) {
                         return state.into_verified(
                             true,
                             &evidence,
@@ -2684,108 +2768,6 @@ impl<'a> Pipeline<'a> {
         Ok(probe)
     }
 
-    // Stage: judge
-
-    /// One distress-guidance call ([`guidance_prompt`]): best-effort and
-    /// never a verdict — the failure it reacts to is already deterministic,
-    /// so the judge's job here is *steering*, not re-judging. A failed call
-    /// (or an unresolvable judge) degrades to evidence-only revision.
-    async fn judge_guidance(
-        &self,
-        goal: &str,
-        diff: &str,
-        evidence_summary: &str,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
-    ) -> Result<Option<String>, PipelineBudgetAbort> {
-        let resolved = match self.resolve_provider(Role::Judge) {
-            Ok(resolved) => resolved,
-            Err(_) => return Ok(None),
-        };
-        if let Some(fb) = &resolved.fallback {
-            self.emit_fallback(fb);
-        }
-        self.emit(AgentEvent::Stage {
-            name: StageKind::Judge,
-        });
-        let prompt = guidance_prompt(goal, diff, evidence_summary);
-        match self
-            .metered_raw_call(
-                RawCall {
-                    role: ModelCallRole::DistressGuidance,
-                    resolved: &resolved,
-                    messages: vec![CompletionMessage::user(prompt)],
-                    policy: RetryPolicy::deterministic(),
-                    overrides: &self.config.role_overrides.judge,
-                    timeout: None,
-                },
-                budget,
-                total,
-            )
-            .await
-        {
-            Ok(result) => {
-                let text = result.text.trim().to_string();
-                if text.is_empty() {
-                    Ok(None)
-                } else {
-                    Ok(Some(text))
-                }
-            }
-            Err(RawCallError::Budget(abort)) => Err(abort),
-            Err(RawCallError::Provider | RawCallError::Timeout) => Ok(None),
-        }
-    }
-
-    async fn judge(
-        &self,
-        goal: &str,
-        diff: &str,
-        evidence_summary: &str,
-        inputs: &LadderInputs,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
-    ) -> Result<ModelJudgeVerdict, PipelineBudgetAbort> {
-        self.emit(AgentEvent::Stage {
-            name: StageKind::Judge,
-        });
-        let resolved = match self.resolve_provider(Role::Judge) {
-            Ok(r) => r,
-            // Judge unresolvable → conservative heuristic verdict (L-E11).
-            Err(_) => return Ok(heuristic_fallback(inputs)),
-        };
-        if let Some(fb) = &resolved.fallback {
-            self.emit_fallback(fb);
-        }
-
-        let prompt = judge_prompt(goal, diff, evidence_summary);
-        // Deterministic policy: a judge call that fails must not hang; it falls
-        // back to the heuristic verdict rather than retrying.
-        match self
-            .metered_raw_call(
-                RawCall {
-                    role: ModelCallRole::Judge,
-                    resolved: &resolved,
-                    messages: vec![CompletionMessage::user(prompt)],
-                    policy: RetryPolicy::deterministic(),
-                    overrides: &self.config.role_overrides.judge,
-                    timeout: None,
-                },
-                budget,
-                total,
-            )
-            .await
-        {
-            Ok(result) => {
-                let verdict = parse_judge_response(&result.text)
-                    .unwrap_or_else(|| heuristic_fallback(inputs));
-                Ok(verdict)
-            }
-            Err(RawCallError::Budget(abort)) => Err(abort),
-            Err(RawCallError::Provider | RawCallError::Timeout) => Ok(heuristic_fallback(inputs)),
-        }
-    }
-
     // Shared helpers
 
     /// Resolve a role to a concrete provider via the router + provider
@@ -2805,6 +2787,7 @@ impl<'a> Pipeline<'a> {
             model_ref: decision.model_ref,
             provider,
             fallback: decision.fallback,
+            caveat: decision.caveat,
         })
     }
 
@@ -3003,7 +2986,12 @@ impl<'a> Pipeline<'a> {
                 .await;
             for (path, added) in counted {
                 lines += added;
-                text.push_str(&format!("\n+ untracked change: {path} (+{added} lines)"));
+                // The shared builder, so `witness::warrant` can parse these
+                // paths back out and hold them to the same path rules as
+                // tracked changes — a hand-rolled format here silently
+                // blinded the warrant to every untracked file.
+                text.push('\n');
+                text.push_str(&crate::witness::warrant::untracked_change_line(path, added));
             }
         }
         DiffProbe {
@@ -3323,26 +3311,52 @@ fn bound_recalled_frames(frames: Vec<RecalledFrame>) -> Vec<RecalledFrame> {
     out
 }
 
-fn assemble_user_message(goal: &str, frames: &[RecalledFrame]) -> String {
-    if frames.is_empty() {
+fn assemble_user_message(
+    goal: &str,
+    frames: &[RecalledFrame],
+    verified_by: Option<&str>,
+) -> String {
+    if frames.is_empty() && verified_by.is_none() {
         return goal.to_string();
     }
-    let mut s = String::from("## Recalled context\n");
-    for f in frames {
-        // Cite by human label (L-C4); include content as grounding.
-        s.push_str("- [");
-        s.push_str(&f.citation_label);
-        s.push_str("] (");
-        s.push_str(&f.source);
-        s.push_str(")\n");
-        if !f.content.trim().is_empty() {
-            s.push_str("  ");
-            s.push_str(f.content.trim());
-            s.push('\n');
+    let mut s = String::new();
+    if !frames.is_empty() {
+        s.push_str("## Recalled context\n");
+        for f in frames {
+            // Cite by human label (L-C4); include content as grounding.
+            s.push_str("- [");
+            s.push_str(&f.citation_label);
+            s.push_str("] (");
+            s.push_str(&f.source);
+            s.push_str(")\n");
+            if !f.content.trim().is_empty() {
+                s.push_str("  ");
+                s.push_str(f.content.trim());
+                s.push('\n');
+            }
         }
+        s.push('\n');
     }
-    s.push_str("\n## Task\n");
+    s.push_str("## Task\n");
     s.push_str(goal.trim());
+    // The verification contract, when the operator configured one. The
+    // methodology prompt tells the worker to "run the target test" without
+    // ever saying which — the command that actually gates the run was
+    // withheld until the first failure disclosed it (the airlock's L1 brief
+    // names it anyway). Saying it up front moves that information one failed
+    // revision earlier, on the exact channel the worker plans from. Only the
+    // operator-CONFIGURED command is ever disclosed here: an authored
+    // witness's command does not exist yet at assembly time, and its
+    // disclosure stays governed by the airlock (`crate::witness::airlock`).
+    if let Some(command) = verified_by {
+        s.push_str("\n\n## Verification\n");
+        s.push_str(&format!(
+            "This run's primary verification is `{command}`: the accepted deterministic \
+             evidence is this command failing before your change and passing after it. \
+             Reproduce the failure with it before editing; make it pass before finishing. \
+             Do not modify the tests it runs."
+        ));
+    }
     s
 }
 

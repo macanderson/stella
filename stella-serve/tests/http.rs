@@ -281,6 +281,231 @@ async fn full_turn_round_trips_over_http() {
     assert_eq!(outcome["text"].as_str(), Some("done"));
 }
 
+/// The per-turn engine surface of #1167, end to end: the overrides land on
+/// the completion request the host receives, a value past the operator
+/// ceiling is clamped **and the clamp is reported in the create response**,
+/// and one server answers turns at different postures without redeploying.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn engine_overrides_reach_the_provider_request_and_clamps_are_reported() {
+    let addr = start_server().await;
+
+    let create = json!({
+        "provider_id": "mock",
+        "messages": [serde_json::to_value(CompletionMessage::user("cold and short")).unwrap()],
+        "engine": {
+            "temperature": 0.0,
+            "max_output_tokens": u32::MAX,
+            "effort": "xhigh",
+        },
+    })
+    .to_string();
+    let (status, body) = post_json(addr, "/v1/turns", Some(TOKEN), &create).await;
+    assert!(status.contains("200"), "create: {status} {body}");
+    let created: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let turn_id = created["turn_id"].as_str().unwrap().to_string();
+    let clamped = created["clamped"]
+        .as_array()
+        .expect("the ceiling-clamped knob must be reported");
+    assert_eq!(clamped.len(), 1, "exactly one knob was lowered: {body}");
+    assert_eq!(clamped[0]["knob"].as_str(), Some("max_output_tokens"));
+    assert!(
+        clamped[0]["effective"].as_f64().unwrap() < clamped[0]["requested"].as_f64().unwrap(),
+        "the report shows the lowering: {body}"
+    );
+
+    let mut sse = open_sse(addr, &format!("/v1/turns/{turn_id}/events"), TOKEN).await;
+    while let Some(event) = next_event(&mut sse).await {
+        match event["type"].as_str().unwrap_or_default() {
+            "provider_request" => {
+                let request = &event["request"];
+                assert_eq!(request["temperature"].as_f64(), Some(0.0));
+                assert_eq!(request["effort"].as_str(), Some("xhigh"));
+                let cap = request["max_output_tokens"].as_u64().unwrap();
+                assert!(
+                    cap < u64::from(u32::MAX),
+                    "the clamped cap is what actually reaches the model: {cap}"
+                );
+                let body = json!({
+                    "request_id": event["request_id"].as_str().unwrap(),
+                    "status": "ok",
+                    "result": model_result("done"),
+                })
+                .to_string();
+                let (status, resp) = post_json(
+                    addr,
+                    &format!("/v1/turns/{turn_id}/provider-result"),
+                    Some(TOKEN),
+                    &body,
+                )
+                .await;
+                assert!(status.contains("200"), "provider-result: {status} {resp}");
+            }
+            "turn_complete" => break,
+            _ => {}
+        }
+    }
+
+    // The same server, a different posture — no `clamped` key when nothing
+    // was lowered, so pre-#1167 clients keep parsing the response they know.
+    let create = json!({
+        "provider_id": "mock",
+        "messages": [serde_json::to_value(CompletionMessage::user("hot")).unwrap()],
+        "engine": { "temperature": 1.0, "max_output_tokens": 32000 },
+    })
+    .to_string();
+    let (status, body) = post_json(addr, "/v1/turns", Some(TOKEN), &create).await;
+    assert!(status.contains("200"), "second create: {status} {body}");
+    let created: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(
+        created.get("clamped").is_none(),
+        "an unclamped create must not grow the key: {body}"
+    );
+}
+
+/// Unusable engine values — and typoed knobs — are refused with a 400 naming
+/// the problem, never silently dropped or silently honored.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn unusable_engine_overrides_are_rejected_by_name() {
+    let addr = start_server().await;
+
+    for (engine, named) in [
+        (json!({ "max_output_tokens": 0 }), "max_output_tokens"),
+        (json!({ "temperature": -0.5 }), "temperature"),
+        (json!({ "temprature": 0.5 }), "temprature"),
+    ] {
+        let create = json!({
+            "provider_id": "mock",
+            "messages": [serde_json::to_value(CompletionMessage::user("hi")).unwrap()],
+            "engine": engine,
+        })
+        .to_string();
+        let (status, body) = post_json(addr, "/v1/turns", Some(TOKEN), &create).await;
+        assert!(status.contains("400"), "expected a 400: {status} {body}");
+        assert!(
+            body.contains(named),
+            "the refusal must name `{named}`: {body}"
+        );
+    }
+}
+
+/// The provider-delta route of #1165 over a real socket: fragments POSTed for
+/// an in-flight provider request surface as `text_delta` frames on the SSE
+/// stream before the completion, an empty batch is refused, and fragments
+/// arriving after the result get an honest 409.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn provider_deltas_stream_onto_the_event_stream_over_http() {
+    let addr = start_server().await;
+
+    let create = json!({
+        "provider_id": "mock",
+        "messages": [serde_json::to_value(CompletionMessage::user("stream it")).unwrap()],
+    })
+    .to_string();
+    let (status, body) = post_json(addr, "/v1/turns", Some(TOKEN), &create).await;
+    assert!(status.contains("200"), "create: {status} {body}");
+    let created: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let turn_id = created["turn_id"].as_str().unwrap().to_string();
+
+    let mut sse = open_sse(addr, &format!("/v1/turns/{turn_id}/events"), TOKEN).await;
+    let mut text_deltas: Vec<String> = Vec::new();
+    let mut completed_at: Option<usize> = None;
+    let mut frames = 0usize;
+    let mut request_id = String::new();
+
+    while let Some(event) = next_event(&mut sse).await {
+        frames += 1;
+        match event["type"].as_str().unwrap_or_default() {
+            "provider_request" => {
+                request_id = event["request_id"].as_str().unwrap().to_string();
+
+                // An empty batch is refused: it would not reset the idle
+                // deadline, so accepting it would fake liveness.
+                let empty = json!({ "request_id": request_id, "deltas": [] }).to_string();
+                let (status, resp) = post_json(
+                    addr,
+                    &format!("/v1/turns/{turn_id}/provider-delta"),
+                    Some(TOKEN),
+                    &empty,
+                )
+                .await;
+                assert!(status.contains("400"), "empty batch: {status} {resp}");
+
+                let deltas = json!({
+                    "request_id": request_id,
+                    "deltas": [
+                        { "kind": "text", "text": "Hel" },
+                        { "kind": "text", "text": "lo" },
+                    ],
+                })
+                .to_string();
+                let (status, resp) = post_json(
+                    addr,
+                    &format!("/v1/turns/{turn_id}/provider-delta"),
+                    Some(TOKEN),
+                    &deltas,
+                )
+                .await;
+                assert!(status.contains("200"), "delta batch: {status} {resp}");
+
+                let result = json!({
+                    "request_id": request_id,
+                    "status": "ok",
+                    "result": model_result("Hello"),
+                })
+                .to_string();
+                let (status, resp) = post_json(
+                    addr,
+                    &format!("/v1/turns/{turn_id}/provider-result"),
+                    Some(TOKEN),
+                    &result,
+                )
+                .await;
+                assert!(status.contains("200"), "provider-result: {status} {resp}");
+            }
+            // Agent events ride nested under the `event` frame type.
+            "event" if event["event"]["type"].as_str() == Some("text_delta") => {
+                text_deltas.push(
+                    event["event"]["text"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string(),
+                );
+            }
+            "turn_complete" => {
+                completed_at = Some(frames);
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    assert_eq!(
+        text_deltas,
+        vec!["Hel".to_string(), "lo".to_string()],
+        "the fragments must surface as text_delta frames, in order"
+    );
+    assert!(completed_at.is_some(), "the turn still completes");
+
+    // The request is resolved; late fragments must 409, not vanish.
+    let late = json!({
+        "request_id": request_id,
+        "deltas": [{ "kind": "text", "text": "too late" }],
+    })
+    .to_string();
+    let (status, resp) = post_json(
+        addr,
+        &format!("/v1/turns/{turn_id}/provider-delta"),
+        Some(TOKEN),
+        &late,
+    )
+    .await;
+    assert!(
+        status.contains("409") || status.contains("404"),
+        "late fragments must be refused (409 while the turn lives, 404 once \
+         it is gone): {status} {resp}"
+    );
+}
+
 /// The whole response head, not just the status line — for assertions about
 /// headers a rejection must carry (`Retry-After` on a 429).
 async fn post_json_head(

@@ -50,6 +50,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
+use stella_protocol::completion::FinishReason;
 use stella_protocol::event::{
     BudgetMode, BudgetScope, CiStatus, FileChangeKind, MediaJobState, MediaKind, ModelCallRole,
     PolicyKind, PrStatus, ProofStep, ProofTree, ScopeProposal, StageKind, TaskItem, TaskStatus,
@@ -330,6 +331,11 @@ fn all_model_call_roles() -> Vec<ModelCallRole> {
 fn all_usage_incomplete_reasons() -> Vec<UsageIncompleteReason> {
     use UsageIncompleteReason::*;
     vec![ProviderError, Timeout, Cancelled]
+}
+
+fn all_finish_reasons() -> Vec<FinishReason> {
+    use FinishReason::*;
+    vec![Stop, Length, ToolCalls, ContentFilter]
 }
 
 fn all_file_change_kinds() -> Vec<FileChangeKind> {
@@ -812,6 +818,9 @@ fn sample_events() -> Vec<AgentEvent> {
                 retries: 0,
                 tool_calls: 1,
                 complete: true,
+                // The "all optional fields present" shape must actually carry
+                // the optional field, or the sample proves nothing about it.
+                finish_reason: Some(FinishReason::Stop),
             },
             AgentEvent::StepUsage {
                 step: 1,
@@ -829,9 +838,38 @@ fn sample_events() -> Vec<AgentEvent> {
                 retries: 0,
                 tool_calls: 0,
                 complete: false,
+                // ...and the "all absent" shape must omit it entirely, which
+                // is what `skip_serializing_if` promises consumers.
+                finish_reason: None,
             },
         ]
     }));
+    // Every stop reason on the wire, `Length` above all: it is the only
+    // truthful signal that a step was cut off at the output ceiling, and a
+    // consumer that cannot parse it is back to inferring truncation from step
+    // shape — the reading that produced an unexplained `cap_hits: 106`.
+    events.extend(
+        all_finish_reasons()
+            .into_iter()
+            .map(|finish_reason| AgentEvent::StepUsage {
+                step: 2,
+                role: ModelCallRole::Worker,
+                provider: "zai".into(),
+                output_text: None,
+                model: "glm-5.2".into(),
+                input_tokens: 1_000,
+                output_tokens: 64_000,
+                cached_input_tokens: 0,
+                cache_write_tokens: 0,
+                estimated_input_tokens: 980,
+                cost_usd: 0.04,
+                duration_ms: 90_000,
+                retries: 0,
+                tool_calls: 0,
+                complete: true,
+                finish_reason: Some(finish_reason),
+            }),
+    );
     events.extend(
         all_usage_incomplete_reasons()
             .into_iter()
@@ -1180,6 +1218,7 @@ fn every_nested_vocabulary_is_fully_sampled() {
             "UsageIncompleteReason",
             all_usage_incomplete_reasons().len(),
         ),
+        ("FinishReason", all_finish_reasons().len()),
         ("FileChangeKind", all_file_change_kinds().len()),
         ("ProofTree", all_proof_trees().len()),
         ("MediaKind", all_media_kinds().len()),
@@ -1219,6 +1258,7 @@ fn every_nested_vocabulary_is_fully_sampled() {
         "PolicyKind",
         "ModelCallRole",
         "UsageIncompleteReason",
+        "FinishReason",
         "FileChangeKind",
         "ProofTree",
         "MediaKind",

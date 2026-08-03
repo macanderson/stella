@@ -439,6 +439,78 @@ impl Catalog {
                     },
                 )
                 .with_reasoning(Some(true)),
+                // The three Anthropic models as OpenRouter serves them. They
+                // duplicate slugs already seeded under `anthropic`, and that
+                // duplication is the point: `resolve_for` matches on
+                // (provider, id) exactly, so the first-party row is invisible
+                // to a run routed through the gateway. Without these, a
+                // benchmark trial on `openrouter/anthropic/claude-sonnet-5`
+                // resolves nothing, `max_output_tokens` is `None`, and the
+                // engine falls back to its global 16384 — the zero-tool
+                // truncation failure these ceilings exist to prevent,
+                // reintroduced by the choice of route alone.
+                //
+                // Routing matters now because the first-party Anthropic key is
+                // not always the one available; the gateway is. Prices are
+                // OpenRouter's own quotes, which differ from Anthropic list
+                // (Sonnet is $2/$10 here against $3/$15 direct), so a row that
+                // merely aliased the first-party pricing would misreport spend
+                // on every gateway turn.
+                CatalogEntry::new(
+                    "anthropic/claude-sonnet-5",
+                    "openrouter",
+                    "claude",
+                    1_000_000,
+                    // OpenRouter speaks its OpenAI-compatible dialect for every
+                    // upstream, including Anthropic's own models — the same
+                    // reason `moonshotai/kimi-k3` above is `OpenaiJson` rather
+                    // than the vendor's native shape.
+                    ToolDialect::OpenaiJson,
+                    Pricing {
+                        input_usd_per_mtok: 2.00,
+                        output_usd_per_mtok: 10.00,
+                        cached_input_usd_per_mtok: 0.20,
+                        cache_write_usd_per_mtok: 2.50,
+                    },
+                )
+                .with_reasoning(Some(true))
+                .with_max_output_tokens(Some(64_000)),
+                CatalogEntry::new(
+                    "anthropic/claude-fable-5",
+                    "openrouter",
+                    "claude",
+                    1_000_000,
+                    ToolDialect::OpenaiJson,
+                    Pricing {
+                        input_usd_per_mtok: 10.00,
+                        output_usd_per_mtok: 50.00,
+                        cached_input_usd_per_mtok: 1.00,
+                        cache_write_usd_per_mtok: 12.50,
+                    },
+                )
+                .with_reasoning(Some(true))
+                .with_max_output_tokens(Some(64_000)),
+                // Seeded for the `triage` role specifically: it classifies the
+                // request and builds a prompt, never edits the workspace, so
+                // the cheapest fast model in the family is the right one and
+                // its reasoning stays off. The 200k window is Haiku's own, not
+                // a trimmed copy of Sonnet's — `compaction_budget_tokens` is
+                // clamped off this number, so overstating it would let triage
+                // assemble a prompt the model cannot accept.
+                CatalogEntry::new(
+                    "anthropic/claude-haiku-4.5",
+                    "openrouter",
+                    "claude",
+                    200_000,
+                    ToolDialect::OpenaiJson,
+                    Pricing {
+                        input_usd_per_mtok: 1.00,
+                        output_usd_per_mtok: 5.00,
+                        cached_input_usd_per_mtok: 0.10,
+                        cache_write_usd_per_mtok: 1.25,
+                    },
+                )
+                .with_reasoning(Some(false)),
             ],
         }
     }
@@ -663,6 +735,42 @@ mod tests {
                 Some(64_000),
                 "{slug} must carry its ceiling in the seed, not only after a refresh",
             );
+        }
+        // The same models reached through the gateway are different rows, and
+        // the ceiling has to be on both. `resolve_for` matches (provider, id)
+        // exactly, so the first-party row above cannot answer for a run routed
+        // over OpenRouter: without its own ceiling that run silently drops to
+        // the engine's global 16384 and truncates before it emits a tool call.
+        // Choosing a route is not supposed to change the model's ceiling.
+        for slug in ["anthropic/claude-sonnet-5", "anthropic/claude-fable-5"] {
+            assert_eq!(
+                Catalog::seed()
+                    .resolve_for("openrouter", slug)
+                    .unwrap()
+                    .max_output_tokens,
+                Some(64_000),
+                "{slug} must carry its ceiling on the gateway route too",
+            );
+        }
+    }
+
+    /// The benchmark's roles must all resolve on one provider. A trial carries
+    /// exactly one credential, so a judge or triage model that only exists on
+    /// a second provider is unreachable at run time — and an unresolvable
+    /// judge pin silently degrades to "judge is the worker", which is the
+    /// weaker claim #1147 exists to refuse.
+    #[test]
+    fn every_benchmark_role_model_resolves_on_the_gateway_provider() {
+        let catalog = Catalog::seed();
+        for slug in [
+            "anthropic/claude-sonnet-5",  // worker
+            "anthropic/claude-fable-5",   // judge, arm A
+            "moonshotai/kimi-k3",         // judge, arm B
+            "anthropic/claude-haiku-4.5", // triage, both arms
+        ] {
+            catalog
+                .resolve_for("openrouter", slug)
+                .unwrap_or_else(|_| panic!("`{slug}` must be reachable on the openrouter route"));
         }
     }
 

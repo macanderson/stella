@@ -254,7 +254,7 @@ pub fn compact_measured(
     // what capturing up front preserves.
     //
     // Deliberately NOT keyed by `call_id`. A call_id is unique only within ONE
-    // step — `driver.rs::snapshot_result_identities` says so and poisons any id
+    // step — `driver/loop_evidence.rs::snapshot_result_identities` says so and poisons any id
     // it sees carrying two different outputs — and Gemini/Vertex mint theirs as
     // `call_{ordinal}` counted per response, so `call_0` recurs on every
     // assistant step. A `HashMap<call_id, block_id>` keeps only the LAST

@@ -315,6 +315,13 @@ pub(crate) async fn drain(state: &Arc<ServerState>, grace: Duration) {
     let timed_out = remaining > 0;
     if timed_out {
         for entry in state.live_entries() {
+            // All three signals, as `Session::cancel` documents: a turn that
+            // outlived the grace period is by definition one that did not
+            // observe phase one's soft stop, and the step-boundary latch is
+            // the second, independent chance to stop it before the process
+            // exits — without it a mid-step turn unwinds only at its next
+            // reverse request, past the window the grace was sized for.
+            entry.cancel.cancel();
             entry.pending.cancel();
             entry.controls.resume();
         }

@@ -8,6 +8,11 @@
 //! a path another task (or another run) already claims fails that dispatch
 //! by name instead of letting two agents edit the same file.
 //!
+//! Wave dispatch is **cache-TTL-aware** (#1222): [`crate::fleet_warmth`]
+//! projects each task's last-attempt timestamp through the provider's
+//! prompt-cache TTL, so a ready wave resumes soonest-to-expire prefixes
+//! first — see that module for the signal's honest limits.
+//!
 //! Each worker is a full Stella engine turn (the raw step-loop) running in
 //! its task's workspace with the standard tool registry — headless: no MCP,
 //! no custom tools, no ask_user, so a worker can never block on stdin. The
@@ -56,7 +61,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::agent;
 use crate::config::Config;
-use crate::runtime::{SystemClock, TokioSleeper};
+use crate::runtime::{SystemClock, TokioSleeper, WallClock};
 use crate::tui;
 
 /// Cap on the per-task summary line so the report table stays a table.
@@ -74,6 +79,7 @@ pub async fn run_fleet(
     budget_limit: Option<f64>,
     watch: bool,
     use_pipeline: bool,
+    task_timeout: Option<std::time::Duration>,
     output_format: crate::OutputFormat,
 ) -> Result<(), String> {
     crate::enterprise_telemetry::authorize_execution_surface(
@@ -170,8 +176,19 @@ pub async fn run_fleet(
         WorktreeManager::new(SystemGitCli, root.clone()).with_run_scope(&run_id),
         ledger,
         agent::build_budget_guard(budget_limit),
-        SystemClock::new(),
-        FleetConfig::new(&run_id, &base_sha).with_max_concurrency(max_concurrency.max(1)),
+        // Wall-anchored, NOT `SystemClock`: every stamp this clock feeds is
+        // a durable ledger row that must stay comparable across runs — the
+        // warmth projection (#1222) reads a PRIOR run's `finished_at_ms`.
+        // `SystemClock`'s per-process origin made every run start near zero.
+        WallClock,
+        {
+            let mut config =
+                FleetConfig::new(&run_id, &base_sha).with_max_concurrency(max_concurrency.max(1));
+            if let Some(limit) = task_timeout {
+                config = config.with_task_timeout(limit);
+            }
+            config
+        },
     )
     .map_err(|e| format!("could not start the fleet: {e}"))?;
     // File claims live in the workspace store (`.stella/private/store.db`), opened
@@ -196,6 +213,8 @@ pub async fn run_fleet(
     } else {
         fleet
     };
+    // Cache-TTL-aware wave dispatch (#1222) — see `crate::fleet_warmth`.
+    let fleet = crate::fleet_warmth::install(fleet, cfg.provider.id, &ledger_path);
 
     let report = if live {
         // Paint the live grid over the alternate screen while `run_plan` fans
@@ -676,9 +695,16 @@ async fn run_task(
 
     let mut messages = vec![CompletionMessage::system(
         // Each worker is its own session in its own workspace, so its
-        // SessionStart hooks fire here, in the worktree.
+        // SessionStart hooks fire here, in the worktree. Persona matches the
+        // driver: a pipeline-driven worker gets the pipeline worker persona
+        // (methodology ladder + `agents.worker.prompt` override), which
+        // fleet workers never carried.
         agent::with_session_hook_context(
-            agent::build_system_prompt(&cfg, root, &active_rules),
+            if use_pipeline {
+                agent::build_pipeline_system_prompt(&cfg, root, &active_rules)
+            } else {
+                agent::build_system_prompt(&cfg, root, &active_rules)
+            },
             &cfg,
         )
         .await,
@@ -822,16 +848,23 @@ async fn run_task(
                 headless_bypass_scope_review: agent::HEADLESS_SCOPE_REVIEW_BYPASS,
                 ..PipelineConfig::default()
             };
-            let pipeline = Pipeline::new(ports, tx.clone(), config);
+            // The pause gate, honored on the pipeline path too: the pipeline
+            // attaches it to every engine it builds (execute/revise turns,
+            // the witness author) and parks its management calls behind it,
+            // so `Fleet::pause_task` reaches a pipeline-driven worker at the
+            // same safe step boundary the raw path always had. Published to
+            // the registry as well, so a paused worker's sub-agents park too.
+            let gate: Arc<WatchGate> = Arc::new(WatchGate(pause));
+            let _controls = registry.attach_turn_controls(
+                stella_core::ports::TurnControls::none().with_gate(gate.clone()),
+            );
+            let pipeline = Pipeline::new(ports, tx.clone(), config).with_turn_gate(gate.as_ref());
             // The system prompt + task prompt are already in `messages`; the
             // pipeline appends its own volatile recall+goal message, so pass the
             // raw task prompt as the goal (the pipeline never re-reads `messages`
             // for its goal — it takes `task.prompt` directly).
             // The stop line races the whole staged run — the future drops at
             // its next await point, the same clean cancel the raw path gets.
-            // Pause is NOT honored here yet: boundary-gating individual stages
-            // needs a gate port on `PipelinePorts` (the existing named
-            // follow-up) — only the raw step-loop path below holds a TurnGate.
             let raced = tokio::select! {
                 result = pipeline.run(&task.prompt, &mut messages, &mut budget) => {
                     Raced::Outcome(result)
@@ -1077,6 +1110,16 @@ fn render_report(plan: &Plan, report: &FleetRunReport, ledger_path: &Path) {
         if !handle.outcome.summary.is_empty() {
             println!("      {}", handle.outcome.summary.dimmed());
         }
+        if let Some(error) = &handle.ledger_error {
+            // The result above is authoritative; what was lost is the durable
+            // row. Silent here would mean the only witness to an open
+            // attempts row is a future `stella doctor`.
+            println!(
+                "      {} attempt not recorded in the fleet ledger ({error}) — the row stays \
+                 open; `stella doctor` will report it",
+                "!".yellow()
+            );
+        }
     }
     for (task_id, reason) in &report.dispatch_failures {
         println!(
@@ -1265,6 +1308,7 @@ mod tests {
             retries: 0,
             tool_calls: 0,
             complete: true,
+            finish_reason: None,
         })
         .expect("event");
         drop(tx);
@@ -1371,6 +1415,7 @@ mod tests {
             },
             worktree: None,
             budget: BudgetOutcome::Continue,
+            ledger_error: None,
         }
     }
 

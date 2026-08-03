@@ -47,8 +47,8 @@ pub(super) struct Clustering {
 
 /// Cluster `vectors` into at most `k` groups.
 ///
-/// `k` is clamped into `1..=vectors.len()`; an empty input yields an empty
-/// clustering. Every vector is assigned, including a zero-norm one (empty
+/// `k` is capped at `vectors.len()`; `k == 0` — like an empty input — yields
+/// an empty clustering rather than being clamped up to 1. Every vector is assigned, including a zero-norm one (empty
 /// content projects to the zero vector under [`crate::embed::HashEmbedder`]):
 /// it scores 0.0 against every centroid, ties everywhere, and therefore lands in
 /// centroid 0 — deterministically, rather than being dropped and silently

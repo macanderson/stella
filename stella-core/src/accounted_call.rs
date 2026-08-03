@@ -226,6 +226,9 @@ pub async fn run_accounted_call(
         retries: outcome.retries.len() as u32,
         tool_calls: result.tool_calls.len(),
         complete: result.usage.is_complete(),
+        // Management calls truncate too — a judge verdict or a plan cut off at
+        // the ceiling is exactly the silent failure this field exists to name.
+        finish_reason: result.finish_reason,
     });
     let budget_outcome = budget.record_spend(result.cost_usd);
     let _ = events.send(AgentEvent::BudgetTick {

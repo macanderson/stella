@@ -303,7 +303,7 @@ the relaunch is a fresh job name rather than a resume. The fix is to pre-pull al
 of the run instead of a term in the measurement. Any future runner on a
 consumer network should do the same.
 
-### 8.5 Effort was `high` against a `max` comparator (#1007)
+### 8.4 Effort was `high` against a `max` comparator (#1007)
 
 The posture froze `effort: high` for default/worker/judge. The comparator this
 benchmark is scored against is *"Claude Code using GLM-5.1 at **max effort**"*
@@ -330,7 +330,7 @@ the launcher emits:
 | x-ai/grok-4.5 | `3c7d6155…` | `ff61cb06…` |
 | z-ai/glm-5.1 | `55fdf342…` | `f15536e5…` |
 
-### 8.3.1 `max` → `xhigh`, for the Sonnet-5 comparator
+### 8.4.1 `max` → `xhigh`, for the Sonnet-5 comparator
 
 The rule that picked `max` above did not change; the comparator did. The rule
 is *spend what the other side spends*, because the leaderboard treats `high`,
@@ -345,7 +345,7 @@ Stella compute the comparator never receives. Anthropic separately documents
 `xhigh` — not `max` — as the setting for coding and agentic work, and warns
 `max` is prone to overthinking, so parity and the model's own guidance agree.
 
-### 8.3.2 The output cap moves with the effort tier
+### 8.4.2 The output cap moves with the effort tier
 
 Raising the tier alone was not enough, and the smoke run said so before the
 scored run could. Two of three Stella trials at xhigh died with:
@@ -390,7 +390,7 @@ because those arms were re-run. Runs published under the `max` posture remain
 described by the 8.3 table; a run states which posture it used in its own
 manifest, which is the point of hashing it.
 
-### 8.3.2 The output cap moves to the model's ceiling, and the two ceilings behind it
+### 8.4.3 The output cap moves to the model's ceiling, and the two ceilings behind it
 
 The `xhigh` posture above kept `params.max_tokens` at 32000. Arm B telemetry
 from the gate3c head-to-head falsified that number directly. Claude Code passed
@@ -429,23 +429,26 @@ head-to-head mean anything: **never be the side that stops first.** A ceiling
 below what the comparator is allowed is not a tuning choice, it is a handicap
 that the score then reports as a capability difference.
 
-Recomputed digests, via the adapter's own `_benchmark_engine_posture`:
+Recomputed digests, via the adapter's own `_benchmark_engine_posture`. (An
+earlier revision of this table mislabeled the `max`-era digests as the
+`xhigh`/32000 ones for three models; both prior generations are shown below,
+each re-verified by recomputing the exact posture variant.)
 
-| model | was (`xhigh`, 32000) | now (`xhigh`, 64000) |
-|---|---|---|
-| deepseek-v4-pro | `4249a1f9…` / `0de2116f…` | `9d7ad135…` |
-| z-ai/glm-5.2 | `a0ab8a75…` | `7e9da633…` |
-| x-ai/grok-4.5 | `ff61cb06…` | `19c4d345…` |
-| z-ai/glm-5.1 | `f15536e5…` | `8530a36f…` |
-| anthropic/claude-sonnet-5 | `55c6ef4c…` | `3c428a22…` |
+| model | was (`max`, uncapped) | was (`xhigh`, 32000) | now (`xhigh`, 64000) |
+|---|---|---|---|
+| deepseek-v4-pro | `0de2116f…` | `4249a1f9…` | `9d7ad135…` |
+| z-ai/glm-5.2 | `a0ab8a75…` | `b906090c…` | `7e9da633…` |
+| x-ai/grok-4.5 | `ff61cb06…` | `a1b0df58…` | `19c4d345…` |
+| z-ai/glm-5.1 | `f15536e5…` | `b80a9d06…` | `8530a36f…` |
+| anthropic/claude-sonnet-5 | `5176b46b…` | `55c6ef4c…` | `3c428a22…` |
 
-Runs published under the 32000 posture remain described by the 8.3.1 table.
+Runs published under the 32000 posture remain described by the 8.4.1 table.
 The registered tables in the protocol and the analyzer README carry the new
 values, because those describe the posture the launcher will actually emit —
 a document that disagrees with the code is the `harbor==0.6.1` failure again,
 in a different file.
 
-### 8.4 The measured baseline
+### 8.5 The measured baseline
 
 See `bench/evidence/` for the run manifest, per-trial rows, per-task results and
 the two scripts that recompute the number from them. Its preregistration is

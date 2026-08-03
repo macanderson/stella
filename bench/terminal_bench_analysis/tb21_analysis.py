@@ -55,7 +55,17 @@ CANONICAL_ENGINE_POSTURE_VERSION = "stella-tb21-engine-posture-v1"
 
 
 def canonical_engine_posture(model: str) -> tuple[dict[str, Any], str, str]:
-    """Return the registered launcher-owned engine config and byte hash."""
+    """Return the registered launcher-owned engine config and byte hash.
+
+    Mirrors ``bench/harbor_adapter/stella_harbor/posture.py`` — the normative
+    home for the posture (its module docs promise every consumer derives the
+    hash "from one implementation rather than from copies that can disagree").
+    This copy exists only because the analyzer is deliberately stdlib-only;
+    ``tests/test_tb21_analysis.py::test_posture_matches_the_adapters`` pins the
+    two byte-for-byte, so an edit to either without the other fails CI instead
+    of failing every trial's posture gate at claim time (which is what the
+    previous, silently stale copy of this function did).
+    """
     selected_model = model.strip()
     if not selected_model or "/" not in selected_model:
         raise ValueError("model must be a non-empty provider/model spec")
@@ -65,10 +75,23 @@ def canonical_engine_posture(model: str) -> tuple[dict[str, Any], str, str]:
         "auto_mode": "off",
         "effort_auto": "off",
         "reasoning_auto": "off",
+        "headless_scope_bypass": "on",
         "agents": {
-            "default": {"effort": "high", "reasoning": "on"},
-            "worker": {"effort": "high", "reasoning": "on"},
-            "judge": {"effort": "high", "reasoning": "on"},
+            "default": {
+                "effort": "xhigh",
+                "reasoning": "on",
+                "params": {"max_tokens": 64000},
+            },
+            "worker": {
+                "effort": "xhigh",
+                "reasoning": "on",
+                "params": {"max_tokens": 64000},
+            },
+            "judge": {
+                "effort": "xhigh",
+                "reasoning": "on",
+                "params": {"max_tokens": 64000},
+            },
             "triage": {"effort": "low", "reasoning": "off"},
         },
     }
@@ -612,13 +635,23 @@ STUDY_MANIFEST_ENGINE_POSTURE_FIELDS = frozenset(
         "auto_mode",
         "effort_auto",
         "reasoning_auto",
+        "headless_scope_bypass",
         "agents",
     }
 )
 STUDY_MANIFEST_ENGINE_POSTURE_AGENT_ROLES = frozenset(
     {"default", "worker", "judge", "triage"}
 )
-STUDY_MANIFEST_ENGINE_POSTURE_AGENT_FIELDS = frozenset({"effort", "reasoning"})
+# Per-role field shapes: the outcome-bearing roles carry the raised output cap
+# (`params.max_tokens`); triage deliberately keeps the engine default, so its
+# exact shape has no `params` key. One flat set cannot express both.
+STUDY_MANIFEST_ENGINE_POSTURE_AGENT_FIELDS_BY_ROLE: dict[str, frozenset[str]] = {
+    "default": frozenset({"effort", "reasoning", "params"}),
+    "worker": frozenset({"effort", "reasoning", "params"}),
+    "judge": frozenset({"effort", "reasoning", "params"}),
+    "triage": frozenset({"effort", "reasoning"}),
+}
+STUDY_MANIFEST_ENGINE_POSTURE_AGENT_PARAMS_FIELDS = frozenset({"max_tokens"})
 STUDY_MANIFEST_CONFIRMATORY_FIELDS = frozenset({"job_name", "n_concurrent_trials"})
 
 JOB_CONFIG_ALLOWED_FIELDS = frozenset(
@@ -2247,10 +2280,22 @@ def _validate_engine_posture_manifest_schema(
             continue
         _require_exact_manifest_fields(
             agents[role],
-            STUDY_MANIFEST_ENGINE_POSTURE_AGENT_FIELDS,
+            STUDY_MANIFEST_ENGINE_POSTURE_AGENT_FIELDS_BY_ROLE[role],
             f"{label}.agents.{role}",
             reasons,
         )
+        role_config = agents[role]
+        if (
+            isinstance(role_config, dict)
+            and "params" in STUDY_MANIFEST_ENGINE_POSTURE_AGENT_FIELDS_BY_ROLE[role]
+            and "params" in role_config
+        ):
+            _require_exact_manifest_fields(
+                role_config["params"],
+                STUDY_MANIFEST_ENGINE_POSTURE_AGENT_PARAMS_FIELDS,
+                f"{label}.agents.{role}.params",
+                reasons,
+            )
 
 
 def _matches_setting(actual: Any, expected: Any) -> bool:

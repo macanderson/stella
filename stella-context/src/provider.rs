@@ -387,7 +387,7 @@ mod tests {
         assert!(caps.graph);
         assert_eq!(
             caps.embeddings_fingerprint.as_deref(),
-            Some("hash-ngram@1/256/l2")
+            Some("hash-ngram@2/256/l2")
         );
         assert!(caps.query.kinds.contains(&"snippet".to_string()));
     }
