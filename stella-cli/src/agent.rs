@@ -579,7 +579,13 @@ async fn run_pipeline_one_shot(
         // Trajectory trace (#1042, `trace_capture`, off by default): one
         // training-ready record folded from what the closeout just settled.
         if cfg.trace_capture {
-            crate::trace::capture_or_warn(store, *id, &files, &cfg.workspace_root);
+            crate::trace::capture_or_warn(
+                store,
+                *id,
+                &files,
+                &cfg.workspace_root,
+                &cfg.reward_policy,
+            );
         }
     }
 

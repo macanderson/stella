@@ -452,7 +452,11 @@ async fn without_a_lint_probe_the_flip_still_fast_submits() {
     );
     // And the label that rung earns is the hard +1.0, before shaping.
     assert_eq!(
-        crate::reward::outcome_term(stella_protocol::LadderRung::SubmitFast, verdict.passed),
+        crate::reward::outcome_term(
+            stella_protocol::LadderRung::SubmitFast,
+            verdict.passed,
+            &crate::reward::OutcomeWeights::default(),
+        ),
         Ok(1.0)
     );
     let why = crate::replay::verdict_provenance(&stella_protocol::JudgeEvidence {

@@ -122,7 +122,10 @@ pub use ports::{
     RepoStructurePort, ScopeDecision, StdioApprovalGate, TestInvocation, TestRunner,
     WorkspaceError,
 };
-pub use reward::{DiscardReason, RewardLabel, RewardShaping, Settlement, TrajectoryCost, label};
+pub use reward::{
+    DiscardReason, OutcomeWeights, RewardLabel, RewardPolicy, RewardShaping, Settlement,
+    TrajectoryCost, WeightError, label,
+};
 pub use triage::TaskClass;
 pub use verify::{FlipOracle, FlipState, LadderDecision, LadderInputs};
 pub use witness::airlock::{
