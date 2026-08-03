@@ -438,18 +438,19 @@ pub(crate) enum Command {
         task_timeout: Option<u64>,
     },
 
-    /// Query the code graph — definitions, references, imports
+    /// Query the code graph — definitions, references, callers, imports
     ///
     /// Query the code graph built by `stella init` — symbol definitions and
-    /// references, a file's imports/importers, or its graph neighborhood.
+    /// references, recorded call sites (callees/callers, name-based), a
+    /// file's imports/importers, or its graph neighborhood.
     /// Offline: reads .stella/private/codegraph.db, needs no API key.
     Graph {
         /// What to ask the graph
         #[arg(value_enum)]
         op: contextgraph::GraphOp,
 
-        /// Symbol name (definitions/references) or workspace-relative file
-        /// path (imports/importers/neighbors)
+        /// Symbol name (definitions/references/callees/callers) or
+        /// workspace-relative file path (imports/importers/neighbors)
         target: String,
     },
 

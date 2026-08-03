@@ -156,6 +156,176 @@ pub(crate) fn references_bounded(
     Ok(out)
 }
 
+/// One frame per definition of `name`, listing the call sites recorded
+/// inside that definition's stored line span — the honest half of B1
+/// (#335): these are real, structural call sites in this body, but the
+/// names are **unresolved** (no receiver types, no cross-file identity), so
+/// the frame lists names, not targets.
+pub(crate) fn callees(
+    conn: &Connection,
+    root: &Path,
+    name: &str,
+) -> Result<Vec<ContextFrame>, GraphError> {
+    let mut out = Vec::new();
+    for def in store::definitions(conn, name)? {
+        let calls = store::calls_in_span(conn, &def.path, def.start_line, def.end_line)?;
+        // Dedup by callee name (first line wins): a helper called ten times
+        // in one body is one edge, and the listing stays readable. The raw
+        // per-line rows remain queryable via `callers` on the callee.
+        let mut seen = HashSet::new();
+        let deduped: Vec<_> = calls
+            .into_iter()
+            .filter(|call| seen.insert(call.callee.clone()))
+            .collect();
+        if deduped.is_empty() {
+            continue;
+        }
+        let mut lines: Vec<String> = deduped
+            .iter()
+            .take(EDGE_LISTING_MAX)
+            .map(|call| format!("{} ({}:{})", call.callee, def.path, call.line))
+            .collect();
+        if deduped.len() > EDGE_LISTING_MAX {
+            lines.push(format!("+{} more", deduped.len() - EDGE_LISTING_MAX));
+        }
+        let relations = deduped
+            .iter()
+            .map(|call| Relation {
+                rel: "CALLS".into(),
+                // Name-based, deliberately not a file URI: resolving the
+                // name to a definition is exactly what this edge does not
+                // claim (#335 non-goals).
+                target_uri: format!("symbol:{}", call.callee),
+                display_name: Some(call.callee.clone()),
+            })
+            .collect();
+        let uri = file_uri(root, &def.path);
+        let citation = format!(
+            "callees of {} {} ({}:{})",
+            def.kind.keyword(),
+            def.name,
+            def.path,
+            def.start_line
+        );
+        let provenance = vec![
+            file_provenance(
+                &uri,
+                Some(format!("L{}-{}", def.start_line, def.end_line)),
+                Some(&def.sha),
+            ),
+            derivation("tree-sitter/call-extract"),
+        ];
+        out.push(frame(
+            format!(
+                "{PROVIDER_ID}:callees:{}:{}:{}",
+                def.path, def.start_line, def.name
+            ),
+            FrameKind::Graph,
+            citation.clone(),
+            lines.join("\n"),
+            Some(uri),
+            SCORE_GRAPH_EDGE,
+            citation,
+            provenance,
+            relations,
+        ));
+    }
+    Ok(out)
+}
+
+/// Best-effort caller frames for `name`: every recorded call site whose
+/// callee name matches, labeled by its enclosing definition where the index
+/// holds one. This is a **reverse name lookup**, not resolution — same-name
+/// methods and trait impls all match — so it scores [`SCORE_REFERENCE`], the
+/// weakest band, exactly the discipline [`references`] already applies. The
+/// improvement over `references` is structural: every hit is a real call
+/// site from a parse tree, never a comment, a string, or a definition.
+pub(crate) fn callers(
+    conn: &Connection,
+    root: &Path,
+    name: &str,
+) -> Result<Vec<ContextFrame>, GraphError> {
+    let rows = store::calls_of_name(conn, name, MAX_REFERENCES)?;
+    let mut out = Vec::new();
+    // Rows arrive path-ordered; symbols and source are loaded once per file.
+    let mut cache: Option<CallerFileCtx> = None;
+    for row in rows {
+        if cache.as_ref().is_none_or(|c| c.path != row.path) {
+            cache = Some(CallerFileCtx::load(conn, root, &row.path)?);
+        }
+        let Some(ctx) = cache.as_ref() else {
+            continue;
+        };
+        // The innermost enclosing definition: smallest stored span whose
+        // lines contain the call. A top-level call has none and cites bare.
+        let enclosing = ctx
+            .symbols
+            .iter()
+            .filter(|s| s.start_line <= row.line && row.line <= s.end_line)
+            .min_by_key(|s| s.end_line - s.start_line);
+        let citation = match enclosing {
+            Some(sym) => format!(
+                "{} {} ({}:{})",
+                sym.kind.keyword(),
+                sym.name,
+                row.path,
+                row.line
+            ),
+            None => format!("{}:{}", row.path, row.line),
+        };
+        let content = ctx
+            .lines
+            .as_ref()
+            .and_then(|lines| lines.get(row.line as usize - 1))
+            .map(|line| truncate_chars(line.trim(), REF_LINE_MAX_CHARS))
+            .unwrap_or_else(|| format!("calls {name}"));
+        let uri = file_uri(root, &row.path);
+        let provenance = vec![
+            file_provenance(&uri, Some(format!("L{}", row.line)), None),
+            derivation("tree-sitter/call-extract"),
+        ];
+        out.push(frame(
+            format!("{PROVIDER_ID}:caller:{}:{}:{}", row.path, row.line, name),
+            FrameKind::Snippet,
+            format!("caller of {name}"),
+            content,
+            Some(uri),
+            SCORE_REFERENCE,
+            citation,
+            provenance,
+            Vec::new(),
+        ));
+    }
+    Ok(out)
+}
+
+/// Per-file context for [`callers`]: the file's symbol spans (for enclosing
+/// labels) and its source lines, loaded under the same bounds the reference
+/// scan uses — an oversized or unreadable file keeps its citations and loses
+/// only the quoted line.
+struct CallerFileCtx {
+    path: String,
+    symbols: Vec<DefRow>,
+    lines: Option<Vec<String>>,
+}
+
+impl CallerFileCtx {
+    fn load(conn: &Connection, root: &Path, rel: &str) -> Result<CallerFileCtx, GraphError> {
+        let abs = root.join(rel);
+        let lines = match std::fs::metadata(&abs) {
+            Ok(meta) if meta.len() <= REF_FILE_MAX_BYTES => std::fs::read_to_string(&abs)
+                .ok()
+                .map(|content| content.lines().map(str::to_string).collect()),
+            _ => None,
+        };
+        Ok(CallerFileCtx {
+            path: rel.to_string(),
+            symbols: store::symbols_in_file(conn, rel)?,
+            lines,
+        })
+    }
+}
+
 /// A single graph frame listing the imports out of `rel` (empty if the file
 /// has no recorded imports).
 pub(crate) fn imports_of(

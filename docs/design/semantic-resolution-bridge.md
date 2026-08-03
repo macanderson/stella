@@ -1,8 +1,11 @@
 # Semantic-resolution bridge — evaluation
 
 **Status:** B2 shipped (#443 — `stella-graph/src/rust_resolve.rs`, plus the
-`run_tests` `scope:"impacted"` cargo `-p` mapping); B1 and the held Option A
-remain as written. **Date:** 2026-07-23, status updated 2026-07-28.
+`run_tests` `scope:"impacted"` cargo `-p` mapping). B1 shipped — per-language
+call-site capture, the `code_graph_calls` table, and the `callees`/`callers`
+ops (`callees` honest within a definition's span, `callers` labeled
+best-effort, the `references` scoring discipline). The held Option A remains
+as written. **Date:** 2026-07-23, status updated 2026-08-03.
 **Owner:** Mac Anderson. **Issue:** #335 (parent #336; the Rust slice of #334
 is gated on this). Citations re-verified against the working tree at `fef8e4b`
 (§ appendix).

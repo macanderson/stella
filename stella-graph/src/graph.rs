@@ -278,6 +278,28 @@ impl CodeGraph {
         frames::references(&self.inner.read_guard(), &self.inner.root, name)
     }
 
+    /// One frame per definition of `name`, listing the call sites recorded
+    /// inside that definition's line span (#335, B1). Honest but unresolved:
+    /// real structural call sites, name-only — no receiver types, no
+    /// cross-file identity.
+    pub fn callees(&self, name: &str) -> Result<Vec<ContextFrame>, GraphError> {
+        frames::callees(&self.inner.read_guard(), &self.inner.root, name)
+    }
+
+    /// Best-effort caller frames for `name`: recorded call sites whose
+    /// callee name matches, labeled by their enclosing definition where the
+    /// index holds one (#335, B1). A reverse *name* lookup — same-name
+    /// methods conflate — scored in the same weakest band as
+    /// [`CodeGraph::references`].
+    pub fn callers(&self, name: &str) -> Result<Vec<ContextFrame>, GraphError> {
+        frames::callers(&self.inner.read_guard(), &self.inner.root, name)
+    }
+
+    /// Total call sites across the whole index.
+    pub fn call_count(&self) -> Result<usize, GraphError> {
+        store::call_count(&self.inner.read_guard())
+    }
+
     /// A frame describing the imports out of `file`.
     pub fn imports_of(&self, file: &Path) -> Result<Vec<ContextFrame>, GraphError> {
         let rel = self.resolve_rel(file);

@@ -66,7 +66,7 @@ These 47 tools register in every session — no configuration, no prerequisites.
     Find files by glob pattern, returned as workspace-relative paths.
   </ToolCard>
   <ToolCard name="graph_query" access="read">
-    Query the indexed code graph instead of grepping: definitions, references, imports, importers, or a file's full graph neighborhood. Registers every session and builds its own code-graph index on first use.
+    Query the indexed code graph instead of grepping: definitions, references, callees, callers (best-effort by name), imports, importers, or a file's full graph neighborhood. Registers every session and builds its own code-graph index on first use.
   </ToolCard>
 </CardGrid>
 

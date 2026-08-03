@@ -324,6 +324,100 @@ fn query_stops_looking_after_twelve_distinct_identifiers() {
     assert!(frames.iter().all(|f| f.title != "fn sym_12"));
 }
 
+/// #335 B1 fixture: `run_turn` calls two helpers; `boot` (another file)
+/// calls `run_turn`; a comment and a string mention `run_turn` without
+/// calling it — the false hits the textual reference scan cannot exclude
+/// and the call table must.
+fn call_fixture() -> (TempDir, TempDir, CodeGraph) {
+    let ws = TempDir::new().unwrap();
+    let dbdir = TempDir::new().unwrap();
+    fs::write(
+        ws.path().join("driver.rs"),
+        "pub fn run_turn() {\n    prepare();\n    engine.step();\n    prepare();\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        ws.path().join("main.rs"),
+        "// run_turn drives everything\n\
+         pub fn boot() {\n    let s = \"run_turn\";\n    run_turn();\n}\n",
+    )
+    .unwrap();
+    let graph = CodeGraph::open(ws.path(), &dbdir.path().join("context.db")).unwrap();
+    graph.index_all().unwrap();
+    (ws, dbdir, graph)
+}
+
+/// `callees` (#335 B1): one frame per definition, listing the deduped callee
+/// names recorded inside its span — real structural call sites, name-only.
+#[test]
+fn callees_list_the_calls_inside_the_definitions_span() {
+    let (_ws, _db, graph) = call_fixture();
+    let frames = graph.callees("run_turn").unwrap();
+    assert_eq!(frames.len(), 1, "one definition, one frame");
+    let frame = &frames[0];
+
+    let label = frame.citation_label.as_deref().expect("citation mandatory");
+    assert!(
+        label.contains("run_turn") && label.contains("driver.rs:1"),
+        "label cites the definition: {label}"
+    );
+    let content = frame.content.as_deref().expect("callee listing");
+    assert!(content.contains("prepare"), "{content}");
+    assert!(content.contains("step"), "{content}");
+    // Two `prepare()` calls are one edge — deduped by name.
+    assert_eq!(content.matches("prepare").count(), 1, "{content}");
+    // The relations are name-based on purpose: no resolved file target.
+    assert!(
+        frame
+            .relations
+            .iter()
+            .all(|r| r.rel == "CALLS" && r.target_uri.starts_with("symbol:")),
+        "{:?}",
+        frame.relations
+    );
+    assert_eq!(frame.kind, FrameKind::Graph);
+    assert!(frame.has_valid_score());
+    assert!(
+        frame
+            .provenance
+            .iter()
+            .any(|p| p.by.as_deref() == Some(PROVIDER_ID)),
+        "code-graph provenance is mandatory"
+    );
+}
+
+/// `callers` (#335 B1): a reverse name lookup over recorded call sites —
+/// labeled by the enclosing definition, and structurally immune to the
+/// comment/string false hits `references` cannot exclude.
+#[test]
+fn callers_cite_the_enclosing_definition_and_skip_comments_and_strings() {
+    let (_ws, _db, graph) = call_fixture();
+    let frames = graph.callers("run_turn").unwrap();
+    assert_eq!(
+        frames.len(),
+        1,
+        "one real call site; the comment and the string literal are not calls: {:?}",
+        frames
+            .iter()
+            .map(|f| f.citation_label.as_deref().unwrap_or(&f.title))
+            .collect::<Vec<_>>()
+    );
+    let frame = &frames[0];
+    let label = frame.citation_label.as_deref().expect("citation mandatory");
+    assert!(
+        label.starts_with("fn boot (") && label.contains("main.rs:4"),
+        "the enclosing definition labels the call site: {label}"
+    );
+    let content = frame.content.as_deref().expect("quoted call line");
+    assert!(content.contains("run_turn()"), "{content}");
+    // Best-effort discipline: same weakest score band as `references`.
+    let reference_score = graph.references("run_turn").unwrap()[0].score;
+    assert_eq!(
+        frame.score, reference_score,
+        "callers must not claim more confidence than the reference scan"
+    );
+}
+
 /// The reference scan bounds what any ONE file may cost it: a file past the
 /// 400 KiB per-file ceiling is skipped outright — the ceiling is on the
 /// scan's read, not on indexing, so the oversized file is still in the graph.

@@ -1,9 +1,9 @@
 ---
 title: stella graph
-description: Query the code graph built by stella init — definitions, references, imports, importers, and neighbors.
+description: Query the code graph built by stella init — definitions, references, callees, callers, imports, importers, and neighbors.
 ---
 
-Ask the code graph structural questions about your workspace: where a symbol is defined, who references it, what a file imports, who imports it, or a file's immediate neighborhood. It is fully offline — it reads `.stella/private/codegraph.db` and needs no API key.
+Ask the code graph structural questions about your workspace: where a symbol is defined, who references it, what a definition calls, which call sites name it, what a file imports, who imports it, or a file's immediate neighborhood. It is fully offline — it reads `.stella/private/codegraph.db` and needs no API key.
 
 ## Synopsis
 
@@ -15,7 +15,7 @@ stella graph <op> <target>
 
 `stella graph` reads the code-graph index that [`stella init`](/docs/commands/init) builds at `<workspace>/.stella/private/codegraph.db`. Because it only reads that local index, it makes no model calls and needs no provider credential — it is instant and works on a plane.
 
-`<op>` is one of five operations, and `<target>` is interpreted according to the operation:
+`<op>` is one of seven operations, and `<target>` is interpreted according to the operation:
 
 <CardGrid size="md">
   <OptionCard name="definitions <symbol>">
@@ -23,6 +23,15 @@ stella graph <op> <target>
   </OptionCard>
   <OptionCard name="references <symbol>">
     Where is this symbol used? `<target>` is a symbol name.
+  </OptionCard>
+  <OptionCard name="callees <symbol>">
+    What does this definition call? Recorded call sites inside the definition's
+    span. `<target>` is a symbol name.
+  </OptionCard>
+  <OptionCard name="callers <symbol>">
+    Which call sites name this symbol? Best-effort — matched by name, so
+    same-name methods conflate, and the answer says so. `<target>` is a symbol
+    name.
   </OptionCard>
   <OptionCard name="imports <path>">
     What does this file import? `<target>` is a workspace-relative file path.
@@ -55,6 +64,14 @@ Find where a symbol is defined and who uses it:
 ```bash
 stella graph definitions resolve_provider_config
 stella graph references resolve_provider_config
+```
+
+Walk the call structure around a function — what it calls, and who calls it
+(callers is name-matched, so treat it as a shortlist, not proof):
+
+```bash
+stella graph callees run_turn
+stella graph callers run_turn
 ```
 
 Inspect a file's imports, its importers, and its neighborhood:

@@ -58,7 +58,16 @@ use crate::symbol::SymbolKind;
 use crate::walk::walk_indexable;
 
 /// The on-disk schema version stamped in `PRAGMA user_version`. Bump it in
-/// the same commit that changes the shape [`MIGRATION`] produces.
+/// the same commit as a **reshape** — an altered or backfilled column,
+/// anything the `IF NOT EXISTS` guard would silently skip on an existing
+/// store. A purely *additive* table or index is what convergence already
+/// expresses (the whole [`MIGRATION`] batch replays on every writer open),
+/// so it ships **without** a bump — bumping would make every older binary
+/// refuse a store a newer one touched
+/// ([`stella_store::durable::ensure_converged_schema_version`] fails closed
+/// on a future stamp) for no protection gained. Precedent: the #1214
+/// storage indexes and the #335 `code_graph_calls` table, both additive,
+/// both unbumped.
 const SCHEMA_VERSION: i64 = 1;
 
 /// The tables [`MIGRATION`] must have produced before the version is stamped.
@@ -68,6 +77,7 @@ const SCHEMA_TABLES: &[&str] = &[
     "code_graph_files",
     "code_graph_symbols",
     "code_graph_imports",
+    "code_graph_calls",
     "code_graph_storage_objects",
 ];
 
@@ -102,6 +112,17 @@ CREATE INDEX IF NOT EXISTS code_graph_symbols_name ON code_graph_symbols(name);
 CREATE INDEX IF NOT EXISTS code_graph_symbols_file ON code_graph_symbols(file_id);
 CREATE INDEX IF NOT EXISTS code_graph_imports_from ON code_graph_imports(from_file_id);
 CREATE INDEX IF NOT EXISTS code_graph_imports_to   ON code_graph_imports(to_path);
+-- Call sites (#335, B1): unresolved name-based edges. `callee_name` is the
+-- bare identifier at the call site; `line` is 1-based. `callers` filters on
+-- the name, `callees` on (file, line-range) — one index each.
+CREATE TABLE IF NOT EXISTS code_graph_calls (
+    id          INTEGER PRIMARY KEY,
+    file_id     INTEGER NOT NULL REFERENCES code_graph_files(id) ON DELETE CASCADE,
+    callee_name TEXT NOT NULL,
+    line        INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS code_graph_calls_name ON code_graph_calls(callee_name);
+CREATE INDEX IF NOT EXISTS code_graph_calls_file ON code_graph_calls(file_id, line);
 CREATE TABLE IF NOT EXISTS code_graph_storage_objects (
     id            INTEGER PRIMARY KEY,
     file_id       INTEGER NOT NULL REFERENCES code_graph_files(id) ON DELETE CASCADE,
@@ -173,6 +194,7 @@ pub struct IndexStats {
     pub files_pruned: usize,
     pub symbols: usize,
     pub imports: usize,
+    pub calls: usize,
 }
 
 /// One symbol row joined to its file — the shape every symbol-producing query
@@ -431,6 +453,10 @@ fn index_one(
         "DELETE FROM code_graph_imports WHERE from_file_id = ?1",
         params![file_id],
     )?;
+    tx.execute(
+        "DELETE FROM code_graph_calls WHERE file_id = ?1",
+        params![file_id],
+    )?;
 
     // `prepare_cached`, not `execute`: the row loops below run once per symbol
     // and once per edge, and `Connection::execute` re-prepares (and discards)
@@ -465,8 +491,17 @@ fn index_one(
             ])?;
         }
     }
+    {
+        let mut insert_call = tx.prepare_cached(
+            "INSERT INTO code_graph_calls(file_id, callee_name, line) VALUES(?1, ?2, ?3)",
+        )?;
+        for call in &parsed.calls {
+            insert_call.execute(params![file_id, call.callee, call.line])?;
+        }
+    }
     stats.symbols += parsed.symbols.len();
     stats.imports += edges.len();
+    stats.calls += parsed.calls.len();
 
     // Storage adapters (deep pass, spec §6): the same transaction that
     // replaced this file's symbols replaces its storage rows. Extraction is
@@ -819,6 +854,67 @@ pub(crate) fn importers_of(conn: &Connection, rel: &str) -> Result<Vec<String>, 
     )?;
     let rows = stmt.query_map(params![rel], |row| row.get::<_, String>(0))?;
     Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// One call site joined to its file — the row behind the `callers` reverse
+/// lookup.
+#[derive(Debug, Clone)]
+pub(crate) struct CallRow {
+    pub path: String,
+    pub line: u32,
+}
+
+/// The call sites recorded inside `rel`'s lines `start..=end` — the `callees`
+/// read (#335, B1). The span is a stored symbol span, so "what does this
+/// definition call" is one indexed range query, ordered by line.
+pub(crate) fn calls_in_span(
+    conn: &Connection,
+    rel: &str,
+    start_line: u32,
+    end_line: u32,
+) -> Result<Vec<crate::symbol::CallSite>, GraphError> {
+    let mut stmt = conn.prepare(
+        "SELECT c.callee_name, c.line \
+         FROM code_graph_calls c JOIN code_graph_files f ON f.id = c.file_id \
+         WHERE f.path = ?1 AND c.line BETWEEN ?2 AND ?3 \
+         ORDER BY c.line, c.callee_name",
+    )?;
+    let rows = stmt.query_map(params![rel, start_line, end_line], |row| {
+        Ok(crate::symbol::CallSite {
+            callee: row.get(0)?,
+            line: row.get(1)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// Up to `limit` call sites whose callee name is exactly `name` — the
+/// best-effort `callers` reverse lookup (#335, B1). Name-based: same-name
+/// methods on different types all match, which is the labeled honesty of
+/// this op. Path-then-line order keeps a truncated list stable.
+pub(crate) fn calls_of_name(
+    conn: &Connection,
+    name: &str,
+    limit: usize,
+) -> Result<Vec<CallRow>, GraphError> {
+    let mut stmt = conn.prepare(
+        "SELECT f.path, c.line \
+         FROM code_graph_calls c JOIN code_graph_files f ON f.id = c.file_id \
+         WHERE c.callee_name = ?1 ORDER BY f.path, c.line LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![name, limit as i64], |row| {
+        Ok(CallRow {
+            path: row.get(0)?,
+            line: row.get(1)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// Total indexed call sites across the whole tree.
+pub(crate) fn call_count(conn: &Connection) -> Result<usize, GraphError> {
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM code_graph_calls", [], |r| r.get(0))?;
+    Ok(count as usize)
 }
 
 /// Up to `limit` files that no resolved import edge points at — the
@@ -1310,6 +1406,45 @@ mod tests {
         index_tree(&mut conn, &root, &grammars).unwrap();
         let rows = storage_rows(&conn).unwrap();
         assert!(!rows.iter().any(|r| r.name == "payments"), "{rows:?}");
+    }
+
+    /// #335 B1: call sites persist per file, answer both reads (span and
+    /// reverse name), and prune with their file like every other row.
+    #[test]
+    fn call_sites_index_answer_both_reads_and_prune_with_their_file() {
+        let ws = tempdir().unwrap();
+        let dbdir = tempdir().unwrap();
+        let root = canon(&ws);
+        let db = dbdir.path().join("codegraph.db");
+        fs::write(
+            root.join("caller.rs"),
+            "pub fn outer() {\n    helper();\n    helper();\n    other();\n}\n\
+             pub fn separate() {\n    helper();\n}\n",
+        )
+        .unwrap();
+        let grammars = Grammars::load().unwrap();
+        let mut conn = open(&db).unwrap();
+        let stats = index_tree(&mut conn, &root, &grammars).unwrap();
+        assert_eq!(stats.calls, 4, "{stats:?}");
+        assert_eq!(call_count(&conn).unwrap(), 4);
+
+        // Span read: only the calls inside `outer`'s lines (1-5).
+        let in_outer = calls_in_span(&conn, "caller.rs", 1, 5).unwrap();
+        assert_eq!(in_outer.len(), 3, "{in_outer:?}");
+        assert!(in_outer.iter().any(|c| c.callee == "other"));
+
+        // Reverse name read, capped: `helper` is called three times.
+        let helper_calls = calls_of_name(&conn, "helper", 50).unwrap();
+        assert_eq!(helper_calls.len(), 3, "{helper_calls:?}");
+        assert!(helper_calls.iter().all(|c| c.path == "caller.rs"));
+        let capped = calls_of_name(&conn, "helper", 2).unwrap();
+        assert_eq!(capped.len(), 2, "the limit bounds the reverse lookup");
+
+        // Rows prune with the file (CASCADE), same as symbols and imports.
+        fs::remove_file(root.join("caller.rs")).unwrap();
+        index_tree(&mut conn, &root, &grammars).unwrap();
+        assert_eq!(call_count(&conn).unwrap(), 0);
+        assert!(calls_of_name(&conn, "helper", 50).unwrap().is_empty());
     }
 
     #[test]

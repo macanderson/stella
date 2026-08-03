@@ -15,8 +15,12 @@
 //! - **Indexes** Rust, TypeScript, TSX, JavaScript, Python, SQL, Go, Java, C,
 //!   and PHP (see [`Language`]): symbols (functions, methods,
 //!   structs/classes/enums/traits/interfaces; for SQL, tables/views/schema
-//!   enums — the rows the schema gate reads) and import edges
-//!   (`file → module/file`), via compile-time tree-sitter queries (L-L2).
+//!   enums — the rows the schema gate reads), import edges
+//!   (`file → module/file`), and **unresolved call sites** (#335 B1: the
+//!   callee *name* at each call — honest `callees` within a definition's
+//!   span, best-effort `callers` by reverse name lookup; no types, no trait
+//!   dispatch, no cross-file identity), via compile-time tree-sitter
+//!   queries (L-L2).
 //! - **Resolves** Python relative imports (`from . import x`,
 //!   `from ..pkg import y`), TS/JS relative specifiers (`./x`, `../y`,
 //!   `index.*`), and the literal-path imports of C (`#include "x.h"`) and PHP
@@ -73,7 +77,7 @@ pub use import::{ImportEdge, ImportKind};
 pub use lang::Language;
 pub use storage::{StorageExtract, StorageExtractor, StorageSnapshot};
 pub use store::IndexStats;
-pub use symbol::{Symbol, SymbolKind};
+pub use symbol::{CallSite, Symbol, SymbolKind};
 #[doc(hidden)]
 pub use watch::WatchInjector;
 
