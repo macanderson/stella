@@ -140,6 +140,40 @@ impl Registry {
         render_channel(&inputs, channel, budget_chars)
     }
 
+    /// Render the volatile channel for **one turn**, keeping only records whose
+    /// `applies_to` matches the turn's facts.
+    ///
+    /// This is where `applies_to` finally earns its keep as a selector (see
+    /// [`super::select`]): an unscoped record still renders on every turn, a
+    /// scoped one only when the turn names a matching path, task, or keyword.
+    /// The cached channel never goes through here — `must`/`should` records are
+    /// unconditional by contract and their bytes must not vary per turn.
+    ///
+    /// A record deselected here appears in neither `rendered` nor `dropped`:
+    /// `dropped` is the budget's silent-gap ledger (`NotRendered`), and a record
+    /// that does not apply this turn was never a candidate the budget could lose.
+    pub fn render_volatile_for_turn(
+        &self,
+        facts: &super::select::TurnFacts<'_>,
+        budget_chars: Option<usize>,
+    ) -> RenderedChannel {
+        let inputs: Vec<RenderInput<'_>> = self
+            .entries
+            .iter()
+            .filter(|entry| {
+                let applies_to = entry
+                    .record
+                    .record
+                    .steering
+                    .as_ref()
+                    .and_then(|steering| steering.applies_to.as_ref());
+                super::select::applies_this_turn(applies_to, facts)
+            })
+            .map(Entry::render_input)
+            .collect();
+        render_channel(&inputs, Channel::Volatile, budget_chars)
+    }
+
     /// The entry a `^handle` names, for `stella context explain`.
     pub fn by_handle(&self, handle: &str) -> Option<&Entry> {
         let handle = handle.trim_start_matches('^');

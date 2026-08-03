@@ -92,7 +92,7 @@ use private_state::resolve_context_db_path;
 use projection::{is_suppressed_local_frame, project_recalled_frame};
 pub use recall::inject_recall_block;
 #[cfg(test)]
-use recall::{ab_control_turn, goal_path_anchors, render_context_section};
+use recall::{ab_control_turn, goal_path_anchors, render_context_section, turn_path_tokens};
 #[cfg(test)]
 pub(crate) use skill_files::load_workspace_skills;
 pub(crate) use skill_files::{
@@ -251,16 +251,19 @@ pub struct SessionMemory {
     /// this is off the learning loop runs exactly the lexical path that ships
     /// today and writes nothing to the lifecycle ledger.
     lifecycle_enabled: bool,
-    /// The volatile context-record channel — `may`/`info` records and anything the
-    /// truth sweep demoted (epic #897).
+    /// The resolved record registry behind the volatile context-record channel —
+    /// `may`/`info` records and anything the truth sweep demoted (epic #897).
     ///
-    /// It rides the recall block rather than the cached system prefix because that
-    /// is what `force` means: `must`/`should` are unconditional and cacheable,
-    /// facts are only worth tokens when they apply. Set once per session by
+    /// The channel rides the recall block rather than the cached system prefix
+    /// because that is what `force` means: `must`/`should` are unconditional and
+    /// cacheable, facts are only worth tokens when they apply. The *registry* is
+    /// stored rather than a pre-rendered string because rendering is per turn:
+    /// `applies_to` selection needs the turn's prompt to decide which scoped
+    /// records are worth their tokens right now. Set once per session by
     /// [`Self::open_for_session`] from the already-resolved rule registry —
-    /// re-deriving it here would re-walk the rule directories and re-run the truth
-    /// sweep on every turn.
-    record_channel: Option<String>,
+    /// re-deriving it here would re-walk the rule directories and re-run the
+    /// truth sweep on every turn.
+    record_registry: Option<stella_core::records::Registry>,
 }
 
 impl SessionMemory {
@@ -341,15 +344,7 @@ impl SessionMemory {
             warn,
             authority.project_prompts_allowed,
         )?;
-        memory.set_record_channel(
-            active_rules
-                .registry()
-                .render(
-                    stella_core::records::Channel::Volatile,
-                    Some(recall::RECORD_CHANNEL_BUDGET),
-                )
-                .text,
-        );
+        memory.set_record_registry(active_rules.registry().clone());
         Some(memory)
     }
 
@@ -390,7 +385,7 @@ impl SessionMemory {
                     suppression::suppression_reader(workspace_root, store.clone()),
                 );
                 Some(Self {
-                    record_channel: None,
+                    record_registry: None,
                     store,
                     host,
                     domains,

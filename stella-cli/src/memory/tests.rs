@@ -54,6 +54,28 @@ fn goal_path_anchors_are_capped() {
     );
 }
 
+#[test]
+fn turn_path_tokens_takes_path_shaped_tokens_without_a_disk_check() {
+    // Bare file names qualify: a record scoped to `deny.toml` is about the
+    // topic, and the topic does not require the file to exist from here.
+    assert_eq!(
+        turn_path_tokens("add an MIT dep, then update deny.toml."),
+        vec!["deny.toml"]
+    );
+    // `/` paths, `file:line` spellings, and `./` prefixes normalize.
+    assert_eq!(
+        turn_path_tokens("see ./src/api/mod.rs:42 and src/lib.rs"),
+        vec!["src/api/mod.rs", "src/lib.rs"]
+    );
+    // Prose extracts nothing; escapes never qualify; duplicates collapse.
+    assert!(turn_path_tokens("no paths here at all").is_empty());
+    assert!(turn_path_tokens("read ../../etc/passwd or /etc/passwd").is_empty());
+    assert_eq!(
+        turn_path_tokens("deny.toml then deny.toml again"),
+        vec!["deny.toml"]
+    );
+}
+
 fn msg(role: MessageRole, content: &str) -> CompletionMessage {
     CompletionMessage {
         role,
@@ -458,7 +480,29 @@ async fn the_pipeline_recall_block_carries_skills_and_records_but_never_frames()
         })
         .await
         .unwrap();
-    memory.set_record_channel("Volatile records:\n- staging URL: https://stage.example".into());
+    let record_file = stella_core::rules::RuleFile {
+        path: ".stella/rules/ctx.acme.staging.toml".to_string(),
+        contents: r#"
+schema = "context-record/v0.1"
+set_id = "acme"
+
+[[record]]
+lineage_id = "ctx.acme.staging-url"
+kind = "preference"
+statement = "The staging URL is https://stage.example."
+status = "active"
+origin = "user"
+
+[record.steering]
+force = "may"
+"#
+        .to_string(),
+    };
+    memory.set_record_registry(stella_core::records::registry::load(
+        &[],
+        &[record_file],
+        &stella_core::records::Facts::default(),
+    ));
 
     let full = memory
         .recall_block("review the database migrations")

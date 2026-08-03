@@ -49,15 +49,35 @@ impl RecalledBlock {
 pub(super) const RECORD_CHANNEL_BUDGET: usize = 2_000;
 
 impl SessionMemory {
-    /// Hand this session the volatile record channel resolved at assembly.
+    /// Hand this session the resolved record registry behind the volatile
+    /// channel.
     ///
     /// Private to the memory module, and reachable only through
-    /// [`SessionMemory::open_for_session`], which renders the channel from the
-    /// rule registry the driver already resolved — so recall never re-walks the
-    /// rule directories or re-runs the truth sweep, and no session surface can
-    /// open a memory that skips this step.
-    pub(super) fn set_record_channel(&mut self, block: String) {
-        self.record_channel = (!block.trim().is_empty()).then_some(block);
+    /// [`SessionMemory::open_for_session`], which passes the rule registry the
+    /// driver already resolved — so recall never re-walks the rule directories
+    /// or re-runs the truth sweep, and no session surface can open a memory
+    /// that skips this step. The registry is stored rather than a rendered
+    /// string because rendering happens per turn: `applies_to` selection needs
+    /// each turn's prompt to decide which scoped records apply.
+    pub(super) fn set_record_registry(&mut self, registry: stella_core::records::Registry) {
+        self.record_registry = (!registry.entries.is_empty()).then_some(registry);
+    }
+
+    /// This turn's volatile record section: the registry's volatile channel,
+    /// selected by `applies_to` against the turn's prompt and the paths it
+    /// names. `None` when nothing applies — an empty section would only burn
+    /// tokens (the channel is opt-out by emptiness, not by flag).
+    fn turn_record_section(&self, prompt: &str) -> Option<String> {
+        let registry = self.record_registry.as_ref()?;
+        let paths = turn_path_tokens(prompt);
+        let facts = stella_core::records::TurnFacts {
+            text: prompt,
+            paths: &paths,
+        };
+        let text = registry
+            .render_volatile_for_turn(&facts, Some(RECORD_CHANNEL_BUDGET))
+            .text;
+        (!text.trim().is_empty()).then(|| text.trim_start().to_string())
     }
 
     /// Build the volatile recalled-context block for a prompt: relevant
@@ -130,9 +150,11 @@ impl SessionMemory {
 
         // The volatile context-record channel (epic #897). Same channel as the
         // memories above and for the same reason: a fact about a staging URL costs
-        // tokens on every turn and is worth them on almost none.
-        if let Some(section) = self.record_channel.as_deref().filter(|s| !s.is_empty()) {
-            sections.push(section.trim_start().to_string());
+        // tokens on every turn and is worth them on almost none — which is why it
+        // is selected per turn: a record scoped by `applies_to` renders only when
+        // this prompt names a matching path, task, or keyword.
+        if let Some(section) = self.turn_record_section(prompt) {
+            sections.push(section);
         }
 
         RecalledBlock {
@@ -187,8 +209,8 @@ impl SessionMemory {
         {
             sections.push(section);
         }
-        if let Some(section) = self.record_channel.as_deref().filter(|s| !s.is_empty()) {
-            sections.push(section.trim_start().to_string());
+        if let Some(section) = self.turn_record_section(prompt) {
+            sections.push(section);
         }
         (!sections.is_empty()).then(|| format!("{RECALL_MARKER}\n\n{}", sections.join("\n\n")))
     }
@@ -335,6 +357,46 @@ impl SessionMemory {
 /// [`SessionMemory`] it lives on.
 pub(super) fn ab_control_turn(turn: u32, rate: u32) -> bool {
     rate > 1 && turn.is_multiple_of(rate)
+}
+
+/// Path-shaped tokens the prompt names (`deny.toml`, `src/api/mod.rs`), for
+/// `applies_to` path matching. Unlike [`goal_path_anchors`] below this does
+/// NOT require the file to exist: a record scoped to `deny.toml` is about the
+/// *topic* the turn raises, and the turn that says "add an MIT dep to
+/// deny.toml" is exactly when it applies — whether or not the working
+/// directory is the workspace root, and even before the file exists. A
+/// token qualifies with a `/` (a path) or an interior `.` (a file name);
+/// noise tokens cost nothing because they only matter when a record's
+/// pattern matches them, and a pattern matching "v0.1.2" is a pattern the
+/// author wrote to match it. `file:line` spellings anchor the file, a
+/// leading `./` is normalized off, and escapes are rejected.
+pub(super) fn turn_path_tokens(goal: &str) -> Vec<String> {
+    const MAX_TOKENS: usize = 32;
+    let mut seen = std::collections::HashSet::new();
+    let mut tokens = Vec::new();
+    for token in goal.split(|c: char| c.is_whitespace() || "\"'`()[]{}<>,;!?".contains(c)) {
+        let token = token.trim_end_matches(['.', ':']);
+        let token = token.split(':').next().unwrap_or(token);
+        let token = token.strip_prefix("./").unwrap_or(token);
+        let path_shaped = token.contains('/')
+            || token
+                .find('.')
+                .is_some_and(|at| at > 0 && at + 1 < token.len());
+        if !path_shaped
+            || token.len() > 256
+            || token.split('/').any(|seg| seg == "..")
+            || token.starts_with('/')
+        {
+            continue;
+        }
+        if seen.insert(token.to_string()) {
+            tokens.push(token.to_string());
+            if tokens.len() == MAX_TOKENS {
+                break;
+            }
+        }
+    }
+    tokens
 }
 
 /// Workspace files the goal names verbatim (`src/driver.rs`,
