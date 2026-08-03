@@ -82,6 +82,11 @@ struct TranscriptCache {
     file_gen: u64,
     expand_thinking: bool,
     width: usize,
+    /// Leading entries already in the terminal's scrollback at fold time
+    /// ([`UiState::scrollback_entries`]). Its own term because a flush changes
+    /// what the pane renders without changing the transcript's length — the
+    /// pane gets *shorter* while `len` grows, so no other term catches it.
+    scrollback: usize,
     lines: Vec<Line<'static>>,
 }
 
@@ -126,6 +131,27 @@ pub struct UiState {
     pub enter_submits: bool,
     /// Viewport sizes from the last render (for scroll clamping).
     pub metrics: ViewportMetrics,
+    /// Lay the frame out for a screen reader rather than for an eye.
+    ///
+    /// A reader walks the terminal grid **row by row**, so the side-by-side
+    /// transcript|files split — which is the fastest layout to scan visually —
+    /// is the worst one to listen to: every row interleaves half a sentence of
+    /// transcript with half a filename. With this set the same panels stack in
+    /// one column, so a row is one thought and reading order matches document
+    /// order. Set by [`crate::shell::RunOptions::screen_reader`]; the deck
+    /// never sets it (it is not this surface's flag to read).
+    pub screen_reader: bool,
+    /// How many leading transcript entries the shell has already written into
+    /// the terminal's own scrollback, and which the live pane must therefore
+    /// not draw again.
+    ///
+    /// Only the screen-reader shell moves it off zero (see
+    /// [`crate::shell::RunOptions::screen_reader`]): there, a settled entry
+    /// becomes ordinary terminal output — written once, announced once,
+    /// reachable with the reader's review cursor — and the pane keeps only the
+    /// sentence still being written. Everywhere else it stays 0 and the pane
+    /// renders the whole transcript exactly as before.
+    pub scrollback_entries: usize,
     /// Memoized transcript render (see [`TranscriptCache`]). Private: the render
     /// path reads it only through [`UiState::transcript_lines`].
     transcript_cache: Option<TranscriptCache>,
@@ -147,6 +173,8 @@ impl Default for UiState {
             thinking_expanded: false,
             enter_submits: false,
             metrics: ViewportMetrics::default(),
+            screen_reader: false,
+            scrollback_entries: 0,
             transcript_cache: None,
         }
     }
@@ -182,6 +210,7 @@ impl UiState {
         // trailing entry could leave the total unchanged and the cache stale.
         let streaming_len = model.streaming_text.len();
         let file_gen: u64 = model.files.iter().map(|f| u64::from(f.changes)).sum();
+        let scrollback = self.scrollback_entries;
         let fresh = self.transcript_cache.as_ref().is_some_and(|c| {
             c.len == len
                 && c.trailing_stream_len == trailing_stream_len
@@ -189,9 +218,10 @@ impl UiState {
                 && c.file_gen == file_gen
                 && c.expand_thinking == expand_thinking
                 && c.width == width
+                && c.scrollback == scrollback
         });
         if !fresh {
-            let lines = crate::render::transcript_lines(model, expand_thinking, width);
+            let lines = crate::render::transcript_lines(model, scrollback, expand_thinking, width);
             self.transcript_cache = Some(TranscriptCache {
                 len,
                 trailing_stream_len,
@@ -199,6 +229,7 @@ impl UiState {
                 file_gen,
                 expand_thinking,
                 width,
+                scrollback,
                 lines,
             });
         }

@@ -1620,6 +1620,7 @@ class StellaAgent(BaseInstalledAgent):
             report = build_exit_cause_report(
                 return_code=SIGKILL_EXIT_CODE,
                 container_state=probe.get("container_state"),
+                container_absent=bool(probe.get("container_absent")),
                 memory_events_text=probe.get("memory_events_text"),
                 events=events,
                 probe_errors=list(probe.get("errors") or []),

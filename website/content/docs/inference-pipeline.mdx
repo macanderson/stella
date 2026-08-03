@@ -224,6 +224,16 @@ mid-run — and losing candidates leave no residue. Your index and stash are
 never touched. Outside a git repository, candidates degrade to sharing the
 working tree, with a loud warning.
 
+Isolated candidates run **concurrently**, so N candidates cost N× the money but
+roughly the wall clock of the slowest one rather than the sum of all N. The
+turn's budget is divided between the candidates in flight rather than handed to
+each of them, so a `--budget` still bounds the fan-out as a whole. While several
+models are writing to one event stream the live text preview is paused — each
+candidate's full answer, its tool calls and its file changes still arrive, and
+the run says so when it starts. Candidates sharing the working tree (the
+non-git degradation above) always run one at a time: they would otherwise
+overwrite each other's files.
+
 ## End to end: one verified run
 
 ```bash

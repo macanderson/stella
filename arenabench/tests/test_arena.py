@@ -275,6 +275,41 @@ class TestMetrics:
         assert metrics.resolved is False
         assert metrics.failure == "NonZeroAgentExitCodeError"
 
+    def test_atif_only_trials_read_the_real_atif_field_names(self, tmp_path: Path):
+        """The trajectory fallback is the ONLY source for a non-Stella agent.
+
+        ATIF spells these ``total_prompt_tokens`` / ``total_completion_tokens``;
+        the plausible-looking ``total_input_tokens`` / ``total_output_tokens``
+        do not exist in the format. Reading the wrong key does not raise — it
+        returns zero, so a Claude Code arm that really spent 40k tokens and $2
+        would post 0 tokens and $0.00 and win every efficiency dimension on the
+        scoreboard. Wrong-but-plausible is exactly the failure a benchmark tool
+        must not have.
+        """
+        trial_dir = tmp_path / "job" / "t__1"
+        (trial_dir / "agent").mkdir(parents=True)
+        (trial_dir / "agent" / "trajectory.json").write_text(
+            json.dumps(
+                {
+                    "steps": [{"tool_calls": [{"name": "bash"}]}],
+                    "final_metrics": {
+                        "total_prompt_tokens": 40_000,
+                        "total_completion_tokens": 3_200,
+                        "total_cached_tokens": 31_000,
+                        "total_cost_usd": 2.15,
+                        "extra": {"total_cache_write_tokens": 4_100},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        metrics = MetricsReader().read(trial_dir, "t")
+        assert metrics.tokens_in == 40_000
+        assert metrics.tokens_out == 3_200
+        assert metrics.cache_read == 31_000
+        assert metrics.cache_write == 4_100
+        assert metrics.total_cost == pytest.approx(2.15)
+
     def test_the_cache_is_invalidated_when_the_file_grows(self, trial: Path):
         reader = MetricsReader()
         first = reader.read(trial, "fix-git")
@@ -496,3 +531,91 @@ def test_every_registered_agent_declares_how_it_launches():
     for slug in AGENTS:
         seat = Contestant.from_json({"name": slug, "agent": slug, "engine": {"model": "m"}})
         assert launch_flags(seat), slug
+
+
+class TestRecorder:
+    """The recorder is optional, so its failures must stay cheap and quiet.
+
+    Nothing here starts a container. Both behaviours under test are decisions
+    the supervisor makes *before* it shells out, which is exactly why they are
+    reachable without Docker.
+    """
+
+    def _supervisor(self, tmp_path: Path):
+        from arenabench.recorder import RecorderSupervisor
+
+        return RecorderSupervisor(jobs_root=tmp_path, jobs=["job"])
+
+    def test_the_task_platform_pin_is_not_inherited_by_the_recorder(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A benchmark host exports ``DOCKER_DEFAULT_PLATFORM=linux/amd64``
+        because Terminal-Bench task images publish amd64 only. The recorder is
+        built locally for the host's own architecture and never runs task code,
+        so inheriting the pin sends Docker looking for an amd64 variant of an
+        arm64 image — which it cannot find locally and then tries to *pull*
+        from a registry that has no such repository. The operator sees "image
+        not found" and goes hunting for a missing image that is sitting right
+        there.
+        """
+        monkeypatch.setenv("DOCKER_DEFAULT_PLATFORM", "linux/amd64")
+        monkeypatch.setenv("ARENA_UNRELATED", "keep-me")
+
+        env = self._supervisor(tmp_path)._docker_env()
+
+        assert "DOCKER_DEFAULT_PLATFORM" not in env
+        # Scrubbing one variable must not amount to running with a bare
+        # environment: Docker still needs DOCKER_HOST, PATH and friends.
+        assert env["ARENA_UNRELATED"] == "keep-me"
+
+    def test_the_ambient_environment_is_not_mutated(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """The pin is dropped from a *copy*. Popping it from ``os.environ``
+        itself would silently unpin every task container started afterwards,
+        turning a recorder fix into a benchmark-integrity bug."""
+        import os
+
+        monkeypatch.setenv("DOCKER_DEFAULT_PLATFORM", "linux/amd64")
+        self._supervisor(tmp_path)._docker_env()
+        assert os.environ["DOCKER_DEFAULT_PLATFORM"] == "linux/amd64"
+
+    def test_a_trial_that_cannot_be_filmed_is_abandoned_not_retried_forever(
+        self, tmp_path: Path
+    ):
+        """The watcher polls every two seconds for the life of the trial, so an
+        unrecoverable start failure is not one error — it is one error per poll
+        for as long as the trial runs, each a registry round-trip, scrolling
+        the log an operator is watching the match in."""
+        supervisor = self._supervisor(tmp_path)
+        trial_dir = tmp_path / "job" / "t__1"
+
+        for _ in range(supervisor.max_start_attempts - 1):
+            supervisor._record_failure(trial_dir, "no such image")
+            assert trial_dir not in supervisor._finished
+
+        supervisor._record_failure(trial_dir, "no such image")
+        assert trial_dir in supervisor._finished
+
+        # `_finished` is the short-circuit `_consider` checks first, so being
+        # in it is what actually stops the retries.
+        (trial_dir / "agent").mkdir(parents=True)
+        supervisor._start_container = lambda *a, **k: pytest.fail(  # type: ignore[method-assign]
+            "gave up on this trial but tried to start it again"
+        )
+        supervisor._consider(trial_dir, "job")
+
+    def test_a_recovered_trial_starts_its_failure_count_over(self, tmp_path: Path):
+        """The cap counts *consecutive* failures. A trial that starts on the
+        second attempt and later needs restarting should not be one strike from
+        being abandoned for the rest of the match."""
+        supervisor = self._supervisor(tmp_path)
+        trial_dir = tmp_path / "job" / "t__1"
+
+        supervisor._record_failure(trial_dir, "transient")
+        assert supervisor._failures[trial_dir] == 1
+
+        supervisor._failures.pop(trial_dir, None)  # what a successful start does
+        supervisor._record_failure(trial_dir, "transient")
+        assert supervisor._failures[trial_dir] == 1
+        assert trial_dir not in supervisor._finished

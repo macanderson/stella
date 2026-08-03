@@ -230,11 +230,20 @@ class MetricsReader:
                 )
             final = trajectory.get("final_metrics")
             if isinstance(final, dict):
-                metrics.tokens_in = int(final.get("total_input_tokens") or 0)
-                metrics.tokens_out = int(final.get("total_output_tokens") or 0)
+                # ATIF spells these `total_prompt_tokens` /
+                # `total_completion_tokens`. The `total_input_*` / `total_output_*`
+                # spellings do not exist in the format, and reading them silently
+                # yields zero — so an agent that publishes only a trajectory
+                # (i.e. every non-Stella contestant) would score a real run at
+                # 0 tokens and $0 and look astonishingly efficient.
+                metrics.tokens_in = int(final.get("total_prompt_tokens") or 0)
+                metrics.tokens_out = int(final.get("total_completion_tokens") or 0)
                 metrics.cache_read = int(final.get("total_cached_tokens") or 0)
-                metrics.cache_write = int(final.get("total_cache_write_tokens") or 0)
                 metrics.total_cost = float(final.get("total_cost_usd") or 0.0)
+                # Cache writes ride in `extra`, not on the metrics object.
+                extra = final.get("extra")
+                if isinstance(extra, dict):
+                    metrics.cache_write = int(extra.get("total_cache_write_tokens") or 0)
 
         # Stella's own stream is richer and current, so it wins where it speaks.
         if events is not None:

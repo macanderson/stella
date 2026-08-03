@@ -172,7 +172,7 @@ fn system_notice(text: String) -> Inbound {
 /// `OXAGEN_DEBUG` is accepted as a deprecated alias for one release: the
 /// user-facing env surface is `STELLA_*` everywhere else (88 names), and this
 /// was the only runtime toggle stranded in the pre-rename namespace.
-fn debug_log_path() -> Option<PathBuf> {
+pub(crate) fn debug_log_path() -> Option<PathBuf> {
     let requested = std::env::var_os("STELLA_DEBUG").or_else(|| std::env::var_os("OXAGEN_DEBUG"));
     if requested.is_none_or(|v| v.is_empty() || v == "0") {
         return None;

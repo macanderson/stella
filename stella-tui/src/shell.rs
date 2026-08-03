@@ -26,8 +26,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crossterm::event::{self, Event, KeyEventKind};
-use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use ratatui::text::{Line, Text};
+use ratatui::widgets::{Paragraph, Widget};
+use ratatui::{Terminal, TerminalOptions, Viewport};
 use stella_protocol::AgentEvent;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
@@ -35,7 +37,7 @@ use crate::composer::{Composer, SlashCommand};
 use crate::input::UserInput;
 use crate::model::SessionModel;
 use crate::render::render;
-use crate::term::{PanicHookGuard, TerminalGuard};
+use crate::term::{PanicHookGuard, Screen, TerminalGuard};
 use crate::theme;
 use crate::ui::{ShellAction, UiState, handle_key, ingest};
 
@@ -55,6 +57,25 @@ pub struct RunOptions {
     /// keeps working (L-T2) — turn on only for an explicitly mouse-driven,
     /// keyboard-degradable feature.
     pub mouse_capture: bool,
+    /// Run the surface the way a screen reader can actually read it. Set by
+    /// `stella --simple` (#936); see [`run`] for what it changes.
+    ///
+    /// The alternate screen is the root of the problem it solves: it is a
+    /// separate grid that a full-repaint app owns and that vanishes on exit,
+    /// so a reader sees a rectangle of cells being rewritten wholesale every
+    /// frame with no notion of "a new line appeared". Drawing on the normal
+    /// screen instead makes finished transcript rows ordinary terminal
+    /// output — announced as they arrive, and still there afterwards.
+    ///
+    /// Three things follow from it, and they are one decision, not three:
+    /// the session draws **inline** on the user's own screen instead of on
+    /// the alternate one; each settled transcript entry is written into the
+    /// terminal's scrollback as ordinary output, exactly once; and the panels
+    /// stack in a single column so reading order matches document order
+    /// ([`crate::ui::UiState::screen_reader`]). Mouse capture is forced off
+    /// regardless of [`Self::mouse_capture`] — a captured mouse takes the
+    /// selection away from the assistive technology that needs it.
+    pub screen_reader: bool,
 }
 
 impl Default for RunOptions {
@@ -64,8 +85,156 @@ impl Default for RunOptions {
             paste_line_threshold: crate::composer::DEFAULT_PASTE_LINE_THRESHOLD,
             debug_log_path: None,
             mouse_capture: false,
+            screen_reader: false,
         }
     }
+}
+
+/// Rows the inline viewport reserves in screen-reader mode: the HUD (3), a
+/// live tail of the transcript plus the files list, and the composer (3).
+/// Everything older has already moved into scrollback, so this is a live
+/// working area rather than the session's whole history — it does not need to
+/// be large, and a smaller stable region is a quieter one for a reader.
+const INLINE_VIEWPORT_ROWS: u16 = 14;
+
+/// How tall the inline viewport should be on a terminal of `terminal_rows`.
+///
+/// One row is always left above it whenever the terminal has one to spare:
+/// the viewport is anchored to the cursor's row, and claiming the entire
+/// screen would leave `insert_before` nowhere to put a line — every flush
+/// would scroll the whole screen instead of appending above a stable region.
+///
+/// There is deliberately no lower bound beyond one row. A floor could only be
+/// honoured by claiming rows the terminal does not have, which is the one
+/// outcome this must never produce; a terminal too short for the full working
+/// area gets a cramped one, not a broken flush.
+fn inline_viewport_rows(terminal_rows: u16) -> u16 {
+    // `clamp(1, ..)` rather than `.min().max()`: same answer, and clippy is
+    // right that spelling the bounds out together makes the (constant, never
+    // inverted) ordering obvious at the call site.
+    terminal_rows
+        .saturating_sub(1)
+        .clamp(1, INLINE_VIEWPORT_ROWS)
+}
+
+/// Which screen this session draws on.
+///
+/// A screen-reader session is never allowed the alternate one: it is the
+/// whole reason the surface exists (see [`Screen`]), so it is not a
+/// preference the caller can combine away.
+fn screen_for(opts: &RunOptions) -> Screen {
+    if opts.screen_reader {
+        Screen::Normal
+    } else {
+        Screen::Alternate
+    }
+}
+
+/// Whether this session captures the mouse.
+///
+/// [`RunOptions::mouse_capture`] is a request, not a decision: a screen-reader
+/// session refuses it. Mouse capture disables the terminal's own selection,
+/// and selection is how several assistive technologies read a terminal — so
+/// honouring the request would take away the thing the surface exists to
+/// provide.
+fn mouse_capture_enabled(opts: &RunOptions) -> bool {
+    opts.mouse_capture && !opts.screen_reader
+}
+
+/// How many leading transcript entries are safe to move into scrollback.
+///
+/// Everything but the last: [`SessionModel`] coalesces streaming deltas into
+/// the **trailing** entry, so it is the only one that can still grow. Flushing
+/// it would put half a sentence into scrollback and then, once it finished
+/// growing, put the whole sentence there again — a screen reader would read
+/// the fragment and the sentence as two separate utterances.
+///
+/// At teardown the caller flushes the remainder ([`flush_settled`] with
+/// `include_trailing`), because by then nothing can grow.
+fn settled_entry_count(transcript_len: usize, include_trailing: bool) -> usize {
+    if include_trailing {
+        transcript_len
+    } else {
+        transcript_len.saturating_sub(1)
+    }
+}
+
+/// The rendered lines for transcript entries `from..to`, wrapped to `width`.
+///
+/// `live` is `false` for every entry: liveness is the tail-follow affordance
+/// for a thought still being written, and nothing in this range is still being
+/// written — that is what makes it flushable at all.
+fn scrollback_lines(
+    model: &SessionModel,
+    from: usize,
+    to: usize,
+    expand_thinking: bool,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let mut out = Vec::new();
+    for entry in &model.transcript[from.min(to)..to] {
+        crate::render::entry_lines(
+            entry,
+            &model.files,
+            expand_thinking,
+            expand_thinking,
+            false,
+            width,
+            &mut out,
+        );
+    }
+    out
+}
+
+/// Move every newly-settled transcript entry into the terminal's scrollback
+/// and record that it is there.
+///
+/// This is the whole accessibility mechanism. `insert_before` writes the lines
+/// **above** the inline viewport, so they are ordinary terminal output: a
+/// screen reader announces them once as they arrive, the reader's review
+/// cursor can walk back through them, and the user's own scrollback keys
+/// reach them. The alternative — leaving them in a pane that repaints every
+/// frame — gives a reader a rectangle of cells that changes wholesale several
+/// times a second and no notion of "a new line appeared".
+///
+/// Bumping [`UiState::scrollback_entries`] is what stops the live pane from
+/// drawing the same entries again; the two must move together or the session
+/// is announced twice.
+fn flush_settled<B>(
+    terminal: &mut Terminal<B>,
+    model: &SessionModel,
+    ui: &mut UiState,
+    color_mode: theme::ColorMode,
+    include_trailing: bool,
+) -> io::Result<()>
+where
+    B: ratatui::backend::Backend<Error = io::Error>,
+{
+    let settled = settled_entry_count(model.transcript.len(), include_trailing);
+    if settled <= ui.scrollback_entries {
+        return Ok(());
+    }
+    let width = terminal.size()?.width;
+    let lines = scrollback_lines(
+        model,
+        ui.scrollback_entries,
+        settled,
+        ui.thinking_expanded,
+        width as usize,
+    );
+    ui.scrollback_entries = settled;
+    let height = match u16::try_from(lines.len()) {
+        Ok(0) => return Ok(()),
+        Ok(h) => h,
+        // A single settled entry cannot plausibly wrap to 65k rows, but the
+        // cast must not wrap around into a tiny viewport if it ever did.
+        Err(_) => u16::MAX,
+    };
+    terminal.insert_before(height, |buf| {
+        Paragraph::new(Text::from(lines)).render(buf.area, buf);
+        theme::apply_theme(buf, color_mode);
+        theme::degrade_buffer(buf, color_mode);
+    })
 }
 
 /// A best-effort structured debug log (L-T8). Never panics and never fails the
@@ -175,10 +344,49 @@ pub async fn run(
 
     // The hook shares the guard's state so a panic restores the terminal even
     // in abort builds, where Drop never runs (see `crate::term`).
-    let term_guard = TerminalGuard::enter(opts.mouse_capture)?;
+    // Screen-reader mode owns both of these (see `screen_for` /
+    // `mouse_capture_enabled` for why neither is negotiable).
+    let term_guard = TerminalGuard::enter(mouse_capture_enabled(&opts), screen_for(&opts))?;
     let _hook_guard = PanicHookGuard::install(opts.debug_log_path.clone(), &term_guard);
 
-    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    // `inline` is the load-bearing bit, not `opts.screen_reader`: it records
+    // whether the inline viewport was actually obtained, and the scrollback
+    // flush is gated on it. `insert_before` is a silent no-op on any other
+    // viewport, so flushing against one would advance the "already in
+    // scrollback" counter while writing nothing — entries would leave the
+    // live pane and land nowhere. The counter must only ever move when the
+    // lines really were written.
+    let (mut terminal, inline) = match opts.screen_reader {
+        // An inline viewport draws in place and leaves everything above it
+        // alone, which is what makes `insert_before` — and therefore the
+        // whole scrollback path in `flush_settled` — possible.
+        true => {
+            let rows =
+                inline_viewport_rows(crossterm::terminal::size().map_or(24, |(_, rows)| rows));
+            let options = TerminalOptions {
+                viewport: Viewport::Inline(rows),
+            };
+            match Terminal::with_options(CrosstermBackend::new(io::stdout()), options) {
+                Ok(terminal) => (terminal, true),
+                // Anchoring an inline viewport means asking the terminal
+                // where the cursor is (a DSR report) and waiting for the
+                // answer. Every real emulator answers; some minimal ones and
+                // some harnesses never do, and the read times out. That must
+                // degrade rather than refuse to start — but it degrades to a
+                // full-viewport draw on the user's OWN screen, never to the
+                // alternate one, because the alternate screen is the thing
+                // this surface exists to avoid.
+                Err(error) => {
+                    debug.note(&format!(
+                        "inline viewport unavailable ({error}); drawing full-screen without \
+                         scrollback"
+                    ));
+                    (Terminal::new(CrosstermBackend::new(io::stdout()))?, false)
+                }
+            }
+        }
+        false => (Terminal::new(CrosstermBackend::new(io::stdout()))?, false),
+    };
     // Detected once (see `theme::color_mode`) and threaded through the draw
     // loop below, rather than touching every `theme::TOKEN` call site in
     // `render.rs`/`textline.rs`/the view modules.
@@ -192,6 +400,24 @@ pub async fn run(
     // Enter semantics follow the terminal's actual capability (see
     // `crate::term::TerminalGuard::kitty` and `crate::composer::classify_enter`).
     ui.enter_submits = !term_guard.kitty();
+    ui.screen_reader = opts.screen_reader;
+    // A degraded screen-reader session must say so. The whole promise of the
+    // surface is that finished messages become durable terminal output; if
+    // the inline viewport could not be anchored they do not, and a user who
+    // scrolls back to re-read an answer that is not there has been told a
+    // silent lie. It rides the transcript because the shell owns the screen
+    // from here on — a `println!` would be painted over.
+    if opts.screen_reader && !inline {
+        ingest(
+            &AgentEvent::Text {
+                delta: "this terminal did not report its cursor position, so messages stay in \
+                        this pane instead of moving into scrollback"
+                    .to_string(),
+            },
+            &mut model,
+            &mut ui,
+        );
+    }
 
     // A blocking reader thread forwards crossterm input events to the async
     // loop. It polls so it can observe the shutdown flag and exit promptly.
@@ -216,6 +442,12 @@ pub async fn run(
     });
 
     loop {
+        // Settled history leaves the repainting viewport and becomes ordinary
+        // terminal output BEFORE the draw, so the pane never paints a line
+        // that is already in scrollback. No-op unless `screen_reader` is set.
+        if inline {
+            flush_settled(&mut terminal, &model, &mut ui, color_mode, false)?;
+        }
         terminal.draw(|f| {
             render(&model, &mut ui, f);
             theme::apply_theme(f.buffer_mut(), color_mode);
@@ -313,6 +545,18 @@ pub async fn run(
 
     shutdown.store(true, Ordering::Relaxed);
     let _ = reader.join();
+
+    // The trailing entry was held back all session because it could still
+    // grow (see `settled_entry_count`); nothing can grow now, so it goes to
+    // scrollback with the rest. Without this the last thing the assistant
+    // said — usually the answer — would vanish with the viewport on exit.
+    // Best-effort: a failed flush must not turn a clean quit into an error.
+    if inline {
+        let _ = flush_settled(&mut terminal, &model, &mut ui, color_mode, true);
+        // Leave the cursor below the viewport rather than inside it, so the
+        // shell prompt that follows does not overwrite the last frame.
+        let _ = terminal.clear();
+    }
     debug.note("tui session end");
     Ok(())
 }
@@ -398,6 +642,119 @@ mod tests {
 
         assert!(append_json_line(&path, "note", serde_json::json!({})).is_err());
         assert_eq!(std::fs::read_to_string(target).unwrap(), "outside\n");
+    }
+
+    // ── The screen-reader surface (#936) ────────────────────────────────
+
+    #[test]
+    fn a_screen_reader_session_refuses_the_alternate_screen_and_the_mouse() {
+        // Both are the point of the surface, not preferences a caller can
+        // combine away — so an explicit `mouse_capture: true` alongside
+        // `screen_reader: true` still yields no capture, and the session
+        // still draws on the user's own screen.
+        let asked_for_both = RunOptions {
+            mouse_capture: true,
+            screen_reader: true,
+            ..RunOptions::default()
+        };
+        assert_eq!(screen_for(&asked_for_both), Screen::Normal);
+        assert!(
+            !mouse_capture_enabled(&asked_for_both),
+            "capture disables the terminal selection several readers read by"
+        );
+
+        // Every other session is untouched by this: the deck and the
+        // full-screen REPL keep the alternate screen and their opt-in mouse.
+        let ordinary = RunOptions {
+            mouse_capture: true,
+            ..RunOptions::default()
+        };
+        assert_eq!(screen_for(&ordinary), Screen::Alternate);
+        assert!(mouse_capture_enabled(&ordinary));
+        assert_eq!(screen_for(&RunOptions::default()), Screen::Alternate);
+        assert!(!mouse_capture_enabled(&RunOptions::default()));
+    }
+
+    #[test]
+    fn the_trailing_entry_waits_for_teardown_before_it_reaches_scrollback() {
+        // It is the only entry `SessionModel` can still grow (streaming
+        // deltas coalesce into it), so flushing it mid-session would put a
+        // fragment in scrollback and then the whole sentence again — a reader
+        // would announce them as two separate utterances.
+        assert_eq!(settled_entry_count(4, false), 3);
+        // At teardown nothing can grow, so the last one goes too — otherwise
+        // the assistant's final answer vanishes with the viewport on exit.
+        assert_eq!(settled_entry_count(4, true), 4);
+        // An empty transcript has nothing to hold back and must not underflow.
+        assert_eq!(settled_entry_count(0, false), 0);
+        assert_eq!(settled_entry_count(0, true), 0);
+        assert_eq!(settled_entry_count(1, false), 0);
+    }
+
+    #[test]
+    fn the_inline_viewport_always_leaves_a_row_above_itself() {
+        // `insert_before` needs somewhere to put a line. A viewport claiming
+        // the whole terminal would turn every flush into a full-screen scroll
+        // instead of an append above a stable region — so this holds at every
+        // size, including the short terminals an earlier lower bound got
+        // wrong by rounding *up* past the rows that existed.
+        for rows in 2u16..=200 {
+            assert!(
+                inline_viewport_rows(rows) < rows,
+                "{rows}-row terminal: viewport claimed every row"
+            );
+        }
+        // Roomy terminals get the working area, not the whole screen — the
+        // history is in scrollback, so the live region stays small and quiet.
+        assert_eq!(inline_viewport_rows(50), INLINE_VIEWPORT_ROWS);
+        assert_eq!(inline_viewport_rows(200), INLINE_VIEWPORT_ROWS);
+        // A cramped terminal gets everything but the reserved row.
+        assert_eq!(inline_viewport_rows(12), 11);
+        // Degenerate sizes must not panic, wrap around, or ask for 0 rows.
+        assert_eq!(inline_viewport_rows(1), 1);
+        assert_eq!(inline_viewport_rows(0), 1);
+    }
+
+    #[test]
+    fn scrollback_lines_cover_exactly_the_newly_settled_range() {
+        let mut model = SessionModel::new();
+        model.apply(&AgentEvent::Text {
+            delta: "alpha".into(),
+        });
+        model.apply(&AgentEvent::Stage {
+            name: stella_protocol::StageKind::Execute,
+        });
+        model.apply(&AgentEvent::Text {
+            delta: "omega".into(),
+        });
+
+        let text = |from: usize, to: usize| {
+            scrollback_lines(&model, from, to, false, 60)
+                .iter()
+                .map(|l| {
+                    l.spans
+                        .iter()
+                        .map(|s| s.content.as_ref())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        let head = text(0, 1);
+        assert!(head.contains("alpha"), "the flushed range renders:\n{head}");
+        assert!(
+            !head.contains("omega"),
+            "…and nothing past it, or the tail lands in scrollback twice:\n{head}"
+        );
+        // A second flush picks up where the first stopped — no gap, no
+        // overlap, which is what makes "announced exactly once" true.
+        let tail = text(1, 3);
+        assert!(!tail.contains("alpha"), "no re-flush:\n{tail}");
+        assert!(tail.contains("omega"), "the newly settled entry:\n{tail}");
+        // An empty range is a no-op rather than a panic (`from == to` happens
+        // on every frame where nothing settled).
+        assert!(scrollback_lines(&model, 3, 3, false, 60).is_empty());
     }
 
     /// The one interactive path a unit test cannot drive: it needs a real TTY

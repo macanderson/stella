@@ -341,14 +341,25 @@ is cheaper and sharper if the thing you are changing *is* the engine:
 
 ```bash
 cargo run -p loop-bench -- --n 4                     # four tasks, the default pool
-cargo run -p loop-bench -- --json                    # the report, for CI
+cargo run -p loop-bench -- --json-out report.json    # table on stdout, report on disk
 cargo run -p loop-bench -- --analyze-only --jobs-dir <dir> --job-name <name>   # free
 ```
 
 It reads `stella-events.jsonl` per trial, produces exactly the verdict ladder
 above, and exits `1` if any trial is `loop_broken` — even when other trials
-passed, and also when no trial artifacts were found at all. Exit `2` means the
-task list resolved to nothing.
+passed. Exit `2` means the task list resolved to nothing (or an unwritable
+report path), `3` that no trial artifacts were found at all — an infrastructure
+failure, deliberately distinguished from a loop regression — and `4` that the
+loop was healthy but fewer trials passed than `--min-pass` demanded.
+
+Stella runs it against itself nightly, not per-PR: it needs Docker, a task
+runner, a provider key, and real money. Two details of that job are worth
+copying. The task list is pinned **by name** rather than taken as "the first
+four of the pool", because the pool is an ordinary source constant and
+reordering it would silently change what is measured. And the pass-rate floor
+ships **disabled**, to be raised only once the job's own uploaded reports say
+what normal is — a floor set by intuition on a cheap model is red every night,
+and a gate that is always red is a gate nobody reads.
 
 <Callout type="info">
 Its whole design premise is worth stealing: the expensive benchmark measures

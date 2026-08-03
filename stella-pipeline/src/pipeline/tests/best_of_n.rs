@@ -8,6 +8,13 @@
 
 use super::*;
 
+/// Candidates running *at the same time* (#1215) — the wall-clock half of the
+/// contract this module pins the correctness half of. A child module rather
+/// than a sibling of `best_of_n` so it reaches the shared fakes through this
+/// file's own `use super::*`, and so the already-oversized `tests.rs` does not
+/// grow another module declaration.
+mod fanout_concurrency;
+
 /// The core best-of-N isolation contract: every candidate runs against
 /// its own workspace surface (the session ports panic if touched), only
 /// the winner is adopted, and every workspace is removed.
