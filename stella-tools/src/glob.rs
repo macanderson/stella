@@ -181,8 +181,18 @@ fn backend_failure(program: &str, output: &std::process::Output) -> Option<Strin
         return None;
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let first = stderr.lines().find(|line| !line.trim().is_empty())?;
-    Some(format!("{program} error: {}", first.trim()))
+    // Per-entry traversal noise is benign: a walk that brushes an unreadable
+    // directory (systemd-private tempdirs on a shared /tmp, another user's
+    // build dir) makes find/fd exit non-zero while the empty result is still
+    // the honest answer — the same tolerance grep's pattern guard applies.
+    // Only a complaint that is NOT permission noise makes the empty result a
+    // lie worth surfacing (bad search path, malformed pattern).
+    let first = stderr.lines().map(str::trim).find(|line| {
+        !line.is_empty()
+            && !line.contains("Permission denied")
+            && !line.contains("Operation not permitted")
+    })?;
+    Some(format!("{program} error: {first}"))
 }
 
 fn fd_command(search_dir: &std::path::Path, pattern: &str) -> Command {
@@ -526,5 +536,25 @@ mod tests {
             stderr: b"   \n".to_vec(),
         };
         assert_eq!(backend_failure("fd", &silent), None);
+
+        // Per-entry traversal noise stays quiet: a walk brushing another
+        // user's unreadable directory exits non-zero with only permission
+        // complaints, and the empty result is still the honest answer.
+        let traversal_noise = std::process::Output {
+            status: std::process::ExitStatus::from_raw(256),
+            stdout: Vec::new(),
+            stderr: b"find: '/tmp/systemd-private-abc': Permission denied\n".to_vec(),
+        };
+        assert_eq!(backend_failure("find", &traversal_noise), None);
+
+        // ...but a real complaint after the noise still surfaces.
+        let mixed = std::process::Output {
+            status: std::process::ExitStatus::from_raw(256),
+            stdout: Vec::new(),
+            stderr: b"find: '/tmp/systemd-private-abc': Permission denied\nfind: 'srcc': No such file or directory\n"
+                .to_vec(),
+        };
+        let message = backend_failure("find", &mixed).expect("real failure must surface");
+        assert!(message.contains("srcc"), "{message}");
     }
 }

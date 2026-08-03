@@ -739,6 +739,12 @@ mod tests {
     #[tokio::test]
     async fn a_mid_batch_write_failure_rolls_back_the_written_files() {
         use std::os::unix::fs::PermissionsExt;
+        // Root bypasses DAC: a 0444 file is still writable, so the induced
+        // failure never happens and the batch (correctly) succeeds. Skip
+        // rather than assert the wrong thing in a root container.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.rs"), "fn a() { one }\n").unwrap();
         let locked = dir.path().join("b.rs");
