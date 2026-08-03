@@ -272,7 +272,7 @@ const PLAN_REPAIR_ECHO_CHARS: usize = 16_000;
 /// A short re-prompt asking a model that returned unparseable plan output to
 /// re-emit it as a strict JSON array — the pipeline's one bounded repair
 /// retry (L-V2 "bounded repair loops"). Kept here beside the parsers it feeds.
-/// The echo is clamped to [`PLAN_REPAIR_ECHO_CHARS`]: an unbounded echo paid
+/// The echo is clamped to `PLAN_REPAIR_ECHO_CHARS`: an unbounded echo paid
 /// for a pathological response twice, once to receive it and once to repeat
 /// it back.
 pub fn plan_repair_prompt(previous_response: &str) -> String {

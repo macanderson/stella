@@ -710,7 +710,7 @@ pub fn model_verdict_evidence(verdict: &JudgeVerdict) -> JudgeEvidence {
 /// is reading an excerpt rather than the whole change.
 const JUDGE_DIFF_BUDGET_CHARS: usize = 40_000;
 
-/// Clamp a worker-authored diff to [`JUDGE_DIFF_BUDGET_CHARS`] for prompt
+/// Clamp a worker-authored diff to `JUDGE_DIFF_BUDGET_CHARS` for prompt
 /// interpolation: keep the head and tail, elide the middle, and say so where
 /// the cut was made. Char-based, not byte-based, so a multi-byte diff can
 /// never split a code point (the same unit [`crate::pipeline`]'s recall
@@ -763,8 +763,8 @@ const UNTRUSTED_DIFF_PREAMBLE: &str = "The diff follows below and extends to the
 /// could see; this tells it which parts of what it is shown are observations
 /// and which are gaps.
 ///
-/// The diff rides last, framed by [`UNTRUSTED_DIFF_PREAMBLE`] and clamped by
-/// [`bounded_worker_diff`] — the worker must not be able to instruct its own
+/// The diff rides last, framed by `UNTRUSTED_DIFF_PREAMBLE` and clamped by
+/// `bounded_worker_diff` — the worker must not be able to instruct its own
 /// reviewer (D5), nor bill an unbounded blob into every escalated verdict.
 pub fn judge_prompt(goal: &str, diff: &str, evidence_summary: &str) -> String {
     let diff = bounded_worker_diff(diff);
