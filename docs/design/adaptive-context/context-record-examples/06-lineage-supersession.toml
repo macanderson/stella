@@ -16,10 +16,13 @@
 # proposals' supporting-observation references never dangle.
 #
 # Note there is no `superseded` status: RecordStatus is frozen at active /
-# retracted / archived. A replaced record is `archived` and points forward with
-# `superseded_by`. `retracted` is reserved for a claim that was *wrong* — the
-# distinction matters, because an archived record was true for its window and
-# `as_of` queries should still return it.
+# retracted / archived. A replaced record is `archived`; the live revision
+# points BACK at it with a `derived_from` link (the file surface has no
+# forward `superseded_by` field — forward pointers live in the lifecycle
+# ledger, whose append carries `supersedes`, so the immutable old record
+# never needs editing when a successor lands). `retracted` is reserved for a
+# claim that was *wrong* — the distinction matters, because an archived
+# record was true for its window and `as_of` queries should still return it.
 
 schema = "context-record/v0.1"
 set_id = "acme.web"
@@ -36,18 +39,20 @@ repo        = "git@github.com:acme/web.git"
 # ── The superseded revision, retained so old citations still resolve ─────────
 [[record]]
 lineage_id  = "ctx.acme.web.node-version"
-record_id   = "rec_node_version_11a7ce30d482"
-record_hash = "sha256:11a7ce30d4826b0f95e13c8a70df42b6810c95fe2a7d640b3e18cc0592af7b13"
+record_id   = "rec_acme_web_node_version_06911686d7bf"
+record_hash = "sha256:cf4cdc7905a24f58f5364a8d0119b9730cda690a881296471cc173a806db6339"
 kind        = "constraint"
 status      = "archived"
 statement   = "Development runs on Node 20.x."
 
-superseded_by = "rec_node_version_84f0b2ed6a95"
-archived_at   = 2026-06-02T00:00:00Z
+# When this revision was replaced, and by what, is NOT recorded here — the
+# archived record is immutable, so a forward pointer would mean editing it the
+# day its successor lands. The lifecycle ledger's append for the new revision
+# carries `supersedes`, and the new record's `derived_from` link (below) is
+# the git-visible projection of the same fact.
 
   [record.provenance]
-  commit      = "3ab77e1"
-  authored_by = "@dana"
+  commit = "3ab77e1"
 
   [record.steering]
   force      = "must"
@@ -61,24 +66,20 @@ archived_at   = 2026-06-02T00:00:00Z
   basis       = "decree"
   confidence  = 100
   verified_by = "@dana"
-  valid_from  = 2025-04-18T00:00:00Z
-  valid_until = 2026-06-02T00:00:00Z   # exclusive: true right up to this instant
+  valid_from  = "2025-04-18T00:00:00Z"
 
 
 # ── The live revision ────────────────────────────────────────────────────────
 [[record]]
 lineage_id  = "ctx.acme.web.node-version"
-record_id   = "rec_node_version_84f0b2ed6a95"
-record_hash = "sha256:84f0b2ed6a951c73d0e825bf4a6013cc79ed2b8f50a4917e63cb0d21fa8e7c40"
+record_id   = "rec_acme_web_node_version_27a072786d8c"
+record_hash = "sha256:d89727651321730b9a7d6daf4d4bd9d88a6e954363cf2be3996954730193b06a"
 kind        = "constraint"
 status      = "active"
 statement   = "Development runs on Node 22.x."
 
-supersedes = "rec_node_version_11a7ce30d482"
-
   [record.provenance]
-  commit      = "9f2c1ab"
-  authored_by = "@dana"
+  commit = "9f2c1ab"
 
   [record.steering]
   force         = "must"
@@ -96,14 +97,22 @@ supersedes = "rec_node_version_11a7ce30d482"
   basis        = "decree"
   confidence   = 100
   verified_by  = "@dana"
-  verified_at  = 2026-06-02T00:00:00Z
-  valid_from   = 2026-06-02T00:00:00Z
+  verified_at  = "2026-06-02T00:00:00Z"
+  valid_from   = "2026-06-02T00:00:00Z"
   review_every = "P180D"
 
     [record.truth.probe]
     kind    = "file_contains"
     path    = ".nvmrc"
     pattern = "^22\\."
+
+  # The revision chain, as the file surface expresses it: the live revision
+  # was derived from the archived one it replaces. (LinkRelation is frozen at
+  # derived_from / refines / requires / supports / contradicts — there is no
+  # `supersedes` relation; that verb belongs to the lifecycle ledger.)
+  [[record.link]]
+  relation = "derived_from"
+  target   = "rec_acme_web_node_version_06911686d7bf"
 
   # Records the governance decision that replaced the old revision. The
   # corresponding immutable `pev_` promotion event carries actor, reason, and

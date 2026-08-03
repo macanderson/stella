@@ -587,7 +587,9 @@ stella context ignore <id> --reason  # decline, with a re-proposal cooldown
 stella context list                  # what currently steers this workspace
 stella context validate              # re-probe every claim; non-zero if any must not steer
 stella context explain <handle>      # provenance, evidence, enforcement, efficacy
-stella context propose <handle>      # branch + single-concern diff + PR body
+stella context propose <handle>      # branch + single-concern diff + PR body (--commit for solo)
+stella context promote <rule>        # change enforcement accountably (--to, --reason; §5.3)
+stella context govern [mode]         # show or change governance mode (--separation, --yes)
 ```
 
 Each flow presents candidate, evidence, exact diff, owners, and expected
@@ -599,8 +601,10 @@ Still specified and not built:
 
 ```text
 stella context simulate <file>       # match preview against recent history
-stella context promote <candidate>   # promote an existing record's enforcement level
 ```
+
+(`stella context promote` used to sit in this list; it shipped with the
+governance ledger in #994 — see §5.3 — and now appears above.)
 
 ### Pull-request integration
 

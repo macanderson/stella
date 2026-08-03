@@ -37,15 +37,15 @@ source_lines  = [88, 90]
 repo          = "git@github.com:acme/web.git"
 commit        = "9f2c1ab"
 ingest_run_id = "ing_01J8XQ4M2K7ZP3VN5T0R9WB6HC"
-extracted_at  = 2026-07-27T09:00:00Z
+extracted_at  = "2026-07-27T09:00:00Z"
 extractor     = "claude-opus-5"
 
 
 # ── 1. Format ────────────────────────────────────────────────────────────────
 [[record]]
 lineage_id  = "ctx.acme.web.capability-contract-format"
-record_id   = "rec_cap_contract_format_9e1d40c7ab52"
-record_hash = "sha256:9e1d40c7ab52f8360b7e4295cd1a83f07be6205d9c4a17f83b0e6cd21947f5aa"
+record_id   = "rec_acme_web_capability_contract_format_d1997f20826a"
+record_hash = "sha256:de3c2e6399c9933f832c8bcbb69e3f02b118500b0cbb9db8c0a171f907e7a74c"
 kind        = "fact"
 statement   = "An agent capability's contract is written as a YAML file."
 tags        = ["capabilities", "contracts"]
@@ -61,7 +61,7 @@ tags        = ["capabilities", "contracts"]
   [record.truth]
   basis       = "measured"
   confidence  = 95
-  verified_at = 2026-07-27T09:00:00Z
+  verified_at = "2026-07-27T09:00:00Z"
 
     [record.truth.probe]
     kind = "path_exists"
@@ -71,8 +71,8 @@ tags        = ["capabilities", "contracts"]
 # ── 2. Location ──────────────────────────────────────────────────────────────
 [[record]]
 lineage_id  = "ctx.acme.web.capability-contract-location"
-record_id   = "rec_cap_contract_loc_2f77b9c318ea"
-record_hash = "sha256:2f77b9c318ea6d05948c1f3b7ea20d64c85e1a97403fb2d68c05a3e719bf4d80"
+record_id   = "rec_acme_web_capability_contract_location_631459495b1e"
+record_hash = "sha256:131443f343ba28efcfa726efff7fb302999eed871b585155b8e2a07797405ad8"
 kind        = "fact"
 statement   = "Capability contract files are stored in the capabilities/contracts/ directory."
 tags        = ["capabilities", "contracts"]
@@ -88,7 +88,7 @@ tags        = ["capabilities", "contracts"]
   [record.truth]
   basis       = "measured"
   confidence  = 95
-  verified_at = 2026-07-27T09:00:00Z
+  verified_at = "2026-07-27T09:00:00Z"
 
     [record.truth.probe]
     kind = "path_exists"
@@ -98,8 +98,8 @@ tags        = ["capabilities", "contracts"]
 # ── 3. Procedure ─────────────────────────────────────────────────────────────
 [[record]]
 lineage_id  = "ctx.acme.web.ship-a-capability"
-record_id   = "rec_ship_capability_c604af8b1d7e"
-record_hash = "sha256:c604af8b1d7ec2951403d7ba6e8f0257cd913b46a0e7f2185cb39d0ea4715f62"
+record_id   = "rec_acme_web_ship_a_capability_8670a49e0307"
+record_hash = "sha256:5244a57dc16de172cb106711825fead90b48fa8f5f10f661a604ba326665f240"
 kind        = "procedure"
 statement   = "To ship an agent capability, write its contract file and place it with the other contracts before implementing the capability."
 tags        = ["capabilities", "contracts"]
@@ -120,7 +120,7 @@ tags        = ["capabilities", "contracts"]
   basis       = "decree"
   confidence  = 100
   verified_by = "@dana"
-  verified_at = 2026-07-27T09:00:00Z
+  verified_at = "2026-07-27T09:00:00Z"
 
     [record.truth.probe]
     kind = "manual"
