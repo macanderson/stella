@@ -81,8 +81,75 @@ def test_cap_hit_and_zero_tool_flags_surface(tmp_path: Path) -> None:
     view = trial_view(trial, _EventsCache())
     assert view["status"] == "done"
     assert view["cap_hits"] == 1
+    assert view["cap_hits_source"] == "inferred"
     assert view["tools"] == 0
     assert view["judge_passed"] is False
+
+
+def test_reported_finish_reason_beats_the_output_size_heuristic(tmp_path: Path) -> None:
+    """#1211 §6.5: a long answer is not a cap hit, and the provider says so.
+
+    Both steps here are the exact shape the heuristic fires on — output at
+    or past the 16K threshold, no tool call — but the provider reported a
+    natural stop. Under the old rule this trial contributed 2 to `cap_hits`;
+    that reading, applied across a 64K-ceiling run, is what produced the
+    unexplained 106.
+    """
+    long_answer = {**_CAP_STEP, "output_tokens": 24_000, "finish_reason": "stop"}
+    trial = _write_trial(
+        tmp_path,
+        "j-armA",
+        "regex-log",
+        events=[long_answer, long_answer, {"type": "complete"}],
+    )
+    view = trial_view(trial, _EventsCache())
+    assert view["cap_hits"] == 0
+    assert view["cap_hits_source"] == "reported"
+
+
+def test_reported_truncation_is_counted(tmp_path: Path) -> None:
+    # The other direction: a genuinely truncated step is counted even though
+    # its output is far below the heuristic's threshold, which the inference
+    # route could never have caught.
+    truncated = {
+        "type": "step_usage",
+        "input_tokens": 900,
+        "output_tokens": 128,
+        "cost_usd": 0.002,
+        "tool_calls": 0,
+        "finish_reason": "length",
+    }
+    trial = _write_trial(
+        tmp_path,
+        "j-armA",
+        "regex-log",
+        events=[truncated, {"type": "complete"}],
+    )
+    view = trial_view(trial, _EventsCache())
+    assert view["cap_hits"] == 1
+    assert view["cap_hits_source"] == "reported"
+
+
+def test_legacy_stream_without_finish_reason_still_infers(tmp_path: Path) -> None:
+    # Archived bundles predate the field entirely. They must keep classifying
+    # exactly as before — the fallback is why the heuristic still exists.
+    trial = _write_trial(
+        tmp_path,
+        "j-armA",
+        "regex-log",
+        events=[_CAP_STEP, {"type": "complete"}],
+    )
+    view = trial_view(trial, _EventsCache())
+    assert view["cap_hits"] == 1
+    assert view["cap_hits_source"] == "inferred"
+
+
+def test_a_trial_with_no_telemetry_has_no_cap_hit_claim(tmp_path: Path) -> None:
+    # Absent is not a truthful zero: with no event stream there is no count
+    # by either route, and the source must say so rather than implying one.
+    trial = _write_trial(tmp_path, "j-armA", "regex-log", result={"reward": 1})
+    view = trial_view(trial, _EventsCache())
+    assert view["cap_hits_source"] is None
 
 
 def test_result_json_is_the_verdict_of_record(tmp_path: Path) -> None:
@@ -140,6 +207,29 @@ def test_rows_pair_by_task_across_arms_and_total(tmp_path: Path) -> None:
     table = render(snapshot)
     assert "regex-log" in table and "only-in-a" in table
     assert "A totals:" in table and "B totals:" in table
+
+
+def test_a_summed_cap_hit_count_names_the_route_it_came_from(tmp_path: Path) -> None:
+    # One trial reports, one infers. The sum is neither claim, and the
+    # footer has to say so instead of presenting a mixed number as measured.
+    _write_trial(tmp_path, "j-armA", "legacy", events=[_CAP_STEP, {"type": "complete"}])
+    _write_trial(
+        tmp_path,
+        "j-armA",
+        "current",
+        events=[
+            {**_CAP_STEP, "finish_reason": "length"},
+            {"type": "complete"},
+        ],
+    )
+    _write_trial(tmp_path, "j-armB", "legacy", result={"verifier_result": {"reward": 1}})
+
+    snapshot = state(tmp_path, "j-armA", "j-armB", _EventsCache())
+    assert snapshot["totals"]["a"]["cap_hits"] == 2
+    assert snapshot["totals"]["a"]["cap_hits_source"] == "mixed"
+    # Arm B has no event stream at all, so it makes no cap-hit claim.
+    assert snapshot["totals"]["b"]["cap_hits_source"] is None
+    assert "cap-hits 2 (mixed)" in render(snapshot)
 
 
 def test_growth_cache_reparses_only_on_size_change(tmp_path: Path) -> None:
