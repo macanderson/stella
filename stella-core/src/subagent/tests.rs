@@ -990,6 +990,36 @@ async fn owned_turn_controls_stop_a_child_without_clobbering_an_attached_gate() 
     );
 }
 
+/// Every driver used to publish exactly one seam — worker lanes a gate, the
+/// deck's lead a steering tap — so the both-at-once case had no caller and no
+/// test. The deck's lead lane is that caller now (#1219): it steers with `>`
+/// and pauses with `p`, and hands the pair to its sub-agent dispatcher in one
+/// [`TurnControls`]. A `with_gate` that displaced the steering it was given
+/// would turn the lead's Esc into a no-op the moment pause was wired up —
+/// silently, since both are `Option` and neither absence is an error.
+#[test]
+fn turn_controls_carrying_both_seams_give_a_child_both() {
+    let provider = ScriptedProvider::new(vec![]);
+    let tools = MixedTools::default();
+    let both = TurnControls::none()
+        .with_gate(Arc::new(CountingGate(AtomicUsize::new(0))))
+        .with_steering(Arc::new(SpySteering {
+            drained: AtomicUsize::new(0),
+            stop: false,
+        }));
+    assert!(!both.is_empty());
+
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &NoSleep)
+        .with_turn_controls(&both);
+
+    assert!(engine.gate.is_some(), "the pause must survive the steering");
+    assert!(
+        engine.steering.is_some(),
+        "and the steering must survive the pause — the two seams are \
+         independent, not a slot the last writer wins"
+    );
+}
+
 #[test]
 fn empty_turn_controls_leave_an_engine_exactly_as_it_was() {
     let provider = ScriptedProvider::new(vec![]);

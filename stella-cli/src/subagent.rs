@@ -113,11 +113,12 @@
 //!   message the user addressed to the parent.
 //!
 //! Every driver that runs turns installs a dispatcher and publishes what it
-//! has: the deck's lead and pipeline turns publish a steering tap (Pause is a
-//! worker-lane verb, so the lead has no gate), and deck worker lanes and fleet
-//! workers publish their `WatchGate`. A driver that publishes nothing is still
-//! not a failure state — a child then runs bounded by its step cap and its
-//! carve, exactly as before.
+//! has: the deck's lead and pipeline turns publish both a steering tap and a
+//! `WatchGate` (#1219 — `p` on the lead row parks the turn and, through this
+//! dispatcher, every child it dispatched), and deck worker lanes and fleet
+//! workers publish their own `WatchGate`. A driver that publishes nothing is
+//! still not a failure state — a child then runs bounded by its step cap and
+//! its carve, exactly as before.
 //!
 //! # A cancelled parent: cascade the intent, not the mechanism
 //!
