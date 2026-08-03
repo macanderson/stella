@@ -10,8 +10,10 @@
 //!    drift, not a generic miss.
 //! 2. **Apply**: only when every edit validated, each touched file is
 //!    written once with its final content. If a write fails midway (disk
-//!    full, permissions), already-written files are **rolled back** to their
-//!    original bytes so the tree is never left half-applied.
+//!    full, permissions), every touched file — the one that failed included —
+//!    is **rolled back** to its original bytes so the tree is never left
+//!    half-applied; a file that cannot be restored is named loudly in the
+//!    error instead of being reported clean.
 //!
 //! One transactional call also fits the engine's concurrency model better
 //! than N serial `edit_file` barriers: mutating tools are never
@@ -337,6 +339,31 @@ impl Tool for ApplyEdits {
             .await
             {
                 let mut rollback_note = String::new();
+                // The failing file first: `durable_write` rewrites in place,
+                // so a failure inside `write_all` (disk full) can leave new
+                // bytes spliced over the old tail — and this is exactly the
+                // file the old rollback skipped while the error claimed the
+                // tree was intact. Only rewritten when the bytes actually
+                // moved, so a pre-write failure (open denied) stays silent
+                // rather than raising a false "restore manually" alarm.
+                let (fail_path, fail_full, fail_original, _) = &files[key];
+                let needs_restore = match tokio::fs::read(fail_full).await {
+                    Ok(now) => now != fail_original.as_bytes(),
+                    Err(_) => true,
+                };
+                if needs_restore
+                    && crate::durable_write::write_file_durably(
+                        fail_full.clone(),
+                        fail_original.as_bytes().to_vec(),
+                    )
+                    .await
+                    .is_err()
+                {
+                    rollback_note.push_str(&format!(
+                        "\n  ROLLBACK FAILED for `{fail_path}` — restore it manually from \
+                         the content you last read"
+                    ));
+                }
                 for prior in &written {
                     let (prior_path, prior_full, original, _) = &files[*prior];
                     // The rollback especially must not truncate: a failed
@@ -355,9 +382,10 @@ impl Tool for ApplyEdits {
                         ));
                     }
                 }
-                if rollback_note.is_empty() && !written.is_empty() {
+                if rollback_note.is_empty() {
                     rollback_note = format!(
-                        "\n  {} already-written file(s) rolled back to their original content",
+                        "\n  every touched file (including `{path}`) holds its original \
+                         content; {} already-written file(s) were rolled back",
                         written.len()
                     );
                 }
@@ -702,5 +730,54 @@ mod tests {
             )
             .await;
         assert!(result.is_error());
+    }
+
+    /// A mid-batch write failure rolls back the already-written files and
+    /// reports the tree's true state — the failing file's own content is
+    /// verified (and restored when the bytes moved) rather than skipped.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_mid_batch_write_failure_rolls_back_the_written_files() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "fn a() { one }\n").unwrap();
+        let locked = dir.path().join("b.rs");
+        std::fs::write(&locked, "fn b() { one }\n").unwrap();
+        // Make the SECOND file unwritable so file one lands first and the
+        // batch then aborts.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o444)).unwrap();
+
+        let result = ApplyEdits::default()
+            .execute(
+                &serde_json::json!({ "edits": [
+                    edit("a.rs", "one", "two"),
+                    edit("b.rs", "one", "two"),
+                ]}),
+                dir.path(),
+            )
+            .await;
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let message = match result {
+            ToolOutput::Error { message } => message,
+            ToolOutput::Ok { content } => panic!("expected the batch to abort, got: {content}"),
+        };
+        assert!(message.contains("batch aborted"), "{message}");
+        assert!(message.contains("rolled back"), "{message}");
+        // The written file is back to its original bytes, and the failed
+        // file was never corrupted.
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("a.rs")).unwrap(),
+            "fn a() { one }\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("b.rs")).unwrap(),
+            "fn b() { one }\n"
+        );
+        // Nothing was corrupted, so no manual-restore alarm may fire.
+        assert!(
+            !message.contains("ROLLBACK FAILED"),
+            "an intact failing file must not raise a manual-restore alarm: {message}"
+        );
     }
 }

@@ -55,7 +55,7 @@
           "properties": {
             "cache_write_tokens": {
               "default": 0,
-              "description": "Tokens WRITTEN to the provider's prompt cache by this call\n(Anthropic `cache_creation_input_tokens`, Bedrock\n`cacheWriteInputTokens`). Unlike `cached_input_tokens` this is NOT a\nsubset of `input_tokens` — providers report writes separately, and\nfolding them into `input_tokens` would change cost accounting\n(`Pricing::cost_usd` carries no cache-write rate). 0 for providers\nthat never report cache writes (the OpenAI-compatible dialects).\n`serde(default)` so envelopes serialized before this field existed\nstill parse.",
+              "description": "Tokens WRITTEN to the provider's prompt cache by this call\n(Anthropic `cache_creation_input_tokens`, Bedrock\n`cacheWriteInputTokens`). Unlike `cached_input_tokens` this is NOT a\nsubset of `input_tokens` — providers report writes separately, and\nfolding them into `input_tokens` would change cost accounting\n(`Pricing::cost_usd` bills them on their own line at the catalog's\n`cache_write_usd_per_mtok`, so folding would double-charge). 0 for providers\nthat never report cache writes (the OpenAI-compatible dialects).\n`serde(default)` so envelopes serialized before this field existed\nstill parse.",
               "format": "uint64",
               "minimum": 0,
               "type": "integer"

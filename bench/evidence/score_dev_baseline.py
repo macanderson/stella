@@ -98,9 +98,18 @@ def extract_trial(result_path: Path) -> dict[str, Any]:
         "n_cache_tokens": _int(agent_result.get("n_cache_tokens")),
         # Harbor records the spend on the agent result; the adapter's accounting
         # block carries Stella's own per-step totals. Prefer Harbor's, because it
-        # is the same field the claim analyzer bills from.
-        "usd": _number(agent_result.get("cost_usd")) or _number(accounting.get("usd_total")),
-        "model_calls": total("model_calls"),
+        # is the same field the claim analyzer bills from. `is not None`, not
+        # `or`: a genuine $0.0000 from Harbor must not be silently replaced.
+        # The fallback keys are the ones `envelope_accounting` actually emits —
+        # `usd_total`/`model_calls` never existed, so every dev-baseline row
+        # published `"usd": null` when Harbor's field was absent and
+        # `"model_calls": null` always.
+        "usd": (
+            harbor_usd
+            if (harbor_usd := _number(agent_result.get("cost_usd"))) is not None
+            else _number(accounting.get("envelope_total_cost_usd"))
+        ),
+        "model_calls": _int(accounting.get("step_usage_records")),
         "tool_calls": total("tool_calls"),
         # Stella's self-reported terminal state, which is NOT the same thing as
         # the process exiting: a completed turn whose process lingers is killed

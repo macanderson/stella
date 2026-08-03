@@ -104,9 +104,15 @@ pub trait Embedder: Send + Sync {
 /// The pure-Rust default embedder: the hashing trick over character n-grams.
 ///
 /// For each length-`n` character window of the (lowercased) input we compute
-/// two independent FNV-1a hashes — one selects a dimension bucket, one picks a
-/// sign — and accumulate ±1 into that bucket (a signed random projection that
-/// keeps the expected dot-product an unbiased similarity estimate). The result
+/// two FNV-1a hashes — one selects a dimension bucket, and the OTHER's top
+/// bit picks a sign — and accumulate ±1 into that bucket (a signed random
+/// projection that keeps the expected dot-product an unbiased similarity
+/// estimate). The sign must come from a high bit: FNV-1a's multiplier is odd,
+/// so bit 0 survives hashing, both offset bases are odd, and with
+/// power-of-two dims the bucket (`h % dims`) shares that bit — a low-bit sign
+/// was a pure function of bucket parity, collapsing the projection into an
+/// unsigned count sketch whose collisions add instead of cancel (revision 1's
+/// defect; revision 2 fixed it). The result
 /// is L2-normalized so cosine similarity is a plain dot product. Fully
 /// deterministic and platform-independent: the same string always yields the
 /// same vector, which is what makes the `(content_hash, fingerprint)` skip in
@@ -126,7 +132,11 @@ impl Default for HashEmbedder {
         Self {
             dims: 256,
             ngram: 3,
-            revision: "1".to_string(),
+            // Revision 2: the sign now comes from the seeded hash's top bit.
+            // Revision 1 derived it from bit 0, which bucket parity fully
+            // determined — bumping the revision re-embeds stored vectors on
+            // next touch (`L-C2`) instead of mixing the two projections.
+            revision: "2".to_string(),
         }
     }
 }
@@ -162,8 +172,11 @@ impl HashEmbedder {
             gram.extend(chars[start..start + window].iter());
             let h = fnv1a(gram.as_bytes());
             let bucket = (h % self.dims as u64) as usize;
-            // A second, decorrelated hash chooses the sign.
-            let sign = if fnv1a_seeded(gram.as_bytes(), 0x9E37_79B9_7F4A_7C15) & 1 == 0 {
+            // The second hash's TOP bit chooses the sign — its low bit is
+            // preserved from the input by FNV-1a's odd multiplier and equals
+            // the bucket hash's low bit, so `& 1` made the sign a function of
+            // bucket parity (see the type-level docs).
+            let sign = if fnv1a_seeded(gram.as_bytes(), 0x9E37_79B9_7F4A_7C15) >> 63 == 0 {
                 1.0
             } else {
                 -1.0
@@ -241,11 +254,11 @@ mod tests {
     fn fingerprint_id_is_canonical_and_stable() {
         let fp = EmbedderFingerprint {
             model_id: "hash-ngram".into(),
-            revision: "1".into(),
+            revision: "2".into(),
             dims: 256,
             normalization: "l2".into(),
         };
-        assert_eq!(fp.id(), "hash-ngram@1/256/l2");
+        assert_eq!(fp.id(), "hash-ngram@2/256/l2");
     }
 
     #[test]
@@ -291,7 +304,7 @@ mod tests {
             .await
             .expect("batch embeds");
         assert_eq!(out.len(), 2);
-        assert_eq!(out[0].fingerprint, "hash-ngram@1/256/l2");
+        assert_eq!(out[0].fingerprint, "hash-ngram@2/256/l2");
         assert_eq!(out[0].vector.len(), 256);
     }
 

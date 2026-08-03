@@ -619,12 +619,14 @@ impl Store {
     /// turn actually made rather than zero. Making one entry point
     /// responsible would leave every other one serving a hole.
     ///
-    /// It is safe to run against a workspace another process is actively
-    /// writing. The sweep only re-folds `tool_calls` from the `events` log,
-    /// which is idempotent and writes exactly what the live projection
-    /// already wrote; it never stamps an outcome, so a *live* turn in another
-    /// process is not declared dead (see
-    /// [`Store::reconcile_interrupted_executions`]). And it costs nothing in
+    /// It is safe — with one visible wrinkle — to run against a workspace
+    /// another process is actively writing. The sweep re-folds `tool_calls`
+    /// from the `events` log, which is idempotent; it never stamps an
+    /// outcome, so a *live* turn in another process is not declared dead
+    /// (see [`Store::reconcile_interrupted_executions`]). The wrinkle: a call
+    /// announced but not yet returned re-folds as an abandoned error until
+    /// its `tool_result` lands and re-opens it, so another session's
+    /// in-flight call can briefly render as failed. And it costs nothing in
     /// the overwhelmingly common case: the `executions_unfinished` partial
     /// index holds only unclosed rows, so "is anything unclosed?" is an empty
     /// index probe and no write happens at all.

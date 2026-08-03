@@ -127,9 +127,11 @@ pub fn label_for(
                 .chain(provider.env_var_aliases)
                 .find(|v| std::env::var(*v).map(|s| !s.is_empty()).unwrap_or(false));
             let Some(var) = var else {
-                // Unreachable in practice (resolve_provider_key only
-                // returns EnvVar when a var actually matched) — degrade to
-                // the primary var name rather than panic.
+                // Reachable: the anonymous-FD credential handoff reports
+                // `EnvVar` without installing any variable in the process
+                // environment (`config::resolve_provider_key`), so the scan
+                // above finds nothing. Naming the primary var is the best
+                // available label there — degrade rather than panic.
                 return format!("env:{}", provider.env_var);
             };
             match loaded_env.and_then(|l| l.file_for(var)) {

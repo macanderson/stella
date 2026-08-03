@@ -122,11 +122,16 @@ impl Scoreboard {
                     board.supplied_chars += chars;
                     if seen_opening {
                         board.follow_ups += 1;
+                        // Only a follow-up can interrupt: nothing is in
+                        // flight when the opening request arrives, and
+                        // counting it here kept `interrupts` a subset of
+                        // `follow_ups` in name only — a task could score
+                        // one-shot AND interrupted at once.
+                        if interrupted {
+                            board.interrupts += 1;
+                        }
                     }
                     seen_opening = true;
-                    if interrupted {
-                        board.interrupts += 1;
-                    }
                 }
                 Event::ModelCall => board.model_calls += 1,
                 Event::ToolCall => board.tool_calls += 1,

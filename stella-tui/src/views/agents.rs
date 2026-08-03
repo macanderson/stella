@@ -56,7 +56,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
 }
 
 /// The secondary nav line: the two pane labels (UPPERCASE, like the deck's
-/// tab labels), active in the accent cyan, plus the switch hint.
+/// tab labels), active in the brand accent, plus the switch hint.
 fn render_pane_nav(pane: AgentsPane, area: Rect, buf: &mut Buffer) {
     if area.height == 0 {
         return;
@@ -87,7 +87,7 @@ const COMPACT_TABLE_WIDTH: u16 = 140;
 
 /// The columns the compact set keeps, as indices into [`HEADERS`] (and the
 /// full width/cell arrays): Agent, Goal, Status, Ctx%, Cost, Elapsed,
-/// In/Out. What goes ($/hr, CPU%, MEM, Activity) is density signal, not
+/// In/Out. What goes ($/hr, CPU%, MEM, Cache, Warmth, Activity) is density signal, not
 /// identity — the wide layout still shows everything.
 const COMPACT_COLUMNS: [usize; 7] = [0, 1, 2, 3, 4, 6, 9];
 

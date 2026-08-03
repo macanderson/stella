@@ -3,8 +3,10 @@
 //! `stella_protocol::ProviderError`'s category shape (transport / rate-limit /
 //! auth / malformed / cancelled / terminal) with its own type because
 //! `stella-media` may not depend on `stella-model` (parallel-workstream
-//! isolation, see the crate-level doc). Two categories are added beyond the
-//! chat provider's set:
+//! isolation, see the crate-level doc). Six categories are added beyond the
+//! chat provider's set — the two below plus [`MediaError::CapabilityUnavailable`],
+//! [`MediaError::Artifact`], [`MediaError::SidecarRace`], and
+//! [`MediaError::Journal`]:
 //!
 //! * [`MediaError::ContentPolicy`] — a provider refusal; terminal, never
 //!   retried.

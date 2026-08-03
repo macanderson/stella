@@ -348,8 +348,9 @@ pub struct PipelineConfig {
     /// with n× the execution cost — opt-in only.
     pub candidates: Option<u32>,
     /// Whether this run does its work in a throwaway worktree rather than the
-    /// user's checkout. Consulted once, at triage, and only when the run is
-    /// going to change files.
+    /// user's checkout. Consulted once — after planning, before execution,
+    /// using the task class triage resolved — and only when the run is going
+    /// to change files.
     ///
     /// The precedence is: a run that changes nothing is never isolated; a
     /// workspace with no candidate isolation cannot offer it (and an `Always`
@@ -617,7 +618,9 @@ struct CandidateState {
     mutating_actions: u32,
     oracle: FlipOracle,
     /// The oracle's observations in the order they were made (#864) —
-    /// baseline, per-iteration candidate runs, the pre-submit confirmation.
+    /// baseline (only for a configured `--test-command`; the authored-witness
+    /// baseline feeds the flip oracle directly without a trace entry),
+    /// per-iteration candidate runs, the pre-submit confirmation.
     /// Mirrors the emitted `ProofStep::Oracle` events, accumulated here so
     /// the verdict can carry its own trace without replaying the stream.
     oracle_trace: Vec<OracleObservation>,
@@ -2101,7 +2104,8 @@ impl<'a> Pipeline<'a> {
             // it — gated on the DECISION, not on the flip transition, so
             // paths already headed to the judge pay nothing extra and the
             // cost is bounded to one lint pass + one suite run per
-            // candidate, exactly where the credit is spent.
+            // verification round (a revised candidate re-enters the audit),
+            // paid only where a credit is about to be spent.
             let mut lint_sample = String::new();
             if matches!(ladder_decision(&inputs), LadderDecision::SubmitFast)
                 && let Some(cmd) = effective_cmd
@@ -2333,8 +2337,14 @@ impl<'a> Pipeline<'a> {
                     // failure means the evidence alone didn't steer the
                     // worker — spend one judge call on course-correction
                     // (event-triggered, never a fixed midpoint checkpoint).
+                    // Counted from the deterministic-failure ledger
+                    // (`deterministic_disclosure` just recorded this round's
+                    // fingerprint), not from `revisions`: a prior model-judge
+                    // FAIL also increments `revisions`, and gating on it paid
+                    // a guidance call on the FIRST deterministic red while
+                    // telling the judge the agent had "failed twice in a row".
                     let mut reason = brief.message();
-                    if self.config.distress_guidance && state.revisions >= 1 {
+                    if self.config.distress_guidance && state.failures.len() >= 2 {
                         match self
                             .judge_guidance(
                                 goal,

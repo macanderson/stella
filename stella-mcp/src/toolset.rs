@@ -437,7 +437,11 @@ impl McpToolSet {
     }
 
     /// (Re)build the routing map from the current clients. Server names are
-    /// already validated unique + namespaceable, so no two entries collide.
+    /// validated unique + namespaceable, which makes the usual case
+    /// unambiguous — but `mcp__<server>__<tool>` can still collide when a
+    /// server name ends in `_` and another's tool starts with `_`
+    /// (`acme` + `_status` == `acme_` + `status`), and the later client then
+    /// wins the route silently.
     fn rebuild_routes(&mut self) {
         self.routes.clear();
         for (idx, client) in self.clients.iter().enumerate() {

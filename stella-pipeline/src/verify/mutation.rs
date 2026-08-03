@@ -19,7 +19,9 @@
 use crate::ports::LineMutation;
 
 /// Ceiling on proposed mutants: bounded cost, one witness run per mutant,
-/// spent only on the winning candidate (the pre-submit audit gates it).
+/// spent only on a candidate about to be credited a deterministic pass (the
+/// pre-submit audit gates it) — in best-of-N that is per fast-submitting
+/// candidate, not once per run.
 pub const MAX_MUTANTS: usize = 3;
 
 /// Propose up to [`MAX_MUTANTS`] single-line mutants from a unified diff,

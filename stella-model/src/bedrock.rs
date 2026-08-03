@@ -478,7 +478,8 @@ struct BedrockUsage {
     /// Tokens written to the prompt cache by this call (Converse
     /// `cacheWriteInputTokens`) — reported separately from `inputTokens`,
     /// surfaced as the normalized `cache_write_tokens` and never folded into
-    /// `input_tokens` (no cache-write rate in the catalog to price them).
+    /// `input_tokens` — `Pricing::cost_usd` bills them at the catalog's
+    /// `cache_write_usd_per_mtok` instead.
     #[serde(default)]
     cache_write_input_tokens: u64,
 }

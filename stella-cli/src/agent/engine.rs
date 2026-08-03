@@ -132,8 +132,11 @@ pub(crate) fn pipeline_engine_config_for(cfg: &Config, worker_model: &ModelRef) 
     )
 }
 
-/// CLI-owned headless surfaces have no host approval port, so scope expansion
-/// always stops at the named pipeline error. Output modes never alter this.
+/// The safe default for CLI-owned headless surfaces: no host approval port,
+/// so scope expansion stops at the named pipeline error — unless
+/// `agent_engine_config.headless_scope_bypass` opts a `stella run` out (see
+/// `pipeline_config_for_approval_capability`, which ORs this constant with
+/// that setting). Output modes never alter this.
 pub(crate) const HEADLESS_SCOPE_REVIEW_BYPASS: bool = false;
 pub(crate) const HEADLESS_APPROVAL_GATE: AlwaysAbortGate = AlwaysAbortGate;
 

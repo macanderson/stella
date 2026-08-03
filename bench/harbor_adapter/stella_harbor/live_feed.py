@@ -165,8 +165,14 @@ def trial_view(trial_dir: Path, events_cache: _EventsCache) -> dict[str, Any]:
             )
         metrics = trajectory.get("final_metrics")
         if isinstance(metrics, dict):
-            view["input_tokens"] = metrics.get("total_input_tokens", view["input_tokens"])
-            view["output_tokens"] = metrics.get("total_output_tokens", view["output_tokens"])
+            # ATIF spells these `total_prompt_tokens`/`total_completion_tokens`
+            # (see `FinalMetrics` in atif.py) — the `total_input_tokens`
+            # spellings read here before never existed, so every archived
+            # bundle rendered 0k tokens on the trajectory-only path.
+            view["input_tokens"] = metrics.get("total_prompt_tokens", view["input_tokens"])
+            view["output_tokens"] = metrics.get(
+                "total_completion_tokens", view["output_tokens"]
+            )
             view["cost_usd"] = metrics.get("total_cost_usd", view["cost_usd"])
 
     if events is not None:

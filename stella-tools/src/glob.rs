@@ -98,6 +98,15 @@ impl Tool for Glob {
             crate::exec::Captured::Done(output) => {
                 let text = String::from_utf8_lossy(&output.stdout);
                 if text.is_empty() {
+                    // A backend failure must surface as an error, not be
+                    // swallowed as "(no files found)" — same rule as grep's
+                    // pattern guard: a typo'd `path` or malformed glob makes
+                    // fd exit non-zero with empty stdout, and reporting that
+                    // as an empty tree sends the agent off recreating files
+                    // that exist.
+                    if let Some(message) = backend_failure("fd", &output) {
+                        return ToolOutput::Error { message };
+                    }
                     return ToolOutput::Ok {
                         content: "(no files found)".into(),
                     };
@@ -124,6 +133,10 @@ impl Tool for Glob {
                     crate::exec::Captured::Done(output) => {
                         let text = String::from_utf8_lossy(&output.stdout);
                         if text.is_empty() {
+                            // Same backend-failure guard as the fd arm.
+                            if let Some(message) = backend_failure("find", &output) {
+                                return ToolOutput::Error { message };
+                            }
                             ToolOutput::Ok {
                                 content: "(no files found)".into(),
                             }
@@ -159,6 +172,19 @@ impl Tool for Glob {
 /// to the `find` fallback ([`find_command`]) so both backends answer alike.
 /// `.gitignore` pruning stays on — that one is a feature, and it is the
 /// documented difference between the two backends.
+/// A zero-match result that is really a backend failure: non-zero exit with
+/// nothing on stdout and a reason on stderr. `None` for the benign shape
+/// (a genuine empty result, or noise-free non-zero exits from unreadable
+/// subtrees that printed nothing).
+fn backend_failure(program: &str, output: &std::process::Output) -> Option<String> {
+    if output.status.success() {
+        return None;
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let first = stderr.lines().find(|line| !line.trim().is_empty())?;
+    Some(format!("{program} error: {}", first.trim()))
+}
+
 fn fd_command(search_dir: &std::path::Path, pattern: &str) -> Command {
     let mut fd = Command::new("fd");
     fd.arg("--glob");
@@ -469,5 +495,36 @@ mod tests {
             ToolOutput::Ok { content } => assert!(content.contains("no files")),
             ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
         }
+    }
+
+    #[test]
+    fn a_backend_failure_is_an_error_not_an_empty_result() {
+        use std::os::unix::process::ExitStatusExt;
+        // Non-zero exit + empty stdout + a reason on stderr = failure.
+        let failed = std::process::Output {
+            status: std::process::ExitStatus::from_raw(256),
+            stdout: Vec::new(),
+            stderr: b"[fd error]: Search path 'srcc' is not a directory\n".to_vec(),
+        };
+        let message = backend_failure("fd", &failed).expect("failure must surface");
+        assert!(
+            message.contains("srcc"),
+            "the reason must be named: {message}"
+        );
+
+        // A genuine empty result (exit 0) stays quiet, and so does a silent
+        // non-zero exit (nothing to report).
+        let empty = std::process::Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        };
+        assert_eq!(backend_failure("fd", &empty), None);
+        let silent = std::process::Output {
+            status: std::process::ExitStatus::from_raw(256),
+            stdout: Vec::new(),
+            stderr: b"   \n".to_vec(),
+        };
+        assert_eq!(backend_failure("fd", &silent), None);
     }
 }

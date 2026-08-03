@@ -264,8 +264,9 @@ pub fn normalize_name(name: &str) -> String {
 /// The duplicate-detection key: [`normalize_name`] with a conservative
 /// singular fold, so `payments`, `payment`, and `Payment` share one key.
 /// `ies` → `y`; a single trailing `s` is stripped unless the name ends in
-/// `ss` (`status`, `address` keep their tail consistent either way since
-/// both sides of a comparison fold identically).
+/// `ss` (`address`, `class` keep their tail). A name like `status` still
+/// folds (`statu`) — harmless, since both sides of a comparison fold
+/// identically.
 pub fn dedup_key(name: &str) -> String {
     normalize_name(name)
         .split('_')

@@ -9,7 +9,8 @@
 //!   share-by-default isolation, wave scheduling ([`Plan::ready_tasks`]), topological
 //!   order, and cycle detection.
 //! - [`git`] — **git-worktree isolation** over the [`GitCli`] port: a
-//!   dedicated worktree per task, plus commit helpers that *always* use
+//!   dedicated worktree per *isolated* task (share-by-default: shared-tree
+//!   tasks run in the repo root), plus commit helpers that *always* use
 //!   explicit pathspecs (a fleet worker can never sweep a sibling's staged
 //!   files).
 //! - [`ledger`] — the **commit ledger**: one embedded SQLite file recording

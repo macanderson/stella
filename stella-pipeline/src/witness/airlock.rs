@@ -582,7 +582,19 @@ pub fn redact(sealed: &SealedFailure<'_>, requested: DisclosureGrain) -> Failure
         match scrub(&candidate, sealed) {
             Ok(()) => Some(candidate),
             Err(_) => {
-                grain = DisclosureGrain::Outcome;
+                // Withhold the command, but keep the symptom when one was
+                // disclosed above: the symptom is a classification, safe by
+                // construction, and dropping to `Outcome` here silenced it as
+                // collateral — on the authored-witness path, whose command
+                // always names its (sealed) selector, EVERY failure then
+                // disclosed nothing and the worker revised blind. Never a
+                // step up: `symptom.is_some()` implies the requested grain
+                // was at least `Symptom`.
+                grain = if symptom.is_some() {
+                    DisclosureGrain::Symptom
+                } else {
+                    DisclosureGrain::Outcome
+                };
                 None
             }
         }
@@ -592,8 +604,8 @@ pub fn redact(sealed: &SealedFailure<'_>, requested: DisclosureGrain) -> Failure
 
     FailureBrief {
         grain,
-        // A grain that fell to `Outcome` withholds the command it could not
-        // scrub; one that merely lost its reproduction keeps it.
+        // A grain that fell on a failed command scrub withholds the command;
+        // one that merely lost its reproduction keeps it.
         command: (grain >= DisclosureGrain::Command)
             .then_some(command)
             .flatten(),

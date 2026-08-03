@@ -10,7 +10,7 @@
 //! Data flow per turn:
 //!
 //! ```text
-//! prompt ──> recall_block(): registry-routed recall (crate::contextgraph) + select_skills()
+//! prompt ──> recall_block_reported(): registry-routed recall (crate::contextgraph) + select_skills()
 //!            └─ volatile message AFTER the byte-stable system prefix (L-E8)
 //! turn runs …
 //! outcome ─> reflect_and_record(): one cheap model call -> 0-3 lessons

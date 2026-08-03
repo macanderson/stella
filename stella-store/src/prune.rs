@@ -42,8 +42,10 @@
 //!   hands `MAX(rowid) + 1` to the next insert, so deleting the highest
 //!   telemetry row makes the *next real model call* land at or below a stale
 //!   cursor and never replicate. This is not theoretical — it is what
-//!   `a_prune_without_vacuum_rewinds_the_cursor_past_reusable_rowids` pins,
-//!   end to end in `stella-cli/tests/stats_prune_cli.rs`.
+//!   `a_prune_without_vacuum_rewinds_the_cursor_past_reusable_rowids` pins
+//!   in this module's tests, with
+//!   `a_prune_that_empties_telemetry_leaves_the_next_turn_replicable`
+//!   covering it end to end in `stella-cli/tests/stats_prune_cli.rs`.
 //! - **`VACUUM` is documented to renumber it.** SQLite's docs say `VACUUM`
 //!   "may change the ROWIDs of entries in any tables that do not have an
 //!   explicit INTEGER PRIMARY KEY". Empirically it currently does *not*
@@ -171,8 +173,9 @@ pub struct StorePruneReport {
     /// per-call token and cost data. Called out separately because it is the
     /// only class of row here that another database was tracking.
     pub telemetry_pruned: u64,
-    /// Executions inside the age window (or eligible for eviction) that were
-    /// kept because they still own un-replicated telemetry. Non-zero means
+    /// Executions inside the age window that were kept because they still
+    /// own un-replicated telemetry (the row-ceiling phase reports its own
+    /// residual as `still_over_ceiling` instead). Non-zero means
     /// "run `stella usage sync`, then re-run" — or `--force` to accept the
     /// loss. Only counted without `force`.
     pub protected_unreplicated: u64,

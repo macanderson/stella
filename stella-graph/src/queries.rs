@@ -8,7 +8,8 @@
 //! [`crate::parse`] can decode matches uniformly:
 //! - `@name` captures the identifier whose text becomes the symbol name.
 //! - the *kind capture* (`@fn` / `@method` / `@struct` / `@enum` / `@trait` /
-//!   `@class` / `@interface`) captures the whole definition node — its line
+//!   `@class` / `@interface`, plus the SQL kinds `@table` / `@column` /
+//!   `@schema_enum` / `@view`) captures the whole definition node — its line
 //!   span becomes the symbol span, and its capture name encodes the kind.
 //!
 //! Name fields are matched with the `(_)` wildcard rather than a concrete

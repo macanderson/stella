@@ -160,7 +160,9 @@ export type StellaWireFrame = ServerFrame & { seq: number };
  * Deliberately has no `seq`: it describes what the transport can no longer
  * supply, not something that happened in the turn. Receiving it means the
  * frames between `requested_after` and `oldest_retained` are unrecoverable —
- * reconnect with `?after=0` to replay what is still held, or abandon the turn.
+ * reconnect with `?after=` one less than `oldest_retained` to replay what is
+ * still held (an `?after=0` resume just re-answers `replay_truncated` unless
+ * the ring still holds seq 1), or abandon the turn.
  */
 export interface ReplayTruncated {
   type: \"replay_truncated\";
@@ -184,5 +186,7 @@ const INBOUND_HEADER: &str = "
 // An outstanding reverse request is NOT re-announced on resume: asking for
 // `?after=N` asserts you received everything through N, obligations included.
 // A client that persisted its seq but not its in-flight request ids must
-// resume from `?after=0` and replay to rediscover what it owes.
+// replay from the start — `?after=0`, or after a `replay_truncated`, one less
+// than `oldest_retained` — to rediscover what it owes; obligations announced
+// in frames the ring has already evicted cannot be re-learned this way.
 ";

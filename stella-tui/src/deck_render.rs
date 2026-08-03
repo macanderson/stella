@@ -54,7 +54,8 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         return;
     }
 
-    // tab bar (bordered, exactly 3 rows) | content | run progress bar |
+    // tab bar (bordered, exactly 3 rows) | content | trace strip (2 rows) |
+    // run progress bar |
     // composer | composer footer | statline. The progress bar is always present
     // (idle collapses it to a flat track). The composer grows with its
     // soft-wrapped content up to a cap, then scrolls to keep the cursor visible;
@@ -1585,9 +1586,9 @@ fn pr_cell(pr: &PrInfo) -> Vec<Span<'static>> {
 }
 
 /// The transcript's PR ramp — `render`'s `pr_status_color` is private
-/// to that module, so the statline replicates it: quiet amber draft (the one
-/// semantic-warning exception), azure while open, cyan on merge, magenta on
-/// close.
+/// to that module, so the statline replicates it: warning-orange draft (the
+/// one semantic-warning exception), deep gold while open, full gold on merge,
+/// danger on close.
 fn pr_status_color(status: PrStatus) -> ratatui::style::Color {
     match status {
         PrStatus::Draft => theme::WARNING,

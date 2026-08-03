@@ -191,8 +191,10 @@ pub(crate) enum BodyOutcome {
 
 /// Read the declared body off the socket and throw it away, in constant memory.
 ///
-/// Used on the paths that answer without looking at the body — a 401, a 413, a
-/// 405. Draining first is what makes the response actually arrive: closing a
+/// Used on the paths that answer without looking at the body — a 401, a 403,
+/// a 405. (The 413 from an over-cap `Content-Length` is produced before a
+/// `Request` exists, so it cannot drain — see `read_head`'s caller.)
+/// Draining first is what makes the response actually arrive: closing a
 /// connection with unread bytes still in flight makes the kernel send an RST,
 /// and a peer that gets an RST mid-send never reads the status we wrote. The
 /// drain is bounded by the same deadline as the read it replaces, and by

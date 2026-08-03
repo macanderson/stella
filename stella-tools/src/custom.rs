@@ -459,9 +459,20 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
     for (k, v) in &tool.env {
         cmd.env(k, v);
     }
-    // … then each scalar input property as STELLA_INPUT_*. Keys come from the
-    // model but are namespaced under STELLA_INPUT_, so they cannot clobber PATH
-    // or any inherited variable.
+    // A custom tool spawns a model-invoked command, so it is a full command
+    // path like `bash`/`start_process`/the hook runner — it must also strip
+    // the surrounding git env and forced-color vars, not only credentials.
+    // Manifest env is deliberately set BEFORE the scrub (a credential-shaped
+    // manifest entry is stripped like an inherited one).
+    crate::subprocess_env::scrub_spawn_env(&mut cmd);
+    // The STELLA_INPUT_* exports come AFTER the scrub: an input property
+    // named `api_token` exports as STELLA_INPUT_API_TOKEN, whose `_TOKEN`
+    // suffix the credential scrub matches — scrubbing after the export
+    // silently deleted it, breaking this module's "each scalar is exported"
+    // contract while the same value flowed to the child verbatim on stdin
+    // anyway (the env copy protected nothing). Keys come from the model but
+    // are namespaced under STELLA_INPUT_, so they cannot clobber PATH, any
+    // inherited variable, or a host credential name.
     if let Some(obj) = input.as_object() {
         for (key, value) in obj {
             if let Some(v) = scalar_env_value(value) {
@@ -469,10 +480,6 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
             }
         }
     }
-    // A custom tool spawns a model-invoked command, so it is a full command
-    // path like `bash`/`start_process`/the hook runner — it must also strip
-    // the surrounding git env and forced-color vars, not only credentials.
-    crate::subprocess_env::scrub_spawn_env(&mut cmd);
 
     // New process group so a timeout kills the whole child tree (mirrors
     // `crate::bash`).
