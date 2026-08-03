@@ -38,6 +38,7 @@ from typing import Any, Iterable
 
 __all__ = [
     "EVENTS_NAME",
+    "INFRASTRUCTURE_FAILURES",
     "TRAJECTORY_NAME",
     "MetricsReader",
     "TranscriptReader",
@@ -79,6 +80,46 @@ def _iso_seconds(started: Any, finished: Any) -> float | None:
 # Metrics
 # --------------------------------------------------------------------------
 
+#: Harbor exceptions that mean **the agent never got a fair attempt** — the
+#: container did not start, its toolchain did not install, credentials were
+#: wrong, or the verifier itself fell over and never returned a verdict.
+#:
+#: These are held apart from agent failures because conflating them corrupts a
+#: head-to-head in whichever direction the infrastructure happened to break.
+#: An agent whose per-trial installer needs the network is fragile to an outage
+#: in a way that says nothing about how well it codes; scoring those trials 0
+#: hands its opponent a win nobody can defend when the logs are opened. The
+#: reverse is just as bad — a host DNS drop mid-run should not read as the
+#: agent giving up.
+#:
+#: The split is deliberately conservative. Anything that happened *while the
+#: agent was running and in control* stays an agent failure, including
+#: `AgentTimeoutError` (it had its time), `NonZeroAgentExitCodeError` (it ran
+#: and quit), and the context/output/memory ceilings (it chose what to spend).
+#: Being wrong in that direction under-credits a contestant, which is the safe
+#: way to be wrong about your own result.
+INFRASTRUCTURE_FAILURES: frozenset[str] = frozenset(
+    {
+        # The trial never reached a state where the agent could act.
+        "AgentSetupTimeoutError",
+        "EnvironmentStartTimeoutError",
+        "HealthcheckError",
+        "AddTestsDirError",
+        "DownloadVerifierDirError",
+        "MissingExtraError",
+        # Credentials are an operator setting, not a capability.
+        "AuthenticationError",
+        "OAuthCallbackError",
+        "RefreshTokenExpiredError",
+        # The verifier broke, so no verdict exists to record either way.
+        "VerifierTimeoutError",
+        "VerifierOutputParseError",
+        "RewardFileNotFoundError",
+        "RewardFileEmptyError",
+        "MultimodalExportError",
+    }
+)
+
 
 @dataclass
 class TrialMetrics:
@@ -92,6 +133,10 @@ class TrialMetrics:
     #: different answers and a solve rate that conflates them is wrong.
     resolved: bool | None = None
     failure: str = ""
+    #: ``True`` when :attr:`failure` names a harness or host fault rather than
+    #: something the agent did. Such a trial is left *unjudged* — see
+    #: :data:`INFRASTRUCTURE_FAILURES` for why that is not the same as a loss.
+    infrastructure: bool = False
     steps: int = 0
     tools: int = 0
     tokens_in: int = 0
@@ -113,6 +158,7 @@ class TrialMetrics:
             "status": self.status,
             "resolved": self.resolved,
             "failure": self.failure,
+            "infrastructure": self.infrastructure,
             "steps": self.steps,
             "tools": self.tools,
             "tokens_in": self.tokens_in,
@@ -270,7 +316,12 @@ class MetricsReader:
             exception = result.get("exception_info")
             if isinstance(exception, dict) and exception.get("exception_type"):
                 metrics.failure = str(exception["exception_type"])
-                if metrics.resolved is None:
+                metrics.infrastructure = metrics.failure in INFRASTRUCTURE_FAILURES
+                if metrics.resolved is None and not metrics.infrastructure:
+                    # An agent that ran and failed scores 0, as every
+                    # leaderboard counts it. One that never started stays
+                    # `None`: unjudged, excluded from the solve rate, and
+                    # counted where a reader can see it.
                     metrics.resolved = False
             wall = _iso_seconds(result.get("started_at"), result.get("finished_at"))
             if wall is not None:
@@ -302,12 +353,19 @@ def aggregate(trials: Iterable[TrialMetrics]) -> dict[str, Any]:
     ``solve_rate`` divides by *judged* trials, not by attempted ones. Early in
     a match most trials are unjudged, and dividing by them would show every
     contestant near zero and climbing — an artifact of progress, not of skill.
+
+    ``infrastructure`` counts trials that never reached a verdict because the
+    harness or host broke. They are excluded from the solve rate on purpose,
+    and reported separately so a reader can tell "won 8 of 10" from "won 8 of
+    the 8 that managed to start". A scoreboard that hides the difference is
+    the one nobody can defend afterwards.
     """
     trials = list(trials)
     judged = [t for t in trials if t.resolved is not None]
     passed = [t for t in judged if t.resolved]
     return {
         "trials": len(trials),
+        "infrastructure": sum(1 for t in trials if t.infrastructure),
         "running": sum(1 for t in trials if t.status == "running"),
         "done": sum(1 for t in trials if t.status == "done"),
         "judged": len(judged),

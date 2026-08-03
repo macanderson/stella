@@ -399,6 +399,18 @@ class MatchSpec:
     contestants: tuple[Contestant, ...]
     attempts: int = 1
     concurrency: int = 1
+    #: Scales Harbor's agent-*setup* budget — installing the agent's own
+    #: toolchain into each container, before the task begins.
+    #:
+    #: It is separate from the agent timeout because the two measure
+    #: different things, and only one of them is about coding. An agent
+    #: that installs a Node toolchain per trial needs the network for
+    #: minutes before it starts; one that uploads a static binary needs
+    #: seconds. On a slow link or a contended host the first blows the
+    #: default budget and scores nothing, which is a fact about its
+    #: installer rather than its ability — so the operator gets a knob
+    #: instead of a mystery.
+    setup_timeout_multiplier: float = 1.0
     #: Capture a real MP4 screen recording per trial (see :mod:`.recorder`).
     record_video: bool = False
 
@@ -411,6 +423,7 @@ class MatchSpec:
             "contestants": [c.redacted() for c in self.contestants],
             "attempts": self.attempts,
             "concurrency": self.concurrency,
+            "setup_timeout_multiplier": self.setup_timeout_multiplier,
             "record_video": self.record_video,
         }
 
@@ -430,6 +443,9 @@ class MatchSpec:
             contestants=contestants,
             attempts=max(1, int(raw.get("attempts") or 1)),
             concurrency=max(1, int(raw.get("concurrency") or 1)),
+            setup_timeout_multiplier=max(
+                1.0, float(raw.get("setup_timeout_multiplier") or 1.0)
+            ),
             record_video=bool(raw.get("record_video")),
         )
 

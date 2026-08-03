@@ -98,6 +98,11 @@
         <span>Concurrency</span>
         <input type="number" id="concurrency" value="1" min="1" max="16">
       </label>
+      <label class="field field-sm">
+        <span>Setup timeout &times;</span>
+        <input type="number" id="setup-timeout" value="1" min="1" max="20" step="0.5"
+               title="Scales the budget for installing each agent's toolchain into its container, before the task starts. Agents that install a Node toolchain per trial need minutes of network; one that uploads a static binary needs seconds. Raise this on a slow or contended host so a slow installer does not score as a coding failure.">
+      </label>
       <label class="chk-inline chk-record">
         <input type="checkbox" id="record-video">
         <span>Record MP4

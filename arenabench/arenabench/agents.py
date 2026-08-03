@@ -97,6 +97,12 @@ class AgentSpec:
     #: first. Used to alias a provider-native key into the name the agent
     #: actually reads once it has been routed off its home provider.
     token_env: tuple[str, ...] = ()
+    #: Variables that satisfy this agent's credential requirement but are
+    #: never alias *targets*. A subscription token is not a provider bearer
+    #: token: copying a provider key into it would produce a seat that
+    #: cannot authenticate at all, so it counts as credentials present
+    #: without ever being written to.
+    alt_credential_env: tuple[str, ...] = ()
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -165,6 +171,7 @@ def _builtin(
     reasoning: bool = False,
     base_url_env: str | None = None,
     token_env: tuple[str, ...] = (),
+    alt_credential_env: tuple[str, ...] = (),
 ) -> AgentSpec:
     """A Harbor built-in agent.
 
@@ -192,6 +199,7 @@ def _builtin(
         honours=frozenset(honours),
         base_url_env=base_url_env,
         token_env=token_env,
+        alt_credential_env=alt_credential_env,
     )
 
 
@@ -215,6 +223,11 @@ AGENTS: dict[str, AgentSpec] = {
             # Anthropic seat possible at all.
             base_url_env="ANTHROPIC_BASE_URL",
             token_env=("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"),
+            # A Claude subscription. Harbor forwards this into the
+            # container and the CLI prefers whichever auth is present, so
+            # a seat carrying only this runs on the plan rather than on
+            # metered credits.
+            alt_credential_env=("CLAUDE_CODE_OAUTH_TOKEN",),
         ),
         _builtin("codex", "Codex CLI", "OpenAI's coding CLI.", effort=True),
         _builtin("gemini-cli", "Gemini CLI", "Google's coding CLI."),
@@ -307,7 +320,9 @@ def missing_credentials(contestant: Contestant) -> list[str]:
     """
     spec = resolve_agent(contestant.agent)
     candidates = list(credential_env_for(contestant.engine.api))
-    candidates += [name for name in spec.token_env if name not in candidates]
+    for name in spec.token_env + spec.alt_credential_env:
+        if name not in candidates:
+            candidates.append(name)
     if not candidates:
         return []
     if any(contestant.env.get(name) for name in candidates):

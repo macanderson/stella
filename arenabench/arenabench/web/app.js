@@ -465,6 +465,7 @@ async function launch() {
     contestants: State.seats.map(seatPayload),
     attempts: Number($('#attempts').value) || 1,
     concurrency: Number($('#concurrency').value) || 1,
+    setup_timeout_multiplier: Number($('#setup-timeout').value) || 1,
     record_video: $('#record-video').checked,
   };
   if (!payload.tasks.length) {
@@ -571,6 +572,11 @@ function renderScoreboard(snapshot) {
       el('div', { class: 'card-engine' }, `${c.agent} · ${c.engine_label}`),
       el('div', { class: 'card-state' },
         `${c.state}${t.running ? ` · ${t.running} running` : ''} · ${t.judged}/${t.trials} judged`),
+      // An arm whose trials never started has not lost them. Saying so beside
+      // the rate is the difference between "won 8 of 10" and "won 8 of the 8
+      // that managed to start" — one of which survives being checked.
+      t.infrastructure ? el('div', { class: 'card-infra' },
+        `${t.infrastructure} never started (harness/host)`) : null,
       el('div', { class: 'card-solve' },
         el('span', { class: 'solve-big' }, fmt.pct(t.solve_rate)),
         el('span', { class: 'solve-frac' }, `${t.passed} / ${t.judged || 0} solved`)),

@@ -64,6 +64,10 @@ _SCRUBBED_EXACT = frozenset(
         "MOONSHOT_API_KEY",
         "XAI_API_KEY",
         "MISTRAL_API_KEY",
+        # Claude Code's subscription credential. Not caught by the
+        # ANTHROPIC_ prefix above, and every bit as capable of letting an
+        # ambient host login stand in for a seat that was never given one.
+        "CLAUDE_CODE_OAUTH_TOKEN",
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
     }
@@ -354,6 +358,11 @@ class MatchRunner:
             "--n-concurrent", str(match.spec.concurrency),
             "--max-retries", "0",
         ]
+        if match.spec.setup_timeout_multiplier != 1.0:
+            command += [
+                "--agent-setup-timeout-multiplier",
+                str(match.spec.setup_timeout_multiplier),
+            ]
         for task in match.spec.tasks:
             command += ["--include-task-name", f"{match.dataset.namespace}/{task}"]
 

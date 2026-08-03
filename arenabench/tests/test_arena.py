@@ -36,8 +36,14 @@ from arenabench.model import (
     slugify,
 )
 from arenabench.registry import DEFAULT_REGISTRY, Task, sample_tasks
-from arenabench.runner import ContestantRun, MatchRunner
-from arenabench.telemetry import MetricsReader, TranscriptReader, aggregate, leaders
+from arenabench.runner import ContestantRun, MatchRunner, _base_environment
+from arenabench.telemetry import (
+    MetricsReader,
+    TranscriptReader,
+    TrialMetrics,
+    aggregate,
+    leaders,
+)
 
 # --------------------------------------------------------------------------
 # fixtures
@@ -729,7 +735,12 @@ class TestDirectProviderRouting:
         assert missing_credentials(agent_side) == []
         assert missing_credentials(
             _seat(api="zai", model="glm-5.2", base_url=base)
-        ) == ["ZAI_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"]
+        ) == [
+            "ZAI_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_API_KEY",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+        ]
 
 
 class TestRandomTaskSampling:
@@ -781,3 +792,99 @@ class TestRandomTaskSampling:
 
     def test_a_ceiling_that_excludes_everything_draws_nothing(self):
         assert sample_tasks(self._tasks(50), 10, 7, max_memory_mb=1) == []
+
+
+class TestSubscriptionCredential:
+    """Claude Code seated on a Claude subscription rather than metered credits.
+
+    Harbor forwards `CLAUDE_CODE_OAUTH_TOKEN` into the container and the CLI
+    picks whichever auth method is actually present, so a seat carrying only
+    that token runs on the plan. Two things must hold for it to be safe.
+    """
+
+    def test_a_subscription_token_credentials_the_seat(self):
+        seat = Contestant.from_json({
+            "name": "cc", "agent": "claude-code",
+            "engine": {"api": "anthropic", "model": "claude-fable-5"},
+            "env": "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat-x",
+        })
+        assert missing_credentials(seat) == []
+
+    def test_a_subscription_token_is_never_written_to(self, tmp_path: Path):
+        """It is not a provider bearer token. Aliasing a provider key into it
+        would produce a seat that cannot authenticate at all — so it counts as
+        credentials present without ever becoming an alias target."""
+        seat = Contestant.from_json({
+            "name": "cc", "agent": "claude-code",
+            "engine": {"api": "zai", "model": "glm-5.2",
+                       "base_url": "https://api.z.ai/api/anthropic"},
+            "env": "ZAI_API_KEY=zk",
+        })
+        runner = MatchRunner(DEFAULT_REGISTRY, tmp_path)
+        run = ContestantRun(contestant=seat, job_name="j",
+                            job_dir=tmp_path / "j", log_path=tmp_path / "j.log")
+        env = runner._routing_environment(seat, run)
+        assert env["ANTHROPIC_AUTH_TOKEN"] == "zk"
+        assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
+
+    def test_an_ambient_subscription_token_never_reaches_a_seat(self, monkeypatch):
+        """The scrub list is prefix-based and `CLAUDE_CODE_` is not one of the
+        prefixes, so this needs its own entry. Without it, a token exported in
+        the operator's shell silently credentials *every* Claude Code seat —
+        two arms you believed were on different credentials, both on the plan.
+        """
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat-ambient")
+        assert "CLAUDE_CODE_OAUTH_TOKEN" not in _base_environment()
+
+
+class TestInfrastructureFailuresAreNotLosses:
+    """A trial the agent never got to attempt is not a trial it lost."""
+
+    def _trial(self, tmp_path: Path, exception_type: str, reward=None) -> TrialMetrics:
+        trial = tmp_path / f"t-{exception_type}"
+        trial.mkdir()
+        payload: dict = {"exception_info": {"exception_type": exception_type}}
+        if reward is not None:
+            payload["verifier_result"] = {"reward": reward}
+        (trial / "result.json").write_text(json.dumps(payload))
+        return MetricsReader().read(trial, "task")
+
+    def test_a_setup_timeout_is_left_unjudged(self, tmp_path: Path):
+        """Claude Code installs its toolchain per container. On a slow link
+        that setup blows its budget, which is a fact about its installer and
+        not about how well it codes — scoring it 0 hands the other arm a win
+        that does not survive anyone opening the logs."""
+        m = self._trial(tmp_path, "AgentSetupTimeoutError")
+        assert m.infrastructure is True
+        assert m.resolved is None, "unjudged, not lost"
+
+    def test_an_agent_that_ran_and_quit_still_scores_zero(self, tmp_path: Path):
+        m = self._trial(tmp_path, "NonZeroAgentExitCodeError")
+        assert m.infrastructure is False
+        assert m.resolved is False
+
+    def test_an_agent_that_used_all_its_time_still_scores_zero(self, tmp_path: Path):
+        m = self._trial(tmp_path, "AgentTimeoutError")
+        assert m.infrastructure is False and m.resolved is False
+
+    def test_a_broken_verifier_returns_no_verdict_either_way(self, tmp_path: Path):
+        m = self._trial(tmp_path, "VerifierTimeoutError")
+        assert m.infrastructure is True and m.resolved is None
+
+    def test_infrastructure_trials_leave_the_solve_rate_alone(self, tmp_path: Path):
+        """Eight of ten never started; the arm won both it actually ran. The
+        rate must say 100% of 2 judged, and the count of the missing eight must
+        be visible beside it — "won 8 of 10" and "won 2 of the 2 that started"
+        are different claims."""
+        started = [
+            TrialMetrics(task=f"ok{i}", trial=f"ok{i}", resolved=True) for i in range(2)
+        ]
+        never = [
+            TrialMetrics(task=f"x{i}", trial=f"x{i}", failure="AgentSetupTimeoutError",
+                         infrastructure=True)
+            for i in range(8)
+        ]
+        totals = aggregate(started + never)
+        assert totals["judged"] == 2
+        assert totals["solve_rate"] == 100.0
+        assert totals["infrastructure"] == 8

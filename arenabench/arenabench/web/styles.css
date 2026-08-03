@@ -465,6 +465,7 @@ input:focus, select:focus, textarea:focus {
 /* Routing this seat took a step the operator did not literally type. Nothing
    is wrong, so it must not read as a warning — but it must be visible, since
    an invisible route is how two seats end up secretly identical. */
+.card-infra { margin-top: 6px; font-size: 11px; color: var(--violet); font-family: var(--mono); }
 .card-note { margin-top: 6px; font-size: 11px; color: var(--muted); font-family: var(--mono); }
 
 /* ------------------------------------------------------------- the race */
