@@ -37,6 +37,7 @@ from stella_harbor import (  # noqa: E402 - after importorskip by design
     _stream_to_envelope,
     resolve_candidates,
     resolve_max_revisions,
+    resolve_model_timeout,
 )
 
 
@@ -388,6 +389,7 @@ class TestAttemptCountArms:
             triage_model="openrouter/anthropic/claude-haiku-4.5",
             max_revisions=4,
             candidates=2,
+            model_timeout_secs=1572,
         )
         allowed_roots = {
             "default_model",
@@ -401,6 +403,7 @@ class TestAttemptCountArms:
             "headless_scope_bypass",
             "pipeline_max_revisions",
             "pipeline_candidates",
+            "model_timeout_secs",
             "agents",
         }
         assert set(posture) <= allowed_roots
@@ -437,6 +440,114 @@ class TestAttemptCountArms:
             resolve_max_revisions("40")
         with pytest.raises(ValueError, match="candidates must be between"):
             resolve_candidates("20")
+
+
+class TestModelTimeoutArm:
+    """The third coupled ceiling, as a selectable hashed arm (#1211 §6.2).
+
+    The other two have been selectable for generations — the output cap rides
+    `agents.<role>.params.max_tokens` in the posture itself, the turn budget is
+    a per-trial flag — but `model_timeout` was an `EngineConfig` constant. On
+    this protocol that made a timeout change a **system-under-test** change: a
+    re-freeze of the registered commit rather than a line in a posture, which
+    is one of the three reasons the Fable-class ceiling memo gives for why the
+    change could not be automated away.
+
+    Nothing here decides the Fable arm's numbers. It makes them expressible.
+    """
+
+    _MODEL = "openrouter/anthropic/claude-sonnet-5"
+
+    def test_unset_omits_the_key_and_reproduces_the_frozen_posture(self) -> None:
+        """Absent means "the engine's default", which is what history had.
+
+        The same rule the attempt-count knobs follow, and load-bearing for the
+        same reason: writing `model_timeout_secs: 816` — the value every run so
+        far actually had — would change every recorded digest to describe a
+        posture identical to the one it already described.
+        """
+        default_posture, default_json, default_digest = _benchmark_engine_posture(
+            self._MODEL
+        )
+        explicit = _benchmark_engine_posture(self._MODEL, model_timeout_secs=None)
+        assert default_json == explicit[1]
+        assert default_digest == explicit[2]
+        assert "model_timeout_secs" not in default_posture
+        # The digest an external preflight already checks by prefix, asserted
+        # again from this arm's own test so a regression here cannot be read as
+        # someone else's failure.
+        assert _benchmark_engine_posture("anthropic/claude-sonnet-5")[2].startswith(
+            "3c428a22"
+        )
+
+    def test_a_selected_timeout_lands_in_the_digest_and_moves_nothing_else(
+        self,
+    ) -> None:
+        """Selecting the ceiling declares itself, and declares only itself."""
+        base, _base_json, base_digest = _benchmark_engine_posture(self._MODEL)
+        scaled, _scaled_json, scaled_digest = _benchmark_engine_posture(
+            self._MODEL, model_timeout_secs=1572
+        )
+        assert scaled["model_timeout_secs"] == 1572
+        assert scaled_digest != base_digest
+        for key in ("default_model", "allowed_models", "agents"):
+            assert scaled[key] == base[key]
+
+    def test_zero_is_no_backstop_and_is_distinct_from_unset(self) -> None:
+        """Three states, not two — and the digest can tell them apart.
+
+        `None` asks for the engine's default; `0` asks for no ceiling at all
+        (the engine's `Option::None`, an unbounded await). Collapsing them
+        would make "I chose unbounded" indistinguishable from "I chose
+        nothing", which is precisely the ambiguity these selectors exist to
+        remove.
+        """
+        assert resolve_model_timeout("0") == 0
+        unset, _unset_json, unset_digest = _benchmark_engine_posture(self._MODEL)
+        unbounded, _json, unbounded_digest = _benchmark_engine_posture(
+            self._MODEL, model_timeout_secs=0
+        )
+        assert "model_timeout_secs" not in unset
+        assert unbounded["model_timeout_secs"] == 0
+        assert unbounded_digest != unset_digest
+
+    def test_the_resolver_refuses_a_lost_value_and_a_fat_fingered_digit(
+        self,
+    ) -> None:
+        """Fails closed on every non-value, like every selector beside it.
+
+        The ceiling is the one that matters on a benchmark: a timeout an order
+        of magnitude too large does not fail loudly, it spends the trial's
+        whole agent budget in silence and reports the result as a task the
+        agent could not solve.
+        """
+        assert resolve_model_timeout(None) is None
+        assert resolve_model_timeout(" 1572 ") == 1572
+        with pytest.raises(ValueError, match="must not be empty"):
+            resolve_model_timeout("   ")
+        with pytest.raises(ValueError, match="must be an integer"):
+            resolve_model_timeout("1572s")
+        with pytest.raises(ValueError, match="model timeout must be between"):
+            resolve_model_timeout("86400")
+
+    def test_the_three_ceilings_can_be_selected_together(self) -> None:
+        """The point of the knob: one posture that scales the whole budget.
+
+        A Fable-class arm raises the output cap AND the silence ceiling that
+        has to absorb it. Expressing only one is how `16384 -> 32000 -> 64000`
+        each relocated the cliff instead of removing it — the recorded history
+        of this very posture.
+        """
+        posture, _normalized, _digest = _benchmark_engine_posture(
+            self._MODEL, model_timeout_secs=1572
+        )
+        assert posture["model_timeout_secs"] == 1572
+        capped = [
+            role
+            for role, agent in posture["agents"].items()
+            if "params" in agent and "max_tokens" in agent["params"]
+        ]
+        assert sorted(capped) == ["default", "judge", "worker"]
 
 
 class TestWitnessStreamObservation:

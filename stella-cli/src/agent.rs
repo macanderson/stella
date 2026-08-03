@@ -1056,7 +1056,10 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         };
         let input = expanded.as_deref().unwrap_or(input);
 
-        messages.push(crate::attachments::user_message(input));
+        messages.push(crate::attachments::user_message_in(
+            input,
+            &cfg.workspace_root,
+        ));
         println!();
 
         let mut recall_event = None;

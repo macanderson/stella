@@ -37,8 +37,18 @@ Same one-budget coupling as §8.4.3 — moving one alone relocates the cliff:
 | ceiling | Sonnet-5 arm (frozen) | Fable-class arm (proposed) | where it lives | what changes |
 |---|---|---|---|---|
 | `params.max_tokens` (default/worker/judge) | 64,000 | **128,000** (the model ceiling) | `bench/harbor_adapter/stella_harbor/posture.py::_benchmark_engine_posture` | the hashed posture → every posture digest |
-| `EngineConfig::model_timeout` | 816s | **1,572s** (provisional, see below) | `stella-core/src/driver.rs` (engine default) | the SUT binary → re-freeze of the SUT commit |
+| `model_timeout` | 816s (engine default) | **1,572s** (provisional, see below) | `agent_engine_config.model_timeout_secs`, selected by `STELLA_MODEL_TIMEOUT` | the hashed posture → every posture digest |
 | `--turn-budget` | per-trial, Harbor agent timeout − 60s | unchanged | adapter, per trial | nothing |
+
+> **Amended.** When this memo was written `model_timeout` was an `EngineConfig`
+> constant with no configuration path, which is why the row above used to read
+> "the SUT binary → re-freeze of the SUT commit". It is now an ordinary posture
+> key (`agent_engine_config.model_timeout_secs`, host-side selector
+> `STELLA_MODEL_TIMEOUT`), so both ceilings move the same way: the digest.
+> Unset omits the key, so every digest registered before the selector existed
+> still describes the posture that produced it — the frozen Sonnet-5 arm still
+> hashes to `3c428a22…`. **This changes how the decision is executed, not what
+> is being decided.** The numbers below are still the maintainer's to approve.
 
 `triage` stays at the engine default in both arms — low effort, three-line
 classification, the cap was never near binding (same reasoning as every
@@ -96,10 +106,12 @@ Three separate reasons, each sufficient:
    makes the digest describe a posture nobody registered. The change must
    land as its own preregistration (or amendment) with the new digests in
    the protocol tables — the same path §8.4.2 and §8.4.3 took.
-2. **Half of it is a SUT change.** `model_timeout` is an engine constant, so
-   the Fable arm requires a re-freeze of the SUT commit, which is
-   maintainer-only under the protocol ("design finalization before the audit
-   clock starts").
+2. ~~**Half of it is a SUT change.**~~ **Resolved.** `model_timeout` was an
+   engine constant when this memo was written, so the Fable arm required a
+   re-freeze of the SUT commit — maintainer-only under the protocol. It is now
+   `agent_engine_config.model_timeout_secs`, so the arm is a posture change
+   like the output cap beside it and no binary moves. What remains is reason 1,
+   which applies to both ceilings equally.
 3. **The number itself is provisional.** 1,572s is derived, not measured;
    the preregistration should say which it is registering.
 
@@ -108,8 +120,19 @@ Three separate reasons, each sufficient:
 * [ ] Approve the Fable-class arm shape: `max_tokens: 128000` for
       default/worker/judge, `model_timeout: 1572s`, turn-budget wiring
       unchanged, triage unchanged.
-* [ ] Choose global-constant vs per-arm-selector implementation.
-* [ ] Register it: apply the one-line posture change + engine constant on a
-      commit that becomes the new frozen SUT, recompute digests via
-      `_benchmark_engine_posture`, update the protocol/analyzer/READINESS
-      tables, and publish before any paid Fable-class trial.
+* [x] ~~Choose global-constant vs per-arm-selector implementation.~~
+      **Per-arm selector**, and it is built: `STELLA_MODEL_TIMEOUT` lands in
+      the hashed posture exactly like `STELLA_WORKER_EFFORT`, so which timeout
+      a run used is a property of its digest rather than of its logs. Chosen
+      rather than deferred because the two options are not symmetric — the
+      selector is the only one of the two that leaves every already-registered
+      digest reproducible, and it subsumes the global constant (an operator
+      who wants one arm just sets one value).
+* [ ] Register it. **What this now takes:** the output cap is still a literal
+      in `posture.py` pinned by `TestOutputCeilingParity` to the seeded
+      ceiling in `stella-model/src/catalog.rs`, so approving 128,000 means
+      moving the catalog row and letting the ratchet pull the posture with it.
+      The timeout needs no code at all — it is `STELLA_MODEL_TIMEOUT=1572` on
+      the run. Then recompute digests via `_benchmark_engine_posture`, update
+      the protocol/analyzer/READINESS tables, and publish before any paid
+      Fable-class trial.

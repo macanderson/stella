@@ -429,7 +429,8 @@ pub static CAPABILITIES: &[Capability] = &[
         engine_entries: &[],
         cli: SurfacePosture::Shipped {
             mechanism: "the full local registry (bash, edit, read, MCP, skills) under policy \
-                        layering",
+                        layering — settings scopes plus the `--tools` per-invocation scope \
+                        (#1263), which composes by intersection and can only narrow",
             witness: "a_settings_entry_hides_and_refuses_bash_in_the_real_stack",
         },
         api: SurfacePosture::NotApplicable {
