@@ -267,6 +267,80 @@ def test_extract_carries_the_runs_own_identity(tmp_path: Path) -> None:
     assert row["reward"] == 1.0
 
 
+def test_extract_carries_the_verification_ladder_a_run_actually_exercised(
+    tmp_path: Path,
+) -> None:
+    """The A/B's whole input (#1284), and it only exists while the run does.
+
+    Stella's verdict on its own work and the witness observations behind it live
+    in the Harbor job tree, which is never committed. A comparison that reads
+    them from there can only run on the machine that produced the run; carried
+    into `trials.jsonl` they outlive it, like every other field the score
+    depends on.
+    """
+    path = _result(
+        tmp_path,
+        {
+            "task_name": "task",
+            "verifier_result": {"rewards": {"reward": 0.0}},
+            "agent_result": {
+                "metadata": {
+                    "stella_assurance_arm": "witness-on",
+                    "stella_witness_author_model": "openrouter/deepseek/deepseek-v4-pro",
+                    "stella_witness_authored_state": "authored",
+                    "stella_stream": {
+                        "witness_authored_count": 2,
+                        "witness_warranted_count": 3,
+                        "self_verdict_passed": True,
+                        "self_verdict_deterministic": False,
+                    },
+                }
+            },
+        },
+    )
+    row = scorer.extract_trial(path)
+
+    assert row["witness_author_model"] == "openrouter/deepseek/deepseek-v4-pro"
+    assert row["witness_authored_state"] == "authored"
+    assert row["witness_authored_count"] == 2
+    assert row["witness_warranted_count"] == 3
+    # Claimed pass, graded zero: one wrong "this passed" call, recomputable
+    # from the committed row alone.
+    assert row["self_verdict_passed"] is True
+    assert row["self_verdict_deterministic"] is False
+    assert row["accuracy"] == 0.0
+
+
+def test_a_trial_that_closed_no_verdict_extracts_null_not_false(tmp_path: Path) -> None:
+    """Tri-state, or "not measured" starts reading as "measured and honest"."""
+    path = _result(
+        tmp_path,
+        {
+            "task_name": "task",
+            "verifier_result": {"rewards": {"reward": 0.0}},
+            "agent_result": {"metadata": {"stella_stream": {}}},
+        },
+    )
+    row = scorer.extract_trial(path)
+
+    assert row["self_verdict_passed"] is None
+    assert row["self_verdict_deterministic"] is None
+
+
+def test_a_control_arm_manifest_refuses_an_author_it_did_not_run_with() -> None:
+    """An A/B is run from one shell, and the author stays exported (#1284).
+
+    Finalizing the control arm then records the treatment's author on a run
+    that never had one — a mislabeled arm, well-formed and confident.
+    """
+    assert manifest._arm_mismatch("witness-off", "openrouter/deepseek/deepseek-v4-pro")
+    assert manifest._arm_mismatch("witness-on", None)
+    assert not manifest._arm_mismatch("witness-off", None)
+    assert not manifest._arm_mismatch("witness-on", "openrouter/x-ai/grok-4.5")
+    # v1 evidence records no arm and cannot contradict anything.
+    assert not manifest._arm_mismatch(None, "openrouter/x-ai/grok-4.5")
+
+
 def test_reward_is_read_from_the_nested_rewards_object(tmp_path: Path) -> None:
     """`verifier_result.reward` is always None; the reward lives one level in.
 

@@ -659,7 +659,8 @@ def fold_witness_observations(events: list[dict[str, Any]]) -> dict[str, Any]:
     warrant decided no test was warranted at all.
 
     Reads `{"type":"proof","step":{"kind":…}}` events, Stella's own account of
-    its verification ladder (`stella_protocol::ProofStep`). Before #1007 this
+    its verification ladder (`stella_protocol::ProofStep`), plus the
+    `{"type":"judge_verdict"}` event that closes the ladder. Before #1007 this
     lived only in the human-readable warning beside it, so "was the witness
     authored" was a question you answered by grepping trajectories.
 
@@ -667,13 +668,47 @@ def fold_witness_observations(events: list[dict[str, Any]]) -> dict[str, Any]:
     it could not author one; `None` means the stream never reached the question
     (an interrupted trial, or triage waiving assurance). Collapsing those into
     one boolean is how "not measured" starts reading as "measured and absent".
+
+    The verdict fields are the other half of the A/B question (#1284). A trial
+    carries two independent opinions about the same work — Stella's own
+    (`judge_verdict`) and the benchmark's external grader (`reward`, from the
+    verifier, which the agent never sees) — and the interesting number is how
+    often they disagree, in which direction. That comparison was only ever
+    computable from the multi-gigabyte job tree, which is never committed, so
+    it evaporated when the tree was deleted. Folding the verdict here puts it in
+    trial metadata, and `score_dev_baseline.py` carries it into the committed
+    `trials.jsonl` beside the reward it must be compared against.
+
+    `self_verdict_deterministic` is what keeps that comparison honest: a verdict
+    the flip oracle decided and a verdict a model opined are not the same claim,
+    and the model-judge-only rate is the one #1284 quotes.
     """
     proof_kinds: dict[str, int] = {}
     unavailable_reasons: list[str] = []
     warranted = 0
     assurance_planned: bool | None = None
+    verdict_count = 0
+    verdict_passed: bool | None = None
+    verdict_deterministic: bool | None = None
 
     for event in events:
+        if event.get("type") == "judge_verdict":
+            passed = event.get("passed")
+            if not isinstance(passed, bool):
+                continue  # a verdict that states no outcome is not one
+            verdict_count += 1
+            # Last verdict wins: a turn can revise a candidate and judge it
+            # again, and the claim the trial *ends* on is the one the external
+            # reward is a comment on.
+            verdict_passed = passed
+            evidence = event.get("evidence")
+            deterministic = (
+                evidence.get("deterministic") if isinstance(evidence, dict) else None
+            )
+            verdict_deterministic = (
+                deterministic if isinstance(deterministic, bool) else None
+            )
+            continue
         if event.get("type") != "proof":
             continue
         step = event.get("step")
@@ -720,4 +755,18 @@ def fold_witness_observations(events: list[dict[str, Any]]) -> dict[str, Any]:
         "witness_unavailable_reasons": unavailable_reasons,
         "witness_warranted_count": warranted,
         "assurance_witness_planned": assurance_planned,
+        # Same tri-state discipline as `witness_authored`: a trial that was
+        # killed before the ladder closed made no claim, and "made no claim"
+        # must not be scored as "claimed failure" in an agreement rate.
+        "self_verdict_passed": verdict_passed,
+        "self_verdict_state": (
+            "not_reported"
+            if verdict_passed is None
+            else ("passed" if verdict_passed else "failed")
+        ),
+        "self_verdict_deterministic": verdict_deterministic,
+        "self_verdict_count": verdict_count,
+        "verification_unavailable_count": proof_kinds.get(
+            "verification_unavailable", 0
+        ),
     }
