@@ -192,6 +192,119 @@ class TestBenchmarkPosture:
         assert on_digest != off_digest
 
 
+class TestWorkerEffortAndTriageArms:
+    """The two selectors a tuning run varies, and what they refuse."""
+
+    _MODEL = "openrouter/anthropic/claude-sonnet-5"
+
+    def test_unset_selectors_reproduce_the_frozen_posture(self) -> None:
+        """Carrying this code must not, by itself, change any recorded digest.
+
+        The selectors exist so a run can *ask* for a different arm. A tree that
+        merely contains them has asked for nothing, so the posture it produces
+        has to be byte-identical to the one produced before they existed —
+        otherwise every hash in `bench/READINESS.md` silently stops describing
+        the run it was recorded against.
+        """
+        explicit = _benchmark_engine_posture(
+            self._MODEL, worker_effort="xhigh", triage_model=None
+        )
+        default = _benchmark_engine_posture(self._MODEL)
+        assert default[1] == explicit[1]
+        assert default[2] == explicit[2]
+        assert default[0]["agents"]["worker"]["effort"] == "xhigh"
+        assert "pipeline_triage_model" not in default[0]
+
+    def test_worker_effort_moves_only_the_worker_and_the_digest(self) -> None:
+        """`high` and `xhigh` are two arms, and the hash has to say which."""
+        high, _high_json, high_digest = _benchmark_engine_posture(
+            self._MODEL, worker_effort="high"
+        )
+        xhigh, _xhigh_json, xhigh_digest = _benchmark_engine_posture(
+            self._MODEL, worker_effort="xhigh"
+        )
+        assert high["agents"]["worker"]["effort"] == "high"
+        assert xhigh["agents"]["worker"]["effort"] == "xhigh"
+        assert high_digest != xhigh_digest
+        # Only the worker moved. `default` governs roles with no entry of
+        # their own, and letting it track the worker would retune them as an
+        # undeclared second variable inside a one-variable comparison.
+        assert high["agents"]["default"]["effort"] == "xhigh"
+        assert high["agents"]["judge"]["effort"] == "xhigh"
+        assert high["agents"]["triage"] == xhigh["agents"]["triage"]
+
+    def test_unrecognised_worker_effort_is_refused_not_defaulted(self) -> None:
+        """A typo must not be silently promoted to the frozen default.
+
+        Falling back would attribute the run to a tier nobody selected, and the
+        digest would agree with the typo rather than with reality — the same
+        failure mode as a treatment arm degrading into the control arm.
+        """
+        with pytest.raises(ValueError, match="worker effort"):
+            _benchmark_engine_posture(self._MODEL, worker_effort="ultra")
+
+    def test_triage_pin_lands_in_the_flat_key_and_widens_the_vocabulary(
+        self,
+    ) -> None:
+        """A pinned triage author must also be an *allowed* model.
+
+        `allowed_models` is a whitelist. A triage pin outside it is refused at
+        resolve time, triage falls back to the worker, and the run bills the
+        expensive model for the cheap role while the digest claims otherwise.
+        """
+        triage = "openrouter/anthropic/claude-haiku-4.5"
+        posture, _normalized, digest = _benchmark_engine_posture(
+            self._MODEL, triage_model=triage
+        )
+        assert posture["pipeline_triage_model"] == triage
+        assert triage in posture["allowed_models"]
+        assert self._MODEL in posture["allowed_models"]
+        # Triage stays low/off regardless of who authors it: the role emits a
+        # short classification, and raising it would change what Stella is
+        # rather than what it was allowed to spend.
+        assert posture["agents"]["triage"] == {"effort": "low", "reasoning": "off"}
+        assert digest != _benchmark_engine_posture(self._MODEL)[2]
+
+    def test_triage_pin_must_share_the_workers_provider(self) -> None:
+        """One credential reaches the container, so a second provider is unusable."""
+        with pytest.raises(ValueError, match="triage model must share"):
+            _benchmark_engine_posture(
+                self._MODEL, triage_model="anthropic/claude-haiku-4.5"
+            )
+
+    def test_all_three_roles_coexist_inside_the_launcher_vocabulary(self) -> None:
+        """The full tuning posture must survive the fail-closed launcher seam.
+
+        `config::trusted_engine_config_shape_is_strict` rejects any root key
+        outside `ENGINE_ROOT_FIELDS`, so a posture that names a judge *and* a
+        triage author is the shape most likely to trip it — and it refuses the
+        run outright rather than dropping the unknown key.
+        """
+        posture, _normalized, _digest = _benchmark_engine_posture(
+            self._MODEL,
+            witness_author="openrouter/anthropic/claude-fable-5",
+            worker_effort="high",
+            triage_model="openrouter/anthropic/claude-haiku-4.5",
+        )
+        allowed_roots = {
+            "default_model",
+            "pipeline_judge_model",
+            "pipeline_worker_model",
+            "pipeline_triage_model",
+            "allowed_models",
+            "auto_mode",
+            "effort_auto",
+            "reasoning_auto",
+            "headless_scope_bypass",
+            "agents",
+        }
+        assert set(posture) <= allowed_roots
+        assert set(posture["agents"]) <= {"default", "worker", "judge", "triage"}
+        # Every pinned role is in the whitelist, or it cannot be resolved.
+        for role_key in ("pipeline_judge_model", "pipeline_triage_model"):
+            assert posture[role_key] in posture["allowed_models"]
+
+
 class TestWitnessStreamObservation:
     """Folding `AgentEvent::Proof` into a field an analysis can read."""
 
