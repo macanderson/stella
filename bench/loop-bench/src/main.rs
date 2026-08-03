@@ -22,6 +22,9 @@
 //! # pick tasks + model explicitly
 //! cargo run -p loop-bench -- --tasks fix-git,prove-plus-comm -m openrouter/z-ai/glm-5.2
 //!
+//! # A/B two configs over the same tasks; the first named is the baseline
+//! cargo run -p loop-bench -- --compare model-a,model-b --tasks fix-git --trials 2
+//!
 //! # analyze a finished jobs dir without spending anything
 //! cargo run -p loop-bench -- --analyze-only --jobs-dir /path/to/jobs --job-name my-run
 //! ```
@@ -43,9 +46,13 @@
 //! - `4` — the loop was healthy but fewer than `--min-pass` trials passed.
 //! - `5` — the run completed and the `--json-out` report could not be
 //!   written; the JSON is dumped on stdout instead.
+//! - `6` — `--compare --require-winner` and no arm confidently beat the
+//!   baseline, or one did and a guard metric regressed. Opt-in, like `4`: a
+//!   comparison is a measurement, and "no winner" is a legitimate answer to it.
 //!
 //! `1` outranks `4`: when both fire, the loop failure is the one a human can
-//! act on, and a broken loop explains the missing passes anyway.
+//! act on, and a broken loop explains the missing passes anyway. `1` outranks
+//! `6` for the same reason.
 
 use std::path::Path;
 use std::process::Command;
@@ -53,7 +60,9 @@ use std::time::{Duration, Instant};
 
 use clap::Parser;
 
+use loop_bench::compare::{arm_trials, default_guards, print_comparison};
 use loop_bench::{TrialReport, analyze, below_pass_floor, print_table, tally};
+use stella_core::comparison::{ArmTrials, ComparisonConfig, Metric, compare};
 
 /// A small, representative default pool — mixed languages and difficulties, the
 /// same tasks the loop-hardening work was measured against. `--n` takes the
@@ -155,6 +164,54 @@ struct Args {
     /// model, and a gate that is always red is a gate nobody reads.
     #[arg(long, default_value_t = 0, value_name = "N")]
     min_pass: usize,
+
+    /// A/B two or more models over the same task set (#876). The **first**
+    /// named is the baseline every other is measured against; `-m/--model` is
+    /// ignored. Each config runs into its own job directory under
+    /// `--jobs-dir`, and the run emits one comparison report rather than N
+    /// separate tables.
+    #[arg(long, value_delimiter = ',', value_name = "MODEL,MODEL")]
+    compare: Vec<String>,
+
+    /// Trials per task per config (harbor's `-k`). More trials is the only
+    /// way past the comparison's sample floor on a short task list: two arms
+    /// of four trials cannot clear it however cleanly they separate.
+    #[arg(long, default_value_t = 1, value_name = "N")]
+    trials: usize,
+
+    /// The metric `--compare` picks the winner on. Guards are applied to the
+    /// other cost metrics regardless.
+    #[arg(long, value_enum, default_value = "pass-rate", value_name = "METRIC")]
+    primary: PrimaryMetric,
+
+    /// Fail (exit 6) when `--compare` produces no promotable winner. Off by
+    /// default: a comparison is a measurement, and a CI job that wants it to
+    /// be a gate should have to say so.
+    #[arg(long)]
+    require_winner: bool,
+}
+
+/// The `--primary` choices, mapped onto the shared metric vocabulary. A
+/// separate enum so clap validates the flag at parse time and so the harness
+/// offers only the metrics a *model* comparison is meaningfully judged on —
+/// `retries` is a loop signal this harness already gates on separately.
+#[derive(clap::ValueEnum, Clone, Copy, Debug)]
+enum PrimaryMetric {
+    PassRate,
+    CostUsd,
+    Tokens,
+    Turns,
+}
+
+impl From<PrimaryMetric> for Metric {
+    fn from(value: PrimaryMetric) -> Self {
+        match value {
+            PrimaryMetric::PassRate => Metric::PassRate,
+            PrimaryMetric::CostUsd => Metric::CostUsd,
+            PrimaryMetric::Tokens => Metric::Tokens,
+            PrimaryMetric::Turns => Metric::Turns,
+        }
+    }
 }
 
 fn main() {
@@ -175,33 +232,21 @@ fn main() {
         std::process::exit(2);
     }
 
-    if !args.analyze_only
-        && let Err(code) = run_harbor(&args, &tasks)
-    {
-        eprintln!("harbor run failed (exit {code}); analyzing whatever landed");
-    }
-
-    // The resolved task set scopes the analysis (#611): stale trial dirs from
-    // an earlier run under the same job name are skipped, and requested tasks
-    // that never launched become NOT-RUN rows. `--analyze-only` reads
-    // whatever the finished jobs dir holds instead.
-    let requested = if args.analyze_only {
-        None
+    let code = if args.compare.is_empty() {
+        run_single(&args, &tasks)
     } else {
-        Some(tasks.as_slice())
+        run_comparison(&args, &tasks)
     };
-    let job_dir = Path::new(&args.jobs_dir).join(&args.job_name);
-    let reports = analyze(&job_dir, requested);
-    // Distinguished from exit 1 (#611): nothing to judge is an infrastructure
-    // failure, not a loop regression, and a CI consumer must be able to tell
-    // a broken runner from a broken agent.
-    if reports.is_empty() {
-        eprintln!(
-            "no trial artifacts found under {} — nothing to report",
-            job_dir.display()
-        );
-        std::process::exit(3);
-    }
+    std::process::exit(code);
+}
+
+/// The original one-config run: measure the loop, render the table, apply the
+/// loop gate and the opt-in pass floor.
+fn run_single(args: &Args, tasks: &[String]) -> i32 {
+    let reports = match collect_arm(args, tasks, &args.model, &args.job_name) {
+        Ok(reports) => reports,
+        Err(code) => return code,
+    };
 
     let json = serde_json::to_string_pretty(&reports).unwrap_or_else(|_| "[]".into());
     if args.json {
@@ -209,27 +254,13 @@ fn main() {
     } else {
         print_table(&reports);
     }
-
-    // Write the artifact after rendering, so a late failure here (a disk that
-    // filled during the run) still leaves the operator the report — dumped on
-    // stdout below rather than lost — and is reported as its own exit code.
-    let mut report_lost = false;
-    if let Some(path) = &args.json_out
-        && let Err(err) = std::fs::write(path, format!("{json}\n"))
-    {
-        eprintln!("could not write the report to {path}: {err}");
-        if !args.json {
-            eprintln!("dumping it on stdout instead so the run is not evidence-free:");
-            println!("{json}");
-        }
-        report_lost = true;
-    }
+    let report_lost = write_artifact(args, &json);
 
     // Exit non-zero if the LOOP misbehaved, even when some tasks passed —
     // this tool gates on loop health, not pass rate. See the library docs for
     // which verdicts fold into `loop_broken()`.
     if reports.iter().any(TrialReport::loop_broken) {
-        std::process::exit(1);
+        return 1;
     }
     // The second, opt-in gate (#873). Checked after loop health so a run that
     // fails both reports the actionable half.
@@ -240,11 +271,136 @@ fn main() {
             reports.len(),
             args.min_pass
         );
-        std::process::exit(4);
+        return 4;
     }
-    if report_lost {
-        std::process::exit(5);
+    if report_lost { 5 } else { 0 }
+}
+
+/// The `--compare` run (#876): the same task set under each named config, then
+/// one comparison report.
+///
+/// Each config runs into its own job directory so the two arms' trial dirs
+/// cannot be mistaken for one another — a shared directory would make the
+/// second run's `<task>__<id>` dirs indistinguishable from the first's, and the
+/// comparison would silently fold one model's trials into the other's arm.
+fn run_comparison(args: &Args, tasks: &[String]) -> i32 {
+    let configs = &args.compare;
+    if configs.len() < 2 {
+        eprintln!("--compare needs at least two configs, e.g. --compare model-a,model-b");
+        return 2;
     }
+    for (index, config) in configs.iter().enumerate() {
+        if configs[..index].contains(config) {
+            eprintln!("--compare names `{config}` twice; every arm must be distinct");
+            return 2;
+        }
+    }
+
+    let mut arms: Vec<ArmTrials> = Vec::with_capacity(configs.len());
+    let mut loop_broken = false;
+    for (index, model) in configs.iter().enumerate() {
+        let job_name = arm_job_name(&args.job_name, index, model);
+        let reports = match collect_arm(args, tasks, model, &job_name) {
+            Ok(reports) => reports,
+            Err(code) => return code,
+        };
+        loop_broken |= reports.iter().any(TrialReport::loop_broken);
+        arms.push(arm_trials(model, model, &reports));
+    }
+
+    // The first config named is the incumbent; every other is a candidate
+    // measured against it.
+    let config = ComparisonConfig::new(configs[0].clone(), args.primary.into())
+        .with_guards(default_guards());
+    let report = compare(&arms, &config);
+
+    let json = serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".into());
+    if args.json {
+        println!("{json}");
+    } else {
+        print_comparison(&report);
+    }
+    let report_lost = write_artifact(args, &json);
+
+    // The loop gate outranks the comparison for the same reason it outranks
+    // the pass floor: a broken loop is the actionable failure, and it also
+    // makes the arm's numbers untrustworthy as a comparison.
+    if loop_broken {
+        return 1;
+    }
+    if args.require_winner && !report.verdict.is_winner() {
+        eprintln!("NO WINNER: --require-winner was set and no arm cleared both bars");
+        return 6;
+    }
+    if report_lost { 5 } else { 0 }
+}
+
+/// Run (unless `--analyze-only`) and distill one config's trials.
+///
+/// `Err(code)` is the process exit code for a run with nothing to judge —
+/// distinguished from exit 1 (#611): an infrastructure failure is not a loop
+/// regression, and a CI consumer must be able to tell a broken runner from a
+/// broken agent.
+fn collect_arm(
+    args: &Args,
+    tasks: &[String],
+    model: &str,
+    job_name: &str,
+) -> Result<Vec<TrialReport>, i32> {
+    if !args.analyze_only
+        && let Err(code) = run_harbor(args, tasks, model, job_name)
+    {
+        eprintln!("harbor run failed (exit {code}); analyzing whatever landed");
+    }
+    // The resolved task set scopes the analysis (#611): stale trial dirs from
+    // an earlier run under the same job name are skipped, and requested tasks
+    // that never launched become NOT-RUN rows. `--analyze-only` reads
+    // whatever the finished jobs dir holds instead.
+    let requested = if args.analyze_only { None } else { Some(tasks) };
+    let job_dir = Path::new(&args.jobs_dir).join(job_name);
+    let reports = analyze(&job_dir, requested);
+    if reports.is_empty() {
+        eprintln!(
+            "no trial artifacts found under {} — nothing to report",
+            job_dir.display()
+        );
+        return Err(3);
+    }
+    Ok(reports)
+}
+
+/// Write `--json-out`, returning whether the artifact was lost.
+///
+/// Called after rendering, so a late failure here (a disk that filled during
+/// the run) still leaves the operator the report — dumped on stdout rather
+/// than lost — and is reported as its own exit code.
+fn write_artifact(args: &Args, json: &str) -> bool {
+    let Some(path) = &args.json_out else {
+        return false;
+    };
+    let Err(err) = std::fs::write(path, format!("{json}\n")) else {
+        return false;
+    };
+    eprintln!("could not write the report to {path}: {err}");
+    if !args.json {
+        eprintln!("dumping it on stdout instead so the run is not evidence-free:");
+        println!("{json}");
+    }
+    true
+}
+
+/// One arm's job directory name: `<job>-arm<i>-<slug>`.
+///
+/// The index is not decoration. Two distinct model strings can slug to the
+/// same characters (`a/b` and `a-b` both become `a-b`), and two arms sharing a
+/// job directory is the one failure mode that would corrupt a comparison
+/// without looking like an error — the index makes collision impossible.
+fn arm_job_name(job_name: &str, index: usize, model: &str) -> String {
+    let slug: String = model
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    format!("{job_name}-arm{index}-{slug}")
 }
 
 fn resolve_tasks(args: &Args) -> Vec<String> {
@@ -269,9 +425,13 @@ fn resolve_tasks(args: &Args) -> Vec<String> {
         .collect()
 }
 
-/// Build and run the harbor command. Returns Err(exit_code) on a non-zero
-/// harbor exit — non-fatal, since partial results are still worth analyzing.
-fn run_harbor(args: &Args, tasks: &[String]) -> Result<(), i32> {
+/// Build and run the harbor command for one config. Returns Err(exit_code) on
+/// a non-zero harbor exit — non-fatal, since partial results are still worth
+/// analyzing.
+///
+/// `model` and `job_name` are parameters rather than reads off `args` because
+/// `--compare` runs this once per arm, each into its own job directory.
+fn run_harbor(args: &Args, tasks: &[String], model: &str, job_name: &str) -> Result<(), i32> {
     // A non-positive (or NaN) cap denies the very first model call, which
     // would report as a zero-work loop failure for every task — the harness
     // manufacturing the signal it gates on. Warn loudly rather than hand
@@ -308,10 +468,12 @@ fn run_harbor(args: &Args, tasks: &[String]) -> Result<(), i32> {
     cmd.arg("run")
         .args(["--dataset", &args.dataset])
         .args(["--agent-import-path", "stella_harbor:StellaAgent"])
-        .args(["-m", &args.model])
-        .args(["-k", "1"])
+        .args(["-m", model])
+        // Floored for the same reason as `--n`: zero trials measures nothing,
+        // and an operator asking for zero meant one.
+        .args(["-k", &args.trials.max(1).to_string()])
         .args(["-n", &concurrent.to_string()])
-        .args(["--job-name", &args.job_name])
+        .args(["--job-name", job_name])
         .args(["--jobs-dir", &args.jobs_dir])
         .arg("-y");
     for task in tasks {
@@ -343,9 +505,10 @@ fn run_harbor(args: &Args, tasks: &[String]) -> Result<(), i32> {
     cmd.env("PYTHONPATH", pythonpath);
 
     eprintln!(
-        "▶ loop-bench: {} task(s) on {} (budget ${:.2}/task, {} concurrent)",
+        "▶ loop-bench: {} task(s) × {} trial(s) on {} (budget ${:.2}/task, {} concurrent)",
         tasks.len(),
-        args.model,
+        args.trials.max(1),
+        model,
         args.budget,
         concurrent
     );

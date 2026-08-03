@@ -122,8 +122,15 @@ fn rendered_skill_bytes_are_pinned() {
 /// candidate whose file already exists. Anything that reorders these two
 /// changes which reason a caller logs, and a "file exists" line for a session
 /// that never got to look at the filesystem is a confusing lie.
+///
+/// Every call here passes a candidate that has already cleared #1067's eval
+/// gate, which is what keeps this a test about the *ordering* rather than one
+/// that would pass for the wrong reason once the gate refuses everything. The
+/// gate's own placement — last, after both of these — is pinned separately by
+/// `the_eval_gate_is_checked_after_the_cap_and_the_no_clobber_guard`.
 #[test]
 fn the_session_cap_is_checked_before_the_no_clobber_guard() {
+    use super::appraisal::EvalEvidence::MeasuredLift as PROVEN;
     let candidate = SkillCandidate {
         name: "already-there".into(),
         description: "d".into(),
@@ -140,14 +147,14 @@ fn the_session_cap_is_checked_before_the_no_clobber_guard() {
 
     // At the cap: capped, even though the file also exists.
     assert_eq!(
-        decide_auto_creation(&candidate, ".stella/skills", &existing, 2, &config),
+        decide_auto_creation(&candidate, ".stella/skills", &existing, 2, PROVEN, &config),
         AutoCreateDecision::Skip {
             reason: AutoCreateSkip::SessionCapReached { cap: 2 }
         }
     );
     // Under the cap: now the no-clobber guard is what stops it.
     assert_eq!(
-        decide_auto_creation(&candidate, ".stella/skills", &existing, 0, &config),
+        decide_auto_creation(&candidate, ".stella/skills", &existing, 0, PROVEN, &config),
         AutoCreateDecision::Skip {
             reason: AutoCreateSkip::FileExists {
                 path: ".stella/skills/already-there.md".into()
@@ -156,9 +163,84 @@ fn the_session_cap_is_checked_before_the_no_clobber_guard() {
     );
     // Neither applies: create.
     assert_eq!(
-        decide_auto_creation(&candidate, ".stella/skills", &[], 1, &config),
+        decide_auto_creation(&candidate, ".stella/skills", &[], 1, PROVEN, &config),
         AutoCreateDecision::Create {
             path: ".stella/skills/already-there.md".into()
+        }
+    );
+}
+
+/// #1067's gate is the **last** rung, so neither of the two refusals above is
+/// displaced by it. Pinned here beside the ordering it extends, because a gate
+/// that jumped ahead of the cap would change which reason a capped session
+/// reports — and that reason is what an operator acts on.
+#[test]
+fn the_eval_gate_is_checked_after_the_cap_and_the_no_clobber_guard() {
+    use super::appraisal::EvalEvidence;
+
+    let candidate = SkillCandidate {
+        name: "already-there".into(),
+        description: "d".into(),
+        domains: vec![],
+        body: "b".into(),
+        occurrences: 3,
+        salient: false,
+        evidence: vec![],
+        score: 30.0,
+    };
+    let existing = vec![".stella/skills/already-there.md".to_string()];
+    // Armed explicitly: the gate ships off (see
+    // `AutoCreateConfig::require_measured_lift`), and what this pins is where
+    // it sits in the order once something turns it on.
+    let config = AutoCreateConfig {
+        require_measured_lift: true,
+        ..AutoCreateConfig::default()
+    };
+
+    // Unevaluated AND at the cap: the cap still wins.
+    assert_eq!(
+        decide_auto_creation(
+            &candidate,
+            ".stella/skills",
+            &existing,
+            2,
+            EvalEvidence::Unevaluated,
+            &config
+        ),
+        AutoCreateDecision::Skip {
+            reason: AutoCreateSkip::SessionCapReached { cap: 2 }
+        }
+    );
+    // Unevaluated AND the file exists: no-clobber still wins.
+    assert_eq!(
+        decide_auto_creation(
+            &candidate,
+            ".stella/skills",
+            &existing,
+            0,
+            EvalEvidence::Unevaluated,
+            &config
+        ),
+        AutoCreateDecision::Skip {
+            reason: AutoCreateSkip::FileExists {
+                path: ".stella/skills/already-there.md".into()
+            }
+        }
+    );
+    // Only once neither applies does the gate get to speak.
+    assert_eq!(
+        decide_auto_creation(
+            &candidate,
+            ".stella/skills",
+            &[],
+            0,
+            EvalEvidence::Unevaluated,
+            &config
+        ),
+        AutoCreateDecision::Skip {
+            reason: AutoCreateSkip::AwaitingEvaluation {
+                evidence: EvalEvidence::Unevaluated
+            }
         }
     );
 }

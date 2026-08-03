@@ -131,10 +131,11 @@ fn digest_line(d: &TurnDigest, folded: bool, width: usize) -> Vec<Line<'static>>
 /// so each term is a thing that can silently alter an already-rendered row:
 /// the agent, thinking/expand-all overlays and their revision, the pane width,
 /// how many entries have been evicted off the front, the file-mutation count
-/// (an inline diff can go stale without anything being appended), and the set
-/// of folded turns (which changes on its own when a turn finishes under the
-/// fold-all overlay).
-type FoldKey = (String, bool, bool, u64, usize, usize, u64, u64);
+/// (an inline diff can go stale without anything being appended), the set of
+/// folded turns (which changes on its own when a turn finishes under the
+/// fold-all overlay), and how many leading entries have moved into the
+/// terminal's scrollback (accessible mode — those must stop being drawn).
+type FoldKey = (String, bool, bool, u64, usize, usize, u64, u64, usize);
 
 /// Incremental transcript fold for the Session tab.
 ///
@@ -179,6 +180,7 @@ impl SessionFold {
         expanded_rev: u64,
         width: usize,
         plan: &FoldPlan,
+        flushed: usize,
     ) {
         // Front-eviction shifts every retained index, so the settled prefix
         // no longer describes the entries now occupying 0..settled. The
@@ -203,6 +205,7 @@ impl SessionFold {
             evicted,
             file_gen,
             plan.signature,
+            flushed,
         );
         // Invalidation CLEARS the key; the commit happens after the fold loop
         // below. A panic inside `entry_lines` would otherwise leave `prefix`
@@ -221,6 +224,19 @@ impl SessionFold {
         while self.settled < target {
             let i = self.settled;
             let start = self.prefix.len();
+            if i < flushed {
+                // Already ordinary terminal output above this pane
+                // (`accessible::Scrollback`). Drawing it again would have a
+                // reader hear the conversation twice — once as it arrived in
+                // scrollback, once as part of a pane that repaints. It still
+                // gets a (zero-width) row range so every index-keyed
+                // affordance — selection, search, scroll-into-view — stays
+                // aligned with the transcript rather than shifting by
+                // however much has been flushed.
+                self.entry_rows.push(start..start);
+                self.settled += 1;
+                continue;
+            }
             if let Some(d) = plan.digests.get(&i) {
                 self.prefix.extend(digest_line(d, true, width));
             } else if plan.hides(i) {
@@ -360,7 +376,14 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     // fixed column, so they cost the transcript some right-margin clipping
     // instead of costing it whole rows. Below `RAIL_MIN_COLS` the split never
     // happens and the strip carries everything.
-    let (transcript_area, rail_area) = if crate::views::work_rail::rail_visible(sm, area.width) {
+    // Accessible mode takes the narrow-frame branch unconditionally: the rail
+    // is a column beside the transcript, so every row it occupies carries two
+    // logical panes at once, and read aloud that is one interleaved line
+    // (#1258). Nothing is lost — this is the same path a sub-`RAIL_MIN_COLS`
+    // terminal already takes, where the one-row strip carries scope · tasks ·
+    // proof and `⌃S` opens the whole thing.
+    let split_rail = !ui.accessible && crate::views::work_rail::rail_visible(sm, area.width);
+    let (transcript_area, rail_area) = if split_rail {
         let cols = Layout::horizontal([
             Constraint::Min(1),
             Constraint::Length(crate::views::work_rail::RAIL_W),
@@ -416,6 +439,10 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
             crate::deck_ui::is_folded(ui, &agent.meta.id, turn)
         }),
     };
+    // In accessible mode the leading entries are already in the terminal's
+    // scrollback; the pane must skip exactly those, or the conversation is
+    // announced twice. Zero on every ordinary session.
+    let flushed = ui.scrollback.flushed_for(&agent.meta.id);
     ui.session_fold.refresh(
         &agent.meta.id,
         &sm.transcript,
@@ -427,6 +454,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         ui.expanded_rev,
         width,
         &plan,
+        flushed,
     );
     ui.session_plan = Some((plan_key, plan));
     let height = inner_height(transcript_area);
@@ -866,6 +894,7 @@ mod tests {
             0,
             80,
             &FoldPlan::default(),
+            0,
         );
         for i in 1_000..(MAX_TRANSCRIPT_ENTRIES + 50) {
             model.apply(&retry(i));
@@ -882,6 +911,7 @@ mod tests {
             0,
             80,
             &FoldPlan::default(),
+            0,
         );
 
         let mut fresh = SessionFold::default();
@@ -896,6 +926,7 @@ mod tests {
             0,
             80,
             &FoldPlan::default(),
+            0,
         );
         assert_eq!(fold.total(), fresh.total());
         assert_eq!(
@@ -962,6 +993,7 @@ mod tests {
             0,
             120,
             &FoldPlan::default(),
+            0,
         );
         let text: String = fold
             .window_lines(0..fold.total())
@@ -995,6 +1027,7 @@ mod tests {
             0,
             120,
             &FoldPlan::default(),
+            0,
         );
         let text: String = fold
             .window_lines(0..fold.total())
@@ -1035,6 +1068,7 @@ mod tests {
             0,
             120,
             &FoldPlan::default(),
+            0,
         );
         let text: String = fold
             .window_lines(0..fold.total())
@@ -1063,6 +1097,7 @@ mod tests {
             0,
             120,
             &FoldPlan::default(),
+            0,
         );
         assert_eq!(
             fold.window_lines(0..fold.total()),
@@ -1320,6 +1355,7 @@ mod tests {
             0,
             120,
             &plan,
+            0,
         );
         fold
     }
@@ -1522,6 +1558,7 @@ mod tests {
                 0,
                 60,
                 &plan,
+                0,
             );
         };
 

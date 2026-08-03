@@ -55,8 +55,8 @@ use stella_core::retry::{RetryPolicy, Sleeper};
 use stella_core::router::FallbackInfo;
 use stella_core::{BudgetGuard, Engine, EngineConfig, EventSender, Router, TurnOutcome};
 use stella_protocol::{
-    AgentEvent, CompletionMessage, JudgeEvidence, LadderSnapshot, MessageRole, ModelCallRole,
-    ModelRef, OracleObservation, ProofStep, ProofTree, Provider, Role, StageKind,
+    AgentEvent, CompletionMessage, JudgeEvidence, LadderRung, LadderSnapshot, MessageRole,
+    ModelCallRole, ModelRef, OracleObservation, ProofStep, ProofTree, Provider, Role, StageKind,
 };
 
 use crate::candidate::{
@@ -2623,7 +2623,7 @@ impl<'a> Pipeline<'a> {
                         }
                     };
                     let mut evidence = model_verdict_evidence(&verdict);
-                    evidence.ladder = Some(Box::new(snapshot.clone()));
+                    evidence.ladder = Some(Box::new(snapshot.with_rung(verdict.rung())));
                     self.emit(AgentEvent::JudgeVerdict {
                         passed: verdict.passed,
                         evidence: evidence.clone(),

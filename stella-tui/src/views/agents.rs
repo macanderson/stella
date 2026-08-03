@@ -105,6 +105,11 @@ fn render_executions(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &
     );
     let block = Block::default().borders(Borders::ALL).title(title);
 
+    if ui.accessible {
+        render_executions_linear(model, ui.focused, block, area, buf);
+        return;
+    }
+
     let compact = area.width < COMPACT_TABLE_WIDTH;
     let keep = |i: usize| !compact || COMPACT_COLUMNS.contains(&i);
 
@@ -154,6 +159,86 @@ fn render_executions(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &
         .block(block)
         .column_spacing(1)
         .render(area, buf);
+}
+
+/// The EXECUTIONS pane in accessible mode: the same records, the same fields,
+/// in the same order — as labelled text instead of a 13-column grid.
+///
+/// The dashboard's whole compression scheme is positional: `$0.05` means cost
+/// because of the header two rows up and the column it sits in, and read aloud
+/// both of those are whitespace. There is no compact/full split here either;
+/// the full field set always renders and a narrow terminal clips the tail,
+/// because dropping `$/hr` and `CPU%` on a narrow frame is a decision made for
+/// an eye scanning columns, not for a reader walking fields.
+fn render_executions_linear(
+    model: &WorkspaceModel,
+    focused: usize,
+    block: Block<'static>,
+    area: Rect,
+    buf: &mut Buffer,
+) {
+    let inner = block.inner(area);
+    block.render(area, buf);
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+    let width = inner.width as usize;
+    let lines: Vec<Line<'static>> = model
+        .agents
+        .iter()
+        .enumerate()
+        .take(inner.height as usize)
+        .map(|(i, entry)| agent_record(entry, model.now_ms, i == focused, width))
+        .collect();
+    Paragraph::new(lines).render(inner, buf);
+}
+
+/// One agent as `> ● lead · status running · goal … · ctx 12% · …`.
+fn agent_record(entry: &AgentEntry, now_ms: u64, is_focused: bool, width: usize) -> Line<'static> {
+    let status = entry.status;
+    let color = theme::status_color(status);
+    // The glyph rides the name rather than standing in for the status: it is
+    // decoration for whoever is looking, and `status` says the same thing in
+    // words a line later for whoever is listening.
+    let identity = crate::views::linear::identity(
+        format!("{} {}", theme::status_glyph(status), entry.meta.id),
+        is_focused,
+        color,
+    );
+    let ctx_frac = ctx_used_fraction(entry.context_tokens);
+    let fields = [
+        ("status", status.label().to_string()),
+        ("goal", truncate(&entry.meta.title, GOAL_MAX_CHARS)),
+        ("ctx", format!("{:.0}%", ctx_frac * 100.0)),
+        ("cost", format!("${:.2}", entry.cost_usd)),
+        ("$/hr", format!("${:.2}", entry.usd_per_hour(now_ms))),
+        ("elapsed", fmt_elapsed(entry.elapsed_ms(now_ms))),
+        ("cpu", format!("{:.0}%", entry.res.cpu_pct)),
+        ("mem", humanize_bytes(entry.res.mem_bytes)),
+        (
+            "tokens in/out",
+            format!(
+                "{}/{}",
+                humanize_count(entry.tokens_in),
+                humanize_count(entry.tokens_out)
+            ),
+        ),
+        (
+            "cache",
+            match cache_panel::hit_pct(entry.cache_read_tokens, entry.tokens_in) {
+                Some(pct) => format!("{pct}%"),
+                None => String::new(),
+            },
+        ),
+        (
+            "warmth",
+            match entry.cache_warmth_secs(now_ms) {
+                Some(secs) => cache_panel::fmt_warmth(Some(secs)),
+                None => String::new(),
+            },
+        ),
+    ];
+    crate::views::linear::record_line(identity, &fields, width)
 }
 
 /// Build one dashboard row for `entry`. Every cell owns its content, so the

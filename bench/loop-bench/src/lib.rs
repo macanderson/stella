@@ -36,6 +36,8 @@
 //! the pass rate this harness produces is a flash-tier model's under a cap:
 //! a floor is only meaningful once a job's own history has established one.
 
+pub mod compare;
+
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -93,6 +95,15 @@ pub struct TrialReport {
     /// operator can tell whether the per-task cap was hit when interpreting a
     /// verdict (#611).
     pub spend_usd: f64,
+    /// Sum of `step_usage.input_tokens + output_tokens` across the trial's
+    /// committed model calls. Not shown in the single-run table — its columns
+    /// are for loop health, and a token count says nothing about that — but it
+    /// is a first-class metric of an A/B (#876), where "the candidate wins by
+    /// reading four times as much context" is a result the operator must see.
+    pub tokens: u64,
+    /// Sum of `step_usage.retries`. A retried call still emits one
+    /// `step_usage`, so this is the retry *count*, not a second call tally.
+    pub retries: u32,
     /// Lines of the stream that parsed as events.
     pub parsed_lines: u32,
     /// Lines that did not parse. `parsed_lines == 0` with unparsable lines
@@ -310,6 +321,14 @@ pub fn distill_events(task: &str, raw: &str) -> TrialReport {
             Some("step_usage") => {
                 r.model_calls += 1;
                 r.spend_usd += ev.get("cost_usd").and_then(Value::as_f64).unwrap_or(0.0);
+                for field in ["input_tokens", "output_tokens"] {
+                    let count = ev.get(field).and_then(Value::as_u64).unwrap_or(0);
+                    r.tokens = r.tokens.saturating_add(count);
+                }
+                let retries = ev.get("retries").and_then(Value::as_u64).unwrap_or(0);
+                r.retries = r
+                    .retries
+                    .saturating_add(u32::try_from(retries).unwrap_or(u32::MAX));
             }
             Some("tool_start") => {
                 r.tool_calls += 1;

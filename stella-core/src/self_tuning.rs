@@ -166,7 +166,12 @@ impl ArmStats {
 
 /// Thresholds for [`select_winner`]. `Default` is a conservative bar suited to
 /// auto-promotion of stella's own behavior.
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// Serializable because a verdict without its thresholds cannot be audited:
+/// [`crate::comparison::ComparisonReport`] publishes the bar a promotion
+/// cleared beside the promotion itself, so a reader can see it was the
+/// conservative default rather than one lowered for the occasion.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct SelectionConfig {
     /// Minimum trials required in **every** arm before any promotion. A knob
     /// change is never made on a handful of samples.

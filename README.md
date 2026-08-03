@@ -360,7 +360,11 @@ stella            # or: stella chat
 
 On a TTY this opens the **Command Deck** — a tabbed TUI (Session · Agents ·
 Traces · Graph · Files · Skills · MCP) with PR-style diffs and an editable prompt
-queue. `--plain` (or `STELLA_PLAIN=1`, or piped stdio) falls back to the line REPL.
+queue. `--accessible` (or `STELLA_ACCESSIBLE=1`) runs that same deck so a screen
+reader can read it: inline on your own screen, each finished message into normal
+scrollback exactly once, single-column panels, labelled rows instead of tables,
+and a spoken line whenever you change tab, overlay, or focus. `--plain` (or
+`STELLA_PLAIN=1`, or piped stdio) falls back to the line REPL.
 
 **In-chat commands** — the Command Deck and the line REPL each implement their
 own vocabulary, so the surface column says where a command actually works:
@@ -430,9 +434,9 @@ stella inspect   # the exact context a past model call was sent, rebuilt from
 ### Global flags
 
 `--model provider/id` · `--api-key` · `--base-url` · `--budget <usd>` ·
-`--output-format text|json|stream-json` · `--plain` · `--no-anim` (also as
-`STELLA_MODEL`, `STELLA_BASE_URL`, `STELLA_BUDGET`, `STELLA_OUTPUT_FORMAT`,
-`STELLA_PLAIN`, `STELLA_NO_ANIM`). All of them are registered with every
+`--output-format text|json|stream-json` · `--accessible` · `--plain` ·
+`--no-anim` (also as `STELLA_MODEL`, `STELLA_BASE_URL`, `STELLA_BUDGET`,
+`STELLA_OUTPUT_FORMAT`, `STELLA_ACCESSIBLE`, `STELLA_PLAIN`, `STELLA_NO_ANIM`). All of them are registered with every
 subcommand, so they parse before _or_ after the subcommand token. The `json` /
 `stream-json` formats are for headless one-shot `stella run`; interactive
 `chat` / `goal` / `monitor` modes render human-readable output. `stella run`

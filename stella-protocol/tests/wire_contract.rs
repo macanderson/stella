@@ -56,6 +56,7 @@ use stella_protocol::event::{
     PolicyKind, PrStatus, ProofStep, ProofTree, ScopeProposal, StageKind, TaskItem, TaskStatus,
     UsageIncompleteReason,
 };
+use stella_protocol::ladder::{LadderRung, LadderSnapshot, OracleObservation};
 use stella_protocol::receipt::{
     BlockKind, BlockOrigin, CacheZone, ContextFrameRef, ContextProviderUsage, ContextUsage,
     ManifestEntry, ProviderShare,
@@ -345,6 +346,19 @@ fn all_file_change_kinds() -> Vec<FileChangeKind> {
 
 fn all_proof_trees() -> Vec<ProofTree> {
     vec![ProofTree::Baseline, ProofTree::Candidate]
+}
+
+fn all_ladder_rungs() -> Vec<LadderRung> {
+    use LadderRung::*;
+    vec![
+        SubmitFast,
+        Revise,
+        NothingAttempted,
+        Unverifiable,
+        ModelJudge,
+        HeuristicFallback,
+        Waived,
+    ]
 }
 
 fn all_media_kinds() -> Vec<MediaKind> {
@@ -1046,6 +1060,45 @@ fn sample_events() -> Vec<AgentEvent> {
             depth: 2,
         },
     });
+    // Every ladder rung (#1043). Each has to reach the wire on its own,
+    // because the rung is the *only* thing separating verdicts that the
+    // surrounding `passed`/`deterministic` flags spell identically — a
+    // deterministic pass from a waived review, a judge that answered from one
+    // that was unavailable.
+    events.extend(
+        all_ladder_rungs()
+            .into_iter()
+            .map(|rung| AgentEvent::JudgeVerdict {
+                passed: rung.is_deterministic(),
+                evidence: JudgeEvidence {
+                    summary: "sampled for the rung".into(),
+                    deterministic: rung.is_deterministic(),
+                    evidence_refs: vec![],
+                    ladder: Some(Box::new(LadderSnapshot {
+                        rung: Some(rung),
+                        tracked_command: Some("cargo test -p x".into()),
+                        oracle_trace: vec![OracleObservation {
+                            tree: ProofTree::Candidate,
+                            passed: true,
+                        }],
+                        flip_achieved: true,
+                        unstable_flip: false,
+                        flip_refused_different_failure: false,
+                        touched_tests_passed: Some(true),
+                        test_infra: Some("timed_out".into()),
+                        diff_lines: 12,
+                        diff_budget: 400,
+                        diff_available: true,
+                        file_change_events: 2,
+                        mutating_actions: 3,
+                        new_diag_errors: 0,
+                        new_diag_warnings: 1,
+                        witness_intact: Some(true),
+                        witness_mutation: Some(true),
+                    })),
+                },
+            }),
+    );
 
     events
 }
@@ -1221,6 +1274,7 @@ fn every_nested_vocabulary_is_fully_sampled() {
         ("FinishReason", all_finish_reasons().len()),
         ("FileChangeKind", all_file_change_kinds().len()),
         ("ProofTree", all_proof_trees().len()),
+        ("LadderRung", all_ladder_rungs().len()),
         ("MediaKind", all_media_kinds().len()),
         ("PrStatus", all_pr_statuses().len()),
         ("CiStatus", all_ci_statuses().len()),
@@ -1261,6 +1315,7 @@ fn every_nested_vocabulary_is_fully_sampled() {
         "FinishReason",
         "FileChangeKind",
         "ProofTree",
+        "LadderRung",
         "MediaKind",
         "PrStatus",
         "CiStatus",

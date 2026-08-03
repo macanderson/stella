@@ -10,7 +10,9 @@ use clap::{CommandFactory, Parser};
 use super::build_info::{
     BUILD_VERSION_IDENTITY, long_version_static, version_static, version_string,
 };
-use super::term_policy::{PlainReason, animation_disabled, deck_decision, dumb_terminal};
+use super::term_policy::{
+    PlainReason, accessible_env, animation_disabled, deck_decision, dumb_terminal,
+};
 use super::{AuthCmd, Cli, Command, ConnectCmd, OutputFormat, TelemetryCmd, error_summary_json};
 
 /// `-V` stays one greppable line; `--version` answers the two questions a bug
@@ -192,6 +194,38 @@ fn a_dumb_terminal_disables_colour_unless_the_user_forces_it() {
     assert!(!dumb_terminal(term("xterm-256color").as_deref(), None));
     assert!(!dumb_terminal(term("dumb-but-not-really").as_deref(), None));
     assert!(!dumb_terminal(None, None));
+}
+
+/// `--accessible` has an env synonym so a screen-reader user can set it once,
+/// in their shell profile, instead of remembering a flag on every invocation
+/// (#1258). It follows this CLI's house convention for boolean env vars, where
+/// an explicit `0` means off — the same rule `STELLA_PLAIN` and
+/// `STELLA_NO_ENV_FILE` follow, so there is one convention to learn.
+#[test]
+fn the_accessible_env_var_follows_the_house_boolean_convention() {
+    use std::ffi::OsStr;
+    let v = |s: &str| Some(OsStr::new(s)).map(|o| o.to_owned());
+
+    assert!(accessible_env(v("1").as_deref()));
+    assert!(accessible_env(v("yes").as_deref()));
+    assert!(!accessible_env(v("0").as_deref()));
+    assert!(!accessible_env(v("").as_deref()));
+    assert!(!accessible_env(None));
+}
+
+/// Accessible mode is a mode ON the deck, not a third surface beside it — so
+/// it takes no part in the deck-or-REPL decision, and `--plain` keeps meaning
+/// exactly what it meant. Pinned because the surface it replaced (#1237's
+/// `--simple`) *was* a third branch here, and re-introducing one is how the
+/// second-class tier comes back.
+#[test]
+fn accessible_mode_does_not_change_the_deck_or_repl_decision() {
+    assert_eq!(deck_decision(false, false, true, true), None);
+    assert_eq!(
+        deck_decision(true, false, true, true),
+        Some(PlainReason::Flag),
+        "--plain still wins on its own terms"
+    );
 }
 
 /// The deck and the line REPL are different programs: the REPL has no prompt

@@ -35,6 +35,26 @@ skip the roll) were re-inserted the same way.
 
 ## [Unreleased]
 
+### Added
+
+- `--accessible` (env `STELLA_ACCESSIBLE=1`) runs the **Command Deck itself** so
+  a screen reader can read it — a mode on the real product, not a lesser surface
+  beside it. Every tab, gate, key, sub-agent and resume is unchanged. The deck
+  draws inline on your own screen instead of the alternate one, each completed
+  message moves into normal scrollback exactly once (and is still there after you
+  quit), animation is frozen, the GRAPH/SKILLS panes and the session work rail
+  stack into one column, the grid views (TRACES, ISSUES, TOOLS, AGENTS,
+  INSTALLED) render as labelled rows instead of aligned columns, and tab,
+  overlay and focus changes are announced. A terminal that never answers a
+  cursor-position request still gets a deck — it degrades to a full-screen draw
+  on your own screen, and says so. (#1258)
+
+### Fixed
+
+- Messages the deck itself speaks are now marked `▸`, so the transcript no longer
+  reads as though the model said "conversation cleared". The rail glyph that used
+  to carry that distinction is visual, and visual distinctions do not survive
+  being read aloud. (#1258)
 ## [0.6.79] — 2026-08-03
 
 ## [0.6.78] — 2026-08-03

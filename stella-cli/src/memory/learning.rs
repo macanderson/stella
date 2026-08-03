@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use colored::Colorize;
 use stella_context::{ContextDelta, MemoryInput};
+use stella_core::skills::appraisal::EvalEvidence;
 use stella_core::skills::{
     self, AutoCreateConfig, AutoCreateDecision, SkillMineConfig, SkillObservation,
 };
@@ -529,12 +530,22 @@ impl SessionMemory {
         let mut occupied_paths = skill_paths_on_disk(&skills_dir);
         occupied_paths.extend(existing.iter().map(|s| s.source_path.clone()));
         let config = AutoCreateConfig::default();
+        // #1067's eval gate. A candidate is promoted on measured lift, never on
+        // observation frequency alone, and the verdict comes from the appraisal
+        // ledger rather than from this turn — one turn cannot measure a skill
+        // that has never been injected.
+        let verdicts = super::appraisals::latest_verdicts(&self.workspace_root);
         for candidate in candidates {
+            let evidence = verdicts
+                .get(&candidate.name)
+                .copied()
+                .unwrap_or(EvalEvidence::Unevaluated);
             match skills::decide_auto_creation(
                 &candidate,
                 &skills_dir,
                 &occupied_paths,
                 self.skills_created,
+                evidence,
                 &config,
             ) {
                 AutoCreateDecision::Create { path } => {
@@ -554,6 +565,21 @@ impl SessionMemory {
                             );
                         }
                     }
+                }
+                // A held candidate is queued, not lost (#1067): its
+                // observations stay in the mining log, and the queue is what an
+                // appraisal run reads. Silence here would be the old failure
+                // mode wearing new clothes — a loop that quietly stops
+                // producing looks exactly like one that has nothing to produce.
+                AutoCreateDecision::Skip {
+                    reason: skills::AutoCreateSkip::AwaitingEvaluation { evidence },
+                } => {
+                    super::appraisals::queue_candidate(
+                        &self.workspace_root,
+                        &candidate,
+                        evidence,
+                        quiet,
+                    );
                 }
                 AutoCreateDecision::Skip { .. } => {}
             }

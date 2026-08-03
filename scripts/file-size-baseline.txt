@@ -17,6 +17,7 @@
 1615 bench/terminal_bench_analysis/tests/test_tb21_evidence_contract.py
 1744 stella-cli/src/agent_tests.rs
 2362 stella-cli/src/agent.rs
+1743 stella-cli/src/agent_tests.rs
 1576 stella-cli/src/candidate_ws.rs
 4561 stella-cli/src/command_deck.rs
 1515 stella-cli/src/fleet_cmd.rs
@@ -30,7 +31,7 @@
 1773 stella-model/src/zai/tests.rs
 3491 stella-pipeline/src/pipeline.rs
 2590 stella-pipeline/src/pipeline/tests.rs
-2806 stella-protocol/src/event.rs
+2722 stella-protocol/src/event.rs
 2078 stella-store/src/lib.rs
 2261 stella-store/src/tests.rs
 1905 stella-store/src/usage.rs
@@ -38,6 +39,6 @@
 2234 stella-tools/src/registry.rs
 1839 stella-tools/src/scripts.rs
 1892 stella-tui/src/deck_render.rs
-3955 stella-tui/src/deck_ui.rs
+4008 stella-tui/src/deck_ui.rs
 1665 stella-tui/src/views/engine.rs
-1557 stella-tui/src/views/session.rs
+1594 stella-tui/src/views/session.rs
