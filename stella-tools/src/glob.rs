@@ -81,6 +81,17 @@ impl Tool for Glob {
                 };
             }
         };
+        // A typo'd `path` is caught here, deterministically, rather than by
+        // parsing backend stderr: fd and find phrase a missing search dir
+        // differently, and find's phrasing ("No such file or directory") is
+        // byte-identical to the noise an entry vanishing mid-walk produces.
+        // With existence settled up front, backend_failure can treat every
+        // vanished-entry complaint as the race it is.
+        if !search_dir.is_dir() {
+            return ToolOutput::Error {
+                message: format!("search path `{search_path}` is not a directory"),
+            };
+        }
         // Results are rendered relative to the (canonical) workspace root, per
         // this tool's advertised contract.
         let canon_root = root.canonicalize().ok();
@@ -182,15 +193,19 @@ fn backend_failure(program: &str, output: &std::process::Output) -> Option<Strin
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
     // Per-entry traversal noise is benign: a walk that brushes an unreadable
-    // directory (systemd-private tempdirs on a shared /tmp, another user's
-    // build dir) makes find/fd exit non-zero while the empty result is still
+    // directory (systemd-private tempdirs on a shared /tmp) or an entry that
+    // vanishes between enumeration and stat (another process cleaning its
+    // tempdir) makes find/fd exit non-zero while the empty result is still
     // the honest answer — the same tolerance grep's pattern guard applies.
-    // Only a complaint that is NOT permission noise makes the empty result a
-    // lie worth surfacing (bad search path, malformed pattern).
+    // "No such file or directory" can only be that race here: the search dir
+    // itself was verified in `execute` before the backend ran. Only a
+    // complaint outside these shapes makes the empty result a lie worth
+    // surfacing (malformed pattern, unlaunchable backend).
     let first = stderr.lines().map(str::trim).find(|line| {
         !line.is_empty()
             && !line.contains("Permission denied")
             && !line.contains("Operation not permitted")
+            && !line.contains("No such file or directory")
     })?;
     Some(format!("{program} error: {first}"))
 }
@@ -538,12 +553,14 @@ mod tests {
         assert_eq!(backend_failure("fd", &silent), None);
 
         // Per-entry traversal noise stays quiet: a walk brushing another
-        // user's unreadable directory exits non-zero with only permission
-        // complaints, and the empty result is still the honest answer.
+        // user's unreadable directory, or an entry deleted mid-walk by a
+        // concurrent process, exits non-zero while the empty result is
+        // still the honest answer.
         let traversal_noise = std::process::Output {
             status: std::process::ExitStatus::from_raw(256),
             stdout: Vec::new(),
-            stderr: b"find: '/tmp/systemd-private-abc': Permission denied\n".to_vec(),
+            stderr: b"find: '/tmp/systemd-private-abc': Permission denied\nfind: '/tmp/vanished_mid_walk': No such file or directory\n"
+                .to_vec(),
         };
         assert_eq!(backend_failure("find", &traversal_noise), None);
 
@@ -551,10 +568,28 @@ mod tests {
         let mixed = std::process::Output {
             status: std::process::ExitStatus::from_raw(256),
             stdout: Vec::new(),
-            stderr: b"find: '/tmp/systemd-private-abc': Permission denied\nfind: 'srcc': No such file or directory\n"
+            stderr: b"find: '/tmp/systemd-private-abc': Permission denied\nfind: paths must precede expression: `src[`\n"
                 .to_vec(),
         };
         let message = backend_failure("find", &mixed).expect("real failure must surface");
-        assert!(message.contains("srcc"), "{message}");
+        assert!(message.contains("precede expression"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn a_typod_search_path_is_a_named_error_before_any_backend_runs() {
+        let dir = std::env::temp_dir();
+        let result = Glob::default()
+            .execute(
+                &serde_json::json!({"pattern": "*.rs", "path": "srcc"}),
+                &dir,
+            )
+            .await;
+        match result {
+            ToolOutput::Error { message } => {
+                assert!(message.contains("srcc"), "{message}");
+                assert!(message.contains("not a directory"), "{message}");
+            }
+            ToolOutput::Ok { content } => panic!("expected error, got: {content}"),
+        }
     }
 }
