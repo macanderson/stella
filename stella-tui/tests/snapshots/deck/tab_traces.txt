@@ -1,0 +1,45 @@
+# deck golden · tab_traces
+# the TRACES tab over the scripted demo session
+# viewport 160×40 · rendered through render_deck, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
+
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ SKILLS │ MCP │ ISSUES │ SETTINGS                                                                                 │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ traces · all · 24 events · following · f: filter ────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│00:00  lead  [stage] triage                                                                                                                                   │
+│00:00  lead  [ctx] 2 frames, 210 tok                                                                                                                          │
+│00:00  lead  [stage] plan                                                                                                                                     │
+│00:00  lead  [text] Planning the automations cluster: list, editor, triggers, workflows.                                                                      │
+│00:00  lead  [spend] glm-5.2 $0.0210                                                                                                                          │
+│00:00  lead  [spend] $0.0210                                                                                                                                  │
+│00:00  lead  [stage] execute                                                                                                                                  │
+│00:00  lead  [tool] read_file()                                                                                                                               │
+│00:00  lead  [tool] ok in 42ms                                                                                                                                │
+│00:00  lead  [file] modified apps/app/automations/page.tsx +4/-1                                                                                              │
+│00:00  lead  [spend] glm-5.2 $0.0180                                                                                                                          │
+│00:00  lead  [spend] $0.0390                                                                                                                                  │
+│00:00  sub:auth  [stage] execute                                                                                                                              │
+│00:00  sub:auth  [tool] grep()                                                                                                                                │
+│00:00  sub:auth  [file] created apps/api/routes/v1/automations.ts +3/-0                                                                                       │
+│00:00  sub:auth  [spend] glm-5.2 $0.0110                                                                                                                      │
+│00:00  sub:auth  [spend] $0.0110                                                                                                                              │
+│00:00  sub:auth  [·] Which auth guard should the triggers route use?                                                                                          │
+│00:00  sub:ci  [stage] verify                                                                                                                                 │
+│00:00  sub:ci  [verdict] passed                                                                                                                               │
+│00:00  sub:ci  [vcs] feat(automations): triggers + workflows UI                                                                                               │
+│00:00  sub:ci  [vcs] pr open                                                                                                                                  │
+│00:00  sub:ci  [spend] glm-5.2-air $0.0040                                                                                                                    │
+│00:00  lead  [stage] Refactor the automations store into a shared workspace package                                                                           │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▸ stage  Refactor the automations store into a shared workspace package
+✓ plan  ▸ execute  · verify ██████████████████████████████████████████┊█████████████████████░░░░░░░░░░░░░░░░░░░░░┊░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 50%
+>>>
+ ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
+           │ AGENT │ STAGE     │ CPU         │ CONTEXT          │ SPEND │ CACHE                 │ SAVED │ WARMTH │ ENGINE   │ PIPELINE │ PR            │ INBOX
+ ✦ stella  │ lead  │ ● execute │ ▮▮▮▯▯▯  50% │ ▯▯▯▯▯▯ 8.2k/200k │ $0.05 │ 63% (18.0K rd · 0 wr) │ $0.00 │ —      │ 3 active │ OFF      │ ⇢ #981 open … │ —
+ MODELS  T·—  W·zai/glm-5.2-air  J·—

@@ -289,6 +289,7 @@ editing Stella's own code should know what lives where:
 |---|---|
 | `.stella/memories/*.md` | Durable lessons baked into the byte-stable system prompt prefix. Sorted by filename, loaded once per session. (Write side: the `save_memory` tool.) |
 | `.stella/skills/<slug>/SKILL.md` | Auto-promoted skills from recurring reflection lessons. Never enforced — selected and injected as volatile context. |
+| `.stella/rules/*.toml` | Published **context records** — this repository's own steering policy, one record per file ([`docs/context-pr.md`](docs/context-pr.md)). The one part of `.stella/` that is **tracked in Git**, because a record only steers a teammate's session if it travels with the repository. Beside them, `governance.toml` sets the governance mode (this repo is `regulated`) and `promotions.jsonl` is the hash-chained ledger of enforcement grants; `stella context validate` re-verifies both in CI on every PR. Edit through `stella context keep` / `promote`, not by hand. |
 | `.stella/tools/*.toml` | Developer-defined custom script tools. Also scanned at `~/.stella/tools/`. |
 | `.stella/settings.json` | Project-scope provider config (overrides built-ins or defines new providers) and tool switches (`tools.bash: "off"` withholds the shell tool — every built-in, the shell included, is registered by default since #710). Merged per-field with org-managed and user scopes. |
 | `.stella/mcp.toml` | MCP server config — extra tools merged into the registry at session start. |
@@ -441,6 +442,14 @@ be closed by exactly one PR; if a fix spans several, close on the last and
   classification (`stella-model`, `stella-mcp`, `stella-media`).
 - **Integration tests** with fixture MCP servers (`stella-mcp/tests/`).
 - **Replay fixtures** for pipeline stages (`stella-pipeline/tests/`).
+- **Golden frames** for the command deck
+  (`stella-tui/tests/deck_render_snapshots.rs`). Each tab and overlay renders
+  into a fixed-size `TestBackend` and the whole character grid is compared
+  against a committed snapshot under `tests/snapshots/deck/`. This catches what
+  a `contains` assertion cannot — a column that shifted, a panel that moved, a
+  row that vanished. Regenerate with
+  `BLESS=1 cargo test -p stella-tui --test deck_render_snapshots`, then **read
+  the diff**: a golden blessed without looking is a changelog, not a test.
 
 When iterating, run a single crate's tests — `cargo test -p stella-core` is
 seconds; `cargo test --workspace` rebuilds everything.

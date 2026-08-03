@@ -1,0 +1,84 @@
+# Stella's own repository policy, published as a context record.
+#
+# Source: AGENTS.md lines 110-115, which states this in bold as a decree:
+#
+#   "If `cargo deny` rejects a new dependency, drop the dependency — do not
+#    widen the allow-list in `deny.toml` without a licensing decision."
+#
+# This is a `constraint`, not a `rule`: it is true by decree rather than by
+# measurement, and the reason it is enforceable is that the failure it prevents
+# is not a style problem. The workspace is AGPL-3.0-only and dual-licensed, so
+# a dependency carrying a further restriction breaks redistribution on both
+# tracks — and the cheapest moment to catch it is the edit that would have
+# admitted it, not the release that ships it.
+#
+# The guard names no `guard_tool` on purpose. `Edit` would cover `edit_file`
+# and `apply_edits` but not `write_file`, and a guard that stops the model's
+# usual path while leaving the other one open is worse than no guard: it reads
+# as enforcement in `stella context list` and is not. With the tool field
+# omitted the guard matches on path alone, so every tool that names a path is
+# covered, and `Bash` (which carries no `path`) is not — running `cargo deny`
+# is exactly what this record wants to happen.
+
+schema = "context-record/v0.1"
+set_id = "stella"
+
+[defaults]
+sharing_scope = "repository"
+status        = "active"
+origin        = "user"
+
+# `source_digest` and `commit` pin the state this claim was READ FROM, not the
+# current tip: the digest is AGENTS.md at 0731387e. That is the point of citing
+# both — a later edit to AGENTS.md does not retroactively change where the
+# record came from, and a reviewer comparing the two learns exactly that the
+# source has moved since extraction.
+[defaults.provenance]
+source_kind   = "document"
+source_uri    = "AGENTS.md"
+source_digest = "sha256:1ec11d010d094ac5d8a8d4b0514c7032fbf1adc0fe09cd01d5a2ce8ad2466b03"
+repo          = "git@github.com:macanderson/stella"
+commit        = "0731387e"
+
+
+[[record]]
+lineage_id = "ctx.stella.dependency-license-allowlist"
+kind       = "constraint"
+statement  = "A dependency that `cargo deny` rejects must be dropped rather than admitted by widening the license allow-list in `deny.toml`."
+tags       = ["licensing", "supply-chain", "dependencies"]
+
+  [record.provenance]
+  source_lines = [110, 115]
+
+  [record.steering]
+  force      = "must"
+  precedence = 100
+  applies_to = { paths = ["deny.toml"], tasks = ["build", "ci", "install"] }
+
+  [record.enforcement]
+  mode = "hard"
+  # `*` is the matcher's only wildcard and it crosses path separators, so this
+  # one pattern covers `deny.toml`, `./deny.toml`, and the absolute form —
+  # every shape a model actually writes. There is exactly one `deny.toml` in
+  # the tree, so the leading `*` costs no precision.
+  guard_deny_path = "*deny.toml"
+  severity        = "error"
+  on_violation    = "Drop the dependency or find a compatibly-licensed alternative. Widening the allow-list needs a licensing decision from the repository owner first, because the workspace is AGPL-3.0-only and dual-licensed."
+
+  [record.truth]
+  basis        = "decree"
+  confidence   = 100
+  verified_by  = "@macanderson"
+  verified_at  = "2026-08-02T00:00:00Z"
+  review_every = "P180D"
+
+    # A decree cannot be refuted by measuring the world — it is true because an
+    # owner wrote it down. What CAN be measured is whether the owner still has:
+    # if this sentence leaves AGENTS.md, the decree was withdrawn and the record
+    # must stop steering until somebody re-ratifies it. Weaker than a real
+    # falsification, stronger than the `manual` probe that would abstain
+    # forever, and ungated — it reads one tracked file and executes nothing.
+    [record.truth.probe]
+    kind    = "file_contains"
+    path    = "AGENTS.md"
+    pattern = "do not widen the allow-list in"
