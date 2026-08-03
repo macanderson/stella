@@ -277,13 +277,41 @@ pub(crate) async fn session_start_hook_context(cfg: &Config) -> Option<String> {
     (!outcome.output.is_empty()).then_some(outcome.output)
 }
 
+/// Ceiling on hook-contributed session context, in chars (~1k tokens). Every
+/// other system-prompt section carries a budget (memories 16k, exploration
+/// index 2k, records 2k); this one had none, so a hook that cats a log file
+/// silently inflated every model call for the whole session — inside the
+/// cached prefix, where the write premium re-bills it on any miss.
+pub(crate) const SESSION_HOOK_CONTEXT_BUDGET_CHARS: usize = 4_000;
+
+/// Head-clamp hook output to [`SESSION_HOOK_CONTEXT_BUDGET_CHARS`] with a
+/// visible marker — the same posture as every other budgeted prompt section:
+/// the truncation is stated in-band, never silent.
+pub(crate) fn clamp_hook_context(context: &str) -> String {
+    let mut kept: String = context
+        .chars()
+        .take(SESSION_HOOK_CONTEXT_BUDGET_CHARS)
+        .collect();
+    if kept.chars().count() < context.chars().count() {
+        kept.push_str("\n[… SessionStart hook output truncated at the session-context budget …]");
+    }
+    kept
+}
+
 /// Append any `SessionStart` hook context to an assembled system prompt.
 /// The result is still byte-stable for the session: hooks fire once, here,
 /// and the prompt never changes afterwards.
+///
+/// Byte-stable for the session is the guarantee; byte-stable *across*
+/// sessions is the hook author's side of the bargain. Output that differs
+/// per run — a timestamp, a `git status`, a branch SHA — rewrites the whole
+/// cached prefix on every new session, which is exactly the
+/// `CacheCause::PrefixInstability` the cache panel diagnoses. The clamp
+/// bounds the cost of that mistake; it cannot remove it.
 pub(crate) async fn with_session_hook_context(mut system_prompt: String, cfg: &Config) -> String {
     if let Some(context) = session_start_hook_context(cfg).await {
         system_prompt.push_str("\n\nSession context (from SessionStart hooks):\n");
-        system_prompt.push_str(&context);
+        system_prompt.push_str(&clamp_hook_context(&context));
     }
     system_prompt
 }

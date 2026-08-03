@@ -337,15 +337,14 @@ async fn run_pipeline_one_shot(
         }
     }
     if let Some(m) = &memory {
-        // Phase 2 (#713): the one-shot path recalled and reported nothing, so
-        // `stella run` — the primary surface — left no record of what context
-        // it was given. The stream is already live here, so the event goes
-        // straight out.
-        let recalled = m.recall_block_reported(prompt).await;
-        if let Some(event) = recalled.telemetry_event() {
-            let _ = tx.send(event);
-        }
-        inject_recall_block(&mut messages, recalled.text);
+        // Frames ride the pipeline's own recall port below (`recall:` in the
+        // ports), which recalls once, renders them into the goal message, and
+        // emits the turn's one `ContextRecall` event. Injecting the *full*
+        // block here too — the shape this path had — recalled twice per turn
+        // and billed the same frame content into the prompt twice. The
+        // pipeline block carries only the sections the port has no channel
+        // for: skills, draft claims, and the volatile record channel.
+        inject_recall_block(&mut messages, m.pipeline_recall_block(prompt).await);
     }
     let mut budget = build_budget_guard(budget_limit);
     budget.begin_turn();

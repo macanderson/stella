@@ -72,6 +72,32 @@ async fn best_of_n_folds_the_mcp_prefetch_into_every_candidate() {
     );
 }
 
+/// The pre-fetched block is budgeted like recall: past the fan-out budget it
+/// is head-kept with an in-band marker. This block rides ahead of every
+/// candidate's every turn, so an unbounded server answer multiplied itself
+/// by N candidates × every revision.
+#[tokio::test]
+async fn an_oversized_prefetch_is_clamped_with_a_visible_marker() {
+    /// [`FixedPrefetch`] with an owned answer, sized at runtime.
+    struct OwnedPrefetch(String);
+    #[async_trait]
+    impl McpPrefetchPort for OwnedPrefetch {
+        async fn prefetch(&self, _goal: &str) -> Option<String> {
+            Some(self.0.clone())
+        }
+    }
+    let port = OwnedPrefetch("x".repeat(60_000));
+    let folded = crate::mcp_prefetch::fold(Some(&port), "goal", 2, &[])
+        .await
+        .expect("a hit folds a message");
+    let msg = &folded.last().expect("one folded message").content;
+    assert!(msg.contains("truncated at the fan-out budget"));
+    assert!(
+        msg.chars().count() < 21_000,
+        "the folded block is bounded by the budget, not the server's appetite"
+    );
+}
+
 /// A prefetch miss (`None`) must never abort the run — best-of-N proceeds
 /// exactly as if no [`McpPrefetchPort`] were wired at all.
 #[tokio::test]

@@ -1792,3 +1792,21 @@ async fn a_customer_registered_tool_is_covered_by_the_policy() {
         other => panic!("a disabled custom tool must be refused, got {other:?}"),
     }
 }
+
+/// The SessionStart hook budget: within it, bytes pass through untouched
+/// (the prefix stays exactly what the hook wrote); past it, the cut is
+/// marked in-band — the same never-silent posture as every other budgeted
+/// prompt section.
+#[test]
+fn session_hook_context_is_clamped_with_a_visible_marker() {
+    let small = "export STAGING_URL=https://stage.example";
+    assert_eq!(crate::agent::clamp_hook_context(small), small);
+
+    let big = "x".repeat(crate::agent::SESSION_HOOK_CONTEXT_BUDGET_CHARS + 500);
+    let clamped = crate::agent::clamp_hook_context(&big);
+    assert!(clamped.contains("hook output truncated"));
+    assert!(
+        clamped.chars().count() < crate::agent::SESSION_HOOK_CONTEXT_BUDGET_CHARS + 200,
+        "the clamp bounds the section, not the hook's appetite"
+    );
+}

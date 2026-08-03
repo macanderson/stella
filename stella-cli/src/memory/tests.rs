@@ -432,6 +432,52 @@ async fn ab_control_suppresses_skills_before_any_recall_section_is_built() {
     );
 }
 
+/// The frames-free block for pipeline-driven turns: skills and the record
+/// channel ride, recalled frames do not — those are the pipeline recall
+/// port's job, and rendering them here too is the double-recall/double-bill
+/// this method exists to end.
+#[tokio::test]
+async fn the_pipeline_recall_block_carries_skills_and_records_but_never_frames() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".stella")).unwrap();
+    let skill_dir = dir.path().join(".stella/skills/reviewer");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: reviewer\ndescription: database review\n---\nALWAYS_REVIEW_DATABASES",
+    )
+    .unwrap();
+    let mut memory =
+        SessionMemory::open_with_workspace_skills(dir.path(), false, true).expect("session memory");
+    let lesson = "always use the frobnicator for database migrations";
+    memory
+        .store
+        .upsert(ContextDelta {
+            memories: vec![MemoryInput::reflection(lesson, Vec::<String>::new())],
+            ..ContextDelta::default()
+        })
+        .await
+        .unwrap();
+    memory.set_record_channel("Volatile records:\n- staging URL: https://stage.example".into());
+
+    let full = memory
+        .recall_block("review the database migrations")
+        .await
+        .expect("the full block renders frames, skills, and records");
+    assert!(full.contains("frobnicator"), "full block carries frames");
+
+    let pipeline = memory
+        .pipeline_recall_block("review the database migrations")
+        .await
+        .expect("skills + records still render");
+    assert!(pipeline.contains("ALWAYS_REVIEW_DATABASES"));
+    assert!(pipeline.contains("staging URL"));
+    assert!(
+        !pipeline.contains("frobnicator"),
+        "frames must stay on the pipeline's recall port, not be billed twice"
+    );
+}
+
 #[tokio::test]
 async fn a_fresh_quarantine_filters_rendered_and_pipeline_recall_next_time() {
     let dir = tempfile::tempdir().unwrap();
