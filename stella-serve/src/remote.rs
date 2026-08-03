@@ -20,11 +20,12 @@ use serde_json::Value;
 use stella_core::ports::ToolExecutor;
 use stella_core::retry::Sleeper;
 use stella_protocol::{
-    CompletionRequestRef, CompletionResult, Provider, ProviderError, ToolOutput, ToolSchema,
+    CompletionRequestRef, CompletionResult, Provider, ProviderError, ToolCallObserver, ToolOutput,
+    ToolSchema,
 };
 use tokio::sync::{mpsc, oneshot};
 
-use crate::frame::ServerFrame;
+use crate::frame::{ProviderDelta, ServerFrame};
 use crate::observe::event::{RequestId, ReverseKind, ServeEvent, millis};
 use crate::pending::Pending;
 
@@ -76,11 +77,30 @@ fn timed_out(pending: &Pending, request_id: &str, kind: ReverseKind, started: In
 /// "wedged forever" into "fails in minutes" — the whole point, since the parked
 /// step also holds an OS thread.
 ///
+/// For a provider request this is an **idle** bound, not a total one: a host
+/// that streams fragments back (`POST /v1/turns/{id}/provider-delta`, #1165)
+/// resets the clock with each batch, so a completion that keeps producing is
+/// never cut however long it runs — the same "measure silence, not elapsed
+/// time" rule as `EngineConfig::model_timeout`. A host that does not stream
+/// sees exactly the fixed window it always had.
+///
 /// Per-turn overridable via [`crate::SessionSpec::reverse_request_timeout`] (on
 /// the wire: `reverse_request_timeout_ms` on `POST /v1/turns`), because a host
 /// with genuinely slower tools should raise it rather than have the engine
 /// pretend its tools failed.
 pub(crate) const DEFAULT_REVERSE_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Hand one streamed fragment to the engine's observer, on the channel that
+/// keeps answer text and thinking apart. A `None` observer (the plain
+/// `complete_ref` path) drops the fragment: the aggregated result is
+/// authoritative either way.
+fn forward_delta(observer: Option<&dyn ToolCallObserver>, delta: &ProviderDelta) {
+    let Some(observer) = observer else { return };
+    match delta {
+        ProviderDelta::Text { text } => observer.text_delta(text),
+        ProviderDelta::Reasoning { text } => observer.reasoning_delta(text),
+    }
+}
 
 /// A Tokio-backed [`Sleeper`] for the session runtime's retry backoff. The
 /// session runtime is built with the time driver enabled, so `sleep` resolves
@@ -121,15 +141,20 @@ impl RemoteProvider {
     }
 }
 
-#[async_trait]
-impl Provider for RemoteProvider {
-    fn id(&self) -> &str {
-        &self.id
-    }
-
-    async fn complete_ref(
+impl RemoteProvider {
+    /// The one remoted completion path, shared by both trait methods.
+    ///
+    /// With an observer this is what closes #1165: fragments the host POSTs to
+    /// `/v1/turns/{id}/provider-delta` land on the registered feed and are
+    /// forwarded inline, so the engine's gate emits `TextDelta` / `Reasoning`
+    /// events and the frames flow into `FrameHistory` — ordering, `seq`, and
+    /// replay for free, exactly as with a local streaming adapter. Without an
+    /// observer the fragments are drained and dropped; the aggregated result
+    /// stays authoritative either way.
+    async fn complete_remoted(
         &self,
         req: CompletionRequestRef<'_>,
+        observer: Option<&dyn ToolCallObserver>,
     ) -> Result<CompletionResult, ProviderError> {
         // Refuse to park a cancelled turn. `Cancelled` is not retryable, so this
         // is what unwinds the turn after `POST /v1/turns/{id}/cancel` — including
@@ -138,13 +163,14 @@ impl Provider for RemoteProvider {
             return Err(ProviderError::Cancelled);
         }
         let request_id = format!("prov-{}", self.counter.fetch_add(1, Ordering::Relaxed));
-        let (tx, rx) = oneshot::channel();
+        let (tx, mut rx) = oneshot::channel();
+        let (feed, mut deltas) = mpsc::unbounded_channel::<ProviderDelta>();
         // Register before emitting so the entry always exists by the time the
         // host can answer (register → send ordering closes the race). A refused
         // registration means `cancel()` landed since the check above — its
         // wake-everyone clear has already run, so parking now would wait out
         // the full deadline with nobody left to wake this step.
-        if !self.pending.register_provider(request_id.clone(), tx) {
+        if !self.pending.register_provider(request_id.clone(), tx, feed) {
             return Err(ProviderError::Cancelled);
         }
         if self
@@ -168,33 +194,89 @@ impl Provider for RemoteProvider {
             ));
         }
         let started = dispatched(&self.pending, &request_id, ReverseKind::Provider);
-        match tokio::time::timeout(self.timeout, rx).await {
-            Ok(Ok(result)) => {
-                answered(&self.pending, &request_id, ReverseKind::Provider, started);
-                result
-            }
-            // Sender dropped. Cancellation is the deliberate case and reports
-            // itself as such; otherwise the session is being torn down. Either
-            // way `Pending`'s own clear reports the discard, so there is no
-            // per-request event here.
-            Ok(Err(_)) if self.pending.is_cancelled() => Err(ProviderError::Cancelled),
-            Ok(Err(_)) => Err(ProviderError::Transport(
-                "serve host dropped the model call without answering".to_string(),
-            )),
-            Err(_) => {
-                self.pending.abandon(&request_id);
-                timed_out(&self.pending, &request_id, ReverseKind::Provider, started);
-                // Deliberately `Terminal`, not `Transport`: `Transport` is
-                // retryable, so a host that is simply not answering would be
-                // handed the same unbounded wait again once per retry —
-                // multiplying the very window this deadline exists to close.
-                Err(ProviderError::Terminal(format!(
-                    "serve host did not answer the model call within {:?} \
-                     (reverse-request deadline)",
-                    self.timeout
-                )))
+        // Drain fragments while parked on the result. Each loop iteration
+        // arms a fresh sleep, which is what makes the deadline an *idle*
+        // bound for a streaming host (see DEFAULT_REVERSE_REQUEST_TIMEOUT):
+        // a batch landing resets it, silence does not.
+        let mut feed_open = true;
+        loop {
+            tokio::select! {
+                result = &mut rx => {
+                    // The result races fragments already queued on the feed:
+                    // both can be ready in the same poll, and the host sent
+                    // the fragments first. Drain them before consuming the
+                    // result, or the tail of the stream is silently — and
+                    // nondeterministically — dropped.
+                    while let Ok(delta) = deltas.try_recv() {
+                        forward_delta(observer, &delta);
+                    }
+                    return match result {
+                        Ok(result) => {
+                            answered(&self.pending, &request_id, ReverseKind::Provider, started);
+                            result
+                        }
+                        // Sender dropped. Cancellation is the deliberate case
+                        // and reports itself as such; otherwise the session is
+                        // being torn down. Either way `Pending`'s own clear
+                        // reports the discard, so there is no per-request
+                        // event here.
+                        Err(_) if self.pending.is_cancelled() => Err(ProviderError::Cancelled),
+                        Err(_) => Err(ProviderError::Transport(
+                            "serve host dropped the model call without answering".to_string(),
+                        )),
+                    };
+                }
+                maybe = deltas.recv(), if feed_open => match maybe {
+                    Some(delta) => forward_delta(observer, &delta),
+                    // The registry entry is gone — the result has been taken
+                    // (its reply fires next poll) or the turn was cleared
+                    // (the reply errors next poll). Either way the branch is
+                    // disabled rather than spun on: `recv` on a closed
+                    // channel returns instantly forever.
+                    None => feed_open = false,
+                },
+                _ = tokio::time::sleep(self.timeout) => {
+                    self.pending.abandon(&request_id);
+                    timed_out(&self.pending, &request_id, ReverseKind::Provider, started);
+                    // Deliberately `Terminal`, not `Transport`: `Transport` is
+                    // retryable, so a host that is simply not answering would be
+                    // handed the same unbounded wait again once per retry —
+                    // multiplying the very window this deadline exists to close.
+                    return Err(ProviderError::Terminal(format!(
+                        "serve host did not answer the model call within {:?} \
+                         (reverse-request deadline)",
+                        self.timeout
+                    )));
+                }
             }
         }
+    }
+}
+
+#[async_trait]
+impl Provider for RemoteProvider {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    async fn complete_ref(
+        &self,
+        req: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
+        self.complete_remoted(req, None).await
+    }
+
+    /// The override that puts a served turn's streamed text on the engine's
+    /// event stream (#1165). The engine drives every model call through this
+    /// method with its speculation gate as the observer, so forwarding the
+    /// host's fragments here is all it takes for `AgentEvent::TextDelta` to
+    /// fire under serve exactly as it does with a local provider.
+    async fn complete_observed_ref(
+        &self,
+        req: CompletionRequestRef<'_>,
+        observer: &dyn ToolCallObserver,
+    ) -> Result<CompletionResult, ProviderError> {
+        self.complete_remoted(req, Some(observer)).await
     }
 }
 

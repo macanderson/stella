@@ -12,7 +12,7 @@ use stella_protocol::{
     ToolSchema,
 };
 use stella_serve::observe::TurnRef;
-use stella_serve::{ServerFrame, Session, SessionSpec, TurnOutcomeWire};
+use stella_serve::{ProviderDelta, ServerFrame, Session, SessionSpec, TurnOutcomeWire};
 
 /// Build a mock model result carrying a final text answer and no tool calls —
 /// the engine treats this as "the turn is done."
@@ -337,6 +337,170 @@ async fn dropping_a_session_cancels_the_turn_rather_than_letting_it_retry() {
     assert!(
         pending.is_cancelled(),
         "teardown must latch the cancel flag so the woken step aborts instead of retrying"
+    );
+}
+
+/// The streaming half of the provider answer (#1165): fragments the host
+/// feeds to an in-flight provider request surface on the frame stream as
+/// `TextDelta` / `Reasoning` events **before** the turn completes — which is
+/// what a second `/events` subscriber sees live and a resuming client
+/// replays. Before this, a served turn's stream carried no partial text at
+/// all: the engine only ever saw one assembled result.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn streamed_provider_deltas_surface_as_events_before_the_completion() {
+    let mut session = Session::start(spec_for("stream the answer"));
+
+    let mut text_deltas: Vec<String> = Vec::new();
+    let mut reasoning = 0usize;
+    let mut final_text_at: Option<usize> = None;
+    let mut frames_seen = 0usize;
+    let mut outcome = None;
+
+    while let Some(frame) = session.next_frame().await {
+        frames_seen += 1;
+        match frame {
+            ServerFrame::ProviderRequest { request_id, .. } => {
+                // The host streams its model call: two batches of fragments,
+                // then the aggregated result — exactly the wire choreography
+                // of POST provider-delta, provider-delta, provider-result.
+                session
+                    .resolve_provider_delta(
+                        &request_id,
+                        vec![
+                            ProviderDelta::Reasoning {
+                                text: "weighing…".to_string(),
+                            },
+                            ProviderDelta::Text {
+                                text: "Hel".to_string(),
+                            },
+                        ],
+                    )
+                    .expect("first batch lands on the in-flight request");
+                session
+                    .resolve_provider_delta(
+                        &request_id,
+                        vec![ProviderDelta::Text {
+                            text: "lo".to_string(),
+                        }],
+                    )
+                    .expect("a second batch still finds the request in flight");
+                session
+                    .resolve_provider(&request_id, final_answer("Hello"))
+                    .unwrap();
+            }
+            ServerFrame::Event { event } => match event {
+                stella_protocol::AgentEvent::TextDelta { text } => {
+                    text_deltas.push(text);
+                }
+                stella_protocol::AgentEvent::Reasoning { .. } => reasoning += 1,
+                stella_protocol::AgentEvent::Text { .. } => {
+                    final_text_at.get_or_insert(frames_seen);
+                }
+                _ => {}
+            },
+            ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
+            ServerFrame::ToolRequest { .. } => {}
+        }
+    }
+
+    assert_eq!(
+        text_deltas,
+        vec!["Hel".to_string(), "lo".to_string()],
+        "the host's text fragments must surface as TextDelta events, in order"
+    );
+    assert!(
+        reasoning >= 1,
+        "the thinking fragment must surface as Reasoning, never as answer text"
+    );
+    assert!(
+        final_text_at.is_some(),
+        "the authoritative Text event still lands after the previews"
+    );
+    assert_eq!(
+        outcome,
+        Some(TurnOutcomeWire::Completed {
+            text: "Hello".to_string(),
+            cost_usd: 0.0,
+        }),
+        "streaming must not change the turn's outcome"
+    );
+}
+
+/// A host that streams nothing keeps exactly its old behavior — the whole
+/// route is optional, which is the compatibility half of #1165's acceptance.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_host_that_never_streams_is_unchanged() {
+    let mut session = Session::start(spec_for("just answer"));
+
+    let mut text_deltas = 0usize;
+    let mut outcome = None;
+    while let Some(frame) = session.next_frame().await {
+        match frame {
+            ServerFrame::ProviderRequest { request_id, .. } => {
+                session
+                    .resolve_provider(&request_id, final_answer("hello"))
+                    .unwrap();
+            }
+            ServerFrame::Event {
+                event: stella_protocol::AgentEvent::TextDelta { .. },
+            } => text_deltas += 1,
+            ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
+            _ => {}
+        }
+    }
+
+    assert_eq!(text_deltas, 0, "no fragments were fed, so none may appear");
+    assert_eq!(
+        outcome,
+        Some(TurnOutcomeWire::Completed {
+            text: "hello".to_string(),
+            cost_usd: 0.0,
+        }),
+    );
+}
+
+/// Fragments count as progress against the reverse-request deadline: a host
+/// that keeps streaming past the configured window must not have its turn cut
+/// as "unanswered" — the deadline measures silence, not elapsed time.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_streaming_host_resets_the_reverse_request_deadline() {
+    let deadline = Duration::from_millis(120);
+    let mut session = Session::start(spec_with_deadline("keep streaming", deadline));
+
+    let mut outcome = None;
+    while let Some(frame) = session.next_frame().await {
+        match frame {
+            ServerFrame::ProviderRequest { request_id, .. } => {
+                // Stream fragments for ~3x the deadline, each gap well inside
+                // it, then answer. Under a fixed total window this turn would
+                // have been killed after `deadline`.
+                for n in 0..6 {
+                    tokio::time::sleep(Duration::from_millis(60)).await;
+                    session
+                        .resolve_provider_delta(
+                            &request_id,
+                            vec![ProviderDelta::Text {
+                                text: format!("chunk-{n} "),
+                            }],
+                        )
+                        .expect("a live stream must keep its request in flight");
+                }
+                session
+                    .resolve_provider(&request_id, final_answer("streamed to the end"))
+                    .unwrap();
+            }
+            ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
+            _ => {}
+        }
+    }
+
+    assert_eq!(
+        outcome,
+        Some(TurnOutcomeWire::Completed {
+            text: "streamed to the end".to_string(),
+            cost_usd: 0.0,
+        }),
+        "a host that keeps producing must never be timed out as silent",
     );
 }
 

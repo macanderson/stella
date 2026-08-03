@@ -55,6 +55,7 @@
 mod accept;
 pub mod checkpoint;
 mod controls;
+mod engine_overrides;
 mod error;
 mod frame;
 mod history;
@@ -79,8 +80,8 @@ pub use checkpoint::{
 };
 pub use error::ServeError;
 pub use frame::{
-    ProviderErrorWire, ProviderOutcomeIn, ProviderResultIn, ServerFrame, ToolResultIn,
-    TurnOutcomeWire,
+    ProviderDelta, ProviderDeltaIn, ProviderErrorWire, ProviderOutcomeIn, ProviderResultIn,
+    ServerFrame, ToolResultIn, TurnOutcomeWire,
 };
 pub use hostguard::HostMode;
 pub use observe::{Metrics, Observer, ServeEvent, SharedObserver};

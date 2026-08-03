@@ -1771,3 +1771,201 @@ export interface ProviderResultIn {
 {
   request_id: string;
 }}
+
+// ── inbound, optional: streaming a provider answer ──────────────────────────
+//
+// A host that streams its model call MAY POST batches of fragments to
+// `POST /v1/turns/{id}/provider-delta` while the provider_request is in
+// flight, keyed by the same request_id its eventual ProviderResultIn answers.
+// Fragments surface on /events as text_delta / reasoning frames (so second
+// subscribers and resuming clients see them) and each batch resets the
+// reverse-request deadline. Strictly advisory: the definitive text is the
+// CompletionResult on the terminating provider-result POST — a retried call
+// re-streams from the start with no reset marker. A host that cannot stream
+// simply never uses this route.
+
+/**
+ * One streamed fragment of an in-flight model completion.
+ *
+ * Text and thinking are distinct variants rather than one string because the
+ * two must never be confused downstream: thinking renders as collapsible,
+ * visibly-secondary content while answer text is the reply — the same
+ * separation `ToolCallObserver` keeps between `text_delta` and
+ * `reasoning_delta`, carried across the wire.
+ */
+export type ProviderDelta = {
+  kind: "text";
+  text: string;
+} | {
+  kind: "reasoning";
+  text: string;
+};
+
+/**
+ * Host → engine: a batch of streamed fragments for an in-flight
+ * [`ServerFrame::ProviderRequest`] — the incremental half of a provider
+ * answer (#1165), POSTed to `POST /v1/turns/{id}/provider-delta` and keyed by
+ * the same `request_id` the terminating [`ProviderResultIn`] answers.
+ *
+ * Strictly optional: a host that cannot stream never POSTs one and keeps
+ * exactly its old behavior. Strictly advisory, with the same contract as
+ * `ToolCallObserver::text_delta`: the definitive text is the
+ * `CompletionResult` on the eventual provider result — a retried model call
+ * re-streams from the start with no reset marker, and consumers replace the
+ * preview with the authoritative `Text` event when it lands.
+ *
+ * A batch rather than one fragment per POST, because a per-token HTTP
+ * request would cost more than the latency it buys: the host accumulates
+ * whatever chunking its own stream hands it and flushes on its own cadence.
+ */
+export interface ProviderDeltaIn {
+{
+  /**
+   * The fragments, in stream order. Must not be empty — an empty batch
+   * carries no information and is refused at the route.
+   */
+  deltas: ProviderDelta[];
+  request_id: string;
+}}
+
+// ── request-side: the optional `engine` object on POST /v1/turns ────────────
+//
+// Per-turn engine knobs (#1167), also accepted on
+// POST /v1/sessions/{id}/turns. Lowered onto the server's defaults: an
+// omitted field keeps the default, an empty object is a no-op. Unusable
+// values (a zero cap, a NaN temperature) are refused with a 400 naming the
+// knob; values past an operator ceiling are clamped, and every clamp is
+// reported in the create response's `clamped` array as
+// {knob, requested, effective} — a request is never silently honored at a
+// value it did not get. retry_policy and loop_detection are operator policy
+// and are deliberately not on this object.
+
+/**
+ * Optional sampling/routing parameter overrides riding a
+ * [`CompletionRequest`]. Every field is independently optional —
+ * "include" semantics: `None` leaves the provider's own default in place,
+ * `Some` puts the value on the wire. Each adapter forwards the subset its
+ * dialect supports and silently drops the rest (a param the provider
+ * can't express must never fail the request).
+ */
+export interface GenerationParams {
+  /**
+   * Penalize tokens by their frequency in the text so far.
+   */
+  frequency_penalty?: number | null;
+  /**
+   * Penalize tokens that have appeared at all in the text so far.
+   */
+  presence_penalty?: number | null;
+  /**
+   * Multiplicative repetition penalty (>1 discourages, <1 encourages).
+   */
+  repetition_penalty?: number | null;
+  /**
+   * Random seed for deterministic outputs, where supported.
+   */
+  seed?: number | null;
+  /**
+   * Which capacity tier to route to ([`ServiceTier`]).
+   */
+  service_tier?: ServiceTier | null;
+  /**
+   * Limit sampling to the k highest-probability tokens.
+   */
+  top_k?: number | null;
+  /**
+   * Nucleus sampling: cumulative-probability cutoff.
+   */
+  top_p?: number | null;
+  /**
+   * How much detail to ask for ([`Verbosity`]).
+   */
+  verbosity?: Verbosity | null;
+}
+
+/**
+ * Reasoning effort forwarded to models with a thinking/extended-reasoning
+ * mode. One enum, mapped per-adapter to the provider's own parameter name
+ * ("reasoning_param").
+ */
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+/**
+ * Provider service tier: `Priority` routes to faster paid-tier capacity,
+ * `Flex` to cheaper capacity with slower response times. Only applied by
+ * providers that support tiered service; others use their default tier.
+ */
+export type ServiceTier = "auto" | "default" | "flex" | "priority";
+
+/**
+ * Response-detail level for providers with a verbosity parameter (OpenAI's
+ * `text.verbosity`). Adapters whose wire has no equivalent ignore it — the
+ * same never-fail contract as [`ReasoningEffort`].
+ */
+export type Verbosity = "low" | "medium" | "high";
+
+/**
+ * The caller-policy slice of `EngineConfig`, settable per turn (#1167) as
+ * the optional `engine` object on `POST /v1/turns` and
+ * `POST /v1/sessions/{id}/turns`.
+ *
+ * Every field is independently optional with "lower onto defaults" semantics:
+ * `None` keeps the server's configured default, `Some` overrides it for this
+ * turn only. What is deliberately **not** here: `retry_policy` and
+ * `loop_detection` are operator policy — they bound what a single request can
+ * cost this process, and a caller who could widen them could make a turn
+ * effectively unbounded — and `max_steps` / `reverse_request_timeout_ms`
+ * already ride the request top-level.
+ *
+ * Unknown fields are refused rather than ignored: a typoed knob that parses
+ * is a knob silently *not* honored, the same illegibility the ceilings exist
+ * to avoid on the other side.
+ *
+ * Session note: none of these knobs touch the message transcript, so a
+ * per-turn override on `POST /v1/sessions/{id}/turns` cannot perturb the
+ * byte-stable prompt prefix the session's cache contract depends on.
+ */
+export interface EngineOverrides {
+{
+  /**
+   * Compaction trigger, in estimated tokens. Rejected at 0; clamped to
+   * [`MAX_COMPACTION_BUDGET_TOKENS`].
+   */
+  compaction_budget_tokens?: number | null;
+  /**
+   * Reasoning-effort tier (`CompletionRequest::effort` semantics).
+   */
+  effort?: ReasoningEffort | null;
+  /**
+   * Output-token cap forwarded on every completion of this turn. Rejected
+   * at 0; clamped to [`MAX_OUTPUT_TOKENS_CEILING`]. Effort tier and this
+   * cap are one budget — raising effort against a small cap is how a model
+   * spends its tokens thinking and gets truncated before its tool call.
+   */
+  max_output_tokens?: number | null;
+  /**
+   * Sampling/routing overrides (`CompletionRequest::params` semantics —
+   * the host's adapter forwards the subset its dialect supports).
+   */
+  params?: GenerationParams | null;
+  /**
+   * Thinking-mode enable/disable (`CompletionRequest::reasoning`
+   * semantics; `None` = provider default).
+   */
+  reasoning?: boolean | null;
+  /**
+   * Messages at the tail the summarizer never touches. Clamped to
+   * [`MAX_SUMMARIZE_KEEP_RECENT`].
+   */
+  summarize_keep_recent?: number | null;
+  /**
+   * Whether overflow beyond the compaction budget may be summarized away
+   * by a model call (`EngineConfig::summarize_overflow`).
+   */
+  summarize_overflow?: boolean | null;
+  /**
+   * Sampling temperature. Rejected unless finite and non-negative; clamped
+   * to [`MAX_TEMPERATURE`].
+   */
+  temperature?: number | null;
+}}

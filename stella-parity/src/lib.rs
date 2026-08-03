@@ -418,7 +418,9 @@ pub static CAPABILITIES: &[Capability] = &[
         },
         api: SurfacePosture::Shipped {
             mechanism: "reverse RPC: provider_request frames answered on \
-                        POST /v1/turns/{id}/provider-result, tool_request frames on \
+                        POST /v1/turns/{id}/provider-result, optionally streamed \
+                        incrementally via POST /v1/turns/{id}/provider-delta \
+                        (#1165), tool_request frames on \
                         POST /v1/turns/{id}/tool-result — the host owns keys and execution",
             witness: "an_unanswered_provider_request_fails_on_the_deadline",
         },

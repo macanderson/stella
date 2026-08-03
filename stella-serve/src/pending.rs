@@ -18,9 +18,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use stella_protocol::{CompletionResult, ProviderError, ToolOutput};
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::error::ServeError;
+use crate::frame::ProviderDelta;
 use crate::observe::SharedObserver;
 use crate::observe::event::{AbandonReason, MisrouteFault, RequestId, ServeEvent, TurnRef};
 
@@ -28,10 +29,22 @@ use crate::observe::event::{AbandonReason, MisrouteFault, RequestId, ServeEvent,
 /// model call, or the failure class it wants the engine's retry logic to see.
 type ProviderReply = oneshot::Sender<Result<CompletionResult, ProviderError>>;
 
+/// The stream a parked provider step drains while it waits: the host's
+/// incremental fragments (#1165), forwarded to the engine's observer as they
+/// arrive. Unbounded for the same reason the frame channel is — the sender is
+/// an HTTP handler that must never block on the session thread.
+type ProviderDeltaFeed = mpsc::UnboundedSender<ProviderDelta>;
+
 /// A registered reply channel, discriminated by the kind of request it answers.
 enum PendingReply {
     Tool(oneshot::Sender<ToolOutput>),
-    Provider(ProviderReply),
+    Provider {
+        reply: ProviderReply,
+        /// Stays in the map (looked up, never taken) so any number of delta
+        /// POSTs can feed the same parked step; dropped with the entry, which
+        /// is how the step learns the fragment stream is over.
+        deltas: ProviderDeltaFeed,
+    },
 }
 
 /// A cloneable handle to the shared registry. Cloning shares the same map.
@@ -93,15 +106,22 @@ impl Pending {
         true
     }
 
-    /// Register a provider reply channel under `id`. Same contract — and the
-    /// same locked cancellation check — as [`Pending::register_tool`].
+    /// Register a provider reply channel under `id`, together with the feed
+    /// any streamed fragments for that request are delivered on. Same
+    /// contract — and the same locked cancellation check — as
+    /// [`Pending::register_tool`].
     #[must_use]
-    pub(crate) fn register_provider(&self, id: String, reply: ProviderReply) -> bool {
+    pub(crate) fn register_provider(
+        &self,
+        id: String,
+        reply: ProviderReply,
+        deltas: ProviderDeltaFeed,
+    ) -> bool {
         let mut map = self.lock();
         if self.is_cancelled() {
             return false;
         }
-        map.insert(id, PendingReply::Provider(reply));
+        map.insert(id, PendingReply::Provider { reply, deltas });
         true
     }
 
@@ -125,6 +145,39 @@ impl Pending {
             .report_misroute(id, self.take_provider(id))?
             .send(result);
         Ok(())
+    }
+
+    /// Feed streamed fragments to the parked step awaiting provider request
+    /// `id` (#1165). Errors if `id` is unknown or names a tool request —
+    /// including a request already resolved, whose late fragments get the
+    /// same honest 409 a late result does.
+    ///
+    /// The entry is looked up, never taken: the request stays in flight, and
+    /// any number of delta batches may land before the terminating
+    /// [`Pending::resolve_provider`]. A receiver that is gone (the step was
+    /// cancelled between lookup and send) is not a host error — the fragments
+    /// are simply dropped, exactly as a resolve's result would be.
+    pub fn resolve_provider_delta(
+        &self,
+        id: &str,
+        deltas: Vec<ProviderDelta>,
+    ) -> Result<(), ServeError> {
+        let sent = {
+            let map = self.lock();
+            match map.get(id) {
+                Some(PendingReply::Provider { deltas: feed, .. }) => {
+                    for delta in deltas {
+                        let _ = feed.send(delta);
+                    }
+                    Ok(())
+                }
+                Some(PendingReply::Tool(_)) => {
+                    Err(ServeError::RequestKindMismatch(id.to_string(), "provider"))
+                }
+                None => Err(ServeError::UnknownRequest(id.to_string())),
+            }
+        };
+        self.report_misroute(id, sent)
     }
 
     /// Record a host answer that matched nothing, then hand the result back.
@@ -242,11 +295,13 @@ impl Pending {
     }
 
     /// Take the provider reply channel registered under `id`. Same
-    /// single-lock discipline as [`Pending::take_tool`].
+    /// single-lock discipline as [`Pending::take_tool`]. The delta feed is
+    /// dropped with the entry, which closes the fragment stream the parked
+    /// step is draining — the result now owns the rest of the answer.
     fn take_provider(&self, id: &str) -> Result<ProviderReply, ServeError> {
         let mut map = self.lock();
         match map.remove(id) {
-            Some(PendingReply::Provider(tx)) => Ok(tx),
+            Some(PendingReply::Provider { reply, .. }) => Ok(reply),
             Some(other) => {
                 map.insert(id.to_string(), other);
                 Err(ServeError::RequestKindMismatch(id.to_string(), "provider"))
@@ -281,6 +336,11 @@ mod tests {
         (pending, capture)
     }
 
+    /// A fresh delta feed whose receiver the test may drop or drain.
+    fn delta_feed() -> (ProviderDeltaFeed, mpsc::UnboundedReceiver<ProviderDelta>) {
+        mpsc::unbounded_channel()
+    }
+
     /// A host that answers with an id nobody is waiting on must be visible.
     /// Before this, the `409` it received was the only trace, and the engine
     /// step it meant to answer stayed parked until its deadline with nothing
@@ -289,7 +349,8 @@ mod tests {
     fn a_misrouted_answer_is_recorded_with_its_fault() {
         let (pending, capture) = observed_pending();
         let (tx, _rx) = oneshot::channel();
-        assert!(pending.register_provider("prov-0".to_string(), tx));
+        let (feed, _deltas) = delta_feed();
+        assert!(pending.register_provider("prov-0".to_string(), tx, feed));
 
         // Fabricated id: nothing is registered under it.
         assert!(
@@ -360,7 +421,8 @@ mod tests {
     fn abandoned_work_is_counted_and_a_clean_teardown_is_silent() {
         let (pending, capture) = observed_pending();
         let (tx, _rx) = oneshot::channel();
-        assert!(pending.register_provider("prov-0".to_string(), tx));
+        let (feed, _deltas) = delta_feed();
+        assert!(pending.register_provider("prov-0".to_string(), tx, feed));
         let (tx, _rx) = oneshot::channel();
         assert!(pending.register_tool("tool-0".to_string(), tx));
 
@@ -396,7 +458,8 @@ mod tests {
         pending.cancel();
 
         let (tx, rx) = oneshot::channel();
-        assert!(!pending.register_provider("prov-0".to_string(), tx));
+        let (feed, _deltas) = delta_feed();
+        assert!(!pending.register_provider("prov-0".to_string(), tx, feed));
         // The refused sender is dropped, so a caller that parked anyway would
         // still wake immediately rather than wait for a resolve that can
         // never come.
@@ -415,7 +478,8 @@ mod tests {
     fn cancel_after_registration_wakes_the_parked_sender() {
         let pending = test_pending();
         let (tx, rx) = oneshot::channel();
-        assert!(pending.register_provider("prov-0".to_string(), tx));
+        let (feed, _deltas) = delta_feed();
+        assert!(pending.register_provider("prov-0".to_string(), tx, feed));
 
         pending.cancel();
 
@@ -426,6 +490,100 @@ mod tests {
         assert!(
             rx.blocking_recv().is_err(),
             "the clear woke the parked step"
+        );
+    }
+
+    /// The delta path (#1165): fragments POSTed for an in-flight provider
+    /// request reach its feed in order, and the entry stays registered — any
+    /// number of batches may precede the terminating resolve.
+    #[test]
+    fn provider_deltas_reach_the_feed_and_leave_the_request_in_flight() {
+        let pending = test_pending();
+        let (tx, _rx) = oneshot::channel();
+        let (feed, mut deltas) = delta_feed();
+        assert!(pending.register_provider("prov-0".to_string(), tx, feed));
+
+        pending
+            .resolve_provider_delta(
+                "prov-0",
+                vec![
+                    ProviderDelta::Reasoning {
+                        text: "weighing…".to_string(),
+                    },
+                    ProviderDelta::Text {
+                        text: "Hel".to_string(),
+                    },
+                ],
+            )
+            .expect("first batch");
+        pending
+            .resolve_provider_delta(
+                "prov-0",
+                vec![ProviderDelta::Text {
+                    text: "lo".to_string(),
+                }],
+            )
+            .expect("a second batch must find the request still in flight");
+
+        let received: Vec<ProviderDelta> = std::iter::from_fn(|| deltas.try_recv().ok()).collect();
+        assert_eq!(received.len(), 3, "all fragments arrive, in order");
+        assert!(matches!(&received[0], ProviderDelta::Reasoning { text } if text == "weighing…"));
+        assert!(matches!(&received[1], ProviderDelta::Text { text } if text == "Hel"));
+        assert!(matches!(&received[2], ProviderDelta::Text { text } if text == "lo"));
+    }
+
+    /// A delta for a request that is not an in-flight provider request is a
+    /// misroute, recorded exactly like a misrouted result: unknown ids and
+    /// tool ids each with their own fault, and a resolved request answers as
+    /// unknown — its late fragments must not be silently swallowed.
+    #[test]
+    fn a_misrouted_delta_is_refused_and_recorded() {
+        let (pending, capture) = observed_pending();
+        let (tx, _rx) = oneshot::channel();
+        assert!(pending.register_tool("tool-0".to_string(), tx));
+
+        let text = vec![ProviderDelta::Text {
+            text: "late".to_string(),
+        }];
+        assert!(
+            pending
+                .resolve_provider_delta("nope-1", text.clone())
+                .is_err()
+        );
+        assert!(
+            pending
+                .resolve_provider_delta("tool-0", text.clone())
+                .is_err()
+        );
+
+        // A resolved provider request is gone from the registry, so fragments
+        // arriving after the result answer as unknown.
+        let (tx, _rx) = oneshot::channel();
+        let (feed, _deltas) = delta_feed();
+        assert!(pending.register_provider("prov-0".to_string(), tx, feed));
+        pending
+            .resolve_provider(
+                "prov-0",
+                Err(ProviderError::Terminal("done early".to_string())),
+            )
+            .expect("resolve");
+        assert!(pending.resolve_provider_delta("prov-0", text).is_err());
+
+        let faults: Vec<MisrouteFault> = capture
+            .events()
+            .into_iter()
+            .filter_map(|event| match event {
+                ServeEvent::ReverseMisrouted { fault, .. } => Some(fault),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            faults,
+            vec![
+                MisrouteFault::UnknownRequest,
+                MisrouteFault::KindMismatch,
+                MisrouteFault::UnknownRequest,
+            ],
         );
     }
 }
