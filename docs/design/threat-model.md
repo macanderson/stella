@@ -154,11 +154,36 @@ refuses to ever apply `LD_*`, `DYLD_*`, `PATH`, `NODE_OPTIONS`, `BASH_ENV`,
 
 ### B5 — Workspace root → filesystem
 
-`stella_tools::resolve_within_root` canonicalizes and rejects escapes, using
-`symlink_metadata` rather than `exists()` so a dangling symlink is caught.
-#695 extended this to workspace-member patterns read from `Cargo.toml`,
+Every file tool that **opens** — read, write, edit, apply_edits, delete,
+download, and the content hashing behind exploration and context packs — is
+confined by `stella_tools::rootfd::RootHandle`, which holds the workspace
+root's directory descriptor and walks each component `openat(dirfd, name,
+O_DIRECTORY | O_NOFOLLOW)` off the one before it. `..` pops the descriptor
+stack rather than opening `".."`; a symlink is read with `readlinkat` and
+re-confined rather than followed; expansion is bounded. The boundary is
+therefore the descriptor chain, not a string comparison, and a name is
+resolved exactly once — by the kernel, at the moment it is used.
+
+That replaced a string resolution (#938). `resolve_within_root` canonicalizes
+and rejects escapes, using `symlink_metadata` rather than `exists()` so a
+dangling symlink is caught, and it is still correct about a filesystem that
+holds still. It could not be correct about one that does not: it approves a
+path whose interior directories do not exist yet without validating them, and
+everything downstream re-resolves those names, so a symlink planted in between
+by the model's own `bash` tool or by a `build.rs` under audit was followed.
+`O_NOFOLLOW` on the final component did not close it — the final component is
+not the one that moves. It survives for the callers that need a *name* rather
+than a descriptor: an argument to `rg` or `fd`, a subprocess working
+directory, the shadow worktree in `verify_done`, the file-touch ledger. #695
+extended it to workspace-member patterns read from `Cargo.toml`,
 `package.json`, and `pnpm-workspace.yaml`, and made out-of-root skips counted
 and surfaced rather than silent.
+
+This confines Stella's own tools, not the subprocesses they spawn: `bash` can
+still write anywhere the user's account can, and isolating that is structural
+(a container), not a matter of path resolution. Off Unix there is no `openat`,
+so the descriptor walk degrades to the string resolver — see
+[R5](#r5--non-unix-platforms-are-materially-weaker).
 
 ### B6 — Stella's private state → other local processes
 

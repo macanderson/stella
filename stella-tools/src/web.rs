@@ -55,8 +55,10 @@
 //! but never `speculation_safe`: every run is real traffic against someone
 //! else's server — and `web_search` spends a metered BYOK key — so a stream
 //! retry must not be able to run one twice (#923);
-//! `web_download` writes through [`crate::resolve_within_root`] and is
-//! classified into the file-touch ledger like `write_file`.
+//! `web_download` writes through [`crate::rootfd::RootHandle`] — the same
+//! held-descriptor confinement `write_file` uses, because a download lands on
+//! the same workspace paths — and is classified into the file-touch ledger
+//! like `write_file`.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -1111,11 +1113,23 @@ impl Tool for WebDownload {
             Ok(p) => p,
             Err(e) => return e,
         };
-        let Some(full) = crate::resolve_within_root(root, path) else {
-            return ToolOutput::Error {
-                message: format!("path `{path}` escapes the workspace root"),
-            };
+        let handle = match crate::rootfd::RootHandle::open(root) {
+            Ok(handle) => std::sync::Arc::new(handle),
+            Err(e) => {
+                return ToolOutput::Error {
+                    message: format!("cannot open workspace root: {e}"),
+                };
+            }
         };
+        // Asked early so a download that cannot land is refused before 64 MB
+        // crosses the wire. It is not the confinement — the write below walks
+        // held directory descriptors and is the authority — it is the same
+        // question asked at the only point where the answer saves work.
+        if let Err(e) = handle.is_confined(path) {
+            return ToolOutput::Error {
+                message: format!("path `{path}` escapes the workspace root ({e})"),
+            };
+        }
         let mut fetched = match fetch_raw(url, auth, DOWNLOAD_CAP_BYTES, None).await {
             Ok(f) => f,
             Err(message) => return ToolOutput::Error { message },
@@ -1129,32 +1143,24 @@ impl Tool for WebDownload {
                 ),
             };
         }
-        // `tokio::fs` like every other file-writing tool in the crate: this
-        // is an async `execute` and the payload is up to DOWNLOAD_CAP_BYTES,
-        // so a blocking write here parks a runtime worker for 64 MB. A
-        // let-chain condition cannot host the `.await`, hence the `match`.
-        let parent_ready = match full.parent() {
-            Some(parent) => tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| format!("cannot create {}: {e}", parent.display())),
-            None => Ok(()),
-        };
-        if let Err(message) = parent_ready {
-            return ToolOutput::Error { message };
-        }
         // The same durable replacement `write_file`/`edit_file` use, for the
         // same reason ([`crate::durable_write`]): a download lands on the same
         // workspace paths they do, and `tokio::fs::write` opens with
         // `O_TRUNC` — a re-download that fails mid-write would leave the
         // existing artifact truncated with the replacement nowhere on disk.
+        // The `_at` form walks held directory descriptors and creates the
+        // parent directories inside that walk, so there is no `create_dir_all`
+        // re-resolving the prefix between the check above and the open (#938).
         // `mem::take` hands the body over without a second 64 MB copy; the
         // rest of `fetched` (final URL, content type, auth provenance) is
         // still needed for the report below.
         let bytes = std::mem::take(&mut fetched.bytes);
         let byte_count = bytes.len();
-        if let Err(e) = crate::durable_write::write_file_durably(full.clone(), bytes).await {
+        if let Err(e) =
+            crate::durable_write::write_file_durably_at(handle, path.to_string(), bytes, true).await
+        {
             return ToolOutput::Error {
-                message: format!("cannot write {}: {e}", full.display()),
+                message: format!("cannot write {path}: {e}"),
             };
         }
         ToolOutput::Ok {

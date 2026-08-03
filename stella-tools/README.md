@@ -75,13 +75,29 @@ conflict. The `read_only` flag is load-bearing, not documentation — `stella-co
 gate forwards exactly the read-only set and drops everything after the first mutating call, and
 `ReadOnlyTools` uses it to give a judge evidence-gathering power without write authority.
 
-**Root pinning.** `resolve_within_root` ([`src/lib.rs:81`](src/lib.rs)) is the only confinement
-check. It canonicalises the root and then normalises the join, because `Path::starts_with` is a
-*lexical* comparison that never resolves `..`. The existence walk uses `symlink_metadata`
-(lstat), not `exists()`: `exists()` follows symlinks and so reports `false` for a *dangling*
-link, which let the old code hand back `root/link` as a brand-new in-root file — the OS then
-followed the link on write and escaped the workspace. All four cases have witness tests at the
-bottom of `lib.rs`.
+**Root pinning — two primitives, and they are not interchangeable.**
+
+`rootfd::RootHandle` ([`src/rootfd.rs`](src/rootfd.rs)) is the confinement for anything that
+**opens**: read, write, create, stat, unlink. The root is opened once and the descriptor held;
+every component after it is opened `openat(dirfd, name, O_DIRECTORY | O_NOFOLLOW)` off the
+descriptor before it, `..` pops the descriptor stack rather than opening `".."`, and a symlink
+is expanded through `readlinkat` and re-confined rather than followed. A name is therefore
+resolved exactly once, by the kernel, at the moment it is used.
+
+`resolve_within_root` ([`src/lib.rs`](src/lib.rs)) is for **naming**: an argument handed to
+`rg` or `fd`, a working directory for a project script, the shadow-worktree copy in `verify`,
+the ledger's record of which workspace file a touch referred to. It canonicalises the root and
+normalises the join, because `Path::starts_with` is a *lexical* comparison that never resolves
+`..`, and its existence walk uses `symlink_metadata` (lstat) rather than `exists()`, which
+follows symlinks and so reports `false` for a *dangling* link. All four cases have witness
+tests at the bottom of `lib.rs`.
+
+What it cannot do — #938 — is stay true between its answer and an `open`. It approves a path
+whose interior directories do not exist yet without validating them, and everything downstream
+re-resolves every one of those names; a symlink planted in between is followed, and
+`O_NOFOLLOW` on the final component does not help because the final component is not the one
+that moved. `tests/path_confinement_race.rs` holds the witnesses, including a symlink swap
+raced against a write loop.
 
 **`verify_done` — the definition of done, as a tool.** A change is done when a witness test
 fails on the previous code and passes on the new code. Either half alone is worthless: a test
@@ -183,8 +199,10 @@ Adding a built-in tool:
 1. Add a module under `src/` with a `//!` header saying what the tool is *for* and why it exists.
    Study a sibling of similar shape first.
 2. Implement `Tool`: `schema()` (name, model-facing description, JSON Schema, honest `read_only`)
-   and `execute(input, root)`. Resolve every path through `resolve_within_root`. Return
-   `ToolOutput::Error` with a message that names the failure — never panic on model input.
+   and `execute(input, root)`. If the tool opens a file, do it through `rootfd::RootHandle`;
+   `resolve_within_root` is only for a path handed to a subprocess or recorded as a name (see
+   Root pinning above). Return `ToolOutput::Error` with a message that names the failure —
+   never panic on model input.
 3. Register it in `ToolRegistry::with_backends_and_options` ([`src/registry.rs`](src/registry.rs))
    — or in [`src/registry/process_tools.rs`](src/registry/process_tools.rs) if it spawns a child
    process, delegates to another agent, or reaches a process-backed adapter, since that list is

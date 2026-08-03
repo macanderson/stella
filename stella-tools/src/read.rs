@@ -62,6 +62,16 @@ const MAX_RENDER_BYTES: usize = 400 * 1024;
 /// which stream, not a multi-gigabyte allocation followed by a 400 KB answer.
 const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
+/// What one confined open of the target found. The classification travels
+/// back from the blocking worker alongside the bytes so the refusals above
+/// are decided from the metadata of the descriptor that was actually read,
+/// not from a second `stat` of the same name.
+enum Loaded {
+    Bytes(Vec<u8>),
+    Directory,
+    TooLarge { bytes: u64 },
+}
+
 /// Per-file record of what the model last saw: how many times the file was
 /// read, and the sha256 of the file's full content the last time the model
 /// saw it (via a read, or via its own successful edit/write).
@@ -195,21 +205,46 @@ impl Tool for ReadFile {
             .map(|n| (n as usize).min(MAX_LINES))
             .unwrap_or(MAX_LINES);
 
-        let full_path = match crate::resolve_within_root(root, path) {
-            Some(p) => p,
-            None => {
+        let handle = match crate::rootfd::RootHandle::open(root) {
+            Ok(handle) => std::sync::Arc::new(handle),
+            Err(e) => {
                 return ToolOutput::Error {
-                    message: format!("path `{path}` escapes workspace root"),
+                    message: format!("cannot open workspace root: {e}"),
                 };
             }
         };
 
-        // Classify BEFORE loading: a directory and an oversized blob both used
-        // to come back as a raw `io::Error` string ("Is a directory (os error
-        // 21)"), which tells the model what the syscall thought but not what
-        // to do instead — and the blob was already resident by then.
-        if let Ok(meta) = tokio::fs::metadata(&full_path).await {
-            if meta.is_dir() {
+        // Open once, then classify and load from the descriptor we are holding.
+        // A `metadata` by path followed by a `read` by path is two resolutions
+        // of the same name, and the second one is what a swapped intermediate
+        // redirects — an out-of-root file landing in the transcript (#938).
+        let loaded = tokio::task::spawn_blocking({
+            let (handle, path) = (std::sync::Arc::clone(&handle), path.to_string());
+            move || -> Result<Loaded, crate::rootfd::RootError> {
+                use std::io::Read as _;
+                let mut file = handle.open_read(&path)?;
+                let meta = file.metadata()?;
+                // Classify BEFORE loading: a directory and an oversized blob
+                // both used to come back as a raw `io::Error` string ("Is a
+                // directory (os error 21)"), which tells the model what the
+                // syscall thought but not what to do instead — and the blob
+                // was already resident by then.
+                if meta.is_dir() {
+                    return Ok(Loaded::Directory);
+                }
+                if meta.len() > MAX_FILE_BYTES {
+                    return Ok(Loaded::TooLarge { bytes: meta.len() });
+                }
+                let mut bytes = Vec::with_capacity(meta.len() as usize);
+                file.read_to_end(&mut bytes)?;
+                Ok(Loaded::Bytes(bytes))
+            }
+        })
+        .await;
+
+        let bytes = match loaded {
+            Ok(Ok(Loaded::Bytes(bytes))) => bytes,
+            Ok(Ok(Loaded::Directory)) => {
                 return ToolOutput::Error {
                     message: format!(
                         "`{path}` is a directory, not a file — list it with \
@@ -217,35 +252,47 @@ impl Tool for ReadFile {
                     ),
                 };
             }
-            if meta.len() > MAX_FILE_BYTES {
+            Ok(Ok(Loaded::TooLarge { bytes })) => {
                 return ToolOutput::Error {
                     message: format!(
                         "`{path}` is {} MB, past read_file's {} MB ceiling — the whole file is \
                          loaded to render any range, so offset/limit would not help. Search it \
                          with grep, or page it with bash (`sed -n '1,200p' {path}`).",
-                        meta.len() / (1024 * 1024),
+                        bytes / (1024 * 1024),
                         MAX_FILE_BYTES / (1024 * 1024)
                     ),
                 };
             }
-        }
+            Ok(Err(e)) if e.is_escape() => {
+                return ToolOutput::Error {
+                    message: format!("path `{path}` escapes workspace root ({e})"),
+                };
+            }
+            Ok(Err(e)) => {
+                return ToolOutput::Error {
+                    message: format!("failed to read `{path}`: {e}"),
+                };
+            }
+            Err(e) => {
+                return ToolOutput::Error {
+                    message: format!("failed to read `{path}`: {e}"),
+                };
+            }
+        };
 
         // Bytes then decode, rather than `read_to_string`: the same single
         // UTF-8 validation, but the failure can name the file as binary
         // instead of surfacing "stream did not contain valid UTF-8", which
         // reads to a model as a transient IO problem worth retrying.
-        let decoded = match tokio::fs::read(&full_path).await {
-            Ok(bytes) => String::from_utf8(bytes).map_err(|e| {
-                let at = e.utf8_error().valid_up_to();
-                let len = e.as_bytes().len();
-                format!(
-                    "`{path}` is not UTF-8 text — it is binary ({len} bytes; first invalid byte \
-                     at offset {at}). read_file returns text only; inspect it with bash \
-                     (`file {path}`, `xxd -l 256 {path}`)."
-                )
-            }),
-            Err(e) => Err(format!("failed to read `{path}`: {e}")),
-        };
+        let decoded = String::from_utf8(bytes).map_err(|e| {
+            let at = e.utf8_error().valid_up_to();
+            let len = e.as_bytes().len();
+            format!(
+                "`{path}` is not UTF-8 text — it is binary ({len} bytes; first invalid byte \
+                 at offset {at}). read_file returns text only; inspect it with bash \
+                 (`file {path}`, `xxd -l 256 {path}`)."
+            )
+        });
 
         match decoded {
             Ok(content) => {

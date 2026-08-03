@@ -36,22 +36,55 @@ impl Tool for DeleteFile {
                 message: "missing required field `path`".into(),
             };
         };
-        let Some(full) = crate::resolve_within_root(root, path) else {
-            return ToolOutput::Error {
-                message: format!("path `{path}` escapes the workspace root"),
-            };
+        let handle = match crate::rootfd::RootHandle::open(root) {
+            Ok(handle) => std::sync::Arc::new(handle),
+            Err(e) => {
+                return ToolOutput::Error {
+                    message: format!("cannot open workspace root: {e}"),
+                };
+            }
         };
-        if !full.is_file() {
-            return ToolOutput::Error {
+        // Classify and unlink on one blocking worker. `unlinkat` never follows
+        // a symlink, so nothing planted between the two can redirect the
+        // removal — the check and the act see the same directory descriptor.
+        let outcome = tokio::task::spawn_blocking({
+            let (handle, path) = (std::sync::Arc::clone(&handle), path.to_string());
+            move || -> Result<bool, crate::rootfd::RootError> {
+                if !handle.stat(&path)?.is_file() {
+                    return Ok(false);
+                }
+                handle.remove_file(&path)?;
+                Ok(true)
+            }
+        })
+        .await;
+        match outcome {
+            Ok(Ok(true)) => ToolOutput::Ok {
+                content: format!("deleted {path}"),
+            },
+            Ok(Ok(false)) => ToolOutput::Error {
                 message: format!(
                     "`{path}` is not a file (directories and missing paths are not deletable \
                      with this tool)"
                 ),
-            };
-        }
-        match tokio::fs::remove_file(&full).await {
-            Ok(()) => ToolOutput::Ok {
-                content: format!("deleted {path}"),
+            },
+            Ok(Err(e)) if e.is_escape() => ToolOutput::Error {
+                message: format!("path `{path}` escapes the workspace root ({e})"),
+            },
+            // A missing path reaches here as the `stat` failing, and must read
+            // as the same refusal a directory gets — this tool deletes files.
+            Ok(Err(crate::rootfd::RootError::Io(e)))
+                if e.kind() == std::io::ErrorKind::NotFound =>
+            {
+                ToolOutput::Error {
+                    message: format!(
+                        "`{path}` is not a file (directories and missing paths are not deletable \
+                         with this tool)"
+                    ),
+                }
+            }
+            Ok(Err(e)) => ToolOutput::Error {
+                message: format!("could not delete `{path}`: {e}"),
             },
             Err(e) => ToolOutput::Error {
                 message: format!("could not delete `{path}`: {e}"),

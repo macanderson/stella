@@ -43,6 +43,7 @@ pub mod read;
 pub mod read_symbol;
 pub mod registry;
 pub mod repo;
+pub mod rootfd;
 pub mod sandbox;
 pub mod schema_gate;
 pub mod screenshot;
@@ -65,20 +66,43 @@ pub mod write;
 
 pub use registry::{RegistryOptions, ToolRegistry};
 
-/// Resolve `path` against `root` and verify the result stays inside `root`.
+/// Turn a workspace-relative `path` into a full path, refusing one that names
+/// a location outside `root`.
+///
+/// # This is for naming, not for opening
+///
+/// **Anything that opens, reads, writes, creates or unlinks a file must go
+/// through [`rootfd::RootHandle`] instead.** This function answers a question
+/// about a *string* and then hands the string back, and #938 is the gap that
+/// leaves: for a path whose tail does not exist yet it walks up to the
+/// deepest existing ancestor and re-appends the missing components without
+/// validating them, so the interior directories of a brand-new file were
+/// never checked at all. Whatever the caller does next re-resolves every
+/// component from scratch, and anything that moved in between — a symlink
+/// planted by the model's own `bash` tool, or by a `build.rs` in the
+/// repository under audit — is followed. `O_NOFOLLOW` on the final component
+/// does not close it, because the final component is not the one that moved.
+///
+/// What survives here is the set of callers that need a *name* rather than a
+/// descriptor, and for which there is nothing to race because nothing is
+/// opened: an argument handed to `rg`, `fd` or a project script; a working
+/// directory for a subprocess; the shadow-worktree copy in `verify`; the
+/// ledger's record of which workspace file a touch referred to. For those the
+/// lexical question is the whole question.
+///
+/// # What it checks
 ///
 /// `Path::starts_with` is a *lexical* component comparison — it does not
 /// resolve `..`.  On Linux where `std::env::temp_dir()` is `/tmp`, the path
 /// `../../etc/passwd` joined to `/tmp` produces `/tmp/../../etc/passwd` which
 /// *lexically* starts with `/tmp` but *semantically* resolves to `/etc/passwd`.
 ///
-/// This helper canonicalises `root` (which must exist) and then normalises
-/// the joined path.  If the file already exists, it is canonicalised
-/// directly.  If it does not exist (e.g. `write_file` creating a new file),
-/// the path is normalised by walking up to the deepest existing ancestor,
-/// canonicalising that, and re-appending the remaining non-existent
-/// components.  If the normalised full path does not start with the
-/// canonicalised root, the path escapes the workspace and the caller must
+/// So this canonicalises `root` (which must exist) and then normalises the
+/// joined path.  If the file already exists, it is canonicalised directly.
+/// If it does not exist, the path is normalised by walking up to the deepest
+/// existing ancestor, canonicalising that, and re-appending the remaining
+/// non-existent components.  If the normalised full path does not start with
+/// the canonicalised root, the path escapes the workspace and the caller must
 /// reject it.
 ///
 /// Returns the resolved full path on success, or `None` if the path

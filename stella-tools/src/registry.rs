@@ -46,12 +46,16 @@ pub trait Tool: Send + Sync {
 }
 
 /// A file op classified before execution: the normalized path the ledger
-/// aggregates by, the resolved on-disk path (for pre/post content capture),
-/// and the CRUD event. Create-vs-update is decided here — it depends on
-/// whether the file exists BEFORE the write, not after.
+/// aggregates by and the CRUD event. Create-vs-update is decided here — it
+/// depends on whether the file exists BEFORE the write, not after.
+///
+/// The path is workspace-relative and stays that way: every pre/post content
+/// capture below reads it back through [`crate::rootfd`], so the ledger's
+/// digests and line diffs come from the same confined walk the tools use and
+/// cannot be re-pointed at a file outside the workspace between the classify
+/// and the read (#938).
 struct PendingTouch {
     path: String,
-    full: PathBuf,
     op: FileOp,
 }
 
@@ -838,9 +842,9 @@ impl ToolRegistry {
         let pre_contents: Vec<Option<String>> = pending_ops
             .iter()
             .map(|pending| match pending.op {
-                FileOp::Update | FileOp::Delete => std::fs::read(&pending.full)
-                    .ok()
-                    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()),
+                FileOp::Update | FileOp::Delete => {
+                    crate::rootfd::read_confined_lossy(&self.root, &pending.path)
+                }
                 _ => None,
             })
             .collect();
@@ -874,8 +878,7 @@ impl ToolRegistry {
                     if let Some(path) = input.get("path").and_then(|v| v.as_str())
                         && crate::schema_gate::is_schema_file(path)
                     {
-                        let current = crate::resolve_within_root(&self.root, path)
-                            .and_then(|p| std::fs::read_to_string(p).ok());
+                        let current = crate::rootfd::read_confined(&self.root, path);
                         let proposed_src: Option<String> = match name {
                             "write_file" => input
                                 .get("content")
@@ -920,8 +923,7 @@ impl ToolRegistry {
                         {
                             continue;
                         }
-                        let current = crate::resolve_within_root(&self.root, path)
-                            .and_then(|p| std::fs::read_to_string(p).ok());
+                        let current = crate::rootfd::read_confined(&self.root, path);
                         let proposed_src = current
                             .as_deref()
                             .and_then(|cur| crate::apply_edits::simulate_batch(input, path, cur));
@@ -1072,24 +1074,25 @@ impl ToolRegistry {
         if let Some(before) = shell_probe {
             let after = crate::shell_touch::WorkspaceProbe::capture(&self.root);
             for touch in before.diff(&after) {
-                let Some(full) = crate::resolve_within_root(&self.root, &touch.path) else {
+                // The probe walks the tree itself, but its keys still go
+                // through the naming gate before the ledger records them.
+                if crate::resolve_within_root(&self.root, &touch.path).is_none() {
                     continue;
-                };
+                }
                 // An unmeasurable update carries its own post-image as the
                 // pre-image, yielding 0/0. The alternative — an empty
                 // pre-image — would render a same-file rewrite as a
                 // whole-file insertion, which is a louder lie than silence.
                 let pre_content = match (touch.counts_measurable, touch.op) {
                     (true, _) => touch.pre_content,
-                    (false, FileOp::Update | FileOp::Delete) => std::fs::read(&full)
-                        .ok()
-                        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()),
+                    (false, FileOp::Update | FileOp::Delete) => {
+                        crate::rootfd::read_confined_lossy(&self.root, &touch.path)
+                    }
                     (false, _) => None,
                 };
                 self.record_touch(
                     PendingTouch {
                         path: touch.path,
-                        full,
                         op: touch.op,
                     },
                     pre_content,
@@ -1130,13 +1133,12 @@ impl ToolRegistry {
                 let resolved: Vec<String> =
                     std::mem::take(&mut *self.span_reads.lock().unwrap_or_else(|p| p.into_inner()));
                 for path in resolved {
-                    if let Some(full) = crate::resolve_within_root(&self.root, &path)
-                        && let Some(normalized) = normalize_workspace_path(&self.root, &path)
-                    {
+                    // `normalize_workspace_path` runs the confinement check
+                    // itself, so an escaping span path drops out here.
+                    if let Some(normalized) = normalize_workspace_path(&self.root, &path) {
                         self.record_touch(
                             PendingTouch {
                                 path: normalized,
-                                full,
                                 op: FileOp::Read,
                             },
                             None,
@@ -1570,16 +1572,12 @@ impl ToolRegistry {
             let Some(raw) = edit.get("path").and_then(|v| v.as_str()) else {
                 continue;
             };
-            let Some(full) = crate::resolve_within_root(&self.root, raw) else {
-                continue;
-            };
             let Some(path) = normalize_workspace_path(&self.root, raw) else {
                 continue;
             };
             if seen.insert(path.clone()) {
                 ops.push(PendingTouch {
                     path,
-                    full,
                     op: FileOp::Update,
                 });
             }
@@ -1597,7 +1595,6 @@ impl ToolRegistry {
     /// agents toward them.
     fn classify_file_op(&self, tool: &str, input: &Value) -> Option<PendingTouch> {
         let raw = input.get("path").and_then(|v| v.as_str())?;
-        let full = crate::resolve_within_root(&self.root, raw)?;
         let path = normalize_workspace_path(&self.root, raw)?;
         let op = match tool {
             "read_file" => FileOp::Read,
@@ -1606,7 +1603,7 @@ impl ToolRegistry {
             // `web_download` lands a file exactly like `write_file`, so it
             // takes the same ledger classification and hook gating.
             "write_file" | "web_download" => {
-                if full.exists() {
+                if crate::rootfd::exists_confined(&self.root, &path) {
                     FileOp::Update
                 } else {
                     FileOp::Create
@@ -1614,7 +1611,7 @@ impl ToolRegistry {
             }
             _ => return None,
         };
-        Some(PendingTouch { path, full, op })
+        Some(PendingTouch { path, op })
     }
 
     /// Record what this session now knows `path` to hold, hashed from disk.
@@ -1624,13 +1621,13 @@ impl ToolRegistry {
     /// load-bearing here as a write. A path that no longer exists drops its
     /// entry — after a delete there is nothing left to clobber, and the next
     /// agent to create the file is starting fresh rather than overwriting.
-    fn remember_observed(&self, path: &str, full: &std::path::Path) {
+    fn remember_observed(&self, path: &str) {
         let mut observed = self.observed.lock().unwrap_or_else(|p| p.into_inner());
-        match std::fs::read(full) {
-            Ok(bytes) => {
+        match crate::rootfd::read_confined_bytes(&self.root, path) {
+            Some(bytes) => {
                 observed.insert(path.to_string(), crate::staleness::hex_sha256(&bytes));
             }
-            Err(_) => {
+            None => {
                 observed.remove(path);
             }
         }
@@ -1709,8 +1706,8 @@ impl ToolRegistry {
             .filter(|p| matches!(p.op, FileOp::Update | FileOp::Delete))
             .filter(|p| {
                 observed.get(&p.path).is_some_and(|seen| {
-                    std::fs::read(&p.full)
-                        .is_ok_and(|bytes| crate::staleness::hex_sha256(&bytes) != *seen)
+                    crate::rootfd::read_confined_bytes(&self.root, &p.path)
+                        .is_some_and(|bytes| crate::staleness::hex_sha256(&bytes) != *seen)
                 })
             })
             .map(|p| p.path.clone())
@@ -1794,7 +1791,7 @@ impl ToolRegistry {
         // here can fail or return early: the ledger is telemetry, but this is
         // the guarantee, and a touch whose digest went unrecorded would leave
         // the NEXT write to this path unguarded.
-        self.remember_observed(&pending.path, &pending.full);
+        self.remember_observed(&pending.path);
         let reason = input
             .get("reason")
             .and_then(|v| v.as_str())
@@ -1821,9 +1818,7 @@ impl ToolRegistry {
                 // attribution path exists to see.
                 let from_input = input.get("content").and_then(|v| v.as_str());
                 let from_disk = from_input.is_none().then(|| {
-                    std::fs::read(&pending.full)
-                        .ok()
-                        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                    crate::rootfd::read_confined_lossy(&self.root, &pending.path)
                         .unwrap_or_default()
                 });
                 let content =
@@ -1845,9 +1840,7 @@ impl ToolRegistry {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string(),
-                    _ => std::fs::read(&pending.full)
-                        .ok()
-                        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                    _ => crate::rootfd::read_confined_lossy(&self.root, &pending.path)
                         .unwrap_or_default(),
                 };
                 let (added, removed) = line_diff(pre, &post);
@@ -2003,9 +1996,9 @@ impl ToolRegistry {
         };
         let after = crate::shell_touch::WorkspaceProbe::capture(&self.root);
         for touch in before.diff(&after) {
-            let Some(full) = crate::resolve_within_root(&self.root, &touch.path) else {
+            if crate::resolve_within_root(&self.root, &touch.path).is_none() {
                 continue;
-            };
+            }
             // Identical to the per-call path above, and deliberately so: the
             // probe captured a real pre-image for every file it could hold
             // within budget, and that is what makes the line counts honest.
@@ -2015,15 +2008,14 @@ impl ToolRegistry {
             // whole-file insertion, which is a louder lie than silence.
             let pre_content = match (touch.counts_measurable, touch.op) {
                 (true, _) => touch.pre_content,
-                (false, FileOp::Update | FileOp::Delete) => std::fs::read(&full)
-                    .ok()
-                    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()),
+                (false, FileOp::Update | FileOp::Delete) => {
+                    crate::rootfd::read_confined_lossy(&self.root, &touch.path)
+                }
                 (false, _) => None,
             };
             self.record_touch(
                 PendingTouch {
                     path: touch.path,
-                    full,
                     op: touch.op,
                 },
                 pre_content,
