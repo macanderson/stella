@@ -407,6 +407,31 @@ pub struct AgentEngineConfig {
     /// stay behind.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_candidates: Option<u32>,
+    /// Seconds of provider silence that end a single generation
+    /// (`stella_core::EngineConfig::model_timeout`). Absent keeps the engine's
+    /// own default, which is what every run used before this key existed.
+    ///
+    /// This is the third of the three coupled ceilings, and the only one that
+    /// used to be reachable from nothing: the output cap lives in
+    /// `agents.<role>.params.max_tokens` and the turn budget is a CLI flag, but
+    /// `model_timeout` was an engine constant, so moving it meant recompiling.
+    /// For a benchmark arm that made a timeout change a *system-under-test*
+    /// change — a re-freeze of the registered commit rather than a line in the
+    /// posture (#1211 §6.2).
+    ///
+    /// The three move together or not at all. Raising the output cap alone
+    /// relocates the cliff rather than removing it: a step allowed 128k output
+    /// tokens against a timeout sized for 64k stops on the timeout instead, and
+    /// the run reports a capability difference that was really a ceiling
+    /// nobody scaled. The rule that sets all three is the same — never be the
+    /// side that stops first.
+    ///
+    /// It bounds *idle silence between stream fragments*, not elapsed time, so
+    /// a generation that keeps streaming is never cut by it. Size it as a
+    /// margin against a provider that stopped answering, above what the output
+    /// cap can take to produce at the model's observed throughput.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_timeout_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents: Option<AgentEngineAgents>,
 }
@@ -584,6 +609,7 @@ impl AgentEngineConfig {
         take!(headless_scope_bypass);
         take!(pipeline_max_revisions);
         take!(pipeline_candidates);
+        take!(model_timeout_secs);
         if let Some(agents) = &other.agents {
             let target = self.agents.get_or_insert_with(AgentEngineAgents::default);
             for kind in EngineAgentKind::ALL {
