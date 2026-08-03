@@ -137,6 +137,23 @@ _TRAJECTORY_NAME = "trajectory.json"
 # zero bytes lost), which trained readers to ignore it.
 _TELEMETRY_INCOMPLETE = "stella-adapter: TELEMETRY-INCOMPLETE"
 
+# Workspace git baseline (#1211 §6 item 4; blindness documented in #973).
+# Terminal-Bench task images are plain directories, so on exactly this
+# benchmark the diff probe can never read a tree, candidate isolation is
+# unavailable, the witness author has nothing to snapshot, and the mutation
+# audit cannot restore. One repository with one commit, created before Stella
+# starts, turns all of those channels on. The marker line is the whole
+# contract between the in-container script and the host-side parser; the
+# parsed report is disclosed verbatim in trial metadata and the public ATIF
+# trajectory, so a reviewer sees exactly what the adapter did to the
+# workspace. A workspace that is already a repository is left untouched —
+# committing on top of task-owned history would change the task.
+_GIT_BASELINE_MARKER = "stella-git-baseline:"
+_GIT_BASELINE_TIMEOUT_SEC = 180
+_GIT_BASELINE_COMMIT_MESSAGE = "stella-harbor: task workspace baseline"
+_GIT_BASELINE_IDENT = "stella-harbor"
+_GIT_BASELINE_EMAIL = "stella-harbor@bench.invalid"
+
 # Defaults when neither Harbor nor the environment specify a value.
 _DEFAULT_MODEL = "anthropic/claude-fable-5"
 _DEFAULT_BUDGET = "5.0"
@@ -1120,6 +1137,86 @@ def _stream_to_envelope(
     }
 
 
+def _git_baseline_script(workdir: str | None) -> str:
+    """Build the POSIX-sh script that establishes the workspace git baseline.
+
+    Always exits 0 and reports through one greppable marker line, because an
+    evidence-channel setup step must never be able to fail a trial — a
+    workspace it could not baseline runs exactly as every published number
+    did (diff-blind), it just says so in metadata instead of silently.
+
+    Branch order is load-bearing:
+
+    - ``[ -e .git ]`` runs before ``rev-parse`` so a repository git refuses
+      to read (dubious ownership) still reads as *preexisting* rather than
+      falling through to ``git init`` — reinitializing and committing inside
+      a task-owned repository would rewrite task state.
+    - ``rev-parse`` runs under ``safe.directory='*'`` for the same reason:
+      a false "not a repository" is the one probe result that must not
+      happen, and it covers the workspace-nested-inside-a-parent-repo case
+      ``[ -e .git ]`` cannot see.
+    - ``.stella/`` is excluded via ``.git/info/exclude``, never a tracked
+      ``.gitignore`` — the exclude file lives inside ``.git``, so the
+      baseline adds zero entries to the tree a verifier might enumerate.
+    - ``--allow-empty`` guarantees a baseline commit exists even for an
+      empty task directory, so "repository with no HEAD" is not a state the
+      diff probe can encounter.
+    """
+    prologue = ""
+    if workdir:
+        prologue = (
+            f"cd {shlex.quote(workdir)} || {{ "
+            f"echo '{_GIT_BASELINE_MARKER} state=error detail=workdir-unavailable'; "
+            "exit 0; }; "
+        )
+    ident = (
+        f"-c user.name={shlex.quote(_GIT_BASELINE_IDENT)} "
+        f"-c user.email={shlex.quote(_GIT_BASELINE_EMAIL)}"
+    )
+    return (
+        f"{prologue}"
+        "if ! command -v git >/dev/null 2>&1; then "
+        f"echo '{_GIT_BASELINE_MARKER} state=unavailable detail=git-not-installed'; "
+        "elif [ -e .git ] || git -c safe.directory='*' rev-parse "
+        "--is-inside-work-tree >/dev/null 2>&1; then "
+        f"echo '{_GIT_BASELINE_MARKER} state=preexisting'; "
+        "elif git init -q >/dev/null 2>&1 "
+        "&& mkdir -p .git/info "
+        "&& printf '%s\\n' '.stella/' >> .git/info/exclude "
+        "&& git add -A >/dev/null 2>&1 "
+        f"&& git {ident} commit -q --allow-empty --no-verify "
+        f"-m {shlex.quote(_GIT_BASELINE_COMMIT_MESSAGE)} >/dev/null 2>&1; then "
+        f'echo "{_GIT_BASELINE_MARKER} state=created '
+        'commit=$(git rev-parse HEAD 2>/dev/null)"; '
+        "else "
+        f"echo '{_GIT_BASELINE_MARKER} state=failed detail=git-command-failed'; "
+        "fi"
+    )
+
+
+def _parse_git_baseline_report(stdout: str | None) -> dict[str, str]:
+    """Parse the marker line into a report; absence is itself a finding.
+
+    The last marker line wins (a retried step reports its final state), and
+    only non-empty ``key=value`` tokens are kept, so a failed
+    ``git rev-parse HEAD`` yields no ``commit`` key rather than an empty one.
+    """
+    if stdout:
+        for line in reversed(stdout.splitlines()):
+            stripped = line.strip()
+            if not stripped.startswith(_GIT_BASELINE_MARKER):
+                continue
+            report: dict[str, str] = {}
+            for token in stripped[len(_GIT_BASELINE_MARKER) :].split():
+                key, sep, value = token.partition("=")
+                if sep and key and value:
+                    report[key] = value
+            if report.get("state"):
+                return report
+            break
+    return {"state": "unreported"}
+
+
 class StellaAgent(BaseInstalledAgent):
     """Run the Stella coding CLI as a Harbor installed agent."""
 
@@ -1155,6 +1252,7 @@ class StellaAgent(BaseInstalledAgent):
     _assurance_tiers: dict[str, Any]
     _assurance_tiers_json: str
     _assurance_tiers_sha256: str
+    _workspace_git_baseline: dict[str, str]
 
     def __init__(self, *args: Any, agent_timeout_sec: Any = None, **kwargs: Any):
         """Accept Harbor's per-trial agent deadline, and keep it off the base.
@@ -1283,6 +1381,7 @@ class StellaAgent(BaseInstalledAgent):
         # `stella init` writes its DB into the workspace (see git_baseline).
         await run_git_baseline(self, environment)
         await self._build_code_graph(environment)
+        await self._establish_workspace_git_baseline(environment)
 
     async def _build_code_graph(self, environment: BaseEnvironment) -> None:
         """Index the task workspace so ``graph_query`` is offered at all.
@@ -1314,6 +1413,37 @@ class StellaAgent(BaseInstalledAgent):
             if "code graph:" in line:
                 self._code_graph_summary = line.strip()
                 break
+
+    async def _establish_workspace_git_baseline(
+        self, environment: BaseEnvironment
+    ) -> None:
+        """Give the task workspace a git baseline before Stella starts.
+
+        Runs once per task environment, after ``stella init`` (whose
+        ``.stella/`` state directory the script excludes from the baseline),
+        as the same in-container user the turn runs as — so the repository
+        the diff probe later reads is owned by the user reading it.
+        Best-effort by construction: every outcome, including "could not
+        even exec", lands in ``self._workspace_git_baseline`` and from there
+        in trial metadata and the ATIF trajectory, never in a raised error.
+        """
+        task_env_config = getattr(environment, "task_env_config", None)
+        cwd = getattr(task_env_config, "workdir", None)
+        script = _git_baseline_script(str(cwd) if cwd else None)
+        try:
+            result = await self.exec_as_agent(
+                environment, command=script, timeout_sec=_GIT_BASELINE_TIMEOUT_SEC
+            )
+        except Exception as exc:  # noqa: BLE001 - evidence setup, never fatal
+            self._workspace_git_baseline = {"state": "error", "detail": str(exc)}
+            print(
+                f"stella-adapter: workspace git baseline unavailable: {exc}",
+                file=sys.stderr,
+            )
+            return
+        self._workspace_git_baseline = _parse_git_baseline_report(
+            getattr(result, "stdout", None)
+        )
 
     @with_prompt_template
     async def run(
@@ -1913,6 +2043,11 @@ class StellaAgent(BaseInstalledAgent):
             if isinstance(stream_view, dict)
             else None
         ) or "not_reported"
+        # Absent (adapter predates install, or install never ran) is a real
+        # state and must not be conflated with a step that ran and reported.
+        workspace_git_baseline = getattr(
+            self, "_workspace_git_baseline", {"state": "not_attempted"}
+        )
 
         extra: dict[str, Any] = {
             "stella_status": metrics.get("status"),
@@ -1966,6 +2101,7 @@ class StellaAgent(BaseInstalledAgent):
             "stella_assurance_tiers_sha256": assurance_tiers_sha256,
             "stella_witness_author_model": witness_author_model,
             "stella_witness_authored_state": witness_authored_state,
+            "stella_workspace_git_baseline": workspace_git_baseline,
         }
         if envelope is not None:
             extra["stella_accounting"] = envelope_accounting(envelope)
@@ -2025,6 +2161,7 @@ class StellaAgent(BaseInstalledAgent):
                 assurance_tiers_sha256=assurance_tiers_sha256,
                 witness_author_model=witness_author_model,
                 witness_authored_state=witness_authored_state,
+                workspace_git_baseline=workspace_git_baseline,
             )
             self._write_log(
                 _TRAJECTORY_NAME,
