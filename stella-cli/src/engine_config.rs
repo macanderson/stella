@@ -949,9 +949,20 @@ mod tests {
         // Worker family anthropic → zai (2.20) beats deepseek (1.10).
         let spec = auto_judge_spec(&engine, "anthropic", &|_| true).unwrap();
         assert_eq!(spec.provider, "zai");
-        // Credentials filter: with anthropic unavailable, deepseek wins for
-        // a zai worker.
+        // Credentials filter: with anthropic unavailable, `anthropic/…` stops
+        // parsing as a qualified spec (the prefix is no longer a configured
+        // provider) and falls through to a bare-slug catalog lookup of the
+        // whole string. The gateway seeds that exact slug — it is OpenRouter's
+        // real wire name for the model — so the same model is still reachable
+        // over a provider we DO hold a credential for, and price still ranks
+        // it above deepseek. Losing the first-party key downgrades the route,
+        // not the judge.
         let spec = auto_judge_spec(&engine, "zai", &|id| id != "anthropic").unwrap();
+        assert_eq!(spec.provider, "openrouter");
+        assert_eq!(spec.model, "anthropic/claude-fable-5");
+        // With neither the vendor nor the gateway, deepseek is the fallback.
+        let spec =
+            auto_judge_spec(&engine, "zai", &|id| id != "anthropic" && id != "openrouter").unwrap();
         assert_eq!(spec.provider, "deepseek");
         // Nothing configured → None (caller falls back to normal routing).
         assert!(auto_judge_spec(&engine, "zai", &|_| false).is_none());
