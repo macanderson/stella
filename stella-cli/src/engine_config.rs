@@ -961,8 +961,10 @@ mod tests {
         assert_eq!(spec.provider, "openrouter");
         assert_eq!(spec.model, "anthropic/claude-fable-5");
         // With neither the vendor nor the gateway, deepseek is the fallback.
-        let spec =
-            auto_judge_spec(&engine, "zai", &|id| id != "anthropic" && id != "openrouter").unwrap();
+        let spec = auto_judge_spec(&engine, "zai", &|id| {
+            id != "anthropic" && id != "openrouter"
+        })
+        .unwrap();
         assert_eq!(spec.provider, "deepseek");
         // Nothing configured → None (caller falls back to normal routing).
         assert!(auto_judge_spec(&engine, "zai", &|_| false).is_none());
