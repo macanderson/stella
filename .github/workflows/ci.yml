@@ -203,6 +203,18 @@ jobs:
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
+      # Prompt caching has no stale-read failure mode: a hit and a miss return
+      # the same tokens, so a broken cache never fails a test that asserts on
+      # output — it just quietly bills full price on every call. The golden
+      # manifests record where the breakpoints fell (`cache_zone` per block),
+      # which makes the drift checkable. `cargo test` below covers these too;
+      # they run first, and by name, because "the system prefix stopped being
+      # byte-stable" deserves better than being one line inside a full-suite
+      # wall of output. Cheap: the compile is shared with the step after it.
+      - name: prompt-cache correctness (golden fixtures)
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        run: make cache-correctness
+
       - name: cargo test
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo test --workspace
