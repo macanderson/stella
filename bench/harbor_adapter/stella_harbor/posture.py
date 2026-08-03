@@ -113,6 +113,59 @@ _CANDIDATES_CEILING = 5
 # timeout and reports it as a task failure.
 _MODEL_TIMEOUT_CEILING = 21_600
 
+# The output cap, per model, and the silence ceiling that has to absorb it.
+#
+# These were one shared number (64000) until the Fable ceiling set was
+# approved (#1211 §6.2). One number was only ever right by coincidence: it is
+# the *model's* ceiling, and models differ. Fable 5 answers up to 128,000
+# output tokens; capping its trials at 64,000 stopped it at half the height
+# the comparator is allowed to fill, and the score then reported that as a
+# capability difference rather than as our own ceiling.
+#
+# Keyed by the bare model slug, so a model reached directly
+# (`anthropic/claude-fable-5`) and the same model reached through a gateway
+# (`openrouter/anthropic/claude-fable-5`) get the same ceilings. Booking route
+# is not a model property.
+#
+# `TestOutputCeilingParity` pins the caps here against
+# `stella-model/src/catalog.rs`, which is the authority. Change the catalog and
+# this must follow, which is the point: the two numbers used to be able to
+# drift apart silently, both still looking deliberate.
+_DEFAULT_OUTPUT_CAP = 64_000
+_OUTPUT_CAP_BY_SLUG = {"claude-fable-5": 128_000}
+
+# The timeout is DERIVED from the cap, not chosen independently, which is why
+# it lives in the same table. It bounds silence between stream fragments, so it
+# has to exceed the time the model needs to produce a full-cap answer at its
+# observed speed. The registered derivation: the comparator's rewarded 64,000
+# token step took 756s (~85 tokens/second), so 128,000 tokens is ~1,512s, plus
+# the same 60s margin every previous ceiling used = 1,572s.
+#
+# `None` means "leave it out and inherit the engine default", which is what
+# every model but Fable does and what every historical run recorded.
+#
+# Raising the cap without raising this is the mistake this table exists to
+# prevent: the step then stops on the timeout instead of the cap, which looks
+# identical in the results and is just as much us stopping first. That is not
+# hypothetical — it is the recorded history of this posture, where
+# 16384 -> 32000 -> 64000 each moved one ceiling while the others held.
+_MODEL_TIMEOUT_BY_SLUG = {"claude-fable-5": 1_572}
+
+
+def _model_slug(model: str) -> str:
+    """The bare model name, with any provider or gateway prefix stripped."""
+    return model.rsplit("/", 1)[-1].strip().lower()
+
+
+def default_output_cap(model: str) -> int:
+    """The output-token cap this model's benchmark posture uses."""
+    return _OUTPUT_CAP_BY_SLUG.get(_model_slug(model), _DEFAULT_OUTPUT_CAP)
+
+
+def default_model_timeout(model: str) -> int | None:
+    """The silence ceiling that goes with this model's cap, or ``None``."""
+    return _MODEL_TIMEOUT_BY_SLUG.get(_model_slug(model))
+
 
 def _validated_attempt_count(
     value: str, *, label: str, floor: int, ceiling: int
@@ -357,6 +410,8 @@ def _benchmark_engine_posture(
     if not selected_model or "/" not in selected_model:
         raise ValueError("benchmark model must be a non-empty provider/model spec")
     selected_effort = _validated_worker_effort(worker_effort)
+    # The model's own ceilings, unless the operator selected otherwise below.
+    output_cap = default_output_cap(selected_model)
     posture: dict[str, Any] = {
         "default_model": selected_model,
         "allowed_models": [selected_model],
@@ -438,7 +493,7 @@ def _benchmark_engine_posture(
             "default": {
                 "effort": "xhigh",
                 "reasoning": "on",
-                "params": {"max_tokens": 64000},
+                "params": {"max_tokens": output_cap},
             },
             # Only the worker's tier moves with the arm. `default` stays at
             # `xhigh` deliberately: it governs roles with no explicit entry
@@ -448,12 +503,12 @@ def _benchmark_engine_posture(
             "worker": {
                 "effort": selected_effort,
                 "reasoning": "on",
-                "params": {"max_tokens": 64000},
+                "params": {"max_tokens": output_cap},
             },
             "judge": {
                 "effort": "xhigh",
                 "reasoning": "on",
-                "params": {"max_tokens": 64000},
+                "params": {"max_tokens": output_cap},
             },
             "triage": {"effort": "low", "reasoning": "off"},
         },
@@ -514,8 +569,13 @@ def _benchmark_engine_posture(
     # byte-identical to every run recorded before the key existed, which is the
     # only way the registered numbers keep describing the postures that
     # produced them.
-    if model_timeout_secs is not None:
-        posture["model_timeout_secs"] = model_timeout_secs
+    effective_timeout = (
+        model_timeout_secs
+        if model_timeout_secs is not None
+        else default_model_timeout(selected_model)
+    )
+    if effective_timeout is not None:
+        posture["model_timeout_secs"] = effective_timeout
     normalized = json.dumps(
         posture,
         sort_keys=True,
