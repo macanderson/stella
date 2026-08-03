@@ -40,7 +40,7 @@ use super::context::ContextSettings;
 use super::context_providers::ContextProviderSettings;
 use super::{
     AgentEngineAgent, AgentEngineAgents, AgentEngineConfig, McpSettings, ProviderSettings,
-    Settings, Toggle, ToolsSettings, UiSettings,
+    RewardSettings, Settings, Toggle, ToolsSettings, UiSettings,
 };
 
 /// The schema version this build writes and understands.
@@ -159,6 +159,8 @@ pub struct AgentsSection {
     pub pipeline_max_revisions: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_candidates: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_timeout_secs: Option<u64>,
 
     // The four built-in agents, as tables. Serialized LAST so the flat scalars
     // above are not stranded after a table header — TOML would then read them
@@ -224,6 +226,10 @@ pub struct TomlConfig {
     pub context_providers: ContextProviderSettings,
     #[serde(default)]
     pub ui: Option<UiSettings>,
+    /// `[reward]` — what a turn's verdict is worth as a training label (#1043).
+    /// Same shape in JSON and TOML, so no lowering beyond the move.
+    #[serde(default)]
+    pub reward: Option<RewardSettings>,
     /// Honored only from the managed tier; see [`Settings::managed_authority`].
     #[serde(default)]
     pub authority: Option<ManagedAuthoritySettings>,
@@ -323,6 +329,7 @@ impl TomlConfig {
             context,
             context_providers,
             ui,
+            reward,
             authority,
             enterprise_telemetry,
         } = self;
@@ -352,6 +359,7 @@ impl TomlConfig {
             trace_capture: run.trace_capture,
             create_worktrees: run.create_worktrees,
             ui,
+            reward,
             context,
             context_providers,
             managed_authority: authority,
@@ -547,6 +555,7 @@ pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection) {
         headless_scope_bypass: cfg.headless_scope_bypass,
         pipeline_max_revisions: cfg.pipeline_max_revisions,
         pipeline_candidates: cfg.pipeline_candidates,
+        model_timeout_secs: cfg.model_timeout_secs,
         default: per_agent.default,
         worker: per_agent.worker,
         judge: per_agent.judge,
@@ -611,6 +620,7 @@ fn lower_agents(agents: AgentsSection, models: ModelsSection) -> Option<AgentEng
         headless_scope_bypass: agents.headless_scope_bypass,
         pipeline_max_revisions: agents.pipeline_max_revisions,
         pipeline_candidates: agents.pipeline_candidates,
+        model_timeout_secs: agents.model_timeout_secs,
         agents: agents_field,
     })
 }

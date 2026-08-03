@@ -1,10 +1,21 @@
 # Proposal: the Fable-class ceiling set — 128,000 output cap + scaled `model_timeout`
 
-**Status: PROPOSED — preregistration decision, maintainer sign-off required.
-Nothing in this PR changes the frozen posture, the engine constant, or any
-registered digest.** This memo exists so the decision can be made once,
-deliberately, before a paid Fable-class run — not discovered mid-run the way
-16384 → 32000 → 64000 each were (READINESS.md §8.4.2–§8.4.3).
+**Status: APPROVED and REGISTERED (2026-08-03).** The maintainer approved the
+Fable ceiling set; it is implemented and its digests are registered below.
+This memo is kept as the reasoning of record — why these numbers, and how they
+were derived — rather than rewritten into a changelog entry.
+
+What shipped:
+
+| ceiling | value | where |
+|---|---|---|
+| `params.max_tokens` (default/worker/judge) | **128,000** | `posture.py::_OUTPUT_CAP_BY_SLUG`, pinned to `catalog.rs` by `TestOutputCeilingParity` |
+| `model_timeout` | **1,572s** | `posture.py::_MODEL_TIMEOUT_BY_SLUG`, emitted as the `model_timeout_secs` posture key |
+| `--turn-budget` | unchanged | adapter, per trial |
+
+**Only the Fable arm moved.** Sonnet 5 keeps 64,000 and no timeout key, so its
+registered digest `3c428a22…` is bit-identical — its comparator stops at
+64,000, so parity says it stays.
 
 ## The rule, restated
 
@@ -34,11 +45,22 @@ comparator's winning steps were already brushing its own ceiling.
 
 Same one-budget coupling as §8.4.3 — moving one alone relocates the cliff:
 
-| ceiling | Sonnet-5 arm (frozen) | Fable-class arm (proposed) | where it lives | what changes |
+| ceiling | Sonnet-5 arm | Fable arm (approved) | where it lives | what it moves |
 |---|---|---|---|---|
-| `params.max_tokens` (default/worker/judge) | 64,000 | **128,000** (the model ceiling) | `bench/harbor_adapter/stella_harbor/posture.py::_benchmark_engine_posture` | the hashed posture → every posture digest |
-| `EngineConfig::model_timeout` | 816s | **1,572s** (provisional, see below) | `stella-core/src/driver.rs` (engine default) | the SUT binary → re-freeze of the SUT commit |
+| `params.max_tokens` (default/worker/judge) | 64,000 | **128,000** (the model ceiling) | `posture.py::_OUTPUT_CAP_BY_SLUG` | the hashed posture → the Fable digests |
+| `model_timeout` | engine default (816s), key omitted | **1,572s** | `posture.py::_MODEL_TIMEOUT_BY_SLUG` → `model_timeout_secs` | the hashed posture → the Fable digests |
 | `--turn-budget` | per-trial, Harbor agent timeout − 60s | unchanged | adapter, per trial | nothing |
+
+> **Amended.** When this memo was written `model_timeout` was an `EngineConfig`
+> constant with no configuration path, so this row read "the SUT binary →
+> re-freeze of the SUT commit" and half the change was maintainer-only for
+> mechanical reasons rather than judgement ones. It is now an ordinary posture
+> key, so both ceilings move the same way: the digest, and no binary.
+>
+> Both are also keyed by **model** rather than shared, which is what stops the
+> two from separating. Selecting Fable selects 128,000 *and* 1,572s together;
+> there is no way to raise one and forget the other, which is exactly how
+> 16384 → 32000 → 64000 each relocated the cliff instead of removing it.
 
 `triage` stays at the engine default in both arms — low effort, three-line
 classification, the cap was never near binding (same reasoning as every
@@ -62,54 +84,64 @@ the comparator's 64,000-token rewarded step took 756s (~85 tok/s); a
   + 60s), exactly as 816 was derived. The provisional number is registered as
   provisional for that reason.
 
-## Reference digests for the proposed arm
+## Registered digests
 
-Computed with the adapter's own canonicalization (the posture dict from
-`_benchmark_engine_posture`, caps patched, normalized and hashed by the same
-`sort_keys`/compact-JSON/SHA-256 rule). **Reference only** — the
-authoritative values are whatever `_benchmark_engine_posture` emits after the
-constant actually moves, and the launcher manifest is the value of record; a
-hand value that disagrees with the machine manifest is the `harbor==0.6.1`
-failure in a new file.
+Emitted by `_benchmark_engine_posture` after the change, which is the
+authoritative source — a hand-computed value that disagrees with the machine
+manifest is the `harbor==0.6.1` failure in a new file. Pinned by
+`TestFableCeilingSet::test_the_registered_fable_digests`.
 
-| model | frozen (`xhigh`, 64000) | proposed (`xhigh`, 128000) |
-|---|---|---|
-| anthropic/claude-fable-5 | `640b9469d5d3bc1394af20967915cca0f6841180648dec4daedbbd5f629ef510` | `b640fec3867ed632d742f8a78c5f899b222ce77422192a5c9ee395ceb2a004aa` |
-| anthropic/claude-sonnet-5 | `3c428a22435228b8b11731e7c90031f4b606a8ec8c96eadde9dd266a7ffdb104` | `29b57409d8448e565dadce0697cde353c6d84919a46a50467d7515522aba2848` |
+| model | registered digest | cap | timeout |
+|---|---|---|---|
+| anthropic/claude-fable-5 | `5d42e2364755534c5632189ca988b892d108f54c30901d988fc88037407b2bfe` | 128,000 | 1,572s |
+| openrouter/anthropic/claude-fable-5 | `18a1ba22e2ffef7fb8634504a0d6aff39c3117a52e48dd0f22159693641fd572` | 128,000 | 1,572s |
+| anthropic/claude-sonnet-5 (unchanged) | `3c428a22435228b8b11731e7c90031f4b606a8ec8c96eadde9dd266a7ffdb104` | 64,000 | engine default |
 
-(The frozen Sonnet-5 value matches READINESS.md §8.4.3's registered table,
-which is the check that the reference machinery agrees with the launcher's.)
-The Sonnet-5 row's proposed column is listed because the constant is shared,
-**not** because this memo proposes changing the Sonnet-5 arm — under the
-parity rule the Sonnet-5 comparator stops at 64,000, so its frozen posture
-stays. If the maintainer instead prefers per-arm caps, the implementation
-should follow the existing arm pattern (a host-side selector that lands in
-the hash, like `STELLA_WORKER_EFFORT`), so that which cap a run used is a
-property of its digest rather than of its logs.
+Two notes on reading these.
 
-## Why this is not automated away
+**They are not this memo's precomputed values.** The draft predicted
+`b640fec3…` for Fable at 128,000. That figure assumed the timeout stayed an
+engine constant and therefore never appeared in the posture. It is now the
+`model_timeout_secs` key, so it is inside the hash — which is the point of
+moving it. The predicted value described a posture that would have carried
+the raised cap and an unrecorded timeout.
 
-Three separate reasons, each sufficient:
+**Direct and gateway hash differently on purpose.** Same model, same ceilings,
+different `default_model`, and the digest describes the whole posture. A run
+still cannot claim one route's number under the other's digest.
+
+## Why this needed a decision rather than a default
+
+Two reasons stood when this memo was written; one has since been removed.
 
 1. **It changes the frozen digest.** Registered thresholds and any published
-   number describe the posture that produced them; a silently moved constant
-   makes the digest describe a posture nobody registered. The change must
-   land as its own preregistration (or amendment) with the new digests in
-   the protocol tables — the same path §8.4.2 and §8.4.3 took.
-2. **Half of it is a SUT change.** `model_timeout` is an engine constant, so
-   the Fable arm requires a re-freeze of the SUT commit, which is
-   maintainer-only under the protocol ("design finalization before the audit
-   clock starts").
-3. **The number itself is provisional.** 1,572s is derived, not measured;
-   the preregistration should say which it is registering.
+   number describe the posture that produced them, so a silently moved
+   constant makes the digest describe a posture nobody registered. This is
+   why the change landed as an approval with the new digests recorded above
+   — the same path §8.4.2 and §8.4.3 took.
+2. ~~**Half of it is a SUT change.**~~ **Removed.** `model_timeout` was an
+   engine constant, so the Fable arm would have required re-freezing the SUT
+   commit. It is now `agent_engine_config.model_timeout_secs`, so both
+   ceilings are posture keys and no binary moves.
+3. **1,572s is derived, not measured.** Registered as provisional. If a
+   Fable smoke run shows rewarded steps longer than 1,512s, re-derive from
+   the measurement — longest rewarded comparator step + 60s — exactly as 816
+   was derived. Tracked separately.
 
-## Decision asked of the maintainer
+## Decision record
 
-* [ ] Approve the Fable-class arm shape: `max_tokens: 128000` for
-      default/worker/judge, `model_timeout: 1572s`, turn-budget wiring
-      unchanged, triage unchanged.
-* [ ] Choose global-constant vs per-arm-selector implementation.
-* [ ] Register it: apply the one-line posture change + engine constant on a
-      commit that becomes the new frozen SUT, recompute digests via
-      `_benchmark_engine_posture`, update the protocol/analyzer/READINESS
-      tables, and publish before any paid Fable-class trial.
+* [x] **Approved** — the Fable arm shape: `max_tokens: 128000` for
+      default/worker/judge, `model_timeout: 1572s`, turn budget unchanged,
+      triage unchanged. Approved by the maintainer 2026-08-03.
+* [x] **Per-arm, keyed by model.** Both ceilings are properties of the model
+      (`_OUTPUT_CAP_BY_SLUG`, `_MODEL_TIMEOUT_BY_SLUG`) rather than shared
+      constants, so selecting Fable selects both together and neither can be
+      left behind. `STELLA_MODEL_TIMEOUT` still overrides per run.
+* [x] **Registered** — digests above, catalog row corrected to Fable's real
+      128,000 ceiling, posture pinned to it by `TestOutputCeilingParity`.
+
+Still open, and deliberately not part of this approval: whether Sonnet 5's own
+catalog ceiling of 64,000 is correct. It is the *observed comparator* ceiling,
+which is what parity needs, but it may be below the model's real API limit.
+Changing it would move a published digest, so it is tracked as its own piece
+of work rather than folded in here.

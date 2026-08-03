@@ -23,8 +23,15 @@ use crate::theme;
 pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
     // Two panes over a status line.
     let bands = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(area);
-    let panes = Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
-        .split(bands[0]);
+    // Side by side normally; stacked in accessible mode, so a rendered row
+    // carries the installed list or the registry search, never a slice of each
+    // (#1258). ←/→ still switch focus between them — this changes where they
+    // sit, not how they work.
+    let panes = if ui.accessible {
+        Layout::vertical([Constraint::Percentage(55), Constraint::Percentage(45)]).split(bands[0])
+    } else {
+        Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)]).split(bands[0])
+    };
 
     render_installed(ui, panes[0], buf);
     render_search(ui, panes[1], buf);

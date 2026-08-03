@@ -88,6 +88,7 @@ from .posture import (
     _CANDIDATES_ENV,
     _ENGINE_POSTURE_VERSION,
     _MAX_REVISIONS_ENV,
+    _MODEL_TIMEOUT_ENV,
     _TRIAGE_MODEL_ENV,
     _WITNESS_AUTHOR_ENV,
     _WORKER_EFFORT_ENV,
@@ -97,6 +98,7 @@ from .posture import (
     fold_witness_observations,
     resolve_candidates,
     resolve_max_revisions,
+    resolve_model_timeout,
     resolve_triage_model,
     resolve_worker_effort,
 )
@@ -246,6 +248,9 @@ _HOST_ONLY_STELLA_ENV = frozenset(
         # unlisted selector refuses the run instead of enabling the arm.
         _MAX_REVISIONS_ENV,
         _CANDIDATES_ENV,
+        # The third coupled ceiling (#1211 §6.2). Same bucket again: read on the
+        # host, reaching Stella only inside the hashed posture.
+        _MODEL_TIMEOUT_ENV,
         # The portability target triple and glibc floor (#1018). `env.sh` exports
         # both so `build_sut.sh` builds to the same floor `preflight` asserts
         # against — keeping them apart is what let a glibc-2.35 binary reach five
@@ -1680,6 +1685,9 @@ class StellaAgent(BaseInstalledAgent):
                 self._configured_value(_MAX_REVISIONS_ENV)
             ),
             candidates=resolve_candidates(self._configured_value(_CANDIDATES_ENV)),
+            model_timeout_secs=resolve_model_timeout(
+                self._configured_value(_MODEL_TIMEOUT_ENV)
+            ),
         )
 
     def _witness_author_model(self) -> str | None:

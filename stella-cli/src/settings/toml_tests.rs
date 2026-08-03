@@ -56,6 +56,7 @@ fn a_toml_config_and_its_json_equivalent_produce_identical_settings() {
           "enable_recap": "off",
           "trace_capture": "on",
           "ui": {"theme": "stella-dark"},
+          "reward": {"judge_weight": 0.25, "per_usd": 0.75},
           "mcp": {"registry_url": "https://registry.example"}
         }"#,
     );
@@ -70,6 +71,10 @@ schema_version = 1
 [run]
 recap = "off"
 trace_capture = "on"
+
+[reward]
+judge_weight = 0.25
+per_usd = 0.75
 
 [providers.anthropic]
 api_key_env = "ANTHROPIC_API_KEY"
@@ -136,7 +141,65 @@ registry_url = "https://registry.example"
         "[run].trace_capture lowers into the flag"
     );
     assert_eq!(from_json.ui, from_toml.ui, "ui");
+    assert_eq!(from_json.reward, from_toml.reward, "reward");
+    assert_eq!(
+        from_toml.reward_policy().unwrap().outcome.judged,
+        0.25,
+        "[reward].judge_weight resolves into the policy"
+    );
+    assert_eq!(
+        from_toml.reward_policy().unwrap().outcome.deterministic,
+        1.0,
+        "an unset weight is the default, not zero"
+    );
     assert_eq!(from_json.mcp, from_toml.mcp, "mcp");
+}
+
+/// A workspace that distrusts its judge writes one key and inherits the rest.
+/// The alternative — an absent key meaning `0.0` — would silently discard every
+/// judged turn for anyone who set only `per_step`.
+#[test]
+fn an_absent_reward_key_is_the_default_not_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(dir.path(), "stella.toml", "[reward]\njudge_weight = 0.1\n");
+    let settings = load_toml(&path, ConfigScope::User).unwrap();
+    let policy = settings.reward_policy().unwrap();
+    assert_eq!(policy.outcome.judged, 0.1);
+    assert_eq!(policy.outcome.deterministic, 1.0);
+    assert_eq!(policy.shaping.per_step, 0.02);
+    assert_eq!(policy.shaping.per_usd, 0.5);
+    assert_eq!(policy.shaping.per_revision, 0.1);
+}
+
+/// No `[reward]` block at all is exactly the defaults — the shipped behavior is
+/// unchanged for every workspace that never opts in.
+#[test]
+fn no_reward_block_is_exactly_the_defaults() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(dir.path(), "stella.toml", "[run]\nrecap = \"on\"\n");
+    let settings = load_toml(&path, ConfigScope::User).unwrap();
+    assert_eq!(settings.reward, None);
+    assert_eq!(
+        settings.reward_policy().unwrap(),
+        stella_pipeline::reward::RewardPolicy::default()
+    );
+}
+
+/// A judge weight above the deterministic one is refused at load, by name.
+/// Loud beats clamping: a silently-substituted weight produces correctly-shaped
+/// labels that mean something the operator never asked for.
+#[test]
+fn a_judge_weight_above_the_ceiling_fails_the_load_by_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(dir.path(), "stella.toml", "[reward]\njudge_weight = 2.0\n");
+    let settings = load_toml(&path, ConfigScope::User).unwrap();
+    let error = settings
+        .reward_policy()
+        .expect_err("a judge outranking a test must not load");
+    assert!(error.contains("judge_weight"), "{error}");
+    assert!(error.contains("deterministic_weight"), "{error}");
+    // The message has to say what to do, not just that something is wrong.
+    assert!(error.contains("Lower it"), "{error}");
 }
 
 #[test]

@@ -75,6 +75,7 @@ mod scoreboard_cmd;
 // The `/profile` posture planner (fast · balanced · pro · ultra).
 mod profile;
 // Phase 3 (#714): the adaptive-context proposal review surface.
+mod prompt_source;
 mod proposals_cmd;
 mod rules;
 mod runtime;
@@ -83,9 +84,9 @@ mod session_persist;
 mod settings;
 mod settings_check;
 mod signals;
-mod simple_session;
 mod skill_manager;
 mod stats;
+mod stats_graph;
 mod storage_cmd;
 mod subagent;
 mod subsession;
@@ -175,6 +176,7 @@ pub(crate) mod test_env {
     }
 }
 
+use std::io::IsTerminal;
 use std::process::ExitCode;
 
 use clap::{FromArgMatches, ValueEnum};
@@ -470,6 +472,19 @@ fn main() -> ExitCode {
     }
 }
 
+/// The deck's presentation, resolved from the flags and their env synonyms.
+///
+/// One place, so `chat` and `resume` cannot drift: a user who set
+/// `STELLA_ACCESSIBLE` in their profile must get the accessible deck from
+/// both, and finding that out by discovering `resume` ignores it is exactly
+/// the failure this centralization prevents.
+fn deck_presentation(globals: &cli::GlobalArgs) -> term_policy::DeckPresentation {
+    term_policy::DeckPresentation {
+        no_anim: term_policy::animation_disabled(globals.no_anim),
+        accessible: term_policy::accessible_mode(globals.accessible),
+    }
+}
+
 fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
     // Models and Version don't need a configured provider/key.
     match &cli.command {
@@ -580,7 +595,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             return match cmd {
                 None => stats::run_stats(*format, provider.as_deref()),
                 Some(stats::StatsCmd::Prune(args)) => stats::run_stats_prune(args),
-                Some(stats::StatsCmd::Graph(args)) => stats::run_stats_graph(args),
+                Some(stats::StatsCmd::Graph(args)) => stats_graph::run_stats_graph(args),
             };
         }
         Some(Command::Usage { cmd }) => {
@@ -758,6 +773,17 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
     // carry something straight through. `main` is where the flag and the config
     // are both in hand.
     cfg.turn_budget = cli.globals.turn_budget;
+    cfg.plan_mode = cli.globals.plan_mode;
+    // `--tools` is the lowest-authority scope (#1263): folded in AFTER
+    // settings so it can only narrow what they already allowed. `narrow_with`
+    // is the intersection, not a key-level merge, which is what lets the
+    // read-only idiom `*:off,read_file:on` mean what it says while still
+    // being unable to re-enable anything an org policy denied.
+    if let Some(spec) = cli.globals.tools.as_deref() {
+        let scope = stella_tools::policy::ToolPolicy::parse_spec(spec)
+            .map_err(|e| format!("--tools: {e}"))?;
+        cfg.tool_policy.narrow_with(&scope);
+    }
 
     // Correctness pass over the resolved settings — model-slug problems (an
     // unknown provider, a typo, an over-qualified slug that would 400 on the
@@ -784,6 +810,11 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             test_command,
             keep_witness,
         } => {
+            let prompt = prompt_source::resolve(
+                prompt,
+                std::io::stdin().is_terminal(),
+                prompt_source::read_stdin_to_string,
+            )?;
             signals::block_on_interruptible(
                 rt()?,
                 agent::run_one_shot(
@@ -821,6 +852,11 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             )?;
         }
         Command::Goal { goal, no_pipeline } => {
+            let goal = prompt_source::resolve(
+                goal,
+                std::io::stdin().is_terminal(),
+                prompt_source::read_stdin_to_string,
+            )?;
             signals::block_on_interruptible(
                 rt()?,
                 agent::run_goal_cmd(&cfg, &goal, cli.globals.budget, !no_pipeline),
@@ -867,29 +903,22 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             )?;
         }
         Command::Chat => {
-            // Three surfaces, one decision (see `term_policy::chat_surface`):
-            // the Command Deck by default on a real terminal, the accessible
-            // single-pane surface on `--simple` / STELLA_SIMPLE, and the
-            // line-based REPL on `--plain` / STELLA_PLAIN / a non-TTY stream.
-            match term_policy::resolve_chat_surface(cli.globals.plain, cli.globals.simple) {
-                term_policy::ChatSurface::Deck => {
+            // The Command Deck (tabbed TUI) is the default chat surface on a
+            // real terminal; `--plain` / STELLA_PLAIN=1 / a non-TTY stream
+            // falls back to the line-based REPL.
+            match term_policy::plain_fallback(cli.globals.plain) {
+                None => {
                     signals::block_on_interruptible(
                         rt()?,
                         command_deck::run_deck_session(
                             &cfg,
                             cli.globals.budget,
-                            term_policy::animation_disabled(cli.globals.no_anim),
+                            deck_presentation(&cli.globals),
                             None,
                         ),
                     )?;
                 }
-                term_policy::ChatSurface::Simple => {
-                    signals::block_on_interruptible(
-                        rt()?,
-                        simple_session::run_simple_session(&cfg, cli.globals.budget),
-                    )?;
-                }
-                term_policy::ChatSurface::Plain(reason) => {
+                Some(reason) => {
                     // Say which surface this is and why, BEFORE the REPL's
                     // banner — which otherwise looks enough like a normal
                     // start that the missing features read as breakage. The
@@ -916,11 +945,11 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // actual reopen, which is a full deck session (durable state is
             // a deck feature — the plain REPL has no session to restore).
             debug_assert!(!list, "handled before provider resolution");
-            if !term_policy::use_deck(cli.globals.plain, cli.globals.simple) {
+            if !term_policy::use_deck(cli.globals.plain) {
                 return Err(
                     "`stella resume` reopens a Command Deck session and needs a real \
-                     terminal (it cannot combine with --plain / --simple / STELLA_PLAIN / \
-                     STELLA_SIMPLE / a piped stream). `stella resume --list` works anywhere."
+                     terminal (it cannot combine with --plain / STELLA_PLAIN / a piped \
+                     stream). `stella resume --list` works anywhere."
                         .to_string(),
                 );
             }
@@ -933,7 +962,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 command_deck::run_deck_session(
                     &cfg,
                     cli.globals.budget,
-                    term_policy::animation_disabled(cli.globals.no_anim),
+                    deck_presentation(&cli.globals),
                     Some(request),
                 ),
             )?;

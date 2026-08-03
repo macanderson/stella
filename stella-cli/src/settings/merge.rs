@@ -206,6 +206,15 @@ impl Settings {
         if let Some(ui) = &scope.ui {
             self.ui = Some(ui.clone());
         }
+        // Reward weights (#1043): whole-block last-wins, same as `ui` above and
+        // for the same reason — a project that declares any weight is stating a
+        // complete opinion about its own judge, so a per-field merge that left
+        // it with half of a user-scope policy would be a policy nobody wrote.
+        // Must be listed explicitly or the block parses everywhere and merges
+        // to `None`.
+        if let Some(reward) = &scope.reward {
+            self.reward = Some(reward.clone());
+        }
         // Adaptive-context config: whole-block last-wins (a higher-precedence
         // scope that declares `context` replaces a lower one's). Read by
         // `memory::tuning` (retrieval budgets, the lifecycle switch, promotion

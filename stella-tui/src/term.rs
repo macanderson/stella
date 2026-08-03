@@ -123,7 +123,7 @@ impl TermState {
     }
 }
 
-/// Which screen a shell draws on.
+/// Which screen the deck draws on.
 ///
 /// The distinction is an accessibility one, not a cosmetic one. The alternate
 /// screen is a separate grid that a full-repaint app owns and that vanishes on
@@ -134,12 +134,12 @@ impl TermState {
 /// scroll into scrollback, they are announced as they arrive, and every
 /// reader/terminal accessibility bridge already knows how to read them.
 ///
-/// See [`crate::shell::RunOptions::screen_reader`] for the surface that
+/// See [`crate::deck_shell::DeckOptions::accessible`] for the surface that
 /// selects [`Screen::Normal`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Screen {
     /// A separate full-window grid, restored to the user's shell on exit.
-    /// What the deck and the full single-session REPL use.
+    /// What the deck uses by default.
     Alternate,
     /// The user's own screen, drawn inline beneath whatever came before.
     /// Nothing is hidden and nothing is restored, so output that scrolls off
@@ -168,6 +168,10 @@ impl TerminalGuard {
         let mut out = io::stdout();
         enable_raw_mode()?;
         guard.state.raw.store(true, Ordering::SeqCst);
+        // `Screen::Normal` acquires nothing here, so the `alt` flag stays
+        // false and the restore path emits no `LeaveAlternateScreen` — an
+        // unbalanced leave clears the user's real terminal, taking the whole
+        // conversation with it at the last instant.
         if screen == Screen::Alternate {
             execute!(out, EnterAlternateScreen)?;
             guard.state.alt.store(true, Ordering::SeqCst);
@@ -284,7 +288,7 @@ impl PanicHookGuard {
         let delegate = Arc::clone(&prev);
         std::panic::set_hook(Box::new(move |info| {
             if let Some(path) = &debug_log_path {
-                let _ = crate::shell::append_json_line(
+                let _ = crate::debug_log::append_json_line(
                     path,
                     "panic",
                     serde_json::json!({ "info": info.to_string() }),

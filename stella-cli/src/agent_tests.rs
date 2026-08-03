@@ -815,6 +815,7 @@ fn cfg_for(provider_id: &str) -> Config {
         provider,
         model_id,
         turn_budget: None,
+        plan_mode: false,
         // The default posture for these tests is "no --model given", so the
         // settings-driven wiring under test is the thing exercised. The
         // flag-pinned case sets this explicitly.
@@ -831,6 +832,7 @@ fn cfg_for(provider_id: &str) -> Config {
         tool_policy: Default::default(),
         enable_recap: false,
         trace_capture: false,
+        reward_policy: stella_pipeline::reward::RewardPolicy::default(),
         authority: crate::settings::AuthorityPolicy::default(),
         credential_advisories: Vec::new(),
     }

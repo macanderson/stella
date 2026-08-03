@@ -13,8 +13,8 @@
 //! vocabulary.
 //!
 //! [`handle_slash_popup_key`] is the one implementation of slash-popup key
-//! handling, shared by every composer-driven surface (the single-session
-//! REPL's [`crate::ui`] and the deck's [`crate::deck_ui`]) so a future fix to
+//! handling, shared by every composer-driven surface (
+//! the deck's [`crate::deck_ui`]) so a future fix to
 //! selection clamping, Esc semantics, or completion behavior can't land on
 //! one surface and drift from the other.
 //!

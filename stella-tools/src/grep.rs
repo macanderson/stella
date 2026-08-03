@@ -20,6 +20,125 @@ use crate::registry::Tool;
 
 const MAX_RESULTS: usize = 200;
 
+/// Ceiling on `-A`/`-B`/`-C`. Context multiplies the result: at `MAX_RESULTS`
+/// matches, one extra context line each side is 3x the payload, so an
+/// unclamped value is a way to blow the whole line budget on a single search.
+/// Twenty is more than any human reads around a hit and still leaves the
+/// `MAX_RESULTS` cap doing real work.
+const MAX_CONTEXT_LINES: u64 = 20;
+
+/// What shape of answer the caller wants back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputMode {
+    /// `path:LINE:text` per match — today's behaviour, and the default.
+    Content,
+    /// Matching file paths only (`rg -l`). The cheap way to ask "where does
+    /// this live" without paying for every hit in a file that has hundreds.
+    FilesWithMatches,
+    /// `path:COUNT` per file (`rg -c`).
+    Count,
+}
+
+impl OutputMode {
+    fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "content" => Some(Self::Content),
+            "files_with_matches" => Some(Self::FilesWithMatches),
+            "count" => Some(Self::Count),
+            _ => None,
+        }
+    }
+
+    /// What one line of this mode's output *is*, for the truncation note. With
+    /// context lines on, a "matches" count is simply false — the cap counts
+    /// lines, and most of them did not match.
+    fn unit(self, has_context: bool) -> &'static str {
+        match self {
+            Self::Content if has_context => "lines",
+            Self::Content => "matches",
+            Self::FilesWithMatches => "files",
+            Self::Count => "files",
+        }
+    }
+}
+
+/// The parsed, clamped, already-validated search request. Built once by
+/// [`SearchOptions::parse`] so both the rg arm and the `grep` fallback read
+/// the same decisions rather than re-deriving them from the raw JSON.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SearchOptions {
+    mode: OutputMode,
+    before: u64,
+    after: u64,
+    case_insensitive: bool,
+}
+
+impl SearchOptions {
+    /// Reject rather than ignore. A caller that asked for context in
+    /// `files_with_matches` mode has a wrong model of the tool, and silently
+    /// dropping the field teaches it that the field did nothing — the next
+    /// call makes the same mistake. Naming the conflict fixes it in one turn.
+    fn parse(input: &Value) -> Result<Self, String> {
+        let mode = match input.get("output_mode").and_then(|v| v.as_str()) {
+            None => OutputMode::Content,
+            Some(raw) => OutputMode::parse(raw).ok_or_else(|| {
+                format!(
+                    "`output_mode` must be one of \"content\", \"files_with_matches\", \
+                     \"count\" — got {raw:?}"
+                )
+            })?,
+        };
+
+        // `context` is the both-sides shorthand; the directional fields win
+        // over it when both are given, matching `rg`'s own precedence.
+        let symmetric = clamped_context(input, "context")?;
+        let before = clamped_context(input, "context_before")?.or(symmetric);
+        let after = clamped_context(input, "context_after")?.or(symmetric);
+
+        if mode != OutputMode::Content && (before.is_some() || after.is_some()) {
+            return Err(format!(
+                "context lines are only meaningful with `output_mode: \"content\"` — \
+                 drop the context field or switch modes (got {:?})",
+                match mode {
+                    OutputMode::FilesWithMatches => "files_with_matches",
+                    _ => "count",
+                }
+            ));
+        }
+
+        Ok(Self {
+            mode,
+            before: before.unwrap_or(0),
+            after: after.unwrap_or(0),
+            case_insensitive: input
+                .get("case_insensitive")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+        })
+    }
+
+    fn has_context(&self) -> bool {
+        self.before > 0 || self.after > 0
+    }
+}
+
+/// One context knob, validated and clamped to [`MAX_CONTEXT_LINES`]. A
+/// wrong-typed value is reported as wrong-typed rather than as absent —
+/// `.as_u64()` alone collapses "missing" and "not a number" into the same
+/// `None`, which is the defect #1267 is about; there is no reason to add a
+/// fresh instance of it here.
+fn clamped_context(input: &Value, field: &str) -> Result<Option<u64>, String> {
+    match input.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => match v.as_u64() {
+            Some(n) => Ok(Some(n.min(MAX_CONTEXT_LINES))),
+            None => Err(format!(
+                "`{field}` must be a non-negative integer — got {v}"
+            )),
+        },
+    }
+}
+
 /// Wall-clock ceiling on the ripgrep pass. rg prunes with .gitignore and is
 /// I/O-bound, so a whole-workspace search that has not answered in a minute is
 /// wedged (a stalled network mount, a pathological backtracking pattern), not
@@ -99,13 +218,68 @@ fn first_error_line(stderr: &str) -> String {
         .to_string()
 }
 
-/// The code-map footer for these `path:line:text` matches (see
-/// [`crate::code_map`]), or `None` when disabled or nothing maps. A directory
-/// search prints an absolute path before the first `:`; a single-file
-/// search omits the filename entirely (rg and grep both do), so there the
-/// search target itself is the mapped file. Non-path prefixes (a bare line
-/// number, a match containing `:`) simply miss in the graph — best-effort
-/// by construction. `show_tip` appends the `graph_query` pointer, set by the
+/// The file path one result line refers to, or `None` for a line that names
+/// no file.
+///
+/// Three output shapes reach this, and only the first one splits cleanly on
+/// `:`. A **match** is `path:LINE:text`. A **context** line — the thing
+/// `-A`/`-B`/`-C` adds — is `path-LINE-text`, because ripgrep marks a
+/// non-matching line by changing the field separator rather than by omitting
+/// the fields. A **group separator** between non-contiguous context runs is a
+/// bare `--`.
+///
+/// So the pre-context `l.split(':').next()` handed a whole context line to the
+/// graph as if it were a path, and because the search dir is absolute,
+/// `is_absolute()` agreed and the lookup silently missed — the footer would
+/// have quietly emptied out exactly when context was most useful.
+///
+/// `:` is probed before `-` so an ordinary match wins on its real separator
+/// even when the *path* contains a `-N-` run. A context line on such a path
+/// (`/a/x-12-y.rs-5-text`) is still ambiguous and resolves short; that is
+/// best-effort by construction, as it was before.
+fn path_of_result_line(line: &str) -> Option<&str> {
+    if line == "--" || line.is_empty() {
+        return None;
+    }
+    for &sep in b":-" {
+        if let Some(idx) = field_break(line, sep) {
+            return Some(&line[..idx]);
+        }
+    }
+    // `-l` emits a bare path; `-c` emits `path:COUNT`, whose `:` is not a
+    // field break because no second separator follows the digits.
+    line.split(':').next()
+}
+
+/// Drop `path:0` rows from a recursive `grep -c` result, keeping every row
+/// that reports at least one match. Split from the right: a path may itself
+/// contain a `:`, and only the final field is the count.
+fn drop_zero_counts(text: &str) -> String {
+    text.lines()
+        .filter(|line| !matches!(line.rsplit_once(':'), Some((_, count)) if count.trim() == "0"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Index of the first `<sep><digits><sep>` field break in `line`, if any.
+fn field_break(line: &str, sep: u8) -> Option<usize> {
+    let bytes = line.as_bytes();
+    bytes.iter().enumerate().find_map(|(i, b)| {
+        if *b != sep {
+            return None;
+        }
+        let rest = &bytes[i + 1..];
+        let digits = rest.iter().take_while(|c| c.is_ascii_digit()).count();
+        (digits > 0 && rest.get(digits) == Some(&sep)).then_some(i)
+    })
+}
+
+/// The code-map footer for these result lines (see [`crate::code_map`]), or
+/// `None` when disabled or nothing maps. A directory search prints an absolute
+/// path before the first field break; a single-file search omits the filename
+/// entirely (rg and grep both do), so there the search target itself is the
+/// mapped file. Non-path prefixes simply miss in the graph — best-effort by
+/// construction. `show_tip` appends the `graph_query` pointer, set by the
 /// caller from whether the *pattern* is symbol-shaped.
 fn code_map_for(
     enabled: bool,
@@ -125,7 +299,7 @@ fn code_map_for(
         root,
         lines
             .iter()
-            .filter_map(|l| l.split(':').next())
+            .filter_map(|l| path_of_result_line(l))
             .filter(|p| std::path::Path::new(p).is_absolute()),
         show_tip,
     )
@@ -182,13 +356,23 @@ impl Tool for Grep {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "grep".into(),
-            description: "Search file contents with a regex. Returns matching file:line:text. Shells to ripgrep when available. When the code-graph index exists, matches carry a code-map footer (matched files' symbols and import edges).".into(),
+            description: "Search file contents with a regex. Returns matching file:line:text, with context lines around each hit when asked. Shells to ripgrep when available. When the code-graph index exists, matches carry a code-map footer (matched files' symbols and import edges).".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "pattern": { "type": "string", "description": "Regular expression to search for" },
                     "path": { "type": "string", "description": "Subdirectory to search (default: workspace root)" },
-                    "glob": { "type": "string", "description": "Restrict to files matching this glob (e.g. *.rs)" }
+                    "glob": { "type": "string", "description": "Restrict to files matching this glob (e.g. *.rs)" },
+                    "type": { "type": "string", "description": "Restrict to a ripgrep file type (e.g. rust, py, ts). Ignored by the grep fallback when ripgrep is unavailable." },
+                    "case_insensitive": { "type": "boolean", "description": "Match case-insensitively (default: false)" },
+                    "output_mode": {
+                        "type": "string",
+                        "enum": ["content", "files_with_matches", "count"],
+                        "description": "content (default) returns file:line:text; files_with_matches returns matching paths only; count returns file:count. Use files_with_matches to locate something cheaply before reading it."
+                    },
+                    "context": { "type": "integer", "description": "Lines of context on BOTH sides of each match (like grep -C). Max 20. Only valid with output_mode content." },
+                    "context_before": { "type": "integer", "description": "Lines of context before each match (like grep -B). Max 20. Overrides `context`." },
+                    "context_after": { "type": "integer", "description": "Lines of context after each match (like grep -A). Max 20. Overrides `context`." }
                 },
                 "required": ["pattern"]
             }),
@@ -198,16 +382,17 @@ impl Tool for Grep {
     }
 
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
-        let pattern = match input.get("pattern").and_then(|v| v.as_str()) {
-            Some(p) => p,
-            None => {
-                return ToolOutput::Error {
-                    message: "missing required field `pattern`".into(),
-                };
-            }
+        let pattern = match crate::input::required_str(input, "pattern") {
+            Ok(v) => v,
+            Err(message) => return ToolOutput::Error { message },
         };
         let search_path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
         let glob_filter = input.get("glob").and_then(|v| v.as_str());
+        let type_filter = input.get("type").and_then(|v| v.as_str());
+        let opts = match SearchOptions::parse(input) {
+            Ok(o) => o,
+            Err(message) => return ToolOutput::Error { message },
+        };
         // The `graph_query` pointer rides a footer only when the pattern reads
         // like a definition/reference hunt — the case the graph serves better.
         let show_tip = self.footer && crate::code_map::is_symbol_shaped(pattern);
@@ -251,6 +436,35 @@ impl Tool for Grep {
         if let Some(g) = glob_filter {
             rg.arg("--glob").arg(g);
         }
+        if let Some(t) = type_filter {
+            rg.arg("--type").arg(t);
+        }
+        if opts.case_insensitive {
+            rg.arg("--ignore-case");
+        }
+        match opts.mode {
+            OutputMode::Content => {
+                // Asymmetric flags rather than `-C`, since the two sides are
+                // independently settable and `-C` would flatten them.
+                if opts.before > 0 {
+                    rg.arg("--before-context").arg(opts.before.to_string());
+                }
+                if opts.after > 0 {
+                    rg.arg("--after-context").arg(opts.after.to_string());
+                }
+            }
+            OutputMode::FilesWithMatches => {
+                rg.arg("--files-with-matches");
+            }
+            OutputMode::Count => {
+                // `--count-matches`, not `--count`: the question "how many
+                // times does this appear" is the one worth paying for, and
+                // rg's bare `--count` answers the different question "how many
+                // LINES contain it", which undercounts every line with two
+                // hits.
+                rg.arg("--count-matches");
+            }
+        }
         // `-e <pattern>` (not a bare positional) so a pattern that begins
         // with `-` — the everyday `->`, `--flag`, `-n` — is treated as the
         // search string, not parsed as an rg option.
@@ -285,7 +499,11 @@ impl Tool for Grep {
                     let lines: Vec<&str> = text.lines().take(MAX_RESULTS).collect();
                     let mut result = lines.join("\n");
                     if lines.len() == MAX_RESULTS {
-                        result.push_str(&format!("\n... (showing first {MAX_RESULTS} matches)"));
+                        // The unit has to follow the mode: with context on,
+                        // most of these lines did not match, and calling them
+                        // "matches" would misreport the search's own reach.
+                        let unit = opts.mode.unit(opts.has_context());
+                        result.push_str(&format!("\n... (showing first {MAX_RESULTS} {unit})"));
                     }
                     if let Some(map) =
                         code_map_for(self.footer, show_tip, &search_dir, root, &lines)
@@ -315,6 +533,37 @@ impl Tool for Grep {
                 if let Some(g) = glob_filter {
                     grep.arg("--include").arg(g);
                 }
+                // `--type` has no `grep` equivalent — there is no file-type
+                // database to consult — so it is the one field this backend
+                // cannot honour. The schema says so rather than letting the
+                // two backends disagree silently, which is the trap the
+                // hidden-file divergence already sprang once.
+                if opts.case_insensitive {
+                    grep.arg("-i");
+                }
+                match opts.mode {
+                    OutputMode::Content => {
+                        // POSIX-portable spellings: BSD grep (macOS) has the
+                        // short forms but not the GNU long ones.
+                        if opts.before > 0 {
+                            grep.arg("-B").arg(opts.before.to_string());
+                        }
+                        if opts.after > 0 {
+                            grep.arg("-A").arg(opts.after.to_string());
+                        }
+                    }
+                    OutputMode::FilesWithMatches => {
+                        grep.arg("-l");
+                    }
+                    // `grep -c` counts matching LINES, not matches — it has no
+                    // `--count-matches`. Documented here rather than papered
+                    // over: the fallback's count can undercount a line with
+                    // two hits, and inventing a second counting pass in Rust
+                    // would make the two backends disagree in a different way.
+                    OutputMode::Count => {
+                        grep.arg("-c");
+                    }
+                }
                 // `-e <pattern>` for the same leading-`-` safety as rg above.
                 grep.arg("-e").arg(pattern).arg(&search_dir);
                 crate::subprocess_env::scrub_sensitive_env(&mut grep);
@@ -336,6 +585,18 @@ impl Tool for Grep {
                         let text = crate::exec::truncate_middle(cap_columns(
                             &String::from_utf8_lossy(&output.stdout),
                         ));
+                        // Recursive `grep -c` emits a row per file WALKED,
+                        // including `path:0` for every file that did not
+                        // match; rg's `--count-matches` emits only files that
+                        // did. Dropping the zeros is what makes the two
+                        // backends answer the same question — without it a
+                        // count search in a large tree is mostly noise, and
+                        // the `MAX_RESULTS` cap would be spent on zeros.
+                        let text = if opts.mode == OutputMode::Count {
+                            drop_zero_counts(&text)
+                        } else {
+                            text
+                        };
                         if !text.is_empty() {
                             let lines: Vec<&str> = text.lines().take(MAX_RESULTS).collect();
                             let mut result = lines.join("\n");
@@ -343,8 +604,9 @@ impl Tool for Grep {
                             // does: a silently truncated match list reads to
                             // the agent as "there are no other call sites".
                             if lines.len() == MAX_RESULTS {
+                                let unit = opts.mode.unit(opts.has_context());
                                 result.push_str(&format!(
-                                    "\n... (showing first {MAX_RESULTS} matches)"
+                                    "\n... (showing first {MAX_RESULTS} {unit})"
                                 ));
                             }
                             if let Some(map) =
@@ -392,6 +654,219 @@ mod tests {
             "grep: ./error:pages/dump.log: Is a directory"
         ));
         assert!(!is_pattern_error(""));
+    }
+
+    /// A context line uses `-` where a match uses `:`, so the pre-#1260 path
+    /// extraction (`split(':').next()`) handed the graph a whole context line
+    /// — and since the search dir is absolute, `is_absolute()` agreed and the
+    /// code-map footer silently emptied out exactly when context was on.
+    #[test]
+    fn a_context_line_yields_its_path_not_the_whole_line() {
+        assert_eq!(
+            path_of_result_line("/w/src/lib.rs:12:fn main() {"),
+            Some("/w/src/lib.rs")
+        );
+        assert_eq!(
+            path_of_result_line("/w/src/lib.rs-11-// preceding"),
+            Some("/w/src/lib.rs")
+        );
+        // `--` separates non-contiguous context runs and names no file.
+        assert_eq!(path_of_result_line("--"), None);
+        // `-l` emits a bare path; `-c` emits `path:COUNT` (one separator, so
+        // not a field break).
+        assert_eq!(path_of_result_line("/w/src/lib.rs"), Some("/w/src/lib.rs"));
+        assert_eq!(
+            path_of_result_line("/w/src/lib.rs:7"),
+            Some("/w/src/lib.rs")
+        );
+        // A `-N-` run inside the PATH must not beat the real `:` separator.
+        assert_eq!(
+            path_of_result_line("/w/src/x-12-y.rs:5:hit"),
+            Some("/w/src/x-12-y.rs")
+        );
+    }
+
+    /// Context multiplies the payload, so an unclamped value is a way to spend
+    /// the whole line budget on one search.
+    #[test]
+    fn context_is_clamped_and_wrong_types_are_named_as_wrong_types() {
+        let opts = SearchOptions::parse(&serde_json::json!({"context": 9_000})).unwrap();
+        assert_eq!(opts.before, MAX_CONTEXT_LINES);
+        assert_eq!(opts.after, MAX_CONTEXT_LINES);
+
+        // Directional fields win over the symmetric shorthand.
+        let opts =
+            SearchOptions::parse(&serde_json::json!({"context": 3, "context_after": 1})).unwrap();
+        assert_eq!((opts.before, opts.after), (3, 1));
+
+        // Wrong-typed reports wrong-typed, not "missing" (#1267's defect).
+        let err = SearchOptions::parse(&serde_json::json!({"context": "two"})).unwrap_err();
+        assert!(err.contains("non-negative integer"), "got {err}");
+    }
+
+    /// Silently dropping a field teaches the model the field did nothing, so
+    /// the next call repeats the mistake. Naming the conflict fixes it in one
+    /// turn.
+    #[test]
+    fn context_in_a_non_content_mode_is_refused_rather_than_ignored() {
+        let err = SearchOptions::parse(
+            &serde_json::json!({"output_mode": "files_with_matches", "context": 2}),
+        )
+        .unwrap_err();
+        assert!(err.contains("only meaningful"), "got {err}");
+
+        let err = SearchOptions::parse(&serde_json::json!({"output_mode": "nope"})).unwrap_err();
+        assert!(err.contains("output_mode"), "got {err}");
+
+        // Context with no mode given is fine — content is the default.
+        assert!(SearchOptions::parse(&serde_json::json!({"context": 2})).is_ok());
+    }
+
+    /// Recursive `grep -c` reports every file it WALKED, `path:0` included;
+    /// rg's `--count-matches` reports only files that matched. Without this
+    /// the fallback's result is mostly zeros and the cap is spent on them.
+    #[test]
+    fn the_fallback_count_drops_files_that_did_not_match() {
+        let got = drop_zero_counts("/w/a.rs:3\n/w/b.rs:0\n/w/c.rs:1\n");
+        assert_eq!(got, "/w/a.rs:3\n/w/c.rs:1");
+        // A path containing `:` keeps its count read from the right.
+        assert_eq!(drop_zero_counts("/w/od:d.rs:2"), "/w/od:d.rs:2");
+        assert_eq!(drop_zero_counts("/w/od:d.rs:0"), "");
+    }
+
+    /// With context on, most returned lines did NOT match, so reporting them
+    /// as "matches" misstates the search's own reach.
+    #[test]
+    fn the_truncation_note_names_lines_when_context_is_on() {
+        assert_eq!(OutputMode::Content.unit(false), "matches");
+        assert_eq!(OutputMode::Content.unit(true), "lines");
+        assert_eq!(OutputMode::FilesWithMatches.unit(false), "files");
+        assert_eq!(OutputMode::Count.unit(false), "files");
+    }
+
+    /// #1267 through a real tool, not just the helper: before the shared
+    /// readers, `{"pattern": 42}` came back as "missing required field", so
+    /// the model re-sent the same wrong-typed value and burned a step per
+    /// repetition.
+    #[tokio::test]
+    async fn a_wrong_typed_pattern_reports_the_type_not_a_missing_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = Grep::bare()
+            .execute(&serde_json::json!({"pattern": 42}), dir.path())
+            .await;
+        let ToolOutput::Error { message } = out else {
+            panic!("expected Error, got {out:?}");
+        };
+        assert!(message.contains("must be a string"), "got {message}");
+        assert!(message.contains("got number"), "got {message}");
+        assert!(!message.contains("missing"), "got {message}");
+
+        // A genuinely absent field still reads as absent.
+        let out = Grep::bare()
+            .execute(&serde_json::json!({}), dir.path())
+            .await;
+        let ToolOutput::Error { message } = out else {
+            panic!("expected Error");
+        };
+        assert_eq!(message, "missing required field `pattern`");
+    }
+
+    #[tokio::test]
+    async fn context_lines_surround_the_hit() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("lib.rs"),
+            "line one\nline two\nNEEDLE here\nline four\nline five\n",
+        )
+        .unwrap();
+
+        let out = Grep::bare()
+            .execute(
+                &serde_json::json!({"pattern": "NEEDLE", "context": 1}),
+                dir.path(),
+            )
+            .await;
+        let ToolOutput::Ok { content } = out else {
+            panic!("expected Ok, got {out:?}");
+        };
+        assert!(content.contains("NEEDLE here"), "{content}");
+        assert!(
+            content.contains("line two") && content.contains("line four"),
+            "context lines must surround the hit: {content}"
+        );
+        assert!(
+            !content.contains("line one") && !content.contains("line five"),
+            "context of 1 must not reach 2 lines out: {content}"
+        );
+    }
+
+    #[tokio::test]
+    async fn files_with_matches_returns_paths_and_count_returns_counts() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "NEEDLE\nNEEDLE\n").unwrap();
+        std::fs::write(dir.path().join("b.rs"), "nothing here\n").unwrap();
+
+        let out = Grep::bare()
+            .execute(
+                &serde_json::json!({"pattern": "NEEDLE", "output_mode": "files_with_matches"}),
+                dir.path(),
+            )
+            .await;
+        let ToolOutput::Ok { content } = out else {
+            panic!("expected Ok, got {out:?}");
+        };
+        assert!(content.contains("a.rs"), "{content}");
+        assert!(
+            !content.contains("b.rs"),
+            "non-matching file must not appear: {content}"
+        );
+        assert!(
+            !content.contains("NEEDLE"),
+            "files_with_matches must not return line text: {content}"
+        );
+
+        let out = Grep::bare()
+            .execute(
+                &serde_json::json!({"pattern": "NEEDLE", "output_mode": "count"}),
+                dir.path(),
+            )
+            .await;
+        let ToolOutput::Ok { content } = out else {
+            panic!("expected Ok, got {out:?}");
+        };
+        assert!(
+            content.contains("a.rs:2"),
+            "expected a count of 2: {content}"
+        );
+        assert!(
+            !content.contains("b.rs"),
+            "zero-count file must not appear: {content}"
+        );
+    }
+
+    #[tokio::test]
+    async fn case_insensitive_matches_regardless_of_case() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "NeEdLe\n").unwrap();
+
+        let sensitive = Grep::bare()
+            .execute(&serde_json::json!({"pattern": "needle"}), dir.path())
+            .await;
+        let ToolOutput::Ok { content } = sensitive else {
+            panic!("expected Ok");
+        };
+        assert!(content.contains("(no matches)"), "{content}");
+
+        let insensitive = Grep::bare()
+            .execute(
+                &serde_json::json!({"pattern": "needle", "case_insensitive": true}),
+                dir.path(),
+            )
+            .await;
+        let ToolOutput::Ok { content } = insensitive else {
+            panic!("expected Ok");
+        };
+        assert!(content.contains("NeEdLe"), "{content}");
     }
 
     #[tokio::test]

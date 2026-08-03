@@ -343,6 +343,12 @@ pub struct Config {
     /// the engine decline to start a continuation it cannot finish, ending
     /// with a truthful partial instead of being destroyed mid-flight.
     pub turn_budget: Option<std::time::Duration>,
+    /// User-invoked plan mode (#1264): force the scope-review gate for this
+    /// run whatever the plan's size. Stamped from `--plan` in `main`, like
+    /// [`Self::turn_budget`], because `Config::load` has no view of the
+    /// parsed CLI and giving it one for a value it never consults would widen
+    /// its signature to carry something straight through.
+    pub plan_mode: bool,
     pub workspace_root: std::path::PathBuf,
     /// Where this session's turns write their resume point — the handle every
     /// engine this session builds reads its `checkpoint_sink` from.
@@ -396,6 +402,12 @@ pub struct Config {
     /// Trajectory trace capture after each finished execution (settings
     /// `trace_capture`, #1042). Default off.
     pub trace_capture: bool,
+    /// What a turn's verdict is worth as a training label (settings `reward`,
+    /// #1043). Resolved and VALIDATED once here, so every consumer downstream
+    /// receives a policy that already satisfies the ordering rule rather than
+    /// re-checking it — and a workspace with an impossible weight fails at
+    /// launch, by name, instead of quietly mislabelling every turn.
+    pub reward_policy: stella_pipeline::reward::RewardPolicy,
     /// Whether a run does its work in a throwaway git worktree instead of this
     /// checkout (settings `create_worktrees`). Default `ask`, put once at
     /// triage and only when the run is going to change files.
@@ -581,6 +593,7 @@ impl Config {
         cfg.tool_policy = settings.tool_policy();
         cfg.enable_recap = settings.recap_enabled();
         cfg.trace_capture = settings.trace_capture_enabled();
+        cfg.reward_policy = settings.reward_policy()?;
         cfg.create_worktrees = settings.create_worktrees();
         Ok(cfg)
     }
@@ -712,6 +725,7 @@ impl Config {
                     // Stamped by the caller that holds the parsed CLI; see the
                     // field's doc comment.
                     turn_budget: None,
+                    plan_mode: false,
                     // Unbound: the session whose sidecar this points at is
                     // resolved by the driver, after config load. See the
                     // field's doc comment.
@@ -725,6 +739,7 @@ impl Config {
                     tool_policy: Default::default(),
                     enable_recap: false,
                     trace_capture: false,
+                    reward_policy: stella_pipeline::reward::RewardPolicy::default(),
                     create_worktrees: Default::default(),
                     authority: crate::settings::AuthorityPolicy::default(),
                     credential_source,
@@ -908,6 +923,7 @@ impl Config {
             model_pinned_by_flag: false,
             // Likewise stamped by the caller that holds the parsed CLI.
             turn_budget: None,
+            plan_mode: false,
             // Unbound until a driver resolves this run's session record — see
             // the field's doc comment.
             durability: crate::durability::SessionDurability::default(),
@@ -923,6 +939,7 @@ impl Config {
             tool_policy: Default::default(),
             enable_recap: false,
             trace_capture: false,
+            reward_policy: stella_pipeline::reward::RewardPolicy::default(),
             create_worktrees: Default::default(),
             authority: crate::settings::AuthorityPolicy::default(),
             credential_source: Some(source),

@@ -1,11 +1,12 @@
-//! The deck's async run loop — the multi-agent analogue of [`crate::shell::run`].
+//! The deck's async run loop: terminal setup/teardown, the crossterm event
+//! loop, and channel plumbing.
 //!
 //! Deliberately thin, like the single-session shell: every decision
 //! (key→action via [`crate::deck_ui`], event→state via
 //! [`crate::deck_ui::ingest_inbound`], the frame via [`crate::deck_render`])
 //! lives in pure, unit-tested layers. This file only wires them to real I/O.
 //!
-//! It differs from [`crate::shell::run`] in one structural way: a fixed
+//! It differs from a plain single-session loop in one structural way: a fixed
 //! **animation/resource tick** (~30 fps) is a third `select!` arm. A live
 //! dashboard — CPU gauges, elapsed timers, sparklines, the run progress bar —
 //! must repaint on a clock, not only when the agent streams. That tick is also
@@ -21,20 +22,23 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crossterm::event::{self, Event, KeyEventKind};
-use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use ratatui::text::{Line, Text};
+use ratatui::widgets::{Paragraph, Widget};
+use ratatui::{Terminal, TerminalOptions, Viewport};
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
+use crate::accessible;
 use crate::composer::{Composer, SlashCommand};
+use crate::debug_log::DebugLog;
 use crate::deck::WorkspaceModel;
 use crate::deck_render::render_deck;
 use crate::deck_ui::{DeckAction, DeckUi, focused_id, handle_deck_key, ingest_inbound};
 use crate::envelope::{AgentId, AgentMeta, AgentStatus, Inbound, WorkspaceInput};
 use crate::graph::GraphSnapshot;
 use crate::resource::ResourceMonitor;
-use crate::shell::DebugLog;
-use crate::term::{PanicHookGuard, Screen, TerminalGuard};
+use crate::term::{PanicHookGuard, TerminalGuard};
 use crate::theme;
 
 /// The repaint / sample cadence. ~30 fps keeps animations smooth and the CPU
@@ -76,6 +80,27 @@ pub struct DeckOptions {
     /// plan → execute → verify → judge). Seeded into
     /// [`WorkspaceModel::pipeline`] and surfaced as the `PIPELINE` stat box.
     pub pipeline: bool,
+    /// Run the deck the way a screen reader can actually read it —
+    /// `stella --accessible` / `STELLA_ACCESSIBLE` (#1258).
+    ///
+    /// This is a **mode, not a surface**: the same `run_deck`, all nine tabs,
+    /// the prompt queue, sub-agents, steering and resume. Four things follow
+    /// from it, and they are one decision rather than four:
+    ///
+    /// * the deck draws on the user's own screen instead of the alternate one
+    ///   (`term::Screen`), so nothing is hidden and nothing is torn
+    ///   down on exit;
+    /// * it draws into an **inline** viewport, which is what makes
+    ///   `Terminal::insert_before` — and therefore the whole scrollback path
+    ///   in [`crate::accessible::Scrollback`] — possible;
+    /// * motion is frozen regardless of [`Self::no_anim`], because a region
+    ///   that repaints on a clock is a region a reader may keep picking up;
+    /// * mouse capture is forced off regardless of [`Self::mouse_capture`] —
+    ///   a captured mouse takes the selection away from the assistive
+    ///   technology that needs it.
+    ///
+    /// `--plain` is unaffected and stays what it is: the no-terminal path.
+    pub accessible: bool,
 }
 
 fn now_ms() -> u64 {
@@ -349,6 +374,109 @@ fn drain_inbound(
     true
 }
 
+/// The deck's terminal, and whether it got an inline viewport.
+///
+/// An ordinary session takes the full viewport on the alternate screen and is
+/// never inline. An accessible session asks for an inline one, because that is
+/// what leaves the rows above it alone — which is what makes `insert_before`,
+/// and therefore the scrollback path, possible at all.
+///
+/// Anchoring an inline viewport means writing a Device Status Report and
+/// **blocking** until the terminal answers with its cursor position. Every real
+/// emulator answers; some minimal ones and most test harnesses do not, and the
+/// read times out. Found the hard way in #1237: unguarded, that makes the
+/// surface fail to start outright. So it degrades — to a full-viewport draw on
+/// the user's OWN screen, never to the alternate one, because the alternate
+/// screen is the thing accessible mode exists to avoid.
+fn open_terminal(
+    accessible: bool,
+    debug: &DebugLog,
+) -> io::Result<(Terminal<CrosstermBackend<io::Stdout>>, bool)> {
+    if !accessible {
+        return Ok((Terminal::new(CrosstermBackend::new(io::stdout()))?, false));
+    }
+    let rows =
+        accessible::inline_viewport_rows(crossterm::terminal::size().map_or(24, |(_, rows)| rows));
+    let options = TerminalOptions {
+        viewport: Viewport::Inline(rows),
+    };
+    match Terminal::with_options(CrosstermBackend::new(io::stdout()), options) {
+        Ok(terminal) => Ok((terminal, true)),
+        Err(error) => {
+            debug.note(&format!(
+                "inline viewport unavailable ({error}); drawing full-screen without scrollback"
+            ));
+            Ok((Terminal::new(CrosstermBackend::new(io::stdout()))?, false))
+        }
+    }
+}
+
+/// Move every newly-settled transcript entry — and every queued announcement —
+/// out of the repainting viewport and into the terminal's scrollback.
+///
+/// This is the whole accessibility mechanism. `insert_before` writes the lines
+/// **above** the inline viewport, so they are ordinary terminal output: a
+/// screen reader announces them once as they arrive, the reader's review cursor
+/// can walk back through them, and the user's own scrollback keys reach them.
+/// The alternative — leaving them in a pane that repaints every frame — gives a
+/// reader a rectangle of cells that changes wholesale several times a second
+/// and no notion of "a new line appeared".
+///
+/// The plan/record split is the invariant (see [`crate::accessible`]): the
+/// counter moves only after the write returned `Ok`, one block at a time, so a
+/// mid-flush failure leaves the un-written remainder still owned by the live
+/// pane rather than lost between the two.
+fn flush_scrollback(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    model: &WorkspaceModel,
+    ui: &mut DeckUi,
+    color_mode: theme::ColorMode,
+    include_trailing: bool,
+) -> io::Result<()> {
+    if !ui.scrollback.is_live() {
+        return Ok(());
+    }
+    let width = terminal.size()?.width;
+    // Announcements first: they say where the session now *is*, so they must
+    // precede whatever landed after the move.
+    let notes: Vec<Line<'static>> = ui
+        .scrollback
+        .take_announcements()
+        .into_iter()
+        .map(Line::from)
+        .collect();
+    write_scrollback(terminal, notes, color_mode)?;
+
+    for block in ui.scrollback.plan(model, include_trailing) {
+        let lines = accessible::block_lines(model, &block, ui.thinking_expanded, width as usize);
+        write_scrollback(terminal, lines, color_mode)?;
+        // Only now — the lines really are in the terminal.
+        ui.scrollback.record(&block);
+    }
+    Ok(())
+}
+
+/// `insert_before` for one already-rendered run of lines, themed exactly like
+/// the live pane so a flushed row and a painted one are the same row.
+fn write_scrollback(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    lines: Vec<Line<'static>>,
+    color_mode: theme::ColorMode,
+) -> io::Result<()> {
+    let height = match u16::try_from(lines.len()) {
+        Ok(0) => return Ok(()),
+        Ok(h) => h,
+        // A single settled entry cannot plausibly wrap to 65k rows, but the
+        // cast must not wrap around into a tiny region if it ever did.
+        Err(_) => u16::MAX,
+    };
+    terminal.insert_before(height, |buf| {
+        Paragraph::new(Text::from(lines)).render(buf.area, buf);
+        theme::apply_theme(buf, color_mode);
+        theme::degrade_buffer(buf, color_mode);
+    })
+}
+
 /// Run the command deck to completion. [`Inbound`] envelopes stream in over
 /// `inbound`; the user's [`WorkspaceInput`]s stream out over `submissions`.
 /// Returns when the inbound stream closes or the user quits, having always
@@ -363,9 +491,17 @@ pub async fn run_deck(
 
     // The hook shares the guard's state so a panic restores the terminal even
     // in abort builds, where Drop never runs (see `crate::term`).
-    let guard = TerminalGuard::enter(opts.mouse_capture, Screen::Alternate)?;
+    // An accessible session owns both of these — see `accessible::screen_for`
+    // and `accessible::mouse_capture_enabled` for why neither is negotiable.
+    let guard = TerminalGuard::enter(
+        accessible::mouse_capture_enabled(opts.mouse_capture, opts.accessible),
+        accessible::screen_for(opts.accessible),
+    )?;
     let _hook_guard = PanicHookGuard::install(opts.debug_log_path.clone(), &guard);
-    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    // `inline` is the load-bearing bit, not `opts.accessible`: it records
+    // whether the inline viewport was actually obtained, and the whole
+    // scrollback path is gated on it (see `crate::accessible`).
+    let (mut terminal, inline) = open_terminal(opts.accessible, &debug)?;
     // Detected once (see `theme::color_mode`) and threaded through the draw loop
     // below, rather than touching every `theme::TOKEN` call site in
     // `deck_render.rs`/the view modules.
@@ -374,7 +510,12 @@ pub async fn run_deck(
     // synonym, or `NO_COLOR` (a recording context wants a static frame). Gates
     // the progress shimmer / pulse / caret blink; the deck otherwise only ever
     // runs on a TTY, so no additional TTY check is needed.
+    //
+    // Accessible mode forces it: inline on the user's own screen, a statline
+    // and a progress bar repainting on a 30fps clock are a live region a
+    // reader may keep picking up, and a frozen frame is a quiet one.
     let no_anim = opts.no_anim
+        || opts.accessible
         || std::env::var_os("STELLA_NO_ANIM").is_some()
         || color_mode == theme::ColorMode::None;
 
@@ -388,6 +529,18 @@ pub async fn run_deck(
     ui.slash_commands = opts.slash_commands.clone();
     ui.color_mode = color_mode;
     ui.no_anim = no_anim;
+    ui.accessible = opts.accessible;
+    ui.scrollback.set_live(inline);
+    // A degraded accessible session must say so. The whole promise of the mode
+    // is that finished messages become durable terminal output; if the inline
+    // viewport could not be anchored they do not, and a user who scrolls back
+    // to re-read an answer that is not there has been told a silent lie. It
+    // rides the deck's own startup-notice channel because the shell owns the
+    // screen from here on — a `println!` would be painted over by the first
+    // frame, and with no scrollback there is nowhere else for it to go.
+    if let Some(notice) = accessible::degrade_notice(opts.accessible, inline) {
+        ui.notice.push(notice);
+    }
     // A no-anim session lights the launch mark immediately, with no reveal
     // step (and `ingest_inbound` drops any later replay cues).
     ui.splash.set_reduced(no_anim);
@@ -452,6 +605,11 @@ pub async fn run_deck(
             let _ = submissions.send(input);
         }
 
+        // Settled history leaves the repainting viewport and becomes ordinary
+        // terminal output BEFORE the draw, so the pane never paints a line
+        // that is already in scrollback. No-op unless an inline viewport was
+        // obtained.
+        flush_scrollback(&mut terminal, &model, &mut ui, color_mode, false)?;
         terminal.draw(|f| {
             render_deck(&model, &mut ui, f);
             theme::apply_theme(f.buffer_mut(), color_mode);
@@ -631,6 +789,14 @@ pub async fn run_deck(
 
     shutdown.store(true, Ordering::Relaxed);
     let _ = reader.join();
+    // The last flush includes the trailing entry of every lane: nothing can
+    // coalesce into it any more, and leaving it behind would end the session
+    // with its final answer in a pane that is about to stop being redrawn.
+    // Best-effort — a failed write here must not turn a clean quit into an
+    // error exit, and the debug log is where a lost flush is diagnosable.
+    if let Err(error) = flush_scrollback(&mut terminal, &model, &mut ui, color_mode, true) {
+        debug.note(&format!("final scrollback flush failed: {error}"));
+    }
     debug.note("deck session end");
     Ok(())
 }

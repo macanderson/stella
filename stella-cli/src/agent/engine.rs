@@ -95,6 +95,19 @@ fn tuned_engine_config(
         engine.effort = tuning.effort;
         engine.reasoning = tuning.reasoning;
         engine.params = tuning.params;
+        // The output cap's partner ceiling, and it is set here rather than
+        // per-role for the reason the turn budget is: what it bounds belongs to
+        // the process, not to one agent. A judge left on the default while the
+        // worker's cap tripled would stop first on exactly the runs the raise
+        // was for.
+        //
+        // `0` disables the backstop (`None`), restoring the unbounded await.
+        // That is spelled rather than refused because it is the only way to say
+        // "no ceiling" in a field whose absence already means "the default" —
+        // and the two are genuinely different requests.
+        if let Some(secs) = settings.model_timeout_secs {
+            engine.model_timeout = (secs > 0).then(|| std::time::Duration::from_secs(secs));
+        }
     }
     // Capability clamp: a catalog-confirmed non-reasoning model must not
     // carry effort/reasoning onto the wire — providers reject or silently
@@ -225,6 +238,7 @@ pub(crate) fn pipeline_config_for_approval_capability(
     PipelineConfig {
         engine: pipeline_engine_config_for(cfg, worker_model),
         headless: approval == PipelineApprovalCapability::Unavailable,
+        plan_mode: cfg.plan_mode,
         // The constant is the safe default; a workspace may opt out of it
         // where the tree is disposable (see `headless_scope_bypass`).
         headless_bypass_scope_review: cfg

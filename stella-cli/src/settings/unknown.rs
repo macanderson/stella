@@ -35,6 +35,7 @@ const ROOT_FIELDS: &[&str] = &[
     "trace_capture",
     "create_worktrees",
     "ui",
+    "reward",
     "context",
     "context_providers",
     "authority",
@@ -57,6 +58,18 @@ const MCP_FIELDS: &[&str] = &["registry_url"];
 
 /// `ui` — [`super::UiSettings`].
 const UI_FIELDS: &[&str] = &["theme"];
+
+/// `reward` — [`super::RewardSettings`]. Closed: a mistyped weight key is the
+/// exact failure this walker exists for, because the typo and the correct key
+/// produce identically-shaped labels that differ only in a number nobody reads
+/// until they pool the traces.
+const REWARD_FIELDS: &[&str] = &[
+    "deterministic_weight",
+    "judge_weight",
+    "per_step",
+    "per_usd",
+    "per_revision",
+];
 
 /// `hooks` — the PascalCase lifecycle-event keys `stella_core::hooks::Hooks`
 /// renames its fields to. A misspelled event name is the highest-consequence
@@ -82,6 +95,7 @@ pub(crate) const ENGINE_ROOT_FIELDS: &[&str] = &[
     "headless_scope_bypass",
     "pipeline_max_revisions",
     "pipeline_candidates",
+    "model_timeout_secs",
     "agents",
 ];
 
@@ -149,6 +163,7 @@ const TOML_ROOT_FIELDS: &[&str] = &[
     "context",
     "context_providers",
     "ui",
+    "reward",
     "authority",
     "enterprise_telemetry",
 ];
@@ -217,6 +232,7 @@ fn scan_toml_root(root: &Value, found: &mut Vec<String>) {
             "models" => closed("models", value, MODELS_FIELDS, found),
             "mcp" => closed("mcp", value, TOML_MCP_FIELDS, found),
             "ui" => closed("ui", value, UI_FIELDS, found),
+            "reward" => closed("reward", value, REWARD_FIELDS, found),
             "hooks" => closed("hooks", value, HOOK_EVENTS, found),
             "providers" => {
                 if let Some(entries) = value.as_object() {
@@ -297,6 +313,7 @@ fn scan_root(root: &Value, found: &mut Vec<String>) {
             }
             "mcp" => closed("mcp", value, MCP_FIELDS, found),
             "ui" => closed("ui", value, UI_FIELDS, found),
+            "reward" => closed("reward", value, REWARD_FIELDS, found),
             "hooks" => closed("hooks", value, HOOK_EVENTS, found),
             "agent_engine_config" => scan_engine(value, found),
             // `tools`, `context_providers`, `context`, `authority`, and

@@ -308,6 +308,14 @@ async fn main() -> std::io::Result<()> {
             SlashCommand::new("/files", "jump to the Files tab"),
             SlashCommand::new("/clear", "clear the focused transcript"),
         ],
+        // The demo is also the entry point `tests/deck_pty_smoke.rs` drives, so
+        // accessible mode (#1258) has to be reachable from it — same deck,
+        // normal screen, inline viewport, settled entries into scrollback.
+        // Run it yourself with `STELLA_ACCESSIBLE=1 cargo run -p stella-tui
+        // --example deck_demo` and scroll back after quitting: the conversation
+        // is still there, as ordinary text.
+        accessible: std::env::var_os("STELLA_ACCESSIBLE")
+            .is_some_and(|v| !v.is_empty() && v != "0"),
         ..Default::default()
     };
     run_deck(opts, in_rx, sub_tx).await

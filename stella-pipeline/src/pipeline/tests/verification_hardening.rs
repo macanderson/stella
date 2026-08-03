@@ -442,6 +442,23 @@ async fn without_a_lint_probe_the_flip_still_fast_submits() {
         3,
         "baseline fail + candidate pass + confirmation pass"
     );
+    // #1043: the snapshot names the rung it came to rest on, so a reader does
+    // not have to infer "deterministic pass" from flags that a *waived* review
+    // sets identically.
+    assert_eq!(
+        snapshot.rung,
+        Some(stella_protocol::LadderRung::SubmitFast),
+        "a fast-submit verdict records its rung"
+    );
+    // And the label that rung earns is the hard +1.0, before shaping.
+    assert_eq!(
+        crate::reward::outcome_term(
+            stella_protocol::LadderRung::SubmitFast,
+            verdict.passed,
+            &crate::reward::OutcomeWeights::default(),
+        ),
+        Ok(1.0)
+    );
     let why = crate::replay::verdict_provenance(&stella_protocol::JudgeEvidence {
         summary: verdict.summary.clone(),
         deterministic: verdict.deterministic,
@@ -449,6 +466,7 @@ async fn without_a_lint_probe_the_flip_still_fast_submits() {
         ladder: verdict.ladder.clone(),
     })
     .expect("provenance renders from the recorded snapshot");
+    assert!(why.starts_with("rung=submit_fast"), "got: {why}");
     assert!(why.contains("flip=achieved"), "got: {why}");
     assert!(why.contains("baseline:fail → candidate:pass"), "got: {why}");
     let events = drain(&mut rx);

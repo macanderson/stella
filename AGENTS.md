@@ -79,8 +79,24 @@ after touching a `NORMATIVE-HOME:` document.
 `docs/**.md` path — or a `§N` inside one — that does not exist (#652). Adding
 a citation to a document you have not written yet fails the build, by design.
 
-For a faster pre-push sanity check (no tests): `make check` — scratch + pins +
-license parity + shellcheck + invariants + file-size + fmt + clippy.
+Three rungs, each a superset of the one above:
+
+| Target | Runs | Honours `CARGO_SCOPE` |
+| --- | --- | --- |
+| `make guards` | global guards + `fmt --check` — nothing compiles | — |
+| `make check` | ...plus clippy | clippy |
+| `make gate` | ...plus rustdoc and the test suite | clippy, rustdoc, test |
+
+`CARGO_SCOPE` narrows only the compile tiers, and defaults to `--workspace`, so
+`make gate` and CI are unchanged unless a caller asks for less (#1135):
+
+```bash
+make gate CARGO_SCOPE="-p stella-cli"   # that crate and its dependents
+make impacted RANGE=origin/main..HEAD   # what the hook would pick for your branch
+```
+
+The global guards are never scoped: a 1500-line file or an unpinned action is a
+fact about the repository, not about a crate.
 
 `no-scratch` runs first because it costs milliseconds: it asserts no tracked
 file matches a `.gitignore` rule. **Session scratch must never reach the
@@ -98,9 +114,29 @@ It is advisory and per-clone (bypassable with `SKIP_GATE=1 git push` or
 `git push --no-verify`), so it complements the required server-side checks
 rather than replacing them — with `enforce_admins` off, an admin or auto-merge
 can still land gate-failing code, and the hook is what catches that on the
-author's push. When Actions is unavailable entirely (an org billing hold has
+author's push. It is also the only place some guards run for long stretches:
+`wire-schema` lived only in `make gate` until #1185 merged with stale generated
+artifacts. When Actions is unavailable entirely (an org billing hold has
 happened before — see RELEASING.md's local-release path), it is the only gate
 running at all.
+
+The hook derives `CARGO_SCOPE` from the pushed diff via
+`scripts/impacted-crates.sh`, so a change confined to one crate compiles and
+tests that crate and its dependents rather than all 21 members (#1135). It
+widens to the whole workspace for a push to `main`, a tag, a diff touching a
+workspace-root manifest / `Cargo.lock` / a build script / the gate machinery,
+and for anything it cannot narrow with confidence. Two escape hatches sit
+*above* `SKIP_GATE`, because the choice under time pressure should not be
+binary:
+
+```bash
+GATE=fast git push       # make check — guards + fmt + clippy, no rustdoc, no tests
+GATE=full git push       # the whole workspace, whatever the diff says
+SKIP_GATE=1 git push     # nothing at all (emergencies)
+```
+
+`make impacted-test` covers the scoping rules; it is hermetic and deliberately
+not part of `gate`.
 
 Supply-chain checks run as a separate CI job: `make supply-chain` (or
 `cargo deny check advisories bans sources licenses`). All four are real

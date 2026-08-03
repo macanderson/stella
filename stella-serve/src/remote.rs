@@ -118,7 +118,7 @@ impl Sleeper for TokioSleeper {
 /// [`ServerFrame::ProviderRequest`] and blocks the step on the host's answer.
 pub(crate) struct RemoteProvider {
     id: String,
-    frames: mpsc::UnboundedSender<ServerFrame>,
+    frames: crate::backlog::FrameSink,
     pending: Pending,
     counter: AtomicU64,
     timeout: Duration,
@@ -127,7 +127,7 @@ pub(crate) struct RemoteProvider {
 impl RemoteProvider {
     pub(crate) fn new(
         id: String,
-        frames: mpsc::UnboundedSender<ServerFrame>,
+        frames: crate::backlog::FrameSink,
         pending: Pending,
         timeout: Duration,
     ) -> Self {
@@ -286,7 +286,7 @@ impl Provider for RemoteProvider {
 /// [`ServerFrame::ToolRequest`] and blocks on the host's answer.
 pub(crate) struct RemoteToolExecutor {
     schemas: Vec<ToolSchema>,
-    frames: mpsc::UnboundedSender<ServerFrame>,
+    frames: crate::backlog::FrameSink,
     pending: Pending,
     counter: AtomicU64,
     timeout: Duration,
@@ -295,7 +295,7 @@ pub(crate) struct RemoteToolExecutor {
 impl RemoteToolExecutor {
     pub(crate) fn new(
         schemas: Vec<ToolSchema>,
-        frames: mpsc::UnboundedSender<ServerFrame>,
+        frames: crate::backlog::FrameSink,
         pending: Pending,
         timeout: Duration,
     ) -> Self {

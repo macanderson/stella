@@ -108,10 +108,28 @@ impl Pipeline<'_> {
             estimated_files: plan.len() as u32,
             estimated_cost_usd: None,
         };
-        if !needs_scope_review(&plan, &estimate, &self.config.scope_thresholds) {
+        // Plan mode (#1264) forces the gate: the thresholds decide whether a
+        // plan is *big*, and the user has said they want to see it whatever
+        // the size. Checked before the threshold test rather than folded into
+        // it so `needs_scope_review` stays a pure function of the plan.
+        if !self.config.plan_mode
+            && !needs_scope_review(&plan, &estimate, &self.config.scope_thresholds)
+        {
             return Ok(ScopeVerdict::Run(plan));
         }
 
+        if self.config.plan_mode && self.config.headless {
+            // The bypass below exists for plans that merely *tripped* a
+            // threshold. Plan mode is an explicit request to be asked, so
+            // honouring a bypass here would silently deliver the opposite of
+            // what was asked for — worse than refusing.
+            self.emit(AgentEvent::Error {
+                message: "--plan-mode asks for the plan to be approved before anything runs, and a headless run has nobody to ask; drop --plan-mode or run interactively"
+                    .to_string(),
+                retryable: false,
+            });
+            return Ok(ScopeVerdict::Stop);
+        }
         if self.config.headless && self.config.headless_bypass_scope_review {
             // Bypass means proceed, not "ask a gate that always says no".
             // The headless approval port is `AlwaysAbortGate`, so running the

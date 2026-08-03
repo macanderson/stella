@@ -55,8 +55,8 @@ use stella_core::retry::{RetryPolicy, Sleeper};
 use stella_core::router::FallbackInfo;
 use stella_core::{BudgetGuard, Engine, EngineConfig, EventSender, Router, TurnOutcome};
 use stella_protocol::{
-    AgentEvent, CompletionMessage, JudgeEvidence, LadderSnapshot, MessageRole, ModelCallRole,
-    ModelRef, OracleObservation, ProofStep, ProofTree, Provider, Role, StageKind,
+    AgentEvent, CompletionMessage, JudgeEvidence, LadderRung, LadderSnapshot, MessageRole,
+    ModelCallRole, ModelRef, OracleObservation, ProofStep, ProofTree, Provider, Role, StageKind,
 };
 
 use crate::candidate::{
@@ -282,6 +282,22 @@ pub struct PipelineConfig {
     pub scope_thresholds: crate::scope::ScopeThresholds,
     /// Whether this run is headless (no interactive approver available).
     pub headless: bool,
+    /// User-invoked plan mode (#1264): show the plan and wait for approval
+    /// **regardless of size**.
+    ///
+    /// The thresholds in [`Self::scope_thresholds`] answer "is this plan big
+    /// enough to be worth interrupting for?", which is a question about the
+    /// *plan*. This answers a different one — "do I want to see the plan
+    /// before anything happens?" — which is a question about the *user*, and
+    /// no estimate can answer it. A one-step plan in unfamiliar code is
+    /// exactly the case the thresholds wave through and a human most wants to
+    /// read first.
+    ///
+    /// Forcing the gate is the whole mechanism, because the gate already sits
+    /// ahead of the execute stage — the only stage that touches the working
+    /// tree. Declining therefore leaves the tree untouched by construction
+    /// rather than by the model's good behaviour.
+    pub plan_mode: bool,
     /// If headless and a plan crosses the scope-review thresholds, this must
     /// be explicitly `true` to proceed. The bypass skips the gate outright —
     /// `Pipeline::scope_review` never consults the approval port for it —
@@ -403,6 +419,7 @@ impl Default for PipelineConfig {
             scope_thresholds: crate::scope::ScopeThresholds::default(),
             headless: false,
             headless_bypass_scope_review: false,
+            plan_mode: false,
             test_command: None,
             witness_writer: true,
             keep_witness: false,
@@ -2606,7 +2623,7 @@ impl<'a> Pipeline<'a> {
                         }
                     };
                     let mut evidence = model_verdict_evidence(&verdict);
-                    evidence.ladder = Some(Box::new(snapshot.clone()));
+                    evidence.ladder = Some(Box::new(snapshot.with_rung(verdict.rung())));
                     self.emit(AgentEvent::JudgeVerdict {
                         passed: verdict.passed,
                         evidence: evidence.clone(),

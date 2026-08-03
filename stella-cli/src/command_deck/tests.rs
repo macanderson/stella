@@ -614,3 +614,39 @@ fn requeue_front_mirrors_each_front_insert_to_the_deck() {
     }
     assert!(rx.try_recv().is_err(), "exactly one mirror per insert");
 }
+
+/// `AgentEvent` has no system-notice variant, so a driver message goes out as
+/// `Text` — which renders on the AGENT rail. Unmarked, the transcript would be
+/// asserting that the model said "conversation cleared". The rail glyph is a
+/// visual distinction, and accessible mode (#1258) is exactly the surface where
+/// visual distinctions are the ones least likely to land.
+#[test]
+fn a_chrome_note_is_marked_as_the_program_speaking() {
+    let Inbound::Event {
+        agent,
+        event: AgentEvent::Text { delta },
+    } = chrome_note("conversation cleared".into())
+    else {
+        panic!("chrome rides the transcript as Text on the lead lane");
+    };
+    assert_eq!(agent, LEAD);
+    assert!(
+        delta.starts_with(stella_tui::NOTICE_MARKER),
+        "an unmarked note reads as model speech: {delta:?}"
+    );
+    assert!(delta.contains("conversation cleared"));
+}
+
+/// The marker is idempotent: a caller that already spoke in the program's
+/// voice must not end up double-marked.
+#[test]
+fn an_already_marked_note_is_not_marked_twice() {
+    let Inbound::Event {
+        event: AgentEvent::Text { delta },
+        ..
+    } = chrome_note(format!("{}already mine", stella_tui::NOTICE_MARKER))
+    else {
+        panic!("chrome rides the transcript as Text");
+    };
+    assert_eq!(delta, format!("{}already mine", stella_tui::NOTICE_MARKER));
+}

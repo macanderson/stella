@@ -948,6 +948,41 @@ export interface JudgeEvidence {
 }
 
 /**
+ * Which rung of the evidence ladder a `JudgeVerdict` actually came to rest
+ * on (#1043).
+ *
+ * # Why the rung is on the wire instead of inferred
+ *
+ * `JudgeEvidence` already carries `passed` and `deterministic`, and for a
+ * while that looked like enough. It is not, and the gap is not academic:
+ *
+ * - `deterministic: true, passed: false` is emitted by **two** rungs — a red
+ *   touched test ([`LadderRung::Revise`], a genuine failure) and a turn that
+ *   dispatched nothing ([`LadderRung::NothingAttempted`], where the honest
+ *   label is "no evidence", not "wrong").
+ * - `deterministic: true, passed: true` is emitted both by the full
+ *   deterministic pass ([`LadderRung::SubmitFast`]) and by a *waived* review
+ *   where the warrant found nothing to prove ([`LadderRung::Waived`]) — so a
+ *   reader inferring "deterministic pass" from those two flags would label a
+ *   turn nothing checked as the ladder's strongest possible result.
+ * - `deterministic: false` covers a real model judge, a heuristic verdict
+ *   after the judge call *failed*, and the abstain rung. The first is soft
+ *   signal, the second is not signal at all, and the only thing separating
+ *   them in the old shape was the wording of a summary string.
+ *
+ * Re-deriving the rung by re-running the ladder over
+ * [`LadderSnapshot`] cannot close any of that: it reproduces the *decision*
+ * but not which of the three ways the judge arm resolved, and it silently
+ * disagrees with reality whenever the run's `veto_warnings` setting differed
+ * from the reader's assumption. So the pipeline states the rung it took.
+ *
+ * Wire-compatible in the additive direction only, like every nested
+ * vocabulary in this crate: a reader that meets a rung it does not know fails
+ * the event rather than laundering it (see the [`crate::event`] docs).
+ */
+export type LadderRung = "submit_fast" | "revise" | "nothing_attempted" | "unverifiable" | "model_judge" | "heuristic_fallback" | "waived";
+
+/**
  * The deterministic evidence the ladder decided a verdict from, snapshotted
  * at decision time (#865). Everything here existed when the decision was
  * made; attaching it to the verdict is what makes "why?" answerable later
@@ -996,6 +1031,13 @@ export interface LadderSnapshot {
    * pre-submit confirmation). Infra runs are absent by construction.
    */
   oracle_trace?: OracleObservation[];
+  /**
+   * The rung this verdict came to rest on (#1043). Absent on events
+   * recorded before it existed, which is the one case a reader must handle
+   * as "unknown" rather than guess at — see [`LadderRung`] for why the
+   * guess is not available.
+   */
+  rung?: LadderRung | null;
   /**
    * Why the test run observed nothing, when it didn't (`timed_out`,
    * `infra_failure`) — the #860 distinction between "the suite failed"
@@ -1232,7 +1274,7 @@ export type ProofStep = {
 };
 
 /**
- * Which code state a [`ProofStep::Oracle`] observation was made against.
+ * Which code state a `ProofStep::Oracle` observation was made against.
  *
  * The distinction is the whole content of a flip: the same command failing in
  * `Baseline` and passing in `Candidate` is proof, while either result twice
@@ -1991,6 +2033,18 @@ export interface EngineOverrides {
    * spends its tokens thinking and gets truncated before its tool call.
    */
   max_output_tokens?: number | null;
+  /**
+   * Seconds of provider silence that end a single generation
+   * (`EngineConfig::model_timeout`). Clamped to
+   * [`MAX_MODEL_TIMEOUT_SECS`]; `0` disables the backstop.
+   *
+   * The partner of `max_output_tokens`, and unusable without it: the two are
+   * one budget, so a host that raises the cap and leaves this at the default
+   * has moved where its steps die rather than stopped them dying. Exposed
+   * for that reason — before this, a host could pin the output cap over the
+   * wire but not the timeout that has to scale with it (#1211 §6.2).
+   */
+  model_timeout_secs?: number | null;
   /**
    * Sampling/routing overrides (`CompletionRequest::params` semantics —
    * the host's adapter forwards the subset its dialect supports).

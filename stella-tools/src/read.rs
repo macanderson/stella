@@ -184,13 +184,9 @@ impl Tool for ReadFile {
     }
 
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
-        let path = match input.get("path").and_then(|v| v.as_str()) {
-            Some(p) => p,
-            None => {
-                return ToolOutput::Error {
-                    message: "missing required field `path`".into(),
-                };
-            }
+        let path = match crate::input::required_str(input, "path") {
+            Ok(v) => v,
+            Err(message) => return ToolOutput::Error { message },
         };
 
         let offset = input

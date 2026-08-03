@@ -11,6 +11,8 @@
 //! which knob belongs to the caller, which to the operator, and what happens
 //! when a request asks for more than the deployment will pay for.
 
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 use stella_core::EngineConfig;
 
@@ -70,6 +72,17 @@ pub(crate) struct EngineOverrides {
     /// [`MAX_SUMMARIZE_KEEP_RECENT`].
     #[serde(default)]
     summarize_keep_recent: Option<usize>,
+    /// Seconds of provider silence that end a single generation
+    /// (`EngineConfig::model_timeout`). Clamped to
+    /// [`MAX_MODEL_TIMEOUT_SECS`]; `0` disables the backstop.
+    ///
+    /// The partner of `max_output_tokens`, and unusable without it: the two are
+    /// one budget, so a host that raises the cap and leaves this at the default
+    /// has moved where its steps die rather than stopped them dying. Exposed
+    /// for that reason — before this, a host could pin the output cap over the
+    /// wire but not the timeout that has to scale with it (#1211 §6.2).
+    #[serde(default)]
+    model_timeout_secs: Option<u64>,
 }
 
 /// Ceiling on a caller-supplied `engine.max_output_tokens`: far above any
@@ -94,6 +107,14 @@ const MAX_COMPACTION_BUDGET_TOKENS: u64 = 2_000_000;
 /// the knob is indistinguishable from disabling the summarizer, which
 /// `summarize_overflow: false` already spells honestly.
 const MAX_SUMMARIZE_KEEP_RECENT: usize = 1_024;
+
+/// Ceiling on a caller-supplied `engine.model_timeout_secs`: six hours, far
+/// above the longest single generation any model produces today, while keeping
+/// a caller from parking a server worker on an effectively unbounded await by
+/// accident. Saying so on purpose still works — `0` disables the backstop,
+/// which is a different request from "a very large one" and is spelled
+/// differently.
+const MAX_MODEL_TIMEOUT_SECS: u64 = 21_600;
 
 /// One knob the server lowered below what the caller asked for — reported in
 /// the create response so the clamp is legible, never silently honored-as-if.
@@ -191,6 +212,20 @@ pub(crate) fn apply_engine_overrides(
         }
         config.summarize_keep_recent = effective;
     }
+    if let Some(requested) = overrides.model_timeout_secs {
+        let effective = requested.min(MAX_MODEL_TIMEOUT_SECS);
+        if effective != requested {
+            clamped.push(ClampedKnob {
+                knob: "model_timeout_secs",
+                requested: requested as f64,
+                effective: effective as f64,
+            });
+        }
+        // Zero is "no backstop", not "time out immediately" — the reading that
+        // makes every generation fail instantly is never what a caller meant,
+        // and `Option::None` is the field's own spelling for unbounded.
+        config.model_timeout = (effective > 0).then(|| Duration::from_secs(effective));
+    }
     Ok(clamped)
 }
 
@@ -215,6 +250,7 @@ mod tests {
             default.compaction_budget_tokens
         );
         assert_eq!(config.summarize_keep_recent, default.summarize_keep_recent);
+        assert_eq!(config.model_timeout, default.model_timeout);
     }
 
     /// One turn at temperature 0 with a small cap, the next at high effort
@@ -230,6 +266,7 @@ mod tests {
             "compaction_budget_tokens": 200_000,
             "summarize_overflow": false,
             "summarize_keep_recent": 16,
+            "model_timeout_secs": 1572,
             "params": { "top_p": 0.9 },
         }))
         .expect("a full override set parses");
@@ -242,6 +279,7 @@ mod tests {
         assert_eq!(config.compaction_budget_tokens, 200_000);
         assert!(!config.summarize_overflow);
         assert_eq!(config.summarize_keep_recent, 16);
+        assert_eq!(config.model_timeout, Some(Duration::from_secs(1572)));
         assert_eq!(config.params.and_then(|p| p.top_p), Some(0.9));
         // The knobs the caller did not send keep their defaults.
         assert_eq!(config.max_steps, EngineConfig::default().max_steps);
@@ -257,6 +295,7 @@ mod tests {
             "max_output_tokens": u32::MAX,
             "compaction_budget_tokens": u64::MAX,
             "summarize_keep_recent": 1_000_000,
+            "model_timeout_secs": u64::MAX,
         }))
         .expect("large values still parse");
         let clamped =
@@ -269,6 +308,7 @@ mod tests {
                 "max_output_tokens",
                 "compaction_budget_tokens",
                 "summarize_keep_recent",
+                "model_timeout_secs",
             ],
             "every lowered knob must be named"
         );
@@ -279,6 +319,10 @@ mod tests {
             MAX_COMPACTION_BUDGET_TOKENS
         );
         assert_eq!(config.summarize_keep_recent, MAX_SUMMARIZE_KEEP_RECENT);
+        assert_eq!(
+            config.model_timeout,
+            Some(Duration::from_secs(MAX_MODEL_TIMEOUT_SECS))
+        );
         for clamp in &clamped {
             assert!(
                 clamp.requested > clamp.effective,
@@ -310,6 +354,28 @@ mod tests {
                 .expect_err("an unusable value must be refused");
             assert!(err.contains(named), "the refusal must name the knob: {err}");
         }
+    }
+
+    /// `0` is the one value here that means something other than "too small".
+    ///
+    /// The output cap refuses it because a zero-token generation cannot
+    /// produce anything; this knob accepts it because `EngineConfig` already
+    /// spells "no backstop" as `None`, and a host that wants an unbounded
+    /// await has no other way to ask. Reading it as "time out immediately"
+    /// would instead fail every generation on the turn.
+    #[test]
+    fn a_zero_model_timeout_is_no_backstop_rather_than_an_instant_trip() {
+        let mut config = EngineConfig::default();
+        let overrides: EngineOverrides =
+            serde_json::from_value(serde_json::json!({ "model_timeout_secs": 0 })).expect("parses");
+        let clamped =
+            apply_engine_overrides(&mut config, &overrides).expect("zero is a legal request");
+        assert!(clamped.is_empty(), "zero is under the ceiling, not past it");
+        assert_eq!(config.model_timeout, None);
+        assert!(
+            EngineConfig::default().model_timeout.is_some(),
+            "the default must be bounded, or this test proves nothing"
+        );
     }
 
     /// A typoed knob is refused rather than silently ignored — the mirror

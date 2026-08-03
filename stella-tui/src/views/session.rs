@@ -1,5 +1,5 @@
 //! Session tab — the focused agent's REPL surface (identity header + HUD +
-//! any pending gate card + the task-board checklist + transcript). It **reuses** the single-session
+//! any pending gate card + the task-board checklist + transcript). It **reuses** the shared
 //! renderers (`render_hud`, `render_transcript`, `render_scope_review`,
 //! `render_ask_user`, `entry_lines`) so the classic view is pixel-identical,
 //! just scoped to whichever agent `ui.focused` points at. No transcript
@@ -9,12 +9,10 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Widget};
+use ratatui::widgets::{Paragraph, Widget};
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
-
-use stella_protocol::{TaskItem, TaskStatus};
 
 use crate::deck::{AgentEntry, WorkspaceModel};
 use crate::deck_ui::DeckUi;
@@ -133,10 +131,11 @@ fn digest_line(d: &TurnDigest, folded: bool, width: usize) -> Vec<Line<'static>>
 /// so each term is a thing that can silently alter an already-rendered row:
 /// the agent, thinking/expand-all overlays and their revision, the pane width,
 /// how many entries have been evicted off the front, the file-mutation count
-/// (an inline diff can go stale without anything being appended), and the set
-/// of folded turns (which changes on its own when a turn finishes under the
-/// fold-all overlay).
-type FoldKey = (String, bool, bool, u64, usize, usize, u64, u64);
+/// (an inline diff can go stale without anything being appended), the set of
+/// folded turns (which changes on its own when a turn finishes under the
+/// fold-all overlay), and how many leading entries have moved into the
+/// terminal's scrollback (accessible mode — those must stop being drawn).
+type FoldKey = (String, bool, bool, u64, usize, usize, u64, u64, usize);
 
 /// Incremental transcript fold for the Session tab.
 ///
@@ -181,6 +180,7 @@ impl SessionFold {
         expanded_rev: u64,
         width: usize,
         plan: &FoldPlan,
+        flushed: usize,
     ) {
         // Front-eviction shifts every retained index, so the settled prefix
         // no longer describes the entries now occupying 0..settled. The
@@ -205,6 +205,7 @@ impl SessionFold {
             evicted,
             file_gen,
             plan.signature,
+            flushed,
         );
         // Invalidation CLEARS the key; the commit happens after the fold loop
         // below. A panic inside `entry_lines` would otherwise leave `prefix`
@@ -223,6 +224,19 @@ impl SessionFold {
         while self.settled < target {
             let i = self.settled;
             let start = self.prefix.len();
+            if i < flushed {
+                // Already ordinary terminal output above this pane
+                // (`accessible::Scrollback`). Drawing it again would have a
+                // reader hear the conversation twice — once as it arrived in
+                // scrollback, once as part of a pane that repaints. It still
+                // gets a (zero-width) row range so every index-keyed
+                // affordance — selection, search, scroll-into-view — stays
+                // aligned with the transcript rather than shifting by
+                // however much has been flushed.
+                self.entry_rows.push(start..start);
+                self.settled += 1;
+                continue;
+            }
             if let Some(d) = plan.digests.get(&i) {
                 self.prefix.extend(digest_line(d, true, width));
             } else if plan.hides(i) {
@@ -317,7 +331,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
 
     // Each pending gate claims its own band (0 = collapsed). Both can be
     // pending at once — nothing clears one when the other arrives — so they
-    // render independently, exactly like the single-session `render`; an
+    // render independently, band by band; an
     // ask-user question is never hidden behind a scope review.
     let scope_h: u16 = if sm.pending_scope_review.is_some() {
         8
@@ -328,21 +342,17 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         Some(p) => (p.options.len() as u16 + 5).min(12),
         None => 0,
     };
-    // The TASKS card sits between the gates and the transcript when the
-    // board is non-empty (0 = collapsed). Its interior is capped at
-    // [`TASK_CARD_MAX_ROWS`] rows by [`task_card_rows`], so the whole card
-    // never exceeds 10 lines and cannot steal the transcript.
-    let task_rows = task_card_rows(&sm.tasks);
-    let tasks_h: u16 = if task_rows.is_empty() {
-        0
-    } else {
-        (task_rows.len() as u16 + 2).min(10)
-    };
+    // The state strip: one row carrying scope · tasks · proof, replacing the
+    // bordered TASKS card that used to claim up to ten rows here and the
+    // always-on PROOF rail below. 0 when there is nothing at all to summarize.
+    // See [`crate::views::work_rail`] for why one row beats two cards.
+    let strip = crate::views::work_rail::strip_line(sm, area.width);
+    let strip_h: u16 = if strip.is_some() { 1 } else { 0 };
 
     // The PROOF rail sits UNDER the transcript, not above it: it is a claim
-    // about the work, so it reads after the work. Fixed height while it is up
-    // (0 = collapsed on turns that never reach verification), so the transcript
-    // does not reflow as the proof accumulates.
+    // about the work, so it reads after the work. Raised only when the proof
+    // carries news (0 otherwise) — on a quiet turn the strip's `⚖` cell says
+    // everything this band would have.
     let proof_h = crate::views::proof::band_height(&sm.proof);
 
     // The routing card: raised when a prompt arrives mid-turn and the deck
@@ -356,11 +366,33 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         Constraint::Length(scope_h),    // pending scope review (0 = collapsed)
         Constraint::Length(ask_h),      // pending ask-user (0 = collapsed)
         Constraint::Length(dispatch_h), // mid-turn routing (0 = collapsed)
-        Constraint::Length(tasks_h),    // task-board checklist (0 = collapsed)
-        Constraint::Min(1),             // transcript
-        Constraint::Length(proof_h),    // proof rail (0 = collapsed)
+        Constraint::Length(strip_h),    // scope · tasks · proof strip (0 = none)
+        Constraint::Min(1),             // transcript (+ right rail on a wide frame)
+        Constraint::Length(proof_h),    // proof rail (0 = nothing notable)
     ])
     .split(area);
+
+    // Option B: on a wide frame the scope and the board move sideways into a
+    // fixed column, so they cost the transcript some right-margin clipping
+    // instead of costing it whole rows. Below `RAIL_MIN_COLS` the split never
+    // happens and the strip carries everything.
+    // Accessible mode takes the narrow-frame branch unconditionally: the rail
+    // is a column beside the transcript, so every row it occupies carries two
+    // logical panes at once, and read aloud that is one interleaved line
+    // (#1258). Nothing is lost — this is the same path a sub-`RAIL_MIN_COLS`
+    // terminal already takes, where the one-row strip carries scope · tasks ·
+    // proof and `⌃S` opens the whole thing.
+    let split_rail = !ui.accessible && crate::views::work_rail::rail_visible(sm, area.width);
+    let (transcript_area, rail_area) = if split_rail {
+        let cols = Layout::horizontal([
+            Constraint::Min(1),
+            Constraint::Length(crate::views::work_rail::RAIL_W),
+        ])
+        .split(bands[6]);
+        (cols[0], Some(cols[1]))
+    } else {
+        (bands[6], None)
+    };
 
     render_header(agent, model.now_ms, bands[0], buf);
     render_hud(&sm.hud, bands[1], buf);
@@ -379,18 +411,17 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     if let Some(pending) = &ui.pending_dispatch {
         crate::views::dispatch_card::render(pending, bands[4], buf);
     }
-    if !task_rows.is_empty() {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(theme::muted())
-            .title(" TASKS ");
-        Paragraph::new(task_rows).block(block).render(bands[5], buf);
+    if let Some(strip) = strip {
+        Paragraph::new(strip).render(bands[5], buf);
+    }
+    if let Some(rail) = rail_area {
+        crate::views::work_rail::render_rail(sm, rail, buf);
     }
 
     // Transcript: fold through the incremental cache (settled entries fold
     // once; only the streaming tail re-folds per frame), then reuse the
     // line-exact scroll window over the cached rows.
-    let width = inner_width(bands[6]);
+    let width = inner_width(transcript_area);
     let empty = HashSet::new();
     let expanded_set = ui.expanded.get(&agent.meta.id).unwrap_or(&empty);
     // The plan is memoized on [`FoldPlanKey`] (taken out of `ui` so the
@@ -408,6 +439,10 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
             crate::deck_ui::is_folded(ui, &agent.meta.id, turn)
         }),
     };
+    // In accessible mode the leading entries are already in the terminal's
+    // scrollback; the pane must skip exactly those, or the conversation is
+    // announced twice. Zero on every ordinary session.
+    let flushed = ui.scrollback.flushed_for(&agent.meta.id);
     ui.session_fold.refresh(
         &agent.meta.id,
         &sm.transcript,
@@ -419,9 +454,10 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         ui.expanded_rev,
         width,
         &plan,
+        flushed,
     );
     ui.session_plan = Some((plan_key, plan));
-    let height = inner_height(bands[6]);
+    let height = inner_height(transcript_area);
     let total = ui.session_fold.total();
 
     // A selection move from the key handler lands here, where visual-row
@@ -492,7 +528,11 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         // `↑` selects the newest message, it does not scroll — the scroll
         // verbs are the page keys (see `handle_session_key`, which claims
         // ↑/↓ for the highlight whenever the transcript has any entries).
-        "↑ select · ⇞⇟ scroll · ⌃F find · ⌃N failure · ⌃Z fold · ⌃O expand".to_string()
+        //
+        // `⌃S` is advertised here rather than only in help because the strip
+        // it expands is a *summary*: a reader who wants the detail behind a
+        // cell has to be told, once, that there is a way to get it.
+        "↑ select · ⇞⇟ scroll · ⌃F find · ⌃N failure · ⌃Z fold · ⌃O expand · ⌃S state".to_string()
     };
     render_transcript_window(
         visible,
@@ -500,7 +540,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         total,
         ui.session_scroll.follow,
         Some(&hint),
-        bands[6],
+        transcript_area,
         buf,
     );
     if proof_h > 0 {
@@ -553,80 +593,6 @@ fn highlight_matches(lines: &mut [Line<'static>], query: &str) {
         }
         line.spans = rebuilt;
     }
-}
-
-/// Most checklist rows the TASKS card shows before collapsing the tail.
-const TASK_CARD_MAX_ROWS: usize = 8;
-
-/// Build the TASKS card's checklist rows from the latest board snapshot —
-/// pure, so the collapse policy is unit-testable, and total on any board
-/// contents (no indexing beyond what is counted, no unwraps).
-///
-/// - Empty board → no rows (the card disappears entirely).
-/// - A board that fits ([`TASK_CARD_MAX_ROWS`] or fewer) renders every task
-///   in board order.
-/// - A larger board prefers the open work (pending + in-progress, still in
-///   board order) and folds everything hidden into one dim tail row —
-///   `… +K done` for the finished/cancelled tasks, plus `+J more` if even
-///   the open set overflows.
-fn task_card_rows(tasks: &[TaskItem]) -> Vec<Line<'static>> {
-    if tasks.is_empty() {
-        return Vec::new();
-    }
-    if tasks.len() <= TASK_CARD_MAX_ROWS {
-        return tasks.iter().map(task_row).collect();
-    }
-    let open: Vec<&TaskItem> = tasks.iter().filter(|t| t.status.is_open()).collect();
-    let done = tasks.len() - open.len();
-    let shown = open.len().min(TASK_CARD_MAX_ROWS - 1);
-    let mut rows: Vec<Line<'static>> = open.iter().take(shown).map(|t| task_row(t)).collect();
-    let hidden_open = open.len() - shown;
-    let mut parts: Vec<String> = Vec::new();
-    if hidden_open > 0 {
-        parts.push(format!("+{hidden_open} more"));
-    }
-    if done > 0 {
-        parts.push(format!("+{done} done"));
-    }
-    if !parts.is_empty() {
-        rows.push(Line::from(Span::styled(
-            format!("… {}", parts.join(" · ")),
-            theme::muted(),
-        )));
-    }
-    rows
-}
-
-/// One checklist row: status glyph · `#id subject` · dim ` (owner)`.
-fn task_row(task: &TaskItem) -> Line<'static> {
-    let (glyph, glyph_style, text_style) = match task.status {
-        TaskStatus::Pending => ("☐", theme::muted(), Style::new().fg(theme::TEXT_SECONDARY)),
-        TaskStatus::InProgress => (
-            "▸",
-            theme::accent().add_modifier(Modifier::BOLD),
-            Style::new()
-                .fg(theme::TEXT_PRIMARY)
-                .add_modifier(Modifier::BOLD),
-        ),
-        TaskStatus::Completed => (
-            "✓",
-            Style::new().fg(theme::SUCCESS),
-            Style::new().fg(theme::TEXT_TERTIARY),
-        ),
-        TaskStatus::Cancelled => (
-            "✗",
-            Style::new().fg(theme::DANGER).add_modifier(Modifier::DIM),
-            Style::new().fg(theme::TEXT_TERTIARY),
-        ),
-    };
-    let mut spans = vec![
-        Span::styled(format!(" {glyph} "), glyph_style),
-        Span::styled(format!("#{} {}", task.id, task.subject), text_style),
-    ];
-    if let Some(owner) = &task.owner {
-        spans.push(Span::styled(format!(" ({owner})"), theme::muted()));
-    }
-    Line::from(spans)
 }
 
 /// The one-line identity header: `▶ lead · running   0:00:00`. The trailing
@@ -689,7 +655,7 @@ mod tests {
     use super::*;
     use crate::envelope::{AgentMeta, Inbound};
     use crate::model::{MAX_TRANSCRIPT_ENTRIES, SessionModel};
-    use stella_protocol::{AgentEvent, ScopeProposal};
+    use stella_protocol::{AgentEvent, ScopeProposal, TaskItem, TaskStatus};
 
     /// Flatten a `Buffer` to plain text (content, not ANSI — the crate-wide
     /// render-test convention).
@@ -928,6 +894,7 @@ mod tests {
             0,
             80,
             &FoldPlan::default(),
+            0,
         );
         for i in 1_000..(MAX_TRANSCRIPT_ENTRIES + 50) {
             model.apply(&retry(i));
@@ -944,6 +911,7 @@ mod tests {
             0,
             80,
             &FoldPlan::default(),
+            0,
         );
 
         let mut fresh = SessionFold::default();
@@ -958,6 +926,7 @@ mod tests {
             0,
             80,
             &FoldPlan::default(),
+            0,
         );
         assert_eq!(fold.total(), fresh.total());
         assert_eq!(
@@ -1024,6 +993,7 @@ mod tests {
             0,
             120,
             &FoldPlan::default(),
+            0,
         );
         let text: String = fold
             .window_lines(0..fold.total())
@@ -1057,6 +1027,7 @@ mod tests {
             0,
             120,
             &FoldPlan::default(),
+            0,
         );
         let text: String = fold
             .window_lines(0..fold.total())
@@ -1097,6 +1068,7 @@ mod tests {
             0,
             120,
             &FoldPlan::default(),
+            0,
         );
         let text: String = fold
             .window_lines(0..fold.total())
@@ -1125,6 +1097,7 @@ mod tests {
             0,
             120,
             &FoldPlan::default(),
+            0,
         );
         assert_eq!(
             fold.window_lines(0..fold.total()),
@@ -1185,102 +1158,23 @@ mod tests {
         }
     }
 
-    /// Flatten one card row to its plain text (content, not style).
-    fn row_text(line: &Line<'_>) -> String {
-        line.spans.iter().map(|s| s.content.as_ref()).collect()
-    }
-
+    /// The board reaches the frame as the strip's one row — the current task
+    /// by name, and the counts — and vanishes with the board.
     #[test]
-    fn task_card_rows_empty_board_builds_no_card() {
-        assert!(task_card_rows(&[]).is_empty(), "no board → no card");
-    }
-
-    #[test]
-    fn task_card_rows_small_board_shows_every_task_in_order_with_glyphs() {
-        let tasks = vec![
-            task("1", "Fix the redirect loop", TaskStatus::Completed, None),
-            task(
-                "2",
-                "Add the session card",
-                TaskStatus::InProgress,
-                Some("lead"),
-            ),
-            task("3", "Write the tests", TaskStatus::Pending, None),
-        ];
-        let rows = task_card_rows(&tasks);
-        assert_eq!(rows.len(), 3, "a board that fits shows every task");
-        assert_eq!(row_text(&rows[0]), " ✓ #1 Fix the redirect loop");
-        assert_eq!(row_text(&rows[1]), " ▸ #2 Add the session card (lead)");
-        assert_eq!(row_text(&rows[2]), " ☐ #3 Write the tests");
-    }
-
-    #[test]
-    fn task_card_rows_large_board_prefers_open_work_and_collapses_the_done_tail() {
-        // 12 tasks, 6 done: the 6 open ones (board order) + one collapse row.
-        let mut tasks = Vec::new();
-        for i in 0..6 {
-            tasks.push(task(
-                &format!("{}", i + 1),
-                "done work",
-                TaskStatus::Completed,
-                None,
-            ));
-        }
-        tasks.push(task("7", "doing now", TaskStatus::InProgress, None));
-        for i in 7..12 {
-            tasks.push(task(
-                &format!("{}", i + 1),
-                "still open",
-                TaskStatus::Pending,
-                None,
-            ));
-        }
-        let rows = task_card_rows(&tasks);
-        assert_eq!(rows.len(), 7, "6 open rows + the collapse row");
-        assert_eq!(
-            row_text(&rows[0]),
-            " ▸ #7 doing now",
-            "open work leads, in board order"
-        );
-        for row in &rows[1..6] {
-            assert!(row_text(row).contains("still open"), "pending rows follow");
-        }
-        assert_eq!(
-            row_text(&rows[6]),
-            "… +6 done",
-            "the finished tail folds into one dim row"
-        );
-        // And the whole card stays inside its height budget.
-        assert!(rows.len() <= TASK_CARD_MAX_ROWS);
-    }
-
-    #[test]
-    fn task_card_rows_overflowing_open_work_reports_the_hidden_count() {
-        // 12 open tasks: 7 rows shown, the rest folded as `+5 more`.
-        let tasks: Vec<TaskItem> = (0..12)
-            .map(|i| task(&format!("{}", i + 1), "open", TaskStatus::Pending, None))
-            .collect();
-        let rows = task_card_rows(&tasks);
-        assert_eq!(rows.len(), TASK_CARD_MAX_ROWS);
-        assert_eq!(row_text(&rows[7]), "… +5 more");
-    }
-
-    #[test]
-    fn tasks_card_renders_between_hud_and_transcript_and_vanishes_when_empty() {
+    fn the_board_reaches_the_frame_as_one_strip_row() {
         let mut model = WorkspaceModel::new();
         model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
         let area = Rect::new(0, 0, 80, 24);
 
-        // Empty board: no card.
+        // Empty board: nothing.
         let mut ui = DeckUi::default();
         let mut buf = Buffer::empty(area);
         render(&model, &mut ui, area, &mut buf);
         assert!(
-            !buffer_text(&buf).contains("TASKS"),
-            "no card on an empty board"
+            !buffer_text(&buf).contains("☑"),
+            "no strip cell on an empty board"
         );
 
-        // A TaskUpdate folds the board in — the card appears with the rows.
         model.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
             event: stella_protocol::AgentEvent::TaskUpdate {
@@ -1298,24 +1192,114 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render(&model, &mut ui, area, &mut buf);
         let text = buffer_text(&buf);
-        assert!(text.contains("TASKS"), "card title visible:\n{text}");
         assert!(
-            text.contains("#1 Fix the auth redirect"),
-            "in-progress row visible:\n{text}"
+            text.contains("☑ 0/2"),
+            "the counts reach the strip:\n{text}"
         );
-        assert!(text.contains("(lead)"), "owner suffix visible:\n{text}");
-        assert!(text.contains("#2 Ship the fix"), "pending row:\n{text}");
+        assert!(
+            text.contains("▸ Fix the auth redirect"),
+            "the current task is named:\n{text}"
+        );
+        assert!(
+            !text.contains("Ship the fix"),
+            "the strip is a summary, not a checklist:\n{text}"
+        );
 
-        // An empty snapshot clears the board — the card disappears again.
+        // An empty snapshot clears the board — the cell disappears again.
         model.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
             event: stella_protocol::AgentEvent::TaskUpdate { tasks: vec![] },
         });
         let mut buf = Buffer::empty(area);
         render(&model, &mut ui, area, &mut buf);
+        let text = buffer_text(&buf);
+        // Assert on the strip's own shape, not the bare subject: the board
+        // update is also a transcript row, and that row legitimately survives
+        // a cleared board — the scrollback is a record, the strip is a state.
         assert!(
-            !buffer_text(&buf).contains("#1 Fix the auth redirect"),
-            "cleared board removes the checklist rows"
+            !text.contains("▸ Fix the auth redirect"),
+            "a cleared board clears the strip:\n{text}"
+        );
+        assert!(
+            !text.contains("☑"),
+            "…and takes the counts with it:\n{text}"
+        );
+    }
+
+    /// **The headline of this change.** On the terminal size the deck is most
+    /// often run at, a turn triage waived must leave the transcript the room it
+    /// used to lose to two panels with nothing to report.
+    #[test]
+    fn a_waived_turn_spends_no_rows_on_panels_that_have_nothing_to_say() {
+        use stella_protocol::ProofStep;
+        let mut model = WorkspaceModel::new();
+        model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
+        model.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::Proof {
+                step: ProofStep::Assurance {
+                    witness: false,
+                    judge: false,
+                },
+            },
+        });
+        let area = Rect::new(0, 0, 80, 24);
+        let mut ui = DeckUi::default();
+        let mut buf = Buffer::empty(area);
+        render(&model, &mut ui, area, &mut buf);
+        let text = buffer_text(&buf);
+        assert!(
+            !text.contains("PROOF"),
+            "the rail claimed a band with no news:\n{text}"
+        );
+        assert!(
+            text.contains("waived · nothing to prove"),
+            "…but the strip still reports it:\n{text}"
+        );
+        // header(1) + HUD(3) + strip(1) = 5 of the 24 rows; the transcript owns
+        // the rest. Before this change the same turn spent 7 more on the rail.
+        assert_eq!(
+            ui.metrics.session_height, 17,
+            "the transcript must own everything the panels do not"
+        );
+    }
+
+    /// The rail is Option B: columns, not rows, and only where there are
+    /// columns to spare.
+    #[test]
+    fn the_right_rail_appears_only_on_a_wide_frame() {
+        let mut model = WorkspaceModel::new();
+        model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
+        model.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event: stella_protocol::AgentEvent::TaskUpdate {
+                tasks: vec![task(
+                    "1",
+                    "Fix the auth redirect",
+                    TaskStatus::Pending,
+                    None,
+                )],
+            },
+        });
+
+        let narrow = Rect::new(0, 0, 100, 24);
+        let mut ui = DeckUi::default();
+        let mut buf = Buffer::empty(narrow);
+        render(&model, &mut ui, narrow, &mut buf);
+        assert!(
+            !buffer_text(&buf).contains("TASKS 0/1"),
+            "a 100-column frame is too narrow for the rail"
+        );
+
+        let wide = Rect::new(0, 0, 120, 24);
+        let mut ui = DeckUi::default();
+        let mut buf = Buffer::empty(wide);
+        render(&model, &mut ui, wide, &mut buf);
+        let text = buffer_text(&buf);
+        assert!(text.contains("TASKS 0/1"), "the rail is up at 120:\n{text}");
+        assert!(
+            text.contains("#1 Fix the auth redirect"),
+            "with the full row, not just a count:\n{text}"
         );
     }
 
@@ -1371,6 +1355,7 @@ mod tests {
             0,
             120,
             &plan,
+            0,
         );
         fold
     }
@@ -1573,6 +1558,7 @@ mod tests {
                 0,
                 60,
                 &plan,
+                0,
             );
         };
 

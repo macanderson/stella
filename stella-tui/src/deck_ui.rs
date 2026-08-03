@@ -1,6 +1,6 @@
 //! Ephemeral deck state and the pure deck-level key→action mapping.
 //!
-//! Mirrors the single-session [`crate::ui`] split: [`DeckUi`] holds everything
+//! The pure-core / thin-shell split: [`DeckUi`] holds everything
 //! *not* derived from the event log (active tab, the one global composer,
 //! per-tab scroll/selection, the splash, the out-of-band graph snapshot), and
 //! [`handle_deck_key`] is a pure function of `(key, model, &mut ui)` returning a
@@ -625,6 +625,23 @@ pub struct DeckUi {
     /// Whether the queue editor popup is open (`ctrl+t`, or `↑` from an empty
     /// composer on the Session tab while prompts are queued).
     pub queue_open: bool,
+    /// Whether the STATE overlay is open (`ctrl+s`): the approved scope's
+    /// steps, the whole task board, and the full proof rail — the expansion of
+    /// the one-row state strip. Modal while open (Esc or ctrl+s closes).
+    ///
+    /// Read-only and scroll-free by design: it is a recall surface, not a
+    /// second place to act on any of the three. Anything actionable —
+    /// approving a scope, answering a question — stays on its own card where
+    /// the keys that answer it are advertised.
+    pub state_open: bool,
+    /// Scroll offset (content rows) for the STATE overlay. A long board or a
+    /// many-step plan outruns a 24-row terminal, and an overlay that dropped
+    /// the overflow would re-create, inside the fix, the very defect it exists
+    /// to remove. Clamped during render against what actually fit.
+    pub state_scroll: usize,
+    /// Rows the STATE overlay last measured, so the key handler can clamp the
+    /// next scroll against what was drawn rather than guessing.
+    pub state_rows: usize,
     /// Selected row in the queue editor.
     pub queue_sel: usize,
     /// Armed by the first `ctrl+d` in the queue editor; the second one clears
@@ -706,6 +723,18 @@ pub struct DeckUi {
     /// Motion off-switch (`--no-anim` / `STELLA_NO_ANIM` / `NO_COLOR`): freezes
     /// the progress shimmer, pulse, and caret blink to a static frame.
     pub no_anim: bool,
+    /// Accessible mode (`--accessible` / `STELLA_ACCESSIBLE`): the SAME deck,
+    /// drawn so a screen reader can read it (#1258). Every tab, gate and key
+    /// is unchanged; what this flag reaches is layout — the remaining
+    /// side-by-side splits stack, and the grid views render as label-value
+    /// text instead of aligned columns, because column alignment carries
+    /// meaning only to an eye. The terminal-level half of the mode (normal
+    /// screen, inline viewport, forced `no_anim`) is the shell's and lives in
+    /// [`crate::accessible`].
+    pub accessible: bool,
+    /// Per-lane scrollback bookkeeping. Inert unless the shell armed it with
+    /// a real inline viewport — see [`crate::accessible::Scrollback`].
+    pub scrollback: crate::accessible::Scrollback,
     /// Whether the SESSIONS overlay is open (empty-prompt `←` on the Session
     /// tab, or `/sessions`). Modal while open: ↑/↓ move, `⏎` open (replay),
     /// `a` archive, `x` delete, `r` refresh, Esc/`←` close.
@@ -800,6 +829,9 @@ impl Default for DeckUi {
             slash_selected: 0,
             thinking_expanded: false,
             queue_open: false,
+            state_open: false,
+            state_scroll: 0,
+            state_rows: 0,
             queue_sel: 0,
             queue_confirm_clear: false,
             enter_submits: false,
@@ -821,6 +853,8 @@ impl Default for DeckUi {
             session_plan: None,
             color_mode: crate::theme::ColorMode::default(),
             no_anim: false,
+            accessible: false,
+            scrollback: crate::accessible::Scrollback::default(),
             sessions_open: false,
             sessions: Vec::new(),
             sessions_sel: 0,
@@ -1022,6 +1056,15 @@ pub enum DeckAction {
 
 /// Fold one inbound envelope and keep the ephemeral UI in range.
 pub fn ingest_inbound(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) {
+    // Same announcement wrapper as the key path: an inbound envelope can move
+    // the session too (a lane registering and taking focus, a driver-driven
+    // tab jump), and a move nobody asked for is the one most worth saying.
+    crate::accessible::announce::announcing_fold(model, ui, |model, ui| {
+        ingest_inner(inbound, model, ui)
+    });
+}
+
+fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) {
     // A refreshed graph snapshot or slash vocabulary is out-of-band view
     // state, not a model fold — apply it straight to the UI. Everything else
     // folds into the model, then selections are re-clamped.
@@ -1294,6 +1337,14 @@ pub fn ingest_inbound(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut De
     // view state like the cue above: the model fold never sees it.
     if let Inbound::Notice(text) = inbound {
         ui.notice.push(text.clone());
+        // A dialog that stands for three seconds and then gets out of the way
+        // is an affordance for an eye that happened to be looking. In
+        // accessible mode the same notice also goes to scrollback, marked as
+        // the program speaking — the deck's startup news ("a previous session
+        // is resumable", an untrusted `mcp.toml`) is exactly the kind a user
+        // needs to be able to go back and read.
+        ui.scrollback
+            .announce(format!("{}{text}", crate::accessible::NOTICE_MARKER));
         return;
     }
     // A deregister removes a dashboard row, shifting every index after it:
@@ -1358,8 +1409,19 @@ fn clamp(model: &WorkspaceModel, ui: &mut DeckUi) {
     // (bumping the rev invalidates the fold cache).
     for agent in &model.agents {
         let evicted = agent.model.evicted_entries();
-        if evicted > ui.evicted_seen.get(&agent.meta.id).copied().unwrap_or(0) {
+        let seen = ui.evicted_seen.get(&agent.meta.id).copied().unwrap_or(0);
+        if evicted > seen {
             ui.evicted_seen.insert(agent.meta.id.clone(), evicted);
+            // The scrollback counter is an *index* into the retained window,
+            // so it moves down by the number of index slots the pass removed —
+            // not by the number of entries it counted. Each pass drains a
+            // chunk and stands one marker in its place, so those differ by
+            // exactly one, and only for the first pass (later passes drain a
+            // marker that was already occupying a slot). Getting this wrong in
+            // the other direction would suppress entries from the live pane
+            // that were never written anywhere.
+            let slots = (evicted - seen).saturating_sub(usize::from(seen == 0));
+            ui.scrollback.shift_after_eviction(&agent.meta.id, slots);
             if ui.expanded.remove(&agent.meta.id).is_some() {
                 ui.expanded_rev += 1;
             }
@@ -1438,6 +1500,14 @@ pub(crate) use nav::is_folded;
 use nav::{handle_search_key, reveal_current_match, seek_failure, toggle_fold};
 
 pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
+    // Accessible mode announces where a key MOVED the session — a tab change,
+    // an overlay, a lane focus. Wrapped here rather than called from each of
+    // the dozen places that write `ui.tab` (see `accessible::announce`); on an
+    // ordinary session it is a single `bool` check.
+    crate::accessible::announce::announcing(model, ui, |ui| handle_key_inner(key, model, ui))
+}
+
+fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
     if key.kind == KeyEventKind::Release {
         return DeckAction::Ignored;
     }
@@ -1681,6 +1751,39 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
         && let Some(action) = handle_skills_key(key, ui, composer_empty)
     {
         return action;
+    }
+
+    // Ctrl-S opens the STATE overlay: the approved scope, the whole task board,
+    // and the full five-row proof rail — everything the one-row state strip
+    // compressed. `s` for state (and for scope, the half of it that had no way
+    // back at all once its gate closed). Free at the deck level: ctrl+s is a
+    // save chord only inside the modal SETTINGS/SKILLS editors, which claim the
+    // keyboard before this line is reached.
+    if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('s')) {
+        ui.state_open = !ui.state_open;
+        // Always open at the top: a stale offset from a previous look would
+        // hide the SCOPE section, which is the section it exists for.
+        ui.state_scroll = 0;
+        return DeckAction::Handled;
+    }
+
+    // Modal while open, like every other overlay: Esc or a second ctrl+s
+    // closes, and nothing behind it moves.
+    if ui.state_open {
+        // A recall surface, so the only verbs are move and leave.
+        let page = 10usize;
+        let max = ui.state_rows.saturating_sub(1);
+        match key.code {
+            KeyCode::Esc => ui.state_open = false,
+            KeyCode::Down => ui.state_scroll = (ui.state_scroll + 1).min(max),
+            KeyCode::Up => ui.state_scroll = ui.state_scroll.saturating_sub(1),
+            KeyCode::PageDown => ui.state_scroll = (ui.state_scroll + page).min(max),
+            KeyCode::PageUp => ui.state_scroll = ui.state_scroll.saturating_sub(page),
+            KeyCode::Home => ui.state_scroll = 0,
+            KeyCode::End => ui.state_scroll = max,
+            _ => {}
+        }
+        return DeckAction::Handled;
     }
 
     // Deck-global tab navigation (Tab / Shift-Tab only — digits never switch
@@ -3394,10 +3497,10 @@ fn handle_agents_key(
         }
         // Agent controls — only when the composer is empty (else they type).
         // `s` stop · `p` pause/resume toggle (by the row's current status) ·
-        // `r` restart. The driver honors all three on worker lanes
-        // (`req:`/`sub:`): pause parks the worker at its next step boundary
-        // (never mid-tool), restart respawns the lane from its retained
-        // spec. On the lead they are no-ops (Esc is the lead's interrupt).
+        // `r` restart. `s` and `p` work on every lane — pause parks the turn at
+        // its next step boundary, never mid-tool, sub-agents included (#1219).
+        // `r` respawns a worker from its retained spec; on the lead it is a
+        // no-op, since restarting it is just re-submitting the prompt.
         KeyCode::Char('s') if composer_empty => model.agents.get(ui.focused).map(|entry| {
             DeckAction::Send(WorkspaceInput::Control {
                 agent: entry.meta.id.clone(),

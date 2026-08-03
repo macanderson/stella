@@ -145,25 +145,25 @@ pub(crate) struct GlobalArgs {
     #[arg(long, global = true, hide_short_help = true)]
     pub(crate) plain: bool,
 
-    /// Use the single-pane accessible chat surface
+    /// Run the Command Deck so a screen reader can read it
     ///
-    /// Built for screen readers, and useful to anyone on a limited terminal.
-    /// It never takes over the screen: the session draws inline under your
-    /// prompt, and each completed message is written into normal scrollback
-    /// once, so a reader announces it as it arrives and your review cursor
-    /// can go back through it. Panels stack in one column so reading order is
-    /// top to bottom, and the terminal cursor sits on the real insertion
-    /// point (which is also what an IME needs to place its candidate
-    /// window). Needs a terminal on both stdin and stdout; use --plain
-    /// otherwise. Env: STELLA_SIMPLE=1.
-    #[arg(long, global = true, hide_short_help = true)]
-    pub(crate) simple: bool,
+    /// The same deck — every tab, every key, nothing removed — drawn as
+    /// ordinary terminal output instead of a full-window app. It never takes
+    /// over the screen: the deck draws inline under your prompt, and each
+    /// completed message is written into normal scrollback once, so a reader
+    /// announces it as it arrives, your review cursor can go back through it,
+    /// and it is still there after you quit. Animation is frozen, panels stack
+    /// in one column, grid views read as labelled rows, and moving between
+    /// tabs or overlays is announced. Needs a terminal on both stdin and
+    /// stdout; use --plain otherwise. Env: STELLA_ACCESSIBLE=1.
+    #[arg(long, global = true, alias = "simple", hide_short_help = true)]
+    pub(crate) accessible: bool,
 
     /// Freeze all deck animation to a static frame
     ///
     /// Stills the run progress bar's shimmer/pulse and the caret blink, for CI
     /// and asciinema-style recordings. Also forced on by STELLA_NO_ANIM or
-    /// NO_COLOR.
+    /// NO_COLOR, and by --accessible.
     #[arg(long, global = true, hide_short_help = true)]
     pub(crate) no_anim: bool,
 
@@ -191,6 +191,39 @@ pub(crate) struct GlobalArgs {
     #[arg(long, global = true, value_name = "SPEC", hide_short_help = true)]
     pub(crate) log_level: Option<String>,
 
+    /// Show the plan and wait for approval before anything runs.
+    ///
+    /// Scope review already interrupts for a *large* plan (more than 5 steps,
+    /// 8 files, or $1.00 estimated). This asks for the plan whatever its size
+    /// — the size thresholds answer "is this big?", and only you can answer
+    /// "do I want to see it first?". The gate sits ahead of the stage that
+    /// touches your working tree, so declining leaves it untouched.
+    ///
+    /// Needs an interactive terminal: there is nobody to ask in a headless
+    /// run, and silently proceeding would deliver the opposite of the ask.
+    //
+    // `--plan-mode`, not `--plan`: `stella fleet --plan <file>` already owns
+    // that name, and a global sharing it does not shadow cleanly — clap
+    // propagates the global's value slot into every subcommand, so the two
+    // collide at match time ("could not downcast to PathBuf, need bool").
+    // `no_subcommand_flag_reuses_a_global_name` is the test that says so.
+    #[arg(long, global = true)]
+    pub(crate) plan_mode: bool,
+
+    /// Turn tools off for this run only, without editing settings.json.
+    ///
+    /// Same spelling as the settings `"tools"` table — a comma-separated list
+    /// of `name:on` / `name:off`, where a name is a tool, a group, or `*`.
+    /// `--tools '*:off,read_file:on,grep:on'` is a read-only run;
+    /// `--tools 'repo_push:off'` removes one capability.
+    ///
+    /// This scope can only narrow. It composes with settings by intersection,
+    /// so it can never switch on something an org or project policy turned
+    /// off — turning things off is always permitted, turning them on never
+    /// overrides a deny from higher up.
+    #[arg(long, global = true, value_name = "SPEC")]
+    pub(crate) tools: Option<String>,
+
     /// Write diagnostics as JSONL to a file (created 0600)
     ///
     /// Defaults to `info` where stderr defaults to `warn`, since a file
@@ -217,8 +250,11 @@ pub(crate) enum MigrateCmd {
 pub(crate) enum Command {
     /// Send a one-shot prompt (non-interactive)
     Run {
-        /// The prompt to send
-        prompt: String,
+        /// The prompt to send. Omit it to read the prompt from stdin when it
+        /// is piped (`cat spec.md | stella run`), or pass `-` to read stdin
+        /// explicitly even on a terminal. A prompt that begins with `-` needs
+        /// the usual `--` separator: `stella run -- --my-prompt`.
+        prompt: Option<String>,
 
         /// Use the raw step-loop instead of the staged pipeline (triage, plan,
         /// execute, verify, judge). The pipeline is the default; this flag
@@ -284,8 +320,10 @@ pub(crate) enum Command {
     /// witness, execute, verify) by default; --no-pipeline falls back to the
     /// raw step-loop.
     Goal {
-        /// What must be true when done — assessed by the judge each round
-        goal: String,
+        /// What must be true when done — assessed by the judge each round.
+        /// Omit it to read the goal from stdin when it is piped, or pass `-`
+        /// to read stdin explicitly.
+        goal: Option<String>,
 
         /// Use the raw step-loop instead of the staged pipeline for each
         /// working round. The pipeline is the default.

@@ -12,40 +12,56 @@
 //!   pending scope-review — via its single mutator [`SessionModel::apply`]. No
 //!   panel owns state that isn't reconstructible by replaying the log from seq
 //!   1 (so replay is a supported debug mode, and the panic boundary is sound).
-//!   [`fn@render`] draws that model into a `ratatui` frame as a deterministic
-//!   function of `(model, ui)`. Ephemeral interaction state (scroll, composer,
-//!   focus) lives in [`UiState`], never in the model.
+//!   [`render_deck`] draws that model into a `ratatui` frame as a
+//!   deterministic function of `(model, ui)`. Ephemeral interaction state
+//!   (scroll, composer, focus) lives in [`DeckUi`], never in the model.
 //!
-//! - **A thin shell.** [`run`] wires the pure core to a real terminal: raw
-//!   mode + alternate screen (always restored on drop), the crossterm event
-//!   loop, and the two channels. It carries no decision logic — key→action is
-//!   [`handle_key`], event→state is [`ingest`], both unit-tested.
+//! - **A thin shell.** [`run_deck`] wires the pure core to a real terminal:
+//!   raw mode + alternate screen (always restored on drop), the crossterm
+//!   event loop, and the two channels. It carries no decision logic —
+//!   key→action is [`handle_deck_key`], event→state is [`ingest_inbound`],
+//!   both unit-tested.
+//!
+//! The Command Deck is the only surface. A second, single-session shell
+//! (`shell::run` + `ui` + a top-level `render` composer) lived here until
+//! #936: it was a divergent second implementation of composer layout, gate
+//! handling, and slash wiring that no product path reached, and its tests
+//! made the suite overstate what it protected. It was deleted; its leaf
+//! panels — the ones the deck actually draws with — stayed, and now live in
+//! [`mod@render`] with a single caller.
+//!
+//! That is also why **accessibility is a mode on the deck, not a surface
+//! beside it** ([`mod@accessible`], #1258): a separate accessible surface is a
+//! permanent second-class tier, since every deck feature shipped afterwards
+//! becomes a new gap it never closes. [`DeckOptions::accessible`] runs the same
+//! `run_deck` on the user's own screen, with settled transcript entries moving
+//! into the terminal's scrollback, panels in one column, and the grid views as
+//! labelled text.
 //!
 //! The binding TUI requirements are honored
 //! structurally: event-derived rendering (L-T1), mouse-off-by-default for
-//! native copy (L-T2, [`RunOptions::mouse_capture`]), paste chips (L-T3,
+//! native copy (L-T2, [`DeckOptions::mouse_capture`]), paste chips (L-T3,
 //! [`Composer::paste`]), line-exact scroll (L-T4, [`ScrollState`]), diffs on
 //! the single event path (L-T5, [`model::FileState`]), buffer-not-ANSI tests
-//! (L-T6), the panel panic boundary (L-T7, `panel_guard` — covering both
-//! the single-session panels and the deck's bands), and the debug channel
-//! (L-T8, [`DebugLog`]).
+//! (L-T6), the panel panic boundary (L-T7, `panel_guard` — covering the
+//! deck's bands), and the debug channel (L-T8, [`DebugLog`]).
 
+pub mod accessible;
 pub mod ansi;
 pub mod attach;
 pub mod clipboard;
 pub mod composer;
+pub mod debug_log;
 pub mod input;
 pub mod model;
 pub(crate) mod panel_guard;
 pub mod render;
 pub mod scroll;
-pub mod shell;
 pub(crate) mod term;
 pub mod textline;
-pub mod ui;
 
 // ── Command Deck: the multi-tab, multi-agent operations workspace ───────────
-// Extends the single-session REPL above into a tabbed deck (Session · Agents ·
+// The tabbed deck (Session · Agents ·
 // Traces · Graph · Files · Skills · MCP · Issues · Settings) while preserving
 // the pure-core / thin-shell design.
 pub mod cache_panel;
@@ -71,6 +87,7 @@ pub mod theme;
 pub mod transcript_nav;
 pub mod views;
 
+pub use accessible::{FlushBlock, NOTICE_MARKER, Scrollback};
 pub use ansi::strip_ansi;
 pub use attach::probe_path_attachment;
 pub use clipboard::{ClipboardPaste, default_attachments_dir};
@@ -78,13 +95,11 @@ pub use composer::{
     Composer, ComposerEntry, DEFAULT_PASTE_LINE_THRESHOLD, SlashCommand, SlashKind, SlashMenu,
     Submission,
 };
+pub use debug_log::DebugLog;
 pub use input::{ScopeDecision, UserInput};
 pub use model::{FileState, Hud, SessionModel, TranscriptEntry};
-pub use render::render;
 pub use scroll::ScrollState;
-pub use shell::{DebugLog, RunOptions, run};
 pub use textline::{EventLine, Tone, event_line};
-pub use ui::{PanelFocus, ShellAction, UiState, ViewportMetrics, handle_key, ingest};
 
 // Command Deck public surface.
 pub use deck::{

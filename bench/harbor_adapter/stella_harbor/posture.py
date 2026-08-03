@@ -78,6 +78,25 @@ _TRIAGE_MODEL_ENV = "STELLA_TRIAGE_MODEL"
 _MAX_REVISIONS_ENV = "STELLA_MAX_REVISIONS"
 _CANDIDATES_ENV = "STELLA_CANDIDATES"
 
+# Host-side selector for the third coupled ceiling. The other two have been
+# selectable for generations — the output cap rides `params.max_tokens` in this
+# very dict, and the turn budget is a per-trial flag — but `model_timeout` was
+# an `EngineConfig` constant, reachable from no configuration at all. That made
+# it the one ceiling a benchmark arm could not move without rebuilding the
+# binary, which under this protocol is a re-freeze of the registered SUT rather
+# than a line in a posture (#1211 §6.2).
+#
+# It matters because the three are one budget. Raising the output cap alone
+# relocates the cliff instead of removing it: a step allowed 128,000 tokens
+# against a timeout sized for 64,000 stops on the timeout, and the trial reports
+# a capability difference that was really a ceiling nobody scaled. That is not
+# hypothetical here — it is the recorded history of this posture, where
+# 16384 -> 32000 -> 64000 each moved one ceiling while the others held.
+#
+# Unset omits the key, so every digest recorded before this selector existed
+# still describes the posture that produced it.
+_MODEL_TIMEOUT_ENV = "STELLA_MODEL_TIMEOUT"
+
 # Refusal ceilings, not clamps. Unlike the effort tier there is no enum to
 # validate an integer against, so a bound is the only check available beyond
 # "parses as a number" — and the failure it catches is a fat-fingered extra
@@ -86,6 +105,66 @@ _CANDIDATES_ENV = "STELLA_CANDIDATES"
 # 2 candidates), so hitting one means a typo rather than an ambitious arm.
 _MAX_REVISIONS_CEILING = 10
 _CANDIDATES_CEILING = 5
+
+# Six hours, the same refusal ceiling `stella-serve` applies to the knob over
+# the wire. Sized to sit far above any single generation a model produces
+# today while keeping a fat-fingered digit from parking a trial on an
+# effectively unbounded await — which on a benchmark spends the whole agent
+# timeout and reports it as a task failure.
+_MODEL_TIMEOUT_CEILING = 21_600
+
+# The output cap, per model, and the silence ceiling that has to absorb it.
+#
+# These were one shared number (64000) until the Fable ceiling set was
+# approved (#1211 §6.2). One number was only ever right by coincidence: it is
+# the *model's* ceiling, and models differ. Fable 5 answers up to 128,000
+# output tokens; capping its trials at 64,000 stopped it at half the height
+# the comparator is allowed to fill, and the score then reported that as a
+# capability difference rather than as our own ceiling.
+#
+# Keyed by the bare model slug, so a model reached directly
+# (`anthropic/claude-fable-5`) and the same model reached through a gateway
+# (`openrouter/anthropic/claude-fable-5`) get the same ceilings. Booking route
+# is not a model property.
+#
+# `TestOutputCeilingParity` pins the caps here against
+# `stella-model/src/catalog.rs`, which is the authority. Change the catalog and
+# this must follow, which is the point: the two numbers used to be able to
+# drift apart silently, both still looking deliberate.
+_DEFAULT_OUTPUT_CAP = 64_000
+_OUTPUT_CAP_BY_SLUG = {"claude-fable-5": 128_000}
+
+# The timeout is DERIVED from the cap, not chosen independently, which is why
+# it lives in the same table. It bounds silence between stream fragments, so it
+# has to exceed the time the model needs to produce a full-cap answer at its
+# observed speed. The registered derivation: the comparator's rewarded 64,000
+# token step took 756s (~85 tokens/second), so 128,000 tokens is ~1,512s, plus
+# the same 60s margin every previous ceiling used = 1,572s.
+#
+# `None` means "leave it out and inherit the engine default", which is what
+# every model but Fable does and what every historical run recorded.
+#
+# Raising the cap without raising this is the mistake this table exists to
+# prevent: the step then stops on the timeout instead of the cap, which looks
+# identical in the results and is just as much us stopping first. That is not
+# hypothetical — it is the recorded history of this posture, where
+# 16384 -> 32000 -> 64000 each moved one ceiling while the others held.
+_MODEL_TIMEOUT_BY_SLUG = {"claude-fable-5": 1_572}
+
+
+def _model_slug(model: str) -> str:
+    """The bare model name, with any provider or gateway prefix stripped."""
+    return model.rsplit("/", 1)[-1].strip().lower()
+
+
+def default_output_cap(model: str) -> int:
+    """The output-token cap this model's benchmark posture uses."""
+    return _OUTPUT_CAP_BY_SLUG.get(_model_slug(model), _DEFAULT_OUTPUT_CAP)
+
+
+def default_model_timeout(model: str) -> int | None:
+    """The silence ceiling that goes with this model's cap, or ``None``."""
+    return _MODEL_TIMEOUT_BY_SLUG.get(_model_slug(model))
 
 
 def _validated_attempt_count(
@@ -150,6 +229,22 @@ def resolve_candidates(value: str | None) -> int | None:
         return None
     return _validated_attempt_count(
         value, label="candidates", floor=1, ceiling=_CANDIDATES_CEILING
+    )
+
+
+def resolve_model_timeout(value: str | None) -> int | None:
+    """Resolve the per-generation silence ceiling in seconds, or ``None``.
+
+    ``0`` is admissible and means *no backstop* — the unbounded await the
+    engine's ``Option::None`` spells. It is accepted rather than refused
+    because "no ceiling" is a real request that a floor of one could not
+    express, and it is distinct from leaving the selector unset, which asks for
+    the engine's own default instead.
+    """
+    if value is None:
+        return None
+    return _validated_attempt_count(
+        value, label="model timeout", floor=0, ceiling=_MODEL_TIMEOUT_CEILING
     )
 
 
@@ -268,6 +363,7 @@ def _benchmark_engine_posture(
     triage_model: str | None = None,
     max_revisions: int | None = None,
     candidates: int | None = None,
+    model_timeout_secs: int | None = None,
 ) -> tuple[dict[str, Any], str, str]:
     """Return a canonical Terminal-Bench engine posture and its hash.
 
@@ -301,11 +397,21 @@ def _benchmark_engine_posture(
     the key rather than writing the engine's default into it — so this function
     still returns byte-identical JSON, and therefore an identical digest, for
     every posture recorded before the knobs were reachable at all.
+
+    ``model_timeout_secs`` is the same shape again, for the ceiling that used to
+    be the exception (#1211 §6.2). The output cap is set per role below and the
+    turn budget is a per-trial flag, but the per-generation silence ceiling was
+    an engine constant — so a Fable-class arm, which needs it scaled with the
+    output cap or it merely stops on the timeout instead, could not be
+    expressed as a posture at all. It is now a key like any other: selecting it
+    changes the digest, leaving it unset reproduces every historical one.
     """
     selected_model = model.strip()
     if not selected_model or "/" not in selected_model:
         raise ValueError("benchmark model must be a non-empty provider/model spec")
     selected_effort = _validated_worker_effort(worker_effort)
+    # The model's own ceilings, unless the operator selected otherwise below.
+    output_cap = default_output_cap(selected_model)
     posture: dict[str, Any] = {
         "default_model": selected_model,
         "allowed_models": [selected_model],
@@ -387,7 +493,7 @@ def _benchmark_engine_posture(
             "default": {
                 "effort": "xhigh",
                 "reasoning": "on",
-                "params": {"max_tokens": 64000},
+                "params": {"max_tokens": output_cap},
             },
             # Only the worker's tier moves with the arm. `default` stays at
             # `xhigh` deliberately: it governs roles with no explicit entry
@@ -397,12 +503,12 @@ def _benchmark_engine_posture(
             "worker": {
                 "effort": selected_effort,
                 "reasoning": "on",
-                "params": {"max_tokens": 64000},
+                "params": {"max_tokens": output_cap},
             },
             "judge": {
                 "effort": "xhigh",
                 "reasoning": "on",
-                "params": {"max_tokens": 64000},
+                "params": {"max_tokens": output_cap},
             },
             "triage": {"effort": "low", "reasoning": "off"},
         },
@@ -457,6 +563,19 @@ def _benchmark_engine_posture(
         posture["pipeline_max_revisions"] = max_revisions
     if candidates is not None:
         posture["pipeline_candidates"] = candidates
+    # Same omit-when-unset rule, and here it carries an extra weight: this key
+    # is what makes a timeout change a *posture* change rather than a rebuild.
+    # A run that selects it says so in its digest; a run that does not is
+    # byte-identical to every run recorded before the key existed, which is the
+    # only way the registered numbers keep describing the postures that
+    # produced them.
+    effective_timeout = (
+        model_timeout_secs
+        if model_timeout_secs is not None
+        else default_model_timeout(selected_model)
+    )
+    if effective_timeout is not None:
+        posture["model_timeout_secs"] = effective_timeout
     normalized = json.dumps(
         posture,
         sort_keys=True,

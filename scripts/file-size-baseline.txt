@@ -7,7 +7,7 @@
 # must be split instead. Raising an existing ceiling is allowed but is
 # never silent — it lands as a visible diff here, to be justified in
 # review like any other change.
-2264 bench/harbor_adapter/stella_harbor/__init__.py
+2272 bench/harbor_adapter/stella_harbor/__init__.py
 4277 bench/harbor_adapter/stella_harbor/secure_launcher.py
 2150 bench/harbor_adapter/tests/test_adapter.py
 3230 bench/harbor_adapter/tests/test_secure_launcher.py
@@ -15,10 +15,10 @@
 1887 bench/terminal_bench_analysis/tb21_evidence_contract.py
 4207 bench/terminal_bench_analysis/tests/test_tb21_analysis.py
 1615 bench/terminal_bench_analysis/tests/test_tb21_evidence_contract.py
-1743 stella-cli/src/agent_tests.rs
-2359 stella-cli/src/agent.rs
+1745 stella-cli/src/agent_tests.rs
+2368 stella-cli/src/agent.rs
 1576 stella-cli/src/candidate_ws.rs
-4551 stella-cli/src/command_deck.rs
+4581 stella-cli/src/command_deck.rs
 1515 stella-cli/src/fleet_cmd.rs
 1526 stella-cli/src/memory/tests.rs
 2129 stella-core/src/bus.rs
@@ -28,16 +28,16 @@
 2060 stella-model/src/openai.rs
 1524 stella-model/src/zai.rs
 1773 stella-model/src/zai/tests.rs
-3474 stella-pipeline/src/pipeline.rs
+3491 stella-pipeline/src/pipeline.rs
 2590 stella-pipeline/src/pipeline/tests.rs
-2806 stella-protocol/src/event.rs
+2722 stella-protocol/src/event.rs
 2078 stella-store/src/lib.rs
 2261 stella-store/src/tests.rs
 1905 stella-store/src/usage.rs
 1569 stella-tools/src/media.rs
 2234 stella-tools/src/registry.rs
 1839 stella-tools/src/scripts.rs
-1870 stella-tui/src/deck_render.rs
-3902 stella-tui/src/deck_ui.rs
+1892 stella-tui/src/deck_render.rs
+4005 stella-tui/src/deck_ui.rs
 1665 stella-tui/src/views/engine.rs
-1608 stella-tui/src/views/session.rs
+1594 stella-tui/src/views/session.rs

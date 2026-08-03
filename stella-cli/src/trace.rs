@@ -43,13 +43,26 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use stella_core::redact::redact_secrets;
+use stella_pipeline::reward::{RewardLabel, RewardPolicy, Settlement, TrajectoryCost, label};
 use stella_protocol::{AgentEvent, CompletionMessage};
 use stella_store::Store;
 
 /// Bump when [`TraceRecord`]'s shape changes incompatibly. Readers (#872's
 /// dataset exporter) skip records whose schema they don't know rather than
 /// misparsing them.
-pub const TRACE_SCHEMA_VERSION: u32 = 1;
+///
+/// `2` added the reward label (#1043), which every record now carries and an
+/// older record does not — so a v1 line is skipped rather than parsed with an
+/// invented label.
+///
+/// `3` stamps the [`RewardPolicy`] onto that label, now that the weights are
+/// configurable. Every v2 line was in fact written under the defaults — the
+/// weights were constants then — so a reader *could* upgrade one by assuming
+/// them. The bump says no: `policy` is a required field, nothing reads traces
+/// yet, and the alternative is every future reader carrying "v2 implies the
+/// 2026-08 defaults" as a permanent special case. Skipping is cheaper and
+/// cannot rot.
+pub const TRACE_SCHEMA_VERSION: u32 = 3;
 
 /// The append-only trace file, one JSON record per line, under
 /// `.stella/private/`.
@@ -86,6 +99,16 @@ pub struct TraceRecord {
     /// "this was redacted" is a visible fact, not an assumption
     /// (`stella_core::redact` posture).
     pub redacted: bool,
+    /// The training label this trajectory earned (#1043): the ladder rung it
+    /// came to rest on, the composite reward, or the stated reason there is
+    /// none.
+    ///
+    /// Always present, including for a discard — a trace whose label says
+    /// `nothing_attempted` is exactly the trace a failure-mode study wants,
+    /// and deleting it would be the second time this project lost that
+    /// evidence. Carries no model-authored text by construction; see
+    /// [`stella_pipeline::reward`].
+    pub reward: RewardLabel,
     /// Every model call, in wire order.
     pub calls: Vec<TraceCall>,
 }
@@ -160,8 +183,9 @@ pub fn capture_or_warn(
     execution_id: i64,
     files_touched: &[(String, String)],
     workspace_root: &Path,
+    policy: &RewardPolicy,
 ) {
-    if let Err(error) = capture(store, execution_id, files_touched, workspace_root) {
+    if let Err(error) = capture(store, execution_id, files_touched, workspace_root, policy) {
         eprintln!("  ⚠ trace capture failed: {error}");
     }
 }
@@ -173,8 +197,9 @@ pub fn capture(
     execution_id: i64,
     files_touched: &[(String, String)],
     workspace_root: &Path,
+    policy: &RewardPolicy,
 ) -> Result<PathBuf, String> {
-    let record = assemble(store, execution_id, files_touched)?;
+    let record = assemble(store, execution_id, files_touched, policy)?;
     append_trace(workspace_root, &record)
 }
 
@@ -184,6 +209,7 @@ pub fn assemble(
     store: &Store,
     execution_id: i64,
     files_touched: &[(String, String)],
+    policy: &RewardPolicy,
 ) -> Result<TraceRecord, String> {
     let summary = store
         .execution_summary(execution_id)
@@ -255,6 +281,19 @@ pub fn assemble(
         r.text
     };
 
+    // The reward is folded from the settled record, never from a live
+    // observation: the same discipline as the rest of this module, and the
+    // reason a label can be recomputed under new weights from a stored trace.
+    let reward = label(
+        fold.settlement.unwrap_or(Settlement::Absent),
+        TrajectoryCost {
+            steps: u32::try_from(calls.len()).unwrap_or(u32::MAX),
+            cost_usd: summary.cost_usd,
+            revisions: fold.verdicts.saturating_sub(1),
+        },
+        policy,
+    );
+
     Ok(TraceRecord {
         schema: TRACE_SCHEMA_VERSION,
         execution_id,
@@ -271,18 +310,27 @@ pub fn assemble(
             .collect(),
         change_digest: change_digest(files_touched),
         redacted,
+        reward,
         calls,
     })
 }
 
-/// What one ordered pass over the journal recovers: the staged path, and
-/// per-call stage, cost, and tool attributions.
+/// What one ordered pass over the journal recovers: the staged path, the
+/// verification settlement, and per-call stage, cost, and tool attributions.
 #[derive(Default)]
 struct JournalFold {
     stage_trajectory: Vec<String>,
     stage_by_call: HashMap<(u32, u64, u64), Option<String>>,
     usage_by_call: HashMap<(u32, u64, u64), UsageBits>,
     tools_by_call: HashMap<(u32, u64, u64), Vec<TraceToolUse>>,
+    /// The last `JudgeVerdict` the journal holds — the one that settled the
+    /// turn. Earlier verdicts are revision rounds, counted below.
+    settlement: Option<Settlement>,
+    /// How many verdicts the journal holds. `saturating_sub(1)` is the
+    /// revision count the reward's shaping prices; see
+    /// [`TrajectoryCost::revisions`] for what that over-counts and why the
+    /// direction is safe.
+    verdicts: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -361,6 +409,13 @@ fn fold_journal(events: &[stella_store::SessionEventRecord]) -> JournalFold {
                     entry.is_error = Some(output.is_error());
                     entry.duration_ms = Some(*duration_ms);
                 }
+            }
+            AgentEvent::JudgeVerdict { passed, evidence } => {
+                // Overwritten on every verdict, so the last one wins: that is
+                // the one that settled the turn, and the earlier ones are the
+                // revision rounds this counts.
+                fold.settlement = Some(Settlement::from_evidence(*passed, evidence));
+                fold.verdicts = fold.verdicts.saturating_add(1);
             }
             _ => {}
         }
@@ -478,7 +533,9 @@ pub fn append_trace(workspace_root: &Path, record: &TraceRecord) -> Result<PathB
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stella_protocol::{ModelCallRole, StageKind, ToolCall, ToolOutput};
+    use stella_protocol::{
+        JudgeEvidence, LadderRung, LadderSnapshot, ModelCallRole, StageKind, ToolCall, ToolOutput,
+    };
     use stella_store::{ContextBlockRow, ManifestBlockRow, StepManifestRow};
 
     fn gap_block(id: &str, kind: &str, content: &str) -> ContextBlockRow {
@@ -612,7 +669,7 @@ mod tests {
             .unwrap();
 
         let files = vec![("src/auth.rs".to_string(), "U".to_string())];
-        let record = assemble(&store, id, &files).unwrap();
+        let record = assemble(&store, id, &files, &RewardPolicy::default()).unwrap();
 
         assert_eq!(record.schema, TRACE_SCHEMA_VERSION);
         assert_eq!(record.outcome.as_deref(), Some("completed"));
@@ -692,11 +749,133 @@ mod tests {
             )
             .unwrap();
 
-        let record = assemble(&store, id, &[]).unwrap();
+        let record = assemble(&store, id, &[], &RewardPolicy::default()).unwrap();
         assert_eq!(record.calls.len(), 1);
         assert!(!record.calls[0].reconstruction_verified);
         assert!(record.calls[0].reconstruction_error.is_some());
         assert_eq!(record.change_digest, None);
         assert!(record.outcome.is_none(), "unsettled execution says so");
+        // No verdict reached the journal, so the label says exactly that
+        // rather than scoring the turn on its absence (#1043).
+        assert_eq!(record.reward.reward, None);
+        assert_eq!(
+            record.reward.discard,
+            Some(stella_pipeline::reward::DiscardReason::NoVerdict)
+        );
+    }
+
+    /// One `JudgeVerdict` with a rung, and the trace carries the composite
+    /// reward that rung earns — the #1043 acceptance shape at the trace seam.
+    #[test]
+    fn a_settled_verdict_becomes_a_reward_label() {
+        let store = Store::in_memory().unwrap();
+        let id = store
+            .begin_execution("run", "fix the flake", "zai", "glm-5.2")
+            .unwrap();
+        let verdict = |passed: bool, rung: LadderRung| AgentEvent::JudgeVerdict {
+            passed,
+            evidence: JudgeEvidence {
+                summary: "FAIL — the diff does not address the goal".to_string(),
+                deterministic: false,
+                evidence_refs: Vec::new(),
+                ladder: Some(Box::new(LadderSnapshot {
+                    rung: Some(rung),
+                    ..bare_snapshot()
+                })),
+            },
+        };
+        // Two verdicts: one revision round, then the deterministic pass.
+        for (seq, event) in [
+            verdict(false, LadderRung::Revise),
+            verdict(true, LadderRung::SubmitFast),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            store.record_event(id, seq as u64, &event).unwrap();
+        }
+        store
+            .finish_execution_accounted(id, "completed", 0.40, true)
+            .unwrap();
+
+        let record = assemble(&store, id, &[], &RewardPolicy::default()).unwrap();
+        assert_eq!(record.reward.rung, Some(LadderRung::SubmitFast));
+        assert_eq!(record.reward.outcome, Some(1.0));
+        assert_eq!(
+            record.reward.cost.revisions, 1,
+            "two verdicts, one revision"
+        );
+        assert_eq!(record.reward.cost.steps, 0, "no receipts in this fixture");
+        // 1.0 − 0.02·0 − 0.5·0.40 − 0.1·1 = 0.70
+        let reward = record.reward.reward.expect("scored");
+        assert!((reward - 0.70).abs() < 1e-9, "got {reward}");
+
+        // The airlock at the trace seam: the judge's own sentence is in the
+        // journal this was folded from, and nowhere in the label.
+        let label_json = serde_json::to_string(&record.reward).unwrap();
+        assert!(
+            !label_json.contains("does not address"),
+            "judge prose reached the label: {label_json}"
+        );
+    }
+
+    /// An abstain rung is marked discard, and the trace survives — the record
+    /// a failure-mode study needs is exactly the one with no scalar.
+    #[test]
+    fn an_abstaining_verdict_is_discarded_not_scored() {
+        let store = Store::in_memory().unwrap();
+        let id = store.begin_execution("run", "p", "zai", "glm-5.2").unwrap();
+        store
+            .record_event(
+                id,
+                0,
+                &AgentEvent::JudgeVerdict {
+                    passed: true,
+                    evidence: JudgeEvidence {
+                        summary: "UNVERIFIABLE — no channel could observe this turn".to_string(),
+                        deterministic: false,
+                        evidence_refs: Vec::new(),
+                        ladder: Some(Box::new(LadderSnapshot {
+                            rung: Some(LadderRung::Unverifiable),
+                            ..bare_snapshot()
+                        })),
+                    },
+                },
+            )
+            .unwrap();
+        store
+            .finish_execution_accounted(id, "completed", 0.10, true)
+            .unwrap();
+
+        let record = assemble(&store, id, &[], &RewardPolicy::default()).unwrap();
+        assert_eq!(record.reward.rung, Some(LadderRung::Unverifiable));
+        assert_eq!(record.reward.reward, None);
+        assert_eq!(
+            record.reward.discard,
+            Some(stella_pipeline::reward::DiscardReason::Abstained)
+        );
+    }
+
+    /// The all-dark snapshot every rung fixture above builds on.
+    fn bare_snapshot() -> LadderSnapshot {
+        LadderSnapshot {
+            rung: None,
+            tracked_command: None,
+            oracle_trace: Vec::new(),
+            flip_achieved: false,
+            unstable_flip: false,
+            flip_refused_different_failure: false,
+            touched_tests_passed: None,
+            test_infra: None,
+            diff_lines: 0,
+            diff_budget: 0,
+            diff_available: false,
+            file_change_events: 0,
+            mutating_actions: 0,
+            new_diag_errors: 0,
+            new_diag_warnings: 0,
+            witness_intact: None,
+            witness_mutation: None,
+        }
     }
 }

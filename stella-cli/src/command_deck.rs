@@ -110,6 +110,7 @@ use crate::interactive::{AskUserIo, FREE_TEXT_LABEL, InteractiveToolSet, SkillRe
 
 mod authoring;
 mod forwarder;
+mod lead_control;
 mod model_cmd;
 mod profile_cmd;
 mod scope_gate;
@@ -140,10 +141,25 @@ pub(crate) fn now_ms() -> u64 {
 /// An ephemeral transcript notice for DIRECT deck sends (`deck_tx`), never
 /// the journaled `in_tx` path: boot narration, hints, and guidance that must
 /// not replay (and pile up) every time the session is resumed.
+///
+/// It is **marked** because of what riding the transcript costs.
+/// [`AgentEvent`] has no system-notice variant, so a chrome message goes out as
+/// `Text` — and a `Text` entry renders on the **agent** rail. Unmarked, the
+/// transcript is asserting that the model said "conversation cleared". The
+/// rail glyph is a *visual* distinction, which makes it exactly the one that
+/// does not survive being read aloud (#1258 §6; #1243 fixed the same thing for
+/// the surface that has since been unshipped). One `▸` — the same marker the
+/// CLI already uses on the normal screen for its own voice — costs a character
+/// and removes the lie.
 pub(crate) fn chrome_note(text: String) -> Inbound {
+    let delta = if text.starts_with(stella_tui::NOTICE_MARKER) {
+        text
+    } else {
+        format!("{}{text}", stella_tui::NOTICE_MARKER)
+    };
     Inbound::Event {
         agent: LEAD.to_string(),
-        event: AgentEvent::Text { delta: text },
+        event: AgentEvent::Text { delta },
     }
 }
 
@@ -165,14 +181,14 @@ fn system_notice(text: String) -> Inbound {
 }
 
 /// `STELLA_DEBUG=1` → the structured deck log path (L-T8), mirroring the
-/// location `stella_tui::shell::RunOptions` documents. `None` otherwise, and
+/// location `stella_tui::DeckOptions` documents. `None` otherwise, and
 /// on any failure to create the directory — a lost debug log never gates the
 /// session.
 ///
 /// `OXAGEN_DEBUG` is accepted as a deprecated alias for one release: the
 /// user-facing env surface is `STELLA_*` everywhere else (88 names), and this
 /// was the only runtime toggle stranded in the pre-rename namespace.
-pub(crate) fn debug_log_path() -> Option<PathBuf> {
+fn debug_log_path() -> Option<PathBuf> {
     let requested = std::env::var_os("STELLA_DEBUG").or_else(|| std::env::var_os("OXAGEN_DEBUG"));
     if requested.is_none_or(|v| v.is_empty() || v == "0") {
         return None;
@@ -307,9 +323,13 @@ fn requeue_front(
 pub async fn run_deck_session(
     cfg: &Config,
     budget_limit: Option<f64>,
-    no_anim: bool,
+    presentation: crate::term_policy::DeckPresentation,
     resume: Option<crate::session_persist::ResumeRequest>,
 ) -> Result<(), String> {
+    let crate::term_policy::DeckPresentation {
+        no_anim,
+        accessible,
+    } = presentation;
     crate::enterprise_telemetry::authorize_execution_surface(
         crate::enterprise_telemetry::ExecutionSurface::Deck,
     )?;
@@ -675,6 +695,7 @@ pub async fn run_deck_session(
         initial_graph: agent::graph_snapshot(&cfg.workspace_root),
         no_anim,
         pipeline: pipeline_init,
+        accessible,
         ..Default::default()
     };
     // The deck owns its channel ends and runs on its own task so rendering
@@ -1381,7 +1402,10 @@ pub async fn run_deck_session(
         if !pipeline_on {
             // Attach any media files the prompt names (including `⌃V`
             // clipboard images, which arrive as their stored payload path).
-            messages.push(crate::attachments::user_message(&prompt));
+            messages.push(crate::attachments::user_message_in(
+                &prompt,
+                &cfg.workspace_root,
+            ));
         }
         let reflect_start = messages.len();
 
@@ -1465,6 +1489,8 @@ pub async fn run_deck_session(
         // registry, so sub-agents this turn dispatches stop when it does
         // (`crate::subagent`). The engine still takes it by reference.
         let steering: Arc<subsession::SteeringTap> = Arc::default();
+        // The lead lane's pause seam — `p` on the lead row (#1219).
+        let lead_pause = lead_control::LeadPause::new();
         let end = {
             // Both arms return `Result<(), String>`, so one pinned future
             // drives either path through the same select loop.
@@ -1491,6 +1517,7 @@ pub async fn run_deck_session(
                         &lead_holder,
                         &discovery_activation,
                         &steering,
+                        &lead_pause,
                         mcp.clone(),
                     )
                     .await
@@ -1512,6 +1539,7 @@ pub async fn run_deck_session(
                         &lead_holder,
                         &discovery_activation,
                         &steering,
+                        &lead_pause,
                         recall_event,
                     )
                     .await
@@ -1630,6 +1658,8 @@ pub async fn run_deck_session(
                                 // pair's second press (StopAndHold below)
                                 // stays the immediate hard cancel.
                                 steering.request_soft_stop();
+                                // A paused turn can't reach the stop's boundary.
+                                lead_pause.release_for_soft_stop();
                                 let _ = in_tx.send(Inbound::Event {
                                     agent: LEAD.to_string(),
                                     event: AgentEvent::Text {
@@ -1853,19 +1883,19 @@ pub async fn run_deck_session(
                         }) => {
                             let _ = scope_tx.send(decision);
                         }
-                        // Lead-lane pause/resume/restart: the boundary gate
-                        // now EXISTS (`Pipeline::with_turn_gate` — the fleet's
-                        // pipeline workers park on it), but the deck's lead
-                        // turn does not yet build a watch channel and thread
-                        // it through `run_lead_turn`'s pipeline construction —
-                        // that wiring (and fleet tasks as deck lanes) is the
-                        // remaining follow-up. No-op here until then.
-                        Some(WorkspaceInput::Control { .. }) => {}
+                        // Everything above peeled off `Stop` and every worker
+                        // lane, so this is the LEAD's own pause/resume/restart.
+                        Some(WorkspaceInput::Control { control, .. }) => {
+                            lead_pause.control(control, &in_tx);
+                        }
                     },
                 }
             }
             // `turn` (and the channel senders it holds) drops here.
         };
+
+        // Repay the dashboard if this turn was ever painted paused (#1219).
+        lead_pause.settle(&in_tx);
 
         match end {
             TurnEnd::Finished(outcome) => {
@@ -4103,6 +4133,8 @@ async fn run_lead_turn(
     claim_holder: &str,
     activated: &crate::discovery::ActivatedTools,
     steering: &Arc<subsession::SteeringTap>,
+    // Owned by the driver loop, so its input arms can flip it mid-turn (#1219).
+    pause: &lead_control::LeadPause,
     // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller
     // because recall runs before this channel exists.
     recall_event: Option<AgentEvent>,
@@ -4134,12 +4166,9 @@ async fn run_lead_turn(
     );
     // This turn's file changes ride this turn's channel.
     registry.attach_events(stella_core::EventSender::new(tx.clone()));
-    // ...and this turn's soft stop reaches the sub-agents it dispatches. The
-    // lead turn has no pause gate (Pause is a worker-lane verb), so steering
-    // is all there is to publish; the guard takes it down on return.
-    let _controls = registry.attach_turn_controls(
-        stella_core::ports::TurnControls::none().with_steering(steering.clone()),
-    );
+    // ...and this turn's stop AND pause reach the sub-agents it dispatches
+    // (`lead_control::turn_controls`). The guard takes them down on return.
+    let _controls = registry.attach_turn_controls(lead_control::turn_controls(steering, pause));
 
     // Same structural drop-order rule as `agent::run_turn`: every tx clone
     // lives in this scope so dropping `tx` after it closes the channel.
@@ -4173,7 +4202,8 @@ async fn run_lead_turn(
             &TokioSleeper,
         )
         .with_calibration(calibration)
-        .with_steering(steering.as_ref());
+        .with_steering(steering.as_ref())
+        .with_gate(pause.turn_gate());
         if let Some(hooks) = &cfg.hooks {
             engine = engine.with_hooks(hooks, &hook_runner);
         }
@@ -4263,6 +4293,7 @@ async fn run_lead_pipeline_turn(
     claim_holder: &str,
     activated: &crate::discovery::ActivatedTools,
     steering: &Arc<subsession::SteeringTap>,
+    pause: &lead_control::LeadPause,
     mcp: Option<Arc<stella_mcp::McpToolSet>>,
 ) -> Result<(), String> {
     budget.begin_turn();
@@ -4287,12 +4318,9 @@ async fn run_lead_pipeline_turn(
     // Candidate registries are deliberately left unattached — a candidate's
     // edits live in a shadow worktree and are only the user's once adopted.
     registry.attach_events(stella_core::EventSender::new(tx.clone()));
-    // As in `run_lead_turn`: Esc reaches this turn's sub-agents. The same tap
-    // goes to the pipeline's execute engine below, so one stop lands on the
-    // stage, its tool calls, and their children alike.
-    let _controls = registry.attach_turn_controls(
-        stella_core::ports::TurnControls::none().with_steering(steering.clone()),
-    );
+    // As in `run_lead_turn`: one stop — or one pause — lands on the stage,
+    // its tool calls, and their children alike.
+    let _controls = registry.attach_turn_controls(lead_control::turn_controls(steering, pause));
 
     let result = {
         let customs =
@@ -4379,7 +4407,9 @@ async fn run_lead_pipeline_turn(
             headless_bypass_scope_review: false,
             ..agent::apply_pipeline_tuning(cfg, PipelineConfig::default())
         };
-        let pipeline = Pipeline::new(ports, tx.clone(), config);
+        // #1214's seam, now driven from the deck: the pipeline attaches the gate
+        // to every engine it builds and parks its management calls behind it.
+        let pipeline = Pipeline::new(ports, tx.clone(), config).with_turn_gate(pause.turn_gate());
         pipeline.run(prompt, messages, budget).await
     };
     // Same settle window as `run_lead_turn` — see `SteeringTap::mark_settling`.

@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! What this terminal can support: colour, animation, and the Command Deck.
+//! What this terminal can support: colour, animation, accessibility, and the
+//! Command Deck.
 //!
-//! Three decisions that look unrelated in a match arm but are one question —
-//! *is there a human at a capable terminal on the other end of this stream?* —
-//! answered from the same inputs (`TERM`, `NO_COLOR`, `CLICOLOR_FORCE`,
-//! `STELLA_NO_ANIM`, `STELLA_PLAIN`, and whether stdin/stdout are ttys).
+//! Four decisions that look unrelated in a match arm but are one question —
+//! *is there a human at a capable terminal on the other end of this stream, and
+//! how are they reading it?* — answered from the same inputs (`TERM`,
+//! `NO_COLOR`, `CLICOLOR_FORCE`, `STELLA_NO_ANIM`, `STELLA_ACCESSIBLE`,
+//! `STELLA_PLAIN`, and whether stdin/stdout are ttys).
 //!
 //! Each is a pure function of its inputs with the process-global side effect
 //! isolated in [`apply_dumb_terminal_policy`], so the decisions are testable
@@ -70,6 +72,44 @@ pub(crate) fn animation_disabled(no_anim_flag: bool) -> bool {
     no_anim_flag || stella || no_color
 }
 
+/// How the deck presents itself, as distinct from what it runs.
+///
+/// Grouped rather than passed as two adjacent `bool`s: they are the same kind
+/// of thing, they are both resolved here, and two positional booleans in a row
+/// is exactly the signature a caller silently transposes.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct DeckPresentation {
+    /// Motion frozen to a static frame ([`animation_disabled`]). Implied by
+    /// [`Self::accessible`].
+    pub(crate) no_anim: bool,
+    /// Accessible mode ([`accessible_mode`], #1258): the same deck, drawn on
+    /// the user's own screen with settled messages moving into scrollback.
+    /// See `stella_tui::DeckOptions::accessible`.
+    pub(crate) accessible: bool,
+}
+
+/// Whether the Command Deck runs in accessible mode: the `--accessible` flag
+/// or `STELLA_ACCESSIBLE` (#1258).
+///
+/// A **mode on the deck**, not a surface beside it — so it composes with
+/// everything and takes no part in the deck-or-REPL decision below. It follows
+/// this CLI's house convention for boolean env vars (`--plain`'s
+/// `STELLA_PLAIN`, `env_files`' `STELLA_NO_ENV_FILE`), where an explicit `0`
+/// means off.
+///
+/// The env var exists because a screen-reader user should be able to set this
+/// once, in their shell profile, rather than remember a flag on every
+/// invocation — the flag is the exception, not the habit.
+pub(crate) fn accessible_mode(accessible_flag: bool) -> bool {
+    accessible_flag || accessible_env(std::env::var_os("STELLA_ACCESSIBLE").as_deref())
+}
+
+/// The env half of [`accessible_mode`], kept pure so the convention is
+/// testable without touching the process environment.
+pub(crate) fn accessible_env(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_some_and(|v| !v.is_empty() && v != "0")
+}
+
 /// Why `chat` fell back to the line REPL instead of the Command Deck.
 ///
 /// Carried rather than collapsed to a bool because the two surfaces are not
@@ -104,105 +144,47 @@ impl PlainReason {
     }
 }
 
-/// Which of the three chat surfaces this invocation gets.
+/// The deck-or-REPL decision, kept pure so both branches are testable without
+/// a pty and without touching the process's real streams. `None` means the
+/// Command Deck runs.
 ///
-/// They are three, not two, because "not the deck" covers two different
-/// answers to two different questions. `--plain` answers *there is no usable
-/// terminal here* (a pipe, a CI log, `TERM=dumb`); `--simple` answers *there
-/// is a terminal, but the thing reading it is not a pair of eyes*.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ChatSurface {
-    /// The tabbed Command Deck — the default on a capable terminal.
-    Deck,
-    /// The single-pane accessible surface (#936): inline, one column,
-    /// scrollback-backed. See `stella_tui::RunOptions::screen_reader`.
-    Simple,
-    /// The line REPL, with the reason it was chosen.
-    Plain(PlainReason),
-}
-
-/// The surface decision, kept pure so all three branches are testable without
-/// a pty and without touching the process's real streams.
-///
-/// The ladder, in order, and each rung is a deliberate choice:
-///
-/// 1. `--plain` on the command line. The most conservative thing anyone can
-///    ask for, asked for explicitly; nothing overrides it.
-/// 2. `--simple` on the command line — but only if there is a terminal to
-///    draw on. It is an *inline* TUI, so it still needs raw mode and a real
-///    stdout; asked for over a pipe it degrades to the REPL and says which
-///    stream was the problem, rather than failing.
-/// 3. `STELLA_PLAIN`. Below both flags: an environment variable is usually
-///    inherited rather than typed, and a user who typed `--simple` because
-///    they need it should not be silently overruled by a `STELLA_PLAIN`
-///    exported for some other tool's benefit.
-/// 4. `STELLA_SIMPLE`, on the same terminal condition as rung 2. This is how
-///    a screen-reader user makes the accessible surface their default without
-///    typing a flag every time.
-/// 5. Stream shape: no tty, no full-screen anything.
-/// 6. Otherwise the deck.
-pub(crate) fn chat_surface(
+/// Explicit opt-outs are reported ahead of stream shape: someone who passed
+/// `--plain` does not need to be told about their tty.
+pub(crate) fn deck_decision(
     plain_flag: bool,
-    simple_flag: bool,
     plain_env: bool,
-    simple_env: bool,
     stdin_tty: bool,
     stdout_tty: bool,
-) -> ChatSurface {
-    // What a full-screen (or inline-TUI) surface needs from the streams. Both
-    // the deck and `--simple` enter raw mode, so both fail the same way.
-    let stream_fault = if !stdin_tty {
+) -> Option<PlainReason> {
+    if plain_flag {
+        Some(PlainReason::Flag)
+    } else if plain_env {
+        Some(PlainReason::Env)
+    } else if !stdin_tty {
         Some(PlainReason::StdinNotTty)
     } else if !stdout_tty {
         Some(PlainReason::StdoutNotTty)
     } else {
         None
-    };
-    if plain_flag {
-        return ChatSurface::Plain(PlainReason::Flag);
-    }
-    if simple_flag {
-        return match stream_fault {
-            Some(reason) => ChatSurface::Plain(reason),
-            None => ChatSurface::Simple,
-        };
-    }
-    if plain_env {
-        return ChatSurface::Plain(PlainReason::Env);
-    }
-    if simple_env {
-        return match stream_fault {
-            Some(reason) => ChatSurface::Plain(reason),
-            None => ChatSurface::Simple,
-        };
-    }
-    match stream_fault {
-        Some(reason) => ChatSurface::Plain(reason),
-        None => ChatSurface::Deck,
     }
 }
 
-/// [`chat_surface`] applied to this process's real environment and streams.
-pub(crate) fn resolve_chat_surface(plain_flag: bool, simple_flag: bool) -> ChatSurface {
-    chat_surface(
+/// Whether `chat` should launch the Command Deck: an explicit `--plain` or
+/// STELLA_PLAIN=1 opts out, and both stdin and stdout must be real terminals
+/// (raw mode + the alternate screen are meaningless on a pipe).
+///
+/// [`deck_decision`] is the same question with the reason kept; this wrapper
+/// exists for the call sites that only branch on it.
+pub(crate) fn use_deck(plain_flag: bool) -> bool {
+    plain_fallback(plain_flag).is_none()
+}
+
+/// [`deck_decision`] applied to this process's real environment and streams.
+pub(crate) fn plain_fallback(plain_flag: bool) -> Option<PlainReason> {
+    deck_decision(
         plain_flag,
-        simple_flag,
-        env_flag("STELLA_PLAIN"),
-        env_flag("STELLA_SIMPLE"),
+        std::env::var_os("STELLA_PLAIN").is_some_and(|v| !v.is_empty() && v != "0"),
         std::io::stdin().is_terminal(),
         std::io::stdout().is_terminal(),
     )
-}
-
-/// This CLI's house convention for a boolean env var: on when present and not
-/// `0` (see the module docs).
-fn env_flag(name: &str) -> bool {
-    std::env::var_os(name).is_some_and(|v| !v.is_empty() && v != "0")
-}
-
-/// Whether `chat` should launch the Command Deck specifically — the question
-/// `stella resume` asks, because a durable session is a deck feature and
-/// neither `--simple` nor `--plain` can reopen one.
-pub(crate) fn use_deck(plain_flag: bool, simple_flag: bool) -> bool {
-    resolve_chat_surface(plain_flag, simple_flag) == ChatSurface::Deck
 }

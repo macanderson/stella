@@ -31,6 +31,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use stella_core::hooks::Hooks;
+use stella_pipeline::reward::{OutcomeWeights, RewardPolicy, RewardShaping};
 use stella_protocol::{ReasoningEffort, ServiceTier, Verbosity};
 
 use crate::config::Dialect;
@@ -172,6 +173,12 @@ pub struct Settings {
     /// (`/theme`). Whole-block last-wins across scopes; carries no authority.
     #[serde(default)]
     pub ui: Option<UiSettings>,
+    /// What a turn's verdict is worth as a training label (#1043). Whole-block
+    /// last-wins across scopes; carries no credential or egress authority, so
+    /// no trust restoration — a project setting a weight is expressing an
+    /// opinion about its own judge, not borrowing permission.
+    #[serde(default)]
+    pub reward: Option<RewardSettings>,
     /// Adaptive-context lifecycle configuration (the `context` block).
     /// `context.lifecycle.enabled` defaults **`true`** — the lifecycle ships
     /// on, and setting it `false` restores every pre-adaptive behavior.
@@ -407,6 +414,31 @@ pub struct AgentEngineConfig {
     /// stay behind.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_candidates: Option<u32>,
+    /// Seconds of provider silence that end a single generation
+    /// (`stella_core::EngineConfig::model_timeout`). Absent keeps the engine's
+    /// own default, which is what every run used before this key existed.
+    ///
+    /// This is the third of the three coupled ceilings, and the only one that
+    /// used to be reachable from nothing: the output cap lives in
+    /// `agents.<role>.params.max_tokens` and the turn budget is a CLI flag, but
+    /// `model_timeout` was an engine constant, so moving it meant recompiling.
+    /// For a benchmark arm that made a timeout change a *system-under-test*
+    /// change — a re-freeze of the registered commit rather than a line in the
+    /// posture (#1211 §6.2).
+    ///
+    /// The three move together or not at all. Raising the output cap alone
+    /// relocates the cliff rather than removing it: a step allowed 128k output
+    /// tokens against a timeout sized for 64k stops on the timeout instead, and
+    /// the run reports a capability difference that was really a ceiling
+    /// nobody scaled. The rule that sets all three is the same — never be the
+    /// side that stops first.
+    ///
+    /// It bounds *idle silence between stream fragments*, not elapsed time, so
+    /// a generation that keeps streaming is never cut by it. Size it as a
+    /// margin against a provider that stopped answering, above what the output
+    /// cap can take to produce at the model's observed throughput.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_timeout_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents: Option<AgentEngineAgents>,
 }
@@ -584,6 +616,7 @@ impl AgentEngineConfig {
         take!(headless_scope_bypass);
         take!(pipeline_max_revisions);
         take!(pipeline_candidates);
+        take!(model_timeout_secs);
         if let Some(agents) = &other.agents {
             let target = self.agents.get_or_insert_with(AgentEngineAgents::default);
             for kind in EngineAgentKind::ALL {
@@ -917,6 +950,70 @@ impl ToolsSettings {
     }
 }
 
+/// The `reward` section of settings.json — what a turn's verdict is worth when
+/// it becomes a training label (#1043).
+///
+/// Every field optional, and an absent field means the stated default rather
+/// than zero: a workspace that only wants to distrust its judge writes
+/// `judge_weight` alone and inherits the rest.
+///
+/// The reason this is configurable at all is that `judge_weight`'s default of
+/// `0.5` describes *one* judge's measured accuracy, and a workspace pointing a
+/// weaker model at the judge role — or working in a domain where the judge keeps
+/// mistaking house style for a defect — is entitled to trust it less. Lower is
+/// supported; higher than `deterministic_weight` is refused, because there a
+/// model's opinion would outrank a test's observation. See
+/// [`stella_pipeline::reward`] for the full argument.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+pub struct RewardSettings {
+    /// Magnitude of a deterministic pass or fail. Default `1.0`, and the unit
+    /// every other weight is measured against.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deterministic_weight: Option<f64>,
+    /// Magnitude of a model judge's pass or fail. Default `0.5`. `0.0` discards
+    /// judged turns instead of scoring them — which is a different record from
+    /// a `0.0` score, deliberately.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judge_weight: Option<f64>,
+    /// Reward subtracted per model call. Default `0.02`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub per_step: Option<f64>,
+    /// Reward subtracted per USD spent. Default `0.5`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub per_usd: Option<f64>,
+    /// Reward subtracted per verification round beyond the first. Default
+    /// `0.1`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub per_revision: Option<f64>,
+}
+
+impl RewardSettings {
+    /// Fill the absent fields from the defaults and validate the result.
+    ///
+    /// The error is the message a person sees at launch, so it names the key
+    /// they have to change and what the rule is — never just "invalid".
+    pub fn resolve(&self) -> Result<RewardPolicy, String> {
+        let defaults = RewardPolicy::default();
+        let policy = RewardPolicy {
+            outcome: OutcomeWeights {
+                deterministic: self
+                    .deterministic_weight
+                    .unwrap_or(defaults.outcome.deterministic),
+                judged: self.judge_weight.unwrap_or(defaults.outcome.judged),
+            },
+            shaping: RewardShaping {
+                per_step: self.per_step.unwrap_or(defaults.shaping.per_step),
+                per_usd: self.per_usd.unwrap_or(defaults.shaping.per_usd),
+                per_revision: self.per_revision.unwrap_or(defaults.shaping.per_revision),
+            },
+        };
+        policy
+            .validate()
+            .map_err(|error| format!("settings `reward`: {}", error.explain()))?;
+        Ok(policy)
+    }
+}
+
 /// The `ui` section of settings.json — appearance preferences. All fields
 /// optional so an absent section behaves exactly as the defaults.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
@@ -1000,6 +1097,17 @@ impl Settings {
     /// on (a later `"off"` turns it back off — project wins per field).
     pub fn trace_capture_enabled(&self) -> bool {
         self.trace_capture.is_some_and(Toggle::is_on)
+    }
+
+    /// The resolved reward policy for this workspace (#1043). An absent
+    /// `reward` block is exactly the defaults.
+    ///
+    /// Returns `Err` rather than clamping. A weight the module refuses is a
+    /// mistake someone has to see: silently substituting a legal value would
+    /// produce correctly-shaped labels that mean something the operator never
+    /// asked for, which is worse than not starting.
+    pub fn reward_policy(&self) -> Result<RewardPolicy, String> {
+        self.reward.clone().unwrap_or_default().resolve()
     }
 
     /// The resolved `create_worktrees` policy. An absent key means `ask`, the
