@@ -37,6 +37,15 @@ skip the roll) were re-inserted the same way.
 
 ### Added
 
+- The code graph now records **call sites** (#335, B1): `graph_query` and
+  `stella graph` gain two ops — `callees <symbol>` lists the recorded calls
+  inside a definition's span, and `callers <symbol>` reverse-looks-up call
+  sites by name, labeled best-effort in every answer (same-name methods
+  conflate; function-pointer and macro calls are not seen). Structural, so
+  unlike `references` it never matches comments or strings. Index-time only,
+  no new dependencies; the `code_graph_calls` table converges into existing
+  stores on the next open.
+
 - `--accessible` (env `STELLA_ACCESSIBLE=1`) runs the **Command Deck itself** so
   a screen reader can read it — a mode on the real product, not a lesser surface
   beside it. Every tab, gate, key, sub-agent and resume is unchanged. The deck

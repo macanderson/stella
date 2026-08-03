@@ -11,14 +11,14 @@
 //! parsed is extracted best-effort — a broken file loses only its broken
 //! regions, not the whole index batch.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use tree_sitter::{Node, Parser, Query, QueryCursor, StreamingIterator};
 
 use crate::error::GraphError;
 use crate::import::ImportSpec;
 use crate::lang::Language;
-use crate::symbol::{Symbol, SymbolKind};
+use crate::symbol::{CallSite, Symbol, SymbolKind};
 
 /// Compiled grammars + queries for every supported language, built once and
 /// shared by reference across the whole index (`Send + Sync`, so it lives
@@ -47,6 +47,7 @@ struct LangPack {
     language: tree_sitter::Language,
     symbols: Query,
     imports: Query,
+    calls: Query,
 }
 
 impl LangPack {
@@ -66,10 +67,16 @@ impl LangPack {
                 kind: "import",
                 message: e.to_string(),
             })?;
+        let calls = Query::new(&language, lang.call_query()).map_err(|e| GraphError::Query {
+            lang: lang.tag(),
+            kind: "call",
+            message: e.to_string(),
+        })?;
         Ok(Some(LangPack {
             language,
             symbols,
             imports,
+            calls,
         }))
     }
 }
@@ -116,6 +123,7 @@ impl Grammars {
 pub(crate) struct Parsed {
     pub symbols: Vec<Symbol>,
     pub imports: Vec<ImportSpec>,
+    pub calls: Vec<CallSite>,
 }
 
 /// Parse source into a raw tree for a storage adapter's structural walk
@@ -174,7 +182,64 @@ pub(crate) fn parse_file(grammars: &Grammars, lang: Language, source: &str) -> O
         Language::C => extract_c_imports(&pack.imports, root, src),
         Language::Php => extract_php_imports(&pack.imports, root, src),
     };
-    Some(Parsed { symbols, imports })
+    let calls = extract_calls(&pack.calls, root, src);
+    Some(Parsed {
+        symbols,
+        imports,
+        calls,
+    })
+}
+
+/// Decode call matches (#335, B1): every pattern captures the callee's name
+/// node as `@callee`, so the decode is uniform across languages — take the
+/// node's text, keep it only if it is a bare identifier, record the node's
+/// 1-based line. Dedup by the name node's byte range in case two patterns
+/// ever overlap on one node; distinct calls to the same name each keep their
+/// own row (the line is part of the fact).
+fn extract_calls(query: &Query, root: Node, src: &[u8]) -> Vec<CallSite> {
+    let names = query.capture_names();
+    let mut cursor = QueryCursor::new();
+    let mut seen: HashSet<(usize, usize)> = HashSet::new();
+    let mut out = Vec::new();
+    let mut matches = cursor.matches(query, root, src);
+    while let Some(m) = matches.next() {
+        for cap in m.captures {
+            if names[cap.index as usize] != "callee" {
+                continue;
+            }
+            let Ok(text) = cap.node.utf8_text(src) else {
+                continue;
+            };
+            // The queries pin name nodes, but grammar wildcards (`(_)` in
+            // field positions) can admit non-identifier shapes; skip those
+            // rather than store a fragment no definition could ever match.
+            if !is_bare_identifier(text) {
+                continue;
+            }
+            if !seen.insert((cap.node.start_byte(), cap.node.end_byte())) {
+                continue;
+            }
+            out.push(CallSite {
+                callee: text.to_string(),
+                line: cap.node.start_position().row as u32 + 1,
+            });
+        }
+    }
+    out.sort_by(|a, b| a.line.cmp(&b.line).then_with(|| a.callee.cmp(&b.callee)));
+    out
+}
+
+/// A single unqualified identifier as the indexed languages spell them
+/// (`$` included for JavaScript). Anything else — qualified paths, computed
+/// callees, PHP `$variable` callables — is not a name the symbol index could
+/// hold, so storing it would only manufacture unanswerable edges.
+fn is_bare_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_alphabetic() || first == '_' || first == '$')
+        && chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$')
 }
 
 /// Decode symbol matches. A method is captured by both the general function
@@ -732,6 +797,61 @@ class R { go() {} }
             )
         );
         assert_eq!(kinds(&parsed, "go"), vec![SymbolKind::Method]);
+    }
+
+    fn callee_names(parsed: &Parsed) -> Vec<&str> {
+        parsed.calls.iter().map(|c| c.callee.as_str()).collect()
+    }
+
+    #[test]
+    fn rust_call_sites_capture_plain_path_method_and_turbofish_callees() {
+        let src = "\
+pub fn run() {
+    helper();
+    Widget::new();
+    self.render();
+    parse::<u32>(\"7\");
+    Vec::<u8>::with_capacity(4);
+    println!(\"not a call_expression\");
+}
+";
+        let parsed = parse(Language::Rust, src);
+        let names = callee_names(&parsed);
+        for expected in ["helper", "new", "render", "parse", "with_capacity"] {
+            assert!(names.contains(&expected), "missing {expected}: {names:?}");
+        }
+        // Macro invocations are not call_expressions and stay out on purpose.
+        assert!(!names.contains(&"println"), "{names:?}");
+        // Only bare names are stored — never a qualified path fragment.
+        assert!(
+            parsed.calls.iter().all(|c| !c.callee.contains(':')),
+            "{names:?}"
+        );
+        // Lines are 1-based and point at the callee's name node.
+        let helper = parsed.calls.iter().find(|c| c.callee == "helper").unwrap();
+        assert_eq!(helper.line, 2);
+    }
+
+    #[test]
+    fn python_and_typescript_call_sites_keep_the_final_name_only() {
+        let py = parse(
+            Language::Python,
+            "def top():\n    helper()\n    conn.execute(\"x\")\n",
+        );
+        let py_names = callee_names(&py);
+        assert!(py_names.contains(&"helper"), "{py_names:?}");
+        assert!(py_names.contains(&"execute"), "{py_names:?}");
+        assert!(!py_names.contains(&"conn"), "{py_names:?}");
+
+        let ts = parse(
+            Language::TypeScript,
+            "function boot() {\n  helper();\n  app.router.dispatch();\n  import('./lazy');\n}\n",
+        );
+        let ts_names = callee_names(&ts);
+        assert!(ts_names.contains(&"helper"), "{ts_names:?}");
+        assert!(ts_names.contains(&"dispatch"), "{ts_names:?}");
+        // `import(...)`'s callee is the `(import)` node, never an identifier.
+        assert!(!ts_names.contains(&"import"), "{ts_names:?}");
     }
 
     #[test]
@@ -1294,6 +1414,49 @@ function boot() {}
         let names = names(&parsed);
         assert!(names.contains(&"Page"), "{names:?}");
         assert!(names.contains(&"render"), "{names:?}");
+    }
+
+    #[test]
+    fn go_java_c_and_php_call_sites_extract_their_callee_names() {
+        let go = parse(
+            Language::Go,
+            "package main\nfunc run() {\n\thelper()\n\tfmt.Println(\"x\")\n}\n",
+        );
+        let go_names: Vec<&str> = go.calls.iter().map(|c| c.callee.as_str()).collect();
+        assert!(go_names.contains(&"helper"), "{go_names:?}");
+        assert!(go_names.contains(&"Println"), "{go_names:?}");
+
+        let java = parse(
+            Language::Java,
+            "class A { void run() { helper(); store.put(\"k\"); } }\n",
+        );
+        let java_names: Vec<&str> = java.calls.iter().map(|c| c.callee.as_str()).collect();
+        assert!(java_names.contains(&"helper"), "{java_names:?}");
+        assert!(java_names.contains(&"put"), "{java_names:?}");
+
+        let c = parse(
+            Language::C,
+            "int run(void) { helper(); ops->handler(); return 0; }\n",
+        );
+        let c_names: Vec<&str> = c.calls.iter().map(|call| call.callee.as_str()).collect();
+        assert!(c_names.contains(&"helper"), "{c_names:?}");
+        assert!(c_names.contains(&"handler"), "{c_names:?}");
+
+        let php = parse(
+            Language::Php,
+            "<?php function run() { helper(); $s->put('k'); Cache::flush(); }\n",
+        );
+        let php_names: Vec<&str> = php.calls.iter().map(|c| c.callee.as_str()).collect();
+        for expected in ["helper", "put", "flush"] {
+            assert!(
+                php_names.contains(&expected),
+                "missing {expected}: {php_names:?}"
+            );
+        }
+
+        // SQL models no call graph; its empty query yields no rows.
+        let sql = parse(Language::Sql, "CREATE TABLE t (id INT);\n");
+        assert!(sql.calls.is_empty());
     }
 
     #[test]

@@ -176,6 +176,21 @@ impl Language {
             Language::Php => queries::PHP_IMPORTS,
         }
     }
+
+    /// The compile-time call-site query source for this language (#335, B1).
+    pub(crate) fn call_query(self) -> &'static str {
+        match self {
+            Language::Rust => queries::RUST_CALLS,
+            Language::Python => queries::PYTHON_CALLS,
+            Language::JavaScript => queries::JS_CALLS,
+            Language::TypeScript | Language::Tsx => queries::TS_CALLS,
+            Language::Sql => queries::SQL_CALLS,
+            Language::Go => queries::GO_CALLS,
+            Language::Java => queries::JAVA_CALLS,
+            Language::C => queries::C_CALLS,
+            Language::Php => queries::PHP_CALLS,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -127,20 +127,23 @@ impl Tool for CodeGraphQuery {
         ToolSchema {
             name: "graph_query".into(),
             description: "Query the indexed code graph instead of grepping: where a symbol is \
-                          defined or referenced, what a file imports, which files import it, or \
-                          a file's full graph neighborhood. Cheaper and more precise than \
-                          grep for symbol/dependency questions. The index builds automatically \
-                          and refreshes live as files change — no manual re-index needed."
+                          defined or referenced, what a definition calls (callees), which call \
+                          sites name it (callers, best-effort by name), what a file imports, \
+                          which files import it, or a file's full graph neighborhood. Cheaper \
+                          and more precise than grep for symbol/dependency questions. The index \
+                          builds automatically and refreshes live as files change — no manual \
+                          re-index needed."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "op": {
                         "type": "string",
-                        "enum": ["definitions", "references", "imports", "importers", "neighbors"],
-                        "description": "definitions/references take a symbol name; \
-                                        imports/importers/neighbors take a workspace-relative \
-                                        file path"
+                        "enum": ["definitions", "references", "callees", "callers",
+                                 "imports", "importers", "neighbors"],
+                        "description": "definitions/references/callees/callers take a symbol \
+                                        name; imports/importers/neighbors take a \
+                                        workspace-relative file path"
                     },
                     "target": {
                         "type": "string",
@@ -161,8 +164,9 @@ impl Tool for CodeGraphQuery {
         let target = input.get("target").and_then(|v| v.as_str()).unwrap_or("");
         if target.is_empty() {
             return ToolOutput::Error {
-                message: "`target` is required: a symbol name for definitions/references, a \
-                          file path for imports/importers/neighbors"
+                message: "`target` is required: a symbol name for \
+                          definitions/references/callees/callers, a file path for \
+                          imports/importers/neighbors"
                     .into(),
             };
         }
@@ -317,19 +321,28 @@ pub(crate) fn run_query_with(
     target: &str,
 ) -> ToolOutput {
     match op {
-        "definitions" | "references" => symbol_query(graph, op, target),
+        "definitions" | "references" | "callees" | "callers" => symbol_query(graph, op, target),
         "imports" | "importers" | "neighbors" => path_query(graph, op, target),
         other => ToolOutput::Error {
             message: format!(
-                "unknown op `{other}` — expected definitions, references, imports, \
-                 importers, or neighbors"
+                "unknown op `{other}` — expected definitions, references, callees, callers, \
+                 imports, importers, or neighbors"
             ),
         },
     }
 }
 
-/// `definitions`/`references`: an exact-name lookup, with one qualified-name
-/// retry behind it.
+/// The honesty label prefixed to every non-empty `callers` answer. The op is
+/// a reverse NAME lookup over recorded call sites (#335 B1) — structurally a
+/// call, but same-name methods and trait impls conflate, and calls through
+/// function pointers or macro bodies are never seen — so it ships labeled
+/// best-effort, the same discipline `references` applies through its score.
+pub const CALLERS_BEST_EFFORT_NOTE: &str = "(callers matches call sites by name — same-name \
+     methods and trait impls conflate; calls made through function pointers or macros are \
+     not recorded)";
+
+/// `definitions`/`references`/`callees`/`callers`: an exact-name lookup,
+/// with one qualified-name retry behind it.
 ///
 /// `store::definitions` matches `symbols.name` exactly, so every way a model
 /// naturally writes a symbol it read in source — `Greeter::greet`,
@@ -346,6 +359,8 @@ pub(crate) fn run_query_with(
 fn symbol_query(graph: &stella_graph::CodeGraph, op: &str, target: &str) -> ToolOutput {
     let lookup = |name: &str| match op {
         "definitions" => graph.definitions(name),
+        "callees" => graph.callees(name),
+        "callers" => graph.callers(name),
         _ => graph.references(name),
     };
     let frames = match lookup(target) {
@@ -354,7 +369,7 @@ fn symbol_query(graph: &stella_graph::CodeGraph, op: &str, target: &str) -> Tool
     };
     if !frames.is_empty() {
         return ToolOutput::Ok {
-            content: render_frames(&frames),
+            content: render_symbol_frames(op, &frames),
         };
     }
     if let Some(segment) = last_identifier_segment(target)
@@ -364,11 +379,23 @@ fn symbol_query(graph: &stella_graph::CodeGraph, op: &str, target: &str) -> Tool
         return ToolOutput::Ok {
             content: format!(
                 "(`{target}` is not an indexed symbol name — showing `{segment}` instead)\n{}",
-                render_frames(&frames)
+                render_symbol_frames(op, &frames)
             ),
         };
     }
     unresolved(op, target)
+}
+
+/// Render a symbol-op answer, prefixing the best-effort label on `callers`
+/// (both the exact hit and the last-segment retry go through here, so the
+/// label cannot be lost on one path).
+fn render_symbol_frames(op: &str, frames: &[stella_graph::ContextFrame]) -> String {
+    let rendered = render_frames(frames);
+    if op == "callers" {
+        format!("{CALLERS_BEST_EFFORT_NOTE}\n{rendered}")
+    } else {
+        rendered
+    }
 }
 
 /// `imports`/`importers`/`neighbors`: a path lookup, with the two misses that
@@ -768,9 +795,11 @@ mod tests {
     #[tokio::test]
     async fn unknown_op_and_missing_target_are_named_errors() {
         let dir = indexed_workspace();
+        // `rename` is the op the graph deliberately does NOT offer (#335:
+        // name-based edges cannot make a rename safe).
         let bad_op = CodeGraphQuery
             .execute(
-                &serde_json::json!({"op": "callers", "target": "greet"}),
+                &serde_json::json!({"op": "rename", "target": "greet"}),
                 dir.path(),
             )
             .await;
@@ -991,6 +1020,45 @@ mod tests {
             "re-indexing cannot pull in a tree outside the root: {content}"
         );
         assert_eq!(classify_answer(&content), GraphAnswer::OutOfRoot);
+    }
+
+    /// #335 B1: the call-edge ops. `callees` answers from the call sites
+    /// recorded inside the definition's span; `callers` reverse-looks-up the
+    /// name and carries its best-effort label on every answer.
+    #[test]
+    fn callees_and_callers_answer_from_the_call_table() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("lib.rs"),
+            "pub fn greet() -> &'static str { \"hi\" }\n\
+             pub fn salute() {\n    greet();\n    format_name();\n}\n",
+        )
+        .expect("write source");
+
+        let callees = ok_content(run_query(dir.path(), "callees", "salute"));
+        assert!(callees.contains("greet"), "{callees}");
+        assert!(callees.contains("format_name"), "{callees}");
+        assert!(
+            callees.contains("callees of fn salute"),
+            "the frame cites the definition: {callees}"
+        );
+        assert_eq!(classify_answer(&callees), GraphAnswer::Resolved);
+
+        let callers = ok_content(run_query(dir.path(), "callers", "greet"));
+        assert!(
+            callers.contains(CALLERS_BEST_EFFORT_NOTE),
+            "every callers answer carries its honesty label: {callers}"
+        );
+        assert!(
+            callers.contains("fn salute (lib.rs:3)"),
+            "the call site is labeled by its enclosing definition: {callers}"
+        );
+        assert_eq!(classify_answer(&callers), GraphAnswer::Resolved);
+
+        // A name nothing calls is an ordinary unresolved miss, countable by
+        // the health metric like every other miss.
+        let miss = ok_content(run_query(dir.path(), "callers", "greet_nobody"));
+        assert_eq!(classify_answer(&miss), GraphAnswer::Unresolved);
     }
 
     /// The exact-match SQL behind `definitions` never sees a qualified name,

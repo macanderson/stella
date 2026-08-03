@@ -41,8 +41,8 @@ const MAX_IMPORTERS: usize = 3;
 /// like a definition/reference hunt. Shared so every surface teaches the
 /// same tool the same way.
 pub const GRAPH_QUERY_TIP: &str = "tip: this looks like a symbol/dependency lookup — graph_query answers it \
-     directly (op=definitions|references|imports|importers|neighbors), precise \
-     and cheaper than a text scan.";
+     directly (op=definitions|references|callees|callers|imports|importers|neighbors), \
+     precise and cheaper than a text scan.";
 
 /// Declaration keywords that, leading a query, mark it a definition hunt
 /// (`struct Foo`, `pub fn bar`, `class Baz`, `def qux`). Cross-language on

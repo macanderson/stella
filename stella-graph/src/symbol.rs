@@ -114,3 +114,13 @@ pub struct Symbol {
     pub start_line: u32,
     pub end_line: u32,
 }
+
+/// One extracted call site (#335, B1): the bare name being called and the
+/// 1-based line of the name node. Deliberately **unresolved** — no receiver
+/// type, no target file, no cross-file identity. `callees` reads these within
+/// a definition's line span; `callers` reverse-looks-up the name, best-effort.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallSite {
+    pub callee: String,
+    pub line: u32,
+}

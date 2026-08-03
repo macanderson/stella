@@ -913,7 +913,7 @@ fn now_rfc3339() -> String {
     stella_context::format_rfc3339(secs)
 }
 
-/// The five code-graph queries, mirroring the `graph_query` agent tool's ops
+/// The seven code-graph queries, mirroring the `graph_query` agent tool's ops
 /// one-for-one so a human at the CLI and the model inside a turn see the
 /// same frames for the same question.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -922,6 +922,10 @@ pub enum GraphOp {
     Definitions,
     /// Best-effort textual references to a symbol
     References,
+    /// What a definition calls (recorded call sites inside its span)
+    Callees,
+    /// Call sites naming a symbol (best-effort — matched by name)
+    Callers,
     /// What a file imports
     Imports,
     /// Which files import a file
@@ -935,6 +939,8 @@ impl GraphOp {
         match self {
             GraphOp::Definitions => "definitions",
             GraphOp::References => "references",
+            GraphOp::Callees => "callees",
+            GraphOp::Callers => "callers",
             GraphOp::Imports => "imports",
             GraphOp::Importers => "importers",
             GraphOp::Neighbors => "neighbors",

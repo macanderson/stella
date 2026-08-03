@@ -260,10 +260,12 @@ controls keeps the memory system accountable for real, measured lift.
 backed by a native **tree-sitter** index of your code:
 
 - **Languages:** Rust, Python, JavaScript, TypeScript, TSX, and SQL.
-- **Indexed:** symbol definitions and import edges.
-- **Queries:** `definitions` and `references` (by symbol name); `imports`,
-  `importers`, and `neighbors` (by file path). The same five operations back
-  the offline [`stella graph`](/docs/commands/graph) CLI.
+- **Indexed:** symbol definitions, import edges, and call sites (the callee
+  *name* at each call — unresolved by design).
+- **Queries:** `definitions`, `references`, `callees`, and `callers`
+  (by symbol name — `callers` is a best-effort name match and says so);
+  `imports`, `importers`, and `neighbors` (by file path). The same seven
+  operations back the offline [`stella graph`](/docs/commands/graph) CLI.
 
 The index builds automatically: [`stella init`](/docs/getting-started/initialization)
 builds it eagerly, and every session also builds/refreshes it in the
