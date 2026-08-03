@@ -46,7 +46,7 @@ fn tiny_terminals_with_overlays_never_panic() {
     let model = folded_model();
     for w in [1u16, 2, 4, 9, 17, 40, 120] {
         for h in [1u16, 2, 3, 5, 9, 24] {
-            for which in 0..8 {
+            for which in 0..9 {
                 let mut ui = DeckUi::default();
                 ui.splash.skip();
                 ui.graph = Some(demo_graph());
@@ -58,6 +58,7 @@ fn tiny_terminals_with_overlays_never_panic() {
                     4 => ui.inbox_open = true,
                     5 => ui.context_open = true,
                     6 => ui.inspect_open = true,
+                    7 => ui.state_open = true,
                     _ => {
                         ui.search.open = true;
                         ui.search.query = "a".into();

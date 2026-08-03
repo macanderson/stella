@@ -237,3 +237,67 @@ fn without_a_pending_card_a_submission_is_still_an_ordinary_prompt() {
         })
     );
 }
+
+// ---------------------------------------------------------------------------
+// The STATE overlay (ctrl+s)
+// ---------------------------------------------------------------------------
+
+/// The complaint this overlay answers: an approved scope had no way back.
+/// `⌃S` is the way back, and it toggles from anywhere.
+#[test]
+fn ctrl_s_opens_and_closes_the_state_overlay() {
+    let model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    assert!(!ui.state_open);
+    assert_eq!(
+        handle_deck_key(ctrl('s'), &model, &mut ui),
+        DeckAction::Handled
+    );
+    assert!(ui.state_open, "ctrl+s opens it");
+    assert_eq!(
+        handle_deck_key(ctrl('s'), &model, &mut ui),
+        DeckAction::Handled
+    );
+    assert!(!ui.state_open, "a second ctrl+s closes it");
+}
+
+/// Every way in has a way out — Esc closes it like every other overlay.
+#[test]
+fn esc_closes_the_state_overlay() {
+    let model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    handle_deck_key(ctrl('s'), &model, &mut ui);
+    handle_deck_key(KeyEvent::from(KeyCode::Esc), &model, &mut ui);
+    assert!(!ui.state_open);
+}
+
+/// Modal while open: a keystroke must not reach the composer behind it, or
+/// opening the overlay to check a plan would quietly edit the prompt.
+#[test]
+fn the_state_overlay_owns_the_keyboard_while_it_is_up() {
+    let model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    handle_deck_key(ctrl('s'), &model, &mut ui);
+    type_str("hello", &model, &mut ui);
+    assert!(
+        ui.composer.is_empty(),
+        "typing leaked into the composer behind the overlay: {:?}",
+        ui.composer.buffer()
+    );
+}
+
+/// The collision this binding has to avoid: `ctrl+s` is the *save* chord in the
+/// SKILLS and SETTINGS editors, and those are modal. The overlay is dispatched
+/// after them on purpose — a save must never be stolen by a recall surface.
+#[test]
+fn ctrl_s_still_saves_inside_a_modal_editor() {
+    let model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ui.tab = crate::deck_ui::DeckTab::Settings;
+    ui.engine.focused = true;
+    handle_deck_key(ctrl('s'), &model, &mut ui);
+    assert!(
+        !ui.state_open,
+        "the STATE overlay stole the engine panel's save chord"
+    );
+}
