@@ -15,9 +15,8 @@
 1887 bench/terminal_bench_analysis/tb21_evidence_contract.py
 4207 bench/terminal_bench_analysis/tests/test_tb21_analysis.py
 1615 bench/terminal_bench_analysis/tests/test_tb21_evidence_contract.py
+2362 stella-cli/src/agent.rs
 1744 stella-cli/src/agent_tests.rs
-2368 stella-cli/src/agent.rs
-1743 stella-cli/src/agent_tests.rs
 1576 stella-cli/src/candidate_ws.rs
 4581 stella-cli/src/command_deck.rs
 1515 stella-cli/src/fleet_cmd.rs
