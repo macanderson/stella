@@ -146,17 +146,24 @@ contestant, so 1 already means two containers running at once.
 **Solve rate, clock time, tokens in/out** are real and comparable. They come
 from the verifier and from each agent's own trajectory.
 
-**Total cost is not meaningful here, in two compounding ways.** A subscription
-plan does not bill per token at all, and Claude Code's self-reported
-`total_cost_usd` is computed from its own pricing table, which has no entry for
-`glm-5.2`. Expect zero or null, and do not read it as "free relative to". If
-you need a cost comparison, run the arms on metered keys.
+**Total cost is actively misleading here — treat the column as broken.** It is
+tempting to assume an unpriced model reports nothing; it does not. A measured
+smoke trial returned **`cost_usd: 0.3326`** for a task run entirely on the
+subscription, where the true marginal spend was zero. Claude Code computes
+`total_cost_usd` from its own pricing table, and with every model alias pointed
+at `glm-5.2` it prices the run as though it were the Anthropic model those
+aliases normally name.
 
-**Cache read** is reported by z.ai (`cache_read_input_tokens`) and is
-comparable. **Cache write** was absent from the endpoint's responses in
-testing, so that column will likely sit at zero for the Claude Code arm — which
-is a measurement gap, not a finding. Cache write crowns nobody on the
-scoreboard anyway.
+A fabricated-but-plausible number is worse than a missing one: it populates the
+column, sorts against the other arm, and crowns a winner on a dimension nobody
+measured. **Ignore Total Cost for any seat on the coding plan.** If you need a
+real cost comparison, run both arms on metered keys.
+
+**Cache read is real and large** — the same trial reported 286,656 of 296,070
+input tokens served from cache. z.ai returns `cache_read_input_tokens`, so that
+dimension is comparable. It returns no `cache_creation_input_tokens`, so **cache
+write will read zero** for the Claude Code arm: a measurement gap, not a
+finding. Cache write crowns nobody on the scoreboard anyway.
 
 **Expect the clock to dominate.** The ten tasks above carry 3.8 hours of agent
 timeout between them. Stella has historically burned its full timeout on tasks
