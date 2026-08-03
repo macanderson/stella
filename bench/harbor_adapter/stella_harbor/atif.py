@@ -650,8 +650,9 @@ def envelope_to_trajectory(
     # Written unconditionally, unlike its neighbours: "not_reported" is a
     # result. An absent key here would be indistinguishable from an adapter too
     # old to record it, which is the ambiguity this field exists to remove.
-    if witness_authored_state:
-        agent_extra["witness_authored_state"] = witness_authored_state
+    # (It shipped guarded like its neighbours once — exactly the ambiguity
+    # this comment promised away.)
+    agent_extra["witness_authored_state"] = witness_authored_state or "not_reported"
 
     return Trajectory(
         schema_version="ATIF-v1.7",

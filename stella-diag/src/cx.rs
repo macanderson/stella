@@ -42,10 +42,12 @@ pub struct ShortId([u8; SHORT_ID_CHARS]);
 impl ShortId {
     /// Truncate a full id for recording.
     ///
-    /// A leading `<kind>-` label (`turn-`, `session-`, `exec-`) is dropped
-    /// first, matching `stella-serve::observe::event::TurnRef`, so
-    /// `turn-0123456789abcdef…` records as `01234567` rather than as the word
-    /// `turn-012`. Non-hex characters are skipped (a UUID's dashes), and an id
+    /// Everything before the first `-` is dropped — intended for a `<kind>-`
+    /// label (`turn-`, `session-`, `exec-`), matching
+    /// `stella-serve::observe::event::TurnRef`, so `turn-0123456789abcdef…`
+    /// records as `01234567` rather than as the word `turn-012`. On a bare
+    /// UUID that also consumes the leading hex group (the test below pins
+    /// it). Remaining non-hex characters are skipped, and an id
     /// with fewer than eight hex digits is padded with `0` so the width is
     /// fixed — a ragged handle would be harder to eyeball-match against the
     /// domain plane, which is the entire job.

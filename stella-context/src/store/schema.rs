@@ -20,9 +20,11 @@ pub(crate) const SCHEMA_VERSION: i64 = 10;
 /// columns (`valid_from`/`valid_to`/`recorded_at`/`superseded_at`) exist on both
 /// `node` and `edge`, but only EDGES are actually versioned: `apply_fact`
 /// closes an edge's interval on supersession, never deleting (`L-C3`), and
-/// `facts_as_of` reads history back. NODES are mutable current-state —
-/// `upsert_node` overwrites content in place, so their time columns stay
-/// effectively unused and there is no point-in-time node reader. Fact history is
+/// `facts_as_of` reads history back. NODES are mutable current-state for
+/// *content* — `upsert_node` overwrites in place, so `valid_from`/`valid_to`
+/// are never written. Their `recorded_at`/`superseded_at` columns ARE live:
+/// `candidates::NODE_AS_OF` is the point-in-time node predicate every
+/// candidate query shares, and `supersede_node` closes them. Fact history is
 /// recoverable; node content history is not.
 pub(crate) const MIGRATION_V1: &str = "\
 CREATE TABLE node (

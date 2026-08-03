@@ -348,8 +348,9 @@ pub struct PipelineConfig {
     /// with n× the execution cost — opt-in only.
     pub candidates: Option<u32>,
     /// Whether this run does its work in a throwaway worktree rather than the
-    /// user's checkout. Consulted once, at triage, and only when the run is
-    /// going to change files.
+    /// user's checkout. Consulted once — after planning, before execution,
+    /// using the task class triage resolved — and only when the run is going
+    /// to change files.
     ///
     /// The precedence is: a run that changes nothing is never isolated; a
     /// workspace with no candidate isolation cannot offer it (and an `Always`
@@ -617,7 +618,9 @@ struct CandidateState {
     mutating_actions: u32,
     oracle: FlipOracle,
     /// The oracle's observations in the order they were made (#864) —
-    /// baseline, per-iteration candidate runs, the pre-submit confirmation.
+    /// baseline (only for a configured `--test-command`; the authored-witness
+    /// baseline feeds the flip oracle directly without a trace entry),
+    /// per-iteration candidate runs, the pre-submit confirmation.
     /// Mirrors the emitted `ProofStep::Oracle` events, accumulated here so
     /// the verdict can carry its own trace without replaying the stream.
     oracle_trace: Vec<OracleObservation>,
@@ -1596,6 +1599,16 @@ impl<'a> Pipeline<'a> {
         // solo-provider setups do) previously aborted here after one model
         // call, having done no work at all. Degrade to the unauthored verify
         // ladder instead, and say so once.
+        // Whether this is the `create_worktrees` caller — a plain single-shot
+        // run the operator asked to happen in a worktree — as opposed to
+        // best-of-N or an authored witness. Read from the CALLER's argument,
+        // before the degradation below shadows it, because a requested-then-
+        // degraded authored witness is still not this caller.
+        //
+        // Exact by construction: `run` takes the direct path when
+        // `n == 1 && !authored_witness && !isolate`, so reaching here with
+        // `n == 1 && !author_witness` means `isolate` was the only reason.
+        let single_shot_isolation = n == 1 && !author_witness;
         // `can_author_independent_witness` already gated `author_witness` and
         // announced any degradation, so this is the invariant guard for that
         // decision — silent on purpose, never a second warning.
@@ -1753,6 +1766,28 @@ impl<'a> Pipeline<'a> {
                     // conflicting files; the winning work stays recoverable.
                     Err(e) => adopt_failure = Some(e),
                 }
+            } else if single_shot_isolation {
+                // The `create_worktrees` run that did not pass. Discarding is
+                // right for best-of-N — the operator asked for the best of
+                // several and none was good, and the losers were never meant to
+                // survive. It is also right for an authored-witness abort,
+                // where the candidate is *poisoned* rather than merely
+                // unverified (a tampered artifact, an author that edited
+                // production code) and `witness_isolation`'s tests pin its
+                // removal.
+                //
+                // It is wrong for this third caller. That operator asked where
+                // the work should *happen*, not that it be thrown away unless
+                // it verified — and without this they end up strictly worse off
+                // than with isolation off, where a failed run at least leaves
+                // its changes in the tree to look at. So keep the snapshot and
+                // name it: the same posture as the adopt-failure arm just
+                // above, and for the same reason — unverified is not worthless.
+                self.warn(format!(
+                    "this run's changes did not verify, so they were not adopted into your \
+                     working tree — they are kept at {} for you to inspect or salvage",
+                    ws.root()
+                ));
             } else {
                 ws.remove().await;
             }
@@ -2101,7 +2136,8 @@ impl<'a> Pipeline<'a> {
             // it — gated on the DECISION, not on the flip transition, so
             // paths already headed to the judge pay nothing extra and the
             // cost is bounded to one lint pass + one suite run per
-            // candidate, exactly where the credit is spent.
+            // verification round (a revised candidate re-enters the audit),
+            // paid only where a credit is about to be spent.
             let mut lint_sample = String::new();
             if matches!(ladder_decision(&inputs), LadderDecision::SubmitFast)
                 && let Some(cmd) = effective_cmd
@@ -2333,8 +2369,14 @@ impl<'a> Pipeline<'a> {
                     // failure means the evidence alone didn't steer the
                     // worker — spend one judge call on course-correction
                     // (event-triggered, never a fixed midpoint checkpoint).
+                    // Counted from the deterministic-failure ledger
+                    // (`deterministic_disclosure` just recorded this round's
+                    // fingerprint), not from `revisions`: a prior model-judge
+                    // FAIL also increments `revisions`, and gating on it paid
+                    // a guidance call on the FIRST deterministic red while
+                    // telling the judge the agent had "failed twice in a row".
                     let mut reason = brief.message();
-                    if self.config.distress_guidance && state.revisions >= 1 {
+                    if self.config.distress_guidance && state.failures.len() >= 2 {
                         match self
                             .judge_guidance(
                                 goal,

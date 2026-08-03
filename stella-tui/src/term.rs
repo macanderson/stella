@@ -138,8 +138,9 @@ impl TerminalGuard {
             execute!(out, EnableMouseCapture)?;
             guard.state.mouse.store(true, Ordering::SeqCst);
         }
-        // The kitty keyboard protocol disambiguates modified keys, letting
-        // `⌘⏎`/`⌃⏎` submit while plain `⏎` inserts a line break. Probing
+        // The kitty keyboard protocol disambiguates modified keys, so a
+        // modified `⌘⏎`/`⌃⏎` can insert a line break while a bare `⏎`
+        // submits (`composer::classify_enter`). Probing
         // needs raw mode, so this comes last; best-effort (`false` on any
         // probe error → legacy Enter semantics).
         if matches!(supports_keyboard_enhancement(), Ok(true)) {
@@ -154,7 +155,9 @@ impl TerminalGuard {
 
     /// Whether the kitty keyboard protocol was pushed. When it is active, a
     /// modified Enter (`⌘⏎`/`⌃⏎`) is reportable and the composer runs full
-    /// textarea semantics; without it the shell falls back to Enter-submits
+    /// textarea semantics; without it only `⌥⏎` survives, so the hint
+    /// advertises that chord instead. Enter semantics themselves are
+    /// unchanged either way — a bare `⏎` always submits
     /// (see `crate::composer::classify_enter`).
     pub(crate) fn kitty(&self) -> bool {
         self.state.kitty.load(Ordering::SeqCst)

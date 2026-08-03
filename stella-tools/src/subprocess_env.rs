@@ -4,8 +4,11 @@
 //! Stella needs provider credentials in its own process, but tools do not.
 //! Passing the full inherited environment to a shell, project script, hook,
 //! or long-running server lets ordinary repository code print or exfiltrate
-//! the credential that pays for the agent. Apply [`crate::subprocess_env::scrub_sensitive_env`] as
-//! the final environment mutation before every such spawn.
+//! the credential that pays for the agent. Apply
+//! [`crate::subprocess_env::scrub_spawn_env`] as the final environment
+//! mutation before every such spawn;
+//! [`crate::subprocess_env::scrub_sensitive_env`] is the credential-only
+//! subset, for fixed helper probes that never run repository code.
 //!
 //! Two families are removed, and they are removed for different reasons:
 //!

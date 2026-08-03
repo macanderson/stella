@@ -327,6 +327,14 @@ async fn run_pipeline_one_shot(
         m.register_external_providers(|message| eprintln!("  {} {message}", "!".yellow()))
             .await;
         prompt::attach_record_channel(m, &active_rules);
+        // Tell memory which execution this run reflects on, before the turn
+        // runs — the post-turn self-review is stored 1:1 with an execution,
+        // so a path that skips this files id-less reflection rows (NULL
+        // `self_rating`), which is exactly what happened on this, the primary
+        // headless surface, while only the deck was wired.
+        if let Some((_, id)) = &execution {
+            m.set_execution_id(*id);
+        }
     }
     if let Some(m) = &memory {
         // Phase 2 (#713): the one-shot path recalled and reported nothing, so
@@ -997,6 +1005,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 goal,
                 Some(presence.id()),
                 recall_event,
+                memory.as_mut(),
             )
             .await;
             presence.needs_input();
@@ -1085,6 +1094,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             Some(presence.id()),
             &repl_activation,
             recall_event,
+            memory.as_mut(),
         )
         .await;
         presence.needs_input();
@@ -1942,7 +1952,7 @@ pub(crate) fn settle_reflection_budget(report: &mut ReflectionReport, guard: &mu
 pub(crate) fn open_store(workspace_root: &std::path::Path) -> Option<Arc<Store>> {
     // Persisted telemetry can feed calibration and extension-authored rules
     // back into later sessions. Claim-mode trials are isolated and ephemeral:
-    // do not read that state or create `.stella/store.db` in the task — which
+    // do not read that state or create `.stella/private/store.db` in the task — which
     // is what `session_persistence()` answers.
     //
     // The open itself is `stella_runtime::open_store`, which *returns* the
@@ -2003,6 +2013,11 @@ pub(crate) struct SessionPresence {
     registry: stella_store::SessionRegistry,
     record: stella_store::SessionRecord,
     name: String,
+    /// This session's durable record, carried so [`Self::finish`] can compact
+    /// it. Cloning the handle rather than re-opening the record keeps the
+    /// compaction pointed at the session that was actually bound, whatever the
+    /// driver did in between.
+    durability: crate::durability::SessionDurability,
 }
 
 impl SessionPresence {
@@ -2042,6 +2057,7 @@ impl SessionPresence {
             registry,
             record,
             name,
+            durability: cfg.durability.clone(),
         }
     }
 
@@ -2085,6 +2101,11 @@ impl SessionPresence {
             stella_store::SessionStatus::Error
         };
         let _ = self.registry.upsert(&self.record);
+        // The headless counterpart of the deck's exit compaction. A one-shot
+        // run writes fewer objects than a long deck session, but it is also the
+        // shape that runs a hundred times in a loop from a script — which is
+        // exactly how a workspace accumulates loose objects nobody is watching.
+        self.durability.compact();
         if let Some((title, body)) = notify {
             let _ = stella_store::NotificationStore::open_default().push(
                 &stella_store::Notification::new(title, body, self.record.id.clone())
@@ -2128,10 +2149,18 @@ async fn run_turn(
     // there yet. Passed rather than re-derived: re-running recall to report it
     // would double the retrieval cost of every interactive turn.
     recall_event: Option<AgentEvent>,
+    // The caller's session memory, borrowed for the duration of the turn so
+    // this execution's id can be stamped before the turn runs — the caller
+    // reflects with the same memory afterwards, and a reflection that cannot
+    // name its execution files an id-less row (NULL `self_rating`).
+    session_memory: Option<&mut SessionMemory>,
 ) -> Result<(), String> {
     budget.begin_turn();
     let turn_start = Instant::now();
     let execution = begin_execution(store, kind, prompt, cfg, session);
+    if let (Some((_, id)), Some(m)) = (&execution, session_memory) {
+        m.set_execution_id(*id);
+    }
     let files_before = registry.files_touched().len();
 
     let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();

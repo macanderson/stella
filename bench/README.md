@@ -109,14 +109,15 @@ python3 bench/run_swebench.py --instances bench/instances.sample.jsonl --dry-run
 
 # 2. Generate predictions against SWE-bench-Verified (needs a provider key):
 python3 bench/run_swebench.py \
-  --dataset princeton-nlp/SWE-bench_Verified \
+  --dataset-name princeton-nlp/SWE-bench_Verified \
   --model anthropic/claude-fable-5 \
-  --output predictions.jsonl
+  --output-dir results
 ```
 
 Each input record needs at least `instance_id`, `repo`, `base_commit`, and
-`problem_statement` (a subset of the SWE-bench schema); `--dataset` pulls the
-full set from HuggingFace (`pip install datasets`). The harness clones each repo
+`problem_statement` (a subset of the SWE-bench schema); `--dataset-name` pulls the
+full set from HuggingFace (`pip install datasets`), and the predictions land at
+`<output-dir>/<run-id>/predictions.jsonl`. The harness clones each repo
 at `base_commit`, runs Stella in the pristine checkout, and captures the
 resulting `git diff` as `model_patch`.
 

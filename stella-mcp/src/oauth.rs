@@ -31,9 +31,10 @@
 //! Security: tokens live in an owner-only (0600) JSON file inside an
 //! owner-only (0700) directory, at a path chosen by the caller. Every open is
 //! `O_NOFOLLOW` and rejects a non-regular or multiply-linked file, so a
-//! planted symlink cannot redirect a token write. Persistence is therefore
-//! **Unix-only**: on any other platform [`TokenStore`] refuses to read or
-//! write rather than fall back to a world-readable file. No token, verifier,
+//! planted symlink cannot redirect a token write. That hardening is
+//! **Unix-only**: on other platforms the store still persists (#617 — it
+//! used to refuse), protected only by the OS's inherited ACLs
+//! (see `ensure_private_token_parent`). No token, verifier,
 //! or client secret is ever logged — [`OAuthTokens`]'s `Debug` is hand-written
 //! to redact them, matching the [`crate::config::McpTransport`] convention.
 
