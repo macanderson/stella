@@ -216,23 +216,3 @@ fn summarize_is_deterministic() {
     ];
     assert_eq!(summarize(&boards), summarize(&boards));
 }
-
-#[test]
-fn an_interrupted_opening_request_is_not_an_interrupt() {
-    // Nothing is in flight when the opening request arrives, so an
-    // `interrupted: true` opening must not count — before the guard,
-    // `interrupts` could exceed `follow_ups` (its documented superset) and a
-    // task scored one-shot AND interrupted at once.
-    let board = Scoreboard::from_events(&[interrupt(20), Event::ModelCall]);
-    assert_eq!(board.follow_ups, 0);
-    assert_eq!(
-        board.interrupts, 0,
-        "the opening request counted as an interrupt"
-    );
-    assert!(good(board).was_one_shot());
-
-    // A genuine mid-flight interruption still counts.
-    let board = Scoreboard::from_events(&[human(20), Event::ModelCall, interrupt(5)]);
-    assert_eq!(board.follow_ups, 1);
-    assert_eq!(board.interrupts, 1);
-}

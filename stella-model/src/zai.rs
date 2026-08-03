@@ -1354,13 +1354,17 @@ async fn aggregate_zai_stream(
                     }
                     if let Some(function) = tc_delta.function {
                         if let Some(name) = function.name {
-                            // Last-wins, like `acc.id` above: the dialect
-                            // delivers the name whole, and a gateway that
-                            // repeats it on every argument fragment turned
-                            // append into "read_fileread_fileread_file" — a
-                            // name matching no schema, burning a repair round
-                            // on a tool that exists.
-                            acc.name = name;
+                            // Accumulated, not assigned: the dialect contract
+                            // (pinned by
+                            // `complete_reassembles_a_streamed_tool_call_split_across_many_chunks`)
+                            // allows the name to arrive in fragments like the
+                            // arguments do, so append is the correct
+                            // reassembly. A gateway that instead repeats the
+                            // WHOLE name per fragment would garble this — no
+                            // such gateway has been observed; if one appears,
+                            // dedupe the exact-repeat case rather than
+                            // switching to last-wins.
+                            acc.name.push_str(&name);
                         }
                         if let Some(args) = function.arguments {
                             // Liveness only (see
