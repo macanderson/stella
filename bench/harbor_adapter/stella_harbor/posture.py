@@ -97,6 +97,23 @@ _CANDIDATES_ENV = "STELLA_CANDIDATES"
 # still describes the posture that produced it.
 _MODEL_TIMEOUT_ENV = "STELLA_MODEL_TIMEOUT"
 
+# Host-side selector for the corroboration ask (#1295): when a model judge
+# passes and nothing deterministic stands behind it, does the pipeline spend
+# one revision demanding the evidence, or record the pass as unverified on the
+# spot?
+#
+# A selector rather than a rebuild because the question is empirical and the
+# answer is a measurement, not a preference. It was measured once and reverted:
+# the ask fired on nearly every Terminal-Bench turn, because those turns had no
+# tracked command and therefore no way to satisfy it, so it bought a turn
+# everywhere and evidence nowhere. The pipeline now refuses to raise the ask
+# without a command that could answer it, which is the change this selector
+# exists to put on the record — two arms, one binary, one posture key apart.
+#
+# Unset omits the key, so every digest recorded before this selector existed
+# still describes the posture that produced it.
+_JUDGE_EVIDENCE_DEMAND_ENV = "STELLA_JUDGE_EVIDENCE_DEMAND"
+
 # Refusal ceilings, not clamps. Unlike the effort tier there is no enum to
 # validate an integer against, so a bound is the only check available beyond
 # "parses as a number" — and the failure it catches is a fat-fingered extra
@@ -232,6 +249,29 @@ def resolve_candidates(value: str | None) -> int | None:
     )
 
 
+def resolve_judge_evidence_demand(value: str | None) -> bool | None:
+    """Resolve the corroboration-ask arm, or ``None`` to inherit the default.
+
+    Fails closed on anything that is not one of the four accepted spellings,
+    for the reason every selector here does: a run scored under a configuration
+    nobody chose is worse than a run that refused to start. In particular a
+    bare ``"false"`` is *not* silently read as off — the accepted vocabulary is
+    the one the setting itself uses (``on``/``off``), plus ``1``/``0`` for the
+    shell that has an integer to hand.
+    """
+    if value is None:
+        return None
+    text = value.strip().lower()
+    if text in ("on", "1"):
+        return True
+    if text in ("off", "0"):
+        return False
+    raise ValueError(
+        "benchmark judge evidence demand must be one of on/off/1/0; "
+        f"got `{value}`"
+    )
+
+
 def resolve_model_timeout(value: str | None) -> int | None:
     """Resolve the per-generation silence ceiling in seconds, or ``None``.
 
@@ -363,6 +403,7 @@ def _benchmark_engine_posture(
     triage_model: str | None = None,
     max_revisions: int | None = None,
     candidates: int | None = None,
+    judge_evidence_demand: bool | None = None,
     model_timeout_secs: int | None = None,
 ) -> tuple[dict[str, Any], str, str]:
     """Return a canonical Terminal-Bench engine posture and its hash.
@@ -563,6 +604,14 @@ def _benchmark_engine_posture(
         posture["pipeline_max_revisions"] = max_revisions
     if candidates is not None:
         posture["pipeline_candidates"] = candidates
+    # Same omit-when-unset rule, spelled in the setting's own `on`/`off`
+    # vocabulary rather than as a JSON bool: the CLI parses this key as a
+    # `Toggle`, and a `true` here would be a refused run rather than a
+    # selected arm.
+    if judge_evidence_demand is not None:
+        posture["pipeline_judge_evidence_demand"] = (
+            "on" if judge_evidence_demand else "off"
+        )
     # Same omit-when-unset rule, and here it carries an extra weight: this key
     # is what makes a timeout change a *posture* change rather than a rebuild.
     # A run that selects it says so in its digest; a run that does not is

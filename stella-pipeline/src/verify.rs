@@ -877,5 +877,37 @@ pub fn guidance_prompt(goal: &str, diff: &str, evidence_summary: &str) -> String
     )
 }
 
+/// The feedback a turn carries back to the WORKER when a model judge passed
+/// with nothing deterministic behind it (#1295) — no flip, no green test —
+/// and the run has a tracked command that could still carry that evidence.
+///
+/// Not a judge prompt: this text goes to the worker as a revision reason, so
+/// it names the one thing the next turn has to produce rather than asking for
+/// a verdict. The wording is deliberately narrow about what counts, because
+/// the ladder is: a diff and a file touch prove the tree *changed* and are
+/// already recorded — only `command` going green proves the change is right.
+///
+/// It also states the escape hatch. A worker that cannot make the command
+/// observe its change should say so and stop rather than invent a test that
+/// asserts nothing, which is the failure mode a bare "add a test" ask buys:
+/// the run pays a turn *and* ends up with a tautological witness.
+pub fn evidence_demand_prompt(command: &str) -> String {
+    format!(
+        "Your work was reviewed and looks correct, but NOTHING deterministic backs that up: \
+         `{command}` has not gone from failing to passing, and no test that covers your change \
+         has been observed green. A reviewer's opinion is the only thing standing behind this \
+         turn, and that is not enough to finish on.\n\n\
+         Spend this turn producing that evidence, and nothing else:\n\
+         - Run `{command}` and make it pass over the change you already made.\n\
+         - If it does not cover your change, extend it (or add a test it runs) so that it FAILS \
+           without your change and PASSES with it. Check both directions.\n\
+         - Do not rewrite working code to make a check easier, and do not add an assertion that \
+           would pass either way.\n\n\
+         If the change genuinely cannot be observed by `{command}` — no test surface exists for \
+         it — say so in one line and stop. An honest \"unverified\" is the correct outcome there; \
+         a test that cannot fail is worse than none."
+    )
+}
+
 #[cfg(test)]
 mod tests;

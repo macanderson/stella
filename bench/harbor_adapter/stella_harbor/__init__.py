@@ -87,6 +87,7 @@ from .posture import (
     _ASSURANCE_TIERS_VERSION,
     _CANDIDATES_ENV,
     _ENGINE_POSTURE_VERSION,
+    _JUDGE_EVIDENCE_DEMAND_ENV,
     _MAX_REVISIONS_ENV,
     _MODEL_TIMEOUT_ENV,
     _TRIAGE_MODEL_ENV,
@@ -97,6 +98,7 @@ from .posture import (
     _benchmark_engine_posture,
     fold_witness_observations,
     resolve_candidates,
+    resolve_judge_evidence_demand,
     resolve_max_revisions,
     resolve_model_timeout,
     resolve_triage_model,
@@ -248,6 +250,7 @@ _HOST_ONLY_STELLA_ENV = frozenset(
         # unlisted selector refuses the run instead of enabling the arm.
         _MAX_REVISIONS_ENV,
         _CANDIDATES_ENV,
+        _JUDGE_EVIDENCE_DEMAND_ENV,
         # The third coupled ceiling (#1211 §6.2). Same bucket again: read on the
         # host, reaching Stella only inside the hashed posture.
         _MODEL_TIMEOUT_ENV,
@@ -1685,6 +1688,9 @@ class StellaAgent(BaseInstalledAgent):
                 self._configured_value(_MAX_REVISIONS_ENV)
             ),
             candidates=resolve_candidates(self._configured_value(_CANDIDATES_ENV)),
+            judge_evidence_demand=resolve_judge_evidence_demand(
+                self._configured_value(_JUDGE_EVIDENCE_DEMAND_ENV)
+            ),
             model_timeout_secs=resolve_model_timeout(
                 self._configured_value(_MODEL_TIMEOUT_ENV)
             ),

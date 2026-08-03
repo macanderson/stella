@@ -113,6 +113,11 @@ async fn a_timed_out_candidate_suite_escalates_instead_of_revising() {
     let config = PipelineConfig {
         test_command: Some("cargo test -p x".into()),
         diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
+        // The subject here is which rung an unobservable candidate suite lands
+        // on. The #1295 corroboration ask fires strictly *after* that, on the
+        // judge's pass, and would spend a revision this scenario is not about
+        // — `tests/judge_evidence_demand.rs` covers that behaviour directly.
+        judge_evidence_demand: false,
         ..PipelineConfig::default()
     };
     let pipeline = Pipeline::new(

@@ -354,6 +354,26 @@ pub struct PipelineConfig {
     pub diagnostics_veto_warnings: bool,
     /// Maximum revision turns per candidate when verification fails.
     pub max_revisions: u32,
+    /// Ask for corroboration when a model judge passes and nothing
+    /// deterministic stands behind it (#1295): spend one revision demanding
+    /// the evidence instead of recording the pass as UNVERIFIED on the spot.
+    ///
+    /// Bounded to **one** demand per candidate, drawn from the same
+    /// `max_revisions` budget a real failure spends, and — the part that
+    /// decides whether this is worth having at all — only raised when
+    /// `Pipeline::effective_test_command` resolved to something. Without a
+    /// tracked command the ladder has no channel that can *ever* answer the
+    /// ask: `touched_tests_passed` stays `None` by construction and the flip
+    /// oracle never observes a candidate run, so
+    /// [`crate::verify::LadderInputs::judge_pass_stands_alone`] is true no
+    /// matter what the worker does with the turn. That is the whole of why
+    /// this was measured as a loss the first time (#1211 §1) — on
+    /// Terminal-Bench, with no `--test-command` and the authored-witness rung
+    /// unable to fire under a single-model posture, the condition held on
+    /// nearly every turn and the extra turn bought nothing on all of them.
+    /// Gating on the command is what turns "fires everywhere, answerable
+    /// nowhere" into "fires only where an answer exists".
+    pub judge_evidence_demand: bool,
     /// Refuse the run when no witness author independent of the worker can
     /// be resolved, instead of degrading to the unauthored verify ladder.
     ///
@@ -428,6 +448,12 @@ impl Default for PipelineConfig {
             diff_budget_lines: 400,
             diagnostics_veto_warnings: false,
             max_revisions: 2,
+            // On (#1295). Off is the historical setting, and the reason it was
+            // off — the ask fired on turns that could never answer it — is now
+            // a precondition of raising it at all rather than a property of
+            // the workload. See the field's docs and `bench/evidence/judge-
+            // evidence-demand-1295/README.md` for the measurement.
+            judge_evidence_demand: true,
             require_independent_witness: false,
             candidates: None,
             candidate_concurrency: None,
@@ -714,6 +740,12 @@ struct CandidateState {
     /// (tautological — the fast-submit was withheld); None = never run.
     witness_mutation: Option<bool>,
     revisions: u32,
+    /// How many of those revisions were spent asking for corroboration of a
+    /// standalone judge pass rather than fixing a failure (#1295). Capped at
+    /// one per candidate: the second ask would be to a worker that already
+    /// answered "there is no test surface here", and paying for that answer
+    /// twice is the cost this feature was switched off for the first time.
+    evidence_demands: u32,
     /// Paths of the witness artifact grafted into this candidate, if the
     /// warrant bought one after execution. Empty until then, and empty forever
     /// when the change had nothing to prove.
@@ -1990,6 +2022,7 @@ impl<'a> Pipeline<'a> {
             lint_baseline,
             witness_mutation: None,
             revisions: 0,
+            evidence_demands: 0,
             witness_paths: Vec::new(),
             failures: Vec::new(),
         };
@@ -2643,23 +2676,54 @@ impl<'a> Pipeline<'a> {
                         // `Unverified` score keeps it from tying a genuinely
                         // verified sibling in best-of-N.
                         if inputs.judge_pass_stands_alone() {
-                            // Deliberately relabels rather than sending the
-                            // turn back for evidence. Sending back was built
-                            // and measured, and the measurement is the reason
-                            // it is not wired: this condition holds on MOST
-                            // Terminal-Bench turns, because those tasks
-                            // frequently expose no suite the agent can point
-                            // at — so the request costs a turn nearly
-                            // everywhere rather than on the bad ones. Stella
-                            // already loses 7 trials in 20 to the harness's
-                            // 900-second wall, and buying turns when
-                            // wall-clock is the binding constraint would cost
-                            // more tasks than it recovers.
+                            // Ask for the missing evidence once, when asking
+                            // can be answered (#1295). The precondition that
+                            // makes this affordable is `effective_cmd`: the
+                            // two things that would clear
+                            // `judge_pass_stands_alone` — a flip, or touched
+                            // tests green — are BOTH observations of the
+                            // tracked command, so with none resolved the ask
+                            // is unanswerable however well the worker
+                            // responds, and every turn spent on it is pure
+                            // cost. That is the shape the first measurement
+                            // found (#1211 §1): on Terminal-Bench the
+                            // condition held on most turns precisely because
+                            // most turns had no command, and buying turns
+                            // against a 900-second wall cost more tasks than
+                            // it recovered.
                             //
-                            // The cheaper route to the same end is upstream:
-                            // with shell writes now reaching the ledger,
-                            // `file_change_events` carries real evidence on
-                            // turns that used to arrive here blind.
+                            // Capped at one demand per candidate and drawn
+                            // from the same `max_revisions` budget a real
+                            // failure spends, so the worst case is one extra
+                            // turn on a run that was going to be recorded
+                            // unverified anyway — not an unbounded hunt for
+                            // proof.
+                            if self.config.judge_evidence_demand
+                                && state.evidence_demands == 0
+                                && state.revisions < self.config.max_revisions
+                                && let Some(cmd) = effective_cmd
+                            {
+                                state.evidence_demands += 1;
+                                let ask = crate::verify::evidence_demand_prompt(cmd.command);
+                                if let Err(reason) = self
+                                    .revise_candidate(
+                                        engine, surface, budget, &ask, total, &mut state,
+                                    )
+                                    .await
+                                {
+                                    return CandidateResult::aborted(state.messages, reason);
+                                }
+                                // Re-observe from the top: the revised tree
+                                // gets a fresh test run, and the ladder
+                                // re-decides over it. A turn that produced
+                                // the evidence now takes a deterministic
+                                // rung; one that did not lands back here with
+                                // `evidence_demands` spent and is relabelled
+                                // below.
+                                continue;
+                            }
+                            // No answerable ask left — record the pass as
+                            // unverified, per the comment above.
                             let mut abstained = evidence.clone();
                             abstained.summary = format!(
                                 "UNVERIFIED: judge passed with no deterministic \
