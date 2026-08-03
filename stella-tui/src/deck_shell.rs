@@ -34,7 +34,7 @@ use crate::envelope::{AgentId, AgentMeta, AgentStatus, Inbound, WorkspaceInput};
 use crate::graph::GraphSnapshot;
 use crate::resource::ResourceMonitor;
 use crate::shell::DebugLog;
-use crate::term::{PanicHookGuard, TerminalGuard};
+use crate::term::{PanicHookGuard, Screen, TerminalGuard};
 use crate::theme;
 
 /// The repaint / sample cadence. ~30 fps keeps animations smooth and the CPU
@@ -363,7 +363,7 @@ pub async fn run_deck(
 
     // The hook shares the guard's state so a panic restores the terminal even
     // in abort builds, where Drop never runs (see `crate::term`).
-    let guard = TerminalGuard::enter(opts.mouse_capture)?;
+    let guard = TerminalGuard::enter(opts.mouse_capture, Screen::Alternate)?;
     let _hook_guard = PanicHookGuard::install(opts.debug_log_path.clone(), &guard);
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     // Detected once (see `theme::color_mode`) and threaded through the draw loop

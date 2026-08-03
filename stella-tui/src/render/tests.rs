@@ -757,7 +757,7 @@ fn ui_memoizes_transcript_lines_and_invalidates_on_a_streaming_delta() {
     ui.ensure_transcript_lines(&model, false, 40);
     let first = ui.transcript_lines().to_vec();
     let ptr = ui.transcript_lines().as_ptr();
-    assert_eq!(first, transcript_lines(&model, false, 40));
+    assert_eq!(first, transcript_lines(&model, 0, false, 40));
 
     // An unchanged frame reuses the SAME backing allocation — no re-wrap.
     ui.ensure_transcript_lines(&model, false, 40);
@@ -778,7 +778,10 @@ fn ui_memoizes_transcript_lines_and_invalidates_on_a_streaming_delta() {
         "the delta coalesced, not appended"
     );
     ui.ensure_transcript_lines(&model, false, 40);
-    assert_eq!(ui.transcript_lines(), transcript_lines(&model, false, 40));
+    assert_eq!(
+        ui.transcript_lines(),
+        transcript_lines(&model, 0, false, 40)
+    );
     assert_ne!(
         ui.transcript_lines(),
         first.as_slice(),
@@ -793,7 +796,10 @@ fn ui_memoizes_transcript_lines_and_invalidates_on_a_streaming_delta() {
         wide,
         "a wrap-width change must rebuild"
     );
-    assert_eq!(ui.transcript_lines(), transcript_lines(&model, false, 20));
+    assert_eq!(
+        ui.transcript_lines(),
+        transcript_lines(&model, 0, false, 20)
+    );
 }
 
 #[test]
@@ -907,7 +913,7 @@ fn tool_cards_and_verdicts_style_content_deterministically() {
     });
     // A realistic width: the right-hand metric column only lays out when
     // there is room for it, so a 0-width render would drop the duration.
-    let lines = transcript_lines(&model, false, 120);
+    let lines = transcript_lines(&model, 0, false, 120);
     let joined: String = lines
         .iter()
         .flat_map(|l| l.spans.iter().map(|s| s.content.clone()))

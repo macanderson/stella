@@ -26,8 +26,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crossterm::event::{self, Event, KeyEventKind};
-use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use ratatui::text::{Line, Text};
+use ratatui::widgets::{Paragraph, Widget};
+use ratatui::{Terminal, TerminalOptions, Viewport};
 use stella_protocol::AgentEvent;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
@@ -35,7 +37,7 @@ use crate::composer::{Composer, SlashCommand};
 use crate::input::UserInput;
 use crate::model::SessionModel;
 use crate::render::render;
-use crate::term::{PanicHookGuard, TerminalGuard};
+use crate::term::{PanicHookGuard, Screen, TerminalGuard};
 use crate::theme;
 use crate::ui::{ShellAction, UiState, handle_key, ingest};
 
@@ -55,6 +57,20 @@ pub struct RunOptions {
     /// keeps working (L-T2) — turn on only for an explicitly mouse-driven,
     /// keyboard-degradable feature.
     pub mouse_capture: bool,
+    /// Run the surface the way a screen reader can actually read it. Set by
+    /// `stella --simple` (#936); see [`run`] for what it changes and
+    /// [`crate::term::Screen`] for why the alternate screen is the root of
+    /// the problem.
+    ///
+    /// Three things follow from it, and they are one decision, not three:
+    /// the session draws **inline** on the user's own screen instead of on
+    /// the alternate one; each settled transcript entry is written into the
+    /// terminal's scrollback as ordinary output, exactly once; and the panels
+    /// stack in a single column so reading order matches document order
+    /// ([`crate::ui::UiState::screen_reader`]). Mouse capture is forced off
+    /// regardless of [`Self::mouse_capture`] — a captured mouse takes the
+    /// selection away from the assistive technology that needs it.
+    pub screen_reader: bool,
 }
 
 impl Default for RunOptions {
@@ -64,8 +80,129 @@ impl Default for RunOptions {
             paste_line_threshold: crate::composer::DEFAULT_PASTE_LINE_THRESHOLD,
             debug_log_path: None,
             mouse_capture: false,
+            screen_reader: false,
         }
     }
+}
+
+/// Rows the inline viewport reserves in screen-reader mode: the HUD (3), a
+/// live tail of the transcript plus the files list, and the composer (3).
+/// Everything older has already moved into scrollback, so this is a live
+/// working area rather than the session's whole history — it does not need to
+/// be large, and a smaller stable region is a quieter one for a reader.
+const INLINE_VIEWPORT_ROWS: u16 = 14;
+
+/// Least the inline viewport can shrink to on a short terminal and still show
+/// a HUD, one transcript row, and the composer.
+const INLINE_VIEWPORT_MIN_ROWS: u16 = 8;
+
+/// How tall the inline viewport should be on a terminal of `terminal_rows`.
+///
+/// One row is always left above it: the viewport is anchored to the cursor's
+/// row, and claiming the entire terminal would leave `insert_before` nowhere
+/// to put a line — every flush would scroll the whole screen instead of
+/// appending above a stable region.
+fn inline_viewport_rows(terminal_rows: u16) -> u16 {
+    terminal_rows
+        .saturating_sub(1)
+        .min(INLINE_VIEWPORT_ROWS)
+        .max(INLINE_VIEWPORT_MIN_ROWS.min(terminal_rows.max(1)))
+}
+
+/// How many leading transcript entries are safe to move into scrollback.
+///
+/// Everything but the last: [`SessionModel`] coalesces streaming deltas into
+/// the **trailing** entry, so it is the only one that can still grow. Flushing
+/// it would put half a sentence into scrollback and then, once it finished
+/// growing, put the whole sentence there again — a screen reader would read
+/// the fragment and the sentence as two separate utterances.
+///
+/// At teardown the caller flushes the remainder ([`flush_settled`] with
+/// `include_trailing`), because by then nothing can grow.
+fn settled_entry_count(transcript_len: usize, include_trailing: bool) -> usize {
+    if include_trailing {
+        transcript_len
+    } else {
+        transcript_len.saturating_sub(1)
+    }
+}
+
+/// The rendered lines for transcript entries `from..to`, wrapped to `width`.
+///
+/// `live` is `false` for every entry: liveness is the tail-follow affordance
+/// for a thought still being written, and nothing in this range is still being
+/// written — that is what makes it flushable at all.
+fn scrollback_lines(
+    model: &SessionModel,
+    from: usize,
+    to: usize,
+    expand_thinking: bool,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let mut out = Vec::new();
+    for entry in &model.transcript[from.min(to)..to] {
+        crate::render::entry_lines(
+            entry,
+            &model.files,
+            expand_thinking,
+            expand_thinking,
+            false,
+            width,
+            &mut out,
+        );
+    }
+    out
+}
+
+/// Move every newly-settled transcript entry into the terminal's scrollback
+/// and record that it is there.
+///
+/// This is the whole accessibility mechanism. `insert_before` writes the lines
+/// **above** the inline viewport, so they are ordinary terminal output: a
+/// screen reader announces them once as they arrive, the reader's review
+/// cursor can walk back through them, and the user's own scrollback keys
+/// reach them. The alternative — leaving them in a pane that repaints every
+/// frame — gives a reader a rectangle of cells that changes wholesale several
+/// times a second and no notion of "a new line appeared".
+///
+/// Bumping [`UiState::scrollback_entries`] is what stops the live pane from
+/// drawing the same entries again; the two must move together or the session
+/// is announced twice.
+fn flush_settled<B>(
+    terminal: &mut Terminal<B>,
+    model: &SessionModel,
+    ui: &mut UiState,
+    color_mode: theme::ColorMode,
+    include_trailing: bool,
+) -> io::Result<()>
+where
+    B: ratatui::backend::Backend<Error = io::Error>,
+{
+    let settled = settled_entry_count(model.transcript.len(), include_trailing);
+    if settled <= ui.scrollback_entries {
+        return Ok(());
+    }
+    let width = terminal.size()?.width;
+    let lines = scrollback_lines(
+        model,
+        ui.scrollback_entries,
+        settled,
+        ui.thinking_expanded,
+        width as usize,
+    );
+    ui.scrollback_entries = settled;
+    let height = match u16::try_from(lines.len()) {
+        Ok(0) => return Ok(()),
+        Ok(h) => h,
+        // A single settled entry cannot plausibly wrap to 65k rows, but the
+        // cast must not wrap around into a tiny viewport if it ever did.
+        Err(_) => u16::MAX,
+    };
+    terminal.insert_before(height, |buf| {
+        Paragraph::new(Text::from(lines)).render(buf.area, buf);
+        theme::apply_theme(buf, color_mode);
+        theme::degrade_buffer(buf, color_mode);
+    })
 }
 
 /// A best-effort structured debug log (L-T8). Never panics and never fails the
@@ -175,10 +312,34 @@ pub async fn run(
 
     // The hook shares the guard's state so a panic restores the terminal even
     // in abort builds, where Drop never runs (see `crate::term`).
-    let term_guard = TerminalGuard::enter(opts.mouse_capture)?;
+    // Screen-reader mode owns both of these: the alternate screen is the
+    // single most reader-hostile shape a terminal program can take (see
+    // `crate::term::Screen`), and a captured mouse takes native selection
+    // away from the assistive technology that reads by selecting.
+    let screen = if opts.screen_reader {
+        Screen::Normal
+    } else {
+        Screen::Alternate
+    };
+    let mouse_capture = opts.mouse_capture && !opts.screen_reader;
+    let term_guard = TerminalGuard::enter(mouse_capture, screen)?;
     let _hook_guard = PanicHookGuard::install(opts.debug_log_path.clone(), &term_guard);
 
-    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    let backend = CrosstermBackend::new(io::stdout());
+    let mut terminal = if opts.screen_reader {
+        // An inline viewport draws in place and leaves everything above it
+        // alone, which is what makes `insert_before` — and therefore the
+        // whole scrollback path in `flush_settled` — possible.
+        let rows = inline_viewport_rows(crossterm::terminal::size().map_or(24, |(_, rows)| rows));
+        Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Inline(rows),
+            },
+        )?
+    } else {
+        Terminal::new(backend)?
+    };
     // Detected once (see `theme::color_mode`) and threaded through the draw
     // loop below, rather than touching every `theme::TOKEN` call site in
     // `render.rs`/`textline.rs`/the view modules.
@@ -192,6 +353,7 @@ pub async fn run(
     // Enter semantics follow the terminal's actual capability (see
     // `crate::term::TerminalGuard::kitty` and `crate::composer::classify_enter`).
     ui.enter_submits = !term_guard.kitty();
+    ui.screen_reader = opts.screen_reader;
 
     // A blocking reader thread forwards crossterm input events to the async
     // loop. It polls so it can observe the shutdown flag and exit promptly.
@@ -216,6 +378,12 @@ pub async fn run(
     });
 
     loop {
+        // Settled history leaves the repainting viewport and becomes ordinary
+        // terminal output BEFORE the draw, so the pane never paints a line
+        // that is already in scrollback. No-op unless `screen_reader` is set.
+        if opts.screen_reader {
+            flush_settled(&mut terminal, &model, &mut ui, color_mode, false)?;
+        }
         terminal.draw(|f| {
             render(&model, &mut ui, f);
             theme::apply_theme(f.buffer_mut(), color_mode);
@@ -313,6 +481,18 @@ pub async fn run(
 
     shutdown.store(true, Ordering::Relaxed);
     let _ = reader.join();
+
+    // The trailing entry was held back all session because it could still
+    // grow (see `settled_entry_count`); nothing can grow now, so it goes to
+    // scrollback with the rest. Without this the last thing the assistant
+    // said — usually the answer — would vanish with the viewport on exit.
+    // Best-effort: a failed flush must not turn a clean quit into an error.
+    if opts.screen_reader {
+        let _ = flush_settled(&mut terminal, &model, &mut ui, color_mode, true);
+        // Leave the cursor below the viewport rather than inside it, so the
+        // shell prompt that follows does not overwrite the last frame.
+        let _ = terminal.clear();
+    }
     debug.note("tui session end");
     Ok(())
 }
