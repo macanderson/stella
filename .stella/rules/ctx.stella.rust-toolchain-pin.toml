@@ -1,0 +1,63 @@
+# Stella's own repository policy, published as a context record.
+#
+# Source: AGENTS.md lines 19-23 — "Rust is **pinned to a concrete version**
+# (currently 1.97.0) via `rust-toolchain.toml` ... Floating on
+# `channel = "stable"` was tried and reverted."
+#
+# This record is the deliberate counterpart to the `deny.toml` one beside it:
+# same governance tier, opposite enforcement. It carries no guard, because the
+# thing it protects is not a tool call — nobody blocks their way to a correct
+# toolchain pin. What it has instead is a probe that genuinely falsifies it, so
+# `stella context validate` running as a PR check is a real check rather than a
+# schema formality: revert the pin to `stable` and the probe refutes the claim,
+# the record stops steering, and the check says so.
+
+schema = "context-record/v0.1"
+set_id = "stella"
+
+[defaults]
+sharing_scope = "repository"
+status        = "active"
+origin        = "user"
+
+# As in the record beside this one: `source_digest`/`commit` pin AGENTS.md at
+# 0731387e, the state the claim was read from, not the current tip.
+[defaults.provenance]
+source_kind   = "document"
+source_uri    = "AGENTS.md"
+source_digest = "sha256:1ec11d010d094ac5d8a8d4b0514c7032fbf1adc0fe09cd01d5a2ce8ad2466b03"
+repo          = "git@github.com:macanderson/stella"
+commit        = "0731387e"
+
+
+[[record]]
+lineage_id = "ctx.stella.rust-toolchain-pin"
+kind       = "constraint"
+statement  = "The Rust toolchain is pinned to a concrete version in `rust-toolchain.toml`, never to the floating `stable` channel."
+tags       = ["build", "toolchain"]
+
+  [record.provenance]
+  source_lines = [19, 23]
+
+  [record.steering]
+  force      = "must"
+  precedence = 90
+  applies_to = { paths = ["rust-toolchain.toml"], tasks = ["build", "ci", "release"] }
+
+  [record.enforcement]
+  mode = "none"
+
+  [record.truth]
+  basis        = "measured"
+  confidence   = 100
+  verified_at  = "2026-08-02T00:00:00Z"
+  review_every = "P90D"
+
+    # Inverted sense: the claim holds while the floating channel is ABSENT from
+    # the pin file. Matching is a literal substring, so this is the exact text a
+    # revert would reintroduce.
+    [record.truth.probe]
+    kind    = "file_contains"
+    path    = "rust-toolchain.toml"
+    pattern = 'channel = "stable"'
+    expect  = "absent"

@@ -100,6 +100,28 @@ impl From<Vec<Rule>> for ResolvedRules {
 /// [`stella_core::records::registry`].
 const RULE_EXTENSIONS: &[&str] = &["md", "toml"];
 
+/// File names inside a rules directory that are **governance, not policy**, and
+/// so must never be parsed as records.
+///
+/// `.stella/rules/governance.toml` (#994) shares the directory with the records
+/// it governs, deliberately: which tier applies is itself reviewed policy and
+/// belongs beside the ledger in the same pull request. But it is a
+/// [`Governance`][g] document, not a `context-record/v0.1` one, so the record
+/// loader — correct to treat an unparseable policy file as a governance failure
+/// worth surfacing rather than a file to skip quietly — reported it on every
+/// `stella context list` as `missing field \`schema\``.
+///
+/// A permanent false alarm is worse than no alarm: it is the one signal that a
+/// real broken record file would have to compete with. Reserving the name here
+/// rather than teaching the loader to guess by shape keeps the failure loud for
+/// everything that genuinely is a malformed record.
+///
+/// `promotions.jsonl` needs no entry — its extension is not in
+/// [`RULE_EXTENSIONS`], so it is already never read.
+///
+/// [g]: stella_core::records::promotion::Governance
+const RESERVED_RULE_FILENAMES: &[&str] = &["governance.toml"];
+
 /// The production [`RuleSource`]: real `std::fs` reads over each directory
 /// in `dirs`, in the given order — every `.md` and `.toml` file's contents,
 /// name-sorted within a directory, absent directories skipped silently (exactly
@@ -120,6 +142,12 @@ impl RuleSource for FsRuleSource {
                     path.extension()
                         .and_then(|x| x.to_str())
                         .is_some_and(|ext| RULE_EXTENSIONS.contains(&ext))
+                })
+                .filter(|path| {
+                    !path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| RESERVED_RULE_FILENAMES.contains(&name))
                 })
                 .collect();
             paths.sort();
@@ -501,6 +529,33 @@ mod tests {
         assert!(files[0].path.ends_with("a.md"), "name-sorted within a dir");
         assert!(files[1].path.ends_with("b.md"));
         assert_eq!(files[1].contents, "rule b");
+    }
+
+    /// #994's governance file shares the rules directory with the records it
+    /// governs. Before this filter it was read as a record and reported as a
+    /// malformed one on every `stella context list` / `validate` — the first
+    /// repository to publish records under the regulated tier hit it
+    /// immediately, because setting the mode is what creates the file.
+    #[test]
+    fn fs_source_skips_the_governance_file_that_lives_beside_the_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let rules_dir = dir.path().join("rules");
+        write_rule(
+            &rules_dir,
+            "ctx.a.b.toml",
+            "schema = \"context-record/v0.1\"",
+        );
+        write_rule(&rules_dir, "governance.toml", "mode = \"regulated\"\n");
+        std::fs::write(rules_dir.join("promotions.jsonl"), "{}\n").unwrap();
+        let files = FsRuleSource.read_rule_files(&[rules_dir.display().to_string()]);
+        assert_eq!(
+            files.len(),
+            1,
+            "only the record file is a record: governance.toml is governance and \
+             promotions.jsonl is not a rule extension — got {:?}",
+            files.iter().map(|file| &file.path).collect::<Vec<_>>()
+        );
+        assert!(files[0].path.ends_with("ctx.a.b.toml"));
     }
 
     #[test]
