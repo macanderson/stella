@@ -259,6 +259,93 @@ async fn the_parent_transcript_does_not_grow_by_the_childs_intermediate_work() {
     assert_eq!(parent_messages.len(), before.len() + 1);
 }
 
+/// A sink that records what a turn asked it to do.
+#[derive(Default)]
+struct RecordingSink {
+    persisted: std::sync::Mutex<Vec<String>>,
+    discards: AtomicUsize,
+}
+
+impl std::fmt::Debug for RecordingSink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RecordingSink")
+    }
+}
+
+impl crate::step::CheckpointSink for RecordingSink {
+    fn persist(&self, json: &str) {
+        self.persisted
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(json.to_string());
+    }
+    fn discard(&self) {
+        self.discards.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// A child turn must not touch the SESSION's resume point.
+///
+/// The sink is bound to a session, and the child runs inside one of the
+/// parent's tool calls while the parent's own turn is still in flight. An
+/// inherited sink breaks that in both directions: the child's steps overwrite
+/// the parent's resume point with the child's transcript, and the child
+/// reaching a terminal outcome retracts the parent's resume point outright — so
+/// a crash moments later would find either nothing to resume from, or a
+/// conversation belonging to a different agent.
+#[tokio::test]
+async fn a_child_turn_never_writes_or_clears_the_parents_resume_point() {
+    let parent_provider = ScriptedProvider::new(vec![]);
+    // Two tool calls then an answer: the child crosses two step boundaries, so
+    // an inherited sink would be written to — and discarded — several times.
+    let child_provider = ScriptedProvider::new(vec![
+        Ok(tool_call_result("read_file", "c1", 0.001)),
+        Ok(tool_call_result("read_file", "c2", 0.001)),
+        Ok(text_result("answered", 0.001)),
+    ]);
+    let tools = MixedTools::default();
+    let sink = Arc::new(RecordingSink::default());
+    let config = EngineConfig {
+        checkpoint_sink: Some(sink.clone() as Arc<dyn crate::step::CheckpointSink>),
+        ..EngineConfig::default()
+    };
+    let parent = Engine::with_sleeper(&parent_provider, &tools, config, &NoSleep);
+    let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = parent
+        .run_sub_agent(
+            SubAgentHost::new(&child_provider),
+            &SubAgentSpec::read_only("search-1", "find it"),
+            &mut budget,
+            &tx,
+        )
+        .await;
+    assert!(
+        matches!(outcome, SubAgentOutcome::Completed(_)),
+        "the child really ran: {outcome:?}"
+    );
+    assert_eq!(
+        tools.reads.load(Ordering::SeqCst),
+        2,
+        "and really did work, so it really crossed step boundaries"
+    );
+
+    assert!(
+        sink.persisted
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_empty(),
+        "a child step must not overwrite the session's resume point with the child's transcript"
+    );
+    assert_eq!(
+        sink.discards.load(Ordering::SeqCst),
+        0,
+        "and a child ENDING must not retract a resume point the parent's in-flight turn still needs"
+    );
+    let _ = drain(&mut rx);
+}
+
 // ---- context economy is a mechanism, not an intention -----------------
 
 #[tokio::test]

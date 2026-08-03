@@ -230,8 +230,17 @@ pub static CAPABILITIES: &[Capability] = &[
         id: "session.persistent",
         engine_home: "caller-owned message history and budget across turns (the engine borrows, never owns)",
         engine_entries: &[],
+        // Two stores, deliberately not converged, and split by instant rather
+        // than by content: the sidecar (journal.jsonl / history.json /
+        // queue.json) is canonical for the session and for the conversation
+        // BETWEEN turns; the workspace's git-backed work journal is canonical
+        // for the agent's file changes and for the conversation INSIDE an
+        // interrupted turn. They cannot both describe one moment, because a
+        // checkpoint exists only while a turn is in flight. The table in
+        // `stella_store::journal`'s module docs is the full statement.
         cli: SurfacePosture::Shipped {
-            mechanism: "`stella chat` / `stella resume` over the session_persist journal",
+            mechanism: "`stella chat` / `stella resume` over the session_persist journal, plus \
+                        the work journal for in-turn state (see turn.checkpoint_resume)",
             witness: "journal_then_replay_is_identity_on_the_fold_relevant_stream",
         },
         api: SurfacePosture::Shipped {
@@ -245,20 +254,34 @@ pub static CAPABILITIES: &[Capability] = &[
         id: "turn.checkpoint_resume",
         engine_home: "stella-engine Checkpoint — versioned serde snapshot at a step boundary, resumable in another process",
         engine_entries: &["resume_turn"],
-        cli: SurfacePosture::Deferred {
-            waiting_on: "ADR 0013 (docs/adr/0013-session-artifact-boundary.md) §1, which names \
-                         this the precondition for a CLI-originated artifact: the deck replays its \
-                         own session_persist journal and never calls to_checkpoint/resume_turn, so \
-                         the one durable-resume format the engine exports has zero production \
-                         writers, and the artifact deliberately excludes the sidecar rather than \
-                         carry two transcripts that can disagree",
+        // Shipped at TRANSCRIPT granularity, not as a rebuilt `TurnState`. The
+        // deck prefers the work journal's CHECKPOINT_BLOB over the sidecar's
+        // turn-boundary history whenever one exists — and because every
+        // terminal path discards, one existing means a turn was interrupted —
+        // so a resumed session reopens with the completed steps' work already
+        // in the conversation and does not re-run it. What it does NOT do is
+        // call `resume_turn`: CLI turns are dispatched through stella-pipeline,
+        // which owns turn framing and builds its own TurnState, so handing the
+        // engine a resumed one would mean threading a checkpoint through the
+        // whole verification ladder. See `Engine::resume_turn`'s own docs for
+        // that gap, declared where a caller reads it.
+        cli: SurfacePosture::Shipped {
+            mechanism: "`stella resume` / the SESSIONS overlay via \
+                        session_persist::restore_conversation, which prefers the work journal's \
+                        CHECKPOINT_BLOB over history.json and degrades to the turn boundary, \
+                        visibly, on a version it cannot read",
+            witness: "an_interrupted_turn_resumes_at_the_step_boundary_not_the_turn_boundary",
         },
+        // Deliberately phrased to AGREE with `turn.checkpoint` above rather
+        // than restate it differently: serve does reach both write seams, so
+        // the gap here is not the seam and not the writing. It is that there is
+        // nowhere to read one back FROM, and nothing to key it on.
         api: SurfacePosture::Deferred {
-            waiting_on: "ADR 0013 (docs/adr/0013-session-artifact-boundary.md) — session.rs marks \
-                         StepOutcome::Continue as the persistence seam but nothing persists; the \
-                         ADR keeps the workspace on the host side, so this needs the replay API \
-                         (mode chosen in the signature, fingerprint verified, refusal by default) \
-                         rather than a store behind serve",
+            waiting_on: "somewhere for a served session to read a resume point back from: serve \
+                         reaches the write seams (see turn.checkpoint) but has no store, and \
+                         SessionSpec carries no session identity to key one on — so nothing \
+                         survives the process to resume. Note stella-serve/tests/resume.rs is SSE \
+                         stream resumption, a different resume entirely",
         },
     },
     Capability {
