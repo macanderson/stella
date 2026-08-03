@@ -82,6 +82,7 @@ from .posture import (
     _TRIAGE_MODEL_ENV,
     _WITNESS_AUTHOR_ENV,
     _WORKER_EFFORT_ENV,
+    PostureBuilder,
     _benchmark_assurance_tiers,
     _benchmark_engine_posture,
     fold_witness_observations,
@@ -549,6 +550,7 @@ async def _secure_exec_with_credential_fd(
     credential: str,
     witness_author: str | None = None,
     expected_posture_json: str | None = None,
+    posture_builder: PostureBuilder | None = None,
 ) -> ExecResult:
     """Execute in Harbor Docker with the credential only on anonymous stdin.
 
@@ -583,9 +585,15 @@ async def _secure_exec_with_credential_fd(
     # whose metadata records the treatment arm — a silently disabled tier,
     # which is the whole of #1007. The equality check makes that divergence a
     # refused run instead of an unlabelled one.
-    _, normalized_posture, _ = _benchmark_engine_posture(
-        command_model, witness_author=witness_author
-    )
+    #
+    # `posture_builder` is the agent class's own canonical builder, never a
+    # value the call site computed. A non-claim subclass may declare a
+    # different frozen posture, and the boundary must recompute from *that*
+    # declaration or reject every such run. "Recompute independently, never
+    # trust a passed-in string" is untouched: the class pins the builder, and
+    # the claim launcher pins the class.
+    builder = posture_builder or _benchmark_engine_posture
+    _, normalized_posture, _ = builder(command_model, witness_author=witness_author)
     if (
         expected_posture_json is not None
         and normalized_posture != expected_posture_json
@@ -1318,16 +1326,7 @@ class StellaAgent(BaseInstalledAgent):
             self._engine_posture,
             self._engine_posture_json,
             self._engine_posture_sha256,
-        ) = _benchmark_engine_posture(
-            configured_model,
-            witness_author=witness_author,
-            worker_effort=resolve_worker_effort(
-                self._configured_value(_WORKER_EFFORT_ENV)
-            ),
-            triage_model=resolve_triage_model(
-                self._configured_value(_TRIAGE_MODEL_ENV)
-            ),
-        )
+        ) = self._build_engine_posture(configured_model, witness_author=witness_author)
         (
             self._assurance_tiers,
             self._assurance_tiers_json,
@@ -1370,6 +1369,7 @@ class StellaAgent(BaseInstalledAgent):
             credential=credential,
             witness_author=witness_author,
             expected_posture_json=self._engine_posture_json,
+            posture_builder=self._build_engine_posture,
         )
 
         stdout = getattr(result, "stdout", None)
@@ -1421,6 +1421,39 @@ class StellaAgent(BaseInstalledAgent):
             getattr(self, "model_name", None)
             or self._configured_value("STELLA_MODEL")
             or _DEFAULT_MODEL
+        )
+
+    def _build_engine_posture(
+        self, model: str, *, witness_author: str | None
+    ) -> tuple[dict[str, Any], str, str]:
+        """Return ``(posture, canonical_json, sha256)`` for this trial.
+
+        The one seam a *non-claim* harness may override to run a different
+        frozen engine configuration — a head-to-head varying effort across
+        arms, say, which the benchmark posture deliberately holds constant.
+        Safe by construction, not convention: the claim launcher pins
+        ``--agent-import-path`` to ``stella_harbor:StellaAgent`` and rejects
+        any other agent, so a subclass cannot reach a claim run, and whatever
+        it returns is hashed into the same ``stella_engine_posture*`` metadata
+        — a changed posture is a changed digest, visible in the manifest.
+
+        The base implementation is the frozen benchmark posture and must stay
+        that way: a claim run's posture is part of its identity. The worker
+        effort and triage author are resolved here rather than at the call
+        site so the exec boundary, which recomputes through this same bound
+        method, resolves them identically — a selected arm must produce the
+        same posture at collection and at the process boundary or the run is
+        refused.
+        """
+        return _benchmark_engine_posture(
+            model,
+            witness_author=witness_author,
+            worker_effort=resolve_worker_effort(
+                self._configured_value(_WORKER_EFFORT_ENV)
+            ),
+            triage_model=resolve_triage_model(
+                self._configured_value(_TRIAGE_MODEL_ENV)
+            ),
         )
 
     def _witness_author_model(self) -> str | None:
