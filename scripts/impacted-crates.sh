@@ -172,7 +172,9 @@ while IFS=$'\t' read -r dir name; do
 	rel="${dir#"$repo_root"/}"
 	# Unstripped (a member outside the checkout) or empty (a package rooted at
 	# the checkout itself) both make prefix matching meaningless.
-	[ "$rel" != "$dir" ] && [ -n "$rel" ] || full "package $name is not inside the checkout"
+	if [ "$rel" = "$dir" ] || [ -z "$rel" ]; then
+		full "package $name is not inside the checkout"
+	fi
 	printf '%s\t%s\n' "$rel" "$name" >>"$work/dirs.rel"
 done <"$work/dirs.abs"
 
