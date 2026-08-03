@@ -1,0 +1,173 @@
+<!doctype html>
+<!--
+  SPDX-License-Identifier: Apache-2.0
+  Copyright (c) 2026 the ArenaBench authors
+
+  One page, two views: SETUP builds a match, ARENA watches it. No build step,
+  no framework — the whole client is this file plus app.js and styles.css.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ArenaBench</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#127942;</text></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">◆</span>
+    <span class="brand-name">ARENA<span class="brand-accent">BENCH</span></span>
+  </div>
+  <nav class="tabs">
+    <button class="tab is-active" data-view="setup">Setup</button>
+    <button class="tab" data-view="arena" id="tab-arena" disabled>Arena</button>
+  </nav>
+  <div class="topbar-right">
+    <span class="status-dot" id="conn-dot" title="disconnected"></span>
+    <span class="muted mono" id="conn-label">idle</span>
+  </div>
+</header>
+
+<!-- ==================================================================== -->
+<!-- SETUP                                                                 -->
+<!-- ==================================================================== -->
+<main class="view is-active" id="view-setup">
+
+  <section class="step">
+    <h2><span class="step-n">1</span> Benchmark</h2>
+    <p class="step-hint">Datasets are pinned by digest — a name alone is not a freeze.</p>
+    <div class="dataset-grid" id="dataset-grid"><div class="loading">loading datasets…</div></div>
+  </section>
+
+  <section class="step" id="step-tasks" hidden>
+    <h2><span class="step-n">2</span> Tasks</h2>
+    <p class="step-hint">
+      Every contestant runs the identical list. <strong id="task-count">0</strong> selected.
+    </p>
+
+    <div class="task-toolbar">
+      <input type="search" id="task-search" placeholder="filter tasks…" spellcheck="false">
+      <select id="filter-difficulty"><option value="">all difficulty</option></select>
+      <select id="filter-category"><option value="">all categories</option></select>
+      <label class="chk-inline">
+        <input type="checkbox" id="filter-light">
+        <span>exclude heavy <span class="muted">(&gt;4 GB or multi-CPU)</span></span>
+      </label>
+      <div class="spacer"></div>
+      <button class="btn btn-ghost" id="select-all">select all</button>
+      <button class="btn btn-ghost" id="select-none">clear</button>
+      <button class="btn btn-ghost" id="select-visible">select filtered</button>
+    </div>
+
+    <div class="task-grid" id="task-grid"></div>
+  </section>
+
+  <section class="step" id="step-contestants" hidden>
+    <h2><span class="step-n">3</span> Contestants</h2>
+    <p class="step-hint">
+      A contestant is an agent plus a full engine configuration plus its own
+      environment. Paste that seat's <code>.env</code> — values stay in this
+      process and are never sent back to the browser.
+    </p>
+    <div class="contestants" id="contestants"></div>
+    <button class="btn btn-add" id="add-contestant">+ add contestant</button>
+  </section>
+
+  <section class="step" id="step-launch" hidden>
+    <h2><span class="step-n">4</span> Launch</h2>
+    <div class="launch-row">
+      <label class="field">
+        <span>Match name</span>
+        <input type="text" id="match-name" placeholder="friday head-to-head">
+      </label>
+      <label class="field field-sm">
+        <span>Attempts / task</span>
+        <input type="number" id="attempts" value="1" min="1" max="10">
+      </label>
+      <label class="field field-sm">
+        <span>Concurrency</span>
+        <input type="number" id="concurrency" value="1" min="1" max="16">
+      </label>
+      <label class="chk-inline chk-record">
+        <input type="checkbox" id="record-video">
+        <span>Record MP4
+          <span class="muted">real screen capture, sidecar container</span>
+        </span>
+      </label>
+    </div>
+    <div class="launch-bar">
+      <button class="btn btn-primary btn-lg" id="launch">▶ Start the match</button>
+      <span class="launch-summary muted" id="launch-summary"></span>
+    </div>
+    <div class="errors" id="launch-errors" hidden></div>
+  </section>
+
+  <section class="step" id="step-history">
+    <h2>Recent matches</h2>
+    <div class="history" id="history"><span class="muted">none yet</span></div>
+  </section>
+</main>
+
+<!-- ==================================================================== -->
+<!-- ARENA                                                                 -->
+<!-- ==================================================================== -->
+<main class="view" id="view-arena">
+
+  <section class="arena-head">
+    <div class="arena-title">
+      <h1 id="arena-name">match</h1>
+      <div class="arena-sub muted mono" id="arena-sub"></div>
+    </div>
+    <div class="arena-clock">
+      <div class="clock-value mono" id="arena-elapsed">0:00</div>
+      <div class="clock-label">elapsed</div>
+    </div>
+    <div class="arena-actions">
+      <span class="pill" id="arena-status">running</span>
+      <button class="btn btn-ghost" id="cancel-match">stop</button>
+    </div>
+  </section>
+
+  <div class="arena-note" id="arena-note" hidden></div>
+
+  <!-- scoreboard -->
+  <section class="scoreboard" id="scoreboard"></section>
+
+  <!-- dimension race -->
+  <section class="race" id="race"></section>
+
+  <!-- task grid + transcripts -->
+  <section class="arena-body">
+    <aside class="task-rail">
+      <div class="rail-head">
+        <span>Tasks</span>
+        <span class="muted mono" id="rail-progress"></span>
+      </div>
+      <div class="rail-list" id="rail-list"></div>
+    </aside>
+
+    <section class="stage" id="stage">
+      <div class="stage-empty" id="stage-empty">
+        <div class="stage-empty-mark">◆</div>
+        <p>Select a task to watch its transcripts stream side by side.</p>
+      </div>
+      <div class="stage-live" id="stage-live" hidden>
+        <div class="stage-head">
+          <h3 id="stage-task"></h3>
+          <div class="stage-tools">
+            <button class="btn btn-ghost btn-sm" id="toggle-reasoning">hide reasoning</button>
+            <button class="btn btn-ghost btn-sm" id="toggle-follow">following</button>
+          </div>
+        </div>
+        <div class="lanes" id="lanes"></div>
+      </div>
+    </section>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+ArenaBench
+Copyright (c) 2026 the ArenaBench authors
+
+This product includes software developed by the ArenaBench authors, licensed
+under the Apache License, Version 2.0. A copy of the licence is in LICENSE.
+
+--------------------------------------------------------------------------
+Third-party components
+--------------------------------------------------------------------------
+
+ArenaBench has no bundled third-party code and no Python package
+dependencies. It relies at runtime on tools it does not redistribute:
+
+  Harbor  (https://github.com/laude-institute/harbor)
+      The benchmark runner. ArenaBench invokes the `harbor` executable and
+      imports its agent registry when present. Not vendored.
+
+  Docker
+      Task containers, and the optional MP4 recorder sidecar. Not vendored.
+
+  Stella Harbor adapter  (AGPL-3.0-only)
+      ArenaBench's Stella contestant subclasses `stella_harbor.StellaAgent`,
+      which is part of the Stella project and licensed AGPL-3.0-only. It is
+      an OPTIONAL runtime dependency, resolved by import from a path the
+      operator supplies. ArenaBench does not vendor, redistribute, or link
+      against it at build time, and every other ArenaBench feature works
+      without it.
+
+  The recorder container image
+      Built on demand from recorder/Dockerfile on the operator's machine. It
+      installs Debian packages (xvfb, xterm, ffmpeg, python3, fonts-dejavu)
+      under their own licences. ArenaBench distributes the Dockerfile, not
+      the image or its contents.
+
+--------------------------------------------------------------------------
+Benchmarks
+--------------------------------------------------------------------------
+
+Datasets registered with ArenaBench (Terminal-Bench and any others an
+operator adds) are the property of their respective authors and carry their
+own licences and terms of use. ArenaBench references them by content digest
+and does not redistribute task content.
