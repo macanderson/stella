@@ -559,6 +559,27 @@ pub enum AgentEvent {
         /// legacy values fail closed to `false`.
         #[serde(default)]
         complete: bool,
+        /// Why generation stopped, as the provider reported it
+        /// ([`stella_protocol::completion::FinishReason`]). `Length` is the
+        /// only *ground truth* a consumer has that this step was cut off at
+        /// the output ceiling — the "we stopped first" event.
+        ///
+        /// It is here because it was previously nowhere: the engine knew the
+        /// reason and dropped it at this boundary, so every downstream reader
+        /// had to *infer* truncation from step shape. The benchmark harness
+        /// inferred it as "≥16384 output tokens and no tool call", which was
+        /// right when the output ceiling was 16K and became a false positive
+        /// the moment the ceiling moved to 64K — the reading behind the
+        /// unexplained `cap_hits: 106` in the GLM-5.2 head-to-head. An
+        /// inferred cap hit cannot be told from a long answer; a reported one
+        /// can.
+        ///
+        /// `None` means the provider did not report a reason (or the stream
+        /// predates this field — hence `serde(default)`), and must never be
+        /// read as "not truncated": absence of the signal is not evidence of
+        /// a clean stop.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        finish_reason: Option<crate::completion::FinishReason>,
     },
     /// A provider call failed or timed out after dispatch, so local accounting
     /// cannot prove that no billable work occurred. Content-free by design.
@@ -2173,6 +2194,7 @@ mod tests {
             retries: 1,
             tool_calls: 4,
             complete: true,
+            finish_reason: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"step_usage\""), "{json}");

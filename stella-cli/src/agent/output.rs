@@ -404,6 +404,7 @@ mod durable_stream_tests {
             retries: 0,
             tool_calls: 0,
             complete: true,
+            finish_reason: None,
         };
 
         sender.send(stage.clone()).unwrap();

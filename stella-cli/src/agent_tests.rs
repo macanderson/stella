@@ -96,6 +96,7 @@ fn persist_event_records_cache_write_tokens_from_step_usage() {
         retries: 0,
         tool_calls: 1,
         complete: true,
+        finish_reason: None,
     };
 
     assert!(persist_event(&store, execution_id, 0, &event, "anthropic"));
@@ -1342,6 +1343,7 @@ fn reflection_json_preserves_full_paid_call_envelope_and_cost() {
             retries: 1,
             tool_calls: 0,
             complete: true,
+            finish_reason: None,
         }],
     };
 

@@ -908,6 +908,7 @@ mod tests {
             retries: 2,
             tool_calls: 1,
             complete: true,
+            finish_reason: None,
         });
 
         let json = serde_json::to_string(&records.records()[0]).expect("serialize");

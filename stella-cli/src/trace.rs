@@ -555,6 +555,7 @@ mod tests {
                 retries: 0,
                 tool_calls: 1,
                 complete: true,
+                finish_reason: None,
             },
             AgentEvent::ToolStart {
                 call: ToolCall {
