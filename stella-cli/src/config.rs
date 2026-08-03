@@ -343,6 +343,12 @@ pub struct Config {
     /// the engine decline to start a continuation it cannot finish, ending
     /// with a truthful partial instead of being destroyed mid-flight.
     pub turn_budget: Option<std::time::Duration>,
+    /// User-invoked plan mode (#1264): force the scope-review gate for this
+    /// run whatever the plan's size. Stamped from `--plan` in `main`, like
+    /// [`Self::turn_budget`], because `Config::load` has no view of the
+    /// parsed CLI and giving it one for a value it never consults would widen
+    /// its signature to carry something straight through.
+    pub plan_mode: bool,
     pub workspace_root: std::path::PathBuf,
     /// Where this session's turns write their resume point — the handle every
     /// engine this session builds reads its `checkpoint_sink` from.
@@ -712,6 +718,7 @@ impl Config {
                     // Stamped by the caller that holds the parsed CLI; see the
                     // field's doc comment.
                     turn_budget: None,
+                    plan_mode: false,
                     // Unbound: the session whose sidecar this points at is
                     // resolved by the driver, after config load. See the
                     // field's doc comment.
@@ -908,6 +915,7 @@ impl Config {
             model_pinned_by_flag: false,
             // Likewise stamped by the caller that holds the parsed CLI.
             turn_budget: None,
+            plan_mode: false,
             // Unbound until a driver resolves this run's session record — see
             // the field's doc comment.
             durability: crate::durability::SessionDurability::default(),

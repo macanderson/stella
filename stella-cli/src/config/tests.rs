@@ -211,6 +211,7 @@ fn config_debug_never_leaks_the_api_key() {
         provider: PROVIDERS[0].clone(),
         model_id: "glm-5.2".to_string(),
         turn_budget: None,
+        plan_mode: false,
         model_pinned_by_flag: false,
         durability: Default::default(),
         create_worktrees: Default::default(),
