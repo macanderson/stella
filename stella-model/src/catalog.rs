@@ -306,8 +306,16 @@ impl Catalog {
                     },
                 )
                 .with_reasoning(Some(true))
-                // Same ceiling as Sonnet 5, and seeded for the same reason.
-                .with_max_output_tokens(Some(64_000)),
+                // Fable's own ceiling, which is NOT Sonnet's. This row read
+                // 64000 because it was copied from the Sonnet 5 row above,
+                // and the copy was wrong: Anthropic's `/v1/models` reports
+                // 128000 for Fable 5. The benchmark posture is pinned to this
+                // number (`TestOutputCeilingParity`), so while it was low
+                // every Fable trial stopped at half the height the comparator
+                // is allowed to fill — a self-imposed handicap the score then
+                // reports as a capability difference. Approved as the Fable
+                // ceiling set (#1211 §6.2).
+                .with_max_output_tokens(Some(128_000)),
                 CatalogEntry::new(
                     "gpt-5.5",
                     "openai",
@@ -512,7 +520,10 @@ impl Catalog {
                     },
                 )
                 .with_reasoning(Some(true))
-                .with_max_output_tokens(Some(64_000)),
+                // Same model, same ceiling, reached through a gateway. Both
+                // rows move together or the arm's ceiling depends on which
+                // route it was booked through (#1211 §6.2).
+                .with_max_output_tokens(Some(128_000)),
                 // Seeded for the `triage` role specifically: it classifies the
                 // request and builds a prompt, never edits the workspace, so
                 // the cheapest fast model in the family is the right one and
@@ -602,6 +613,25 @@ impl Catalog {
 
 #[cfg(test)]
 mod tests {
+    /// Serializes the tests that install a runtime catalog.
+    ///
+    /// The runtime catalog is a process-global and `cargo test` runs these in
+    /// parallel threads. Installing a strict superset of the seed — which
+    /// `install_runtime_extends_current_without_disturbing_seed_rows` does —
+    /// makes concurrent lookups of SEED rows safe, but not lookups of the
+    /// synthetic row a test just added: that row exists only in that test's
+    /// catalog, so a second install landing between the first test's install
+    /// and its assertion replaces the catalog out from under it and the row
+    /// is simply gone.
+    ///
+    /// Observed, not theorized: adding an unrelated test to this module
+    /// perturbed the scheduling enough for
+    /// `a_row_carries_the_models_own_output_ceiling_and_defaults_to_unknown`
+    /// to fail once with its own row missing, then pass six runs in a row.
+    /// A flake that rare is worse than a failure — it lands as "the gate is
+    /// being flaky" rather than as a bug report.
+    static RUNTIME_CATALOG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     use super::*;
 
     #[test]
@@ -665,6 +695,9 @@ mod tests {
 
     #[test]
     fn install_runtime_extends_current_without_disturbing_seed_rows() {
+        let _guard = RUNTIME_CATALOG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // The runtime catalog is a process-global; this test installs a
         // strict SUPERSET of the seed so any concurrently-running test that
         // resolves seed rows through `current()` sees identical results
@@ -696,6 +729,9 @@ mod tests {
 
     #[test]
     fn a_row_carries_the_models_own_output_ceiling_and_defaults_to_unknown() {
+        let _guard = RUNTIME_CATALOG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // The value models.dev publishes as `limit.output`. It was parsed,
         // written to the model card's `max_output_tokens` column and read
         // back, then dropped when the runtime catalog was assembled — the
@@ -749,14 +785,21 @@ mod tests {
         // trial-shaped run of the real binary against a recording endpoint
         // put `max_tokens: 16384` on the wire for a model whose ceiling is
         // 64000. Same run after: 64000.
-        for slug in ["claude-sonnet-5", "claude-fable-5"] {
+        //
+        // Per model, not one shared number. These rows carried an identical
+        // 64000 until Fable's was corrected to its real 128000 (#1211 6.2) —
+        // it had been copied from the Sonnet row, and a copied ceiling is
+        // exactly the drift this test is here to catch. Two claims live here
+        // and they decouple the moment two models differ: every benchmarked
+        // model carries SOME ceiling in the seed, and it is THE MODEL'S.
+        for (slug, ceiling) in [("claude-sonnet-5", 64_000), ("claude-fable-5", 128_000)] {
             assert_eq!(
                 Catalog::seed()
                     .resolve_for("anthropic", slug)
                     .unwrap()
                     .max_output_tokens,
-                Some(64_000),
-                "{slug} must carry its ceiling in the seed, not only after a refresh",
+                Some(ceiling),
+                "{slug} must carry its own ceiling in the seed, not only after a refresh",
             );
         }
         // The same models reached through the gateway are different rows, and
@@ -765,14 +808,44 @@ mod tests {
         // over OpenRouter: without its own ceiling that run silently drops to
         // the engine's global 16384 and truncates before it emits a tool call.
         // Choosing a route is not supposed to change the model's ceiling.
-        for slug in ["anthropic/claude-sonnet-5", "anthropic/claude-fable-5"] {
+        for (slug, ceiling) in [
+            ("anthropic/claude-sonnet-5", 64_000),
+            ("anthropic/claude-fable-5", 128_000),
+        ] {
             assert_eq!(
                 Catalog::seed()
                     .resolve_for("openrouter", slug)
                     .unwrap()
                     .max_output_tokens,
-                Some(64_000),
+                Some(ceiling),
                 "{slug} must carry its ceiling on the gateway route too",
+            );
+        }
+    }
+
+    /// Route is not a model property: the direct and gateway rows for one
+    /// model must agree on its ceiling.
+    ///
+    /// Asserted as equality between the two rows rather than against a
+    /// literal, so it keeps holding when a ceiling is corrected. The failure
+    /// it catches is a real one — the rows are edited separately, and a model
+    /// whose ceiling was raised on one route only would answer at full length
+    /// or at half length depending on how the run happened to be booked.
+    #[test]
+    fn a_models_ceiling_does_not_depend_on_the_route_it_is_reached_through() {
+        let seed = Catalog::seed();
+        for (direct, gateway) in [
+            ("claude-sonnet-5", "anthropic/claude-sonnet-5"),
+            ("claude-fable-5", "anthropic/claude-fable-5"),
+        ] {
+            assert_eq!(
+                seed.resolve_for("anthropic", direct)
+                    .unwrap()
+                    .max_output_tokens,
+                seed.resolve_for("openrouter", gateway)
+                    .unwrap()
+                    .max_output_tokens,
+                "{direct} answers at a different length depending on its route",
             );
         }
     }

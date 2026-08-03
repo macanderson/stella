@@ -307,3 +307,199 @@ async fn endless_revision_notes_stop_at_the_cap_and_say_why() {
         Err(e) => panic!("a hit cap is an abort, not a pipeline error: {e:?}"),
     }
 }
+
+/// #1264: a plan far *below* every threshold — two steps, well under the
+/// 5/8/$1.00 defaults — must still raise the card when plan mode is on.
+/// Without this the flag is decorative: the estimator waves the plan through
+/// before the gate is ever consulted, and the user who asked to see the plan
+/// silently does not.
+#[tokio::test]
+async fn plan_mode_raises_the_card_for_a_plan_no_threshold_would_catch() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("multi"),
+        text_result(r#"["s1","s2"]"#),
+        text_result("working"),
+        text_result("done"),
+    ]);
+    let resolver = OneProvider(&provider);
+    let runner = ScriptedRunner::new(vec![], "");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = ScriptedGate::new(vec![ScopeDecision::Approve]);
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig {
+            plan_mode: true,
+            ..PipelineConfig::default()
+        },
+    );
+
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let _ = pipeline
+        .run("small tidy-up", &mut messages, &mut budget)
+        .await;
+
+    assert_eq!(
+        approvals.cards_raised().len(),
+        1,
+        "plan mode must consult the gate even for a two-step plan"
+    );
+    let _ = drain(&mut rx);
+}
+
+/// The control: the SAME two-step plan with plan mode off must sail straight
+/// through untouched. Without this pair, a bug that raised the card for every
+/// run would still pass the test above.
+#[tokio::test]
+async fn the_same_small_plan_is_not_gated_when_plan_mode_is_off() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("multi"),
+        text_result(r#"["s1","s2"]"#),
+        text_result("working"),
+        text_result("done"),
+    ]);
+    let resolver = OneProvider(&provider);
+    let runner = ScriptedRunner::new(vec![], "");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = ScriptedGate::new(vec![ScopeDecision::Approve]);
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig::default(),
+    );
+
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let _ = pipeline
+        .run("small tidy-up", &mut messages, &mut budget)
+        .await;
+
+    assert!(
+        approvals.cards_raised().is_empty(),
+        "a two-step plan is under every threshold and must not be gated"
+    );
+    let _ = drain(&mut rx);
+}
+
+/// Plan mode is an explicit request to be asked. Honouring the headless
+/// bypass here would deliver the exact opposite of the ask, silently — worse
+/// than refusing, because the run would proceed to touch the tree.
+#[tokio::test]
+async fn plan_mode_refuses_a_headless_run_rather_than_bypassing_the_gate() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("multi"),
+        text_result(r#"["s1","s2"]"#),
+        text_result("working"),
+        text_result("done"),
+    ]);
+    let resolver = OneProvider(&provider);
+    let runner = ScriptedRunner::new(vec![], "");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = ScriptedGate::new(vec![ScopeDecision::Approve]);
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig {
+            plan_mode: true,
+            headless: true,
+            // Even with the bypass explicitly ON, plan mode must not proceed.
+            headless_bypass_scope_review: true,
+            ..PipelineConfig::default()
+        },
+    );
+
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let _ = pipeline
+        .run("small tidy-up", &mut messages, &mut budget)
+        .await;
+
+    assert!(
+        approvals.cards_raised().is_empty(),
+        "there is nobody to ask in a headless run"
+    );
+    let events = drain(&mut rx);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Error { message, .. } if message.contains("--plan")
+        )),
+        "the refusal must say why, naming the flag: {events:?}"
+    );
+}

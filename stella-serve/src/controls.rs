@@ -57,7 +57,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use stella_core::ports::{TurnGate, TurnSteering};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::watch;
 
 use crate::frame::ServerFrame;
 
@@ -109,7 +109,7 @@ impl Controls {
     /// `frames` is the session's outbound channel, and the clone taken here
     /// goes onto the *port* half only — see the module docs on why the
     /// registry-held [`Controls`] must not carry one.
-    pub(crate) fn new(frames: mpsc::UnboundedSender<ServerFrame>) -> (Controls, ControlPorts) {
+    pub(crate) fn new(frames: crate::backlog::FrameSink) -> (Controls, ControlPorts) {
         let (pause_tx, pause_rx) = watch::channel(HoldState::Running);
         let steering = Arc::new(SteerQueue::default());
         (
@@ -212,7 +212,7 @@ pub(crate) struct PauseGate {
     /// take, and for the same reason: it is the receive funnel
     /// (`Session::next_seq_frame`) that assigns the `seq` and retains the
     /// frame, and only a frame that went through there is replayable.
-    frames: mpsc::UnboundedSender<ServerFrame>,
+    frames: crate::backlog::FrameSink,
 }
 
 #[async_trait::async_trait]
@@ -294,11 +294,15 @@ impl TurnSteering for SteerQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::mpsc;
 
     /// A control pair plus the receiving end of the frames its gate emits.
     fn controls() -> (Controls, ControlPorts, mpsc::UnboundedReceiver<ServerFrame>) {
         let (frame_tx, frame_rx) = mpsc::unbounded_channel();
-        let (controls, ports) = Controls::new(frame_tx);
+        let (controls, ports) = Controls::new(crate::backlog::FrameSink::new(
+            frame_tx,
+            crate::backlog::FrameBacklog::new(crate::backlog::DEFAULT_MAX_QUEUED_FRAMES),
+        ));
         (controls, ports, frame_rx)
     }
 

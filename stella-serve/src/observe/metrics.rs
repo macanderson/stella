@@ -546,6 +546,7 @@ mod tests {
                 tools_failed: 1,
                 speculation_discarded: 4,
                 loop_detections: 1,
+                frames_dropped: 0,
             },
         });
         let snap = metrics.snapshot();

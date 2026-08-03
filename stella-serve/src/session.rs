@@ -136,6 +136,9 @@ impl SessionSpec {
 /// [`Session::resolve_tool`] / [`Session::resolve_provider`].
 pub struct Session {
     frames: mpsc::UnboundedReceiver<ServerFrame>,
+    /// This turn's queue bound, shared with the sink that fills it (#1266).
+    /// Receiving is what returns capacity, so the receiver owns this half.
+    backlog: Arc<crate::backlog::FrameBacklog>,
     pending: Pending,
     /// The sender half of this turn's mid-turn controls (pause/steer). Shared
     /// with the registry entry the same way [`Pending`] is, and for the same
@@ -165,7 +168,12 @@ impl Session {
     /// session already holds a `TurnComplete { Aborted }` frame, so the caller
     /// drives one code path either way.
     pub fn start(spec: SessionSpec) -> Session {
-        let (frame_tx, frame_rx) = mpsc::unbounded_channel::<ServerFrame>();
+        let (raw_frame_tx, frame_rx) = mpsc::unbounded_channel::<ServerFrame>();
+        // The queue's bound (#1266). Held by both halves: the sink refuses
+        // droppable frames above the cap, and the receive funnel below gives
+        // the capacity back as frames are delivered.
+        let backlog = crate::backlog::FrameBacklog::new(crate::backlog::DEFAULT_MAX_QUEUED_FRAMES);
+        let frame_tx = crate::backlog::FrameSink::new(raw_frame_tx, Arc::clone(&backlog));
         let pending = Pending::new(spec.observer.clone(), spec.turn.clone());
         // The controls' *port* half carries the frame sender, so a hold can
         // announce itself on the stream; the registry-held `Controls` must not
@@ -209,6 +217,7 @@ impl Session {
         };
         Session {
             frames: frame_rx,
+            backlog,
             pending,
             controls,
             cancel,
@@ -220,7 +229,14 @@ impl Session {
     /// Await the next frame from the engine. `None` once the session thread has
     /// finished and dropped its sender (i.e. after `TurnComplete`).
     pub async fn next_frame(&mut self) -> Option<ServerFrame> {
-        self.frames.recv().await
+        let frame = self.frames.recv().await;
+        if frame.is_some() {
+            // Capacity comes back on delivery, not on encode: this and
+            // `next_seq_frame` are the only two ways a frame leaves the
+            // queue, so both give the slot back (#1266).
+            self.backlog.leave();
+        }
+        frame
     }
 
     /// Await the next frame, sequenced and retained for replay.
@@ -237,6 +253,7 @@ impl Session {
     /// produced separately without a window in which the two disagree.
     pub(crate) async fn next_seq_frame(&mut self) -> Option<Encoded> {
         let frame = self.frames.recv().await?;
+        self.backlog.leave();
         let terminal = matches!(frame, ServerFrame::TurnComplete { .. });
         let mut unencodable = None;
         let (seq, json) = self.history.record(|seq| {
@@ -514,7 +531,7 @@ async fn drive_turn(
 /// remoted ports, and drive one turn to its outcome.
 fn run_session(
     mut spec: SessionSpec,
-    frame_tx: mpsc::UnboundedSender<ServerFrame>,
+    frame_tx: crate::backlog::FrameSink,
     pending: Pending,
     control_ports: ControlPorts,
     cancel: CancelToken,
@@ -608,7 +625,11 @@ fn run_session(
         drop(event_tx);
         // A forwarder that panicked still leaves a turn that must be reported;
         // an empty tally is the honest answer for a fold that did not survive.
-        let tally = forwarder.await.unwrap_or_default();
+        let mut tally = forwarder.await.unwrap_or_default();
+        // Read the drop count here, not in the forwarder: the two remote
+        // ports and the terminal path all send through the same sink, so the
+        // only moment the count is final is after the last send (#1266).
+        tally.frames_dropped = frame_tx.backlog().dropped();
 
         let wire: TurnOutcomeWire = outcome.into();
         let settled = match &wire {

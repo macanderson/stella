@@ -523,6 +523,22 @@ pub struct TurnTally {
     /// so this server counts it rather than re-deriving it.
     pub speculation_discarded: u32,
     pub loop_detections: u32,
+    /// Stream frames dropped because this turn's delivery queue was full
+    /// (#1266) — i.e. nobody was reading fast enough. Non-zero means a live
+    /// subscriber saw a hole in the streamed text; it never means a tool
+    /// call, a provider call, or the terminal frame was lost, because those
+    /// are not droppable (`crate::backlog`).
+    ///
+    /// This is the number that makes the bound honest rather than silent: an
+    /// operator can tell "the client is gone" from "the turn was quiet".
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub frames_dropped: u64,
+}
+
+/// `skip_serializing_if` for a counter that is zero on every healthy turn —
+/// keeps the common record byte-identical to before this field existed.
+fn is_zero_u64(n: &u64) -> bool {
+    *n == 0
 }
 
 /// One thing the server did, at a boundary.
@@ -863,6 +879,7 @@ mod tests {
                     tools_failed: 1,
                     speculation_discarded: 1,
                     loop_detections: 0,
+                    frames_dropped: 0,
                 },
             },
         ];

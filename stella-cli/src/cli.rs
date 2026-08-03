@@ -191,6 +191,25 @@ pub(crate) struct GlobalArgs {
     #[arg(long, global = true, value_name = "SPEC", hide_short_help = true)]
     pub(crate) log_level: Option<String>,
 
+    /// Show the plan and wait for approval before anything runs.
+    ///
+    /// Scope review already interrupts for a *large* plan (more than 5 steps,
+    /// 8 files, or $1.00 estimated). This asks for the plan whatever its size
+    /// — the size thresholds answer "is this big?", and only you can answer
+    /// "do I want to see it first?". The gate sits ahead of the stage that
+    /// touches your working tree, so declining leaves it untouched.
+    ///
+    /// Needs an interactive terminal: there is nobody to ask in a headless
+    /// run, and silently proceeding would deliver the opposite of the ask.
+    //
+    // `--plan-mode`, not `--plan`: `stella fleet --plan <file>` already owns
+    // that name, and a global sharing it does not shadow cleanly — clap
+    // propagates the global's value slot into every subcommand, so the two
+    // collide at match time ("could not downcast to PathBuf, need bool").
+    // `no_subcommand_flag_reuses_a_global_name` is the test that says so.
+    #[arg(long, global = true)]
+    pub(crate) plan_mode: bool,
+
     /// Turn tools off for this run only, without editing settings.json.
     ///
     /// Same spelling as the settings `"tools"` table — a comma-separated list

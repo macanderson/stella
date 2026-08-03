@@ -92,19 +92,21 @@ fn parse_edits(input: &Value) -> Result<Vec<ParsedEdit>, String> {
         .iter()
         .enumerate()
         .map(|(i, edit)| {
+            // Per-element reads go through the shared typed readers (#1267) so
+            // `{"path": 42}` reports a wrong type rather than a missing field,
+            // and the element index stays on the front of the message — in a
+            // batch edit, *which* element is wrong is most of the answer.
             let field = |key: &str| -> Result<String, String> {
-                edit.get(key)
-                    .and_then(|v| v.as_str())
+                crate::input::required_str(edit, key)
                     .map(str::to_string)
-                    .ok_or(format!("edit {i}: missing required field `{key}`"))
+                    .map_err(|e| format!("edit {i}: {e}"))
             };
             let parsed = ParsedEdit {
                 path: field("path")?,
                 old_string: field("old_string")?,
                 new_string: field("new_string")?,
-                replace_all: edit
-                    .get("replace_all")
-                    .and_then(|v| v.as_bool())
+                replace_all: crate::input::optional_bool(edit, "replace_all")
+                    .map_err(|e| format!("edit {i}: {e}"))?
                     .unwrap_or(false),
             };
             if parsed.old_string.is_empty() {

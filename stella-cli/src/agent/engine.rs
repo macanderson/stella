@@ -238,6 +238,7 @@ pub(crate) fn pipeline_config_for_approval_capability(
     PipelineConfig {
         engine: pipeline_engine_config_for(cfg, worker_model),
         headless: approval == PipelineApprovalCapability::Unavailable,
+        plan_mode: cfg.plan_mode,
         // The constant is the safe default; a workspace may opt out of it
         // where the tree is disposable (see `headless_scope_bypass`).
         headless_bypass_scope_review: cfg
