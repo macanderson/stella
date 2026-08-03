@@ -563,7 +563,8 @@ function renderRace(snapshot) {
   const rows = snapshot.dimensions.map((dim) => {
     const values = snapshot.contestants.map((c) => Number(c.totals[dim.key]) || 0);
     const max = Math.max(...values, 0);
-    const min = Math.min(...values.filter((v) => v > 0), 0);
+    const positives = values.filter((v) => v > 0);
+    const min = positives.length ? Math.min(...positives) : 0;
 
     const bars = snapshot.contestants.map((c, index) => {
       const value = values[index];

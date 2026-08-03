@@ -88,6 +88,7 @@ from .posture import (
     _ENGINE_POSTURE_VERSION,
     _TRIAGE_MODEL_ENV,
     _WITNESS_AUTHOR_ENV,
+    _WORKER_EFFORT_ENV,
     PostureBuilder,
     _benchmark_assurance_tiers,
     _benchmark_engine_posture,
@@ -1647,9 +1648,23 @@ class StellaAgent(BaseInstalledAgent):
         — a changed posture is a changed digest, visible in the manifest.
 
         The base implementation is the frozen benchmark posture and must stay
-        that way: a claim run's posture is part of its identity.
+        that way: a claim run's posture is part of its identity. The worker
+        effort and triage author are resolved here rather than at the call
+        site so the exec boundary, which recomputes through this same bound
+        method, resolves them identically — a selected arm must produce the
+        same posture at collection and at the process boundary or the run is
+        refused.
         """
-        return _benchmark_engine_posture(model, witness_author=witness_author)
+        return _benchmark_engine_posture(
+            model,
+            witness_author=witness_author,
+            worker_effort=resolve_worker_effort(
+                self._configured_value(_WORKER_EFFORT_ENV)
+            ),
+            triage_model=resolve_triage_model(
+                self._configured_value(_TRIAGE_MODEL_ENV)
+            ),
+        )
 
     def _witness_author_model(self) -> str | None:
         """Return the pinned witness/judge author, or ``None`` for the control arm.
