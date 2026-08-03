@@ -19,10 +19,37 @@
 //! - **`queue.json`** — the pending prompt backlog, rewritten atomically on
 //!   every queue mutation. A prompt the user queued is durable the moment it
 //!   is queued.
-//! - **`checkpoint.json`** — the in-flight turn's resume point, rewritten
-//!   atomically at every step boundary and removed when the turn ends. Unlike
-//!   the three above it describes work that is *still happening*, so its mere
-//!   presence after a restart means a turn was interrupted mid-flight.
+//!
+//! ## Two stores, and which is canonical for what
+//!
+//! A session's durable state does not all live here. The files above are the
+//! sidecar; the agent's file changes, the no-clobber staleness map, and the
+//! **in-flight turn's resume point** live in the workspace's git-backed record
+//! ([`crate::work_journal`]). That is two stores holding conversation, so the
+//! split has to be stated rather than left to be inferred:
+//!
+//! | fact | canonical store |
+//! |---|---|
+//! | the visible session — transcript, lanes, spend, files | `journal.jsonl` (replayed through the deck's fold) |
+//! | the conversation **between** turns | `history.json` |
+//! | the pending prompt backlog | `queue.json` |
+//! | the conversation **inside** an interrupted turn | the work journal's `CHECKPOINT_BLOB` |
+//! | what the agent wrote, and what it last saw | the work journal's commits and `OBSERVED_BLOB` |
+//!
+//! The two conversation stores never describe the same instant, which is what
+//! keeps this from being the ambiguity it looks like. A checkpoint exists only
+//! while a turn is in flight — every terminal path discards it — so its
+//! presence *is* the statement "a turn was interrupted", and in that case it is
+//! strictly the fresher of the two. Absent one, the last turn boundary is the
+//! freshest thing there is. `stella-cli`'s `session_persist::restore_conversation`
+//! is the single place that rule is implemented.
+//!
+//! They are not converged, and this is not a step toward converging them: the
+//! sidecar is per-session and describes a conversation, the work record is
+//! per-workspace and describes a filesystem. What was converged in the PR that
+//! moved the checkpoint here is the pairing that actually mattered — a resume
+//! point and the file changes it is a resume point *for* now share one commit
+//! graph, so no recovery path has to reconcile those two.
 //!
 //! ## Crash-safety contract
 //!

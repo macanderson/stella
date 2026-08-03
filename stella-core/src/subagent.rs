@@ -622,6 +622,25 @@ impl Engine<'_> {
                 compaction_budget_tokens: spec
                     .compaction_budget_tokens
                     .unwrap_or(self.config.compaction_budget_tokens),
+                // The one seam the child must NOT inherit. A sink is bound to a
+                // session, and a child turn is not the session's turn — it runs
+                // inside one of the parent's tool calls, while the parent's own
+                // turn is mid-flight.
+                //
+                // Inheriting it is actively destructive in both directions:
+                // every child step would overwrite the parent's resume point
+                // with the CHILD's transcript, and the child reaching a terminal
+                // outcome would call `discard` — retracting the parent's resume
+                // point while the parent still needs it. A crash just after a
+                // child finished would then find either nothing to resume from
+                // or a conversation belonging to a different agent.
+                //
+                // A child is not separately resumable, and does not need to be:
+                // its work is bounded, its result lands in the parent's
+                // transcript, and a resumed parent re-runs the tool call like
+                // any other. Giving children their own sink would need a session
+                // identity per child, which nothing mints.
+                checkpoint_sink: None,
                 ..self.config.clone()
             },
             call_role: spec.role,
