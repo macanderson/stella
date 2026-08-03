@@ -2761,7 +2761,14 @@ impl<'a> Pipeline<'a> {
             name: StageKind::Execute,
         });
         match self
-            .run_engine_turn(engine, messages, budget, file_changes, mutating_actions, None)
+            .run_engine_turn(
+                engine,
+                messages,
+                budget,
+                file_changes,
+                mutating_actions,
+                None,
+            )
             .await
         {
             TurnOutcome::Completed { text, cost_usd } => {
@@ -2892,7 +2899,9 @@ impl<'a> Pipeline<'a> {
                     }
                     consumer.send(event)
                 }
-                AgentEvent::ToolResult { call_id, output, .. } => {
+                AgentEvent::ToolResult {
+                    call_id, output, ..
+                } => {
                     // The agent running the tracked test itself is the
                     // earliest moment anyone can know the goal is met — and
                     // before this, it was the one observation the oracle
