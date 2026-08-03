@@ -275,6 +275,41 @@ class TestMetrics:
         assert metrics.resolved is False
         assert metrics.failure == "NonZeroAgentExitCodeError"
 
+    def test_atif_only_trials_read_the_real_atif_field_names(self, tmp_path: Path):
+        """The trajectory fallback is the ONLY source for a non-Stella agent.
+
+        ATIF spells these ``total_prompt_tokens`` / ``total_completion_tokens``;
+        the plausible-looking ``total_input_tokens`` / ``total_output_tokens``
+        do not exist in the format. Reading the wrong key does not raise — it
+        returns zero, so a Claude Code arm that really spent 40k tokens and $2
+        would post 0 tokens and $0.00 and win every efficiency dimension on the
+        scoreboard. Wrong-but-plausible is exactly the failure a benchmark tool
+        must not have.
+        """
+        trial_dir = tmp_path / "job" / "t__1"
+        (trial_dir / "agent").mkdir(parents=True)
+        (trial_dir / "agent" / "trajectory.json").write_text(
+            json.dumps(
+                {
+                    "steps": [{"tool_calls": [{"name": "bash"}]}],
+                    "final_metrics": {
+                        "total_prompt_tokens": 40_000,
+                        "total_completion_tokens": 3_200,
+                        "total_cached_tokens": 31_000,
+                        "total_cost_usd": 2.15,
+                        "extra": {"total_cache_write_tokens": 4_100},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        metrics = MetricsReader().read(trial_dir, "t")
+        assert metrics.tokens_in == 40_000
+        assert metrics.tokens_out == 3_200
+        assert metrics.cache_read == 31_000
+        assert metrics.cache_write == 4_100
+        assert metrics.total_cost == pytest.approx(2.15)
+
     def test_the_cache_is_invalidated_when_the_file_grows(self, trial: Path):
         reader = MetricsReader()
         first = reader.read(trial, "fix-git")
