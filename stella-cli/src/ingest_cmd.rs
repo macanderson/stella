@@ -298,6 +298,15 @@ pub fn run(
         run_scan(&root, args.all);
         Ok(())
     } else {
+        // Extraction resolves a provider and makes a model call, so it needs
+        // the same live catalog every other model-calling command gets.
+        // `stella ingest` is dispatched BEFORE `main`'s bootstrap (it has a
+        // scan mode that touches no provider at all), which is exactly how a
+        // catalog-provable bad slug used to slip past validation here and die
+        // at the provider instead (#895). Called on this branch only: scanning
+        // stays catalog-free, and this call site is synchronous, so the full
+        // refresh — not just the network-free half — is safe.
+        crate::model_catalog::bootstrap();
         run_named(&root, &args.paths, model, api_key, base_url)
     }
 }

@@ -45,14 +45,28 @@ fn corrupt(db_path: &Path) {
 /// Run `stella doctor …` in `dir`. No provider or key is configured on purpose —
 /// a corrupt store must be diagnosable in exactly that state. `NO_COLOR` keeps
 /// the assertions off ANSI escapes.
+///
+/// HOME and the data dir are pointed at scratch: the `model config` check
+/// (#895) reads the user settings scope and the on-disk model catalog, so
+/// without this the store assertions below would pass or fail depending on
+/// which models the developer happens to have pinned. `model_config_cli.rs`
+/// owns that check's own assertions.
 fn doctor(dir: &tempfile::TempDir, args: &[&str]) -> Output {
+    let home = dir.path().join("scratch-home");
+    std::fs::create_dir_all(&home).expect("scratch home");
     Command::new(env!("CARGO_BIN_EXE_stella"))
         .arg("doctor")
         .args(args)
         .current_dir(dir.path())
+        .env("HOME", &home)
+        .env("STELLA_DATA_DIR", home.join("data"))
         .env("NO_COLOR", "1")
         .env("STELLA_NO_ENV_FILE", "1")
+        .env("STELLA_CATALOG_AUTO_REFRESH", "0")
+        .env("STELLA_MANAGED_SETTINGS", home.join("no-managed.json"))
+        .env_remove("STELLA_HOME")
         .env_remove("STELLA_MODEL")
+        .env_remove("STELLA_BASE_URL")
         .env_remove("STELLA_BUDGET")
         .output()
         .expect("run stella doctor")
@@ -81,7 +95,11 @@ fn doctor_reports_a_healthy_store_and_exits_zero() {
         stdout.contains("session sidecars"),
         "the sidecar-orphan check is reported too: {stdout}"
     );
-    assert!(stdout.contains("3 ok, 0 failed"), "{stdout}");
+    assert!(
+        stdout.contains("model config"),
+        "the model-config check is reported too: {stdout}"
+    );
+    assert!(stdout.contains("4 ok, 0 failed"), "{stdout}");
 }
 
 #[test]

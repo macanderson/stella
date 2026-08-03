@@ -13,7 +13,7 @@ first.
 ```bash
 stella config     # what actually resolved: provider, model, key source, workspace
 stella models     # every provider, its key status, and which source supplied it
-stella doctor     # is the local state Stella owns sound?
+stella doctor     # is the local state — and the model config — sound?
 ```
 
 Run these before forming a theory. `stella config` in particular resolves every
@@ -72,10 +72,21 @@ This is the check people skip, and the merge rules genuinely differ per field:
 
 Command-line flags and some environment variables sit **above** settings:
 
+- **Model** — `--model` > `STELLA_MODEL` > `agents.default.model` >
+  `default_model` > auto-detection. The flag and the variable are the *same*
+  slot, so the flag wins when both are set, and either wins over every
+  settings key. A settings-pinned model never silently outranks an override.
 - **API key** — `--api-key` > provider env var > `settings.json` `api_key` >
   `credentials.toml` > interactive prompt.
 - **Base URL** — `--base-url` > the `ZAI_GLM_CODING_PLAN=1` toggle (Z.ai only) >
   `settings.json` `base_url` > the built-in default.
+
+<Callout type="warn">
+`--base-url` / `STELLA_BASE_URL` is **not** part of the model chain. It replaces
+the endpoint of whichever provider the chain already picked — without changing
+the pick, or the credential that goes with it. That is how one provider's key
+ends up at another provider's host. `stella doctor` flags the pairing by name.
+</Callout>
 
 An exported shell variable beats the file almost every time, which is the
 resolution to most "but I set it in settings.json" reports.
@@ -126,14 +137,24 @@ Three specific traps:
 
 ### A 401 that names the wrong provider
 
-If `settings.json` pins a `base_url` for one provider and you run without
-`--model`, auto-detection can pick a *different* provider whose key then gets
-sent to the pinned URL. The error names the key's provider while the request
-went somewhere else. Pin the model explicitly and the ambiguity disappears:
+A base URL selects nothing. If `--base-url`, `STELLA_BASE_URL`, or a
+`settings.json` `base_url` points at one provider's host while the model chain
+resolved a *different* provider, that provider's key is sent to the other one's
+endpoint — and the rejection is reported by the adapter that sent it, so the
+error blames the wrong party.
 
-```bash
-stella --model zai/glm-5.2 config
+`stella doctor` detects the pairing and names both sides:
+
+```text
+  ✗ model config — 1 model setting(s) name something the provider will reject
+      --base-url / STELLA_BASE_URL: `https://api.z.ai/api/paas/v4` — points at
+      Z.ai (GLM 5.2) (api.z.ai) while the resolved provider is OpenRouter — your
+      OPENROUTER_API_KEY credential would be sent to Z.ai (GLM 5.2) …
 ```
+
+The fix is to make the two agree: pin the provider to the host
+(`--model zai/glm-5.2`), or drop the override. A host Stella does not recognize
+is left alone — a proxy or a private gateway is a legitimate use of the flag.
 
 ### Auto-detection picked a provider you did not expect
 
@@ -141,12 +162,15 @@ With no `--model`, Stella takes the first provider with a resolvable credential,
 in this order:
 
 ```text
-zai, anthropic, openai, xai, deepseek, gemini, openrouter, then vertex, and bedrock LAST
+openrouter, zai, anthropic, openai, xai, deepseek, gemini, then vertex, and bedrock LAST
 ```
 
-Vertex and Bedrock sit last so generic AWS or Google credentials present for
-other reasons never hijack selection. Any leftover key earlier in that list wins
-over the one you meant — `unset` it, or pin `--model`.
+OpenRouter sits first because nobody exports `OPENROUTER_API_KEY` by accident —
+having one is a deliberate statement about routing. Vertex and Bedrock sit last
+so generic AWS or Google credentials present for other reasons never hijack
+selection. Any leftover key earlier in that list wins over the one you meant —
+`unset` it, or pin `--model`. `stella doctor` prints which provider and model
+the next run would use, and why.
 
 ## "Hooks, MCP servers, or custom tools never load"
 

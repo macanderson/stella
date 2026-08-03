@@ -678,8 +678,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // Reads local state only — and with --repair renames files inside
             // .stella/private/. No provider, no API key, and deliberately
             // before `Config::load`: a workspace whose store is corrupt must be
-            // diagnosable without a working model configuration.
-            return doctor::run_doctor(*repair, *last_failure);
+            // diagnosable without a working model configuration. The session
+            // flags are threaded in so the `model config` check diagnoses the
+            // model the next run would actually send (#895).
+            return doctor::run_doctor(
+                *repair,
+                *last_failure,
+                cli.globals.model.as_deref(),
+                cli.globals.base_url.as_deref(),
+            );
         }
         Some(Command::Completions { shell }) => {
             // Generated from the live `Command` tree, so a new subcommand or
@@ -744,11 +751,12 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
 
     // Correctness pass over the resolved settings — model-slug problems (an
     // unknown provider, a typo, an over-qualified slug that would 400 on the
-    // first call) surface here, before the TUI's alternate screen hides
-    // stderr, as advisory warnings that never block the run.
-    for issue in settings_check::validate_at_launch(&cfg) {
-        eprintln!("⚠ settings: {}", issue.line());
-    }
+    // first call) and a `--base-url` pointed at a different provider's host
+    // surface here, before the TUI's alternate screen hides stderr, as
+    // advisory warnings that never block the run. The printing lives in
+    // `settings_check` so `stella ingest`, which resolves its own config,
+    // says exactly the same thing (#895).
+    settings_check::report_at_launch(&cfg);
 
     // Same posture, one file over: `~/.stella/credentials.toml` is read even
     // when its mode lets others at it (refusing would lock a user out of their

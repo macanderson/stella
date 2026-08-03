@@ -133,6 +133,31 @@ pub fn set_default_model(cfg: &Config, id: &str) -> Result<String, String> {
              or run `/models` to list what your configured providers offer"
         ));
     };
+    // Validated at SET time, not at first use (#895). Parsing only proves the
+    // string has a shape; this proves the provider will serve the WIRE slug —
+    // catching `openrouter/auto`, which parses cleanly and then reaches the
+    // gateway as the bare `auto` it does not serve. Refused before the write,
+    // so a bad default never becomes every future session's 400. Only
+    // built-in providers are checked: a settings-defined endpoint is its own
+    // authority, the same posture `validate_model_slug` holds. The catalog is
+    // already installed — `main` bootstraps it before any path that can reach
+    // the deck.
+    if let Some(provider_config) = crate::config::PROVIDERS
+        .iter()
+        .find(|p| p.id == spec.provider)
+        && let Some(issue) =
+            crate::settings_check::check_resolved_model(provider_config, &spec.model)
+    {
+        return Err(format!(
+            "`{id}` was not saved — {}\n{}",
+            issue.message,
+            crate::settings_check::model_fix_hints(Some(&spec.provider))
+                .iter()
+                .map(|hint| format!("  → {hint}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
     let path = crate::settings::user_config_path().ok_or_else(|| {
         "could not save the default model: the user settings path is unavailable \
          (is $HOME set?)"
@@ -306,6 +331,58 @@ mod tests {
         assert_eq!(
             engine.get("default_model").and_then(|v| v.as_str()),
             Some("zai/glm-5.2")
+        );
+    }
+
+    /// #895: validated at SET time, not at first use. `openrouter/auto`
+    /// parses cleanly — the prefix names a real provider — and then reaches
+    /// the gateway as the bare `auto`, which it does not serve. Saving it
+    /// would break every session started from then on, so the write must not
+    /// happen at all, and the refusal must carry the way out.
+    #[test]
+    fn a_slug_the_catalog_rejects_is_refused_before_it_is_written() {
+        let (td, _guard) = scratch();
+        let cfg = test_config(td.path().join("repo"));
+
+        let error = set_default_model(&cfg, "openrouter/auto")
+            .expect_err("a wire slug the provider cannot serve must not be persisted");
+        assert!(
+            error.contains("vendor namespace"),
+            "the refusal says what is wrong with the slug: {error}"
+        );
+        for remedy in [
+            "stella models list --provider openrouter",
+            "stella models refresh",
+            "SETTINGS tab",
+        ] {
+            assert!(
+                error.contains(remedy),
+                "`{remedy}` must be offered — a refusal with no way forward is \
+                 worse than the 400 it replaces: {error}"
+            );
+        }
+        assert!(
+            !td.path().join("home/.stella/settings.json").exists(),
+            "a refused set must leave the user's settings untouched"
+        );
+    }
+
+    #[test]
+    fn a_valid_slug_still_saves() {
+        // The guard above must not have made the ordinary path unreachable:
+        // `openrouter/openai/gpt-5.5` keeps its vendor namespace on the wire
+        // and is exactly the qualified form users are told to type.
+        let (td, _guard) = scratch();
+        let cfg = test_config(td.path().join("repo"));
+        set_default_model(&cfg, "openrouter/openai/gpt-5.5").expect("a well-formed slug saves");
+        let raw: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(td.path().join("home/.stella/settings.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            raw.pointer("/agent_engine_config/default_model")
+                .and_then(|v| v.as_str()),
+            Some("openrouter/openai/gpt-5.5")
         );
     }
 

@@ -14,9 +14,37 @@
 //!
 //! Warnings never block launch — a run can proceed on a partially-valid
 //! config (a bad judge pin falls back to the worker, etc.); the point is to
-//! surface the problem where it's cheap to fix, not to gate.
+//! surface the problem where it's cheap to fix, not to gate. `stella doctor`
+//! runs the same pass through [`inspect_model_config`] and *does* gate: a
+//! script that wants a hard answer before spending money asks for one.
+//!
+//! # The precedence this module resolves against
+//!
+//! Documented here because it is the thing users guess wrong about (#895),
+//! and because getting it wrong would make every warning point at the wrong
+//! setting. Highest first, as `config.rs` actually implements it:
+//!
+//! 1. **`--model`**, which is the SAME clap slot as **`STELLA_MODEL`**
+//!    (`cli.rs`'s `#[arg(long, global = true, env = "STELLA_MODEL")]`), so
+//!    the flag beats the env var and either beats every settings key —
+//!    `Config::load` does `model_override.or(engine_default)`.
+//! 2. **`agents.default.model`** (with `agents.default.provider` pinning the
+//!    provider, in which case the slug is sent verbatim).
+//! 3. **`default_model`**.
+//! 4. **Auto-detection** — the first [`PROVIDERS`] row with a resolvable
+//!    credential, on that provider's own `default_model`; then
+//!    settings-defined providers, alphabetically.
+//!
+//! `--base-url` / `STELLA_BASE_URL` is NOT in that chain at all: it replaces
+//! the endpoint of whichever provider the chain picked, without changing the
+//! pick or the credential. That is the genuinely surprising one — it is how a
+//! Z.ai URL ends up receiving an OpenRouter key and returning a 401 that
+//! reads as "OpenRouter rejected the credential" — so
+//! [`check_base_url_coherence`] calls it out by name.
 
-use crate::config::{PROVIDERS, ProviderConfig};
+use std::path::Path;
+
+use crate::config::{Dialect, LOCAL_PROVIDER, PROVIDERS, ProviderConfig};
 use crate::engine_config::{ModelSpec, model_spec_for, parse_model_spec};
 use crate::model_catalog::validate_model_slug;
 use crate::settings::{AgentEngineConfig, EngineAgentKind};
@@ -40,6 +68,97 @@ impl SettingsIssue {
     pub fn line(&self) -> String {
         format!("{}: `{}` — {}", self.location, self.value, self.message)
     }
+}
+
+/// The `location` the base-URL coherence finding carries. Named because both
+/// the reporter (which suppresses the model fix hints for it — no amount of
+/// `stella models` fixes a mis-pointed endpoint) and its test refer to it.
+const BASE_URL_LOCATION: &str = "--base-url / STELLA_BASE_URL";
+
+/// The ways out of a bad model setting, in the order a user tries them: see
+/// what IS valid, re-sync in case the model shipped after the last sync, then
+/// the two places the default is actually set. Every model finding — at
+/// launch, in `stella doctor`, and on a refused `/model` — ends with these,
+/// so "invalid model" is never where the message stops (#895).
+pub fn model_fix_hints(provider_id: Option<&str>) -> Vec<String> {
+    let scope = provider_id
+        .map(|id| format!(" --provider {id}"))
+        .unwrap_or_default();
+    vec![
+        format!("`stella models list{scope}` prints every slug that will be accepted"),
+        "`stella models refresh` re-syncs the catalog — try this first if the model shipped \
+         recently"
+            .to_string(),
+        "set the default with `/model <provider>/<slug>` in the deck, or on its SETTINGS tab"
+            .to_string(),
+    ]
+}
+
+/// The host of a base URL — lowercased, without scheme, userinfo, or port.
+/// Deliberately dependency-free (no `url` crate for one comparison) and
+/// deliberately host-only: Z.ai's coding-plan endpoint differs from its
+/// standard one by PATH alone (`/api/coding/paas/v4` vs `/api/paas/v4`) and
+/// must read as coherent.
+fn base_url_host(url: &str) -> Option<String> {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let authority = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    // Strip a port only when the tail really is one, so an unbracketed IPv6
+    // literal is not truncated to `[`.
+    let host = match authority.rsplit_once(':') {
+        Some((head, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => head,
+        _ => authority,
+    };
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+}
+
+/// Detect the provider/base_url incoherence that mislabels its own error
+/// (#895 problem 3): `--base-url` replaces the endpoint but never the
+/// provider or the credential, so pointing it at a DIFFERENT known provider's
+/// host sends provider A's key to provider B — and B's `401` is reported by
+/// A's adapter, which is why the prior incident read as "OpenRouter rejected
+/// the credential" while the request went to Z.ai.
+///
+/// Only a host that belongs to another [`PROVIDERS`] row is flagged. A
+/// private gateway, a corporate proxy, or an SSH tunnel is a legitimate and
+/// common use of the flag, and this check must never cry wolf at one — an
+/// unknown host is `None`. Also `None` for `local` (whose base URL *is* its
+/// address) and for Vertex/Bedrock (whose table rows carry a display anchor,
+/// not a real endpoint — `bedrock` literally contains `<AWS_REGION>`).
+pub fn check_base_url_coherence(
+    provider: &ProviderConfig,
+    base_url_override: Option<&str>,
+) -> Option<SettingsIssue> {
+    let raw = base_url_override.map(str::trim).filter(|u| !u.is_empty())?;
+    if provider.id == LOCAL_PROVIDER.id
+        || matches!(provider.dialect, Dialect::Vertex | Dialect::Bedrock)
+    {
+        return None;
+    }
+    let host = base_url_host(raw)?;
+    if base_url_host(provider.base_url).is_some_and(|own| own == host) {
+        return None;
+    }
+    let other = PROVIDERS.iter().find(|p| {
+        p.id != provider.id
+            && !matches!(p.dialect, Dialect::Vertex | Dialect::Bedrock)
+            && base_url_host(p.base_url).is_some_and(|h| h == host)
+    })?;
+    Some(SettingsIssue {
+        location: BASE_URL_LOCATION.to_string(),
+        value: raw.to_string(),
+        message: format!(
+            "points at {} ({host}) while the resolved provider is {} — your {} credential \
+             would be sent to {}, whose rejection is reported as \"{} rejected the API key\". \
+             Pin the provider to the host (`--model {}/<slug>`) or drop the override.",
+            other.display_name,
+            provider.display_name,
+            provider.env_var,
+            other.display_name,
+            provider.display_name,
+            other.id,
+        ),
+    })
 }
 
 fn kind_label(kind: EngineAgentKind) -> &'static str {
@@ -67,6 +186,20 @@ fn provider_ids_namespaced(provider: &str) -> bool {
     ids.peek().is_some() && ids.all(|id| id.contains('/'))
 }
 
+/// One real seeded id for `provider`, so a message can show the shape it is
+/// asking for instead of describing it. Nothing beats a line the user can
+/// paste. Ids whose vendor happens to BE the provider name are skipped —
+/// `openrouter/openrouter/auto` is a correct setting and a terrible example,
+/// because it looks like the doubling the neighbouring check rejects.
+fn example_id(provider: &str) -> Option<String> {
+    let seed = Catalog::seed();
+    let ids = || seed.entries().iter().filter(|e| e.provider == provider);
+    ids()
+        .find(|e| !e.id.starts_with(&format!("{provider}/")))
+        .or_else(|| ids().next())
+        .map(|e| e.id.clone())
+}
+
 /// The wire-exactness problem with `wire`, if any — checks INDEPENDENT of the
 /// catalog's alias-tolerant `resolve`, which happily maps both a doubled and a
 /// de-namespaced slug back to the right card and so masks exactly these bugs.
@@ -85,10 +218,19 @@ fn wire_shape_issue(provider: &str, wire: &str) -> Option<String> {
         ));
     }
     if !wire.contains('/') && provider_ids_namespaced(provider) {
+        // Deliberately phrased against the SETTING, not the wire slug: this
+        // fires on `default_model: "openrouter/auto"`, whose value is echoed
+        // beside the message, so "the wire slug should be `openrouter/auto`"
+        // read as advice to keep exactly what was already there. What is
+        // actually missing is a segment — the vendor between the two.
+        let example = example_id(provider)
+            .map(|id| format!("{provider}/{id}"))
+            .unwrap_or_else(|| format!("{provider}/<vendor>/{wire}"));
         return Some(format!(
-            "missing the vendor namespace — `{provider}` model ids carry a \
-             `vendor/` prefix, so the wire slug should be e.g. \
-             `{provider}/{wire}`, not the bare `{wire}`"
+            "missing the vendor namespace — `{provider}` model ids are \
+             `vendor/model` pairs, so the bare `{wire}` names nothing it \
+             serves. Name the vendor too, as `{provider}/<vendor>/{wire}` \
+             (a real one looks like `{example}`)"
         ));
     }
     None
@@ -266,21 +408,35 @@ pub fn check_engine_settings(
     issues
 }
 
-/// The launch entry point: validate every configured model reference plus
-/// the resolved default model. Best-effort — a settings load failure yields
-/// no issues here (the config path already surfaced it), and the caller
-/// treats the result as advisory warnings, never a launch gate.
+/// Push `issue` unless the same offending VALUE was already reported —
+/// `default_model` and the resolved wire model are usually the same string
+/// seen from two angles, and saying it twice reads as two problems.
+fn push_unique(issues: &mut Vec<SettingsIssue>, issue: SettingsIssue) {
+    if !issues.iter().any(|i| i.value == issue.value) {
+        issues.push(issue);
+    }
+}
+
+/// Every provider id this workspace can legally name: the built-ins, `local`,
+/// and whatever `settings.providers` defines.
+fn provider_ids(settings: &crate::settings::Settings) -> Vec<String> {
+    PROVIDERS
+        .iter()
+        .map(|p| p.id.to_string())
+        .chain(std::iter::once(LOCAL_PROVIDER.id.to_string()))
+        .chain(settings.providers.keys().cloned())
+        .collect()
+}
+
+/// The launch entry point: validate every configured model reference, the
+/// resolved default model, and the provider/base_url pairing. Best-effort —
+/// a settings load failure yields no issues here (the config path already
+/// surfaced it), and the caller treats the result as advisory warnings, never
+/// a launch gate.
 pub fn validate_at_launch(cfg: &crate::config::Config) -> Vec<SettingsIssue> {
     let mut issues = Vec::new();
     if let Ok(settings) = crate::settings::Settings::load(&cfg.workspace_root) {
-        let ids: Vec<String> = PROVIDERS
-            .iter()
-            .map(|p| p.id.to_string())
-            .chain(std::iter::once(
-                crate::config::LOCAL_PROVIDER.id.to_string(),
-            ))
-            .chain(settings.providers.keys().cloned())
-            .collect();
+        let ids = provider_ids(&settings);
         let is_provider = |id: &str| ids.iter().any(|p| p == id);
         if let Some(engine) = &settings.agent_engine_config {
             issues.extend(check_engine_settings(engine, &is_provider));
@@ -288,12 +444,162 @@ pub fn validate_at_launch(cfg: &crate::config::Config) -> Vec<SettingsIssue> {
     }
     // The effective wire model — deduped against the settings checks so an
     // issue already reported for `default_model` isn't repeated here.
-    if let Some(issue) = check_resolved_model(&cfg.provider, &cfg.model_id)
-        && !issues.iter().any(|i| i.value == issue.value)
-    {
+    if let Some(issue) = check_resolved_model(&cfg.provider, &cfg.model_id) {
+        push_unique(&mut issues, issue);
+    }
+    // Nothing to dedup against: an endpoint is not a model.
+    if let Some(issue) = check_base_url_coherence(&cfg.provider, cfg.base_url_override.as_deref()) {
         issues.push(issue);
     }
     issues
+}
+
+/// Run [`validate_at_launch`] and print it: one `⚠ settings:` line per
+/// finding, then the fix hints ONCE. Owning the printing here rather than at
+/// each call site is what keeps the two paths that resolve their own config —
+/// `main` and `stella ingest <paths>` — saying the same thing (#895 problem
+/// 2, where ingest had no advisory surface at all).
+///
+/// The hints are model-shaped, so they are suppressed when the only finding
+/// is a mis-pointed endpoint: no amount of `stella models` fixes that, and
+/// [`check_base_url_coherence`]'s message already carries its own remedy.
+pub fn report_at_launch(cfg: &crate::config::Config) {
+    let issues = validate_at_launch(cfg);
+    for issue in &issues {
+        eprintln!("⚠ settings: {}", issue.line());
+    }
+    if issues.iter().any(|i| i.location != BASE_URL_LOCATION) {
+        for hint in model_fix_hints(Some(cfg.provider.id)) {
+            eprintln!("  → {hint}");
+        }
+    }
+}
+
+/// What `stella doctor` needs to say about this workspace's model
+/// configuration, resolved WITHOUT credentials and WITHOUT network so the
+/// command keeps its "no provider, no API key, no network" contract.
+#[derive(Debug, Clone, Default)]
+pub struct ModelConfigReport {
+    /// The `provider/slug` the next run would send, when one resolves.
+    pub resolved: Option<String>,
+    /// Which rung of the precedence chain produced it, in the user's own
+    /// vocabulary — the setting they would edit to change it.
+    pub source: String,
+    /// The provider the default routes to, for scoping the fix hints.
+    pub provider: Option<String>,
+    /// An honest caveat on a PASS: what this offline check could not prove.
+    pub note: Option<String>,
+    /// Everything provably wrong, most-configured-first.
+    pub issues: Vec<SettingsIssue>,
+}
+
+/// The offline check's blind spot, stated out loud. An UNSEEDED provider
+/// (OpenRouter, a settings-defined gateway) has no curated slug list, so
+/// until its own `/models` listing has been synced the only thing provable
+/// without network is the slug's SHAPE. A pass must not read as "verified"
+/// when that is all it means.
+fn unsynced_note(provider: &ProviderConfig) -> Option<String> {
+    if provider.seeded {
+        return None;
+    }
+    let synced = crate::model_catalog::catalog_store().map_or(0, |store| {
+        store
+            .provider_model_count(provider.id, Some(crate::model_catalog::SYNC_SOURCE))
+            .unwrap_or(0)
+            + store
+                .provider_model_count(provider.id, Some(crate::model_catalog::NATIVE_SOURCE))
+                .unwrap_or(0)
+    });
+    (synced == 0).then(|| {
+        format!(
+            "{} has no synced model list yet, so only the slug's shape could be checked — \
+             `stella models refresh` turns this into a real catalog check",
+            provider.display_name
+        )
+    })
+}
+
+/// Resolve and validate the default model the way a run would, but with no
+/// credentials prompted and no network touched — the form `stella doctor`
+/// needs. The precedence walked here is the one documented in the module
+/// header, and it is the REAL one: `model_override` carries `--model` and
+/// `STELLA_MODEL` alike (one clap slot), and it outranks settings.
+pub fn inspect_model_config(
+    workspace_root: &Path,
+    model_override: Option<&str>,
+    base_url_override: Option<&str>,
+) -> ModelConfigReport {
+    let settings = crate::settings::Settings::load(workspace_root).unwrap_or_default();
+    let ids = provider_ids(&settings);
+    let is_provider = |id: &str| ids.iter().any(|p| p == id);
+
+    let mut report = ModelConfigReport {
+        issues: settings
+            .agent_engine_config
+            .as_ref()
+            .map(|engine| check_engine_settings(engine, &is_provider))
+            .unwrap_or_default(),
+        ..Default::default()
+    };
+
+    let mut spec = None;
+    if let Some(raw) = model_override.map(str::trim).filter(|m| !m.is_empty()) {
+        // Rung 1. Not covered by `check_engine_settings` — it is not a
+        // setting — so it is validated here, as its own location.
+        if let Some(issue) = check_spec("--model", raw, &is_provider) {
+            push_unique(&mut report.issues, issue);
+        }
+        report.source = "--model / STELLA_MODEL".to_string();
+        spec = parse_model_spec(raw, &is_provider);
+    } else if let Some(engine) = &settings.agent_engine_config
+        && let Some(resolved) = model_spec_for(engine, EngineAgentKind::Default, &is_provider)
+        && !resolved.model.is_empty()
+    {
+        // Rungs 2 and 3, told apart by which key actually answered.
+        report.source = match engine
+            .agent(EngineAgentKind::Default)
+            .and_then(|a| a.model.as_deref())
+        {
+            Some(m) if !m.trim().is_empty() => "agents.default.model",
+            _ => flat_source_label(engine, EngineAgentKind::Default),
+        }
+        .to_string();
+        spec = Some(resolved);
+    }
+    if spec.is_none()
+        && let Some(first) = crate::config::discover_configured_providers()
+            .into_iter()
+            .next()
+    {
+        // Rung 4. `discover_configured_providers` never prompts, so this
+        // stays credential-free in the sense that matters: it reads what is
+        // already there and asks the user for nothing.
+        report.source = format!(
+            "auto-detected — {} is the first provider with a credential",
+            first.config.display_name
+        );
+        spec = Some(ModelSpec {
+            provider: first.config.id.to_string(),
+            model: first.config.default_model.to_string(),
+        });
+    }
+
+    let Some(spec) = spec else {
+        return report;
+    };
+    let value = format!("{}/{}", spec.provider, spec.model);
+    if let Some(issue) = check_resolved_spec("resolved model", &value, &spec) {
+        push_unique(&mut report.issues, issue);
+    }
+    if let Some(provider) = PROVIDERS.iter().find(|p| p.id == spec.provider) {
+        if let Some(issue) = check_base_url_coherence(provider, base_url_override) {
+            report.issues.push(issue);
+        }
+        report.note = unsynced_note(provider);
+    }
+    report.provider = Some(spec.provider);
+    report.resolved = Some(value);
+    report
 }
 
 /// Validate the RESOLVED wire model the default agent will actually send —
@@ -498,6 +804,179 @@ mod tests {
             check_engine_settings(&engine, &is_seed_provider).is_empty(),
             "Default is backstopped elsewhere, not doubly-checked here"
         );
+    }
+
+    fn zai() -> &'static ProviderConfig {
+        PROVIDERS.iter().find(|p| p.id == "zai").unwrap()
+    }
+
+    /// #895 problem 3, the mislabeled 401: an OpenRouter pin whose endpoint
+    /// is forced to Z.ai sends the OpenRouter key to Z.ai, and OpenRouter's
+    /// adapter reports the rejection — so the error blames the wrong party.
+    /// Only the pairing can catch it, and the message has to name both sides
+    /// or it repeats the mistake it is diagnosing.
+    #[test]
+    fn a_base_url_pointing_at_another_provider_is_flagged_with_both_names() {
+        let issue = check_base_url_coherence(openrouter(), Some("https://api.z.ai/api/paas/v4"))
+            .expect("a cross-provider endpoint must be flagged");
+        assert_eq!(issue.location, BASE_URL_LOCATION);
+        assert!(
+            issue.message.contains("Z.ai") && issue.message.contains("OpenRouter"),
+            "both sides must be named: {}",
+            issue.message
+        );
+        assert!(
+            issue.message.contains("OPENROUTER_API_KEY"),
+            "the credential that would reach the wrong host is named: {}",
+            issue.message
+        );
+        assert!(
+            issue.message.contains("--model zai/"),
+            "the fix must be a command, not a diagnosis: {}",
+            issue.message
+        );
+    }
+
+    #[test]
+    fn a_coherent_base_url_is_not_flagged() {
+        // The provider's own endpoint, obviously.
+        assert!(
+            check_base_url_coherence(openrouter(), Some("https://openrouter.ai/api/v1")).is_none()
+        );
+        // Z.ai's coding-plan endpoint differs from its standard one by PATH
+        // only, which is why the comparison is host-scoped: flagging this
+        // would fire on a supported, documented configuration.
+        assert!(
+            check_base_url_coherence(zai(), Some("https://api.z.ai/api/coding/paas/v4")).is_none()
+        );
+        // No override at all.
+        assert!(check_base_url_coherence(openrouter(), None).is_none());
+    }
+
+    #[test]
+    fn an_unknown_host_is_a_private_gateway_not_a_mistake() {
+        // A proxy, a tunnel, or a corporate gateway is the ordinary use of
+        // `--base-url`. A check that flagged these would be ignored within a
+        // day, and then it would not catch the real one either.
+        for url in [
+            "https://llm-gateway.internal.example/v1",
+            "http://localhost:11434/v1",
+            "http://127.0.0.1:8080",
+        ] {
+            assert!(
+                check_base_url_coherence(openrouter(), Some(url)).is_none(),
+                "`{url}` is a legitimate private endpoint"
+            );
+        }
+    }
+
+    #[test]
+    fn base_url_host_strips_scheme_userinfo_and_port_but_not_an_ipv6_literal() {
+        assert_eq!(
+            base_url_host("https://API.Z.ai/api/paas/v4").as_deref(),
+            Some("api.z.ai")
+        );
+        assert_eq!(
+            base_url_host("https://user:pw@openrouter.ai:443/api/v1").as_deref(),
+            Some("openrouter.ai")
+        );
+        // A port-shaped tail that is not a port must survive intact.
+        assert_eq!(
+            base_url_host("http://[::1]:8080/v1").as_deref(),
+            Some("[::1]")
+        );
+    }
+
+    /// The three ways out, named. This is the acceptance criterion of #895 in
+    /// one assertion: an unknown or misrouted slug must print the valid-slug
+    /// listing, `stella models`, and the SETTINGS tab.
+    #[test]
+    fn the_fix_hints_name_all_three_ways_out() {
+        let hints = model_fix_hints(Some("openrouter")).join("\n");
+        assert!(
+            hints.contains("stella models list --provider openrouter"),
+            "{hints}"
+        );
+        assert!(hints.contains("stella models refresh"), "{hints}");
+        assert!(hints.contains("SETTINGS tab"), "{hints}");
+        // Unscoped when the provider is unknown — never a dangling flag.
+        assert!(
+            model_fix_hints(None)
+                .iter()
+                .all(|hint| !hint.contains("--provider")),
+            "{:?}",
+            model_fix_hints(None)
+        );
+    }
+
+    /// A scratch workspace holding `.stella/settings.json`. The user scope is
+    /// already inert under `cfg(test)` (`settings::user_home_dir` reads a
+    /// thread-local nobody sets here), so what this file says is what
+    /// `Settings::load` sees.
+    fn workspace(settings: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("workspace");
+        std::fs::create_dir_all(dir.path().join(".stella")).expect("dot dir");
+        std::fs::write(dir.path().join(".stella/settings.json"), settings).expect("settings");
+        dir
+    }
+
+    #[test]
+    fn a_bad_default_model_is_reported_once_and_attributed_to_its_setting() {
+        let dir = workspace(r#"{"agent_engine_config": {"default_model": "openrouter/auto"}}"#);
+        let report = inspect_model_config(dir.path(), None, None);
+        assert_eq!(
+            report.issues.len(),
+            1,
+            "`default_model` and the wire model it resolves to are one problem \
+             seen twice, not two: {:?}",
+            report.issues
+        );
+        assert_eq!(report.issues[0].location, "default_model");
+        assert_eq!(report.resolved.as_deref(), Some("openrouter/auto"));
+        assert_eq!(report.source, "default_model");
+        assert_eq!(report.provider.as_deref(), Some("openrouter"));
+    }
+
+    /// #895 problem 4 assumed a settings-pinned model silently outranks the
+    /// override. It does not — `--model` and `STELLA_MODEL` are one clap slot
+    /// and `Config::load` does `model_override.or(engine_default)` — so a good
+    /// setting cannot rescue a bad flag, and the finding must be attributed to
+    /// the flag rather than to the innocent setting underneath it.
+    #[test]
+    fn the_override_outranks_the_setting_and_is_named_as_the_source() {
+        let dir = workspace(r#"{"agent_engine_config": {"default_model": "zai/glm-5.2"}}"#);
+        let report = inspect_model_config(dir.path(), Some("openrouter/auto"), None);
+        assert_eq!(report.resolved.as_deref(), Some("openrouter/auto"));
+        assert_eq!(report.source, "--model / STELLA_MODEL");
+        assert_eq!(report.issues.len(), 1, "{:?}", report.issues);
+        assert_eq!(report.issues[0].location, "--model");
+    }
+
+    #[test]
+    fn a_valid_default_reports_the_model_and_no_issues() {
+        let dir = workspace(r#"{"agent_engine_config": {"default_model": "zai/glm-5.2"}}"#);
+        let report = inspect_model_config(dir.path(), None, None);
+        assert!(report.issues.is_empty(), "{:?}", report.issues);
+        assert_eq!(report.resolved.as_deref(), Some("zai/glm-5.2"));
+        assert_eq!(report.source, "default_model");
+        // Z.ai is seeded, so the check is complete and has nothing to caveat.
+        assert_eq!(report.note, None);
+    }
+
+    #[test]
+    fn an_agents_default_pin_is_named_as_the_source_not_the_flat_key() {
+        // Both keys are set and both are valid; only the one that actually
+        // answers may be named, or the user edits the wrong line.
+        let dir = workspace(
+            r#"{"agent_engine_config": {
+                 "default_model": "zai/glm-5.2",
+                 "agents": {"default": {"model": "openai/gpt-5.5"}}
+               }}"#,
+        );
+        let report = inspect_model_config(dir.path(), None, None);
+        assert!(report.issues.is_empty(), "{:?}", report.issues);
+        assert_eq!(report.resolved.as_deref(), Some("openai/gpt-5.5"));
+        assert_eq!(report.source, "agents.default.model");
     }
 
     #[test]

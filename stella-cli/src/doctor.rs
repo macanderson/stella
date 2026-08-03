@@ -5,7 +5,7 @@
 //! one pass/fail line each, plus the opt-in repair for the one failure that
 //! previously had no way out.
 //!
-//! Two checks today:
+//! Four checks today:
 //!
 //! - **store integrity** — this workspace's `.stella/private/store.db`. A
 //!   corrupt store used to surface as an error at session start and nothing
@@ -15,6 +15,13 @@
 //! - **fleet ledger** — rows in `fleet.db` naming a run that is no longer
 //!   recorded. Report-only by design; see [`fleet_ledger_orphans`] for why
 //!   `--repair` must not touch them.
+//! - **session sidecars** — sidecar directories whose session record is gone;
+//!   see [`orphan_session_sidecars`].
+//! - **model config** — the model the next run would actually send, and the
+//!   endpoint it would send it to; see [`model_config`]. The only check that
+//!   is about configuration rather than local state, and the reason is #895:
+//!   a default model the provider cannot serve breaks *every* call, and
+//!   before this it surfaced only as a mid-task `400`, once per command.
 //!
 //! The shape is a LIST of named checks rather than a single hard-coded probe
 //! because the next environment check (a provider reachable, a `.stella/`
@@ -99,13 +106,33 @@ impl Check {
 }
 
 /// Entry point for `stella doctor [--repair] [--last-failure]`.
-pub fn run_doctor(repair: bool, last_failure: bool) -> Result<(), String> {
+///
+/// `model_override` / `base_url_override` are the session flags (`--model` /
+/// `STELLA_MODEL`, `--base-url` / `STELLA_BASE_URL`) threaded in so the
+/// [`model_config`] check diagnoses the model the NEXT run would use, not a
+/// different one — `stella --model x/y doctor` and `stella --model x/y run`
+/// must agree about what x/y resolves to.
+pub fn run_doctor(
+    repair: bool,
+    last_failure: bool,
+    model_override: Option<&str>,
+    base_url_override: Option<&str>,
+) -> Result<(), String> {
     let workspace_root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
     if last_failure {
         return print_last_failure(&workspace_root);
     }
-    run_doctor_at(&workspace_root, repair)
+    // Install the on-disk catalog so the model check validates against what
+    // this machine actually knows, not just the built-in seed. The
+    // network-free half on purpose: `stella doctor` promises no provider, no
+    // API key, and no network, and a diagnostic that phones home to answer
+    // "is my config broken" would be its own bug. Done at the entry point
+    // rather than inside the check so the module tests below — which drive
+    // `run_doctor_at` against scratch workspaces — never touch the user's
+    // real `~/.stella/catalog.db`.
+    crate::model_catalog::ensure_catalog_store();
+    run_doctor_at(&workspace_root, repair, model_override, base_url_override)
 }
 
 /// Print the newest crash dump — `docs/design/diagnostics.md` §7.4.
@@ -139,24 +166,102 @@ fn print_last_failure(workspace_root: &Path) -> Result<(), String> {
 
 /// The command with its workspace passed in, so tests can drive a scratch
 /// workspace instead of the process's cwd. Note that only the
-/// workspace-scoped checks (store integrity, fleet ledger) honour
-/// `workspace_root`; the session-sidecar check operates on the machine-wide
-/// [`stella_store::SessionRegistry`] default location, which is global by
-/// design — so a `--repair` here can reap orphan sidecars regardless of
-/// `workspace_root`.
-pub(crate) fn run_doctor_at(workspace_root: &Path, repair: bool) -> Result<(), String> {
-    let checks = checks(workspace_root, repair);
+/// workspace-scoped checks (store integrity, fleet ledger, model config)
+/// honour `workspace_root`; the session-sidecar check operates on the
+/// machine-wide [`stella_store::SessionRegistry`] default location, which is
+/// global by design — so a `--repair` here can reap orphan sidecars
+/// regardless of `workspace_root`.
+pub(crate) fn run_doctor_at(
+    workspace_root: &Path,
+    repair: bool,
+    model_override: Option<&str>,
+    base_url_override: Option<&str>,
+) -> Result<(), String> {
+    let checks = checks(workspace_root, repair, model_override, base_url_override);
     render(&checks);
     verdict(&checks)
 }
 
 /// Every check this build knows how to run, in the order they are reported.
-fn checks(workspace_root: &Path, repair: bool) -> Vec<Check> {
+fn checks(
+    workspace_root: &Path,
+    repair: bool,
+    model_override: Option<&str>,
+    base_url_override: Option<&str>,
+) -> Vec<Check> {
     vec![
         store_integrity(workspace_root, repair),
         fleet_ledger_orphans(workspace_root),
         orphan_session_sidecars(&stella_store::SessionRegistry::open_default(), repair),
+        model_config(workspace_root, model_override, base_url_override),
     ]
+}
+
+/// #895: the model the next run would actually send, checked before it costs
+/// a turn. A default slug the provider cannot serve does not break one
+/// command — it breaks *every* one, and it used to surface only as a provider
+/// `400` in the middle of whatever the user was doing.
+///
+/// A **Fail** is any finding the catalog can prove offline: an unknown
+/// provider, a slug the synced catalog vetoes, an over-qualified
+/// `openrouter/openrouter/…`, a de-namespaced `openrouter/auto`, or a
+/// `--base-url` pointed at a different provider's host. Every one of them
+/// prints the setting, the value, what is wrong, and
+/// [`crate::settings_check::model_fix_hints`] — the valid-slug listing, the
+/// refresh, and where the default is set. "Invalid model" with no way forward
+/// is the failure mode this check exists to replace.
+///
+/// A **Pass** carries what it could NOT prove: an unseeded provider whose
+/// `/models` listing has never been synced has no authoritative slug set, so
+/// only the shape was checkable. Overclaiming there would be worse than the
+/// silence it replaced.
+fn model_config(
+    workspace_root: &Path,
+    model_override: Option<&str>,
+    base_url_override: Option<&str>,
+) -> Check {
+    const NAME: &str = "model config";
+
+    let report = crate::settings_check::inspect_model_config(
+        workspace_root,
+        model_override,
+        base_url_override,
+    );
+    if !report.issues.is_empty() {
+        return Check::fail(
+            NAME,
+            format!(
+                // Not "model setting(s)": a mis-pointed `--base-url` lands in
+                // the same list and is neither a model nor a setting.
+                "{} configuration problem(s) that will break model calls",
+                report.issues.len()
+            ),
+        )
+        .with_details(
+            report
+                .issues
+                .iter()
+                .map(crate::settings_check::SettingsIssue::line)
+                .collect(),
+        )
+        .with_remedy(crate::settings_check::model_fix_hints(
+            report.provider.as_deref(),
+        ));
+    }
+    let Some(resolved) = report.resolved else {
+        // Nothing configured and no credential to auto-detect from: a fresh
+        // install, which is not a fault. `stella auth set` is the next step,
+        // and the no-key error already says so the moment a run needs one.
+        return Check::pass(
+            NAME,
+            "no model configured yet — the first run picks the provider whose key it finds",
+        );
+    };
+    let summary = format!("{resolved} — from {}", report.source);
+    match report.note {
+        Some(note) => Check::pass(NAME, summary).with_details(vec![note]),
+        None => Check::pass(NAME, summary),
+    }
 }
 
 /// Report — and with `--repair`, reap — session sidecar directories whose
@@ -524,12 +629,17 @@ mod tests {
     #[test]
     fn doctor_passes_on_a_healthy_workspace_store() {
         let dir = workspace_with_store();
-        assert_eq!(run_doctor_at(dir.path(), false), Ok(()));
+        assert_eq!(run_doctor_at(dir.path(), false, None, None), Ok(()));
 
-        let checks = checks(dir.path(), false);
+        let checks = checks(dir.path(), false, None, None);
         assert_eq!(
             checks.iter().map(|c| c.name).collect::<Vec<_>>(),
-            vec!["store integrity", "fleet ledger", "session sidecars"],
+            vec![
+                "store integrity",
+                "fleet ledger",
+                "session sidecars",
+                "model config"
+            ],
             "the shipped checks, in report order: {checks:?}"
         );
         assert!(
@@ -608,7 +718,7 @@ mod tests {
         drop(conn);
 
         for repair in [false, true] {
-            let checks = checks(dir.path(), repair);
+            let checks = checks(dir.path(), repair, None, None);
             let ledger_check = checks
                 .iter()
                 .find(|c| c.name == "fleet ledger")
@@ -639,7 +749,7 @@ mod tests {
     #[test]
     fn doctor_passes_on_a_workspace_that_has_never_run_a_session() {
         let dir = tempfile::tempdir().expect("tempdir");
-        assert_eq!(run_doctor_at(dir.path(), false), Ok(()));
+        assert_eq!(run_doctor_at(dir.path(), false, None, None), Ok(()));
         assert!(
             !store_db(&dir).exists(),
             "checking must not create the store it did not find"
@@ -652,7 +762,7 @@ mod tests {
         let db_path = store_db(&dir);
         corrupt(&db_path);
 
-        let checks = checks(dir.path(), false);
+        let checks = checks(dir.path(), false, None, None);
         assert_eq!(checks[0].status, CheckStatus::Fail, "{checks:?}");
         assert!(
             checks[0].summary.contains(".stella/private/store.db"),
@@ -694,16 +804,16 @@ mod tests {
         let dir = workspace_with_store();
         corrupt(&store_db(&dir));
 
-        let failure = run_doctor_at(dir.path(), false)
+        let failure = run_doctor_at(dir.path(), false, None, None)
             .expect_err("a corrupt store must not exit 0 — scripts gate on this");
         assert!(failure.contains("failed"), "{failure}");
 
         // `verdict` is the mapping `main` turns into ExitCode: 1 on any failure.
-        assert!(verdict(&checks(dir.path(), false)).is_err());
+        assert!(verdict(&checks(dir.path(), false, None, None)).is_err());
 
         // And --repair resolves it, so the same command now exits 0.
-        assert_eq!(run_doctor_at(dir.path(), true), Ok(()));
-        assert_eq!(run_doctor_at(dir.path(), false), Ok(()));
+        assert_eq!(run_doctor_at(dir.path(), true, None, None), Ok(()));
+        assert_eq!(run_doctor_at(dir.path(), false, None, None), Ok(()));
     }
 
     #[test]
@@ -713,7 +823,7 @@ mod tests {
         corrupt(&db_path);
         let corrupt_bytes = std::fs::read(&db_path).expect("read corrupt db");
 
-        let checks = checks(dir.path(), true);
+        let checks = checks(dir.path(), true, None, None);
         assert_eq!(checks[0].status, CheckStatus::Pass, "{checks:?}");
         assert!(
             checks[0].summary.contains("quarantined"),
@@ -762,7 +872,7 @@ mod tests {
         let db_path = store_db(&dir);
         let before = std::fs::read(&db_path).expect("read db");
 
-        let checks = checks(dir.path(), true);
+        let checks = checks(dir.path(), true, None, None);
         assert_eq!(checks[0].status, CheckStatus::Pass);
         assert!(
             checks[0]
