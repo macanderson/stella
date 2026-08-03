@@ -665,15 +665,25 @@ _CATALOG_RS = (
 )
 
 
-def _seeded_output_ceilings() -> dict[str, int]:
-    """Read each seeded model's own completion ceiling from the Rust catalog.
+def _parse_output_ceilings(source: str) -> dict[str, int]:
+    """Collect each shipping model's completion ceiling out of catalog.rs text.
 
     Parsed rather than duplicated, because duplicating it is the defect this
     exists to catch. Entries with no `with_max_output_tokens` are omitted:
     the engine falls back to its global default for those, and the posture
     has no per-model ceiling to match.
+
+    Split out from the file read so the parser's own blind spots can be
+    tested against synthetic source — see `TestCatalogCeilingParser`.
     """
-    source = _CATALOG_RS.read_text(encoding="utf-8")
+    # Stop at the test module. Chunking on `CatalogEntry::new(` bounds every
+    # chunk by the *next* entry, but the seed table's last row has no next
+    # seeded entry — its chunk otherwise runs on into `#[cfg(test)]` and
+    # adopts the first ceiling it finds among the fixtures there. Skipping
+    # `test-only` slugs cannot prevent that: it filters an entry's own
+    # identity, not the extent of the chunk before it. The module boundary
+    # is what actually closes the region.
+    source = source.split("#[cfg(test)]")[0]
     ceilings: dict[str, int] = {}
     for chunk in source.split("CatalogEntry::new(")[1:]:
         head = re.match(r'\s*"([^"]+)"\s*,\s*"([^"]+)"', chunk)
@@ -682,9 +692,9 @@ def _seeded_output_ceilings() -> dict[str, int]:
         slug, provider = head.groups()
         if slug.startswith("test-only"):
             continue  # fixtures for the catalog's own tests, never benchmarked
-        # `split` already consumed the delimiter, so a chunk ends exactly
-        # where the next entry begins and the first ceiling in it is this
-        # entry's own.
+        # Within the seed table `split` already consumed the delimiter, so a
+        # chunk ends exactly where the next entry begins and the first
+        # ceiling in it is this entry's own.
         ceiling = re.search(r"with_max_output_tokens\(Some\(([\d_]+)\)\)", chunk)
         if ceiling is None:
             continue
@@ -699,6 +709,122 @@ def _seeded_output_ceilings() -> dict[str, int]:
         # row and finding this test still green.
         ceilings[f"{provider}/{slug}"] = int(ceiling.group(1).replace("_", ""))
     return ceilings
+
+
+def _seeded_output_ceilings() -> dict[str, int]:
+    """`_parse_output_ceilings` over the real catalog this repo ships."""
+    return _parse_output_ceilings(_CATALOG_RS.read_text(encoding="utf-8"))
+
+
+class TestCatalogCeilingParser:
+    """The parser's own blind spots, pinned against synthetic source.
+
+    The parity check below is only as trustworthy as what this reads out of
+    `catalog.rs`, and both ways it has been wrong so far were silent: a
+    number was still produced, just the wrong model's. Neither would have
+    reddened anything. So the two known misreads get fixtures rather than a
+    comment, because a comment does not fail.
+    """
+
+    _SHIPPING_ROW = """
+                CatalogEntry::new(
+                    "claude-sonnet-5",
+                    "anthropic",
+                    "claude",
+                    200_000,
+                )
+                .with_max_output_tokens(Some(64_000)),
+    """
+
+    # The seed table's *last* row, and — as in `catalog.rs` today — one that
+    # declares no ceiling of its own. That is what leaves its chunk open: with
+    # no ceiling to find first, the next one anywhere below becomes "its".
+    _UNCAPPED_LAST_ROW = """
+                CatalogEntry::new(
+                    "anthropic/claude-haiku-4.5",
+                    "openrouter",
+                    "claude",
+                    200_000,
+                ),
+    """
+
+    _TEST_MODULE_BARE_BUILDER = """
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_row_carries_its_own_ceiling() {
+        let entry = base.with_max_output_tokens(Some(8_000));
+        assert_eq!(entry.max_output_tokens, Some(8_000));
+    }
+}
+"""
+
+    def test_a_fixtures_ceiling_is_not_attributed_to_the_last_shipping_row(
+        self,
+    ) -> None:
+        """The seed table's last row must not adopt a number from the tests.
+
+        Nothing closes its chunk, and it has no ceiling of its own to be found
+        first. The bare builder call below is the shape `catalog.rs` actually
+        contains — a fixture asserting a ceiling round-trips, reached with no
+        `CatalogEntry::new(` in between — so an uncapped shipping row came back
+        capped at a number written to exercise the setter. Silent either way:
+        green if the posture happens to sit at 8000, otherwise red about a
+        model that never declared a ceiling at all.
+        """
+        source = (
+            self._SHIPPING_ROW
+            + self._UNCAPPED_LAST_ROW
+            + self._TEST_MODULE_BARE_BUILDER
+        )
+        assert _parse_output_ceilings(source) == {"anthropic/claude-sonnet-5": 64000}
+
+    def test_a_fixture_entry_does_not_become_a_benchmarked_model(self) -> None:
+        # The other way test source leaks: a fixture with its own
+        # `CatalogEntry::new(` becomes a chunk, and a phantom row the parity
+        # check then demands the posture cap at. Its slug is whatever the
+        # fixture author picked, so the `test-only` prefix is not a guarantee.
+        source = (
+            self._SHIPPING_ROW
+            + """
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_row_carries_its_own_ceiling() {
+        let entry = CatalogEntry::new(
+            "some-fixture",
+            "anthropic",
+            "claude",
+            200_000,
+        )
+        .with_max_output_tokens(Some(8_000));
+    }
+}
+"""
+        )
+        assert _parse_output_ceilings(source) == {"anthropic/claude-sonnet-5": 64000}
+
+    def test_a_gateway_slug_keeps_its_own_key(self) -> None:
+        # `anthropic/claude-sonnet-5` seeded under `openrouter` is a distinct
+        # row from the direct-Anthropic one. Reading the already-slashed slug
+        # as fully qualified collapses the two, and the later row wins — so
+        # one model's posture gets checked against the other's ceiling.
+        source = (
+            self._SHIPPING_ROW
+            + """
+                CatalogEntry::new(
+                    "anthropic/claude-sonnet-5",
+                    "openrouter",
+                    "claude",
+                    200_000,
+                )
+                .with_max_output_tokens(Some(48_000)),
+    """
+        )
+        assert _parse_output_ceilings(source) == {
+            "anthropic/claude-sonnet-5": 64000,
+            "openrouter/anthropic/claude-sonnet-5": 48000,
+        }
 
 
 class TestOutputCeilingParity:
