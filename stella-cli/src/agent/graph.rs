@@ -63,6 +63,7 @@ pub(super) fn index_workspace_graph_blocking(
         files_parsed: stats.files_parsed,
         files_unchanged: stats.files_skipped_unchanged,
         files_skipped_generated: stats.files_skipped_generated,
+        files_skipped_too_large: stats.files_skipped_too_large,
     };
     graph.shutdown();
     Ok(summary)
@@ -81,14 +82,21 @@ pub(super) struct GraphSummary {
     /// separately from `total_files` so the exclusion is visible, not just
     /// silently absent from the count.
     pub(super) files_skipped_generated: usize,
+    /// Files this pass excluded for exceeding the indexer's 4 MiB ceiling (a
+    /// memory bound on tree-sitter, whose syntax tree runs several times the
+    /// size of its source). Same reason the generated count is here: a user
+    /// whose file left the index otherwise gets no signal at all, and reads
+    /// the graph's silence about it as the file having no symbols.
+    pub(super) files_skipped_too_large: usize,
 }
 
 /// The `✓ code graph: N symbols, M imports…` summary line, shared by `stella
 /// init` and the session auto-builder so both surfaces read identically.
 /// Reports index totals; the parenthetical is this pass's parse/skip split.
-/// When this pass excluded any generated/minified files, an explicit
-/// "skipped N generated files" clause makes that visible rather than letting
-/// them silently vanish from the file count (issue #272).
+/// Each exclusion this pass made gets its own trailing clause — "skipped N
+/// generated files" (issue #272), "skipped N files over the size limit" — so
+/// a file that left the index says so, instead of silently vanishing from the
+/// count and reading as a file with no symbols in it.
 pub(super) fn format_graph_stats(summary: &GraphSummary) -> String {
     let base = format!(
         "✓ code graph: {} symbols, {} imports across {} file{} ({} re-parsed, {} unchanged this pass)",
@@ -99,18 +107,25 @@ pub(super) fn format_graph_stats(summary: &GraphSummary) -> String {
         summary.files_parsed,
         summary.files_unchanged,
     );
-    if summary.files_skipped_generated == 0 {
+    let clauses: Vec<String> = [
+        (summary.files_skipped_generated, "generated file"),
+        (summary.files_skipped_too_large, "file over the size limit"),
+    ]
+    .into_iter()
+    .filter(|(count, _)| *count > 0)
+    .map(|(count, noun)| {
+        // "file over the size limit" pluralizes on the noun, not the tail.
+        let plural = noun.replacen("file", "files", 1);
+        format!(
+            "skipped {count} {}",
+            if count == 1 { noun } else { &plural }
+        )
+    })
+    .collect();
+    if clauses.is_empty() {
         return base;
     }
-    format!(
-        "{base} — skipped {} generated file{}",
-        summary.files_skipped_generated,
-        if summary.files_skipped_generated == 1 {
-            ""
-        } else {
-            "s"
-        }
-    )
+    format!("{base} — {}", clauses.join(", "))
 }
 
 /// A session-lifetime holder for the live code graph. It keeps the in-process

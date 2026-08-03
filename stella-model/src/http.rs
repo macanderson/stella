@@ -119,15 +119,99 @@ pub(crate) fn classify_unary_dispatch_error(label: &str, error: &reqwest::Error)
     ProviderError::Transport(error.to_string())
 }
 
-/// Parse a `Retry-After` header (delta-seconds form, RFC 9110 §10.2.3) into
-/// a millisecond hint for the retry policy — `stella-core/src/retry.rs`
-/// honors `RateLimited.retry_after_ms` when present. The HTTP-date form is
-/// not handled (providers send seconds on 429s); an absent or unparseable
-/// value yields `None` rather than an error.
+/// Parse a `Retry-After` header (RFC 9110 §10.2.3) into a millisecond hint
+/// for the retry policy — `stella-core/src/retry.rs` honors
+/// `RateLimited.retry_after_ms` when present. An absent or unparseable value
+/// yields `None` rather than an error.
 pub(crate) fn parse_retry_after_ms(headers: &reqwest::header::HeaderMap) -> Option<u64> {
-    let value = headers.get(reqwest::header::RETRY_AFTER)?;
-    let seconds: u64 = value.to_str().ok()?.trim().parse().ok()?;
-    Some(seconds.saturating_mul(1000))
+    let value = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
+    retry_after_ms_at(value, unix_epoch_secs_now())
+}
+
+/// Seconds since the Unix epoch, or 0 if the system clock is set before it.
+/// Split out so [`retry_after_ms_at`] stays a pure function of its inputs and
+/// the HTTP-date arm is testable without a fixed system clock.
+fn unix_epoch_secs_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// The pure half of [`parse_retry_after_ms`]: `value` interpreted against a
+/// caller-supplied clock.
+///
+/// Both RFC 9110 forms are accepted. Delta-seconds is what every major API
+/// sends directly; the HTTP-date form is what a CDN or reverse proxy in front
+/// of one emits — and a deployment fronted by a CDN is exactly the deployment
+/// that rate-limits. Ignoring the date form did not fail loudly: the hint came
+/// back `None`, the driver fell back to its computed backoff, and the retry
+/// landed back inside the window the server had just named.
+///
+/// A date already in the past yields `Some(0)`; the retry policy floors a zero
+/// hint at its own base delay, so "retry now" is expressed rather than
+/// discarded. The two obsolete formats RFC 9110 §5.6.7 lists (RFC 850 and
+/// asctime) are deliberately not parsed — nothing observed emits them, and
+/// they degrade to `None` exactly as the date form used to.
+fn retry_after_ms_at(value: &str, now_epoch_secs: i64) -> Option<u64> {
+    let value = value.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(seconds.saturating_mul(1000));
+    }
+    let deadline = imf_fixdate_epoch_secs(value)?;
+    Some((deadline - now_epoch_secs).max(0).saturating_mul(1000) as u64)
+}
+
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/// Seconds since the Unix epoch for an IMF-fixdate — `Sun, 06 Nov 1994
+/// 08:49:37 GMT`, the one form RFC 9110 §5.6.7 allows a sender to generate.
+/// Strict by design: a header this function cannot read exactly is a header
+/// whose meaning we would be guessing at, and `None` costs only the fallback
+/// to computed backoff.
+fn imf_fixdate_epoch_secs(value: &str) -> Option<i64> {
+    // The day-of-week is redundant with the date and is not cross-checked;
+    // a sender that disagrees with itself is not a reason to drop the hint.
+    let (_weekday, rest) = value.split_once(", ")?;
+    let mut fields = rest.split(' ');
+    let day: i64 = fields.next()?.parse().ok()?;
+    let month_name = fields.next()?;
+    let month = MONTHS.iter().position(|name| *name == month_name)? as i64 + 1;
+    let year: i64 = fields.next()?.parse().ok()?;
+    let mut clock = fields.next()?.split(':');
+    // GMT is the only zone the grammar permits, so anything else is a
+    // malformed header rather than another time zone to convert from.
+    if fields.next()? != "GMT" || fields.next().is_some() {
+        return None;
+    }
+    let hour: i64 = clock.next()?.parse().ok()?;
+    let minute: i64 = clock.next()?.parse().ok()?;
+    let second: i64 = clock.next()?.parse().ok()?;
+    if clock.next().is_some() {
+        return None;
+    }
+    // A leap second is spelled `:60`; it maps onto the same POSIX epoch
+    // second as `:59`, which is the closest a Unix timestamp can represent.
+    if !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+    Some(days_from_civil(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second.min(59))
+}
+
+/// Days between 1970-01-01 and a proleptic-Gregorian `y-m-d`, by Howard
+/// Hinnant's `days_from_civil`. Written out rather than pulling in a date
+/// crate for one header: this is the whole of the calendar arithmetic an
+/// IMF-fixdate needs, and it handles the leap rules exactly. `m` is 1-based
+/// and assumed in range (its caller validates).
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400; // [0, 399]
+    let day_of_year = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
 }
 
 /// Best-effort extraction of the human `message` from a provider's
@@ -410,6 +494,98 @@ mod tests {
     fn client_builds_without_panicking() {
         // Smoke test: the connect-timeout client constructs on this platform.
         let _ = client();
+    }
+
+    /// The reference epoch every date case below is stated against:
+    /// `Sun, 06 Nov 1994 08:49:37 GMT`, RFC 9110 §5.6.7's own example.
+    const RFC_EXAMPLE_EPOCH: i64 = 784_111_777;
+
+    #[test]
+    fn delta_seconds_is_still_the_common_form() {
+        assert_eq!(retry_after_ms_at("120", 0), Some(120_000));
+        assert_eq!(retry_after_ms_at("  30 ", 0), Some(30_000));
+        assert_eq!(retry_after_ms_at("0", 0), Some(0));
+    }
+
+    /// Issue #940: the HTTP-date form was ignored, so a provider fronted by a
+    /// CDN — the deployments that actually rate-limit — had its stated window
+    /// dropped and the driver retried back inside it on computed backoff.
+    #[test]
+    fn an_http_date_becomes_the_remaining_wait() {
+        assert_eq!(
+            imf_fixdate_epoch_secs("Sun, 06 Nov 1994 08:49:37 GMT"),
+            Some(RFC_EXAMPLE_EPOCH),
+            "the RFC's own example must land on its own epoch second"
+        );
+        assert_eq!(
+            retry_after_ms_at("Sun, 06 Nov 1994 08:49:37 GMT", RFC_EXAMPLE_EPOCH - 90),
+            Some(90_000),
+            "the hint is the wait remaining, not the timestamp"
+        );
+    }
+
+    /// A window that has already closed means "retry now" — expressed as a
+    /// zero hint (which the retry policy floors at its own base delay), never
+    /// as a negative wait and never as a dropped hint.
+    #[test]
+    fn an_elapsed_http_date_is_zero_not_negative_and_not_dropped() {
+        assert_eq!(
+            retry_after_ms_at("Sun, 06 Nov 1994 08:49:37 GMT", RFC_EXAMPLE_EPOCH + 600),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn the_calendar_arithmetic_handles_leap_years_and_epoch_boundaries() {
+        for (header, epoch) in [
+            ("Thu, 01 Jan 1970 00:00:00 GMT", 0),
+            ("Wed, 31 Dec 1969 23:59:59 GMT", -1),
+            // 2000 is a leap year (divisible by 400); 1900 was not.
+            ("Tue, 29 Feb 2000 12:00:00 GMT", 951_825_600),
+            ("Mon, 01 Mar 2100 00:00:00 GMT", 4_107_542_400),
+            // A leap second collapses onto the same POSIX second as :59.
+            ("Sat, 31 Dec 2016 23:59:60 GMT", 1_483_228_799),
+        ] {
+            assert_eq!(imf_fixdate_epoch_secs(header), Some(epoch), "{header}");
+        }
+    }
+
+    /// Strictness is the point: a header we cannot read exactly is one whose
+    /// meaning we would be guessing at, and `None` only costs the fallback to
+    /// computed backoff. The two obsolete RFC 9110 §5.6.7 formats are among
+    /// these deliberately.
+    #[test]
+    fn a_malformed_or_obsolete_date_yields_no_hint_rather_than_a_wrong_one() {
+        for header in [
+            "",
+            "soon",
+            "-30",
+            "1.5",
+            "Sun, 06 Nov 1994 08:49:37 PST", // only GMT is in the grammar
+            "Sun, 06 Nov 1994 08:49:37 GMT extra", // trailing junk
+            "Sun, 06 Nov 1994 08:49 GMT",    // no seconds
+            "Sun, 06 Xyz 1994 08:49:37 GMT", // not a month
+            "Sun, 06 Nov 1994 25:49:37 GMT", // hour out of range
+            "Sun, 32 Nov 1994 08:49:37 GMT", // day out of range
+            "Sunday, 06-Nov-94 08:49:37 GMT", // obsolete RFC 850 form
+            "Sun Nov  6 08:49:37 1994",      // obsolete asctime form
+        ] {
+            assert_eq!(retry_after_ms_at(header, 0), None, "{header:?}");
+        }
+    }
+
+    #[test]
+    fn the_header_map_path_reads_both_forms() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        assert_eq!(parse_retry_after_ms(&headers), None);
+        headers.insert(reqwest::header::RETRY_AFTER, "45".parse().unwrap());
+        assert_eq!(parse_retry_after_ms(&headers), Some(45_000));
+        // Long past, so the answer is deterministic against the real clock.
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            "Sun, 06 Nov 1994 08:49:37 GMT".parse().unwrap(),
+        );
+        assert_eq!(parse_retry_after_ms(&headers), Some(0));
     }
 
     #[test]

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import shutil
 import subprocess
 import threading
@@ -131,9 +132,12 @@ class RecorderSupervisor:
     height: int = 900
     fps: int = 10
     poll_interval: float = 2.0
+    #: Stop trying to film a trial after this many consecutive start failures.
+    max_start_attempts: int = 3
 
     _active: dict[Path, _Recording] = field(default_factory=dict, init=False)
     _finished: set[Path] = field(default_factory=set, init=False)
+    _failures: dict[Path, int] = field(default_factory=dict, init=False)
     _thread: threading.Thread | None = field(default=None, init=False)
     _stop: threading.Event = field(default_factory=threading.Event, init=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
@@ -214,6 +218,44 @@ class RecorderSupervisor:
         digest = hashlib.sha256(str(trial_dir).encode("utf-8")).hexdigest()[:12]
         return f"arena-rec-{digest}"
 
+    @staticmethod
+    def _docker_env() -> dict[str, str]:
+        """Docker environment for the recorder, with the task platform pin removed.
+
+        A benchmark host sets ``DOCKER_DEFAULT_PLATFORM=linux/amd64`` because
+        Terminal-Bench task images publish amd64 only. The recorder is not a
+        task image — it is built locally, for the host's own architecture, and
+        it never runs task code. Inheriting the pin makes Docker look for an
+        amd64 variant of an arm64 image, fail to find it locally, and then try
+        to *pull* ``arenabench/recorder:1`` from a registry that has no such
+        repository. The error reads like a missing image; the cause is an
+        inherited environment variable.
+        """
+        env = dict(os.environ)
+        env.pop("DOCKER_DEFAULT_PLATFORM", None)
+        return env
+
+    def _record_failure(self, trial_dir: Path, detail: str) -> None:
+        """Log a start failure once, then stop retrying this trial.
+
+        Without a cap the watcher retries every poll for the lifetime of the
+        trial. That is noisy in a log an operator is reading during a live run,
+        and when the failure is a registry lookup it is also a network request
+        every two seconds for something that will never succeed.
+        """
+        count = self._failures.get(trial_dir, 0) + 1
+        self._failures[trial_dir] = count
+        if count == 1:
+            log.warning("recorder start failed for %s: %s", trial_dir.name, detail)
+        if count >= self.max_start_attempts:
+            log.warning(
+                "giving up recording %s after %d attempts; the match continues "
+                "without video for this trial",
+                trial_dir.name,
+                count,
+            )
+            self._finished.add(trial_dir)
+
     def _start_container(self, trial_dir: Path, job: str) -> None:
         agent_dir = trial_dir / "agent"
         out_dir = trial_dir / "arena"
@@ -244,18 +286,19 @@ class RecorderSupervisor:
         ]
         try:
             completed = subprocess.run(
-                command, capture_output=True, text=True, timeout=60
+                command,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=self._docker_env(),
             )
         except (OSError, subprocess.SubprocessError) as exc:
-            log.warning("recorder start failed for %s: %s", trial_dir.name, exc)
+            self._record_failure(trial_dir, str(exc))
             return
         if completed.returncode != 0:
-            log.warning(
-                "recorder start failed for %s: %s",
-                trial_dir.name,
-                completed.stderr.strip()[:400],
-            )
+            self._record_failure(trial_dir, completed.stderr.strip()[:400])
             return
+        self._failures.pop(trial_dir, None)
         with self._lock:
             self._active[trial_dir] = _Recording(name, trial_dir, time.time())
         log.info("recording %s (%s)", trial_dir.name, contestant)

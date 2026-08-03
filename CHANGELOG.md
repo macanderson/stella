@@ -35,6 +35,34 @@ skip the roll) were re-inserted the same way.
 
 ## [Unreleased]
 
+### Fixed
+
+- `delete_file` now removes a **symlink itself** instead of the file it points
+  at. The path resolver canonicalizes, so deleting an in-tree symlink (a
+  vendored config, a `node_modules/.bin` entry) silently destroyed the target
+  and left the link dangling, reported as an ordinary deletion. A dangling
+  symlink is now deletable too, and the tool says which of the two it removed.
+- `apply_edits` no longer reverts a write that arrived from outside the batch.
+  When a mid-batch write failed, the rollback restored the bytes captured
+  during validation unconditionally — destroying any change a formatter,
+  watcher, or editor had made in between while still reporting a clean
+  all-or-nothing abort. Files whose bytes are no longer the batch's are left
+  alone and named in the error.
+- `RIPGREP_CONFIG_PATH` is scrubbed from tool subprocesses, alongside the
+  `GIT_CONFIG_*` family it matches. A planted `rg` config (`--max-count=1`, a
+  hiding `--glob`) silently truncated what the `grep` tool returned, and the
+  agent read the shortfall as fact.
+- `Retry-After` is honored in its HTTP-date form, not only as delta-seconds.
+  A provider behind a CDN — the deployments that actually rate-limit — had its
+  stated backoff window dropped, and the retry landed back inside it.
+
+### Changed
+
+- `stella init`'s code-graph summary reports files skipped for exceeding the
+  indexer's size ceiling, beside the existing generated-file count. The
+  exclusion was counted and surfaced nowhere, so a large file leaving the index
+  looked like a file with no symbols in it.
+
 ## [0.6.72] — 2026-08-03
 
 ## [0.6.71] — 2026-08-02

@@ -30,7 +30,8 @@ Defaults: 4 tasks from `DEFAULT_POOL`, `openrouter/z-ai/glm-4.7-flash`,
 `--budget 0.20` USD/task (passed on as `STELLA_BUDGET`), `--concurrent 4`,
 `--dataset terminal-bench`, output under `loop-bench-jobs/loop-bench/`.
 `--stella-binary` / `$STELLA_BINARY` names the uploaded binary; `--json` emits
-the report for CI instead of the table.
+the report for CI instead of the table, and `--json-out <path>` writes that same
+report to a file while the table still goes to stdout.
 
 ## Key concepts
 
@@ -51,9 +52,36 @@ calls (`write_file` / `edit_file` / `apply_edits` are writes — never
 | `ran (unsolved)` | real work happened, the verifier said no — not a loop failure |
 
 **The gate is loop health, not pass rate.** `loop_broken()` is
-`zero_work && reward != Some(1.0)`; the process exits `1` if any trial matches —
-even when others passed, and also when no trial artifacts were found at all.
-Exit `2` means the task list resolved to nothing.
+`zero_work && reward != Some(1.0)`; the process exits `1` if any trial matches,
+even when others passed.
+
+| Exit | Meaning |
+|---|---|
+| `0` | every trial that reported did real work (or passed) |
+| `1` | the loop misbehaved on at least one trial |
+| `2` | bad invocation: the task list resolved to nothing, or `--json-out` names an unwritable path (checked before anything is spent) |
+| `3` | no trial artifacts at all — infrastructure, not a loop regression |
+| `4` | the loop was healthy but fewer than `--min-pass` trials passed |
+| `5` | the run finished and the `--json-out` report could not be written (the JSON is dumped on stdout instead) |
+
+`1` outranks `4`: when both fire, the loop failure is the actionable one, and a
+broken loop explains the missing passes anyway.
+
+## The nightly CI gate (#873)
+
+[`.github/workflows/nightly-bench.yml`](../../.github/workflows/nightly-bench.yml)
+is the only CI job that runs Stella itself against real tasks. It cross-builds
+the SUT to the glibc 2.17 floor (a runner-glibc binary cannot exec in the
+`bullseye` task images, and harbor scores that as the agent failing the task),
+asserts portability, then runs a **pinned** task list on a pinned flash-tier
+model — the harness has no RNG, so that list *is* the seed.
+
+`--min-pass` is the pass-rate floor, and the workflow ships it at `0`
+(disabled). It is a real gate, not a placeholder: raise it once a few nights of
+the uploaded report agree on what normal is. Set by intuition instead, on a
+flash-tier model under a $0.20 cap, it is red every night for a reason no loop
+fix can address — and the loop-health gate above runs unconditionally either
+way.
 
 ## Gotchas
 
@@ -90,7 +118,7 @@ Exit `2` means the task list resolved to nothing.
 cargo test -p loop-bench        # no make target; `make test` covers it via --workspace
 ```
 
-Fourteen pure unit tests in [`src/tests.rs`](src/tests.rs) (pulled in by
+Seventeen pure unit tests in [`src/tests.rs`](src/tests.rs) (pulled in by
 `src/lib.rs` as `#[cfg(test)] mod tests;`) feed JSONL to `distill_events` and
 assert the verdict — no Docker, no harbor, no key. Each pins a real defect:
 batched `apply_edits` reporting zero writes, an ellipsis past the column
