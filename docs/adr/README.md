@@ -1,4 +1,16 @@
-# Architecture Decision Records — Phase 0 (Adaptive Context)
+# Architecture Decision Records
+
+This is Stella's numbered, ratifiable decision record. **ADRs 0001–0012 are one
+series** — the Phase 0 baseline for the adaptive-context work — and the notes
+below are about that series. From 0013 the directory also carries decisions
+outside it; an ADR that is not part of the Phase 0 series says so in its own
+header.
+
+(A bare "ADR-033" in `stella-serve` is not from this directory at all. It means
+the *Oxagen* ADR in the private `oxagen-platform` repository; `docs/design/serve-surface.md`
+is the self-contained Stella-side account.)
+
+## Phase 0 — Adaptive Context (0001–0012)
 
 These ADRs capture the baseline decisions for the adaptive-context work in
 Stella. ADRs 0001–0009 mostly *record* a decision the 2026-07 planning bundle
@@ -56,3 +68,16 @@ open; nothing before Phase 3 forces it.
 | [0010](0010-incremental-authority-transfer.md) | Incremental Authority Transfer (amends 0005) | Accepted — ratified 2026-07-26 (index tables do not transfer) |
 | [0011](0011-context-records-are-toml.md) | Context Records Are TOML (supersedes 0008's surface) | Accepted — ratified 2026-07-30 (hash-neutral; legacy `.md` rules keep loading) |
 | [0012](0012-context-record-field-schema.md) | The Context-Record Field Schema, and Records-Live-in-Files | Accepted — ratified 2026-07-30 (memories in the database, context records in files; `personal` → `user`) |
+
+## Outside the Phase 0 series
+
+| # | Title | Status |
+|---|---|---|
+| [0013](0013-session-artifact-boundary.md) | The Session Artifact Boundary | **Proposed** — awaiting ratification |
+
+ADR 0013 draws the line between what Stella owes a caller that moves a session
+between machines (an artifact, a fingerprint, a version contract, a visible
+fork) and what a control plane owns (identity, storage, transport, auth,
+retention). It decides a boundary, not a feature: nothing in it is implemented,
+and the parity rows `turn.checkpoint` and `turn.checkpoint_resume` defer to it
+by number.
