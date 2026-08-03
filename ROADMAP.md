@@ -158,7 +158,18 @@ Lint/typecheck are rightly excluded from the flip oracle. But they can still
   observations in the same stream), so `replay::calibration` folds it and
   `stella calibration` reports the judge's measured false-positive rate
   beside the deterministic cohort's — unmeasured stays unmeasured, never 0%.
-  Revert detection and threshold auto-tuning wait on real measured data.
+- **An answer key: reverts, and verdicts that arrive late.** *Done (#1293).*
+  Two gaps in the first slice are closed. `replay::ground_truth` reads git's
+  own `This reverts commit <sha>` marker, so a human undoing Stella's work is
+  a ground-truth source — counted apart from red CI, because a revert is a
+  later and better-informed statement. And `calibration_pending` carries a
+  session's unsettled passes out of the fold with the commits and PRs they
+  cover, so a terminal verdict recorded in *another* session (or a revert
+  landing weeks later) still reconciles them. The asymmetry is deliberate and
+  enforced: a revert settles a pass as a false positive, while the ABSENCE of
+  one confirms nothing and leaves the pass out of every denominator.
+  Threshold auto-tuning still waits on real measured data — which this is the
+  instrument for.
 - **Distress guidance earlier for repeated identical failures.** *Already
   satisfied (#868, closed).* The trigger fires on the second consecutive
   deterministic failure unconditionally — the timing this item asked for —

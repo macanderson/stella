@@ -39,8 +39,10 @@
 //! variant. Both mean the record is wrong, not merely newer.
 
 pub mod golden;
+pub mod ground_truth;
 pub mod reference_adapter;
 
+use ground_truth::PendingPass;
 use stella_protocol::{AgentEvent, JudgeEvidence, OracleObservation, ProofTree, StageKind};
 
 /// Judge-calibration tallies folded from recorded event streams (#871).
@@ -83,6 +85,18 @@ pub struct CalibrationReport {
     /// `require_evidence_for_lone_judge_pass` would actually have sent back,
     /// and the ones the pipeline relabels UNVERIFIED while it is off.
     pub judge_passes_standing_alone: u32,
+    /// …of the reconciled judge passes, how many were settled by a **revert**
+    /// rather than by CI (#1293).
+    ///
+    /// Counted apart because it is a different and stronger claim. CI failing
+    /// can mean a flake, a neighbouring change, or an infrastructure day; a
+    /// human reverting a commit is a person deciding, later and with more
+    /// information, that the work should not have landed. A judge whose false
+    /// positives are mostly reverts is failing differently from one whose
+    /// false positives are mostly red CI, and a single number would hide it.
+    pub judge_reverted: u32,
+    /// The same, for the deterministic cohort.
+    pub deterministic_reverted: u32,
 }
 
 impl CalibrationReport {
@@ -97,6 +111,8 @@ impl CalibrationReport {
         self.snapshotted_verdicts += other.snapshotted_verdicts;
         self.uncorroborated_verdicts += other.uncorroborated_verdicts;
         self.judge_passes_standing_alone += other.judge_passes_standing_alone;
+        self.judge_reverted += other.judge_reverted;
+        self.deterministic_reverted += other.deterministic_reverted;
         self
     }
 
@@ -168,12 +184,25 @@ pub fn render_calibration(report: &CalibrationReport) -> String {
             "  judge-alone rate: unmeasured (no verdict carried a ladder snapshot yet)".to_string()
         }
     };
+    // #1293: reverts are counted apart from CI, because they are a different
+    // and stronger statement — a human deciding later that the work should
+    // not have landed. Stated only when there are any: a zero here would read
+    // as "no work was reverted", when the ordinary case is that the caller
+    // gathered no revert evidence at all.
+    let reverts = match (report.judge_reverted, report.deterministic_reverted) {
+        (0, 0) => String::new(),
+        (judge, deterministic) => format!(
+            "\n  of those, settled by a REVERT (a human said it was wrong, not CI): \
+             {judge} judge, {deterministic} deterministic"
+        ),
+    };
     format!(
-        "judge calibration (#871) — passes reconciled against later CI verdicts\n\
-         {}\n{}\n\
-         note: reconciliation is stream-local; passes after a session's last\n\
-         terminal CI verdict stay unreconciled, and reverts are not yet a\n\
-         ground-truth source.\n\
+        "judge calibration (#871) — passes reconciled against later CI verdicts and reverts\n\
+         {}\n{}{reverts}\n\
+         note: a pass is reconciled by a terminal CI verdict or by a revert of\n\
+         a commit it covers, from any session or from the git history (#1293).\n\
+         A pass no evidence reaches stays UNRECONCILED and out of every\n\
+         denominator — absence of a revert is never a confirmation.\n\
          {judge_alone}",
         cohort(
             "  model judge  ",
@@ -190,18 +219,53 @@ pub fn render_calibration(report: &CalibrationReport) -> String {
     )
 }
 
-/// Fold one event stream into a [`CalibrationReport`] (#871).
+/// Fold one event stream into a [`CalibrationReport`] (#871), discarding the
+/// passes it could not settle.
 ///
-/// Reconciliation is stream-local and forward-only: a terminal CI verdict
+/// Reconciliation here is stream-local and forward-only: a terminal CI verdict
 /// covers the passes that PRECEDED it (the PR carries the session's adopted
 /// work), and passes after the last terminal CI observation stay
 /// unreconciled. `Pending`/`Running` reconcile nothing — absence of a
 /// verdict is not a verdict.
+///
+/// Use [`calibration_pending`] to keep those trailing passes and settle them
+/// against evidence that arrives after the session ends (#1293); this
+/// signature is the pre-#1293 one, kept for callers that only want the
+/// in-stream reading.
 pub fn calibration(events: &[AgentEvent]) -> CalibrationReport {
+    calibration_pending("", events).0
+}
+
+/// [`calibration`], plus the pass verdicts this stream could not settle —
+/// each carrying the commits and PRs the session recorded after it (#1293).
+///
+/// The returned [`PendingPass`] values are what makes a *late* verdict usable:
+/// a CI run that finishes after the session, a revert that lands next week, a
+/// terminal verdict recorded in some other session's stream. Feed them to
+/// [`ground_truth::reconcile`] with whatever evidence exists.
+///
+/// `session` is carried through onto each pending pass purely so a caller can
+/// report which records a late verdict settled; the fold does not read it.
+///
+/// The attribution rule for artifacts mirrors the CI one already in place: a
+/// commit or PR recorded at index *i* covers every unsettled pass before it.
+/// That is deliberately generous, and it is the only rule available — a
+/// session's events do not carry which verdict a given commit implements.
+/// The consequence is stated rather than hidden: a session that produced two
+/// passes and one commit attributes that commit's fate to both, so a revert
+/// there counts two false positives. Sessions that adopt one change are the
+/// ordinary case, and over-attributing a revert errs toward reporting the
+/// judge as *worse* than it is — the safe direction for an instrument whose
+/// measured failure is leniency.
+pub fn calibration_pending(
+    session: &str,
+    events: &[AgentEvent],
+) -> (CalibrationReport, Vec<PendingPass>) {
     use stella_protocol::CiStatus;
     let mut report = CalibrationReport::default();
-    // (judge?, still unreconciled) verdicts awaiting a terminal CI result.
-    let mut pending: Vec<bool> = Vec::new();
+    // Unsettled pass verdicts, in order, with the artifacts recorded since
+    // each one. `judge` distinguishes the two cohorts.
+    let mut pending: Vec<PendingPass> = Vec::new();
     for event in events {
         match event {
             // Every verdict — pass or fail — contributes to the judge-alone
@@ -225,20 +289,39 @@ pub fn calibration(events: &[AgentEvent]) -> CalibrationReport {
                 }
                 if evidence.deterministic {
                     report.deterministic_passes += 1;
-                    pending.push(false);
                 } else {
                     report.judge_passes += 1;
-                    pending.push(true);
+                }
+                pending.push(PendingPass {
+                    session: session.to_string(),
+                    judge: !evidence.deterministic,
+                    commits: Vec::new(),
+                    prs: Vec::new(),
+                });
+            }
+            // Every commit and PR the session records after a pass is an
+            // artifact that pass covers — the handle a late verdict is keyed
+            // on. Attached to the unsettled passes only: one already
+            // reconciled in-stream has had its answer.
+            AgentEvent::Commit { sha, .. } => {
+                for pass in &mut pending {
+                    pass.commits.push(sha.clone());
                 }
             }
-            AgentEvent::Pr { ci: Some(ci), .. } => {
+            AgentEvent::Pr { url, ci, .. } => {
+                for pass in &mut pending {
+                    pass.prs.push(url.clone());
+                }
                 let failing = match ci {
-                    CiStatus::Passing => false,
-                    CiStatus::Failing => true,
-                    CiStatus::Pending | CiStatus::Running => continue,
+                    Some(CiStatus::Passing) => false,
+                    Some(CiStatus::Failing) => true,
+                    // Absence of a verdict is not a verdict — the PR is still
+                    // recorded above, so a terminal result arriving later
+                    // (this session or another) can still settle these.
+                    Some(CiStatus::Pending | CiStatus::Running) | None => continue,
                 };
-                for is_judge in pending.drain(..) {
-                    if is_judge {
+                for pass in pending.drain(..) {
+                    if pass.judge {
                         report.judge_reconciled += 1;
                         report.judge_false_positives += u32::from(failing);
                     } else {
@@ -250,7 +333,7 @@ pub fn calibration(events: &[AgentEvent]) -> CalibrationReport {
             _ => {}
         }
     }
-    report
+    (report, pending)
 }
 
 /// Whether a recorded verdict had no deterministic corroboration behind it
@@ -1296,5 +1379,114 @@ mod calibration_tests {
             "an unmeasured rate must say so: {}",
             render_calibration(&report)
         );
+    }
+}
+
+#[cfg(test)]
+mod late_reconciliation_tests {
+    use super::ground_truth::{GroundTruth, reconcile};
+    use super::*;
+    use stella_protocol::{CiStatus, JudgeEvidence, PrStatus};
+
+    fn judge_pass() -> AgentEvent {
+        AgentEvent::JudgeVerdict {
+            passed: true,
+            evidence: JudgeEvidence {
+                summary: String::new(),
+                deterministic: false,
+                evidence_refs: vec![],
+                ladder: None,
+            },
+        }
+    }
+
+    fn commit(sha: &str) -> AgentEvent {
+        AgentEvent::Commit {
+            sha: sha.into(),
+            message: "feat: the work".into(),
+        }
+    }
+
+    fn pr(url: &str, ci: Option<CiStatus>) -> AgentEvent {
+        AgentEvent::Pr {
+            url: url.into(),
+            status: PrStatus::Open,
+            number: Some(1),
+            ci,
+        }
+    }
+
+    /// #1293 acceptance: a pass recorded after its session's last CI
+    /// observation used to be lost. It now leaves the fold carrying the
+    /// commit it covers, and a revert discovered later settles it.
+    #[test]
+    fn a_pass_after_the_last_ci_verdict_survives_its_session_and_a_revert_settles_it() {
+        let events = vec![
+            judge_pass(),
+            pr("https://example.test/pr/1", Some(CiStatus::Passing)),
+            // Everything below is after the session's last terminal verdict —
+            // the region that used to be unreachable.
+            judge_pass(),
+            commit("abc123abc123"),
+        ];
+        let (report, pending) = calibration_pending("sess-a", &events);
+        assert_eq!(report.judge_passes, 2);
+        assert_eq!(
+            report.judge_reconciled, 1,
+            "only the first pass had an in-stream verdict"
+        );
+        assert_eq!(pending.len(), 1, "the trailing pass is carried out");
+        assert_eq!(pending[0].session, "sess-a");
+        assert_eq!(pending[0].commits, vec!["abc123abc123".to_string()]);
+
+        let mut report = report;
+        let truth = GroundTruth::default().with_reverts(["abc123abc123".to_string()]);
+        assert_eq!(reconcile(&mut report, &pending, &truth), 1);
+        assert_eq!(report.judge_reconciled, 2);
+        assert_eq!(report.judge_false_positives, 1);
+        assert_eq!(report.judge_reverted, 1);
+        assert!(
+            render_calibration(&report).contains("settled by a REVERT"),
+            "the render must distinguish a human's revert from a red CI run: {}",
+            render_calibration(&report)
+        );
+    }
+
+    /// The cross-session half: session A's trailing pass is settled by a
+    /// terminal CI verdict recorded in session B, for the PR they share.
+    #[test]
+    fn a_terminal_verdict_in_a_later_session_settles_an_earlier_ones_pass() {
+        let session_a = vec![judge_pass(), pr("https://example.test/pr/4", None)];
+        let session_b = vec![pr("https://example.test/pr/4", Some(CiStatus::Failing))];
+        let (mut report, pending) = calibration_pending("sess-a", &session_a);
+        assert_eq!(
+            report.judge_reconciled, 0,
+            "a PR with no terminal verdict reconciles nothing in its own stream"
+        );
+        let truth = GroundTruth::default()
+            .with_stream(&session_a)
+            .with_stream(&session_b);
+        assert_eq!(reconcile(&mut report, &pending, &truth), 1);
+        assert_eq!(report.judge_false_positives, 1);
+        assert_eq!(
+            report.judge_reverted, 0,
+            "CI is not a revert, and the two must not merge into one number"
+        );
+    }
+
+    /// The unchanged contract: `calibration` still answers exactly what it
+    /// answered before, so a caller that only wants the in-stream reading is
+    /// untouched by any of this.
+    #[test]
+    fn the_in_stream_fold_is_unchanged() {
+        let events = vec![
+            judge_pass(),
+            pr("https://example.test/pr/2", Some(CiStatus::Failing)),
+        ];
+        let report = calibration(&events);
+        assert_eq!(report.judge_passes, 1);
+        assert_eq!(report.judge_reconciled, 1);
+        assert_eq!(report.judge_false_positives, 1);
+        assert_eq!(report.judge_reverted, 0);
     }
 }

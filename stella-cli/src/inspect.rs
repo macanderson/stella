@@ -184,25 +184,46 @@ pub(crate) fn run_inspect(args: &InspectArgs) -> Result<(), String> {
     }
 }
 
-/// `stella calibration` (#871): fold every recorded session's pass verdicts
-/// against the CI verdicts observed after them and report the judge's
-/// measured false-positive rate beside the deterministic cohort's. A pure
-/// reading of the event journal the store already keeps — no new write
-/// path, no daemon.
+/// `stella calibration` (#871, #1293): fold every recorded session's pass
+/// verdicts against the evidence that later contradicted or confirmed them,
+/// and report the judge's measured false-positive rate beside the
+/// deterministic cohort's.
+///
+/// Three passes over what already exists — no new write path, no daemon:
+///
+/// 1. Fold each session, keeping the passes it could not settle itself.
+/// 2. Build the workspace's answer key: every terminal CI verdict from
+///    **every** session (so a verdict recorded after another session ended
+///    still reaches it), plus the reverts in the git history (a human saying
+///    "this was wrong", the source #1293 added).
+/// 3. Settle what the key can reach, and leave the rest unreconciled.
 pub(crate) fn run_calibration(format: InspectFormat) -> Result<(), String> {
+    use stella_pipeline::replay::ground_truth::{GroundTruth, reconcile};
+
     let store = open_readonly_store()?;
     let sessions = store
         .event_session_ids()
         .map_err(|e| format!("cannot enumerate recorded sessions: {e}"))?;
     let mut total = stella_pipeline::replay::CalibrationReport::default();
+    let mut pending = Vec::new();
+    // Seeded with the git history's reverts before any stream is read: a
+    // revert is evidence about a commit, not about a session, so it belongs
+    // to the workspace rather than to whichever stream happens to mention it.
+    let mut truth = GroundTruth::default().with_reverts(revert_targets_from_git());
     for session_id in &sessions {
         let journal = store
             .session_events(session_id)
             .map_err(|e| format!("cannot read session {session_id}: {e}"))?;
         let events: Vec<stella_protocol::AgentEvent> =
             journal.events.into_iter().map(|r| r.event).collect();
-        total = total.merge(stella_pipeline::replay::calibration(&events));
+        let (report, unsettled) = stella_pipeline::replay::calibration_pending(session_id, &events);
+        total = total.merge(report);
+        pending.extend(unsettled);
+        // Every session contributes its CI observations to the key, including
+        // the ones that arrived too late for their own stream.
+        truth = truth.with_stream(&events);
     }
+    let settled_late = reconcile(&mut total, &pending, &truth);
     if matches!(format, InspectFormat::Json) {
         return print_json(&serde_json::json!({
             "sessions": sessions.len(),
@@ -221,14 +242,59 @@ pub(crate) fn run_calibration(format: InspectFormat) -> Result<(), String> {
             "uncorroborated_verdicts": total.uncorroborated_verdicts,
             "uncorroborated_rate": total.uncorroborated_rate(),
             "judge_passes_standing_alone": total.judge_passes_standing_alone,
+            // #1293: the answer key's own reach — how many earlier verdicts
+            // evidence arriving after their session settled, and how many of
+            // the reconciled ones a human revert (not CI) contradicted.
+            "settled_by_late_evidence": settled_late,
+            "unreconciled_passes": pending.len() as u32 - settled_late,
+            "judge_reverted": total.judge_reverted,
+            "deterministic_reverted": total.deterministic_reverted,
         }));
     }
     println!(
-        "{} session(s) with recorded events\n{}",
+        "{} session(s) with recorded events\n{}\n  \
+         late evidence settled {settled_late} verdict(s) their own session never resolved; \
+         {} still unreconciled",
         sessions.len(),
-        stella_pipeline::replay::render_calibration(&total)
+        stella_pipeline::replay::render_calibration(&total),
+        pending.len() as u32 - settled_late,
     );
     Ok(())
+}
+
+/// The commits this repository's history says were reverted (#1293).
+///
+/// Read-only and best-effort, exactly like every other question `stella
+/// inspect` asks: a workspace that is not a git repository, or a `git` that
+/// is not installed, contributes no revert evidence and the calibration
+/// simply has one fewer source. It never fails the command — a missing
+/// answer key is the state this is trying to improve, not an error.
+///
+/// The window is deliberately bounded. A revert contradicts a judgement made
+/// *before* it, so history older than the recorded sessions cannot settle
+/// anything, and reading the whole log of a long-lived repository would cost
+/// seconds to learn nothing.
+fn revert_targets_from_git() -> std::collections::BTreeSet<String> {
+    use stella_pipeline::replay::ground_truth::parse_revert_targets;
+
+    let Ok(root) = std::env::current_dir() else {
+        return Default::default();
+    };
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(["log", "--no-merges", "-n", "2000", "--format=%B"])
+        .current_dir(&root);
+    // The same discipline as every other git spawn in this crate: a
+    // hook-exported GIT_* var must not re-target the read at another repo.
+    for var in stella_tools::exec::GIT_REPO_ENV_VARS {
+        cmd.env_remove(var);
+    }
+    let Ok(output) = cmd.output() else {
+        return Default::default();
+    };
+    if !output.status.success() {
+        return Default::default();
+    }
+    parse_revert_targets(&String::from_utf8_lossy(&output.stdout))
 }
 
 /// Open the workspace store without creating it. Mirrors `stella stats`: a
