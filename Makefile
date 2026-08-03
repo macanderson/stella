@@ -7,6 +7,30 @@ BUMP ?= patch
 LIMIT ?= 0
 TARGET ?= 60
 
+# Which cargo packages the three *compile* tiers of the gate cover — clippy,
+# rustdoc and test (#1135). The default is the whole workspace, so `make gate`
+# and CI behave exactly as they always have; nothing narrows unless a caller
+# asks it to:
+#
+#   make gate                                  every member (CI, `main`, releases)
+#   make gate CARGO_SCOPE="-p stella-cli"      one member and its dependents
+#
+# `.githooks/pre-push` fills this in from the pushed diff via
+# scripts/impacted-crates.sh, which answers `--workspace` for anything it
+# cannot narrow with confidence. The cheap global guards below are deliberately
+# NOT scoped — a 1500-line file or an unpinned action is a fact about the
+# repository, not about a crate.
+CARGO_SCOPE ?= --workspace
+
+# The guard tiers, named so the gate, the fast check and the hook can compose
+# them instead of restating the list three times and drifting apart.
+# GATE_GUARDS_FAST needs no toolchain at all (shell scripts over the tree);
+# doc-citations and wire-schema are separated out because wire-schema runs the
+# two schema exporters, which is a cargo build.
+GATE_GUARDS_FAST := no-scratch action-pins cargo-install-pins license-allowlist-parity \
+                    repro-wiring shellcheck invariants file-size
+GATE_GUARDS := $(GATE_GUARDS_FAST) doc-citations wire-schema
+
 .PHONY: help
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*##' Makefile | \
@@ -44,8 +68,8 @@ format-check: ## Check formatting without modifying (CI gate)
 	cargo fmt --check
 
 .PHONY: lint
-lint: ## Run clippy with -D warnings (CI gate)
-	cargo clippy --workspace --all-targets -- -D warnings
+lint: ## Run clippy with -D warnings (CI gate; CARGO_SCOPE to narrow)
+	cargo clippy $(CARGO_SCOPE) --all-targets -- -D warnings
 
 .PHONY: fix
 fix: ## Auto-fix clippy lints + format
@@ -53,8 +77,8 @@ fix: ## Auto-fix clippy lints + format
 	cargo fmt
 
 .PHONY: test
-test: ## Run the full test suite (all crates)
-	cargo test --workspace
+test: ## Run the test suite (all crates; CARGO_SCOPE to narrow)
+	cargo test $(CARGO_SCOPE)
 
 .PHONY: test-core
 test-core: ## Test stella-core only (fast engine iteration)
@@ -147,8 +171,8 @@ file-size-update: ## Retighten the 1500-line ratchet baseline (run after splitti
 	@./scripts/check-file-size.sh --update
 
 .PHONY: doc-warnings
-doc-warnings: ## Assert rustdoc is clean workspace-wide (#634)
-	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+doc-warnings: ## Assert rustdoc is clean workspace-wide (#634; CARGO_SCOPE to narrow)
+	RUSTDOCFLAGS="-D warnings" cargo doc $(CARGO_SCOPE) --no-deps
 
 .PHONY: shellcheck
 shellcheck: ## Lint install.sh, scripts/*.sh, and .githooks/* (#916)
@@ -161,20 +185,40 @@ serve-image: ## Build the stella-serve image and smoke the container (needs Dock
 	docker build -f packaging/docker/Dockerfile.serve -t stella-serve:ci .
 	@./scripts/smoke-serve-image.sh stella-serve:ci
 
+# The three tiers of the gate, from cheapest to dearest. Each is a superset of
+# the one above it, and only the compile tiers honour CARGO_SCOPE.
+#
+#   guards  every global guard + rustfmt. No crate compiles, so nothing to scope.
+#   check   ...plus clippy. The graduated fallback: a reduced gate, not no gate.
+#   gate    ...plus rustdoc and the test suite. What CI runs, unscoped.
+
+.PHONY: guards
+guards: $(GATE_GUARDS) format-check ## Global guards + fmt only (no crate compiles; nothing to scope)
+
 .PHONY: gate
-gate: no-scratch action-pins cargo-install-pins license-allowlist-parity repro-wiring shellcheck doc-citations invariants file-size wire-schema doc-warnings format-check lint test ## Full CI gate: no-scratch + action-pins + cargo-install-pins + license-allowlist-parity + repro-wiring + shellcheck + doc-citations + invariants + file-size + wire-schema + rustdoc + fmt-check + clippy + test
+gate: $(GATE_GUARDS) doc-warnings format-check lint test ## Full CI gate: guards + rustdoc + fmt-check + clippy + test
 
 .PHONY: check
-check: no-scratch action-pins cargo-install-pins license-allowlist-parity repro-wiring shellcheck invariants file-size format-check lint ## Fast pre-push check (scratch + pins + license parity + repro wiring + shellcheck + invariants + file-size + fmt + clippy, no tests)
+check: $(GATE_GUARDS_FAST) format-check lint ## Fast pre-push check: toolchain-free guards + fmt + clippy, no rustdoc and no tests
+
+.PHONY: impacted
+impacted: ## Print the cargo scope for a diff (RANGE=origin/main..HEAD)
+	@./scripts/impacted-crates.sh $(if $(RANGE),--range $(RANGE),--range origin/main..HEAD)
+
+.PHONY: impacted-test
+impacted-test: ## Test the gate-scoping script (hermetic; not part of `gate`)
+	./scripts/test-impacted-crates.sh
 
 .PHONY: hooks
-hooks: ## Install the pre-push gate hook (runs `make gate` on every push)
+hooks: ## Install the pre-push gate hook (runs `make gate`, scoped to the diff, on every push)
 	git config core.hooksPath .githooks
 	@chmod +x .githooks/* 2>/dev/null || true
-	@printf '\033[32m✔ hooks installed\033[0m — pre-push now runs the fmt+clippy+test gate.\n'
-	@printf '  Catches a red gate on your machine, and is the only gate running when\n'
-	@printf '  Actions is unavailable (an org billing hold has happened before).\n'
-	@printf '  Bypass in emergencies: \033[36mSKIP_GATE=1 git push\033[0m (or \033[36mgit push --no-verify\033[0m).\n'
+	@printf '\033[32m✔ hooks installed\033[0m — pre-push now runs the fmt+clippy+rustdoc+test gate.\n'
+	@printf '  Catches a red gate on your machine instead of ten minutes later in CI.\n'
+	@printf '  Compile tiers are scoped to the crates your diff reaches (#1135); pushes to\n'
+	@printf '  main and tag pushes always run the whole workspace.\n'
+	@printf '  Step down a rung: \033[36mGATE=fast git push\033[0m (guards+fmt+clippy, no tests),\n'
+	@printf '  \033[36mGATE=full git push\033[0m (whole workspace), \033[36mSKIP_GATE=1 git push\033[0m (bypass).\n'
 
 .PHONY: dev-env
 dev-env: ## Set this worktree up for development (per-worktree STELLA_HOME + target dir, tool check)

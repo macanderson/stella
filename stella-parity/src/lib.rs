@@ -249,7 +249,9 @@ pub static CAPABILITIES: &[Capability] = &[
         engine_home: "stella-core TurnGate port — park at a step boundary, never mid-tool",
         engine_entries: &["with_gate"],
         cli: SurfacePosture::Shipped {
-            mechanism: "deck pause/resume controls; a paused turn parks its sub-agent children too",
+            mechanism: "deck pause/resume controls (`p`), on worker lanes and on the lead's own \
+                        turn alike (#1219 — raw and pipeline paths); a paused turn parks its \
+                        sub-agent children too",
             witness: "a_paused_turn_parks_its_children_and_resume_releases_them",
         },
         api: SurfacePosture::Shipped {

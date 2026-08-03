@@ -2,20 +2,56 @@
 #
 # Stella pre-push gate.
 #
-# Runs the exact fmt + clippy + test gate CI would run — locally, on every
-# push — because the org's GitHub Actions is billing-locked: every required
-# check (`fmt + clippy + test`, `cargo deny + cargo audit`) fast-fails in
-# seconds without ever executing, and `enforce_admins` is off, so gate-failing
-# code otherwise reaches `main` through admin/auto merges (exactly how the
-# clippy errors and the E0061 compile break landed and had to be hand-repaired).
+# Runs the fmt + clippy + test gate CI would run — locally, on every push —
+# scoped to the crates the pushed diff can actually reach (#1135).
 #
-# This is the enforcement point that still works while Actions is down: it
-# catches the break on the author's push, before the PR is merged. It is
-# advisory, not a server-side guarantee — it must be installed per clone and is
-# bypassable — but it makes the gate run automatically again.
+# WHY A LOCAL GATE AT ALL
+#
+# Not because Actions is down. It was, and this file used to say so: "the org's
+# GitHub Actions is billing-locked: every required check fast-fails in seconds
+# without ever executing". That stopped being true — Actions executed real
+# checks on PR #1098 on 2026-08-01, ran for minutes, and failed on genuine
+# findings — and a hook justified by a false premise is one correction away
+# from being deleted along with the premise. The reasons that outlive the
+# billing hold:
+#
+#   - `enforce_admins` is off, so gate-failing code can still reach `main`
+#     through an admin or auto merge. That is exactly how the clippy errors and
+#     the E0061 compile break landed and had to be hand-repaired.
+#   - CI is a round trip. Learning about a rustfmt diff ten minutes after the
+#     push, on a branch you have already moved on from, costs more than the
+#     seconds it takes to learn about it here.
+#   - Some guards run nowhere else for months at a time. `wire-schema` lived
+#     only in `make gate`, so a branch pushed server-side never met it — which
+#     is how #1185 merged with stale generated artifacts.
+#
+# It is advisory, not a server-side guarantee — it must be installed per clone
+# and is bypassable — but it makes the gate run automatically again.
+#
+# WHAT IT COSTS
+#
+# `make gate` compiles, documents and tests all 21 workspace members. Running
+# that unconditionally meant a test-only change confined to one crate paid the
+# full workspace, twice, once per push (observed on #911: the push blew a
+# two-minute timeout and had to be re-run detached). So the compile tiers —
+# clippy, rustdoc, test — are scoped to the crates the diff reaches, computed
+# by scripts/impacted-crates.sh, which answers `--workspace` for anything it
+# cannot narrow with confidence. The cheap global guards are never scoped: a
+# 1500-line file or an unpinned action is a fact about the repository, not
+# about a crate.
+#
+# Pushes to `main` and pushes of tags always run the full workspace. So does
+# any diff touching a workspace-root manifest, `Cargo.lock`, a build script, or
+# this gate's own machinery.
 #
 #   Install once per clone:  make hooks           (sets core.hooksPath=.githooks)
+#   Reduced gate:            GATE=fast git push   (guards + fmt + clippy, no tests)
+#   Force the full sweep:    GATE=full git push
 #   Bypass (emergencies):    SKIP_GATE=1 git push     or     git push --no-verify
+#
+# The GATE=fast rung exists because the choice under time pressure used to be
+# binary — the whole gate, or `SKIP_GATE=1` — and under a deadline people pick
+# the second. A reduced gate that runs beats a full gate that gets skipped.
 #
 set -uo pipefail
 
@@ -23,6 +59,8 @@ if [ "${SKIP_GATE:-}" = "1" ]; then
   printf '\033[33m⚠ SKIP_GATE=1 — skipping the pre-push gate\033[0m\n' >&2
   exit 0
 fi
+
+remote_name="${1:-origin}"
 
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
@@ -32,14 +70,129 @@ cd "$(git rev-parse --show-toplevel)" || exit 1
 # committer identity, seed commits, fleet/* branches). Pushes from linked
 # worktrees are the worst case: there GIT_DIR is absolute, so it follows the
 # tests into every temp cwd. Scrub the env so the suite sees a clean world.
+#
+# Scrubbed AFTER the `cd` above, which needs GIT_DIR to resolve the worktree it
+# was invoked from, and before any diff below — those run against the checkout
+# this hook has already cd'd into.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
 
-printf '\033[36m▸ pre-push gate — make gate (fmt-check · clippy -D warnings · test)\033[0m\n' >&2
-if make gate; then
+zero='0000000000000000000000000000000000000000'
+
+# ── What is being pushed ─────────────────────────────────────────────────────
+#
+# Git feeds the hook one line per ref on stdin: `<local ref> <local sha>
+# <remote ref> <remote sha>`. Accumulate the diff of every ref in the push,
+# because one `git push` can carry several branches and the gate must cover all
+# of them.
+
+changed="$(mktemp)"
+trap 'rm -f "$changed"' EXIT
+scope_reason=""
+force_full=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -n "${local_sha:-}" ] || continue
+
+  # Deleting a remote ref pushes no content to check.
+  [ "$local_sha" = "$zero" ] && continue
+
+  # Tags are releases: a tag is what a published binary gets built from, so it
+  # gets the unscoped run no matter how small the diff looks.
+  case "$local_ref" in
+  refs/tags/*)
+    force_full=1
+    scope_reason="pushing a tag"
+    break
+    ;;
+  esac
+
+  # Same for the trunk itself — the branch every other branch is measured
+  # against, and the one place a narrow answer has nothing behind it.
+  case "$remote_ref" in
+  refs/heads/main | refs/heads/master)
+    force_full=1
+    scope_reason="pushing to ${remote_ref#refs/heads/}"
+    break
+    ;;
+  esac
+
+  if [ "$remote_sha" = "$zero" ]; then
+    # A branch the remote does not have yet: measure against the remote's
+    # default branch, which is what the eventual PR will be diffed against.
+    base="$(git symbolic-ref --quiet "refs/remotes/$remote_name/HEAD" 2>/dev/null)"
+    if [ -z "$base" ]; then
+      for candidate in main master; do
+        if git rev-parse --verify --quiet "refs/remotes/$remote_name/$candidate" >/dev/null; then
+          base="refs/remotes/$remote_name/$candidate"
+          break
+        fi
+      done
+    fi
+    if [ -z "$base" ]; then
+      force_full=1
+      scope_reason="no $remote_name default branch to diff a new branch against"
+      break
+    fi
+  else
+    # The remote tip has to be an object we actually hold. If someone else
+    # pushed it and this clone has not fetched, there is no diff to compute.
+    if ! git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+      force_full=1
+      scope_reason="$remote_name is at a commit this clone has not fetched"
+      break
+    fi
+    base="$remote_sha"
+  fi
+
+  # Three-dot: what this push ADDS since the common ancestor. Two-dot would
+  # also report, in reverse, every commit the remote has and this branch does
+  # not — a branch that is merely behind would look like it had changed the
+  # world, and would be gated as if it had.
+  if ! git diff --name-only "$base...$local_sha" >>"$changed" 2>/dev/null; then
+    force_full=1
+    scope_reason="cannot diff $base...$local_sha"
+    break
+  fi
+done
+
+# ── The scope ────────────────────────────────────────────────────────────────
+
+if [ "${GATE:-}" = "full" ]; then
+  force_full=1
+  scope_reason="GATE=full"
+fi
+
+if [ "$force_full" = "1" ]; then
+  scope="--workspace"
+  printf '\033[36m▸ scope: full workspace (%s)\033[0m\n' "$scope_reason" >&2
+else
+  scope="$(sort -u "$changed" | ./scripts/impacted-crates.sh)"
+fi
+
+# ── The tier ─────────────────────────────────────────────────────────────────
+#
+# An empty scope means no crate in the workspace can be reached by this diff —
+# a website-only or workflow-only push. The global guards still run; there is
+# simply nothing to compile.
+
+if [ -z "$scope" ]; then
+  target="guards"
+  label="make guards (no crate reachable — global guards + fmt only)"
+elif [ "${GATE:-}" = "fast" ]; then
+  target="check"
+  label="make check (guards + fmt + clippy; GATE=fast, no rustdoc and no tests)"
+else
+  target="gate"
+  label="make gate (guards + fmt-check · clippy -D warnings · rustdoc · test)"
+fi
+
+printf '\033[36m▸ pre-push gate — %s\033[0m\n' "$label" >&2
+if make "$target" CARGO_SCOPE="$scope"; then
   printf '\033[32m✔ gate green — pushing\033[0m\n' >&2
   exit 0
 fi
 
 printf '\033[31m✖ gate failed — push aborted.\033[0m\n' >&2
-printf '  Fix the errors above, or bypass in an emergency: SKIP_GATE=1 git push (or git push --no-verify).\n' >&2
+printf '  Fix the errors above, or step down a rung: GATE=fast git push (reduced gate),\n' >&2
+printf '  GATE=full git push (whole workspace), SKIP_GATE=1 git push (bypass entirely).\n' >&2
 exit 1

@@ -44,3 +44,4 @@ pub mod settings;
 pub mod skills;
 pub mod tools;
 pub mod traces;
+pub mod work_rail;

@@ -167,9 +167,11 @@ pub trait TurnSteering: Send + Sync {
 /// every turn of the session and cannot name a single turn's lifetime, so it
 /// needs `Arc`s it can clone onto a child's thread instead.
 ///
-/// Both fields are `Option` because no driver has both. The deck's lead turn
-/// steers but does not pause (pause is a worker-lane verb); a worker lane
-/// pauses but does not steer. A driver publishes what it has.
+/// Both fields are `Option` because not every driver has both: a worker lane
+/// pauses but does not steer, and a headless run does neither. The deck's
+/// lead turn has both — it steers (`>`), and since #1219 it pauses (`p`) —
+/// so a driver publishes what it has, which may be one, the other, or the
+/// pair.
 ///
 /// # Empty is a real state, not an error
 ///

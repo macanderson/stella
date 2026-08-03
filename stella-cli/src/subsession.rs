@@ -354,11 +354,18 @@ pub(crate) fn route_mid_turn(text: String, settling: bool) -> MidTurnRoute {
     }
 }
 
-/// `stella_core::ports::TurnGate` over a watch channel: the worker's turn
-/// parks at its next step boundary while the driver holds `true` (Pause)
-/// and continues on `false` (Resume). A dropped sender (driver gone) reads
-/// as resumed — a worker must never park forever on teardown.
-struct WatchGate(watch::Receiver<bool>);
+/// `stella_core::ports::TurnGate` over a watch channel: the turn parks at
+/// its next step boundary while the driver holds `true` (Pause) and
+/// continues on `false` (Resume). A dropped sender (driver gone) reads
+/// as resumed — a turn must never park forever on teardown.
+///
+/// `pub(crate)` for one caller beyond this module: the deck's LEAD lane
+/// (#1219), which builds the same adapter over its own per-turn channel and
+/// hands it to `Pipeline::with_turn_gate` / `Engine::with_gate`. Deck worker
+/// lanes and the deck lead sit on the same side of the deck/fleet boundary,
+/// so they share this item rather than duplicating it; `fleet_cmd.rs` keeps
+/// its own co-located twin precisely because it does not.
+pub(crate) struct WatchGate(pub(crate) watch::Receiver<bool>);
 
 #[async_trait::async_trait]
 impl stella_core::ports::TurnGate for WatchGate {

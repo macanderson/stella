@@ -202,8 +202,8 @@ impl ProofState {
         });
     }
 
-    /// The rail's rows, in fixed order. Always five, so the panel does not
-    /// reflow as the proof accumulates.
+    /// The rail's rows, in fixed order. Always five, so a surface that shows
+    /// the whole rail does not reflow as the proof accumulates.
     ///
     /// Every row resolves: `pending` only while the turn runs, and never once
     /// [`Self::finish`] has been called — see the module docs.
@@ -215,6 +215,124 @@ impl ProofState {
             self.tamper_row(),
             self.verdict_row(),
         ]
+    }
+
+    /// Whether the rail carries news that earns a panel of its own.
+    ///
+    /// # Why this exists
+    ///
+    /// The rail used to claim seven rows the moment [`ProofStep::Assurance`]
+    /// landed — which is the *first* step triage emits, before any work exists.
+    /// On the most common turn by far (triage waives the witness) that bought
+    /// five rows of dashes and two of border to say *nothing was owed here*,
+    /// for the whole turn, in the space the transcript needed. Relevance, not
+    /// existence, is what should raise a panel.
+    ///
+    /// The test is deliberately the *same tone scan* the border already does
+    /// (`views::proof::border_style`), so "the frame is warning" and "the rail
+    /// is up" cannot disagree — one predicate, two consumers. The single
+    /// exception is `bought_nothing`: a turn that purchased no
+    /// assurance and received none has nothing to report, and must not promote
+    /// itself on the *absence* of a report it was never owed.
+    pub fn is_notable(&self) -> bool {
+        if self.bought_nothing() {
+            return false;
+        }
+        self.rows()
+            .iter()
+            .any(|r| matches!(r.tone, Tone::Warn | Tone::Error))
+    }
+
+    /// Triage declared this turn buys neither a witness nor a judge, *and*
+    /// nothing arrived regardless.
+    ///
+    /// Both halves are load-bearing. The first alone would let a turn that
+    /// bought nothing but then failed a verdict anyway suppress the failure;
+    /// requiring that every channel is also empty means anything that actually
+    /// happened is still judged on its own tones.
+    fn bought_nothing(&self) -> bool {
+        self.assurance.is_some_and(|a| !a.witness && !a.judge)
+            && self.witness.is_none()
+            && self.verdict.is_none()
+            && self.unverifiable.is_none()
+            && self.flip == Flip::default()
+    }
+
+    /// The rows worth showing when the rail is promoted: everything that is
+    /// not [`Tone::Muted`], **plus the verdict, always**.
+    ///
+    /// A muted row is one that resolved to "nothing was owed" — correct to
+    /// record, and exactly what a reader scanning a *problem* has to skip past.
+    ///
+    /// The verdict is exempt because it is the rail's conclusion, and a
+    /// conclusion is never nothing. Dropped while muted, a promoted rail would
+    /// show a problem and then stop, leaving "so was this turn accepted or
+    /// not?" unanswered — the reader cannot tell a verdict that is still coming
+    /// from one the filter ate. `verdict  pending` is a row that carries
+    /// information precisely because the rows above it do not.
+    ///
+    /// Can never be empty (the verdict row is unconditional), so the caller is
+    /// never handed a bordered card with no interior.
+    pub fn notable_rows(&self) -> Vec<ProofRow> {
+        let verdict = self.verdict_row();
+        self.rows()
+            .into_iter()
+            .filter(|r| r.tone != Tone::Muted || r.label == verdict.label)
+            .collect()
+    }
+
+    /// The whole rail compressed to one cell, for the state strip.
+    ///
+    /// Ordered by what a reader most needs to know, not by pipeline order: a
+    /// warranted-but-unproven turn outranks a passing verdict, because the
+    /// verdict on such a turn is precisely the thing that must not be read
+    /// alone.
+    pub fn summary(&self) -> ProofRow {
+        if let Some(reason) = &self.unverifiable {
+            return ProofRow::new("proof", format!("unverifiable · {reason}"), Tone::Warn);
+        }
+        if matches!(self.witness, Some(WitnessStanding::Unavailable { .. })) {
+            return ProofRow::new("proof", "⚠ warranted, NOT proven", Tone::Warn);
+        }
+        if let Some(v) = &self.verdict
+            && !v.passed
+        {
+            return ProofRow::new("proof", "✗ failed", Tone::Error);
+        }
+        if self.flip.achieved() {
+            return ProofRow::new("proof", "flip ✓ red→green", Tone::Success);
+        }
+        if self.flip.baseline_passed == Some(true) {
+            return ProofRow::new("proof", "passes on base — no flip", Tone::Warn);
+        }
+        if let Some(v) = &self.verdict {
+            return ProofRow::new(
+                "proof",
+                if v.deterministic {
+                    "✓ passed · deterministic"
+                } else {
+                    "✓ passed · model judge"
+                },
+                if v.deterministic {
+                    Tone::Success
+                } else {
+                    Tone::Info
+                },
+            );
+        }
+        if self.bought_nothing() {
+            return ProofRow::new("proof", "waived · nothing to prove", Tone::Muted);
+        }
+        if self.witness.is_some() {
+            return ProofRow::new("proof", "witness authored · proving…", Tone::Info);
+        }
+        if self.warrant_says_required() {
+            return ProofRow::new("proof", "warranted · proving…", Tone::Info);
+        }
+        if self.finished {
+            return ProofRow::new("proof", "not reported", Tone::Warn);
+        }
+        ProofRow::new("proof", "—", Tone::Muted)
     }
 
     /// The row for something the pipeline has not answered: `pending` mid-turn,
@@ -390,6 +508,10 @@ impl ProofState {
 
     fn warrant_says_not_required(&self) -> bool {
         matches!(self.warrant, Some((false, _, _)))
+    }
+
+    fn warrant_says_required(&self) -> bool {
+        matches!(self.warrant, Some((true, _, _)))
     }
 
     /// Triage declared this turn buys no witness. Distinct from the warrant
