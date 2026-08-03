@@ -264,6 +264,29 @@ impl Catalog {
                 // wire before this line existed: a trial-shaped run sent
                 // `max_tokens: 16384` for a model whose ceiling is 64000.
                 .with_max_output_tokens(Some(64_000)),
+                // The previous-generation mainstream Sonnet. Seeded for the
+                // same hard-stop reason as its successor above: a frozen
+                // container cannot refresh, so an unlisted slug is
+                // unreachable rather than unpriced — and Sonnet 4.6 is what
+                // an account still awaiting current-generation enablement
+                // (Bedrock entitlements, staged first-party rollouts) can
+                // actually run. Same list price as Sonnet 5.
+                CatalogEntry::new(
+                    "claude-sonnet-4-6",
+                    "anthropic",
+                    "claude",
+                    1_000_000,
+                    ToolDialect::AnthropicTools,
+                    Pricing {
+                        input_usd_per_mtok: 3.00,
+                        output_usd_per_mtok: 15.00,
+                        cached_input_usd_per_mtok: 0.30,
+                        cache_write_usd_per_mtok: 3.75,
+                    },
+                )
+                .with_reasoning(Some(true))
+                // Same seeded ceiling as its siblings, for the same reason.
+                .with_max_output_tokens(Some(64_000)),
                 CatalogEntry::new(
                     "claude-fable-5",
                     "anthropic",
