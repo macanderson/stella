@@ -3,16 +3,19 @@
 //! the Files Touched tracker; agents should prefer this over `bash rm`
 //! (which the tracker cannot attribute).
 //!
-//! A **symlink is removed as the link**, never as its target. That takes its
-//! own resolver (`resolve_entry_within_root`) because
-//! [`crate::resolve_within_root`] canonicalizes, which is right for every
-//! other tool — read/edit/write all want the real file — and exactly wrong
-//! here: canonicalizing `vendor/config.toml → ../../real/config.toml` and
-//! then `remove_file`-ing the result deletes the real file and leaves the
-//! link dangling. Silent data loss on any repository carrying in-tree
-//! symlinks (vendored configs, `node_modules/.bin`).
-
-use std::path::{Path, PathBuf};
+//! A **symlink is removed as the link**, never as its target. That rules out
+//! [`crate::resolve_within_root`], which canonicalizes — right for every other
+//! tool (read/edit/write all want the real file) and exactly wrong here:
+//! canonicalizing `vendor/config.toml → ../../real/config.toml` and then
+//! `remove_file`-ing the result deletes the real file and leaves the link
+//! dangling. Silent data loss on any repository carrying in-tree symlinks
+//! (vendored configs, `node_modules/.bin`).
+//!
+//! The guarantee comes from [`crate::rootfd::RootHandle::remove_file`], which
+//! unlinks relative to the root's directory descriptor via `unlinkat`. That
+//! never follows a final symlink, and — unlike resolving to a `PathBuf` first
+//! — the classify and the unlink see the same descriptor, so nothing planted
+//! between them can redirect the removal.
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -22,28 +25,15 @@ use crate::registry::Tool;
 
 pub struct DeleteFile;
 
-/// Resolve `path` to the entry to remove **without following a final
-/// symlink**.
+/// What the unlink actually removed, so the reply can say so.
 ///
-/// The parent goes through [`crate::resolve_within_root`], so containment is
-/// enforced exactly as everywhere else (including through intermediate
-/// symlinked directories); only the last component is re-joined verbatim.
-/// `file_name` returns `None` for `""`, `.`, and any path ending in `..`, so
-/// those are rejected here rather than resolving to a directory.
-///
-/// `None` means the path escapes the workspace root. A path whose parent does
-/// not exist resolves fine and then fails the caller's own existence check
-/// with the missing-path message.
-fn resolve_entry_within_root(root: &Path, path: &str) -> Option<PathBuf> {
-    let relative = Path::new(path);
-    let name = relative.file_name()?;
-    let parent = relative.parent().unwrap_or_else(|| Path::new(""));
-    let parent_full = if parent.as_os_str().is_empty() {
-        root.canonicalize().ok()?
-    } else {
-        crate::resolve_within_root(root, parent.to_str()?)?
-    };
-    Some(parent_full.join(name))
+/// A symlink carries the target it named — read before the unlink, and
+/// reported only to tell the operator which file was *not* touched. `None`
+/// means the link was gone before it could be read, which the delete itself
+/// does not depend on.
+enum Removed {
+    File,
+    Symlink(Option<std::ffi::OsString>),
 }
 
 #[async_trait]
@@ -79,25 +69,48 @@ impl Tool for DeleteFile {
                 };
             }
         };
-        // Classify and unlink on one blocking worker. `unlinkat` never follows
-        // a symlink, so nothing planted between the two can redirect the
+        // Classify and unlink on one blocking worker, both resolved without
+        // expanding the leaf, so the name `unlinkat` is handed is still the
+        // link's own name and nothing planted between the two can redirect the
         // removal — the check and the act see the same directory descriptor.
+        //
+        // A symlink is deletable and reports as one: it is a link the agent may
+        // legitimately want gone (including a dangling one, which names a
+        // target that does not exist), and naming its target in the reply is
+        // what tells the operator that the target was *left alone*.
         let outcome = tokio::task::spawn_blocking({
             let (handle, path) = (std::sync::Arc::clone(&handle), path.to_string());
-            move || -> Result<bool, crate::rootfd::RootError> {
-                if !handle.stat(&path)?.is_file() {
-                    return Ok(false);
-                }
+            move || -> Result<Option<Removed>, crate::rootfd::RootError> {
+                let removed = match handle.stat(&path)?.kind() {
+                    crate::rootfd::EntryKind::File => Removed::File,
+                    // `read_link` can still lose a race; the delete is the
+                    // point, so a missing label must not block it.
+                    crate::rootfd::EntryKind::Symlink => {
+                        Removed::Symlink(handle.read_link(&path).ok())
+                    }
+                    _ => return Ok(None),
+                };
                 handle.remove_file(&path)?;
-                Ok(true)
+                Ok(Some(removed))
             }
         })
         .await;
         match outcome {
-            Ok(Ok(true)) => ToolOutput::Ok {
+            Ok(Ok(Some(Removed::File))) => ToolOutput::Ok {
                 content: format!("deleted {path}"),
             },
-            Ok(Ok(false)) => ToolOutput::Error {
+            Ok(Ok(Some(Removed::Symlink(target)))) => ToolOutput::Ok {
+                content: match target {
+                    Some(t) => format!(
+                        "deleted symlink {path} (the link only; its target {} is untouched)",
+                        std::path::Path::new(&t).display()
+                    ),
+                    None => {
+                        format!("deleted symlink {path} (the link only; its target is untouched)")
+                    }
+                },
+            },
+            Ok(Ok(None)) => ToolOutput::Error {
                 message: format!(
                     "`{path}` is not a file (directories and missing paths are not deletable \
                      with this tool)"

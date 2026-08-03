@@ -119,8 +119,13 @@ fn parse_edits(input: &Value) -> Result<Vec<ParsedEdit>, String> {
         .collect()
 }
 
-/// One touched file: (display path, full path, original bytes, final bytes).
-type TouchedFile = (String, std::path::PathBuf, String, String);
+/// One touched file, keyed by workspace-relative path:
+/// (display path, original bytes, the bytes this batch wrote).
+///
+/// Every path here is resolved through the batch's [`crate::rootfd::RootHandle`]
+/// rather than as a free-standing `PathBuf`, so a symlink or directory swapped
+/// in mid-batch cannot redirect a rollback outside the workspace root.
+type TouchedFile = (String, String, String);
 
 /// Restore every file this batch already wrote back to its pre-batch bytes,
 /// returning the lines the caller appends to its error.
@@ -137,13 +142,15 @@ type TouchedFile = (String, std::path::PathBuf, String, String);
 /// An empty return means every already-written file is back to its original
 /// content.
 async fn roll_back_prior_writes(
+    handle: &std::sync::Arc<crate::rootfd::RootHandle>,
     files: &HashMap<String, TouchedFile>,
     written: &[String],
 ) -> String {
     let mut note = String::new();
     for key in written {
-        let (path, full, original, ours) = &files[key];
-        if matches!(tokio::fs::read(full).await, Ok(now) if now != ours.as_bytes()) {
+        let (path, original, ours) = &files[key];
+        if matches!(crate::rootfd::read_async(handle, path).await, Ok(now) if now != ours.as_bytes())
+        {
             note.push_str(&format!(
                 "\n  NOT ROLLED BACK: `{path}` was changed by something else after this batch \
                  wrote it — its current content was left alone; reconcile it by hand"
@@ -152,9 +159,14 @@ async fn roll_back_prior_writes(
         }
         // The rollback especially must not truncate: a failed rollback with a
         // truncating write turns a partial batch into a destroyed file.
-        if crate::durable_write::write_file_durably(full.clone(), original.as_bytes().to_vec())
-            .await
-            .is_err()
+        if crate::durable_write::write_file_durably_at(
+            std::sync::Arc::clone(handle),
+            path.clone(),
+            original.as_bytes().to_vec(),
+            false,
+        )
+        .await
+        .is_err()
         {
             note.push_str(&format!(
                 "\n  ROLLBACK FAILED for `{path}` — restore it manually from the content you \
@@ -260,7 +272,7 @@ impl Tool for ApplyEdits {
         // and rollback for that file uses — so the whole batch resolves each
         // file exactly one way. Edits to one file compose: edit 3 sees edit
         // 1's result, exactly as the apply will.
-        let mut files: HashMap<String, (String, String, String)> = HashMap::new();
+        let mut files: HashMap<String, TouchedFile> = HashMap::new();
         let mut order: Vec<String> = Vec::new(); // first-touch order, for stable output
         let mut verdicts: Vec<EditVerdict> = Vec::new();
         let mut failures = 0usize;
@@ -432,26 +444,11 @@ impl Tool for ApplyEdits {
                          the content you last read"
                     ));
                 }
-                for prior in &written {
-                    let (prior_path, original, _) = &files[*prior];
-                    // The rollback especially must not truncate: a failed
-                    // rollback with a truncating write turns a partial batch
-                    // into a destroyed file.
-                    if crate::durable_write::write_file_durably_at(
-                        std::sync::Arc::clone(&handle),
-                        prior_path.clone(),
-                        original.as_bytes().to_vec(),
-                        false,
-                    )
-                    .await
-                    .is_err()
-                    {
-                        rollback_note.push_str(&format!(
-                            "\n  ROLLBACK FAILED for `{prior_path}` — restore it manually from \
-                             the content you last read"
-                        ));
-                    }
-                }
+                // Ownership-checked, so a file something else rewrote between
+                // our write and this abort is named rather than silently
+                // reverted (#940). Inlining this loop is what dropped that
+                // check and left the helper unreachable.
+                rollback_note.push_str(&roll_back_prior_writes(&handle, &files, &written).await);
                 if rollback_note.is_empty() {
                     rollback_note = format!(
                         "\n  every touched file (including `{path}`) holds its original \
@@ -858,21 +855,20 @@ mod tests {
     }
 
     /// One entry of the rollback's view of a touched file: the bytes it found
-    /// before the batch, and the bytes the batch wrote.
-    fn touched(
-        key: &str,
-        full: &std::path::Path,
-        original: &str,
-        ours: &str,
-    ) -> (String, TouchedFile) {
+    /// before the batch, and the bytes the batch wrote. Keyed by the
+    /// workspace-relative path the batch first named the file by, which is
+    /// what the rollback resolves through the root handle.
+    /// The root handle the rollback resolves every relative path through —
+    /// the same handle the batch itself opened, so the tests exercise the
+    /// production resolution path rather than bare `std::fs`.
+    fn rollback_handle(root: &std::path::Path) -> std::sync::Arc<crate::rootfd::RootHandle> {
+        std::sync::Arc::new(crate::rootfd::RootHandle::open(root).unwrap())
+    }
+
+    fn touched(key: &str, original: &str, ours: &str) -> (String, TouchedFile) {
         (
             key.to_string(),
-            (
-                key.to_string(),
-                full.to_path_buf(),
-                original.to_string(),
-                ours.to_string(),
-            ),
+            (key.to_string(), original.to_string(), ours.to_string()),
         )
     }
 
@@ -886,14 +882,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let full = dir.path().join("a.rs");
         std::fs::write(&full, "someone else wrote this\n").unwrap();
+        let handle = rollback_handle(dir.path());
 
         let files: HashMap<String, TouchedFile> = HashMap::from([touched(
             "a.rs",
-            &full,
             "before the batch\n",
             "the batch wrote this\n",
         )]);
-        let note = roll_back_prior_writes(&files, &["a.rs".to_string()]).await;
+        let note = roll_back_prior_writes(&handle, &files, &["a.rs".to_string()]).await;
 
         assert!(note.contains("NOT ROLLED BACK"), "{note}");
         assert!(note.contains("a.rs"), "{note}");
@@ -911,14 +907,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let full = dir.path().join("a.rs");
         std::fs::write(&full, "the batch wrote this\n").unwrap();
+        let handle = rollback_handle(dir.path());
 
         let files: HashMap<String, TouchedFile> = HashMap::from([touched(
             "a.rs",
-            &full,
             "before the batch\n",
             "the batch wrote this\n",
         )]);
-        let note = roll_back_prior_writes(&files, &["a.rs".to_string()]).await;
+        let note = roll_back_prior_writes(&handle, &files, &["a.rs".to_string()]).await;
 
         assert!(note.is_empty(), "{note}");
         assert_eq!(
@@ -933,14 +929,14 @@ mod tests {
     async fn an_unreadable_file_is_still_rolled_back() {
         let dir = tempfile::tempdir().unwrap();
         let full = dir.path().join("vanished.rs");
+        let handle = rollback_handle(dir.path());
 
         let files: HashMap<String, TouchedFile> = HashMap::from([touched(
             "vanished.rs",
-            &full,
             "before the batch\n",
             "the batch wrote this\n",
         )]);
-        let note = roll_back_prior_writes(&files, &["vanished.rs".to_string()]).await;
+        let note = roll_back_prior_writes(&handle, &files, &["vanished.rs".to_string()]).await;
 
         assert!(note.is_empty(), "{note}");
         assert_eq!(

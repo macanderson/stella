@@ -51,6 +51,12 @@
 //!   inside the root.
 //! * The empty path, `.`, and any path resolving to the root directory itself
 //!   are refused: these open a *file*, and the root is not one.
+//! * **Expansion stops at the leaf for the operations that mean the link
+//!   itself.** [`RootHandle::stat`], [`RootHandle::read_link`] and
+//!   [`RootHandle::remove_file`] resolve every *parent* under the same rules
+//!   and then leave the last component alone. Reading and writing still expand
+//!   it — those want the real file — but unlinking must not, or deleting
+//!   `vendor/config.toml` removes what it points at (#940).
 //!
 //! # What this does not do
 //!
@@ -384,16 +390,37 @@ impl RootHandle {
         }
     }
 
-    /// `lstat` `rel` through the confined walk.
+    /// `lstat` `rel` through the confined walk — the link itself, never its
+    /// target.
+    ///
+    /// Resolved without expanding a final symlink, so a link reports
+    /// [`EntryKind::Symlink`] rather than whatever it points at. Expanding it
+    /// here is what let `delete_file` classify `vendor/config.toml` as an
+    /// ordinary file and then remove the file it pointed to (#940).
     pub fn stat(&self, rel: &str) -> Result<EntryStat, RootError> {
-        let (parent, name) = self.resolve_leaf(rel, false)?;
+        let (parent, name) = self.resolve_leaf_no_follow(rel)?;
         fstatat(parent.as_fd(), &name).map_err(RootError::Io)
     }
 
-    /// Unlink `rel`. `unlinkat` never follows a symlink, so the leaf cannot be
-    /// swapped into one between the walk and the removal.
+    /// Read the target of the symlink at `rel`, without following it.
+    ///
+    /// The target is returned verbatim, exactly as stored — it is a label for
+    /// the operator ("this is where the link pointed"), not a path to act on,
+    /// and resolving it would defeat the point of asking.
+    pub fn read_link(&self, rel: &str) -> Result<std::ffi::OsString, RootError> {
+        let (parent, name) = self.resolve_leaf_no_follow(rel)?;
+        readlinkat(parent.as_fd(), &name).map_err(RootError::Io)
+    }
+
+    /// Unlink `rel` — the link itself when `rel` names a symlink.
+    ///
+    /// `unlinkat` not following a symlink only helps if the name it is handed
+    /// is still the link's own name, so this resolves without expanding the
+    /// leaf. With the expanding walk the name was already the target's real
+    /// name in the target's real directory, and `unlinkat`'s no-follow
+    /// guarantee bought nothing: deleting a link deleted its target.
     pub fn remove_file(&self, rel: &str) -> Result<(), RootError> {
-        let (parent, name) = self.resolve_leaf(rel, false)?;
+        let (parent, name) = self.resolve_leaf_no_follow(rel)?;
         // SAFETY: `parent` is an open directory descriptor and `name` is a
         // NUL-terminated C string that outlives the call.
         let rc = unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), 0) };
@@ -412,6 +439,26 @@ impl RootHandle {
     /// a symlink *as of the `readlinkat` below* — a link is expanded, so the
     /// name returned is the real name in the real directory.
     fn resolve_leaf(&self, rel: &str, create_dirs: bool) -> Result<(OwnedFd, CString), RootError> {
+        self.resolve_leaf_inner(rel, create_dirs, true)
+    }
+
+    /// [`Self::resolve_leaf`], but stopping at the leaf's own name.
+    ///
+    /// Every parent component is still walked under `O_NOFOLLOW`, so
+    /// containment is enforced exactly as everywhere else — including through
+    /// an intermediate symlinked directory pointing outside the root, which
+    /// still rejects. Only the last component is left unexpanded, which is what
+    /// "operate on the link, not its target" requires.
+    fn resolve_leaf_no_follow(&self, rel: &str) -> Result<(OwnedFd, CString), RootError> {
+        self.resolve_leaf_inner(rel, false, false)
+    }
+
+    fn resolve_leaf_inner(
+        &self,
+        rel: &str,
+        create_dirs: bool,
+        follow_leaf: bool,
+    ) -> Result<(OwnedFd, CString), RootError> {
         let mut queue: std::collections::VecDeque<Step> = std::collections::VecDeque::new();
         splice(&mut queue, Path::new(rel), rel)?;
 
@@ -443,9 +490,16 @@ impl RootHandle {
             let here = stack.last().expect("the root is never popped").as_fd();
 
             if queue.is_empty() {
-                // The leaf. `readlinkat` asks "is this a symlink" without
-                // opening anything, which is the whole point: opening it is
-                // exactly what must not happen until we know where it goes.
+                // The leaf. A caller that wants the link itself stops here:
+                // the parents are already walked and confined, and expanding
+                // this last name is precisely what it must not do.
+                if !follow_leaf {
+                    let parent = stack.pop().expect("the root is never popped");
+                    return Ok((parent, cname));
+                }
+                // `readlinkat` asks "is this a symlink" without opening
+                // anything, which is the whole point: opening it is exactly
+                // what must not happen until we know where it goes.
                 match readlinkat(here, &cname) {
                     Ok(target) => {
                         self.expand(&mut queue, &mut stack, &mut expansions, &target, rel)?;
