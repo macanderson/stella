@@ -10,6 +10,9 @@ Read back what your runs actually cost. `stella stats` summarizes cost, tokens, 
 ```bash
 stella stats [--format <table|json|csv>] [--provider <id>]
 stella stats graph [--format <table|json|csv>] [--limit <N>]
+                   [--workspace <DIR>]... [--scan <DIR>] [--scan-depth <N>]
+                   [--save-baseline <FILE>] [--label <TEXT>]
+                   [--baseline <FILE>] [--fail-on-regression]
 stella stats prune [--older-than <AGE>] [--max-rows <N>] [--force] [--vacuum] [--dry-run]
 ```
 
@@ -141,13 +144,68 @@ adoption: graph_query 16 of 84 structural searches (graph_query + grep + glob) =
     `json` emits the whole report as one object (per-op rows, the total, and the adoption
     counts); `csv` emits the per-op rows plus a `TOTAL` row.
   </OptionCard>
+  <OptionCard name="--workspace <DIR>">
+    Read a workspace other than the current directory. Repeatable — every named workspace
+    is pooled into one report. A path with no `store.db` is an error, not a zero.
+  </OptionCard>
+  <OptionCard name="--scan <DIR>" defaultValue="depth 4">
+    Find every workspace under `DIR` and pool them. A benchmark run is N task workspaces
+    with N stores; this is how they become one run-level number.
+  </OptionCard>
 </CardGrid>
 
-Track it over time to see whether a change to retrieval actually landed:
+### Measuring a change
+
+"Retrieval got better" is a claim about two observations, so the report can be saved and
+diffed. Capture a baseline before the change:
 
 ```bash
-stella stats graph --format json | jq '{resolved: .total.resolved_rate, adoption: .adoption_rate}'
+stella stats graph --scan ./runs/before --save-baseline graph-before.json \
+  --label "v0.6.76, pre-change"
 ```
+
+Then compare a later run against it:
+
+```bash
+stella stats graph --scan ./runs/after --baseline graph-before.json
+```
+
+```text
+graph_query retrieval: current vs baseline
+
+METRIC                   BASELINE    CURRENT      DELTA
+adoption                     4.6%      21.3%     +16.7pp
+resolved-query rate         88.0%      86.4%      -1.6pp
+structural searches           108        413       +305
+workspaces pooled               1         60
+
+baseline: v0.6.76, pre-change
+IMPROVED: adoption rose 16.7 points (4.6% → 21.3%) and the resolved-query rate held
+```
+
+The verdict is graded, not left to the reader:
+
+<CardGrid size="md">
+  <OptionCard name="IMPROVED">
+    Adoption rose by more than a percentage point and the resolve rate held.
+  </OptionCard>
+  <OptionCard name="RESOLVE-REGRESSED">
+    Adoption held or rose, but the resolved-query rate fell more than five points.
+    Queries made more often but landing less often is the tool getting *worse* at the job
+    adoption is read as evidence for — so this never grades as a win.
+  </OptionCard>
+  <OptionCard name="REGRESSED">
+    Adoption fell by more than a percentage point.
+  </OptionCard>
+  <OptionCard name="INCONCLUSIVE">
+    Fewer than 30 structural searches on one side. An adoption ratio over that few calls
+    swings by tens of points on one more `grep`, so it is refused rather than graded.
+  </OptionCard>
+</CardGrid>
+
+Add `--fail-on-regression` to make a benchmark or CI job exit non-zero on either
+regression verdict. It is off by default: reporting a regression and failing on one are
+different requests.
 
 ## Bounding the store — `stella stats prune`
 

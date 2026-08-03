@@ -102,6 +102,7 @@ use stella_tui::{
     SlashCommand, SplashCue, UserInput, WorkspaceInput, run_deck,
 };
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::watch;
 
 use crate::agent;
 use crate::claims::ClaimTap;
@@ -165,14 +166,14 @@ fn system_notice(text: String) -> Inbound {
 }
 
 /// `STELLA_DEBUG=1` → the structured deck log path (L-T8), mirroring the
-/// location `stella_tui::shell::RunOptions` documents. `None` otherwise, and
+/// location `stella_tui::DeckOptions` documents. `None` otherwise, and
 /// on any failure to create the directory — a lost debug log never gates the
 /// session.
 ///
 /// `OXAGEN_DEBUG` is accepted as a deprecated alias for one release: the
 /// user-facing env surface is `STELLA_*` everywhere else (88 names), and this
 /// was the only runtime toggle stranded in the pre-rename namespace.
-pub(crate) fn debug_log_path() -> Option<PathBuf> {
+fn debug_log_path() -> Option<PathBuf> {
     let requested = std::env::var_os("STELLA_DEBUG").or_else(|| std::env::var_os("OXAGEN_DEBUG"));
     if requested.is_none_or(|v| v.is_empty() || v == "0") {
         return None;
@@ -1465,6 +1466,18 @@ pub async fn run_deck_session(
         // registry, so sub-agents this turn dispatches stop when it does
         // (`crate::subagent`). The engine still takes it by reference.
         let steering: Arc<subsession::SteeringTap> = Arc::default();
+        // The lead lane's pause gate (#1219), per-turn for the same reason
+        // `steering` is: a pause cannot leak into the next turn, because the
+        // next iteration builds a fresh channel that starts `false`.
+        //
+        // `Arc` because it goes three places — the pipeline (which attaches it
+        // to every engine it builds and parks its management calls behind it),
+        // the step-loop engine, and the registry, so sub-agents this turn
+        // dispatches park with it rather than spending on behind a paused lead.
+        let (pause_tx, pause_rx) = watch::channel(false);
+        let gate: Arc<subsession::WatchGate> = Arc::new(subsession::WatchGate(pause_rx));
+        // The lane's latched dashboard state — see `service_lead_control`.
+        let mut lead_paused = false;
         let end = {
             // Both arms return `Result<(), String>`, so one pinned future
             // drives either path through the same select loop.
@@ -1491,6 +1504,7 @@ pub async fn run_deck_session(
                         &lead_holder,
                         &discovery_activation,
                         &steering,
+                        &gate,
                         mcp.clone(),
                     )
                     .await
@@ -1512,6 +1526,7 @@ pub async fn run_deck_session(
                         &lead_holder,
                         &discovery_activation,
                         &steering,
+                        &gate,
                         recall_event,
                     )
                     .await
@@ -1630,6 +1645,19 @@ pub async fn run_deck_session(
                                 // pair's second press (StopAndHold below)
                                 // stays the immediate hard cancel.
                                 steering.request_soft_stop();
+                                // A soft stop ends the turn at its NEXT step
+                                // boundary — and a paused turn is exactly one
+                                // that cannot reach a boundary, because the
+                                // gate parks it just before the stop flag is
+                                // read. Release the gate so it wakes, sees the
+                                // latched stop, and ends keeping its completed
+                                // work; otherwise Esc on a paused lead reads
+                                // as doing nothing until the user happens to
+                                // resume (#1219). `lead_paused` is deliberately
+                                // NOT cleared: the row is still painted paused,
+                                // and the turn-end unlatch below is what owes
+                                // it a status.
+                                let _ = pause_tx.send(false);
                                 let _ = in_tx.send(Inbound::Event {
                                     agent: LEAD.to_string(),
                                     event: AgentEvent::Text {
@@ -1853,19 +1881,34 @@ pub async fn run_deck_session(
                         }) => {
                             let _ = scope_tx.send(decision);
                         }
-                        // Lead-lane pause/resume/restart: the boundary gate
-                        // now EXISTS (`Pipeline::with_turn_gate` — the fleet's
-                        // pipeline workers park on it), but the deck's lead
-                        // turn does not yet build a watch channel and thread
-                        // it through `run_lead_turn`'s pipeline construction —
-                        // that wiring (and fleet tasks as deck lanes) is the
-                        // remaining follow-up. No-op here until then.
-                        Some(WorkspaceInput::Control { .. }) => {}
+                        // Lead-lane pause/resume (#1219). Everything above has
+                        // peeled off `Stop` (either lane) and every worker
+                        // lane, so what lands here is the LEAD's own
+                        // pause/resume/restart — see `service_lead_control`.
+                        Some(WorkspaceInput::Control { control, .. }) => {
+                            lead_paused =
+                                service_lead_control(control, &pause_tx, &in_tx, lead_paused);
+                        }
                     },
                 }
             }
             // `turn` (and the channel senders it holds) drops here.
         };
+
+        // The turn is over, so the lane is not paused any more — whether it ran
+        // past its last boundary to completion or was hard-cancelled while
+        // parked. Said explicitly because the fold will not move a row off
+        // `Paused` from the event stream: without this the cancel path's
+        // terminal `Error` — and every event of the NEXT turn — would be
+        // swallowed and the row would read paused for the rest of the session.
+        // `WaitingInput`, not a terminal state: the arms below emit the turn's
+        // own outcome and this must not pre-empt them.
+        if lead_paused {
+            let _ = in_tx.send(Inbound::Status {
+                agent: LEAD.to_string(),
+                status: AgentStatus::WaitingInput,
+            });
+        }
 
         match end {
             TurnEnd::Finished(outcome) => {
@@ -2654,6 +2697,60 @@ fn service_worker_control(
                 );
             }
         }
+    }
+}
+
+/// The LEAD lane's `Control` verbs (#1219) — the lead twin of
+/// [`service_worker_control`], and deliberately much smaller: a worker lane is
+/// a spawned thread with a retained spec, while the lead IS the session.
+///
+/// `paused` is the lane's currently latched state and the return is what it
+/// becomes, so the caller can tell at turn end whether it still owes the
+/// dashboard a status (the deck's fold will not move a row off `Paused` from
+/// the event stream, by design — streaming output must not silently un-pause
+/// a lane the user parked).
+///
+/// The status sent here is load-bearing, not decoration: `p` is a *toggle*
+/// resolved against the row's current status, so a pause that parked the turn
+/// without painting the row would leave the next `p` sending Pause again — a
+/// lane the user could park and never release.
+///
+/// Pause/Resume flip the turn's watch channel, which the pipeline, the
+/// step-loop engine, and the registry's sub-agent dispatcher all hold: the
+/// turn parks at its next step boundary, never mid-tool (L-E6). A `send` that
+/// fails means every receiver is gone — the turn is already over — which is
+/// exactly the stale control that must read as a no-op, so it is dropped
+/// rather than reported.
+///
+/// `Restart` is not a lead verb, by the fleet's own rule: a restart is the
+/// caller re-dispatching, which the deck already offers (stop, then submit
+/// again). There is no retained lead spec to respawn from. `Stop` never
+/// arrives here — the driver's own arm claims it, for both lanes — and is
+/// matched only so a newly added control cannot be silently swallowed.
+fn service_lead_control(
+    control: stella_tui::AgentControl,
+    pause_tx: &watch::Sender<bool>,
+    in_tx: &UnboundedSender<Inbound>,
+    paused: bool,
+) -> bool {
+    match control {
+        stella_tui::AgentControl::Pause => {
+            let _ = pause_tx.send(true);
+            let _ = in_tx.send(Inbound::Status {
+                agent: LEAD.to_string(),
+                status: AgentStatus::Paused,
+            });
+            true
+        }
+        stella_tui::AgentControl::Resume => {
+            let _ = pause_tx.send(false);
+            let _ = in_tx.send(Inbound::Status {
+                agent: LEAD.to_string(),
+                status: AgentStatus::Running,
+            });
+            false
+        }
+        stella_tui::AgentControl::Restart | stella_tui::AgentControl::Stop => paused,
     }
 }
 
@@ -4103,6 +4200,9 @@ async fn run_lead_turn(
     claim_holder: &str,
     activated: &crate::discovery::ActivatedTools,
     steering: &Arc<subsession::SteeringTap>,
+    // This turn's pause gate (#1219), owned by the driver loop so its input
+    // arms can flip it while this future runs.
+    gate: &Arc<subsession::WatchGate>,
     // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller
     // because recall runs before this channel exists.
     recall_event: Option<AgentEvent>,
@@ -4134,11 +4234,14 @@ async fn run_lead_turn(
     );
     // This turn's file changes ride this turn's channel.
     registry.attach_events(stella_core::EventSender::new(tx.clone()));
-    // ...and this turn's soft stop reaches the sub-agents it dispatches. The
-    // lead turn has no pause gate (Pause is a worker-lane verb), so steering
-    // is all there is to publish; the guard takes it down on return.
+    // ...and this turn's soft stop AND pause reach the sub-agents it
+    // dispatches: a paused lead must not keep spending inside a child it
+    // dispatched, which is only reachable because the dispatcher reads both
+    // seams off the registry. The guard takes them down on return.
     let _controls = registry.attach_turn_controls(
-        stella_core::ports::TurnControls::none().with_steering(steering.clone()),
+        stella_core::ports::TurnControls::none()
+            .with_steering(steering.clone())
+            .with_gate(gate.clone()),
     );
 
     // Same structural drop-order rule as `agent::run_turn`: every tx clone
@@ -4173,7 +4276,10 @@ async fn run_lead_turn(
             &TokioSleeper,
         )
         .with_calibration(calibration)
-        .with_steering(steering.as_ref());
+        .with_steering(steering.as_ref())
+        // Polled once per step, at the same boundary as the budget abort and
+        // the soft stop — so a pause parks between model calls, never mid-tool.
+        .with_gate(gate.as_ref());
         if let Some(hooks) = &cfg.hooks {
             engine = engine.with_hooks(hooks, &hook_runner);
         }
@@ -4263,6 +4369,9 @@ async fn run_lead_pipeline_turn(
     claim_holder: &str,
     activated: &crate::discovery::ActivatedTools,
     steering: &Arc<subsession::SteeringTap>,
+    // As in `run_lead_turn` — the driver loop owns it and flips it from its
+    // input arms while this future runs (#1219).
+    gate: &Arc<subsession::WatchGate>,
     mcp: Option<Arc<stella_mcp::McpToolSet>>,
 ) -> Result<(), String> {
     budget.begin_turn();
@@ -4287,11 +4396,13 @@ async fn run_lead_pipeline_turn(
     // Candidate registries are deliberately left unattached — a candidate's
     // edits live in a shadow worktree and are only the user's once adopted.
     registry.attach_events(stella_core::EventSender::new(tx.clone()));
-    // As in `run_lead_turn`: Esc reaches this turn's sub-agents. The same tap
-    // goes to the pipeline's execute engine below, so one stop lands on the
-    // stage, its tool calls, and their children alike.
+    // As in `run_lead_turn`: Esc and Pause reach this turn's sub-agents. The
+    // same tap and gate go to the pipeline below, so one stop — or one pause —
+    // lands on the stage, its tool calls, and their children alike.
     let _controls = registry.attach_turn_controls(
-        stella_core::ports::TurnControls::none().with_steering(steering.clone()),
+        stella_core::ports::TurnControls::none()
+            .with_steering(steering.clone())
+            .with_gate(gate.clone()),
     );
 
     let result = {
@@ -4379,7 +4490,12 @@ async fn run_lead_pipeline_turn(
             headless_bypass_scope_review: false,
             ..agent::apply_pipeline_tuning(cfg, PipelineConfig::default())
         };
-        let pipeline = Pipeline::new(ports, tx.clone(), config);
+        // #1214's seam, now driven from the deck: the pipeline attaches this
+        // gate to every engine it builds (execute/revise turns, the witness
+        // author) and parks its own management calls pre-spend behind it, so a
+        // lead pause reaches a staged turn at the same safe step boundary the
+        // step-loop path gets — and no further `StepUsage` lands until resume.
+        let pipeline = Pipeline::new(ports, tx.clone(), config).with_turn_gate(gate.as_ref());
         pipeline.run(prompt, messages, budget).await
     };
     // Same settle window as `run_lead_turn` — see `SteeringTap::mark_settling`.

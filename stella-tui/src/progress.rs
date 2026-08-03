@@ -300,7 +300,7 @@ fn telemetry_line(state: &ProgressState) -> (Vec<Span<'static>>, usize) {
     }
 }
 
-/// Paint the derived state into `area`. Split out from [`render`] so tests can
+/// Paint the derived state into `area`. Split out from the frame composer so tests can
 /// drive it with a hand-built [`ProgressState`] and a fixed clock.
 fn render_state(state: &ProgressState, now_ms: u64, mode: ColorMode, area: Rect, buf: &mut Buffer) {
     let y = area.y;

@@ -231,23 +231,14 @@ Two things are unique to deck turns:
   `Esc Esc` cancels immediately and holds the queue. Steering beats
   restarting: you keep the cache-warm context and only redirect it.
 
-`stella --simple` (or `STELLA_SIMPLE=1`) runs the **simple surface**: one
-conversation, the same per-prompt raw turns and the same session memory, drawn
-*inline* instead of on the alternate screen. Each finished message moves into
-your terminal's scrollback as ordinary output. That is what makes it readable
-by a screen reader — and by anything else that reads a terminal — where a
-full-repaint TUI is not. See [`stella chat`](/docs/commands/chat) for the full
-account.
-
 `stella --plain` (or any non-TTY stdin/stdout, or `STELLA_PLAIN=1`) falls
-back to the **plain REPL**: the same turns again, in a line-based interface
-with slash commands. It's the low-dependency door — pipes, CI logs, SSH
-sessions, teaching demos.
+back to the **plain REPL**: the same per-prompt raw turns and the same
+session memory, in a line-based interface with slash commands. It's the
+low-dependency door — SSH sessions, minimal terminals, teaching demos.
 
 **Use the deck when** you're exploring, iterating, or supervising real work
-interactively. **Use the simple surface when** you are reading the terminal
-with something other than your eyes, or your terminal cannot carry the deck.
-**Use the plain REPL when** there is no terminal at all.
+interactively. **Use the plain REPL when** you want interactivity without a
+TUI.
 
 ## Delegated: deck sub-agents
 
@@ -343,8 +334,6 @@ discovery tools are read-only, even the judge can run `tool_search`,
 ## Choosing a path
 
 - **Watching and steering** → the Command Deck (`stella`).
-- **Interactive, with a screen reader or a limited terminal** → the simple
-  surface (`stella --simple`).
 - **Interactive, but minimal** → the plain REPL (`stella --plain`).
 - **One defined task, unattended** → `stella run` (add `--test-command` for
   the strongest verification; `--no-pipeline` for speed).

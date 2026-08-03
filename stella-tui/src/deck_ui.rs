@@ -1,6 +1,6 @@
 //! Ephemeral deck state and the pure deck-level key→action mapping.
 //!
-//! Mirrors the single-session [`crate::ui`] split: [`DeckUi`] holds everything
+//! The pure-core / thin-shell split: [`DeckUi`] holds everything
 //! *not* derived from the event log (active tab, the one global composer,
 //! per-tab scroll/selection, the splash, the out-of-band graph snapshot), and
 //! [`handle_deck_key`] is a pure function of `(key, model, &mut ui)` returning a
@@ -3450,7 +3450,10 @@ fn handle_agents_key(
         // `r` restart. The driver honors all three on worker lanes
         // (`req:`/`sub:`): pause parks the worker at its next step boundary
         // (never mid-tool), restart respawns the lane from its retained
-        // spec. On the lead they are no-ops (Esc is the lead's interrupt).
+        // spec. On the lead, `s` is the interrupt (as Esc is) and `p` parks
+        // the live turn at the same step boundary — sub-agents included
+        // (#1219); only `r` stays a no-op there, because restarting the lead
+        // is just re-submitting the prompt and there is no spec to respawn.
         KeyCode::Char('s') if composer_empty => model.agents.get(ui.focused).map(|entry| {
             DeckAction::Send(WorkspaceInput::Control {
                 agent: entry.meta.id.clone(),

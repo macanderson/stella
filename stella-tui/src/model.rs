@@ -6,14 +6,14 @@
 //! numbers, and the pending scope-review. It has exactly one mutator,
 //! [`SessionModel::apply`]; there is no other way to change it. Ephemeral
 //! interaction state (scroll offset, composer buffer, panel focus) that is
-//! *not* derived from events lives in [`crate::ui::UiState`], never here —
+//! *not* derived from events lives in [`crate::deck_ui::DeckUi`], never here —
 //! that boundary is what makes replay-from-seq-1 a supported debug mode and
 //! what makes the panel panic boundary sound (render is a pure function over
 //! `&SessionModel`, so a panicking panel can be caught and discarded without
 //! leaving torn state — L-T7).
 //!
 //! Styling is deliberately *not* stored here: entries are semantic records,
-//! and [`fn@crate::render`] converts them to styled `ratatui` lines as a pure
+//! and [`mod@crate::render`] converts them to styled `ratatui` lines as a pure
 //! function of the model. Determinism therefore extends all the way to the
 //! backing cell buffer (the replay-determinism test in [`mod@crate::render`]).
 
@@ -155,7 +155,7 @@ pub struct SubAgentSummary {
 }
 
 /// One semantic entry in the transcript. Rendering (colour, borders, glyphs)
-/// is applied by [`fn@crate::render`]; this type carries only content.
+/// is applied by [`mod@crate::render`]; this type carries only content.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TranscriptEntry {
     /// Stands in for entries dropped by the retention cap

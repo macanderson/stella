@@ -23,7 +23,7 @@ What comes back: the transcript is rebuilt by replaying the session journal, the
 A session can only be reopened where it belongs: it must not be live in another stella process (there is no attach — stop that session first), it must belong to the current workspace (the deck's tools, memory, and graph are workspace-bound), and it must have durable state on disk (sessions predating session journaling are listed but not resumable).
 
 <Callout type="info">
-`stella resume` opens the Command Deck, so it needs a real terminal — it cannot combine with `--plain`, `--simple`, `STELLA_PLAIN`, `STELLA_SIMPLE`, or a piped stream. A durable session is a deck feature; neither of the other surfaces has one to restore. `stella resume --list` works anywhere.
+`stella resume` opens the Command Deck, so it needs a real terminal — it cannot combine with `--plain`, `STELLA_PLAIN`, or a piped stream. `stella resume --list` works anywhere.
 </Callout>
 
 ## `--list`

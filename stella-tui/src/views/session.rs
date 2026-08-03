@@ -1,5 +1,5 @@
 //! Session tab — the focused agent's REPL surface (identity header + HUD +
-//! any pending gate card + the task-board checklist + transcript). It **reuses** the single-session
+//! any pending gate card + the task-board checklist + transcript). It **reuses** the shared
 //! renderers (`render_hud`, `render_transcript`, `render_scope_review`,
 //! `render_ask_user`, `entry_lines`) so the classic view is pixel-identical,
 //! just scoped to whichever agent `ui.focused` points at. No transcript
@@ -315,7 +315,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
 
     // Each pending gate claims its own band (0 = collapsed). Both can be
     // pending at once — nothing clears one when the other arrives — so they
-    // render independently, exactly like the single-session `render`; an
+    // render independently, band by band; an
     // ask-user question is never hidden behind a scope review.
     let scope_h: u16 = if sm.pending_scope_review.is_some() {
         8

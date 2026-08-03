@@ -1,7 +1,7 @@
 //! Traces tab — the unified, scrollable, filterable cross-agent event
 //! timeline. Every row is one [`TraceRow`] from [`WorkspaceModel::trace`],
 //! oldest → newest top → bottom, following the tail by default exactly like
-//! the single-session transcript (`render.rs::render_transcript`, L-T4).
+//! the transcript pane (`render::render_transcript_window`, L-T4).
 //!
 //! `ui.trace_filter` narrows the timeline to one agent (`TraceLog::for_agent`);
 //! `None` shows every agent interleaved. Both branches iterate the same
