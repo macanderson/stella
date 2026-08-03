@@ -1,0 +1,306 @@
+name: nightly-bench
+
+# The only CI job that runs STELLA ITSELF against real tasks (#873).
+#
+# `ci.yml` proves the code compiles and the unit tests pass; `bench.yml` proves
+# the Python benchmark tooling works. Neither one ever starts the agent, so the
+# class of regression where "the loop broke between releases and nobody
+# noticed" had no gate at all — and it is not hypothetical: #909's first
+# measured Terminal-Bench run is what discovered the loop failures that
+# `loop-bench` was then written to catch cheaply.
+#
+# This runs `loop-bench` (bench/loop-bench/) — a flash-tier model, a per-task
+# spend cap, four pinned tasks — and gates on LOOP HEALTH: did the turn execute
+# real work, or abort having done nothing; did it die without saying why; was
+# it caught cycling. Those signals are visible on a cheap model, which is what
+# makes a nightly affordable at well under a dollar a night.
+#
+# NOT on `pull_request`/`push`: every run spends real money and needs Docker,
+# harbor, and a provider key. Schedule + manual dispatch only, exactly like
+# `live-smoke.yml`.
+#
+# Required repo secret (Settings -> Secrets and variables -> Actions):
+#
+#   OPENROUTER_API_KEY - the provider key the task containers run against.
+#
+# Unlike `live-smoke.yml`, a missing key FAILS this job rather than skipping
+# it. There, an unconfigured provider is a deliberate posture and every other
+# provider still gets tested; here it means nothing was measured at all, and a
+# green "nightly regression gate" that measured nothing is the precise failure
+# `bench.yml`'s header exists to complain about.
+
+on:
+  schedule:
+    # 05:17 UTC daily. Deliberately off the hour: scheduled workflows queue
+    # behind everyone else's `0 * * * *` and can be delayed by many minutes.
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+    inputs:
+      tasks:
+        description: "Comma-separated Terminal-Bench tasks (blank = the pinned nightly set)"
+        required: false
+        type: string
+      model:
+        description: "Provider/model (blank = the pinned nightly model)"
+        required: false
+        type: string
+      budget:
+        description: "Per-task USD cap (blank = the pinned nightly budget)"
+        required: false
+        type: string
+      min_pass:
+        description: "Fail if fewer than N tasks pass; 0 disables (blank = the pinned floor)"
+        required: false
+        type: string
+
+concurrency:
+  # One measured run at a time. Two overlapping runs would share a Docker
+  # daemon and contend for the same task images and the same disk.
+  group: nightly-bench
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+# The pinned measurement lives here and ONLY here — the dispatch inputs above
+# carry no defaults of their own, so a blank input falls through to these and
+# there is exactly one place a nightly constant can be changed.
+#
+# The task list is pinned by NAME rather than taken as `--n 4` off the harness's
+# `DEFAULT_POOL`: reordering that pool is an ordinary edit to a Rust constant
+# and would silently change what the nightly measures. The harness has no RNG
+# — trial selection and ordering are entirely determined by this list — so this
+# list plus the model below is what "fixed seed" means for this benchmark.
+env:
+  LOOP_BENCH_TASKS: "fix-git,prove-plus-comm,overfull-hbox,cobol-modernization"
+  # A flash tier. Loop correctness does not need a strong model, only a running
+  # one, and the whole point of this gate is that it is cheap enough to run
+  # every night. Pinned here rather than inherited from the harness default for
+  # the same reason as the task list.
+  LOOP_BENCH_MODEL: "openrouter/z-ai/glm-4.7-flash"
+  LOOP_BENCH_BUDGET: "0.20"
+  # The pass-rate floor (#873), OFF until this job has a history to set it
+  # from. A floor guessed rather than observed is red every night on a
+  # flash-tier model under a $0.20 cap, and a gate that is always red is a gate
+  # nobody reads. Raise it once a few nights of the artifact below agree on
+  # what normal is; the loop-health gate is unconditional and runs regardless.
+  LOOP_BENCH_MIN_PASS: "0"
+  # Kill harbor after an hour and analyze whatever landed, rather than letting
+  # a stalled image pull hold the runner until the job timeout.
+  LOOP_BENCH_HARBOR_TIMEOUT: "3600"
+  # Task images publish linux/amd64 only, and the SUT binary is x86_64.
+  DOCKER_DEFAULT_PLATFORM: linux/amd64
+  # Same reason bench/evidence/run/env.sh sets it: reflection writes learned
+  # state between turns, so leaving it on makes tonight's run depend on last
+  # night's. Comparability across nights is an acceptance criterion here.
+  STELLA_DISABLE_REFLECTION: "1"
+  # The SUT contract, pinned in one place exactly as
+  # bench/evidence/run/env.sh pins it for a claim run.
+  STELLA_TARGET_TRIPLE: x86_64-unknown-linux-gnu
+  STELLA_GLIBC_FLOOR: "2.17"
+  # The audited harbor constant. `secure_launcher` refuses to start on anything
+  # else (see bench/harbor_adapter/pyproject.toml), so assert it rather than
+  # discovering the mismatch one opaque trial failure at a time.
+  HARBOR_VERSION: "0.6.1"
+
+jobs:
+  loop-bench:
+    name: loop-bench (spends real money)
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Require the provider key
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+            echo "::error::OPENROUTER_API_KEY is not configured; nothing can be measured."
+            echo "Add it under Settings -> Secrets and variables -> Actions." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      # The runner's root filesystem holds both the Rust target directory and
+      # every Docker layer, and a release build plus four task images does not
+      # reliably fit. /mnt is the large scratch disk, so the images go there.
+      - name: Move the Docker data root onto the scratch disk
+        run: |
+          set -euo pipefail
+          df -h / /mnt
+          sudo mkdir -p /mnt/docker
+          printf '{"data-root":"/mnt/docker"}\n' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+          docker info --format 'docker root: {{.DockerRootDir}}'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
+      # Zig is what lets one binary run in every task image. It comes from PyPI
+      # into a throwaway venv rather than `pip install --user`, which Ubuntu's
+      # externally-managed system Python (PEP 668) refuses outright.
+      - name: Install zig
+        run: |
+          set -euo pipefail
+          uv venv "$RUNNER_TEMP/zig"
+          uv pip install --python "$RUNNER_TEMP/zig/bin/python" ziglang==0.16.0
+          "$RUNNER_TEMP/zig/bin/python" -m ziglang version
+
+      - name: cargo install cargo-zigbuild
+        run: cargo install --locked cargo-zigbuild@0.23.0
+
+      # A plain `cargo build --release` on this runner links against the
+      # runner's glibc (2.39), and two Terminal-Bench task images are
+      # debian:bullseye-slim (2.31). Such a binary is rejected by the container's
+      # dynamic linker, harbor records that as NonZeroAgentExitCodeError, and
+      # every trial scores 0.0 — indistinguishable from the agent failing the
+      # task. That is a real incident (2026-07-31, five trials), which is why
+      # the build targets the glibc floor and the next step proves it did.
+      - name: Build the portable SUT binary
+        run: |
+          set -euo pipefail
+          # cargo-zigbuild locates zig as `python3 -m ziglang` when no `zig`
+          # executable is on PATH. The venv holding it goes first on PATH for
+          # THIS STEP ONLY — job-wide it would shadow `python3` for the
+          # portability check and for harbor's own interpreter.
+          export PATH="$RUNNER_TEMP/zig/bin:$PATH"
+          cargo zigbuild --release --locked \
+            --target "$STELLA_TARGET_TRIPLE.$STELLA_GLIBC_FLOOR" \
+            --package stella-cli --bin stella
+          echo "STELLA_BINARY=$GITHUB_WORKSPACE/target/$STELLA_TARGET_TRIPLE/release/stella" >> "$GITHUB_ENV"
+
+      - name: Assert the binary can execute in a task container
+        run: |
+          set -euo pipefail
+          file "$STELLA_BINARY"
+          python3 bench/harbor_adapter/stella_harbor/portability.py \
+            "$STELLA_BINARY" --max-glibc "$STELLA_GLIBC_FLOOR"
+
+      - name: Install harbor + the Stella adapter
+        working-directory: bench/harbor_adapter
+        run: |
+          set -euo pipefail
+          uv sync --locked
+          echo "$GITHUB_WORKSPACE/bench/harbor_adapter/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Preflight — harbor is the audited version and Docker is up
+        run: |
+          set -euo pipefail
+          found="$(harbor --version)"
+          if [ "$found" != "$HARBOR_VERSION" ]; then
+            echo "::error::harbor $found != $HARBOR_VERSION (an audited constant; see bench/harbor_adapter/pyproject.toml)"
+            exit 1
+          fi
+          docker info >/dev/null
+          echo "harbor $found, docker up, SUT $STELLA_BINARY"
+
+      # `--json-out` writes the artifact from the SAME analysis the table and
+      # the exit code come from. Re-running with `--analyze-only --json` to get
+      # the JSON would drop the NOT-RUN rows — that mode has no requested task
+      # set, so it cannot synthesize them — and the artifact would be missing
+      # exactly the rows that gated the run red.
+      #
+      # The step itself does NOT fail on a red gate — the artifact upload and
+      # the summary below have to run first, and a red run is the one whose
+      # evidence matters. `PIPESTATUS[0]` recovers the harness's own exit code
+      # from behind `tee` (which would otherwise report its own 0), and the
+      # final `Gate` step re-raises it.
+      - name: Run loop-bench
+        id: run
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          TASKS: ${{ inputs.tasks || env.LOOP_BENCH_TASKS }}
+          MODEL: ${{ inputs.model || env.LOOP_BENCH_MODEL }}
+          BUDGET: ${{ inputs.budget || env.LOOP_BENCH_BUDGET }}
+          MIN_PASS: ${{ inputs.min_pass || env.LOOP_BENCH_MIN_PASS }}
+        run: |
+          set -euo pipefail
+          mkdir -p loop-bench-out
+          # Actions runs `run:` blocks under `bash -e`, so errexit is already on
+          # and a red gate would abort the step AT the pipeline below — before
+          # PIPESTATUS is ever read. Every non-zero verdict would then reach
+          # `Summarize` as an empty exit_code and be reported as "loop-bench
+          # never ran", which is the one thing it definitely did. Drop errexit
+          # for the measured command only, so the setup above stays guarded.
+          # `pipefail` stays on to keep `$?` honest; PIPESTATUS[0] is what the
+          # gate actually reads, since `tee` would otherwise report its own 0.
+          set +e
+          cargo run --quiet -p loop-bench -- \
+            --tasks "$TASKS" \
+            --model "$MODEL" \
+            --budget "$BUDGET" \
+            --min-pass "$MIN_PASS" \
+            --timeout "$LOOP_BENCH_HARBOR_TIMEOUT" \
+            --json-out loop-bench-out/report.json \
+            2>&1 | tee loop-bench-out/table.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      # The raw streams every verdict was derived from. Without them a
+      # SILENT-DEATH row is a word with nothing behind it.
+      - name: Collect the event streams
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p loop-bench-out/events
+          if [ -d loop-bench-jobs ]; then
+            find loop-bench-jobs -name stella-events.jsonl -print0 \
+              | while IFS= read -r -d '' stream; do
+                  trial="$(basename "$(dirname "$(dirname "$stream")")")"
+                  cp "$stream" "loop-bench-out/events/$trial.jsonl"
+                done
+          fi
+          ls -la loop-bench-out/events
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: loop-bench-${{ github.run_id }}
+          path: loop-bench-out/
+          if-no-files-found: warn
+
+      - name: Summarize
+        if: always()
+        env:
+          EXIT_CODE: ${{ steps.run.outputs.exit_code }}
+          TASKS: ${{ inputs.tasks || env.LOOP_BENCH_TASKS }}
+          MODEL: ${{ inputs.model || env.LOOP_BENCH_MODEL }}
+          MIN_PASS: ${{ inputs.min_pass || env.LOOP_BENCH_MIN_PASS }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## loop-bench"
+            echo
+            echo "\`$MODEL\` · tasks \`$TASKS\` · pass floor \`$MIN_PASS\`"
+            echo
+            # The exit code is the gate's own vocabulary; spell it out rather
+            # than making a reader open bench/loop-bench/src/main.rs.
+            case "${EXIT_CODE:-}" in
+              0) echo "**PASS** — every trial that reported did real work." ;;
+              1) echo "**FAIL (loop)** — silent death, zero work, a stuck loop, or a task that never ran." ;;
+              2) echo "**FAIL (invocation)** — the task list resolved to nothing, or the report path was unwritable." ;;
+              3) echo "**FAIL (infrastructure)** — no trial artifacts at all; harbor never launched anything." ;;
+              4) echo "**FAIL (pass floor)** — the loop was healthy but too few tasks passed." ;;
+              5) echo "**FAIL (report)** — the run completed but the JSON report could not be written." ;;
+              "") echo "**FAIL** — loop-bench never ran; an earlier step failed." ;;
+              *) echo "**FAIL** — exit $EXIT_CODE is outside the harness's contract: a build failure or a crash, not a verdict." ;;
+            esac
+            echo
+            echo '```'
+            cat loop-bench-out/table.txt 2>/dev/null || echo "(no table — the run produced no output)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Gate
+        if: always()
+        env:
+          EXIT_CODE: ${{ steps.run.outputs.exit_code }}
+        run: exit "${EXIT_CODE:-1}"
