@@ -65,7 +65,7 @@ pub mod mutation;
 
 use std::collections::BTreeSet;
 
-use stella_protocol::JudgeEvidence;
+use stella_protocol::{JudgeEvidence, LadderRung};
 
 /// The flip oracle's state. `None` = no failing observation yet; `Failing` =
 /// the tracked command has been seen failing; `Flipped` = the tracked command
@@ -547,6 +547,26 @@ pub fn ladder_decision(inputs: &LadderInputs) -> LadderDecision {
     LadderDecision::ModelJudge
 }
 
+impl From<LadderDecision> for LadderRung {
+    /// The wire name of a decision (#1043).
+    ///
+    /// One-way on purpose, and the missing direction is the point: the wire
+    /// vocabulary is *wider* than this enum, because two of its rungs describe
+    /// what happened after the ladder said [`LadderDecision::ModelJudge`] —
+    /// the judge answered, the judge was unavailable, or no reviewer was
+    /// bought at all. A `LadderRung -> LadderDecision` conversion would have
+    /// to invent that history backwards.
+    fn from(decision: LadderDecision) -> Self {
+        match decision {
+            LadderDecision::SubmitFast => LadderRung::SubmitFast,
+            LadderDecision::Revise => LadderRung::Revise,
+            LadderDecision::NothingAttempted => LadderRung::NothingAttempted,
+            LadderDecision::Unverifiable => LadderRung::Unverifiable,
+            LadderDecision::ModelJudge => LadderRung::ModelJudge,
+        }
+    }
+}
+
 /// Build the deterministic `JudgeEvidence` for a `SubmitFast` verdict — the
 /// evidence attached to the emitted `JudgeVerdict { passed: true,
 /// evidence: { deterministic: true, .. } }`.
@@ -628,11 +648,34 @@ pub fn deterministic_fail_evidence(tail: &str) -> JudgeEvidence {
     }
 }
 
-/// A model judge's parsed verdict.
+/// A model judge's parsed verdict, or the heuristic that stood in for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JudgeVerdict {
     pub passed: bool,
     pub reasoning: String,
+    /// `true` when this came from [`heuristic_fallback`] rather than from a
+    /// model that answered.
+    ///
+    /// The two were indistinguishable downstream until #1043, and conflating
+    /// them is not cosmetic: a heuristic verdict says the judge was
+    /// *unavailable*, which is a fact about the pipeline's plumbing, while a
+    /// model verdict is a — weak, but real — opinion about the work. Reward
+    /// extraction discards the first and keeps the second, so the distinction
+    /// has to survive as a field rather than as the wording of `reasoning`.
+    pub heuristic: bool,
+}
+
+impl JudgeVerdict {
+    /// Which rung this verdict came to rest on — the value the pipeline stamps
+    /// onto the snapshot it attaches (#1043).
+    #[must_use]
+    pub fn rung(&self) -> LadderRung {
+        if self.heuristic {
+            LadderRung::HeuristicFallback
+        } else {
+            LadderRung::ModelJudge
+        }
+    }
 }
 
 /// Parse a Role::Judge model response into a verdict. The judge prompt (see
@@ -654,12 +697,14 @@ pub fn parse_judge_response(text: &str) -> Option<JudgeVerdict> {
                 return Some(JudgeVerdict {
                     passed: true,
                     reasoning: text.trim().to_string(),
+                    heuristic: false,
                 });
             }
             "fail" | "failed" | "reject" | "rejected" => {
                 return Some(JudgeVerdict {
                     passed: false,
                     reasoning: text.trim().to_string(),
+                    heuristic: false,
                 });
             }
             _ => {}
@@ -683,7 +728,11 @@ pub fn heuristic_fallback(inputs: &LadderInputs) -> JudgeVerdict {
         "judge unavailable; heuristic fallback failed (touched tests not confirmed green)"
             .to_string()
     };
-    JudgeVerdict { passed, reasoning }
+    JudgeVerdict {
+        passed,
+        reasoning,
+        heuristic: true,
+    }
 }
 
 /// Convert a model/heuristic [`JudgeVerdict`] into the `JudgeEvidence` for the

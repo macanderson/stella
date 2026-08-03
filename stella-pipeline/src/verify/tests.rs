@@ -713,11 +713,51 @@ fn evidence_builders_tag_determinism_correctly() {
     let model = model_verdict_evidence(&JudgeVerdict {
         passed: true,
         reasoning: "looks fine".into(),
+        heuristic: false,
     });
     assert!(
         !model.deterministic,
         "model verdicts are never deterministic"
     );
+}
+
+/// A parsed verdict and the heuristic that stands in for it name different
+/// rungs (#1043). Both are `deterministic: false` on the wire, so this field
+/// is the only thing separating "a judge answered" from "no judge was
+/// available" — which reward extraction keeps and discards respectively.
+#[test]
+fn a_heuristic_verdict_names_a_different_rung_than_a_parsed_one() {
+    let parsed = parse_judge_response("PASS — the flip is genuine").expect("parses");
+    assert!(!parsed.heuristic);
+    assert_eq!(parsed.rung(), LadderRung::ModelJudge);
+
+    let fallback = heuristic_fallback(&LadderInputs {
+        touched_tests_passed: Some(true),
+        ..LadderInputs::default()
+    });
+    assert!(fallback.heuristic);
+    assert!(
+        fallback.passed,
+        "green touched tests still pass the fallback"
+    );
+    assert_eq!(fallback.rung(), LadderRung::HeuristicFallback);
+}
+
+/// Every ladder decision has a wire name, and the mapping is one-to-one.
+#[test]
+fn every_decision_maps_to_its_rung() {
+    for (decision, rung) in [
+        (LadderDecision::SubmitFast, LadderRung::SubmitFast),
+        (LadderDecision::Revise, LadderRung::Revise),
+        (
+            LadderDecision::NothingAttempted,
+            LadderRung::NothingAttempted,
+        ),
+        (LadderDecision::Unverifiable, LadderRung::Unverifiable),
+        (LadderDecision::ModelJudge, LadderRung::ModelJudge),
+    ] {
+        assert_eq!(LadderRung::from(decision), rung);
+    }
 }
 
 #[test]

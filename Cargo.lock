@@ -1605,6 +1605,7 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
+ "stella-core",
  "tempfile",
 ]
 

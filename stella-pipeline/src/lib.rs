@@ -103,6 +103,7 @@ pub mod pipeline;
 pub mod plan;
 pub mod ports;
 pub mod replay;
+pub mod reward;
 pub mod scope;
 pub mod triage;
 pub mod verify;
@@ -121,6 +122,7 @@ pub use ports::{
     RepoStructurePort, ScopeDecision, StdioApprovalGate, TestInvocation, TestRunner,
     WorkspaceError,
 };
+pub use reward::{DiscardReason, RewardLabel, RewardShaping, Settlement, TrajectoryCost, label};
 pub use triage::TaskClass;
 pub use verify::{FlipOracle, FlipState, LadderDecision, LadderInputs};
 pub use witness::airlock::{

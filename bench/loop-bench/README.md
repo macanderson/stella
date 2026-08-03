@@ -6,9 +6,10 @@ by model quality. This measures what it hides and a **cheap** model exposes just
 as clearly: did the turn execute real work, or abort having done nothing? did it
 die without saying why? did `project_overview` / `graph_query` get used at all?
 
-It shells out to the `stella` binary and `harbor` with **no dependency on any
-stella crate** (`clap`, `serde`, `serde_json` only), so it compiles in seconds
-and never drags the workspace into a bench iteration.
+It shells out to the `stella` binary and `harbor`. Its only workspace dependency
+is `stella-core`, for the A/B report shape `--compare` emits (see below); the
+distillation half still needs nothing but `clap`, `serde`, and `serde_json`, so
+a bench iteration stays cheap.
 
 > Wider benchmarking context — the Harbor adapter, the standalone SWE-bench
 > harness, the zero-cost smoke test, claim-run rules — lives in
@@ -23,6 +24,7 @@ cwd gives a warning here, an opaque per-trial `ImportError` otherwise.
 ```bash
 cargo run -p loop-bench -- --n 4                    # first 4 tasks of the default pool
 cargo run -p loop-bench -- --tasks fix-git,prove-plus-comm -m openrouter/z-ai/glm-5.2
+cargo run -p loop-bench -- --compare model-a,model-b --tasks fix-git --trials 6  # A/B
 cargo run -p loop-bench -- --analyze-only --jobs-dir <dir> --job-name <name>   # free
 ```
 
@@ -63,9 +65,61 @@ even when others passed.
 | `3` | no trial artifacts at all — infrastructure, not a loop regression |
 | `4` | the loop was healthy but fewer than `--min-pass` trials passed |
 | `5` | the run finished and the `--json-out` report could not be written (the JSON is dumped on stdout instead) |
+| `6` | `--compare --require-winner` and no arm cleared both bars |
 
 `1` outranks `4`: when both fire, the loop failure is the actionable one, and a
-broken loop explains the missing passes anyway.
+broken loop explains the missing passes anyway. `1` outranks `6` likewise — a
+broken loop makes an arm's numbers untrustworthy as a comparison.
+
+## `--compare`: A/B two configs over one task set (#876)
+
+`--compare model-a,model-b` runs the same tasks under each config and emits one
+comparison instead of two tables. The **first** config named is the baseline;
+`-m/--model` is ignored. Each arm gets its own job directory
+(`<job-name>-arm<i>-<slug>`) so two runs' `<task>__<id>` dirs can never be
+folded into the wrong arm.
+
+```
+task                            model-a      model-b   leader
+────────────────────────────────────────────────────────────────
+fix-git                             0/6          6/6   model-b
+prove-plus-comm                     0/6          6/6   model-b
+────────────────────────────────────────────────────────────────
+model-a (model-a)        pass   0.0%  $   1.20      48000 tok   10.0 turns  n=12
+model-b (model-b)        pass 100.0%  $   0.60      24000 tok    4.0 turns  n=12
+
+WINNER: model-b — pass_rate lift +1.000 over `model-a` (z ∞, n 12/12)
+  ✓ cost_usd      0.1000 →     0.0500  (+0.0500 vs tolerance 0.0000)
+  ✓ tokens     4000.0000 →  2000.0000  (+2000.0000 vs tolerance 0.0000)
+  ✓ turns        10.0000 →     4.0000  (+6.0000 vs tolerance 0.0000)
+```
+
+Three things about that output are load-bearing:
+
+- **The report shape is `stella_core::comparison::ComparisonReport`, not a
+  harness-local type.** The promotion gates that read it — an adapter (#836), a
+  tuned knob (#831/#1065), an eval-gated skill (#1067) — have to be reading the
+  same aggregates, the same guard set, and the same significance test that were
+  applied here. Two report types would be two standards. `--json` emits that
+  struct verbatim.
+- **A winner clears two independent bars.** A confident lift on the primary
+  metric (`--primary`, default `pass-rate`), decided by the same Welch-style
+  test `stella tune` uses — *and* no regression on the guard metrics
+  (`cost_usd`, `tokens`, `turns`, all at zero tolerance here). A candidate that
+  wins pass rate by spending four times as much is reported as `BLOCKED`, with
+  the lift and the price both on the record. The harness reports the refusal; a
+  human decides whether to accept a price.
+- **Only tasks every arm ran are counted.** A candidate that crashed on the two
+  hardest tasks would otherwise raise its own pass rate by having its trials
+  vanish. Unpaired tasks are named, and each arm reports how many trials the
+  exclusion cost it.
+
+`--trials N` (harbor's `-k`) is usually what a comparison needs: the default
+sample floor is five trials per arm, so a two-task run at one trial each cannot
+promote however cleanly the arms separate — it reports
+`arm ... has 2 trial(s), 5 required`. `--require-winner` turns the comparison
+into a gate (exit `6`); it is off by default because a comparison is a
+measurement and "no winner" is a legitimate answer to it.
 
 ## The nightly CI gate (#873)
 
@@ -118,15 +172,21 @@ way.
 cargo test -p loop-bench        # no make target; `make test` covers it via --workspace
 ```
 
-Seventeen pure unit tests in [`src/tests.rs`](src/tests.rs) (pulled in by
-`src/lib.rs` as `#[cfg(test)] mod tests;`) feed JSONL to `distill_events` and
-assert the verdict — no Docker, no harbor, no key. Each pins a real defect:
-batched `apply_edits` reporting zero writes, an ellipsis past the column
-budget that shifted a whole row, a retryable warning read as terminal, a
-*solved* run with no `complete` event called silent, a stream of non-JSON
-stella output passing for an unexplained silent death. A new signal means a
-`TrialReport` field, an arm in `distill_events`, a `print_table` column
-(`TABLE_WIDTH`), and a test.
+Pure unit tests in [`src/tests.rs`](src/tests.rs) (pulled in by `src/lib.rs` as
+`#[cfg(test)] mod tests;`) feed JSONL to `distill_events` and assert the
+verdict — no Docker, no harbor, no key. Each pins a real defect: batched
+`apply_edits` reporting zero writes, an ellipsis past the column budget that
+shifted a whole row, a retryable warning read as terminal, a *solved* run with
+no `complete` event called silent, a stream of non-JSON stella output passing
+for an unexplained silent death. A new signal means a `TrialReport` field, an
+arm in `distill_events`, a `print_table` column (`TABLE_WIDTH`), and a test.
+
+[`src/compare/tests.rs`](src/compare/tests.rs) covers the A/B fold at the same
+level: known outcomes producing the expected winner, a spend-bought win blocked
+by the guard set, a broken-loop trial counted as a failure rather than dropped,
+and a `NOT-RUN` row contributing nothing. The arithmetic underneath is tested in
+`stella-core` (`src/comparison/tests.rs` and `props.rs`), which is where it
+lives.
 
 ## See also
 

@@ -49,6 +49,7 @@ pub mod completion;
 pub mod context_event;
 pub mod error;
 pub mod event;
+pub mod ladder;
 pub mod provider;
 pub mod receipt;
 pub mod role;
@@ -72,10 +73,13 @@ pub use error::ProviderError;
 pub use event::{
     AgentEvent, BlockKind, BlockOrigin, BudgetMode, BudgetScope, CacheZone, CiStatus,
     ContextFrameRef, ContextProviderUsage, ContextUsage, FileChangeKind, JudgeEvidence,
-    KNOWN_TYPE_TAGS, LadderSnapshot, ManifestEntry, MediaArtifactRef, MediaJobState, MediaKind,
-    ModelCallRole, OracleObservation, PolicyKind, PrStatus, ProofStep, ProofTree, ProviderShare,
-    ScopeProposal, StageKind, TaskItem, TaskStatus, UsageIncompleteReason,
+    KNOWN_TYPE_TAGS, ManifestEntry, MediaArtifactRef, MediaJobState, MediaKind, ModelCallRole,
+    PolicyKind, PrStatus, ProofStep, ProviderShare, ScopeProposal, StageKind, TaskItem, TaskStatus,
+    UsageIncompleteReason,
 };
+// The ladder vocabulary moved out of `event` when the rung joined it (#1043);
+// re-exported here so `stella_protocol::LadderSnapshot` never moved.
+pub use ladder::{LadderRung, LadderSnapshot, OracleObservation, ProofTree};
 pub use provider::{Provider, ToolCallObserver};
 pub use role::{ModelRef, Role};
 pub use subagent_event::{SubAgentPhase, SubAgentStatus};

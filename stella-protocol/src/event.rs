@@ -79,6 +79,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
 use crate::context_event::CompiledContextFrameBuilt;
+// The ladder's own wire vocabulary lives in `crate::ladder`; a verdict event
+// carries it, and `ProofStep::Oracle` names the tree an observation ran
+// against. Re-exported rather than imported so `event::LadderSnapshot` — the
+// path these types had before the move — still resolves for every reader.
+pub use crate::ladder::{LadderRung, LadderSnapshot, OracleObservation, ProofTree};
 use crate::subagent_event::SubAgentPhase;
 use crate::tool::{ToolCall, ToolOutput};
 
@@ -1149,97 +1154,6 @@ pub struct JudgeEvidence {
     pub ladder: Option<Box<LadderSnapshot>>,
 }
 
-/// One flip-oracle observation, in the order the pipeline made it — together
-/// they are the oracle trace a verdict carries (#864).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct OracleObservation {
-    /// Which tree the observation ran against.
-    pub tree: ProofTree,
-    /// Whether the tracked command's assertions passed. Infra outcomes never
-    /// appear here — an unobservable run is not an oracle observation.
-    pub passed: bool,
-}
-
-/// The deterministic evidence the ladder decided a verdict from, snapshotted
-/// at decision time (#865). Everything here existed when the decision was
-/// made; attaching it to the verdict is what makes "why?" answerable later
-/// without re-deriving — and re-deriving is exactly what a replay of an
-/// event stream cannot do, because the world the probes read is gone.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct LadderSnapshot {
-    /// The normalized test command the flip oracle locked onto, when it
-    /// armed at all.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tracked_command: Option<String>,
-    /// The oracle's observations in order (baseline, candidate runs, the
-    /// pre-submit confirmation). Infra runs are absent by construction.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub oracle_trace: Vec<OracleObservation>,
-    /// Whether the oracle's flip was achieved — after the confirmation run,
-    /// so an unconfirmed flip reads `false` here with `unstable_flip: true`.
-    pub flip_achieved: bool,
-    /// A flip was observed but its confirmation re-run did not pass (#859).
-    pub unstable_flip: bool,
-    /// A would-be flip was refused because the passing run named its tests
-    /// and none of the baseline's failing tests were among them — the pass
-    /// demonstrably fixed a *different* failure (#867), most concretely a
-    /// deleted or renamed failing test. `serde(default)` so pre-#867
-    /// snapshots keep parsing.
-    #[serde(default)]
-    pub flip_refused_different_failure: bool,
-    /// Touched-tests result: `None` is "could not be observed", not a pass.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub touched_tests_passed: Option<bool>,
-    /// Why the test run observed nothing, when it didn't (`timed_out`,
-    /// `infra_failure`) — the #860 distinction between "the suite failed"
-    /// and "the suite could not be watched".
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub test_infra: Option<String>,
-    /// Lines changed, and the budget they were judged against.
-    pub diff_lines: u32,
-    pub diff_budget: u32,
-    /// Whether the diff probe could read the working tree at all.
-    pub diff_available: bool,
-    /// Mutating file touches the recorder observed.
-    pub file_change_events: u32,
-    /// Dispatched tool calls capable of changing the workspace.
-    pub mutating_actions: u32,
-    /// New lint/typecheck errors/warnings over the pre-execution baseline
-    /// (#861); zeros when the probe was unavailable or never consulted.
-    pub new_diag_errors: u32,
-    pub new_diag_warnings: u32,
-    /// The witness-tamper check's result: `None` when no witness was armed,
-    /// `Some(true)` when every witness artifact matched its pinned identity.
-    /// `Some(false)` never reaches a verdict — tampering aborts the
-    /// candidate — so its presence here is the *stated* proof the check ran.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub witness_intact: Option<bool>,
-    /// The mutation audit's finding (#870): `Some(true)` = the witness
-    /// failed under at least one trivial mutant of the changed lines (it
-    /// constrains the change); `Some(false)` = it stayed green under every
-    /// observed mutant (tautological — the deterministic credit was
-    /// withheld); `None` = the check never ran.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub witness_mutation: Option<bool>,
-}
-
-/// Which code state a [`ProofStep::Oracle`] observation was made against.
-///
-/// The distinction is the whole content of a flip: the same command failing in
-/// `Baseline` and passing in `Candidate` is proof, while either result twice
-/// against one tree is a tree observed twice.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum ProofTree {
-    /// The pre-execution tree — the code as it was before this turn touched it.
-    Baseline,
-    /// The executed tree — the code as this turn left it.
-    Candidate,
-}
-
 /// One step of the proof a turn builds for its own work, in the order the
 /// pipeline makes the observation. Carried by [`AgentEvent::Proof`].
 ///
@@ -2005,13 +1919,14 @@ mod tests {
                 deterministic: true,
                 evidence_refs: vec![],
                 ladder: Some(Box::new(LadderSnapshot {
+                    rung: Some(crate::LadderRung::SubmitFast),
                     tracked_command: Some("cargo test -p x".into()),
                     oracle_trace: vec![
-                        OracleObservation {
+                        crate::OracleObservation {
                             tree: ProofTree::Baseline,
                             passed: false,
                         },
-                        OracleObservation {
+                        crate::OracleObservation {
                             tree: ProofTree::Candidate,
                             passed: true,
                         },
@@ -2041,6 +1956,7 @@ mod tests {
                 assert_eq!(snapshot.oracle_trace.len(), 2);
                 assert!(snapshot.flip_achieved);
                 assert_eq!(snapshot.tracked_command.as_deref(), Some("cargo test -p x"));
+                assert_eq!(snapshot.rung, Some(crate::LadderRung::SubmitFast));
             }
             other => panic!("unexpected variant: {other:?}"),
         }
