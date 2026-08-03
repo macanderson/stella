@@ -58,7 +58,7 @@ jobs:
             exit 0
           fi
           if git diff --name-only "$BASE_SHA"...HEAD \
-            | grep -Eq '^(bench/harbor_adapter/|bench/terminal_bench_analysis/|bench/telemetry_store/|bench/evidence/frontier/|\.github/workflows/bench\.yml$)'; then
+            | grep -Eq '^(bench/harbor_adapter/|bench/terminal_bench_analysis/|bench/telemetry_store/|bench/evidence/frontier/|arenabench/|\.github/workflows/bench\.yml$)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -100,3 +100,19 @@ jobs:
       - name: frontier planner — pytest
         if: steps.scope.outputs.changed == 'true'
         run: uv run --with pytest --no-project pytest -q bench/evidence/frontier/tests
+
+      # ArenaBench. Ungated until now, and it showed: the trajectory reader was
+      # reading `total_input_tokens`/`total_output_tokens`, which are not ATIF
+      # field names. Reading a key that does not exist does not raise, it
+      # returns zero — so every contestant that publishes only a trajectory
+      # posted 0 tokens and $0.00 and swept every efficiency dimension on the
+      # scoreboard. A benchmark tool reporting confident wrong numbers is worse
+      # than one that is down, and nothing was running the test that catches it.
+      #
+      # `--no-project` like the two above: ArenaBench has zero dependencies by
+      # design, and `pythonpath` in its pyproject makes the package importable
+      # from the source tree without an install.
+      - name: arenabench — pytest
+        if: steps.scope.outputs.changed == 'true'
+        working-directory: arenabench
+        run: uv run --with pytest --no-project pytest -q

@@ -54,3 +54,10 @@ select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# Import the package from the source tree rather than requiring an install.
+# `python -m pytest` happens to work without this because it puts the working
+# directory on `sys.path`; the `pytest` console script does not, and CI runs
+# the console script. ArenaBench has no dependencies to sync, so being
+# runnable un-installed is the difference between the suite being gated and
+# the suite being decorative.
+pythonpath = ["."]

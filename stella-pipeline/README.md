@@ -37,6 +37,8 @@ which owns the port implementations and the `Router` itself. It builds no binary
 | [`src/witness/airlock.rs`](src/witness/airlock.rs) | The feedback airlock: `DisclosureGrain`, `SymptomClass`, `FailureFingerprint`, and the `scrub`/`redact` pair that decide what a failure may tell the worker. |
 | [`src/verify.rs`](src/verify.rs) | `FlipOracle`, `ladder_decision`, judge prompting/parsing, `heuristic_fallback`, `guidance_prompt`. |
 | [`src/candidate.rs`](src/candidate.rs) | `CandidateScore` and `select_best_candidate` — best-of-N selection, pure. |
+| [`src/candidate_fanout.rs`](src/candidate_fanout.rs) | `fan_out_width` and `FanOutBudget` — how wide a fan-out runs and how one turn's money is split between candidates spending at the same time. Pure; the normative statement of the overshoot window. |
+| [`src/pipeline/fanout_stage.rs`](src/pipeline/fanout_stage.rs) | The concurrent dispatch itself: workspace creation (serialized), `buffer_unordered` over the candidates, results re-ordered by index. |
 | [`src/mcp_prefetch.rs`](src/mcp_prefetch.rs) | `fold`: shared MCP context gathered once at the top of a fan-out instead of N times. |
 | [`src/replay.rs`](src/replay.rs), [`src/replay/golden.rs`](src/replay/golden.rs) | `validate_stream` / `structural_diff` / `parse_jsonl`, and the golden fixture format with its provenance manifest. |
 
@@ -112,6 +114,29 @@ same scrub, and a rejection emits `PolicyDecision { kind: Blocked }` carrying a 
 never content. Two audiences, two texts: the operator's `JudgeVerdict` event keeps the
 real output, because the human is not the adversary.
 
+**A best-of-N fan-out runs its isolated candidates at once**
+([`src/pipeline/fanout_stage.rs`](src/pipeline/fanout_stage.rs)). Isolation already
+guaranteed siblings never see each other's edits, so the only thing making
+`candidates = Some(n)` cost the *sum* of n runtimes rather than the slowest was the
+`&mut BudgetGuard` threaded through `run_candidate`. Three consequences worth knowing:
+
+- **Money is split, not shared.** Each candidate spends against a `BudgetGuard::carve` of
+  `headroom / width` and settles it back on the way out, gated before dispatch against the
+  shared parent. Aggregate spend stays at the cap plus one in-flight window — at most
+  `width` model calls, since the budget is consulted between steps and never mid-call.
+  `BudgetGuard::carve` puts its ceiling on the *session* axis by contract, so a candidate
+  that trips a turn cap now names the session axis in its abort text; the money is the same.
+- **Only the isolated path is concurrent.** The shared-tree degradation (`candidates > 1`
+  with no `CandidateWorkspacePort`) stays sequential — those candidates execute into one
+  working tree. `git worktree` creation is serialized too, including the second snapshot a
+  witness author needs: it costs milliseconds against a candidate's minutes.
+- **Live previews are muted while the lane is shared.** `TextDelta` and `Reasoning` are
+  the two events the wire contract already calls best-effort, and splicing three models'
+  fragments into one paragraph is worse than showing none. Every durable event — each
+  candidate's authoritative `Text`, its tool calls, file changes and proof steps — still
+  goes out live, and the fan-out narrates the mute so a quiet stream is not mistaken for a
+  stalled one. `candidate_concurrency: Some(1)` restores strictly sequential dispatch.
+
 **Degrade, never do nothing.** `WitnessAbort` splits reasons into `degradable` (no witness
 could be authored) and `rejected` (a budget limit, or an artifact-integrity violation), and
 `Pipeline::run` re-runs a bare worker turn when a candidate aborted before the worker ever
@@ -162,7 +187,8 @@ and port doubles — no API key, no network.
 
 - **Unit tests** sit beside the code ([`src/pipeline/tests.rs`](src/pipeline/tests.rs) and
   [`src/pipeline/tests/`](src/pipeline/tests)), split by concern: `witness_isolation`,
-  `best_of_n`, `terminal_outcomes`, `usage`, `telemetry`, `management_accounting`,
+  `best_of_n` (and its child `fanout_concurrency`), `terminal_outcomes`, `usage`,
+  `telemetry`, `management_accounting`,
   `mcp_prefetch`. They are child modules so they reach `CandidateSurface` and the other
   private surface via `super::*`; the shared fakes (`run_isolated`, `FakeWorkspacePort`)
   stay in the common ancestor `tests.rs`. `chaos.rs` enumerates the config × environment
