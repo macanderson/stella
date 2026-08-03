@@ -123,7 +123,7 @@ pub static CACHE_POSTURE: &[(&str, CachePosture)] = &[
         "xai",
         CachePosture::Implicit {
             telemetry: "prompt_tokens_details.cached_tokens (shared chat-completions parse path)",
-            witness: "complete_surfaces_cached_tokens_and_bills_them_at_the_cached_rate",
+            witness: "xai_identity_surfaces_cached_tokens_in_usage",
         },
     ),
     (

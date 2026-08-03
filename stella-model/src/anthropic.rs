@@ -270,21 +270,33 @@ const EPHEMERAL_CACHE: AnthropicCacheControl = AnthropicCacheControl { kind: "ep
 /// 400); `tests/live_smoke.rs::anthropic_smoke` tracks whether that holds
 /// end-to-end.
 fn stamp_tail_cache_breakpoint(messages: &mut [AnthropicMessage]) {
-    let Some(block) = messages.last_mut().and_then(|m| m.content.last_mut()) else {
-        return;
-    };
-    match block {
-        AnthropicContentBlock::Text { cache_control, .. }
-        | AnthropicContentBlock::ToolResult { cache_control, .. } => {
-            *cache_control = Some(EPHEMERAL_CACHE);
+    // Walk BACKWARD to the newest stampable block rather than inspecting only
+    // the literal last one. The loop's ordinary shape does end on Text or
+    // ToolResult — but a user message that is *only* an attachment ends on a
+    // media block (`to_anthropic_messages` appends the text block solely when
+    // the trimmed content is non-empty), and giving up there meant the whole
+    // conversation tier went unmarked: that step wrote nothing to the cache,
+    // and the next step re-paid everything since the previous turn's marker
+    // at the full input rate. Stamping the newest Text/ToolResult before the
+    // media tail keeps the incremental tier alive at the cost of leaving only
+    // the trailing attachment blocks uncached.
+    for message in messages.iter_mut().rev() {
+        for block in message.content.iter_mut().rev() {
+            match block {
+                AnthropicContentBlock::Text { cache_control, .. }
+                | AnthropicContentBlock::ToolResult { cache_control, .. } => {
+                    *cache_control = Some(EPHEMERAL_CACHE);
+                    return;
+                }
+                // Media and tool_use blocks don't carry the marker in this
+                // adapter's schema — keep walking to the newest block that
+                // does. The system-block breakpoint still caches the
+                // tools+system tier even if nothing here is stampable.
+                AnthropicContentBlock::Image { .. }
+                | AnthropicContentBlock::Document { .. }
+                | AnthropicContentBlock::ToolUse { .. } => {}
+            }
         }
-        // A media or tool_use tail is not a request shape the loop produces
-        // (a user message's text follows its attachments; requests end on a
-        // user or tool_result turn) — the system-block breakpoint still
-        // caches the tools+system tier.
-        AnthropicContentBlock::Image { .. }
-        | AnthropicContentBlock::Document { .. }
-        | AnthropicContentBlock::ToolUse { .. } => {}
     }
 }
 

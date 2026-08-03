@@ -559,6 +559,55 @@ fn request_serializes_both_cache_breakpoints() {
 }
 
 #[test]
+fn a_media_tail_still_gets_a_conversation_breakpoint_on_the_newest_text() {
+    // The attachment-only shape: a user message that is just an image ends on
+    // a media block (`to_anthropic_messages` appends the text block only when
+    // the trimmed content is non-empty). Giving up there — as the old
+    // last-block-only stamp did — left the whole conversation tier unmarked:
+    // that step wrote nothing to the cache and the next step re-paid
+    // everything since the previous turn's marker at the full input rate. The
+    // stamp must walk back to the newest stampable block instead.
+    let mut messages = vec![
+        AnthropicMessage {
+            role: "user",
+            content: vec![AnthropicContentBlock::Text {
+                text: "earlier turn".into(),
+                cache_control: None,
+            }],
+        },
+        AnthropicMessage {
+            role: "user",
+            content: vec![AnthropicContentBlock::Image {
+                source: AnthropicMediaSource::base64("image/png", "aGk=".into()),
+            }],
+        },
+    ];
+    stamp_tail_cache_breakpoint(&mut messages);
+    match &messages[0].content[0] {
+        AnthropicContentBlock::Text { cache_control, .. } => assert!(
+            cache_control.is_some(),
+            "the newest stampable block carries the breakpoint"
+        ),
+        other => panic!("unexpected block: {other:?}"),
+    }
+
+    // And an all-media conversation (nothing stampable anywhere) stays a
+    // clean no-op rather than a panic or a misplaced marker.
+    let mut all_media = vec![AnthropicMessage {
+        role: "user",
+        content: vec![AnthropicContentBlock::Image {
+            source: AnthropicMediaSource::base64("image/png", "aGk=".into()),
+        }],
+    }];
+    stamp_tail_cache_breakpoint(&mut all_media);
+    let body = serde_json::to_string(&all_media).expect("serializes");
+    assert!(
+        !body.contains("cache_control"),
+        "nothing stampable, nothing stamped: {body}"
+    );
+}
+
+#[test]
 fn uses_adaptive_thinking_classifies_current_vs_legacy_models() {
     // Current generation (4.6+, the 5-family) → adaptive shape. Unknown /
     // future models default to modern so the next launch doesn't silently

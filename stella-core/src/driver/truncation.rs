@@ -121,6 +121,24 @@ pub(super) const TIME_EXHAUSTED_PARTIAL: &str = "[no answer produced: this step'
      at the token limit, and too little of the turn's time remained to continue — the turn stops \
      here, keeping whatever its earlier steps already did]";
 
+/// The history copy of a length-truncated assistant text: middle-elided when
+/// large, verbatim when small.
+///
+/// [`plan_continuation`] applies this shape on the continuation path; this
+/// helper is the same policy for the paths that *end* the turn with a
+/// truncated partial — the spent allowance, the out-of-time stop, the
+/// budget abort, and a truncated step that still carried tool calls. All of
+/// them used to push `result.text` verbatim, so a 64k-token cut-off
+/// scratchpad landed in history as protected assistant text no compaction
+/// pass may touch, and every later step of the session re-sent it
+/// (post-mortem §3.3 lever 2: cap-hit debris compounds into recurring
+/// input). What the *user* sees is never shrunk — the full text was already
+/// streamed as its own `Text` event and rides the `TurnOutcome` — only what
+/// the model re-reads is.
+pub(super) fn retained_partial(text: &str) -> String {
+    crate::compaction::elide_truncated_partial(text).unwrap_or_else(|| text.to_string())
+}
+
 /// The two messages a continuation appends, plus the line the user sees.
 ///
 /// Returned as data rather than pushed here so the decision stays a pure

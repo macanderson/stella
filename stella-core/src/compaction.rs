@@ -1,5 +1,22 @@
 //! Context compaction — pure synchronous logic over owned data
-//! Four mechanisms, applied least-lossy first:
+//! Five mechanisms: an age-based retention pass that runs on every step, and
+//! four budget passes applied least-lossy first once the conversation
+//! outgrows its budget:
+//!
+//! 0. **Tool-result retention** (#1285): tool results older than a horizon of
+//!    tool-bearing steps are middle-out aged *regardless of the budget*. The
+//!    budget passes below fire only near the context ceiling — 96k–150k
+//!    tokens — which on a long trial is the very end of exactly the runs they
+//!    should have been shaping from the middle (the measured cost: 4× more
+//!    input per step than a comparator that holds its standing context flat).
+//!    An old tool output has usually been consumed within a few steps; past
+//!    the horizon its head and tail carry the framing and the errors, and the
+//!    stub says how to get the rest back. Aging fires in batches of at least
+//!    `RETENTION_MIN_BATCH` results so the prompt-cache prefix is mutated
+//!    once per several steps, not once per step (the same discipline as the
+//!    budget hysteresis below — invariant 7, #372).
+//!
+//! The budget passes:
 //!
 //! 1. **Dedup of repeated identical tool outputs** (L-E3): a byte-identical
 //!    tool output appearing more than once keeps only its earliest copy; the
@@ -189,6 +206,114 @@ pub(crate) fn elide_truncated_partial(content: &str) -> Option<String> {
     })
 }
 
+/// How many ageable results must accumulate past the horizon before the
+/// retention pass rewrites any of them.
+///
+/// Aging one result the moment it crosses the horizon would mutate the prompt
+/// prefix at the horizon depth on EVERY large-output step — the per-step
+/// cache-invalidating rewrite the budget passes' hysteresis exists to
+/// prevent, reintroduced at a different trigger. Batching amortizes it: the
+/// prefix ahead of the oldest aged result keeps hitting, and between batches
+/// the whole prefix is byte-stable.
+const RETENTION_MIN_BATCH: usize = 4;
+
+/// Age-based tool-result retention (pass 0, #1285): how many of the most
+/// recent tool-bearing steps keep their results verbatim.
+///
+/// Results in older Tool messages are middle-out aged (`age_content`) once
+/// at least `RETENTION_MIN_BATCH` of them are large enough to be worth it —
+/// independent of the conversation's total size, which is what distinguishes
+/// this from the budget passes: they fire near the context ceiling, this
+/// shapes the standing context from the middle of a long turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetentionPolicy {
+    /// Tool messages within this distance of the newest one are never touched
+    /// (the newest itself is always protected, whatever this says — the
+    /// most-recent-result invariant belongs to every pass).
+    pub keep_recent_steps: usize,
+}
+
+/// Pass 0: age every large tool result older than the policy's horizon,
+/// batched per [`RETENTION_MIN_BATCH`]. Returns `(aged, aged_blocks,
+/// tokens_saved)`; block ids are captured before mutation so the report cites
+/// the identity the previous step's manifest recorded (§6.2). Token savings
+/// are measured per mutated message ([`estimate_message_tokens`] diffs),
+/// never by a whole-transcript walk — this runs on every step, including the
+/// common under-budget one, and Θ(transcript) work there is the cost class
+/// `compute_passes` pins against.
+fn age_stale_tool_results(
+    messages: &mut [CompletionMessage],
+    policy: RetentionPolicy,
+) -> (usize, Vec<String>, u64) {
+    let tool_positions: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.role == MessageRole::Tool)
+        .map(|(idx, _)| idx)
+        .collect();
+    // The horizon counts tool-bearing steps from the end; everything at or
+    // beyond `keep_recent_steps` distance is stale. The newest Tool message
+    // is excluded unconditionally (`max(1)`) so a zero horizon can never
+    // touch the results answering the latest call.
+    let keep = policy.keep_recent_steps.max(1);
+    if tool_positions.len() <= keep {
+        return (0, Vec::new(), 0);
+    }
+    let stale = &tool_positions[..tool_positions.len() - keep];
+    let candidates: usize = stale
+        .iter()
+        .map(|&idx| {
+            messages[idx]
+                .tool_results
+                .iter()
+                .filter(|result| {
+                    let payload = match &result.output {
+                        ToolOutput::Ok { content } => content,
+                        ToolOutput::Error { message } => message,
+                    };
+                    payload.len() > AGE_THRESHOLD_CHARS
+                })
+                .count()
+        })
+        .sum();
+    if candidates < RETENTION_MIN_BATCH {
+        return (0, Vec::new(), 0);
+    }
+    let mut aged = 0usize;
+    let mut aged_blocks = Vec::new();
+    let mut saved = 0u64;
+    for &idx in stale {
+        let message = &mut messages[idx];
+        let before = estimate_message_tokens(message);
+        let mut touched = false;
+        for result in message.tool_results.iter_mut() {
+            let (payload, is_error) = match &result.output {
+                ToolOutput::Ok { content } => (content, false),
+                ToolOutput::Error { message } => (message, true),
+            };
+            if payload.len() > AGE_THRESHOLD_CHARS {
+                aged_blocks.push(tool_result_block_id(&result.output));
+                let aged_payload = age_content(payload);
+                result.output = if is_error {
+                    ToolOutput::Error {
+                        message: aged_payload,
+                    }
+                } else {
+                    ToolOutput::Ok {
+                        content: aged_payload,
+                    }
+                };
+                aged += 1;
+                touched = true;
+            }
+        }
+        if touched {
+            saved += before.saturating_sub(estimate_message_tokens(message));
+        }
+    }
+    (aged, aged_blocks, saved)
+}
+
 /// Evict + dedup until the conversation fits `budget_tokens` — reclaiming
 /// down to a low watermark an eighth below it (see `compact_measured`'s
 /// hysteresis note) — or until nothing more can be safely removed. Returns
@@ -197,11 +322,12 @@ pub(crate) fn elide_truncated_partial(content: &str) -> Option<String> {
 /// permanently-over-budget conversation doesn't emit a no-op `Compaction`
 /// event before every step.
 ///
+/// No retention pass: this form serves callers with no step horizon.
 /// Prefer [`compact_measured`] on the step path: this form throws away the
 /// post-pass token count, which the caller then has to walk the whole
 /// transcript again to recover.
 pub fn compact(messages: &mut [CompletionMessage], budget_tokens: u64) -> Option<CompactionReport> {
-    compact_measured(messages, budget_tokens).1
+    compact_measured(messages, budget_tokens, None).1
 }
 
 /// [`compact`], plus the conversation's token count **after** the pass.
@@ -221,10 +347,32 @@ pub fn compact(messages: &mut [CompletionMessage], budget_tokens: u64) -> Option
 pub fn compact_measured(
     messages: &mut [CompletionMessage],
     budget_tokens: u64,
+    retention: Option<RetentionPolicy>,
 ) -> (u64, Option<CompactionReport>) {
     let before_tokens = estimate_conversation_tokens(messages);
-    if before_tokens <= budget_tokens {
-        return (before_tokens, None);
+    // Pass 0: age-based retention, before — and independent of — the budget
+    // comparison. Its savings feed the comparison, so a retention pass that
+    // shrinks the transcript under budget also spares it the budget passes'
+    // deeper rewrites this step.
+    let (retention_aged, retention_aged_blocks, retention_saved) = match retention {
+        Some(policy) => age_stale_tool_results(messages, policy),
+        None => (0, Vec::new(), 0),
+    };
+    let current_tokens = before_tokens.saturating_sub(retention_saved);
+    if current_tokens <= budget_tokens {
+        if retention_aged == 0 {
+            return (current_tokens, None);
+        }
+        return (
+            current_tokens,
+            Some(CompactionReport {
+                before_tokens,
+                after_tokens: current_tokens,
+                aged: retention_aged,
+                aged_blocks: retention_aged_blocks,
+                ..CompactionReport::default()
+            }),
+        );
     }
     // Hysteresis: the pass TRIGGERS at the budget but passes 3/4 reclaim down
     // to this low watermark. Stopping exactly at the budget meant a saturated
@@ -240,12 +388,14 @@ pub fn compact_measured(
 
     let mut deduped = 0usize;
     let mut superseded = 0usize;
-    let mut aged = 0usize;
+    // Seeded with pass 0's work: retention aging and budget aging are one
+    // mechanism with two triggers, and the report folds them the same way.
+    let mut aged = retention_aged;
     let mut evicted = 0usize;
     // Identities alongside the counts — the block_id each pass stubbed (§6.2).
     let mut deduped_blocks: Vec<String> = Vec::new();
     let mut superseded_blocks: Vec<String> = Vec::new();
-    let mut aged_blocks: Vec<String> = Vec::new();
+    let mut aged_blocks: Vec<String> = retention_aged_blocks;
     let mut evicted_blocks: Vec<String> = Vec::new();
     // Each tool result's ORIGINAL block_id, captured before any pass mutates
     // it, indexed by POSITION: `original_ids[message_idx][result_idx]`. A
@@ -624,6 +774,159 @@ mod tests {
         assert!(compact(&mut messages, 1_000_000).is_none());
     }
 
+    /// A transcript long enough that `count` tool-bearing steps sit behind
+    /// the newest one, each carrying one `size`-byte output.
+    fn long_turn(count: usize, size: usize) -> Vec<CompletionMessage> {
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("do things"),
+        ];
+        for i in 0..count {
+            let id = format!("c{i}");
+            messages.push(assistant_with_call(&id));
+            messages.push(tool_msg(
+                &id,
+                format!("STEP{i}-HEAD\n{}\nSTEP{i}-TAIL", "x".repeat(size)),
+            ));
+        }
+        messages
+    }
+
+    #[test]
+    fn retention_ages_results_past_the_horizon_with_no_budget_pressure() {
+        // The #1285 witness: below budget the old passes did NOTHING, so a
+        // long turn re-sent every old tool output verbatim on every step
+        // until the transcript crossed ~100k tokens. Pass 0 must age results
+        // older than the horizon even under an effectively infinite budget.
+        let mut messages = long_turn(12, 5_000);
+        let (_, report) = compact_measured(
+            &mut messages,
+            u64::MAX,
+            Some(RetentionPolicy {
+                keep_recent_steps: 4,
+            }),
+        );
+        let report = report.expect("retention must report the blocks it aged");
+        // 12 tool steps, horizon 4 → 8 stale results, all above the age
+        // threshold.
+        assert_eq!(report.aged, 8, "{report:?}");
+        assert_eq!(report.aged_blocks.len(), 8);
+        assert!(report.after_tokens < report.before_tokens);
+        assert_eq!(report.evicted, 0, "retention never drops whole outputs");
+        // The oldest result is aged to head+tail…
+        match &messages[3].tool_results[0].output {
+            ToolOutput::Ok { content } => {
+                assert!(content.starts_with("STEP0-HEAD"), "head lost");
+                assert!(content.ends_with("STEP0-TAIL"), "tail lost");
+                assert!(content.contains("middle elided"));
+            }
+            _ => panic!("expected aged content"),
+        }
+        // …and every result inside the horizon is untouched.
+        for i in 8..12 {
+            match &messages[3 + 2 * i].tool_results[0].output {
+                ToolOutput::Ok { content } => assert!(
+                    content.len() > 5_000,
+                    "recent step {i} must keep its verbatim output"
+                ),
+                _ => panic!("recent result must be intact"),
+            }
+        }
+    }
+
+    #[test]
+    fn retention_reports_the_block_identity_the_manifest_cited() {
+        // §6.2 for pass 0: the aged block is named by its PRE-mutation id.
+        let mut messages = long_turn(6, 5_000);
+        let expected = tool_result_block_id(&messages[3].tool_results[0].output);
+        let (_, report) = compact_measured(
+            &mut messages,
+            u64::MAX,
+            Some(RetentionPolicy {
+                keep_recent_steps: 1,
+            }),
+        );
+        let report = report.expect("should age");
+        assert!(
+            report.aged_blocks.contains(&expected),
+            "aged_blocks {:?} must cite the original id {expected}",
+            report.aged_blocks
+        );
+    }
+
+    #[test]
+    fn retention_waits_for_a_batch_before_touching_the_prefix() {
+        // Cache-prefix discipline (invariant 7): aging one result the moment
+        // it crosses the horizon would rewrite the prefix on every step.
+        // Below RETENTION_MIN_BATCH candidates, nothing moves.
+        let mut messages = long_turn(RETENTION_MIN_BATCH + 1, 5_000);
+        // Horizon leaves batch-1 stale results: one below the batch floor.
+        let (_, report) = compact_measured(
+            &mut messages,
+            u64::MAX,
+            Some(RetentionPolicy {
+                keep_recent_steps: 2,
+            }),
+        );
+        assert!(
+            report.is_none(),
+            "below the batch floor the transcript must stay byte-stable: {report:?}"
+        );
+    }
+
+    #[test]
+    fn retention_is_idempotent_between_batches() {
+        // After a batch fires, aged results are below the threshold, so an
+        // immediately following pass finds no candidates and mutates nothing
+        // — the prefix stays byte-stable until a NEW batch accumulates.
+        let mut messages = long_turn(12, 5_000);
+        let policy = Some(RetentionPolicy {
+            keep_recent_steps: 4,
+        });
+        let (_, first) = compact_measured(&mut messages, u64::MAX, policy);
+        assert!(first.is_some());
+        let snapshot: Vec<String> = messages.iter().map(|m| format!("{m:?}")).collect();
+        let (_, second) = compact_measured(&mut messages, u64::MAX, policy);
+        assert!(second.is_none(), "second pass must be a no-op: {second:?}");
+        let after: Vec<String> = messages.iter().map(|m| format!("{m:?}")).collect();
+        assert_eq!(snapshot, after, "no bytes may move between batches");
+    }
+
+    #[test]
+    fn retention_never_touches_the_newest_tool_message_even_at_horizon_zero() {
+        let mut messages = long_turn(6, 5_000);
+        let (_, _) = compact_measured(
+            &mut messages,
+            u64::MAX,
+            Some(RetentionPolicy {
+                keep_recent_steps: 0,
+            }),
+        );
+        match &messages[13].tool_results[0].output {
+            ToolOutput::Ok { content } => assert!(
+                content.len() > 5_000,
+                "the result answering the latest call survives every pass"
+            ),
+            _ => panic!("latest result must be intact"),
+        }
+    }
+
+    #[test]
+    fn small_recent_and_already_aged_results_are_not_retention_candidates() {
+        // Below AGE_THRESHOLD_CHARS there is nothing worth reclaiming, so a
+        // long turn of small outputs never triggers the batch — and never
+        // churns the cache prefix.
+        let mut messages = long_turn(20, 100);
+        let (_, report) = compact_measured(
+            &mut messages,
+            u64::MAX,
+            Some(RetentionPolicy {
+                keep_recent_steps: 2,
+            }),
+        );
+        assert!(report.is_none(), "{report:?}");
+    }
+
     #[test]
     fn evicts_oldest_large_output_first_and_reports() {
         let mut messages = vec![
@@ -938,7 +1241,7 @@ mod tests {
             messages.push(assistant_with_call(&id));
             messages.push(tool_msg(&id, format!("{i} ").repeat(1500)));
         }
-        let (after, report) = compact_measured(&mut messages, budget);
+        let (after, report) = compact_measured(&mut messages, budget, None);
         assert!(report.is_some(), "the oversized transcript must compact");
         assert!(after <= budget, "must land under budget: {after}");
         assert!(
@@ -950,7 +1253,7 @@ mod tests {
         // result — fits inside the reclaimed headroom…
         messages.push(assistant_with_call("next"));
         messages.push(tool_msg("next", "small new output".into()));
-        let (_, report) = compact_measured(&mut messages, budget);
+        let (_, report) = compact_measured(&mut messages, budget, None);
         // …so the pass must NOT mutate the transcript again this step.
         assert!(
             report.is_none(),

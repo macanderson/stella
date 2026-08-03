@@ -81,6 +81,31 @@ fn new_session_id() -> String {
     format!("stella-{}-{nanos:x}-{seq:x}", std::process::id())
 }
 
+/// Whether `base_url` addresses OpenRouter — `openrouter.ai` itself or any
+/// subdomain of it. Host-exact on purpose: matched on the parsed host, never
+/// by substring over the whole URL, so `https://openrouter.ai.evil.example`
+/// and a path that merely mentions the gateway both stay non-matches (this
+/// gates what the request BODY carries, not where it is sent, but a sloppy
+/// match would still leak OpenRouter-only fields onto servers that 400 on
+/// unknown keys).
+fn is_openrouter_endpoint(base_url: &str) -> bool {
+    let after_scheme = base_url
+        .split_once("://")
+        .map_or(base_url, |(_, rest)| rest);
+    let authority = after_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or(after_scheme);
+    // Strip userinfo and port; an IPv6 literal contains ':' but can never be
+    // openrouter.ai, so the split is safe for the hosts this can match.
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let host = host.split(':').next().unwrap_or(host);
+    host.eq_ignore_ascii_case("openrouter.ai")
+        || host.to_ascii_lowercase().ends_with(".openrouter.ai")
+}
+
 impl ZaiProvider {
     pub fn new(api_key: ApiKey, model: impl Into<String>) -> Self {
         let model = model.into();
@@ -120,6 +145,22 @@ impl ZaiProvider {
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
         self
+    }
+
+    /// Whether this instance's requests actually land on OpenRouter — by the
+    /// built-in `openrouter` identity, or by a settings-defined custom
+    /// provider whose base URL points at the gateway.
+    ///
+    /// The cache opt-in (`cache_control` + `session_id`) keys off this rather
+    /// than the identity string: the OpenRouter cache is explicit opt-in, so
+    /// an id-only gate silently ran Claude-via-OpenRouter with ZERO caching
+    /// whenever the user reached the gateway through a custom provider entry
+    /// — the exact defect the parity matrix (invariant 8) was born from. The
+    /// reasoning/attribution fields keep their identity gates: they are
+    /// behavior preferences, not billing, and widening them is a separate
+    /// decision.
+    fn serves_openrouter(&self) -> bool {
+        self.id == "openrouter" || is_openrouter_endpoint(&self.base_url)
     }
 
     /// OpenRouter app attribution: `HTTP-Referer` names the app's site,
@@ -1078,9 +1119,16 @@ impl ZaiProvider {
             usage: self
                 .usage_accounting
                 .then_some(ZaiUsageInclude { include: true }),
-            cache_control: (self.id == "openrouter")
+            // Gated on "actually talking to OpenRouter", not on the identity
+            // string alone: a settings-defined custom provider pointing its
+            // base URL at the gateway is OpenRouter in every way that matters,
+            // and keying the cache opt-in off the id alone re-created the
+            // motivating incident (Claude via OpenRouter, CACHE 0%, every
+            // token at the full input rate) one config file over (#1285).
+            cache_control: self
+                .serves_openrouter()
                 .then_some(ZaiCacheControl { kind: "ephemeral" }),
-            session_id: (self.id == "openrouter").then_some(self.session_id.as_str()),
+            session_id: self.serves_openrouter().then_some(self.session_id.as_str()),
         };
 
         let mut request = self

@@ -597,12 +597,27 @@ fn to_bedrock_tool_config(
 /// Whether the target model family supports Converse `cachePoint` blocks.
 /// Bedrock rejects cache points on models without prompt-caching support
 /// (ValidationException), so the markers are added only for families with
-/// documented support — Anthropic Claude and Amazon Nova. The catalog's
+/// documented support — Anthropic models and Amazon Nova. The catalog's
 /// bedrock entries are all Claude inference profiles today; the gate keeps
 /// a custom-routed model id from breaking every request.
+///
+/// Matched on the vendor token as well as the family names, because Bedrock
+/// ids spell the family several ways (`anthropic.claude-…` foundation
+/// models, `us.anthropic.…` cross-region profiles) and every
+/// Anthropic-vendored model on Bedrock supports caching — a gate that
+/// recognized only "claude" would run a differently-named Anthropic id with
+/// caching silently OFF, the exact defect class the parity matrix
+/// (invariant 8) exists to prevent. The known blind spot is an
+/// application-inference-profile ARN, which is opaque by construction: the
+/// family is not recoverable from the string, and defaulting to sending the
+/// marker would 400 every request on a non-supporting model — the worse
+/// failure. Route such profiles through a catalog entry whose id names the
+/// family.
 fn supports_cache_points(model: &str) -> bool {
     let model = model.to_ascii_lowercase();
-    model.contains("claude") || model.contains("nova")
+    ["anthropic", "claude", "fable", "mythos", "nova"]
+        .iter()
+        .any(|family| model.contains(family))
 }
 
 #[async_trait]

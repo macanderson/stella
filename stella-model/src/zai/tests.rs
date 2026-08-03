@@ -949,6 +949,45 @@ async fn complete_surfaces_cached_tokens_and_bills_them_at_the_cached_rate() {
     assert_eq!(result.cost_usd, expected, "200 cached tokens bill cheaper");
 }
 
+/// The xai identity's own cache-telemetry witness. Grok's Chat Completions
+/// endpoint spells hits the OpenAI-compatible way
+/// (`prompt_tokens_details.cached_tokens`), and the shared adapter parses it
+/// on one code path — but the parity matrix's `xai` row used to cite the
+/// zai-identity test above, so nothing proved the posture ON the identity
+/// that declares it (#1285). This is that proof, built `with_identity("xai")`.
+#[tokio::test]
+async fn xai_identity_surfaces_cached_tokens_in_usage() {
+    let server = MockServer::start().await;
+    let sse_body = concat!(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{}}],\"usage\":{\"prompt_tokens\":900,\"completion_tokens\":50,\"prompt_tokens_details\":{\"cached_tokens\":600}}}\n\n",
+        "data: [DONE]\n\n",
+    );
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+        .mount(&server)
+        .await;
+
+    let provider = ZaiProvider::new(ApiKey::new("xai-test"), "grok-4-fast")
+        .with_base_url(server.uri())
+        .with_identity("xai", "xAI");
+    let result = provider
+        .complete(CompletionRequest {
+            messages: vec![CompletionMessage::user("hi")],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![],
+            reasoning: None,
+            params: None,
+        })
+        .await
+        .expect("should succeed");
+    assert_eq!(result.usage.input_tokens, 900);
+    assert_eq!(result.usage.cached_input_tokens, 600);
+}
+
 #[tokio::test]
 async fn complete_maps_5xx_to_retryable_transport() {
     let server = MockServer::start().await;
@@ -1184,6 +1223,37 @@ async fn openrouter_identity_sends_root_level_cache_control() {
         body.contains("\"cache_control\":{\"type\":\"ephemeral\"}"),
         "{body}"
     );
+}
+
+/// The cache opt-in must key on where requests actually LAND, not on the
+/// identity string: a settings-defined custom provider pointed at
+/// openrouter.ai is OpenRouter in every way that matters, and an id-only
+/// gate re-created the motivating "CACHE 0%" incident one config file over
+/// (#1285). Host-exact both ways — a hostile suffix or a path that merely
+/// mentions the gateway must NOT opt in, because these fields 400 on
+/// servers that don't speak them.
+#[test]
+fn openrouter_cache_opt_in_follows_the_endpoint_not_just_the_identity() {
+    for url in [
+        "https://openrouter.ai/api/v1",
+        "https://openrouter.ai",
+        "https://api.openrouter.ai/v1",
+        "https://OPENROUTER.AI/api/v1",
+        "https://user@openrouter.ai:443/api/v1",
+        "openrouter.ai/api/v1",
+    ] {
+        assert!(is_openrouter_endpoint(url), "must match: {url}");
+    }
+    for url in [
+        "https://api.z.ai/api/paas/v4",
+        "http://127.0.0.1:8080/v1",
+        "https://openrouter.ai.evil.example/api/v1",
+        "https://proxy.example/openrouter.ai/v1",
+        "https://notopenrouter.ai/api/v1",
+        "https://example.com/?ref=openrouter.ai",
+    ] {
+        assert!(!is_openrouter_endpoint(url), "must not match: {url}");
+    }
 }
 
 /// OpenRouter routes each request to whichever upstream wins at that moment,

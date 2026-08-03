@@ -968,7 +968,16 @@ mod tests {
 
     /// Every request carries the session-stable `prompt_cache_key` so
     /// OpenAI's implicit cache routes all of a session's prefix-sharing
-    /// turns to the same shard.
+    /// turns to the same shard — and the cache telemetry the routing earns
+    /// (`input_tokens_details.cached_tokens`) lands in `CompletionUsage`.
+    ///
+    /// Both halves in one witness, deliberately: this is the test the
+    /// parity matrix's `openai` row cites for its `Implicit` posture, and
+    /// that posture's contract is "the telemetry lands in
+    /// `CompletionUsage`". Until the usage assertion below existed, the
+    /// cited witness proved only the request key — the telemetry parse was
+    /// proven by an uncited pricing test the matrix guard could not see
+    /// (#1285).
     #[tokio::test]
     async fn complete_sends_a_session_stable_prompt_cache_key() {
         let server = MockServer::start().await;
@@ -976,7 +985,7 @@ mod tests {
             "event: response.output_text.delta\n",
             "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n",
             "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":100,\"output_tokens\":1,\"input_tokens_details\":{\"cached_tokens\":75}}}}\n\n",
         );
         Mock::given(method("POST"))
             .and(path("/responses"))
@@ -997,10 +1006,13 @@ mod tests {
             reasoning: None,
             params: None,
         };
-        provider.complete(req()).await.expect("first turn");
+        let first = provider.complete(req()).await.expect("first turn");
         provider.complete(req()).await.expect("second turn");
         // The same provider instance keys both turns identically — routing
-        // them to the same cache shard is the whole point.
+        // them to the same cache shard is the whole point — and the shard's
+        // hits are visible, not assumed.
+        assert_eq!(first.usage.input_tokens, 100);
+        assert_eq!(first.usage.cached_input_tokens, 75);
     }
 
     #[test]
