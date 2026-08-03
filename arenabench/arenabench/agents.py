@@ -34,8 +34,10 @@ __all__ = [
     "API_CREDENTIALS",
     "credential_env_for",
     "launch_flags",
+    "launch_model",
     "missing_credentials",
     "resolve_agent",
+    "routes_directly",
 ]
 
 #: Environment variable each provider API reads its key from, plus the base URL
@@ -82,6 +84,19 @@ class AgentSpec:
     has_pipeline: bool = False
     #: Extra environment this agent always needs, beyond the provider key.
     extra_env: dict[str, str] = field(default_factory=dict)
+    #: Environment variable this agent reads a custom provider endpoint from,
+    #: when it can be pointed at one at all. ``None`` means a base URL set on
+    #: this seat is genuinely ignored, and the operator is told so.
+    #:
+    #: Stella deliberately leaves this ``None`` while still honouring
+    #: ``base_url``: its endpoint travels through the adapter's own registered
+    #: ``STELLA_BASE_URL`` seam rather than an environment variable Harbor
+    #: hands to a CLI, so the two are not interchangeable.
+    base_url_env: str | None = None
+    #: Variables this agent will accept a bearer token in, most preferred
+    #: first. Used to alias a provider-native key into the name the agent
+    #: actually reads once it has been routed off its home provider.
+    token_env: tuple[str, ...] = ()
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -148,24 +163,35 @@ def _builtin(
     *,
     effort: bool = False,
     reasoning: bool = False,
+    base_url_env: str | None = None,
+    token_env: tuple[str, ...] = (),
 ) -> AgentSpec:
     """A Harbor built-in agent.
 
     Model selection is the one knob every Harbor agent honours, because Harbor
     passes ``--model`` itself. Effort and reasoning are opt-in per agent since
     most CLI agents expose neither.
+
+    ``base_url_env`` implies :data:`KNOB_BASE_URL` rather than being declared
+    alongside it. The two cannot drift apart that way, and drift is exactly the
+    failure that matters here: an agent listed as honouring ``base_url`` with
+    no variable to put it in would report a route it never took.
     """
     honours = {KNOB_MODEL}
     if effort:
         honours.add(KNOB_EFFORT)
     if reasoning:
         honours.add(KNOB_REASONING)
+    if base_url_env:
+        honours.add(KNOB_BASE_URL)
     return AgentSpec(
         slug=slug,
         title=title,
         harbor_agent=slug,
         description=description,
         honours=frozenset(honours),
+        base_url_env=base_url_env,
+        token_env=token_env,
     )
 
 
@@ -179,9 +205,16 @@ AGENTS: dict[str, AgentSpec] = {
         _builtin(
             "claude-code",
             "Claude Code",
-            "Anthropic's coding CLI.",
+            "Anthropic's coding CLI. Routable at any Anthropic-shaped "
+            "endpoint, so it can also be seated on a GLM or self-hosted model.",
             effort=True,
             reasoning=True,
+            # Harbor's Claude Code agent already forwards ANTHROPIC_BASE_URL
+            # into the task container and, when one is set, hands the model
+            # name to that endpoint unchanged. That is what makes a non-
+            # Anthropic seat possible at all.
+            base_url_env="ANTHROPIC_BASE_URL",
+            token_env=("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"),
         ),
         _builtin("codex", "Codex CLI", "OpenAI's coding CLI.", effort=True),
         _builtin("gemini-cli", "Gemini CLI", "Google's coding CLI."),
@@ -228,6 +261,32 @@ def launch_flags(contestant: Contestant) -> list[str]:
     raise ValueError(f"agent {spec.slug!r} declares no launch mechanism")
 
 
+def routes_directly(contestant: Contestant) -> bool:
+    """Whether this seat talks to a provider endpoint of its own choosing.
+
+    True only when the agent has somewhere to put a base URL *and* the
+    operator set one. Both halves matter: an agent with no such variable
+    cannot be rerouted, and an agent that was never given a URL is still on
+    its home provider and must be addressed the way Harbor addresses it.
+    """
+    spec = resolve_agent(contestant.agent)
+    return bool(spec.base_url_env and (contestant.engine.base_url or "").strip())
+
+
+def launch_model(contestant: Contestant) -> str:
+    """The value for ``harbor run --model``.
+
+    Harbor routes most agents by a ``provider/model`` string and strips the
+    prefix itself on the way to the provider. An agent pointed at an explicit
+    endpoint is the exception: Harbor forwards the name to that endpoint
+    verbatim, so an api prefix ArenaBench added would arrive at a provider
+    that has never heard of it and fail *every* trial with a model-not-found —
+    which reads on the scoreboard as an agent that cannot code.
+    """
+    engine = contestant.engine
+    return engine.bare_model if routes_directly(contestant) else engine.qualified_model
+
+
 def credential_env_for(api: str) -> tuple[str, ...]:
     """Candidate credential variable names for a provider API."""
     return API_CREDENTIALS.get(api.strip().lower(), ())
@@ -239,10 +298,18 @@ def missing_credentials(contestant: Contestant) -> list[str]:
     Returns the *candidate set* when none of the alternatives is present — for
     Google that is ``["GEMINI_API_KEY", "GOOGLE_API_KEY"]``, meaning "any one
     of these". An empty list means the seat is credentialled.
+
+    An agent that carries its token in its own variable adds those names to
+    the set, because a seat routed off its home provider is legitimately
+    credentialled either way: ``ZAI_API_KEY`` is what the provider calls it
+    and ``ANTHROPIC_AUTH_TOKEN`` is what Claude Code reads it from, and
+    warning about the one an operator did not use would be noise.
     """
-    candidates = credential_env_for(contestant.engine.api)
+    spec = resolve_agent(contestant.agent)
+    candidates = list(credential_env_for(contestant.engine.api))
+    candidates += [name for name in spec.token_env if name not in candidates]
     if not candidates:
         return []
     if any(contestant.env.get(name) for name in candidates):
         return []
-    return list(candidates)
+    return candidates

@@ -246,6 +246,24 @@ class Engine:
             return model
         return f"{self.api}/{model}"
 
+    @property
+    def bare_model(self) -> str:
+        """The model id as the *provider* publishes it, with no api prefix.
+
+        The inverse of :attr:`qualified_model`, and the form an agent needs
+        when it has been pointed at a provider's endpoint directly rather than
+        routed there by Harbor: z.ai is handed ``glm-5.2`` and has never heard
+        of ``zai/glm-5.2``.
+
+        Only the leading ``<api>/`` comes off. An OpenRouter model keeps its
+        vendor segment — ``openrouter/z-ai/glm-5.2`` bares to ``z-ai/glm-5.2``,
+        not ``glm-5.2`` — because that segment is part of the id the provider
+        itself publishes, not a route ArenaBench added.
+        """
+        model = self.model.strip()
+        prefix = f"{self.api}/"
+        return model[len(prefix) :] if model.startswith(prefix) else model
+
     def role(self, name: str) -> RoleConfig:
         return self.roles.get(name, RoleConfig())
 

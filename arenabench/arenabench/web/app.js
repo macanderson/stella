@@ -27,6 +27,7 @@ const State = {
   dataset: null,
   tasks: [],
   selected: new Set(),
+  draw: null,           // the last random draw, while the selection still is it
   seats: [],
   match: null,
   snapshot: null,
@@ -133,6 +134,7 @@ function wireChrome() {
   $('#select-all').addEventListener('click', () => { State.tasks.forEach((t) => State.selected.add(t.name)); renderTasks(); });
   $('#select-none').addEventListener('click', () => { State.selected.clear(); renderTasks(); });
   $('#select-visible').addEventListener('click', () => { visibleTasks().forEach((t) => State.selected.add(t.name)); renderTasks(); });
+  $('#select-random').addEventListener('click', drawRandomTasks);
   ['#task-search', '#filter-difficulty', '#filter-category', '#filter-light']
     .forEach((sel) => $(sel).addEventListener('input', renderTasks));
   $('#toggle-reasoning').addEventListener('click', () => {
@@ -203,6 +205,30 @@ function fillFilters() {
   fill('#filter-category', uniq('category'), 'all categories');
 }
 
+// The draw happens on the server, not here. `Math.random` cannot be seeded,
+// and an unseeded slice is a number nobody — including you tomorrow — can
+// reproduce. The seed comes back and is shown, so the selection can be
+// written down and run again.
+async function drawRandomTasks() {
+  if (!State.dataset) return;
+  const count = Math.max(1, Number($('#random-n').value) || 10);
+  const heavy = $('#filter-light').checked ? '1' : '0';
+  const seedEl = $('#random-seed');
+  try {
+    const drawn = await api(
+      `/api/datasets/${encodeURIComponent(State.dataset.key)}/sample` +
+      `?count=${count}&exclude_heavy=${heavy}`);
+    State.selected = new Set(drawn.names);
+    State.draw = new Set(drawn.names);
+    seedEl.textContent =
+      `· ${drawn.names.length} drawn, seed ${drawn.seed}` +
+      (drawn.exclude_heavy ? ', heavy excluded' : '');
+    renderTasks();
+  } catch (err) {
+    seedEl.textContent = `· draw failed: ${err.message}`;
+  }
+}
+
 function visibleTasks() {
   const q = $('#task-search').value.trim().toLowerCase();
   const difficulty = $('#filter-difficulty').value;
@@ -219,6 +245,14 @@ function visibleTasks() {
 
 function renderTasks() {
   const tasks = visibleTasks();
+  // The seed describes a draw. The moment the selection stops being that
+  // draw — one checkbox toggled, "select all" pressed — the seed no longer
+  // reproduces what is about to run, so it stops being shown.
+  if (State.draw) {
+    const intact = State.draw.size === State.selected.size
+      && [...State.draw].every((name) => State.selected.has(name));
+    if (!intact) { State.draw = null; $('#random-seed').textContent = ''; }
+  }
   $('#task-count').textContent = String(State.selected.size);
   $('#task-grid').replaceChildren(...tasks.map((task) => {
     const on = State.selected.has(task.name);
@@ -549,6 +583,7 @@ function renderScoreboard(snapshot) {
         stat('cache_write', 'cache w', fmt.tokens(t.cache_write)),
       ),
       (c.warnings || []).length ? el('div', { class: 'card-warn' }, c.warnings.join(' · ')) : null,
+      (c.notes || []).length ? el('div', { class: 'card-note' }, c.notes.join(' · ')) : null,
       c.error ? el('div', { class: 'card-warn' }, c.error) : null,
     );
   }));

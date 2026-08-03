@@ -46,6 +46,7 @@
     <h2><span class="step-n">2</span> Tasks</h2>
     <p class="step-hint">
       Every contestant runs the identical list. <strong id="task-count">0</strong> selected.
+      <span class="muted mono" id="random-seed"></span>
     </p>
 
     <div class="task-toolbar">
@@ -60,6 +61,9 @@
       <button class="btn btn-ghost" id="select-all">select all</button>
       <button class="btn btn-ghost" id="select-none">clear</button>
       <button class="btn btn-ghost" id="select-visible">select filtered</button>
+      <button class="btn btn-ghost" id="select-random">random</button>
+      <input type="number" id="random-n" value="10" min="1" max="500"
+             title="how many tasks to draw at random">
     </div>
 
     <div class="task-grid" id="task-grid"></div>

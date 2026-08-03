@@ -18,7 +18,12 @@ from pathlib import Path
 
 import pytest
 
-from arenabench.agents import AGENTS, missing_credentials, resolve_agent
+from arenabench.agents import (
+    AGENTS,
+    launch_model,
+    missing_credentials,
+    resolve_agent,
+)
 from arenabench.harbor_agent import arena_posture
 from arenabench.model import (
     DIMENSIONS,
@@ -30,7 +35,8 @@ from arenabench.model import (
     parse_dotenv,
     slugify,
 )
-from arenabench.registry import DEFAULT_REGISTRY
+from arenabench.registry import DEFAULT_REGISTRY, Task, sample_tasks
+from arenabench.runner import ContestantRun, MatchRunner
 from arenabench.telemetry import MetricsReader, TranscriptReader, aggregate, leaders
 
 # --------------------------------------------------------------------------
@@ -619,3 +625,147 @@ class TestRecorder:
         supervisor._record_failure(trial_dir, "transient")
         assert supervisor._failures[trial_dir] == 1
         assert trial_dir not in supervisor._finished
+
+
+# --------------------------------------------------------------------------
+# routing an agent off its home provider
+# --------------------------------------------------------------------------
+
+
+def _seat(env: str = "", **engine: object) -> Contestant:
+    return Contestant.from_json(
+        {"name": "cc", "agent": "claude-code", "engine": engine, "env": env}
+    )
+
+
+class TestDirectProviderRouting:
+    """Seating Claude Code on a non-Anthropic, Anthropic-shaped endpoint.
+
+    Harbor's Claude Code agent reads ``ANTHROPIC_BASE_URL`` and, when one is
+    set, forwards the model name to that endpoint unchanged. Both halves of
+    that sentence are load-bearing, and each has its own failure: no base URL
+    and the seat silently runs on Anthropic; a prefixed model name and every
+    trial dies with model-not-found, which on a scoreboard is indistinguishable
+    from an agent that cannot code.
+    """
+
+    def test_claude_code_declares_that_it_honours_a_base_url(self):
+        spec = resolve_agent("claude-code")
+        assert "base_url" in spec.honours
+        assert spec.unhonoured(Engine(model="glm-5.2", base_url="https://x/y")) == []
+
+    def test_an_agent_with_nowhere_to_put_a_base_url_still_says_so(self):
+        assert "base_url" in resolve_agent("aider").unhonoured(
+            Engine(model="m", base_url="https://x/y")
+        )
+
+    def test_a_routed_seat_is_launched_with_the_providers_own_model_id(self):
+        seat = _seat(api="zai", model="glm-5.2", base_url="https://api.z.ai/api/anthropic")
+        assert launch_model(seat) == "glm-5.2"
+
+    def test_an_unrouted_seat_keeps_harbors_provider_prefix(self):
+        seat = _seat(api="anthropic", model="claude-opus-4-5")
+        assert launch_model(seat) == "anthropic/claude-opus-4-5"
+
+    def test_baring_a_model_strips_only_the_api_prefix(self):
+        """An OpenRouter id keeps its vendor segment: ``z-ai`` is part of the
+        name OpenRouter publishes, not a route ArenaBench added."""
+        assert Engine(api="openrouter", model="z-ai/glm-5.2").bare_model == "z-ai/glm-5.2"
+        assert Engine(api="openrouter", model="openrouter/z-ai/glm-5.2").bare_model == (
+            "z-ai/glm-5.2"
+        )
+        assert Engine(api="zai", model="zai/glm-5.2").bare_model == "glm-5.2"
+
+    def _routing(self, seat: Contestant, tmp_path: Path) -> tuple[dict, list[str]]:
+        runner = MatchRunner(DEFAULT_REGISTRY, tmp_path)
+        run = ContestantRun(
+            contestant=seat,
+            job_name="job",
+            job_dir=tmp_path / "job",
+            log_path=tmp_path / "job.log",
+        )
+        return runner._routing_environment(seat, run), run.notes
+
+    def test_a_provider_key_is_aliased_into_the_variable_the_agent_reads(
+        self, tmp_path: Path
+    ):
+        seat = _seat(
+            env="ZAI_API_KEY=zk-secret",
+            api="zai",
+            model="glm-5.2",
+            base_url="https://api.z.ai/api/anthropic",
+        )
+        env, notes = self._routing(seat, tmp_path)
+        assert env["ANTHROPIC_BASE_URL"] == "https://api.z.ai/api/anthropic"
+        assert env["ANTHROPIC_AUTH_TOKEN"] == "zk-secret"
+        assert any("ZAI_API_KEY" in note for note in notes), (
+            "aliasing a credential must be visible on the seat, not silent"
+        )
+
+    def test_an_explicitly_pasted_token_is_never_overwritten(self, tmp_path: Path):
+        seat = _seat(
+            env="ZAI_API_KEY=zk-provider\nANTHROPIC_AUTH_TOKEN=zk-explicit",
+            api="zai",
+            model="glm-5.2",
+            base_url="https://api.z.ai/api/anthropic",
+        )
+        env, _ = self._routing(seat, tmp_path)
+        assert "ANTHROPIC_AUTH_TOKEN" not in env, (
+            "an operator's own choice outranks ArenaBench's inference"
+        )
+
+    def test_a_seat_with_no_base_url_is_not_rerouted(self, tmp_path: Path):
+        seat = _seat(env="ANTHROPIC_API_KEY=sk", api="anthropic", model="claude-opus-4-5")
+        env, notes = self._routing(seat, tmp_path)
+        assert env == {} and notes == []
+
+    def test_either_credential_name_satisfies_a_routed_seat(self):
+        base = "https://api.z.ai/api/anthropic"
+        provider = _seat(env="ZAI_API_KEY=k", api="zai", model="glm-5.2", base_url=base)
+        agent_side = _seat(
+            env="ANTHROPIC_AUTH_TOKEN=k", api="zai", model="glm-5.2", base_url=base
+        )
+        assert missing_credentials(provider) == []
+        assert missing_credentials(agent_side) == []
+        assert missing_credentials(
+            _seat(api="zai", model="glm-5.2", base_url=base)
+        ) == ["ZAI_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"]
+
+
+class TestRandomTaskSampling:
+    """A seeded draw, because "we ran ten random tasks" is otherwise unfalsifiable."""
+
+    def _tasks(self, count: int) -> list[Task]:
+        return [
+            Task(
+                name=f"task-{index:02d}",
+                qualified=f"ns/task-{index:02d}",
+                memory_mb=8192 if index % 5 == 0 else 2048,
+            )
+            for index in range(count)
+        ]
+
+    def test_the_same_seed_draws_the_same_tasks(self):
+        pool = self._tasks(50)
+        assert sample_tasks(pool, 10, 7) == sample_tasks(pool, 10, 7)
+
+    def test_a_different_seed_draws_a_different_slice(self):
+        pool = self._tasks(50)
+        assert sample_tasks(pool, 10, 7) != sample_tasks(pool, 10, 8)
+
+    def test_the_draw_comes_back_in_dataset_order(self):
+        """Which ten were chosen is the finding; the order they left the
+        generator in carries no information and would only make two selections
+        harder to compare."""
+        drawn = sample_tasks(self._tasks(50), 10, 7)
+        assert [task.name for task in drawn] == sorted(task.name for task in drawn)
+
+    def test_asking_for_more_than_exists_yields_everything(self):
+        pool = self._tasks(6)
+        assert sample_tasks(pool, 99, 1) == pool
+
+    def test_excluding_heavy_narrows_the_population_drawn_from(self):
+        pool = self._tasks(50)
+        drawn = sample_tasks(pool, 10, 7, exclude_heavy=True)
+        assert len(drawn) == 10
+        assert not any(task.heavy for task in drawn)

@@ -31,6 +31,7 @@ import json
 import logging
 import mimetypes
 import os
+import random
 import threading
 import time
 import uuid
@@ -39,12 +40,12 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Iterator
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .agents import AGENTS
 from .model import EFFORTS, ROLES, MatchSpec
 from .recorder import preflight as recorder_preflight
-from .registry import DEFAULT_REGISTRY, Registry
+from .registry import DEFAULT_REGISTRY, Registry, sample_tasks
 from .runner import MatchRunner
 from .telemetry import TranscriptReader
 
@@ -95,6 +96,31 @@ class ArenaServer:
                     f"`harbor download {dataset.harbor_id}`"
                 )
             ),
+        }
+
+    def task_sample(
+        self, key: str, count: int, seed: int | None, exclude_heavy: bool
+    ) -> Any:
+        """Draw a reproducible random slice of a dataset.
+
+        Sampling lives on the server so the picker and the CLI draw with the
+        *same* generator from the same pool. A browser-side shuffle would be a
+        second definition of "random ten", and two definitions is one more
+        than a number anybody quotes can survive.
+        """
+        dataset = self.registry.get(key)
+        if dataset is None:
+            raise KeyError(key)
+        if seed is None:
+            seed = random.randrange(1, 2**31)
+        chosen = sample_tasks(
+            self.registry.tasks(key), count, seed, exclude_heavy=exclude_heavy
+        )
+        return {
+            "seed": seed,
+            "requested": count,
+            "exclude_heavy": exclude_heavy,
+            "names": [task.name for task in chosen],
         }
 
     def agents(self) -> Any:
@@ -354,6 +380,25 @@ def _handler_factory(arena: ArenaServer) -> type[BaseHTTPRequestHandler]:
                     self._json(arena.datasets())
                 case ["datasets", key, "tasks"]:
                     self._json(arena.tasks(key))
+                case ["datasets", key, "sample"]:
+                    query = parse_qs(urlparse(self.path).query)
+
+                    def _int(name: str) -> int | None:
+                        raw = (query.get(name) or [""])[0].strip()
+                        try:
+                            return int(raw)
+                        except ValueError:
+                            return None
+
+                    self._json(
+                        arena.task_sample(
+                            key,
+                            count=_int("count") or 10,
+                            seed=_int("seed"),
+                            exclude_heavy=(query.get("exclude_heavy") or [""])[0]
+                            == "1",
+                        )
+                    )
                 case ["agents"]:
                     self._json(arena.agents())
                 case ["matches"]:

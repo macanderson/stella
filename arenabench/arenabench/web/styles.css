@@ -178,6 +178,9 @@ code { font-family: var(--mono); font-size: .92em; color: var(--citron); }
   flex-wrap: wrap;
   margin-bottom: 14px;
 }
+/* Sits immediately after the "random" button and belongs to it, so it is
+   sized to its content rather than taking a flex share of the toolbar. */
+#random-n { width: 68px; flex: none; }
 input[type=search], input[type=text], input[type=number], select, textarea {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -458,6 +461,11 @@ input:focus, select:focus, textarea:focus {
 .stat-v { font-family: var(--mono); font-size: 12.5px; }
 .stat.is-best .stat-v { color: var(--seat); font-weight: 600; }
 .card-warn { margin-top: 11px; font-size: 11px; color: var(--warn); font-family: var(--mono); }
+
+/* Routing this seat took a step the operator did not literally type. Nothing
+   is wrong, so it must not read as a warning — but it must be visible, since
+   an invisible route is how two seats end up secretly identical. */
+.card-note { margin-top: 6px; font-size: 11px; color: var(--muted); font-family: var(--mono); }
 
 /* ------------------------------------------------------------- the race */
 

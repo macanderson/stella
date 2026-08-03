@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import argparse
 import logging
+import random
 import sys
 from pathlib import Path
 
 from .agents import AGENTS
 from .recorder import IMAGE_TAG, build_image, docker_available, image_present
-from .registry import DEFAULT_REGISTRY
+from .registry import DEFAULT_REGISTRY, sample_tasks
 from .server import default_workspace, serve
 
 __all__ = ["main"]
@@ -58,10 +59,32 @@ def _cmd_tasks(args: argparse.Namespace) -> int:
         target = dataset.harbor_id if dataset else args.dataset
         print(f"no tasks on disk; fetch with: harbor download {target}", file=sys.stderr)
         return 1
+    total = len(tasks)
+    seed = args.seed
+    if args.random:
+        # An unseeded draw still gets a seed, and prints it. Otherwise the one
+        # thing you need to run this slice again is the one thing you no
+        # longer have.
+        if seed is None:
+            seed = random.randrange(1, 2**31)
+        tasks = sample_tasks(
+            tasks, args.random, seed, exclude_heavy=args.exclude_heavy
+        )
+
     for task in tasks:
-        heavy = " [heavy]" if task.memory_mb > 4096 or task.cpus > 1 else ""
+        heavy = " [heavy]" if task.heavy else ""
         print(f"{task.name:38} {task.difficulty:8} {task.category}{heavy}")
-    print(f"\n{len(tasks)} tasks", file=sys.stderr)
+
+    if args.random:
+        pool = "non-heavy tasks" if args.exclude_heavy else "tasks"
+        print(
+            f"\n{len(tasks)} of {total} {pool} — reproduce with "
+            f"--random {args.random} --seed {seed}"
+            + (" --exclude-heavy" if args.exclude_heavy else ""),
+            file=sys.stderr,
+        )
+    else:
+        print(f"\n{total} tasks", file=sys.stderr)
     return 0
 
 
@@ -107,6 +130,22 @@ def main(argv: list[str] | None = None) -> int:
 
     tasks_parser = subparsers.add_parser("tasks", help="list a dataset's tasks")
     tasks_parser.add_argument("dataset", default="terminal-bench-2.1", nargs="?")
+    tasks_parser.add_argument(
+        "--random",
+        type=int,
+        metavar="N",
+        help="draw N tasks at random instead of listing all of them",
+    )
+    tasks_parser.add_argument(
+        "--seed",
+        type=int,
+        help="seed for --random; one is chosen and printed if you omit it",
+    )
+    tasks_parser.add_argument(
+        "--exclude-heavy",
+        action="store_true",
+        help="draw only from tasks that do not force concurrency to 1",
+    )
     tasks_parser.set_defaults(func=_cmd_tasks)
 
     agents_parser = subparsers.add_parser("agents", help="list available agents")

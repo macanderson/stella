@@ -32,7 +32,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .agents import launch_flags, missing_credentials, resolve_agent
+from .agents import (
+    credential_env_for,
+    launch_flags,
+    launch_model,
+    missing_credentials,
+    resolve_agent,
+    routes_directly,
+)
 from .harbor_agent import ARENA_ENGINE_ENV
 from .model import DIMENSIONS, Contestant, MatchSpec
 from .recorder import RecorderSupervisor
@@ -98,6 +105,11 @@ class ContestantRun:
     error: str = ""
     #: Engine knobs this agent will not honour, surfaced to the operator.
     warnings: list[str] = field(default_factory=list)
+    #: Things ArenaBench did *for* this seat that it was not literally asked
+    #: to do — chiefly aliasing a provider-native key into the variable the
+    #: agent reads. Separate from :attr:`warnings` because nothing is wrong;
+    #: it is here so that no part of a contestant's routing is invisible.
+    notes: list[str] = field(default_factory=list)
 
     @property
     def state(self) -> str:
@@ -203,6 +215,9 @@ class Match:
                     if contestant.id in self.runs
                     else "pending",
                     "warnings": self.runs[contestant.id].warnings
+                    if contestant.id in self.runs
+                    else [],
+                    "notes": self.runs[contestant.id].notes
                     if contestant.id in self.runs
                     else [],
                     "error": self.runs[contestant.id].error
@@ -332,7 +347,7 @@ class MatchRunner:
             "--env", "docker",
             "--dataset", match.dataset.harbor_id,
             *launch_flags(contestant),
-            "--model", contestant.engine.qualified_model,
+            "--model", launch_model(contestant),
             "--job-name", job_name,
             "--jobs-dir", str(match.jobs_root),
             "--n-attempts", str(match.spec.attempts),
@@ -344,7 +359,7 @@ class MatchRunner:
 
         env = _base_environment()
         env.update(contestant.env)
-        env.update(self._agent_environment(contestant))
+        env.update(self._agent_environment(contestant, run))
 
         log.info(
             "launching %s: %s (%d tasks)",
@@ -364,13 +379,52 @@ class MatchRunner:
         run.started_at = time.time()
         return run
 
-    def _agent_environment(self, contestant: Contestant) -> dict[str, str]:
+    def _routing_environment(
+        self, contestant: Contestant, run: ContestantRun
+    ) -> dict[str, str]:
+        """Point a Harbor built-in at a provider endpoint of the seat's choosing.
+
+        Harbor's Claude Code agent already reads ``ANTHROPIC_BASE_URL`` and
+        forwards the model name to that endpoint unchanged when one is set —
+        which is why a GLM seat is possible at all. What it cannot do is guess
+        that a seat declaring ``api: zai`` means its ``ZAI_API_KEY`` to be the
+        bearer token, since the variable Claude Code reads has an Anthropic
+        name. ArenaBench does that one translation, and records it on the seat.
+
+        An operator who pastes the agent's own token variable is left alone:
+        an explicit choice outranks an inference every time.
+        """
+        spec = resolve_agent(contestant.agent)
+        if not routes_directly(contestant):
+            return {}
+
+        base_url = (contestant.engine.base_url or "").strip()
+        env = {spec.base_url_env: base_url}  # type: ignore[dict-item]
+        run.notes.append(f"routed at {base_url} via {spec.base_url_env}")
+
+        if not spec.token_env or any(
+            contestant.env.get(name) for name in spec.token_env
+        ):
+            return env
+
+        for source in credential_env_for(contestant.engine.api):
+            token = contestant.env.get(source)
+            if token:
+                env[spec.token_env[0]] = token
+                run.notes.append(f"{source} supplied as {spec.token_env[0]}")
+                break
+        return env
+
+    def _agent_environment(
+        self, contestant: Contestant, run: ContestantRun
+    ) -> dict[str, str]:
         """Agent-specific environment, layered over the operator's ``.env``."""
         spec = resolve_agent(contestant.agent)
         env: dict[str, str] = {}
         if spec.extra_env:
             env.update(spec.extra_env)
         if contestant.agent != "stella":
+            env.update(self._routing_environment(contestant, run))
             return env
 
         # The engine config the ArenaBench Stella adapter reads back.
