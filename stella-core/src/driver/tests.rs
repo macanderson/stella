@@ -872,6 +872,123 @@ async fn simple_turn_with_no_tool_calls_completes() {
     );
 }
 
+/// A halt that is armed from the start, so the first committed step boundary
+/// is the one that ends the turn.
+#[derive(Debug)]
+struct AlwaysHalt;
+impl crate::driver::TurnHalt for AlwaysHalt {
+    fn halt_reason(&self) -> Option<String> {
+        Some("the tracked test now passes".into())
+    }
+}
+
+/// A halt that never fires — the control, proving the seam is inert when the
+/// goal is not met rather than ending turns on its own.
+#[derive(Debug)]
+struct NeverHalt;
+impl crate::driver::TurnHalt for NeverHalt {
+    fn halt_reason(&self) -> Option<String> {
+        None
+    }
+}
+
+/// The point of the whole seam: a turn that would happily keep calling tools
+/// stops at the first step boundary once the goal is met, and reports
+/// `Completed` rather than `Aborted`.
+///
+/// `Aborted` is the arm that matters here. It reaches the CLI as a non-zero
+/// exit, which Harbor scores identically to the agent crashing — so a turn
+/// that stopped BECAUSE it succeeded must not take that exit.
+#[tokio::test]
+async fn a_halt_ends_the_turn_at_the_next_step_boundary_as_completed() {
+    // Three tool-calling steps queued. Without a halt this turn runs all
+    // three; with one it must stop after the first.
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![
+            Ok(tool_call_result("c1", "bash")),
+            Ok(tool_call_result("c2", "bash")),
+            Ok(text_result("done")),
+        ]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let config = EngineConfig {
+        turn_halt: Some(Arc::new(AlwaysHalt)),
+        ..EngineConfig::default()
+    };
+    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("hi"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    match outcome {
+        TurnOutcome::Completed { text, .. } => assert!(
+            text.contains("tracked test now passes"),
+            "with no assistant text yet, the halt reason is the turn's answer: {text}"
+        ),
+        other => panic!("a halted turn must complete, not abort: {other:?}"),
+    }
+    assert_eq!(
+        provider.calls.load(Ordering::SeqCst),
+        1,
+        "the turn must stop after the first committed step, leaving the queued steps unspent"
+    );
+    drain_events(&mut rx);
+}
+
+/// The control: the same script with a halt that never fires runs to its
+/// scripted end. Without this, the test above would also pass if the seam
+/// simply broke every turn after one step.
+#[tokio::test]
+async fn a_halt_that_never_fires_leaves_the_turn_exactly_as_it_was() {
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![
+            Ok(tool_call_result("c1", "bash")),
+            Ok(tool_call_result("c2", "bash")),
+            Ok(text_result("done")),
+        ]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let config = EngineConfig {
+        turn_halt: Some(Arc::new(NeverHalt)),
+        ..EngineConfig::default()
+    };
+    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("hi"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { ref text, .. } if text == "done"),
+        "an unarmed halt must not change the outcome: {outcome:?}"
+    );
+    assert_eq!(
+        provider.calls.load(Ordering::SeqCst),
+        3,
+        "all three scripted steps must run when nothing halts the turn"
+    );
+    drain_events(&mut rx);
+}
+
 /// ~900 chars of protected assistant text — compaction's pure passes
 /// only touch tool outputs, so weight parked here can ONLY be reclaimed
 /// by the summarization fallback.
