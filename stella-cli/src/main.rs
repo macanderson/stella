@@ -85,6 +85,7 @@ mod settings_check;
 mod signals;
 mod skill_manager;
 mod stats;
+mod stats_graph;
 mod storage_cmd;
 mod subagent;
 mod subsession;
@@ -579,7 +580,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             return match cmd {
                 None => stats::run_stats(*format, provider.as_deref()),
                 Some(stats::StatsCmd::Prune(args)) => stats::run_stats_prune(args),
-                Some(stats::StatsCmd::Graph(args)) => stats::run_stats_graph(args),
+                Some(stats::StatsCmd::Graph(args)) => stats_graph::run_stats_graph(args),
             };
         }
         Some(Command::Usage { cmd }) => {
