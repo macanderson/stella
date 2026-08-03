@@ -58,9 +58,14 @@ pub struct RunOptions {
     /// keyboard-degradable feature.
     pub mouse_capture: bool,
     /// Run the surface the way a screen reader can actually read it. Set by
-    /// `stella --simple` (#936); see [`run`] for what it changes and
-    /// [`crate::term::Screen`] for why the alternate screen is the root of
-    /// the problem.
+    /// `stella --simple` (#936); see [`run`] for what it changes.
+    ///
+    /// The alternate screen is the root of the problem it solves: it is a
+    /// separate grid that a full-repaint app owns and that vanishes on exit,
+    /// so a reader sees a rectangle of cells being rewritten wholesale every
+    /// frame with no notion of "a new line appeared". Drawing on the normal
+    /// screen instead makes finished transcript rows ordinary terminal
+    /// output — announced as they arrive, and still there afterwards.
     ///
     /// Three things follow from it, and they are one decision, not three:
     /// the session draws **inline** on the user's own screen instead of on
@@ -104,10 +109,12 @@ const INLINE_VIEWPORT_ROWS: u16 = 14;
 /// outcome this must never produce; a terminal too short for the full working
 /// area gets a cramped one, not a broken flush.
 fn inline_viewport_rows(terminal_rows: u16) -> u16 {
+    // `clamp(1, ..)` rather than `.min().max()`: same answer, and clippy is
+    // right that spelling the bounds out together makes the (constant, never
+    // inverted) ordering obvious at the call site.
     terminal_rows
         .saturating_sub(1)
-        .min(INLINE_VIEWPORT_ROWS)
-        .max(1)
+        .clamp(1, INLINE_VIEWPORT_ROWS)
 }
 
 /// Which screen this session draws on.
