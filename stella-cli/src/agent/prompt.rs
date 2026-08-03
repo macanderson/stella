@@ -170,10 +170,10 @@ pub(crate) const RECORD_CHANNEL_BUDGET: usize = 2_000;
 /// Separate from [`assemble_system_prompt`] because it belongs to a different cache
 /// contract: this text may differ every turn, which is exactly why it must live
 /// after the stable prefix rather than inside it. One call for the
-/// render-and-set pair. NOTE: only the one-shot pipeline and the plain REPL
-/// make it today — the deck, goal loop, fleet workers, and sub-sessions open
-/// a `SessionMemory` without attaching the channel, so volatile records do
-/// not reach their recall blocks yet.
+/// render-and-set pair. NOTE: the one-shot pipeline, the plain REPL, the
+/// deck, and the goal loop attach it; fleet workers and sub-sessions still
+/// open a `SessionMemory` without the channel, so volatile records do not
+/// reach their recall blocks yet.
 pub(crate) fn attach_record_channel(
     memory: &mut crate::memory::SessionMemory,
     active_rules: &crate::rules::ResolvedRules,

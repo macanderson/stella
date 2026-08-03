@@ -342,6 +342,12 @@ pub async fn run_deck_session(
     // `warn: false`: past this point diagnostics would land on the alternate
     // screen; a memory-less session degrades silently here.
     let mut memory = SessionMemory::open_with_authority(&cfg.workspace_root, false, &cfg.authority);
+    if let Some(m) = &mut memory {
+        // The volatile record channel rides the recall block, so a deck that
+        // never attached it silently dropped `may`/`info` facts from every
+        // turn while the one-shot path carried them.
+        agent::attach_record_channel(m, &active_rules);
+    }
     // Custom extensions: ⚡ commands/skills in the slash menu, custom agents
     // behind `/agents`. Reloaded after `/init`, which may adopt new ones.
     let mut custom = crate::extensions::CustomExtensions::load_with_authority(
@@ -1232,6 +1238,9 @@ pub async fn run_deck_session(
                 // (not just the next), and push a fresh Graph-tab snapshot.
                 memory =
                     SessionMemory::open_with_authority(&cfg.workspace_root, false, &cfg.authority);
+                if let Some(m) = &mut memory {
+                    agent::attach_record_channel(m, &active_rules);
+                }
                 if let Some(snapshot) = agent::graph_snapshot(&cfg.workspace_root) {
                     let _ = in_tx.send(Inbound::GraphSnapshot(snapshot));
                 }
@@ -1287,10 +1296,21 @@ pub async fn run_deck_session(
         // Phase 2 (#713): the deck recalled and reported nothing. The event
         // is carried to `run_lead_turn`, which owns the turn's channel.
         let mut recall_event = None;
-        if !pipeline_on && let Some(m) = &memory {
-            let recalled = m.recall_block_reported(&prompt).await;
-            recall_event = recalled.telemetry_event();
-            inject_recall_block(&mut messages, recalled.text);
+        if let Some(m) = &memory {
+            if pipeline_on {
+                // The pipeline recalls frames itself (its port is this same
+                // store) and renders them into its one volatile recall+goal
+                // message, emitting the turn's `ContextRecall`. Dropping the
+                // whole block here — the previous guard — threw skills,
+                // draft claims, and the record channel away with the frames;
+                // the frames-free pipeline block keeps exactly the sections
+                // the pipeline has no channel for.
+                inject_recall_block(&mut messages, m.pipeline_recall_block(&prompt).await);
+            } else {
+                let recalled = m.recall_block_reported(&prompt).await;
+                recall_event = recalled.telemetry_event();
+                inject_recall_block(&mut messages, recalled.text);
+            }
         }
         let turn_base = messages.len();
         if !pipeline_on {

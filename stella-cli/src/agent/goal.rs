@@ -260,12 +260,25 @@ pub async fn run_goal_cmd(
         .await,
     )];
     let mut memory = SessionMemory::open_with_authority(&cfg.workspace_root, true, &cfg.authority);
+    if let Some(m) = &mut memory {
+        prompt::attach_record_channel(m, &active_rules);
+    }
     // Phase 2 (#713): carried to the turn runner, which owns the event channel.
     let mut recall_event = None;
     if let Some(m) = &memory {
-        let recalled = m.recall_block_reported(goal).await;
-        recall_event = recalled.telemetry_event();
-        inject_recall_block(&mut messages, recalled.text);
+        if use_pipeline {
+            // Pipeline rounds recall frames through their own port (wired to
+            // this same store in `run_goal_pipeline_turn`) and emit their own
+            // `ContextRecall`; the CLI block carries only the sections the
+            // port has no channel for. Injecting the full block here would
+            // recall twice and bill the frames twice — the duplication the
+            // one-shot path had.
+            inject_recall_block(&mut messages, m.pipeline_recall_block(goal).await);
+        } else {
+            let recalled = m.recall_block_reported(goal).await;
+            recall_event = recalled.telemetry_event();
+            inject_recall_block(&mut messages, recalled.text);
+        }
     }
 
     let started_unix = crate::memory::unix_now_secs();
@@ -553,7 +566,10 @@ async fn run_goal_pipeline_turn(
 ) -> Result<(), String> {
     let turn_start = Instant::now();
     let execution = begin_execution(store, "goal", goal, cfg, session);
-    if let (Some((_, id)), Some(m)) = (&execution, session_memory) {
+    // Rebound mutable and NOT consumed by the id stamp, so the same memory
+    // can double as the pipeline's recall port below.
+    let mut session_memory = session_memory;
+    if let (Some((_, id)), Some(m)) = (&execution, session_memory.as_deref_mut()) {
         m.set_execution_id(*id);
     }
     let files_before = registry.files_touched().len();
@@ -645,7 +661,16 @@ async fn run_goal_pipeline_turn(
             Some(stella_core::EventSender::new(tx.clone())),
         )?;
         let no_recall = NoContextRecall;
-        let recall: &dyn ContextRecallPort = &no_recall;
+        // The workspace memory doubles as the recall port (as on the one-shot
+        // path), so every round's planner and witness author see the same
+        // durable lessons the worker's block carries. `NoContextRecall` here
+        // starved them while the caller's full block fed only the worker —
+        // and once the caller switched to the frames-free pipeline block,
+        // nothing at all would have carried frames.
+        let recall: &dyn ContextRecallPort = match session_memory.as_deref() {
+            Some(m) => m,
+            None => &no_recall,
+        };
         let hook_runner = ShellHookRunner;
 
         // The goal judge's provider/tool/config bundle. NOT reused across
