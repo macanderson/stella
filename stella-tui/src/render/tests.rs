@@ -13,10 +13,10 @@ use stella_protocol::{
 };
 use stella_protocol::{CiStatus, PrStatus, SubAgentStatus};
 
+mod accessibility;
 mod inline_diff;
 mod palette;
 mod slash;
-mod accessibility;
 mod thinking;
 
 /// Flatten a `TestBackend` buffer to one `String` per row (styling
