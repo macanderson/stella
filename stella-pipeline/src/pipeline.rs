@@ -546,7 +546,9 @@ pub struct PipelineOutcome {
     /// This is what RAN, not what was configured: a candidate that aborted in
     /// setup — no isolation port, a tree that could not be snapshotted, no
     /// independent witness author — never dispatched a model call, and is not
-    /// counted. A `--candidates 4` run where three failed isolation reports 1.
+    /// counted. A `candidates = 4` run where three failed isolation reports 1.
+    /// (Named for a `--candidates` flag that was never built; the knob is set
+    /// through `agent_engine_config.pipeline_candidates` — #1211 §6.8.)
     pub candidates_run: u32,
 }
 

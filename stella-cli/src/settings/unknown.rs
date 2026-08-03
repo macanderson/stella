@@ -80,6 +80,8 @@ pub(crate) const ENGINE_ROOT_FIELDS: &[&str] = &[
     "effort_auto",
     "reasoning_auto",
     "headless_scope_bypass",
+    "pipeline_max_revisions",
+    "pipeline_candidates",
     "agents",
 ];
 
@@ -168,6 +170,8 @@ const TOML_AGENTS_FIELDS: &[&str] = &[
     "effort_auto",
     "reasoning_auto",
     "headless_scope_bypass",
+    "pipeline_max_revisions",
+    "pipeline_candidates",
     "default",
     "worker",
     "judge",

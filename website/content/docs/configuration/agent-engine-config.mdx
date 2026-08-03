@@ -66,6 +66,11 @@ pin just the judge model while your user scope keeps everything else.
     // aborting at the gate that has nobody to ask.
     "headless_scope_bypass": "off",
 
+    // How many times a task may be attempted. Revisions are spent only on a
+    // verification that already failed; candidates are paid on every task.
+    "pipeline_max_revisions": 2,
+    "pipeline_candidates": 1,
+
     // Per-agent deep config. Set a field and it goes on the wire; leave it
     // out and the provider default applies.
     "agents": {
@@ -212,6 +217,21 @@ Set any of the three autos to `"on"` and stop thinking about it:
     instead of stopping at the gate that has nobody to ask. Off deliberately:
     turn it on only where the working tree is disposable and the budget cap is
     the real guard — a benchmark container, CI on a scratch checkout.
+  </OptionCard>
+  <OptionCard name="pipeline_max_revisions" defaultValue="2">
+    Revision turns per candidate after a **failed** verification. A run that
+    passes first time costs the same at `4` as at `2` — this only changes what
+    happens to near-misses. Each revision is a full execute turn, so on a task
+    that cannot be fixed it is the difference between failing cheaply and
+    failing expensively.
+  </OptionCard>
+  <OptionCard name="pipeline_candidates" defaultValue="1">
+    [Best-of-N](/docs/inference-pipeline): generate this many candidate
+    executions and adopt only the winner's changes. Unlike revisions this is
+    paid **unconditionally** — `2` doubles execution cost across every task,
+    including the ones a single shot would have solved. Wants candidate
+    isolation to be meaningful; without it the candidates run sequentially in
+    the shared tree and the losers' edits stay behind.
   </OptionCard>
 </CardGrid>
 
