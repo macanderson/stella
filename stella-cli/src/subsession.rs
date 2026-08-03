@@ -608,7 +608,7 @@ async fn run_worker(
     .await;
     let mut messages = vec![
         CompletionMessage::system(system_prompt),
-        crate::attachments::user_message(&spec.prompt),
+        crate::attachments::user_message_in(&spec.prompt, &cfg.workspace_root),
     ];
     let mut budget = agent::build_budget_guard(budget_limit);
     budget.begin_turn();
