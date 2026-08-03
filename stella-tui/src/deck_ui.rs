@@ -723,6 +723,18 @@ pub struct DeckUi {
     /// Motion off-switch (`--no-anim` / `STELLA_NO_ANIM` / `NO_COLOR`): freezes
     /// the progress shimmer, pulse, and caret blink to a static frame.
     pub no_anim: bool,
+    /// Accessible mode (`--accessible` / `STELLA_ACCESSIBLE`): the SAME deck,
+    /// drawn so a screen reader can read it (#1258). Every tab, gate and key
+    /// is unchanged; what this flag reaches is layout — the remaining
+    /// side-by-side splits stack, and the grid views render as label-value
+    /// text instead of aligned columns, because column alignment carries
+    /// meaning only to an eye. The terminal-level half of the mode (normal
+    /// screen, inline viewport, forced `no_anim`) is the shell's and lives in
+    /// [`crate::accessible`].
+    pub accessible: bool,
+    /// Per-lane scrollback bookkeeping. Inert unless the shell armed it with
+    /// a real inline viewport — see [`crate::accessible::Scrollback`].
+    pub scrollback: crate::accessible::Scrollback,
     /// Whether the SESSIONS overlay is open (empty-prompt `←` on the Session
     /// tab, or `/sessions`). Modal while open: ↑/↓ move, `⏎` open (replay),
     /// `a` archive, `x` delete, `r` refresh, Esc/`←` close.
@@ -841,6 +853,8 @@ impl Default for DeckUi {
             session_plan: None,
             color_mode: crate::theme::ColorMode::default(),
             no_anim: false,
+            accessible: false,
+            scrollback: crate::accessible::Scrollback::default(),
             sessions_open: false,
             sessions: Vec::new(),
             sessions_sel: 0,
@@ -1042,6 +1056,15 @@ pub enum DeckAction {
 
 /// Fold one inbound envelope and keep the ephemeral UI in range.
 pub fn ingest_inbound(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) {
+    // Same announcement wrapper as the key path: an inbound envelope can move
+    // the session too (a lane registering and taking focus, a driver-driven
+    // tab jump), and a move nobody asked for is the one most worth saying.
+    crate::accessible::announce::announcing_fold(model, ui, |model, ui| {
+        ingest_inner(inbound, model, ui)
+    });
+}
+
+fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) {
     // A refreshed graph snapshot or slash vocabulary is out-of-band view
     // state, not a model fold — apply it straight to the UI. Everything else
     // folds into the model, then selections are re-clamped.
@@ -1314,6 +1337,14 @@ pub fn ingest_inbound(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut De
     // view state like the cue above: the model fold never sees it.
     if let Inbound::Notice(text) = inbound {
         ui.notice.push(text.clone());
+        // A dialog that stands for three seconds and then gets out of the way
+        // is an affordance for an eye that happened to be looking. In
+        // accessible mode the same notice also goes to scrollback, marked as
+        // the program speaking — the deck's startup news ("a previous session
+        // is resumable", an untrusted `mcp.toml`) is exactly the kind a user
+        // needs to be able to go back and read.
+        ui.scrollback
+            .announce(format!("{}{text}", crate::accessible::NOTICE_MARKER));
         return;
     }
     // A deregister removes a dashboard row, shifting every index after it:
@@ -1378,8 +1409,19 @@ fn clamp(model: &WorkspaceModel, ui: &mut DeckUi) {
     // (bumping the rev invalidates the fold cache).
     for agent in &model.agents {
         let evicted = agent.model.evicted_entries();
-        if evicted > ui.evicted_seen.get(&agent.meta.id).copied().unwrap_or(0) {
+        let seen = ui.evicted_seen.get(&agent.meta.id).copied().unwrap_or(0);
+        if evicted > seen {
             ui.evicted_seen.insert(agent.meta.id.clone(), evicted);
+            // The scrollback counter is an *index* into the retained window,
+            // so it moves down by the number of index slots the pass removed —
+            // not by the number of entries it counted. Each pass drains a
+            // chunk and stands one marker in its place, so those differ by
+            // exactly one, and only for the first pass (later passes drain a
+            // marker that was already occupying a slot). Getting this wrong in
+            // the other direction would suppress entries from the live pane
+            // that were never written anywhere.
+            let slots = (evicted - seen).saturating_sub(usize::from(seen == 0));
+            ui.scrollback.shift_after_eviction(&agent.meta.id, slots);
             if ui.expanded.remove(&agent.meta.id).is_some() {
                 ui.expanded_rev += 1;
             }
@@ -1458,6 +1500,14 @@ pub(crate) use nav::is_folded;
 use nav::{handle_search_key, reveal_current_match, seek_failure, toggle_fold};
 
 pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
+    // Accessible mode announces where a key MOVED the session — a tab change,
+    // an overlay, a lane focus. Wrapped here rather than called from each of
+    // the dozen places that write `ui.tab` (see `accessible::announce`); on an
+    // ordinary session it is a single `bool` check.
+    crate::accessible::announce::announcing(model, ui, |ui| handle_key_inner(key, model, ui))
+}
+
+fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
     if key.kind == KeyEventKind::Release {
         return DeckAction::Ignored;
     }

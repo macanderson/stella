@@ -145,11 +145,25 @@ pub(crate) struct GlobalArgs {
     #[arg(long, global = true, hide_short_help = true)]
     pub(crate) plain: bool,
 
+    /// Run the Command Deck so a screen reader can read it
+    ///
+    /// The same deck — every tab, every key, nothing removed — drawn as
+    /// ordinary terminal output instead of a full-window app. It never takes
+    /// over the screen: the deck draws inline under your prompt, and each
+    /// completed message is written into normal scrollback once, so a reader
+    /// announces it as it arrives, your review cursor can go back through it,
+    /// and it is still there after you quit. Animation is frozen, panels stack
+    /// in one column, grid views read as labelled rows, and moving between
+    /// tabs or overlays is announced. Needs a terminal on both stdin and
+    /// stdout; use --plain otherwise. Env: STELLA_ACCESSIBLE=1.
+    #[arg(long, global = true, alias = "simple", hide_short_help = true)]
+    pub(crate) accessible: bool,
+
     /// Freeze all deck animation to a static frame
     ///
     /// Stills the run progress bar's shimmer/pulse and the caret blink, for CI
     /// and asciinema-style recordings. Also forced on by STELLA_NO_ANIM or
-    /// NO_COLOR.
+    /// NO_COLOR, and by --accessible.
     #[arg(long, global = true, hide_short_help = true)]
     pub(crate) no_anim: bool,
 

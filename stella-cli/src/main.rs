@@ -472,6 +472,19 @@ fn main() -> ExitCode {
     }
 }
 
+/// The deck's presentation, resolved from the flags and their env synonyms.
+///
+/// One place, so `chat` and `resume` cannot drift: a user who set
+/// `STELLA_ACCESSIBLE` in their profile must get the accessible deck from
+/// both, and finding that out by discovering `resume` ignores it is exactly
+/// the failure this centralization prevents.
+fn deck_presentation(globals: &cli::GlobalArgs) -> term_policy::DeckPresentation {
+    term_policy::DeckPresentation {
+        no_anim: term_policy::animation_disabled(globals.no_anim),
+        accessible: term_policy::accessible_mode(globals.accessible),
+    }
+}
+
 fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
     // Models and Version don't need a configured provider/key.
     match &cli.command {
@@ -899,7 +912,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                         command_deck::run_deck_session(
                             &cfg,
                             cli.globals.budget,
-                            term_policy::animation_disabled(cli.globals.no_anim),
+                            deck_presentation(&cli.globals),
                             None,
                         ),
                     )?;
@@ -948,7 +961,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 command_deck::run_deck_session(
                     &cfg,
                     cli.globals.budget,
-                    term_policy::animation_disabled(cli.globals.no_anim),
+                    deck_presentation(&cli.globals),
                     Some(request),
                 ),
             )?;

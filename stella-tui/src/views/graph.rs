@@ -49,10 +49,19 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     let cursor = ui.graph_cursor.min(snapshot.nodes.len() - 1);
     ui.graph_cursor = cursor;
 
-    let cols =
-        Layout::horizontal([Constraint::Percentage(34), Constraint::Percentage(66)]).split(area);
-    render_node_list(snapshot, cursor, cols[0], buf);
-    render_right(snapshot, cursor, cols[1], buf);
+    // Side by side normally; stacked in accessible mode. A row that carries
+    // the node list on its left and the detail panel on its right reads aloud
+    // as one interleaved line — the two panes are separate documents, so
+    // reading order has to be one then the other, not both at once (#1258).
+    // The list keeps the smaller share either way: it is an index, and the
+    // detail is what the index is for.
+    let panes = if ui.accessible {
+        Layout::vertical([Constraint::Percentage(40), Constraint::Percentage(60)]).split(area)
+    } else {
+        Layout::horizontal([Constraint::Percentage(34), Constraint::Percentage(66)]).split(area)
+    };
+    render_node_list(snapshot, cursor, panes[0], buf);
+    render_right(snapshot, cursor, panes[1], buf);
 }
 
 /// The "nothing loaded" state: a centered muted hint, no border chrome beyond

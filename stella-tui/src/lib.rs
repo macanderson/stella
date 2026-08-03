@@ -30,6 +30,14 @@
 //! panels — the ones the deck actually draws with — stayed, and now live in
 //! [`mod@render`] with a single caller.
 //!
+//! That is also why **accessibility is a mode on the deck, not a surface
+//! beside it** ([`mod@accessible`], #1258): a separate accessible surface is a
+//! permanent second-class tier, since every deck feature shipped afterwards
+//! becomes a new gap it never closes. [`DeckOptions::accessible`] runs the same
+//! `run_deck` on the user's own screen, with settled transcript entries moving
+//! into the terminal's scrollback, panels in one column, and the grid views as
+//! labelled text.
+//!
 //! The binding TUI requirements are honored
 //! structurally: event-derived rendering (L-T1), mouse-off-by-default for
 //! native copy (L-T2, [`DeckOptions::mouse_capture`]), paste chips (L-T3,
@@ -38,6 +46,7 @@
 //! (L-T6), the panel panic boundary (L-T7, `panel_guard` — covering the
 //! deck's bands), and the debug channel (L-T8, [`DebugLog`]).
 
+pub mod accessible;
 pub mod ansi;
 pub mod attach;
 pub mod clipboard;
@@ -78,6 +87,7 @@ pub mod theme;
 pub mod transcript_nav;
 pub mod views;
 
+pub use accessible::{FlushBlock, NOTICE_MARKER, Scrollback};
 pub use ansi::strip_ansi;
 pub use attach::probe_path_attachment;
 pub use clipboard::{ClipboardPaste, default_attachments_dir};

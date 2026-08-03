@@ -110,8 +110,36 @@ struct DeckPty {
     output: Arc<Mutex<Vec<u8>>>,
 }
 
+/// Enter the alternate screen / leave it. An accessible session must emit
+/// NEITHER — and the leave matters as much as the enter: an unbalanced
+/// `LeaveAlternateScreen` clears the user's real terminal, taking the whole
+/// conversation with it at the very last instant.
+const ENTER_ALT_SCREEN: &[u8] = b"\x1b[?1049h";
+const LEAVE_ALT_SCREEN: &[u8] = b"\x1b[?1049l";
+/// Mouse tracking on. Capturing the mouse disables the terminal's own
+/// selection, which is how several assistive technologies read a terminal.
+const ENABLE_MOUSE: &[u8] = b"\x1b[?1000h";
+/// DECTCEM show — what ratatui emits for a frame that positions the cursor
+/// (#935). Its absence means the hardware cursor is hidden and there is no
+/// insertion point for a reader or an IME to track.
+const SHOW_CURSOR: &[u8] = b"\x1b[?25h";
+/// "Where is the cursor?" — the report an inline viewport blocks on while it
+/// anchors itself. The harness answers it; see the reader thread.
+const DEVICE_STATUS_REPORT: &[u8] = b"\x1b[6n";
+
 impl DeckPty {
     fn spawn() -> Self {
+        Self::spawn_with(false, true)
+    }
+
+    /// `accessible` runs the same demo under `STELLA_ACCESSIBLE=1` — the deck
+    /// on the user's own screen, in an inline viewport (#1258).
+    ///
+    /// `answer_dsr` is what a *terminal* does, not what the deck does: with it
+    /// off this pty behaves like the minimal emulators and harnesses that never
+    /// reply to a cursor-position request, which is the case that made #1237's
+    /// surface fail to start outright.
+    fn spawn_with(accessible: bool, answer_dsr: bool) -> Self {
         let mut master: libc::c_int = -1;
         let mut slave: libc::c_int = -1;
         let mut ws = libc::winsize {
@@ -149,6 +177,11 @@ impl DeckPty {
             .env_remove("CLICOLOR_FORCE")
             .env_remove("COLORTERM")
             .env_remove("STELLA_DEBUG");
+        if accessible {
+            cmd.env("STELLA_ACCESSIBLE", "1");
+        } else {
+            cmd.env_remove("STELLA_ACCESSIBLE");
+        }
         unsafe {
             cmd.pre_exec(move || {
                 // A fresh session with the pty as controlling terminal:
@@ -170,6 +203,9 @@ impl DeckPty {
         let output = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&output);
         let mut reader = unsafe { File::from_raw_fd(libc::dup(master)) };
+        // The same fd for writing: this thread has to answer the child, not
+        // just record it (see `DEVICE_STATUS_REPORT`).
+        let mut responder = unsafe { File::from_raw_fd(libc::dup(master)) };
         std::thread::spawn(move || {
             let mut buf = [0u8; 8192];
             // EIO (Linux) or EOF (macOS) once the child's side is gone —
@@ -177,7 +213,26 @@ impl DeckPty {
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) | Err(_) => break,
-                    Ok(n) => sink.lock().unwrap().extend_from_slice(&buf[..n]),
+                    Ok(n) => {
+                        let chunk = &buf[..n];
+                        sink.lock().unwrap().extend_from_slice(chunk);
+                        // An inline viewport anchors itself to the cursor's
+                        // current row, which it learns by asking: it writes a
+                        // Device Status Report and BLOCKS until the terminal
+                        // answers. A bare pty is a pipe with a line discipline
+                        // — it answers nothing — so without this the accessible
+                        // deck degrades to the no-scrollback path and the test
+                        // would be measuring the harness rather than the code.
+                        // Every real emulator replies; so does this one.
+                        if answer_dsr
+                            && chunk
+                                .windows(DEVICE_STATUS_REPORT.len())
+                                .any(|w| w == DEVICE_STATUS_REPORT)
+                        {
+                            let _ = responder.write_all(b"\x1b[1;1R");
+                            let _ = responder.flush();
+                        }
+                    }
                 }
             }
         });
@@ -321,4 +376,153 @@ fn run_deck_paints_folds_resizes_and_restores_under_a_real_pty() {
     deck.wait_for("the terminal restore", |d| {
         d.raw_contains(b"\x1b[?1049l") && d.raw_contains(b"\x1b[?2004l")
     });
+}
+
+/// The accessibility contract of `--accessible` (#1258), driven through the
+/// real entry point.
+///
+/// The load-bearing assertion is negative: this mode must never enter the
+/// alternate screen. That single escape sequence is the difference between
+/// "the conversation is terminal output a screen reader can read" and "the
+/// conversation is a grid of cells being rewritten wholesale", and it is the
+/// kind of thing a well-meaning refactor re-adds without noticing.
+///
+/// The positive half is that it is still the whole deck: it paints, it folds
+/// the scripted scenario, it answers input, and it quits clean — plus the
+/// settled transcript really does reach the terminal's scrollback, which the
+/// last assertion pins by looking only at bytes written *after* the quit key.
+///
+/// The finer scrollback invariants — a settled entry planned exactly once, the
+/// counter never advancing without a write, a lane change neither re-flushing
+/// nor dropping — are unit tests (`accessible::tests`), because a repainting
+/// byte stream cannot distinguish "painted in the live pane" from "written into
+/// scrollback" and an assertion that pretended otherwise would be measuring
+/// ratatui's damage tracking.
+#[test]
+fn the_accessible_deck_runs_inline_answers_input_and_never_takes_the_screen() {
+    let mut deck = DeckPty::spawn_with(true, true);
+
+    // The deck chrome paints — same program, no feature removed.
+    deck.send(b"\x1b");
+    deck.wait_for("the tab bar", |d| {
+        let s = d.painted();
+        s.contains("SESSION") && s.contains("AGENTS") && s.contains("SETTINGS")
+    });
+
+    // THE invariant. Everything else about this mode follows from drawing on
+    // the user's own screen: output that scrolls off stays in scrollback, a
+    // reader announces each line once as it arrives, and quitting leaves the
+    // conversation behind instead of tearing it down with the screen.
+    assert!(
+        !deck.raw_contains(ENTER_ALT_SCREEN),
+        "accessible mode must never enter the alternate screen; the deck painted:\n{}",
+        deck.stripped()
+    );
+    // …and the mouse stays free, so the terminal's own selection — which is
+    // how several assistive technologies read — keeps working.
+    assert!(
+        !deck.raw_contains(ENABLE_MOUSE),
+        "mouse capture disables native selection"
+    );
+
+    // #935, which #1258's acceptance carries forward as a must-not-regress: the
+    // hardware cursor is positioned at the composer caret, so there is a real
+    // insertion point for a reader to follow and for a CJK IME to anchor its
+    // candidate window to. Its absence means the cursor is hidden and there is
+    // no such point.
+    deck.wait_for("a positioned hardware cursor", |d| {
+        d.raw_contains(SHOW_CURSOR)
+    });
+
+    // The scripted scenario folds in and paints, inline.
+    deck.wait_for("the scripted recall fold", |d| {
+        d.painted().contains("enginestep-driver(driver.rs)")
+    });
+
+    // Liveness under resize: the inline viewport is anchored to a row, so this
+    // is the path most likely to wedge if the anchor is wrong.
+    let before = deck.raw_len();
+    deck.resize(30, 100);
+    deck.wait_for("a repaint after resize", |d| d.raw_len() > before);
+
+    // Input still round-trips: the scenario's last event is a scope-review
+    // gate, and answering it goes composer → submissions → demo reactor →
+    // inbound lane → fold → paint.
+    deck.wait_for("the scope-review gate", |d| {
+        d.painted().contains("Refactortheautomationsstore")
+    });
+    deck.send(b"approve\r");
+    deck.wait_for("the gate answer round trip", |d| {
+        d.painted().contains("scopedecision:Approve")
+    });
+
+    // A `!` command puts an entry on the focused lane that this test owns the
+    // text of — `acc-wz` is the child's OUTPUT only (the typed command echoes
+    // as `acc-XY`), and nothing in the scripted scenario can produce it.
+    deck.send(b"!echo acc-XY | tr XY wz\r");
+    deck.wait_for("the shell command's output", |d| {
+        d.painted().contains("acc-wz")
+    });
+
+    // Everything written from here on is teardown. Nothing can coalesce into a
+    // lane's trailing entry any more, so the final flush moves it into
+    // scrollback — the conversation survives the session instead of ending in a
+    // pane that stops being redrawn, which is the property the whole mode
+    // exists to deliver.
+    let before_quit = deck.raw_len();
+    deck.send(&[0x03]);
+    let status = deck.wait_exit();
+    assert!(status.success(), "deck_demo exited with {status:?}");
+
+    let tail = {
+        let out = deck.output.lock().unwrap();
+        strip_ansi(&out[before_quit.min(out.len())..]).replace(' ', "")
+    };
+    assert!(
+        tail.contains("acc-wz"),
+        "the teardown flush must write each lane's last settled entry into scrollback; \
+         the bytes after quit were:\n{tail}"
+    );
+
+    // Restoration must not include leaving a screen that was never entered —
+    // an unbalanced leave clears the user's real terminal, taking the whole
+    // conversation with it at the very last instant.
+    assert!(
+        !deck.raw_contains(ENTER_ALT_SCREEN) && !deck.raw_contains(LEAVE_ALT_SCREEN),
+        "the alternate screen was neither entered nor left"
+    );
+    // Bracketed paste is still restored — the states that WERE acquired all
+    // roll back.
+    deck.wait_for("the terminal restore", |d| d.raw_contains(b"\x1b[?2004l"));
+}
+
+/// A terminal that never answers `ESC [ 6 n` must still get a deck.
+///
+/// Anchoring an inline viewport means blocking on a cursor-position report.
+/// Every real emulator answers; some minimal ones and most harnesses do not,
+/// and #1237 found out the hard way that unguarded this makes the surface fail
+/// to start at all. It has to degrade — to a full-viewport draw on the user's
+/// OWN screen, never the alternate one, with the flush disabled and the loss
+/// announced (`accessible::degrade_notice`, unit-tested).
+#[test]
+fn an_accessible_deck_degrades_rather_than_refusing_to_start() {
+    let mut deck = DeckPty::spawn_with(true, false);
+
+    deck.send(b"\x1b");
+    deck.wait_for("the tab bar on a terminal that answers nothing", |d| {
+        let s = d.painted();
+        s.contains("SESSION") && s.contains("AGENTS") && s.contains("SETTINGS")
+    });
+    assert!(
+        !deck.raw_contains(ENTER_ALT_SCREEN),
+        "the degrade is to the user's own screen — never to the one the mode exists to avoid"
+    );
+
+    deck.send(&[0x03]);
+    let status = deck.wait_exit();
+    assert!(status.success(), "deck_demo exited with {status:?}");
+    assert!(
+        !deck.raw_contains(ENTER_ALT_SCREEN) && !deck.raw_contains(LEAVE_ALT_SCREEN),
+        "the alternate screen was neither entered nor left"
+    );
 }
