@@ -167,7 +167,11 @@ impl Session {
     pub fn start(spec: SessionSpec) -> Session {
         let (frame_tx, frame_rx) = mpsc::unbounded_channel::<ServerFrame>();
         let pending = Pending::new(spec.observer.clone(), spec.turn.clone());
-        let (controls, control_ports) = Controls::new();
+        // The controls' *port* half carries the frame sender, so a hold can
+        // announce itself on the stream; the registry-held `Controls` must not
+        // (a sender parked there would never let the frame channel close — see
+        // `crate::controls`).
+        let (controls, control_ports) = Controls::new(frame_tx.clone());
         let cancel = CancelToken::new();
         let thread_cancel = cancel.clone();
         // Fallible spawn on purpose: a host that opens more turns than the OS

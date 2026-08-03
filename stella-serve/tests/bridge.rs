@@ -147,6 +147,12 @@ async fn tool_round_trip_completes_the_turn() {
                     .unwrap();
             }
             ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
+            // An unpaused turn crosses every step boundary freely, so the
+            // pause gate must stay silent — a hold nobody asked for would
+            // be a frame every host has to learn to ignore.
+            ServerFrame::TurnHeld { .. } | ServerFrame::TurnReleased => {
+                panic!("an unpaused turn must not announce a hold")
+            }
         }
     }
 
@@ -183,6 +189,12 @@ async fn immediate_completion_needs_no_tools() {
             }
             ServerFrame::ToolRequest { .. } => tool_calls += 1,
             ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
+            // An unpaused turn crosses every step boundary freely, so the
+            // pause gate must stay silent — a hold nobody asked for would
+            // be a frame every host has to learn to ignore.
+            ServerFrame::TurnHeld { .. } | ServerFrame::TurnReleased => {
+                panic!("an unpaused turn must not announce a hold")
+            }
         }
     }
 
@@ -213,6 +225,12 @@ async fn an_unanswered_provider_request_fails_on_the_deadline() {
         match frame {
             ServerFrame::ProviderRequest { .. } => provider_requests += 1,
             ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
+            // An unpaused turn crosses every step boundary freely, so the
+            // pause gate must stay silent — a hold nobody asked for would
+            // be a frame every host has to learn to ignore.
+            ServerFrame::TurnHeld { .. } | ServerFrame::TurnReleased => {
+                panic!("an unpaused turn must not announce a hold")
+            }
             _ => {}
         }
     }
@@ -265,6 +283,12 @@ async fn an_unanswered_tool_request_times_out_into_a_tool_error() {
             // Never answered — the port's deadline must resolve it instead.
             ServerFrame::ToolRequest { .. } => tool_requests += 1,
             ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
+            // An unpaused turn crosses every step boundary freely, so the
+            // pause gate must stay silent — a hold nobody asked for would
+            // be a frame every host has to learn to ignore.
+            ServerFrame::TurnHeld { .. } | ServerFrame::TurnReleased => {
+                panic!("an unpaused turn must not announce a hold")
+            }
             _ => {}
         }
     }
@@ -298,6 +322,12 @@ async fn cancelling_a_parked_turn_unwinds_it_promptly() {
             // Cancel instead of answering, while the step is parked on us.
             ServerFrame::ProviderRequest { .. } => session.cancel(),
             ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
+            // An unpaused turn crosses every step boundary freely, so the
+            // pause gate must stay silent — a hold nobody asked for would
+            // be a frame every host has to learn to ignore.
+            ServerFrame::TurnHeld { .. } | ServerFrame::TurnReleased => {
+                panic!("an unpaused turn must not announce a hold")
+            }
             _ => {}
         }
     }
@@ -399,6 +429,12 @@ async fn streamed_provider_deltas_surface_as_events_before_the_completion() {
                 _ => {}
             },
             ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
+            // An unpaused turn crosses every step boundary freely, so the
+            // pause gate must stay silent — a hold nobody asked for would
+            // be a frame every host has to learn to ignore.
+            ServerFrame::TurnHeld { .. } | ServerFrame::TurnReleased => {
+                panic!("an unpaused turn must not announce a hold")
+            }
             ServerFrame::ToolRequest { .. } => {}
         }
     }
@@ -445,6 +481,12 @@ async fn a_host_that_never_streams_is_unchanged() {
                 event: stella_protocol::AgentEvent::TextDelta { .. },
             } => text_deltas += 1,
             ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
+            // An unpaused turn crosses every step boundary freely, so the
+            // pause gate must stay silent — a hold nobody asked for would
+            // be a frame every host has to learn to ignore.
+            ServerFrame::TurnHeld { .. } | ServerFrame::TurnReleased => {
+                panic!("an unpaused turn must not announce a hold")
+            }
             _ => {}
         }
     }
@@ -490,6 +532,12 @@ async fn a_streaming_host_resets_the_reverse_request_deadline() {
                     .unwrap();
             }
             ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
+            // An unpaused turn crosses every step boundary freely, so the
+            // pause gate must stay silent — a hold nobody asked for would
+            // be a frame every host has to learn to ignore.
+            ServerFrame::TurnHeld { .. } | ServerFrame::TurnReleased => {
+                panic!("an unpaused turn must not announce a hold")
+            }
             _ => {}
         }
     }
@@ -523,6 +571,12 @@ async fn provider_error_aborts_cleanly() {
                     .unwrap();
             }
             ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
+            // An unpaused turn crosses every step boundary freely, so the
+            // pause gate must stay silent — a hold nobody asked for would
+            // be a frame every host has to learn to ignore.
+            ServerFrame::TurnHeld { .. } | ServerFrame::TurnReleased => {
+                panic!("an unpaused turn must not announce a hold")
+            }
             _ => {}
         }
     }

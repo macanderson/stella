@@ -3128,6 +3128,38 @@
       "type": "object"
     },
     {
+      "description": "The turn reached a step boundary and is **holding** there, because\n`POST /v1/turns/{id}/pause` asked it to (#932).\n\nEmitted once per hold, from inside the pause gate, at the moment the\nturn actually parks — which is not the moment the POST was accepted.\nThat difference is the whole point: the POST says \"hold at the next\nboundary\", the frame says \"the boundary was reached and nothing further\nwill happen until you release it\".\n\nBecause it is an ordinary numbered frame it lands in the retained ring\nlike any other, so a subscriber that drops during a hold and reconnects\nwith `?after=` re-learns the hold from the replay. Without it a\nreconnecting host cannot tell a held turn from a slow one — the stream\nis silent either way.\n\n`reason` is whatever the pausing host wrote on the POST body, and\n`null` when it wrote none: the client that reconnects need not be the\nprocess that paused.",
+      "properties": {
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "const": "turn_held",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "The hold announced by [`ServerFrame::TurnHeld`] is over and the turn is\nproceeding (#932). Emitted once, paired with the `TurnHeld` before it.\n\nCarries nothing, deliberately: the gate is released by\n`POST /resume`, by a cancel, and by the turn's entry being torn down,\nand from inside the gate those are indistinguishable. A host learns\nwhich it was from what follows — more frames, or `turn_complete`.",
+      "properties": {
+        "type": {
+          "const": "turn_released",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
       "description": "Terminal frame: the turn ended. No further frames follow for this turn.",
       "properties": {
         "outcome": {

@@ -790,23 +790,59 @@ pub(crate) async fn handle_steer(
     res.json("200 OK", br#"{"status":"queued"}"#).await
 }
 
+/// Body of `POST /v1/turns/{id}/pause`. Optional in its entirety — an empty
+/// body is the plain "just hold" the route shipped with.
+#[derive(Debug, Default, Deserialize)]
+struct PauseIn {
+    /// Why the turn is being held, carried onto the `turn_held` frame.
+    ///
+    /// The client that reconnects mid-hold need not be the process that
+    /// paused, so the reason has to live on the stream rather than in the
+    /// pausing caller's memory.
+    #[serde(default)]
+    reason: Option<String>,
+}
+
 /// `POST /v1/turns/{id}/pause` — hold the turn at its next step boundary
 /// (#932). Idempotent. Step granularity, never mid-tool: a step already in
 /// flight (a parked reverse request included) finishes first.
+///
+/// The turn announces the hold on its event stream as a `turn_held` frame when
+/// it actually reaches the boundary — which is later than this response, and
+/// is the frame a reconnecting subscriber replays to re-learn that the turn is
+/// waiting on it (`crate::controls`).
 pub(crate) async fn handle_pause(
     res: &mut Responder<'_>,
     state: &Arc<ServerState>,
     id: &str,
+    body: &[u8],
 ) -> std::io::Result<()> {
     let Some(entry) = state.lookup(id) else {
         return res.json("404 Not Found", &error_body("unknown turn")).await;
+    };
+    // Empty is the documented shape and stays free: only a client that wrote
+    // something is held to it being JSON.
+    let pause: PauseIn = if body.iter().all(u8::is_ascii_whitespace) {
+        PauseIn::default()
+    } else {
+        match serde_json::from_slice(body) {
+            Ok(pause) => pause,
+            Err(err) => {
+                return res
+                    .json(
+                        "400 Bad Request",
+                        &error_body(&format!("invalid pause request: {err}")),
+                    )
+                    .await;
+            }
+        }
     };
     if known_finished(&entry) {
         return res
             .json("409 Conflict", &error_body("turn already finished"))
             .await;
     }
-    entry.controls.pause();
+    entry.controls.pause(pause.reason);
     res.json("200 OK", br#"{"status":"paused"}"#).await
 }
 
@@ -905,6 +941,14 @@ struct SessionInfo<'a> {
     /// The id of the turn currently running in this session, if any — the
     /// handle a reconnecting host needs to rejoin its event stream.
     live_turn: Option<String>,
+    /// Whether that live turn has been asked to hold (#932).
+    ///
+    /// The point of reporting it here is that a host does not have to replay
+    /// a stream to find out. A reconnecting process reads one `GET` and knows
+    /// whether the silence on `/events` is a turn thinking or a turn waiting
+    /// on *it* — the difference between waiting longer and posting a resume.
+    /// `false` when there is no live turn.
+    held: bool,
     /// The retained conversation, compaction rewrites included.
     messages: Vec<CompletionMessage>,
 }
@@ -1091,12 +1135,20 @@ pub(crate) async fn handle_session_get(
             .await;
     };
     let view = sess.view();
+    // A live turn that is no longer in the registry (cancelled, evicted) is
+    // not held — there is nothing left to release.
+    let held = view
+        .live_turn
+        .as_deref()
+        .and_then(|turn_id| state.lookup(turn_id))
+        .is_some_and(|entry| entry.controls.is_paused());
     let body = serde_json::to_vec(&SessionInfo {
         session_id: id,
         turns_completed: view.turns_completed,
         turns_aborted: view.turns_aborted,
         cost_usd: view.cost_usd,
         live_turn: view.live_turn,
+        held,
         messages: view.history,
     })
     .unwrap_or_default();
