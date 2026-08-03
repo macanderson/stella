@@ -1,0 +1,45 @@
+# deck golden · overlay_help_skills
+# the ? help overlay over the SKILLS tab
+# viewport 160×40 · rendered through render_deck, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
+
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ SKILLS │ MCP │ ISSUES │ SETTINGS                                                                                 │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Installed — 4 (user + project) ──────────────────────────────────────────────────────┐┌ Registry search ─────────────────────────────────────────────────────┐
+│  [x] release-checklist v3  (project·workspace)  Cut a release: version bump, change… ││find:                                                                 │
+│▸ [x] rust-review v2/4  (user·user)  Review Rust diffs for ownership, error handling… ││                                                                      │
+│  [ ] sql-tuning v1  (user·installed)  Read a┌ help — SKILLS · esc close ───────────────────────────────────────┐o search                                     │
+│  [x] bench-rig-access v1  (project·auto)  Re│                                                                  │                                             │
+│                                             │  SKILLS tab                                                      │                                             │
+│                                             │  ← →           switch panes                                      │                                             │
+│                                             │  ↑ ↓           select a skill                                    │                                             │
+│                                             │  space         enable / disable                                  │                                             │
+│                                             │  e             edit the selected skill                           │                                             │
+│                                             │  p             pin / unpin                                       │                                             │
+│                                             │  n             new skill — drafted by the LLM                    │                                             │
+│                                             │  ctrl-o        preview                                           │                                             │
+│                                             │  ctrl-x ×2     delete (press twice to confirm)                   │                                             │
+│                                             │  type          search skills                                     │                                             │
+│                                             │                                                                  │                                             │
+│                                             │  everywhere                                                      │                                             │
+│                                             │  tab / ⇧tab    switch tabs                                       │                                             │
+│                                             │  ⏎             queue the prompt — mid-turn it runs as its own age│                                             │
+│                                             │  ⌘⏎ / ⌃⏎ / ⌥⏎  insert a line break in the prompt                 │                                             │
+│                                             │  !cmd          run a shell command NOW (skips the queue)         │                                             │
+│                                             │  /             slash commands — ↑↓ pick · tab completes · ⏎ runs │                                             │
+│                                             │  ctrl-v        paste — a copied image is attached to the prompt  │                                             │
+│                                             │  ctrl-t        open the queue editor                             │                                             │
+│                                             │  >text         steer the running turn — lands at the next step bo│                                             │
+│                                             │  esc           soft-stop at the next step boundary — completed wo│                                             │
+│                                             │  esc esc       cancel NOW & hold — nothing runs until your next p│                                             │
+└─────────────────────────────────────────────│  ctrl-c        quit stella                                       │─────────────────────────────────────────────┘
+ space on/off · ctrl+o preview · ctrl+x×2 dele│                                                                  │
+──────────────────────────────────────────────│  letter & arrow hotkeys apply while the prompt box is empty      │──────────────────────────────────────────────
+ ▸ stage  Refactor the automations store into └──────────────────────────────────────────────────────────────────┘
+✓ plan  ▸ execute  · verify ██████████████████████████████████████████┊█████████████████████░░░░░░░░░░░░░░░░░░░░░┊░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 50%
+>>>
+ ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
+           │ AGENT │ STAGE     │ CPU         │ CONTEXT          │ SPEND │ CACHE                 │ SAVED │ WARMTH │ ENGINE   │ PIPELINE │ PR            │ INBOX
+ ✦ stella  │ lead  │ ● execute │ ▮▮▮▯▯▯  50% │ ▯▯▯▯▯▯ 8.2k/200k │ $0.05 │ 63% (18.0K rd · 0 wr) │ $0.00 │ —      │ 3 active │ OFF      │ ⇢ #981 open … │ —
+ MODELS  T·—  W·zai/glm-5.2-air  J·—

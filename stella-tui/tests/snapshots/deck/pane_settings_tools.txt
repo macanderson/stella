@@ -1,0 +1,45 @@
+# deck golden · pane_settings_tools
+# the SETTINGS tab's TOOLS pane, with an org-locked row
+# viewport 160×40 · rendered through render_deck, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
+
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ SKILLS │ MCP │ ISSUES │ SETTINGS                                                                                 │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  AGENTS  │  TOOLS   ←/→
+┌ tools · 1 off · 1 org-locked ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│▸ BASH                      off  1 tools · org-locked                                                                                                         │
+│    bash                    off  locked · "bash" off in org-managed settings                                                                                  │
+│  CUSTOM                    on   1 tools                                                                                                                      │
+│    deploy_to_staging       on                                                                                                                                │
+│  FILE                      on   2 tools                                                                                                                      │
+│    read_file               on                                                                                                                                │
+│    write_file              on                                                                                                                                │
+│  MCP                       on   1 tools                                                                                                                      │
+│    mcp__github__create_is… on                                                                                                                                │
+│  PROCESS                   on   1 tools                                                                                                                      │
+│    start_process           on                                                                                                                                │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│ e edit tool switches                                                                                                                                         │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▸ stage  Refactor the automations store into a shared workspace package
+✓ plan  ▸ execute  · verify ██████████████████████████████████████████┊█████████████████████░░░░░░░░░░░░░░░░░░░░░┊░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 50%
+>>>
+ ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
+           │ AGENT │ STAGE     │ CPU         │ CONTEXT          │ SPEND │ CACHE                 │ SAVED │ WARMTH │ ENGINE   │ PIPELINE │ PR            │ INBOX
+ ✦ stella  │ lead  │ ● execute │ ▮▮▮▯▯▯  50% │ ▯▯▯▯▯▯ 8.2k/200k │ $0.05 │ 63% (18.0K rd · 0 wr) │ $0.00 │ —      │ 3 active │ OFF      │ ⇢ #981 open … │ —
+ MODELS  T·—  W·zai/glm-5.2-air  J·—
