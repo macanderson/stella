@@ -108,7 +108,7 @@ pub const COMPOSITION_SEAMS: &[&str] = &[
 /// forces this DOWN in the same PR (the win is recorded), and adding a new
 /// unwitnessed claim forces it UP — a visible review decision instead of a
 /// silent one.
-pub const UNWITNESSED_BASELINE: usize = 2;
+pub const UNWITNESSED_BASELINE: usize = 3;
 
 /// The matrix. Ordered by area; ids are stable and unique.
 pub static CAPABILITIES: &[Capability] = &[
@@ -213,6 +213,35 @@ pub static CAPABILITIES: &[Capability] = &[
             mechanism: "POST /v1/turns/{id}/steer — injected at the next step boundary, echoed as \
                         a steered event",
             witness: "a_steer_lands_in_the_next_model_request_and_echoes_on_the_stream",
+        },
+    },
+    Capability {
+        id: "turn.halt_on_goal_met",
+        engine_home: "stella-core TurnHalt port — end a turn at a step boundary because the goal \
+                      is MET, the one exit that is not a limit being reached",
+        engine_entries: &["with_turn_halt"],
+        cli: SurfacePosture::ShippedUnwitnessed {
+            mechanism: "stella-pipeline arms a FlipHalt from the failing pre-execute test \
+                        baseline and feeds it the worker's own shell results, so the execute \
+                        turn ends the moment the tracked command goes fail→pass",
+            // The engine seam itself IS witnessed, in stella-core
+            // (`a_halt_ends_the_turn_at_the_next_step_boundary_as_completed`
+            // plus its never-fires control). What no test yet pins is the
+            // ARMING: that a candidate whose baseline failed reaches
+            // `run_engine_turn` with a halt attached, and that a candidate
+            // whose baseline passed does not. That needs a pipeline-level
+            // harness (CandidateSurface + ports), and this crate's
+            // `cli_sources` does not sweep stella-pipeline — claiming a
+            // stella-core test here would report the seam as proof of the
+            // wiring, which is the exact substitution this matrix exists to
+            // prevent.
+            missing: "a pipeline test that a failing baseline arms the halt and a passing one \
+                      leaves it unarmed",
+        },
+        api: SurfacePosture::Deferred {
+            waiting_on: "a served turn has no test baseline of its own — the host, not the \
+                         engine, would have to say what 'done' means for an embedded turn, and \
+                         no route expresses that yet",
         },
     },
     Capability {

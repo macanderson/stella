@@ -212,6 +212,11 @@ impl<'a> Pipeline<'a> {
                 budget,
                 &mut file_changes,
                 &mut mutating_actions,
+                // No flip halt: this turn is the witness AUTHOR writing the
+                // test, not the worker fixing the code. Stopping it because
+                // the tracked command went green would abandon the artifact
+                // mid-write.
+                None,
             )
             .await
         {
@@ -272,6 +277,8 @@ impl<'a> Pipeline<'a> {
                     budget,
                     &mut file_changes,
                     &mut mutating_actions,
+                    // Witness repair, same reasoning as the author turn.
+                    None,
                 )
                 .await
             {

@@ -46,6 +46,7 @@ use std::time::Duration;
 use std::sync::Arc;
 
 use futures_util::StreamExt as _;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use stella_core::hooks::{HookRunner, Hooks};
@@ -78,6 +79,10 @@ use crate::triage::{
     TaskAssessment, TaskClass, parse_triage_response, resolve_conversational, resolve_task_class,
     resolve_witness, triage_prompt,
 };
+use stella_core::driver::TurnHalt;
+use stella_protocol::ToolOutput;
+
+use crate::flip_halt::{FlipHalt, command_of};
 use crate::verify::{
     FlipOracle, JudgeVerdict as ModelJudgeVerdict, LadderDecision, LadderInputs,
     deterministic_fail_evidence, deterministic_pass_evidence, guidance_prompt, heuristic_fallback,
@@ -623,6 +628,14 @@ struct CandidateState {
     /// engine's own `ToolStart` stream rather than probed for, which is what
     /// lets `0` mean "never tried" instead of "could not tell".
     mutating_actions: u32,
+    /// Ends the execute turn as soon as the tracked test goes fail→pass.
+    ///
+    /// `None` whenever there is nothing to watch: no configured test command,
+    /// or a baseline that was already passing (which can never flip, so a
+    /// halt on it would end turns that had work left). See
+    /// [`crate::flip_halt`] for why stopping is a separate question from
+    /// crediting.
+    flip_halt: Option<Arc<FlipHalt>>,
     oracle: FlipOracle,
     /// The oracle's observations in the order they were made (#864) —
     /// baseline (only for a configured `--test-command`; the authored-witness
@@ -1889,6 +1902,10 @@ impl<'a> Pipeline<'a> {
         // pristine snapshot of this same pre-execution tree.
         let mut oracle = FlipOracle::new();
         let mut oracle_trace = Vec::new();
+        // Armed below, and only by a baseline that actually FAILED. A command
+        // that was already green cannot flip, so arming on it would hand the
+        // engine a stop signal for work the turn never did.
+        let mut flip_halt: Option<Arc<FlipHalt>> = None;
         if assessment.class.verifies_unconditionally()
             && let Some(cmd) = self.effective_test_command(None)
         {
@@ -1913,6 +1930,9 @@ impl<'a> Pipeline<'a> {
                     passed,
                     tree: ProofTree::Baseline,
                 });
+                if !passed {
+                    flip_halt = Some(Arc::new(FlipHalt::new(cmd.command)));
+                }
             }
         }
 
@@ -1948,6 +1968,7 @@ impl<'a> Pipeline<'a> {
             final_text: String::new(),
             file_changes: 0,
             mutating_actions: 0,
+            flip_halt,
             oracle,
             oracle_trace,
             untracked_before,
@@ -2053,6 +2074,7 @@ impl<'a> Pipeline<'a> {
                     budget,
                     &mut state.file_changes,
                     &mut state.mutating_actions,
+                    state.flip_halt.clone(),
                 )
                 .await
             {
@@ -2081,6 +2103,7 @@ impl<'a> Pipeline<'a> {
                         budget,
                         &mut state.file_changes,
                         &mut state.mutating_actions,
+                        state.flip_halt.clone(),
                     )
                     .await
                 {
@@ -2749,7 +2772,7 @@ impl<'a> Pipeline<'a> {
             name: StageKind::Execute,
         });
         match self
-            .run_engine_turn(engine, messages, budget, file_changes, mutating_actions)
+            .run_engine_turn(engine, messages, budget, file_changes, mutating_actions, None)
             .await
         {
             TurnOutcome::Completed { text, cost_usd } => {
@@ -2811,6 +2834,7 @@ impl<'a> Pipeline<'a> {
         budget: &mut BudgetGuard,
         file_changes: &mut u32,
         mutating_actions: &mut u32,
+        flip_halt: Option<Arc<FlipHalt>>,
     ) -> TurnOutcome {
         // The filtered sender is SYNCHRONOUS on purpose: when the outer
         // sender carries a durability boundary, a paid StepUsage cannot
@@ -2823,6 +2847,15 @@ impl<'a> Pipeline<'a> {
         let mutating = seen_mutating.clone();
         let read_only = self.read_only_tool_names();
         let consumer = self.events.clone();
+        // Correlate a shell call's command line (carried on `ToolStart`) with
+        // its exit status (carried in the `ToolResult` content), because
+        // neither event has both. Keyed by `call_id` rather than a
+        // last-command slot: a step dispatches up to eight calls
+        // concurrently, so "the most recent command" is genuinely ambiguous.
+        let pending_commands: Arc<Mutex<HashMap<String, String>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let halt_for_events = flip_halt.clone();
+        let commands = pending_commands.clone();
         let filtered = EventSender::from_fn(move |event| {
             match &event {
                 // The pipeline is the sole authority for stage boundaries and
@@ -2846,11 +2879,56 @@ impl<'a> Pipeline<'a> {
                     if !read_only.contains(&call.name) {
                         mutating.fetch_add(1, Ordering::Relaxed);
                     }
+                    // Remember the command line so its result can be scored
+                    // against the tracked test. Only when a halt is armed —
+                    // otherwise this map is pure overhead on every turn.
+                    if halt_for_events.is_some()
+                        && let Some(command) = command_of(&call.input)
+                        && let Ok(mut pending) = commands.lock()
+                    {
+                        pending.insert(call.call_id.clone(), command.to_string());
+                    }
+                    consumer.send(event)
+                }
+                AgentEvent::ToolResult { call_id, output, .. } => {
+                    // The agent running the tracked test itself is the
+                    // earliest moment anyone can know the goal is met — and
+                    // before this, it was the one observation the oracle
+                    // never saw (it watched only a pre-execute baseline and
+                    // post-execute verification). Feeding it here is what
+                    // lets the engine stop at the next step boundary instead
+                    // of running until a limit fires.
+                    if let Some(halt) = halt_for_events.as_ref() {
+                        let command = commands
+                            .lock()
+                            .ok()
+                            .and_then(|mut pending| pending.remove(call_id));
+                        if let Some(command) = command
+                            && let ToolOutput::Ok { content } = output
+                        {
+                            // Nothing is emitted on the transition: this is a
+                            // success, and the only event available in this
+                            // closure is `Error`, which a TUI renders as a
+                            // failure. The reason reaches the transcript as
+                            // the halted turn's own text (`TurnHalt`).
+                            halt.observe(&command, content);
+                        }
+                    }
                     consumer.send(event)
                 }
                 _ => consumer.send(event),
             }
         });
+        // A halted engine only when there is something to watch, so a turn
+        // with no armed flip runs on exactly the engine it always did.
+        let halted;
+        let engine = match flip_halt {
+            Some(halt) => {
+                halted = engine.with_turn_halt(halt as Arc<dyn TurnHalt>);
+                &halted
+            }
+            None => engine,
+        };
         let outcome = engine
             .run_turn_with_sender(messages, budget, &filtered)
             .await;
