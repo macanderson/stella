@@ -676,9 +676,16 @@ async fn run_task(
 
     let mut messages = vec![CompletionMessage::system(
         // Each worker is its own session in its own workspace, so its
-        // SessionStart hooks fire here, in the worktree.
+        // SessionStart hooks fire here, in the worktree. Persona matches the
+        // driver: a pipeline-driven worker gets the pipeline worker persona
+        // (methodology ladder + `agents.worker.prompt` override), which
+        // fleet workers never carried.
         agent::with_session_hook_context(
-            agent::build_system_prompt(&cfg, root, &active_rules),
+            if use_pipeline {
+                agent::build_pipeline_system_prompt(&cfg, root, &active_rules)
+            } else {
+                agent::build_system_prompt(&cfg, root, &active_rules)
+            },
             &cfg,
         )
         .await,

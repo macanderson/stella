@@ -252,9 +252,16 @@ pub async fn run_goal_cmd(
     tui::section_header("Stella — goal mode");
     println!("  {}\n", goal.dimmed());
 
+    // Persona matches the driver: pipeline rounds get the pipeline worker
+    // persona (methodology ladder + `agents.worker.prompt` override) instead
+    // of the generic REPL prompt only `stella run` used to carry.
     let mut messages = vec![CompletionMessage::system(
         with_session_hook_context(
-            build_system_prompt(cfg, &cfg.workspace_root, &active_rules),
+            if use_pipeline {
+                build_pipeline_system_prompt(cfg, &cfg.workspace_root, &active_rules)
+            } else {
+                build_system_prompt(cfg, &cfg.workspace_root, &active_rules)
+            },
             cfg,
         )
         .await,

@@ -333,12 +333,11 @@ pub async fn run_deck_session(
     // running, so the id is retained here across the whole session loop.
     let mut last_execution_id: Option<i64> = None;
 
-    let system_prompt = agent::with_session_hook_context(
-        agent::build_system_prompt(cfg, &cfg.workspace_root, &active_rules),
-        cfg,
-    )
-    .await;
-    let mut messages = vec![CompletionMessage::system(system_prompt.clone())];
+    // The system prompt and seed message are built AFTER `resume_state`
+    // resolves below — the persona is chosen from the same state that decides
+    // the turn driver, and choosing it blind here gave every deck session the
+    // generic REPL persona even though the deck drives the staged pipeline by
+    // default. See the build beside `restore_messages`.
     // `warn: false`: past this point diagnostics would land on the alternate
     // screen; a memory-less session degrades silently here.
     let mut memory = SessionMemory::open_with_authority(&cfg.workspace_root, false, &cfg.authority);
@@ -403,6 +402,27 @@ pub async fn run_deck_session(
     // is durable now, so an exit with prompts waiting is a pause, not loss.
     let mut session_exit = stella_store::SessionStatus::Complete;
     let mut sidecar_dir = session_registry.sidecar_dir(&session_record.id);
+    // Persona matches the driver: the deck runs the staged pipeline by
+    // default, so the lead gets the pipeline worker persona (methodology
+    // ladder + `agents.worker.prompt` override) that only `stella run`
+    // carried before. Chosen ONCE per session from the same state
+    // `pipeline_init` reads — the prefix is byte-stable for the session
+    // (L-E8), so a mid-session `/pipeline` toggle changes the driver but
+    // keeps the persona until the next session.
+    let pipeline_persona = resume_state
+        .as_ref()
+        .and_then(|rs| rs.pipeline)
+        .unwrap_or(true);
+    let system_prompt = agent::with_session_hook_context(
+        if pipeline_persona {
+            agent::build_pipeline_system_prompt(cfg, &cfg.workspace_root, &active_rules)
+        } else {
+            agent::build_system_prompt(cfg, &cfg.workspace_root, &active_rules)
+        },
+        cfg,
+    )
+    .await;
+    let mut messages = vec![CompletionMessage::system(system_prompt.clone())];
     if let Some(rs) = &mut resume_state {
         messages = crate::session_persist::restore_messages(
             std::mem::take(&mut rs.history).unwrap_or_default(),
@@ -608,11 +628,9 @@ pub async fn run_deck_session(
     // The deck drives turns through the staged pipeline by default (triage →
     // recall → plan → scope → witness → execute → verify → judge); `/pipeline`
     // toggles back to the raw `Engine::run_turn` loop (`run_lead_turn`). A
-    // resumed session keeps whatever it last had.
-    let pipeline_init = resume_state
-        .as_ref()
-        .and_then(|rs| rs.pipeline)
-        .unwrap_or(true);
+    // resumed session keeps whatever it last had — the same state the persona
+    // choice above read, so driver and persona start the session agreeing.
+    let pipeline_init = pipeline_persona;
     // Honour the persisted colour theme (`ui.theme`) before the deck spawns its
     // render task, so the very first frame — the launch cinematic — is already
     // in the chosen theme. Best-effort: an unset/unknown value keeps the
