@@ -507,19 +507,18 @@ sees the exact line _before_ anything spawns
 (`stella-tools/src/registry.rs::command_line_for`). Note the scope: the
 `guard-deny-command` workspace rule globs the `bash` tool's own `command`
 string, not `start_process`'s argv. If you need a boundary rather than a gate,
-use the OS sandbox below.
+run Stella inside a container.
 
-**Opt-in bash sandbox:** `STELLA_BASH_SANDBOX=workspace-write` confines `bash`
-file writes to the workspace root plus the standard tmp dirs (network still
-allowed); `restricted` additionally denies all network. Backends:
-`sandbox-exec` (Seatbelt) on macOS, `bwrap` (bubblewrap) on Linux. This bounds
-the blast radius of prompt injection — instructions hidden in a file the agent
-reads can steer the model into running arbitrary commands. The tradeoff is
-capability: the sandbox also blocks legitimate work (`cargo` writing
-`~/.cargo`, `npm`/`pip` caches under `$HOME`, `git push` under `restricted`),
-which is why the default is `off`. Fail-closed: an unknown value, a missing
-`bwrap`, or an unsupported platform fails the tool call rather than silently
-running unsandboxed.
+**There is no per-command sandbox.** `STELLA_BASH_SANDBOX` — an opt-in
+Seatbelt/`bwrap` wrapper on the `bash` tool — was removed in #1300 and the
+variable now does nothing. It confined one tool while `build_project`,
+`run_tests`, `verify_done`, `run_script`, `start_process`, the `repo_*` and
+`ci_status` invocations, custom manifest tools, and hook actions all spawned
+around it, so it read as a session-wide bound while delivering a single-tool
+one — and a half-boundary people rely on is worse than a clearly absent one.
+For real containment, run the whole Stella process inside a container: that
+boundary sits outside every spawn path, so no tool can step around it. See
+[`docs/design/remote-sandboxes.md`](docs/design/remote-sandboxes.md).
 
 **Conditional tools:** issue tools need `LINEAR_API_KEY` or a `gh auth login`;
 `generate_image` needs `ZAI_API_KEY` or `OPENAI_API_KEY`. Without their

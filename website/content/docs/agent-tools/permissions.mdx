@@ -55,29 +55,30 @@ For blocking by pattern without a hook script, Stella also has native workspace-
 
 For the full hook model — events, matchers, timeouts, and the JSON payload delivered on stdin — see [Hooks](/docs/agent-tools/hooks).
 
-## Sandboxing the shell tool
+## Containment: run Stella in a container
 
-Hooks and guard rules decide *whether* a command runs. An OS sandbox bounds what it can reach once it does — the difference that matters when instructions hidden in a file the agent read steer the model into running something you never asked for. `STELLA_BASH_SANDBOX` turns it on for the [`bash`](/docs/agent-tools#shell) tool:
+Hooks and guard rules decide *whether* a command runs. Containment bounds what it can reach once it does — the difference that matters when instructions hidden in a file the agent read steer the model into running something you never asked for.
 
-<CardGrid size="md">
-  <OptionCard name="STELLA_BASH_SANDBOX=off">
-    No sandbox. `bash` runs with your own privileges. This is the shipped default.
-  </OptionCard>
-  <OptionCard name="STELLA_BASH_SANDBOX=workspace-write">
-    File writes confined to the workspace root plus the standard tmp directories. Reads and
-    network are unrestricted.
-  </OptionCard>
-  <OptionCard name="STELLA_BASH_SANDBOX=restricted">
-    Everything `workspace-write` does, plus a blanket network denial.
-  </OptionCard>
-</CardGrid>
-
-```bash
-STELLA_BASH_SANDBOX=workspace-write stella run "run the migration and fix what breaks"
-```
-
-The backend is `sandbox-exec` (Seatbelt) on macOS and `bwrap` (bubblewrap) on Linux. It **fails closed**: an unrecognized value, a missing `bwrap`, or an unsupported platform fails the tool call with an actionable error rather than quietly running unsandboxed.
+**Stella has no per-command sandbox.** Earlier versions had one: `STELLA_BASH_SANDBOX=workspace-write|restricted` wrapped the [`bash`](/docs/agent-tools#shell) tool in `sandbox-exec` (Seatbelt) on macOS or `bwrap` (bubblewrap) on Linux. It was removed, and the variable now does nothing.
 
 <Callout type="warn">
-The default is `off` because the sandbox costs capability as well as blast radius. It also blocks legitimate work that writes outside the workspace — `cargo` populating `~/.cargo`, `npm` and `pip` caches under `$HOME`, and `git push` under `restricted`. Turn it on for a session where you don't fully trust the repository you're pointing Stella at; expect to grant more room for ordinary builds.
+If you set `STELLA_BASH_SANDBOX` in a shell profile, a CI job, or a service unit, it is inert — nothing reads it and nothing warns you. Remove it, and if you were relying on it for containment, replace it with a container.
 </Callout>
+
+The reason it went is that it covered `bash` and nothing else. `build_project` and `run_tests` take a `command` override, `verify_done` a `test_cmd`, `run_script` composes a line from the scripts index, `start_process` takes an argv whose `argv[0]` may be an interpreter, and the `repo_*`, `ci_status`, custom-manifest, and hook paths all spawn on their own — every one of them ran unconfined while the setting said "sandbox: on". A boundary you can step around by starting a process a different way is not a boundary, and one that people believe in is worse than a clearly absent one.
+
+Run the whole Stella process inside a container instead — Docker, Podman, or a remote sandbox. The boundary then sits *outside* every spawn path rather than on one of them, so no tool can route around it, and it holds for file writes, network, and process execution alike.
+
+No official CLI image ships today, so build one that puts `stella` on `PATH` (the [install script](/docs/getting-started/installation) works inside a `debian:bookworm-slim` stage), then mount only the repository you want the agent to touch:
+
+```bash
+docker run --rm -it \
+  -v "$PWD:/work" -w /work \
+  -e OPENROUTER_API_KEY \
+  your-stella-image \
+  stella run "run the migration and fix what breaks"
+```
+
+Everything outside `/work` is the container's own filesystem, which is discarded on exit — that is the guarantee `workspace-write` gestured at and could not enforce. For a stricter boundary, add `--network none`; be aware of what that costs, because it is the same cost `restricted` had: a session with no network cannot reach your model provider, fetch dependencies, or `git push`. It suits a task you can define offline, not a general session.
+
+Inside the container, `bash` runs with the container's privileges and the [`command.started`](/docs/agent-tools/hooks) policy chain still gates every model-authored command line — the gate and the boundary are complementary, and neither substitutes for the other.

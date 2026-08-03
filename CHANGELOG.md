@@ -35,6 +35,37 @@ skip the roll) were re-inserted the same way.
 
 ## [Unreleased]
 
+### Removed
+
+- **The `bash` sandbox is gone (#1300).** `STELLA_BASH_SANDBOX` —
+  `workspace-write` / `restricted`, backed by `sandbox-exec` (Seatbelt) on
+  macOS and `bwrap` (bubblewrap) on Linux — has been removed along with
+  `stella-tools/src/sandbox.rs`. **The variable is now inert:** it is read
+  nowhere, so a value left in a shell profile, CI job, or service unit does
+  nothing and warns about nothing. Setting it no longer fails a tool call
+  either — an unrecognized value used to be an error, and now it is ignored
+  like any other unused variable.
+
+  It confined the `bash` tool and nothing else. `build_project` and
+  `run_tests` (via `command`), `verify_done` (via `test_cmd`), `run_script`,
+  `start_process`, the `repo_*` and `ci_status` `git`/`gh` invocations, custom
+  manifest tools, and hook actions all spawned around it and always ran
+  unconfined — so "sandbox: on" read as a bound on the session while
+  delivering a bound on one tool. A half-boundary people rely on is worse than
+  a clearly absent one, which is the whole reason this is a removal and not an
+  extension.
+
+  **If you were relying on it:** run the whole `stella` process inside a
+  container (Docker, Podman, or a remote sandbox) and mount only the
+  repository you want the agent to touch. That boundary sits outside every
+  spawn path instead of on one of them, so no tool can route around it. Add
+  `--network none` for the equivalent of `restricted`, with the same cost it
+  always had — no model provider, no dependency fetches, no `git push`. See
+  [Permissions](https://stella.oxagen.sh/docs/agent-tools/permissions) and
+  `docs/design/remote-sandboxes.md`. Nothing else changes: `bash` already ran
+  unconfined by default, and the `command.started` policy chain still gates
+  every model-authored command line before it spawns.
+
 ## [0.6.80] — 2026-08-03
 
 ### Added
