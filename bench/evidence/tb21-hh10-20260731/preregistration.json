@@ -1,0 +1,5 @@
+{"prereg":"hh10","registered_at":"2026-07-31T21:02:14Z","protocol":"full 89-task claim run; validation hh9b passed all 5 checks (A 12/20, B 8/20); no code changed after hh9b",
+"sut_commit":"62a8ae2d5d3d0839e52c268e0c2f5f0f3e3c4a49","binary_sha256":"a6392dccd79ad6669f2e851dd6830e31672b2bad738a348d184c2a0be37f5d77","posture_py_sha256":"28ac06ff509375374e19e98b5247c00003fb0a24e61654d2ccd4b616c90ab9ba","taskset_sha256":"3778b86071c74c8a342222cfff41089916adb5c7338d1afa69f42c9cae21fe3e","denominator":89,
+"arms":{"A":{"agent":"stella","endpoint":"OpenRouter","model":"openrouter/z-ai/glm-5.2"},"B":{"agent":"claude-code","endpoint":"z.ai","model":"glm-5.2","ak":"reasoning_effort=max thinking=enabled"}},
+"shared":"effort=max thinking=on budget=NONE attempts=1 retries=0 concurrency=20/arm same-host same-clock",
+"rules":"no reruns, no outcome-selected stops, failures published; metrics: passes, tokens, cost, wall, tool calls (raw counts published)"}

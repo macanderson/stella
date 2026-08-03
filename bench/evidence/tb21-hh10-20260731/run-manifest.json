@@ -1,0 +1,229 @@
+{
+  "artifacts": {
+    "README.md": "e1d1db28b49454b0a91057ecc163de895e886e31f7bac71ecb1e35428d8fd21a",
+    "comparator/README.md": "9f2623f9dffb0c2c012edadb68f60966d82795e92b4c189431ca9e3354fadd6a",
+    "comparator/results.md": "2c04eb6c1bc81f81b4c0576f3dfaaadb8fc352114d8d6c98c2077de6774b3adc",
+    "comparator/score.json": "91af3b84080bd0a01ee452afe648a6bf1ab12f448597c511779a094cac992abd",
+    "comparator/trials.jsonl": "fc7ce343fcf77a9cbff7a4f4000215c6ce2b3b55edb6a977258c777144baea6d",
+    "preregistration.json": "c52b33c33826915022f6c0726b91d7c532611c44de90b1663b3a51ab257fbe88",
+    "results.md": "39e2729a2d14eaeb625ec37921c8e8025b2367305a2c79b2576b634c3c0d9338",
+    "score.json": "1210e54d32882f9b9ff9e3bbc7d29344c03ef741fb2cd6518f479c1ce4b6a9a7",
+    "trials.jsonl": "4acdfd87fc217cc420b707209398fb9ad502941637ef9dd74658464ee676e191"
+  },
+  "assurance": {
+    "normalized_bytes": 403,
+    "normalized_sha256": "dc61da7ba0b24c5cca002ba9540f2773d706cfb8e8c6ae6331a36c9549b1dbde",
+    "source": "recorded per trial, and this checkout agrees",
+    "tiers": {
+      "arm": "witness-off",
+      "authored_witness_off_reason": "no author independent of the worker: every role inherits default_model, so the witness tier cannot be authored on any task in this run",
+      "tiers": {
+        "authored_witness": "off",
+        "deterministic_verify": "on",
+        "model_judge": "on-same-model-as-worker"
+      },
+      "version": "stella-tb21-assurance-tiers-v1",
+      "witness_author_model": null,
+      "worker_model": "openrouter/z-ai/glm-5.2"
+    }
+  },
+  "benchmark": {
+    "adapter": "bench/harbor_adapter (stella_harbor:StellaAgent)",
+    "dataset": "terminal-bench/terminal-bench-2-1@sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0ea7c4186773687d177ad3a0699a",
+    "harbor_version": "0.6.1",
+    "tasks_declared": 89,
+    "verifier": "the dataset's own, unmodified"
+  },
+  "claim_eligibility": {
+    "audited_public_row": false,
+    "what_it_is": "a self-reported development baseline, adequate as the held-out number the self-improvement track needs and as a falsifiable check on Stella's own claims; not adequate for a leaderboard row or a competitor comparison without restating every caveat above",
+    "why_not": [
+      "credentials came from the ambient environment, the adapter's environment-fallback source, not a Management-API-minted spend-capped key",
+      "no host attestation was collected or committed",
+      "no six-comment intent ledger; a single human-readable preregistration instead",
+      "launched through the plain adapter path, not secure_launcher.py",
+      "no external Terminal-Bench maintainer trajectory review"
+    ]
+  },
+  "engine": {
+    "budget_usd_per_trial": "unbounded",
+    "model": "openrouter/z-ai/glm-5.2",
+    "normalized_bytes": 362,
+    "normalized_sha256": "a0ab8a753a4ffaf7eff5a4ec051f2e6ba3daef38bfb7455af07a634ebde7a407",
+    "posture": {
+      "agents": {
+        "default": {
+          "effort": "max",
+          "reasoning": "on"
+        },
+        "judge": {
+          "effort": "max",
+          "reasoning": "on"
+        },
+        "triage": {
+          "effort": "low",
+          "reasoning": "off"
+        },
+        "worker": {
+          "effort": "max",
+          "reasoning": "on"
+        }
+      },
+      "allowed_models": [
+        "openrouter/z-ai/glm-5.2"
+      ],
+      "auto_mode": "off",
+      "default_model": "openrouter/z-ai/glm-5.2",
+      "effort_auto": "off",
+      "headless_scope_bypass": "on",
+      "reasoning_auto": "off"
+    },
+    "reflection_disabled": true,
+    "source": "recorded per trial, and this checkout agrees",
+    "witness_author_model": null
+  },
+  "host": {
+    "container_platform": "linux/amd64 (native, no emulation layer)",
+    "docker": "29.7.0",
+    "facts_collected": "read from the same still-running instance after the run, not captured at launch. Instance type, architecture, vCPU and memory are properties of the instance and cannot have changed; the Docker version is the one present at collection time and may be later than the one the trials used.",
+    "instance": "AWS EC2 m6id.8xlarge (i-07d46341dcc9a31b3), us-east-1d",
+    "kernel": "Linux-6.8.0-1061-aws-x86_64-with-glibc2.35",
+    "machine": "x86_64",
+    "memory_total_gib": 123,
+    "native_x86_64_linux": true,
+    "note": "dedicated benchmark rig; both arms ran back-to-back on this host in one session",
+    "source": "collected on the run host (host.json)",
+    "system": "Linux",
+    "vcpu": 32,
+    "vm": null
+  },
+  "preregistration_url": "https://github.com/macanderson/stella/issues/1013",
+  "recorded_by_the_run": {
+    "assurance_arm": "witness-off",
+    "assurance_tiers_sha256": "dc61da7ba0b24c5cca002ba9540f2773d706cfb8e8c6ae6331a36c9549b1dbde",
+    "binary_sha256": "a6392dccd79ad6669f2e851dd6830e31672b2bad738a348d184c2a0be37f5d77",
+    "engine_posture_sha256": "a0ab8a753a4ffaf7eff5a4ec051f2e6ba3daef38bfb7455af07a634ebde7a407",
+    "harbor_version": "0.6.1",
+    "source_commit": "62a8ae2d5d3d0839e52c268e0c2f5f0f3e3c4a49",
+    "trials_read": 89
+  },
+  "sampling": {
+    "attempts_per_task": 1,
+    "excluded_tasks": null,
+    "max_retries": 0,
+    "n_concurrent": 20,
+    "task_filters": null
+  },
+  "schema": "stella-tb21-dev-baseline-manifest-v2",
+  "system_under_test": {
+    "binary_sha256": "a6392dccd79ad6669f2e851dd6830e31672b2bad738a348d184c2a0be37f5d77",
+    "binary_sha256_note": "host-specific: release builds bake in the builder's cargo/rustup paths. The authoritative identity is the STELLA_BUILD_GIT_SHA stamp, which the adapter verifies against the uploaded binary on every trial.",
+    "build_stamp_env": "STELLA_BUILD_GIT_SHA=62a8ae2d5d3d0839e52c268e0c2f5f0f3e3c4a49",
+    "commit": "62a8ae2d5d3d0839e52c268e0c2f5f0f3e3c4a49",
+    "describe": "v0.5.68-147-g62a8ae2d",
+    "is_ancestor_of_main": true,
+    "matches_what_the_trials_recorded": {
+      "binary_sha256": true,
+      "commit": true
+    },
+    "target": "x86_64-unknown-linux-gnu, glibc 2.17 floor"
+  },
+  "timing": {
+    "finished_at": "2026-07-31T23:02:16Z",
+    "started_at": "2026-07-31T21:02:19Z"
+  },
+  "trials": {
+    "count": 89,
+    "ids": [
+      "adaptive-rejection-sampler__h6CJtVu",
+      "bn-fit-modify__sDP4kjB",
+      "break-filter-js-from-html__UNgGYne",
+      "build-cython-ext__otyujkY",
+      "build-pmars__vjbjF23",
+      "build-pov-ray__zFpYh5e",
+      "caffe-cifar-10__cf5kuDQ",
+      "cancel-async-tasks__SPjoLuD",
+      "chess-best-move__h3TeNNE",
+      "circuit-fibsqrt__GyojncG",
+      "cobol-modernization__chLPvnB",
+      "code-from-image__kWZGrx7",
+      "compile-compcert__oEc5bLr",
+      "configure-git-webserver__HkuKeCn",
+      "constraints-scheduling__4dGqvij",
+      "count-dataset-tokens__ym7kcm7",
+      "crack-7z-hash__WDPoREs",
+      "custom-memory-heap-crash__SGDLzFU",
+      "db-wal-recovery__FLDaC2i",
+      "distribution-search__RfzD6eQ",
+      "dna-assembly__HJMwB68",
+      "dna-insert__byLZ8f7",
+      "extract-elf__zKd2unP",
+      "extract-moves-from-video__rKwuX5p",
+      "feal-differential-cryptanalysis__fz6KKsp",
+      "feal-linear-cryptanalysis__fPYguBY",
+      "filter-js-from-html__CkbPsfe",
+      "financial-document-processor__SJ4RaCs",
+      "fix-code-vulnerability__qXA9ira",
+      "fix-git__KK5RBoi",
+      "fix-ocaml-gc__bJyLxGQ",
+      "gcode-to-text__z9jcKXe",
+      "git-leak-recovery__7Co73e2",
+      "git-multibranch__PEtrmsk",
+      "gpt2-codegolf__6q3Vcrz",
+      "headless-terminal__hwgiR32",
+      "hf-model-inference__F5xNU7c",
+      "install-windows-3.11__hWSQtau",
+      "kv-store-grpc__PT6NxwL",
+      "large-scale-text-editing__Sk3K3hB",
+      "largest-eigenval__nUvjyGh",
+      "llm-inference-batching-scheduler__nbrZP7a",
+      "log-summary-date-ranges__K2bkkkf",
+      "mailman__C2NU7QZ",
+      "make-doom-for-mips__kw3pEn4",
+      "make-mips-interpreter__Z8v2fxP",
+      "mcmc-sampling-stan__j6CQk9J",
+      "merge-diff-arc-agi-task__mGJjKvc",
+      "model-extraction-relu-logits__c6cMLcu",
+      "modernize-scientific-stack__r2zzPC3",
+      "mteb-leaderboard__C85cFQA",
+      "mteb-retrieve__b3WFgTj",
+      "multi-source-data-merger__YEm29PS",
+      "nginx-request-logging__jnVFbSQ",
+      "openssl-selfsigned-cert__YxuDdAf",
+      "overfull-hbox__e59bqMt",
+      "password-recovery__nNj5Yro",
+      "path-tracing-reverse__taafoef",
+      "path-tracing__w5vpWPt",
+      "polyglot-c-py__ps5vyYz",
+      "polyglot-rust-c__gzTYe2e",
+      "portfolio-optimization__U5nwe72",
+      "protein-assembly__8JuScA2",
+      "prove-plus-comm__xDusGRq",
+      "pypi-server__HB9XhQ4",
+      "pytorch-model-cli__ejDrBAb",
+      "pytorch-model-recovery__FwJ66pq",
+      "qemu-alpine-ssh__BbmDeFA",
+      "qemu-startup__TGqMsn6",
+      "query-optimize__RqSLRSp",
+      "raman-fitting__56BM49p",
+      "regex-chess__pTNtjKE",
+      "regex-log__KR2MLTS",
+      "reshard-c4-data__4bvepcf",
+      "rstan-to-pystan__UPrgHGc",
+      "sam-cell-seg__JrwasXk",
+      "sanitize-git-repo__3DcbM2N",
+      "schemelike-metacircular-eval__UsfcwCh",
+      "sparql-university__vBzwBJS",
+      "sqlite-db-truncate__XjqFDhB",
+      "sqlite-with-gcov__hVocUAR",
+      "torch-pipeline-parallelism__48jDzDT",
+      "torch-tensor-parallelism__b7dUCGr",
+      "train-fasttext__BktWjjh",
+      "tune-mjcf__puUr8ij",
+      "video-processing__7BxrHs3",
+      "vulnerable-secret__zQzphjN",
+      "winning-avg-corewars__PE3fbt6",
+      "write-compressor__EbE8kZJ"
+    ]
+  }
+}
