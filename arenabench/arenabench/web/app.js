@@ -27,6 +27,7 @@ const State = {
   dataset: null,
   tasks: [],
   selected: new Set(),
+  draw: null,           // the last random draw, while the selection still is it
   seats: [],
   match: null,
   snapshot: null,
@@ -133,6 +134,7 @@ function wireChrome() {
   $('#select-all').addEventListener('click', () => { State.tasks.forEach((t) => State.selected.add(t.name)); renderTasks(); });
   $('#select-none').addEventListener('click', () => { State.selected.clear(); renderTasks(); });
   $('#select-visible').addEventListener('click', () => { visibleTasks().forEach((t) => State.selected.add(t.name)); renderTasks(); });
+  $('#select-random').addEventListener('click', drawRandomTasks);
   ['#task-search', '#filter-difficulty', '#filter-category', '#filter-light']
     .forEach((sel) => $(sel).addEventListener('input', renderTasks));
   $('#toggle-reasoning').addEventListener('click', () => {
@@ -203,6 +205,32 @@ function fillFilters() {
   fill('#filter-category', uniq('category'), 'all categories');
 }
 
+// The draw happens on the server, not here. `Math.random` cannot be seeded,
+// and an unseeded slice is a number nobody — including you tomorrow — can
+// reproduce. The seed comes back and is shown, so the selection can be
+// written down and run again.
+async function drawRandomTasks() {
+  if (!State.dataset) return;
+  const count = Math.max(1, Number($('#random-n').value) || 10);
+  const heavy = $('#filter-light').checked ? '1' : '0';
+  const maxMem = Math.max(0, Number($('#random-max-mem').value) || 0);
+  const seedEl = $('#random-seed');
+  try {
+    const drawn = await api(
+      `/api/datasets/${encodeURIComponent(State.dataset.key)}/sample` +
+      `?count=${count}&exclude_heavy=${heavy}&max_memory_mb=${maxMem}`);
+    State.selected = new Set(drawn.names);
+    State.draw = new Set(drawn.names);
+    seedEl.textContent =
+      `· ${drawn.names.length} drawn, seed ${drawn.seed}` +
+      (drawn.exclude_heavy ? ', heavy excluded' : '') +
+      (drawn.max_memory_mb ? `, ≤${drawn.max_memory_mb} MB` : '');
+    renderTasks();
+  } catch (err) {
+    seedEl.textContent = `· draw failed: ${err.message}`;
+  }
+}
+
 function visibleTasks() {
   const q = $('#task-search').value.trim().toLowerCase();
   const difficulty = $('#filter-difficulty').value;
@@ -219,6 +247,14 @@ function visibleTasks() {
 
 function renderTasks() {
   const tasks = visibleTasks();
+  // The seed describes a draw. The moment the selection stops being that
+  // draw — one checkbox toggled, "select all" pressed — the seed no longer
+  // reproduces what is about to run, so it stops being shown.
+  if (State.draw) {
+    const intact = State.draw.size === State.selected.size
+      && [...State.draw].every((name) => State.selected.has(name));
+    if (!intact) { State.draw = null; $('#random-seed').textContent = ''; }
+  }
   $('#task-count').textContent = String(State.selected.size);
   $('#task-grid').replaceChildren(...tasks.map((task) => {
     const on = State.selected.has(task.name);
@@ -429,6 +465,7 @@ async function launch() {
     contestants: State.seats.map(seatPayload),
     attempts: Number($('#attempts').value) || 1,
     concurrency: Number($('#concurrency').value) || 1,
+    setup_timeout_multiplier: Number($('#setup-timeout').value) || 1,
     record_video: $('#record-video').checked,
   };
   if (!payload.tasks.length) {
@@ -535,6 +572,11 @@ function renderScoreboard(snapshot) {
       el('div', { class: 'card-engine' }, `${c.agent} · ${c.engine_label}`),
       el('div', { class: 'card-state' },
         `${c.state}${t.running ? ` · ${t.running} running` : ''} · ${t.judged}/${t.trials} judged`),
+      // An arm whose trials never started has not lost them. Saying so beside
+      // the rate is the difference between "won 8 of 10" and "won 8 of the 8
+      // that managed to start" — one of which survives being checked.
+      t.infrastructure ? el('div', { class: 'card-infra' },
+        `${t.infrastructure} never started (harness/host)`) : null,
       el('div', { class: 'card-solve' },
         el('span', { class: 'solve-big' }, fmt.pct(t.solve_rate)),
         el('span', { class: 'solve-frac' }, `${t.passed} / ${t.judged || 0} solved`)),
@@ -549,6 +591,7 @@ function renderScoreboard(snapshot) {
         stat('cache_write', 'cache w', fmt.tokens(t.cache_write)),
       ),
       (c.warnings || []).length ? el('div', { class: 'card-warn' }, c.warnings.join(' · ')) : null,
+      (c.notes || []).length ? el('div', { class: 'card-note' }, c.notes.join(' · ')) : null,
       c.error ? el('div', { class: 'card-warn' }, c.error) : null,
     );
   }));

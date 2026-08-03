@@ -46,6 +46,7 @@
     <h2><span class="step-n">2</span> Tasks</h2>
     <p class="step-hint">
       Every contestant runs the identical list. <strong id="task-count">0</strong> selected.
+      <span class="muted mono" id="random-seed"></span>
     </p>
 
     <div class="task-toolbar">
@@ -60,6 +61,12 @@
       <button class="btn btn-ghost" id="select-all">select all</button>
       <button class="btn btn-ghost" id="select-none">clear</button>
       <button class="btn btn-ghost" id="select-visible">select filtered</button>
+      <button class="btn btn-ghost" id="select-random">random</button>
+      <input type="number" id="random-n" value="10" min="1" max="500"
+             title="how many tasks to draw at random">
+      <input type="number" id="random-max-mem" value="0" min="0" step="1024"
+             title="draw only tasks asking for at most this many MB (0 = no ceiling). With N contestants racing, use your Docker memory allocation divided by N."
+             placeholder="≤ MB">
     </div>
 
     <div class="task-grid" id="task-grid"></div>
@@ -90,6 +97,11 @@
       <label class="field field-sm">
         <span>Concurrency</span>
         <input type="number" id="concurrency" value="1" min="1" max="16">
+      </label>
+      <label class="field field-sm">
+        <span>Setup timeout &times;</span>
+        <input type="number" id="setup-timeout" value="1" min="1" max="20" step="0.5"
+               title="Scales the budget for installing each agent's toolchain into its container, before the task starts. Agents that install a Node toolchain per trial need minutes of network; one that uploads a static binary needs seconds. Raise this on a slow or contended host so a slow installer does not score as a coding failure.">
       </label>
       <label class="chk-inline chk-record">
         <input type="checkbox" id="record-video">

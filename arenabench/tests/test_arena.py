@@ -18,7 +18,12 @@ from pathlib import Path
 
 import pytest
 
-from arenabench.agents import AGENTS, missing_credentials, resolve_agent
+from arenabench.agents import (
+    AGENTS,
+    launch_model,
+    missing_credentials,
+    resolve_agent,
+)
 from arenabench.harbor_agent import arena_posture
 from arenabench.model import (
     DIMENSIONS,
@@ -30,8 +35,15 @@ from arenabench.model import (
     parse_dotenv,
     slugify,
 )
-from arenabench.registry import DEFAULT_REGISTRY
-from arenabench.telemetry import MetricsReader, TranscriptReader, aggregate, leaders
+from arenabench.registry import DEFAULT_REGISTRY, Task, sample_tasks
+from arenabench.runner import ContestantRun, MatchRunner, _base_environment
+from arenabench.telemetry import (
+    MetricsReader,
+    TranscriptReader,
+    TrialMetrics,
+    aggregate,
+    leaders,
+)
 
 # --------------------------------------------------------------------------
 # fixtures
@@ -619,3 +631,260 @@ class TestRecorder:
         supervisor._record_failure(trial_dir, "transient")
         assert supervisor._failures[trial_dir] == 1
         assert trial_dir not in supervisor._finished
+
+
+# --------------------------------------------------------------------------
+# routing an agent off its home provider
+# --------------------------------------------------------------------------
+
+
+def _seat(env: str = "", **engine: object) -> Contestant:
+    return Contestant.from_json(
+        {"name": "cc", "agent": "claude-code", "engine": engine, "env": env}
+    )
+
+
+class TestDirectProviderRouting:
+    """Seating Claude Code on a non-Anthropic, Anthropic-shaped endpoint.
+
+    Harbor's Claude Code agent reads ``ANTHROPIC_BASE_URL`` and, when one is
+    set, forwards the model name to that endpoint unchanged. Both halves of
+    that sentence are load-bearing, and each has its own failure: no base URL
+    and the seat silently runs on Anthropic; a prefixed model name and every
+    trial dies with model-not-found, which on a scoreboard is indistinguishable
+    from an agent that cannot code.
+    """
+
+    def test_claude_code_declares_that_it_honours_a_base_url(self):
+        spec = resolve_agent("claude-code")
+        assert "base_url" in spec.honours
+        assert spec.unhonoured(Engine(model="glm-5.2", base_url="https://x/y")) == []
+
+    def test_an_agent_with_nowhere_to_put_a_base_url_still_says_so(self):
+        assert "base_url" in resolve_agent("aider").unhonoured(
+            Engine(model="m", base_url="https://x/y")
+        )
+
+    def test_a_routed_seat_is_launched_with_the_providers_own_model_id(self):
+        seat = _seat(api="zai", model="glm-5.2", base_url="https://api.z.ai/api/anthropic")
+        assert launch_model(seat) == "glm-5.2"
+
+    def test_an_unrouted_seat_keeps_harbors_provider_prefix(self):
+        seat = _seat(api="anthropic", model="claude-opus-4-5")
+        assert launch_model(seat) == "anthropic/claude-opus-4-5"
+
+    def test_baring_a_model_strips_only_the_api_prefix(self):
+        """An OpenRouter id keeps its vendor segment: ``z-ai`` is part of the
+        name OpenRouter publishes, not a route ArenaBench added."""
+        assert Engine(api="openrouter", model="z-ai/glm-5.2").bare_model == "z-ai/glm-5.2"
+        assert Engine(api="openrouter", model="openrouter/z-ai/glm-5.2").bare_model == (
+            "z-ai/glm-5.2"
+        )
+        assert Engine(api="zai", model="zai/glm-5.2").bare_model == "glm-5.2"
+
+    def _routing(self, seat: Contestant, tmp_path: Path) -> tuple[dict, list[str]]:
+        runner = MatchRunner(DEFAULT_REGISTRY, tmp_path)
+        run = ContestantRun(
+            contestant=seat,
+            job_name="job",
+            job_dir=tmp_path / "job",
+            log_path=tmp_path / "job.log",
+        )
+        return runner._routing_environment(seat, run), run.notes
+
+    def test_a_provider_key_is_aliased_into_the_variable_the_agent_reads(
+        self, tmp_path: Path
+    ):
+        seat = _seat(
+            env="ZAI_API_KEY=zk-secret",
+            api="zai",
+            model="glm-5.2",
+            base_url="https://api.z.ai/api/anthropic",
+        )
+        env, notes = self._routing(seat, tmp_path)
+        assert env["ANTHROPIC_BASE_URL"] == "https://api.z.ai/api/anthropic"
+        assert env["ANTHROPIC_AUTH_TOKEN"] == "zk-secret"
+        assert any("ZAI_API_KEY" in note for note in notes), (
+            "aliasing a credential must be visible on the seat, not silent"
+        )
+
+    def test_an_explicitly_pasted_token_is_never_overwritten(self, tmp_path: Path):
+        seat = _seat(
+            env="ZAI_API_KEY=zk-provider\nANTHROPIC_AUTH_TOKEN=zk-explicit",
+            api="zai",
+            model="glm-5.2",
+            base_url="https://api.z.ai/api/anthropic",
+        )
+        env, _ = self._routing(seat, tmp_path)
+        assert "ANTHROPIC_AUTH_TOKEN" not in env, (
+            "an operator's own choice outranks ArenaBench's inference"
+        )
+
+    def test_a_seat_with_no_base_url_is_not_rerouted(self, tmp_path: Path):
+        seat = _seat(env="ANTHROPIC_API_KEY=sk", api="anthropic", model="claude-opus-4-5")
+        env, notes = self._routing(seat, tmp_path)
+        assert env == {} and notes == []
+
+    def test_either_credential_name_satisfies_a_routed_seat(self):
+        base = "https://api.z.ai/api/anthropic"
+        provider = _seat(env="ZAI_API_KEY=k", api="zai", model="glm-5.2", base_url=base)
+        agent_side = _seat(
+            env="ANTHROPIC_AUTH_TOKEN=k", api="zai", model="glm-5.2", base_url=base
+        )
+        assert missing_credentials(provider) == []
+        assert missing_credentials(agent_side) == []
+        assert missing_credentials(
+            _seat(api="zai", model="glm-5.2", base_url=base)
+        ) == [
+            "ZAI_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_API_KEY",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+        ]
+
+
+class TestRandomTaskSampling:
+    """A seeded draw, because "we ran ten random tasks" is otherwise unfalsifiable."""
+
+    def _tasks(self, count: int) -> list[Task]:
+        return [
+            Task(
+                name=f"task-{index:02d}",
+                qualified=f"ns/task-{index:02d}",
+                memory_mb=8192 if index % 5 == 0 else 2048,
+            )
+            for index in range(count)
+        ]
+
+    def test_the_same_seed_draws_the_same_tasks(self):
+        pool = self._tasks(50)
+        assert sample_tasks(pool, 10, 7) == sample_tasks(pool, 10, 7)
+
+    def test_a_different_seed_draws_a_different_slice(self):
+        pool = self._tasks(50)
+        assert sample_tasks(pool, 10, 7) != sample_tasks(pool, 10, 8)
+
+    def test_the_draw_comes_back_in_dataset_order(self):
+        """Which ten were chosen is the finding; the order they left the
+        generator in carries no information and would only make two selections
+        harder to compare."""
+        drawn = sample_tasks(self._tasks(50), 10, 7)
+        assert [task.name for task in drawn] == sorted(task.name for task in drawn)
+
+    def test_asking_for_more_than_exists_yields_everything(self):
+        pool = self._tasks(6)
+        assert sample_tasks(pool, 99, 1) == pool
+
+    def test_excluding_heavy_narrows_the_population_drawn_from(self):
+        pool = self._tasks(50)
+        drawn = sample_tasks(pool, 10, 7, exclude_heavy=True)
+        assert len(drawn) == 10
+        assert not any(task.heavy for task in drawn)
+
+    def test_a_memory_ceiling_narrows_the_pool(self):
+        """`heavy` is calibrated for a bigger machine than the one in front of
+        you. A host giving Docker 8 GB and racing two contestants can afford
+        4 GB each, which excludes tasks `heavy` happily keeps."""
+        pool = self._tasks(50)
+        drawn = sample_tasks(pool, 10, 7, max_memory_mb=4096)
+        assert drawn and all(task.memory_mb <= 4096 for task in drawn)
+        assert any(task.memory_mb == 8192 for task in pool), "fixture must have some"
+
+    def test_a_ceiling_that_excludes_everything_draws_nothing(self):
+        assert sample_tasks(self._tasks(50), 10, 7, max_memory_mb=1) == []
+
+
+class TestSubscriptionCredential:
+    """Claude Code seated on a Claude subscription rather than metered credits.
+
+    Harbor forwards `CLAUDE_CODE_OAUTH_TOKEN` into the container and the CLI
+    picks whichever auth method is actually present, so a seat carrying only
+    that token runs on the plan. Two things must hold for it to be safe.
+    """
+
+    def test_a_subscription_token_credentials_the_seat(self):
+        seat = Contestant.from_json({
+            "name": "cc", "agent": "claude-code",
+            "engine": {"api": "anthropic", "model": "claude-fable-5"},
+            "env": "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat-x",
+        })
+        assert missing_credentials(seat) == []
+
+    def test_a_subscription_token_is_never_written_to(self, tmp_path: Path):
+        """It is not a provider bearer token. Aliasing a provider key into it
+        would produce a seat that cannot authenticate at all — so it counts as
+        credentials present without ever becoming an alias target."""
+        seat = Contestant.from_json({
+            "name": "cc", "agent": "claude-code",
+            "engine": {"api": "zai", "model": "glm-5.2",
+                       "base_url": "https://api.z.ai/api/anthropic"},
+            "env": "ZAI_API_KEY=zk",
+        })
+        runner = MatchRunner(DEFAULT_REGISTRY, tmp_path)
+        run = ContestantRun(contestant=seat, job_name="j",
+                            job_dir=tmp_path / "j", log_path=tmp_path / "j.log")
+        env = runner._routing_environment(seat, run)
+        assert env["ANTHROPIC_AUTH_TOKEN"] == "zk"
+        assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
+
+    def test_an_ambient_subscription_token_never_reaches_a_seat(self, monkeypatch):
+        """The scrub list is prefix-based and `CLAUDE_CODE_` is not one of the
+        prefixes, so this needs its own entry. Without it, a token exported in
+        the operator's shell silently credentials *every* Claude Code seat —
+        two arms you believed were on different credentials, both on the plan.
+        """
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat-ambient")
+        assert "CLAUDE_CODE_OAUTH_TOKEN" not in _base_environment()
+
+
+class TestInfrastructureFailuresAreNotLosses:
+    """A trial the agent never got to attempt is not a trial it lost."""
+
+    def _trial(self, tmp_path: Path, exception_type: str, reward=None) -> TrialMetrics:
+        trial = tmp_path / f"t-{exception_type}"
+        trial.mkdir()
+        payload: dict = {"exception_info": {"exception_type": exception_type}}
+        if reward is not None:
+            payload["verifier_result"] = {"reward": reward}
+        (trial / "result.json").write_text(json.dumps(payload))
+        return MetricsReader().read(trial, "task")
+
+    def test_a_setup_timeout_is_left_unjudged(self, tmp_path: Path):
+        """Claude Code installs its toolchain per container. On a slow link
+        that setup blows its budget, which is a fact about its installer and
+        not about how well it codes — scoring it 0 hands the other arm a win
+        that does not survive anyone opening the logs."""
+        m = self._trial(tmp_path, "AgentSetupTimeoutError")
+        assert m.infrastructure is True
+        assert m.resolved is None, "unjudged, not lost"
+
+    def test_an_agent_that_ran_and_quit_still_scores_zero(self, tmp_path: Path):
+        m = self._trial(tmp_path, "NonZeroAgentExitCodeError")
+        assert m.infrastructure is False
+        assert m.resolved is False
+
+    def test_an_agent_that_used_all_its_time_still_scores_zero(self, tmp_path: Path):
+        m = self._trial(tmp_path, "AgentTimeoutError")
+        assert m.infrastructure is False and m.resolved is False
+
+    def test_a_broken_verifier_returns_no_verdict_either_way(self, tmp_path: Path):
+        m = self._trial(tmp_path, "VerifierTimeoutError")
+        assert m.infrastructure is True and m.resolved is None
+
+    def test_infrastructure_trials_leave_the_solve_rate_alone(self, tmp_path: Path):
+        """Eight of ten never started; the arm won both it actually ran. The
+        rate must say 100% of 2 judged, and the count of the missing eight must
+        be visible beside it — "won 8 of 10" and "won 2 of the 2 that started"
+        are different claims."""
+        started = [
+            TrialMetrics(task=f"ok{i}", trial=f"ok{i}", resolved=True) for i in range(2)
+        ]
+        never = [
+            TrialMetrics(task=f"x{i}", trial=f"x{i}", failure="AgentSetupTimeoutError",
+                         infrastructure=True)
+            for i in range(8)
+        ]
+        totals = aggregate(started + never)
+        assert totals["judged"] == 2
+        assert totals["solve_rate"] == 100.0
+        assert totals["infrastructure"] == 8

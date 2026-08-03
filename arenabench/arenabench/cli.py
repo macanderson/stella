@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import argparse
 import logging
+import random
 import sys
 from pathlib import Path
 
 from .agents import AGENTS
 from .recorder import IMAGE_TAG, build_image, docker_available, image_present
-from .registry import DEFAULT_REGISTRY
+from .registry import DEFAULT_REGISTRY, sample_tasks
 from .server import default_workspace, serve
 
 __all__ = ["main"]
@@ -58,10 +59,49 @@ def _cmd_tasks(args: argparse.Namespace) -> int:
         target = dataset.harbor_id if dataset else args.dataset
         print(f"no tasks on disk; fetch with: harbor download {target}", file=sys.stderr)
         return 1
+    total = len(tasks)
+    seed = args.seed
+    if args.random:
+        # An unseeded draw still gets a seed, and prints it. Otherwise the one
+        # thing you need to run this slice again is the one thing you no
+        # longer have.
+        if seed is None:
+            seed = random.randrange(1, 2**31)
+        tasks = sample_tasks(
+            tasks,
+            args.random,
+            seed,
+            exclude_heavy=args.exclude_heavy,
+            max_memory_mb=args.max_memory_mb,
+        )
+
     for task in tasks:
-        heavy = " [heavy]" if task.memory_mb > 4096 or task.cpus > 1 else ""
+        heavy = " [heavy]" if task.heavy else ""
         print(f"{task.name:38} {task.difficulty:8} {task.category}{heavy}")
-    print(f"\n{len(tasks)} tasks", file=sys.stderr)
+
+    if args.random:
+        # Report the size of the pool actually drawn from, not the dataset. A
+        # filtered draw is a sample of a smaller population, and "10 of 89"
+        # would quietly claim otherwise.
+        drawn_from = len(
+            sample_tasks(
+                DEFAULT_REGISTRY.tasks(args.dataset),
+                total,
+                seed,
+                exclude_heavy=args.exclude_heavy,
+                max_memory_mb=args.max_memory_mb,
+            )
+        )
+        narrowed = "" if drawn_from == total else f" (of {total} in the dataset)"
+        print(
+            f"\n{len(tasks)} drawn from a pool of {drawn_from}{narrowed} — "
+            f"reproduce with --random {args.random} --seed {seed}"
+            + (" --exclude-heavy" if args.exclude_heavy else "")
+            + (f" --max-memory-mb {args.max_memory_mb}" if args.max_memory_mb else ""),
+            file=sys.stderr,
+        )
+    else:
+        print(f"\n{total} tasks", file=sys.stderr)
     return 0
 
 
@@ -107,6 +147,31 @@ def main(argv: list[str] | None = None) -> int:
 
     tasks_parser = subparsers.add_parser("tasks", help="list a dataset's tasks")
     tasks_parser.add_argument("dataset", default="terminal-bench-2.1", nargs="?")
+    tasks_parser.add_argument(
+        "--random",
+        type=int,
+        metavar="N",
+        help="draw N tasks at random instead of listing all of them",
+    )
+    tasks_parser.add_argument(
+        "--seed",
+        type=int,
+        help="seed for --random; one is chosen and printed if you omit it",
+    )
+    tasks_parser.add_argument(
+        "--exclude-heavy",
+        action="store_true",
+        help="draw only from tasks that do not force concurrency to 1",
+    )
+    tasks_parser.add_argument(
+        "--max-memory-mb",
+        type=int,
+        default=0,
+        metavar="MB",
+        help="draw only from tasks asking for at most MB of memory; with N "
+             "contestants racing, the ceiling that matters is your Docker "
+             "allocation divided by N",
+    )
     tasks_parser.set_defaults(func=_cmd_tasks)
 
     agents_parser = subparsers.add_parser("agents", help="list available agents")

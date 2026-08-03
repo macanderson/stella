@@ -23,13 +23,21 @@ without any of the UI knowing what a dataset is.
 from __future__ import annotations
 
 import os
+import random
 import subprocess
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Sequence
 
-__all__ = ["Task", "Dataset", "Registry", "DEFAULT_REGISTRY", "harbor_cache_root"]
+__all__ = [
+    "Task",
+    "Dataset",
+    "Registry",
+    "DEFAULT_REGISTRY",
+    "harbor_cache_root",
+    "sample_tasks",
+]
 
 
 @dataclass(frozen=True)
@@ -51,6 +59,17 @@ class Task:
     agent_timeout_sec: float = 0.0
     docker_image: str = ""
 
+    @property
+    def heavy(self) -> bool:
+        """Whether this task forces concurrency down to 1.
+
+        One definition, used by the picker's filter, the CLI listing and the
+        random sampler alike — three places that must agree about which tasks
+        a small machine cannot run beside another, or a seat gets excluded
+        from one of them and not the others.
+        """
+        return self.memory_mb > 4096 or self.cpus > 1
+
     def to_json(self) -> dict[str, Any]:
         return {
             "name": self.name,
@@ -63,8 +82,7 @@ class Task:
             "cpus": self.cpus,
             "agent_timeout_sec": self.agent_timeout_sec,
             "docker_image": self.docker_image,
-            # "heavy" tasks are the ones that force concurrency down to 1.
-            "heavy": self.memory_mb > 4096 or self.cpus > 1,
+            "heavy": self.heavy,
         }
 
 
@@ -244,6 +262,54 @@ class Registry:
             dataset.to_json(task_count=len(self.tasks(key)))
             for key, dataset in sorted(self.datasets.items())
         ]
+
+
+def sample_tasks(
+    tasks: Sequence[Task],
+    count: int,
+    seed: int,
+    *,
+    exclude_heavy: bool = False,
+    max_memory_mb: int = 0,
+) -> list[Task]:
+    """A reproducible random subset of ``tasks``.
+
+    **Seeded, because "we ran ten random tasks" is not a claim anyone can
+    check.** With the seed recorded the same ten come back on demand, so a
+    result that turned on a lucky draw can be told apart from one that did
+    not — and a rival can re-run the identical slice rather than a differently
+    lucky one of their own.
+
+    Returned in the dataset's own order rather than draw order. *Which* ten
+    were chosen is the finding; the sequence they came out of the generator in
+    carries no information, and a stable order lets two selections be compared
+    at a glance.
+
+    ``exclude_heavy`` narrows the pool before drawing, for a host that cannot
+    give a task 8 GB and still run a second contestant beside it.
+    ``max_memory_mb`` narrows it by an explicit ceiling, which is the honest
+    knob when :attr:`Task.heavy` is calibrated for a larger machine than the
+    one in front of you: a match with N contestants runs N containers at once,
+    so the ceiling that matters is the Docker allocation divided by N, and
+    only the operator knows both numbers.
+
+    Both change what the sample is a sample *of*. A caller that sets either
+    owes the reader that detail — this is a smaller population, not the same
+    one, and a solve rate over the easy-to-schedule tasks is not a solve rate
+    over the benchmark.
+    """
+    pool = [
+        task
+        for task in tasks
+        if not (exclude_heavy and task.heavy)
+        and not (max_memory_mb and task.memory_mb > max_memory_mb)
+    ]
+    if count >= len(pool):
+        return pool
+    if count <= 0:
+        return []
+    chosen = random.Random(seed).sample(range(len(pool)), count)
+    return [pool[index] for index in sorted(chosen)]
 
 
 #: Terminal-Bench 2.1, pinned by the digest the Stella benchmark protocol uses.
