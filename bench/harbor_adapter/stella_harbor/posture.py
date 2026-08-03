@@ -78,6 +78,25 @@ _TRIAGE_MODEL_ENV = "STELLA_TRIAGE_MODEL"
 _MAX_REVISIONS_ENV = "STELLA_MAX_REVISIONS"
 _CANDIDATES_ENV = "STELLA_CANDIDATES"
 
+# Host-side selector for the third coupled ceiling. The other two have been
+# selectable for generations — the output cap rides `params.max_tokens` in this
+# very dict, and the turn budget is a per-trial flag — but `model_timeout` was
+# an `EngineConfig` constant, reachable from no configuration at all. That made
+# it the one ceiling a benchmark arm could not move without rebuilding the
+# binary, which under this protocol is a re-freeze of the registered SUT rather
+# than a line in a posture (#1211 §6.2).
+#
+# It matters because the three are one budget. Raising the output cap alone
+# relocates the cliff instead of removing it: a step allowed 128,000 tokens
+# against a timeout sized for 64,000 stops on the timeout, and the trial reports
+# a capability difference that was really a ceiling nobody scaled. That is not
+# hypothetical here — it is the recorded history of this posture, where
+# 16384 -> 32000 -> 64000 each moved one ceiling while the others held.
+#
+# Unset omits the key, so every digest recorded before this selector existed
+# still describes the posture that produced it.
+_MODEL_TIMEOUT_ENV = "STELLA_MODEL_TIMEOUT"
+
 # Refusal ceilings, not clamps. Unlike the effort tier there is no enum to
 # validate an integer against, so a bound is the only check available beyond
 # "parses as a number" — and the failure it catches is a fat-fingered extra
@@ -86,6 +105,13 @@ _CANDIDATES_ENV = "STELLA_CANDIDATES"
 # 2 candidates), so hitting one means a typo rather than an ambitious arm.
 _MAX_REVISIONS_CEILING = 10
 _CANDIDATES_CEILING = 5
+
+# Six hours, the same refusal ceiling `stella-serve` applies to the knob over
+# the wire. Sized to sit far above any single generation a model produces
+# today while keeping a fat-fingered digit from parking a trial on an
+# effectively unbounded await — which on a benchmark spends the whole agent
+# timeout and reports it as a task failure.
+_MODEL_TIMEOUT_CEILING = 21_600
 
 
 def _validated_attempt_count(
@@ -150,6 +176,22 @@ def resolve_candidates(value: str | None) -> int | None:
         return None
     return _validated_attempt_count(
         value, label="candidates", floor=1, ceiling=_CANDIDATES_CEILING
+    )
+
+
+def resolve_model_timeout(value: str | None) -> int | None:
+    """Resolve the per-generation silence ceiling in seconds, or ``None``.
+
+    ``0`` is admissible and means *no backstop* — the unbounded await the
+    engine's ``Option::None`` spells. It is accepted rather than refused
+    because "no ceiling" is a real request that a floor of one could not
+    express, and it is distinct from leaving the selector unset, which asks for
+    the engine's own default instead.
+    """
+    if value is None:
+        return None
+    return _validated_attempt_count(
+        value, label="model timeout", floor=0, ceiling=_MODEL_TIMEOUT_CEILING
     )
 
 
@@ -268,6 +310,7 @@ def _benchmark_engine_posture(
     triage_model: str | None = None,
     max_revisions: int | None = None,
     candidates: int | None = None,
+    model_timeout_secs: int | None = None,
 ) -> tuple[dict[str, Any], str, str]:
     """Return a canonical Terminal-Bench engine posture and its hash.
 
@@ -301,6 +344,14 @@ def _benchmark_engine_posture(
     the key rather than writing the engine's default into it — so this function
     still returns byte-identical JSON, and therefore an identical digest, for
     every posture recorded before the knobs were reachable at all.
+
+    ``model_timeout_secs`` is the same shape again, for the ceiling that used to
+    be the exception (#1211 §6.2). The output cap is set per role below and the
+    turn budget is a per-trial flag, but the per-generation silence ceiling was
+    an engine constant — so a Fable-class arm, which needs it scaled with the
+    output cap or it merely stops on the timeout instead, could not be
+    expressed as a posture at all. It is now a key like any other: selecting it
+    changes the digest, leaving it unset reproduces every historical one.
     """
     selected_model = model.strip()
     if not selected_model or "/" not in selected_model:
@@ -457,6 +508,14 @@ def _benchmark_engine_posture(
         posture["pipeline_max_revisions"] = max_revisions
     if candidates is not None:
         posture["pipeline_candidates"] = candidates
+    # Same omit-when-unset rule, and here it carries an extra weight: this key
+    # is what makes a timeout change a *posture* change rather than a rebuild.
+    # A run that selects it says so in its digest; a run that does not is
+    # byte-identical to every run recorded before the key existed, which is the
+    # only way the registered numbers keep describing the postures that
+    # produced them.
+    if model_timeout_secs is not None:
+        posture["model_timeout_secs"] = model_timeout_secs
     normalized = json.dumps(
         posture,
         sort_keys=True,

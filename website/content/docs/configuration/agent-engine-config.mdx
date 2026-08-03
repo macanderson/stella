@@ -71,6 +71,11 @@ pin just the judge model while your user scope keeps everything else.
     "pipeline_max_revisions": 2,
     "pipeline_candidates": 1,
 
+    // Seconds of provider silence that end one generation. The partner of
+    // params.max_tokens below: raise the output cap without raising this and
+    // long steps stop on the timeout instead of the cap.
+    "model_timeout_secs": 816,
+
     // Per-agent deep config. Set a field and it goes on the wire; leave it
     // out and the provider default applies.
     "agents": {
@@ -232,6 +237,16 @@ Set any of the three autos to `"on"` and stop thinking about it:
     including the ones a single shot would have solved. Wants candidate
     isolation to be meaningful; without it the candidates run sequentially in
     the shared tree and the losers' edits stay behind.
+  </OptionCard>
+  <OptionCard name="model_timeout_secs" defaultValue="816">
+    Seconds of provider **silence** that end a single generation — it bounds
+    the gap between stream fragments, not elapsed time, so a step that keeps
+    streaming is never cut by it. `0` removes the backstop entirely.
+
+    Set it with `params.max_tokens`, not instead of it. The two are one
+    budget: a step allowed 128,000 output tokens against a timeout sized for
+    64,000 stops on the timeout, which looks like a model that could not
+    finish rather than a ceiling nobody scaled.
   </OptionCard>
 </CardGrid>
 
