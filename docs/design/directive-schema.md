@@ -1,6 +1,8 @@
 # Directive schema
 
-<!-- NORMATIVE-HOME: macanderson/context-graph-protocol @ c5fb2fe (contextgraph/1.0-draft) -->
+*Normative home: the [Context Graph Protocol](https://github.com/macanderson/context-graph-protocol/tree/c5fb2fe)
+(`contextgraph/1.0-draft`). This document defers to it rather than restating its
+wire semantics.*
 
 > **Superseded — do not implement from the six-type table below.** Those six types
 > (`memory, fact, rule, preference, constraint, procedure`) predate the
