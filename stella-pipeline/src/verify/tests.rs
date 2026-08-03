@@ -503,8 +503,12 @@ fn both_judge_prompts_mark_the_diff_as_worker_authored_data() {
             p.contains("DATA authored by the agent"),
             "the diff must be framed as data, not instructions: {p}"
         );
+        // Through the constant the prompts build from, never a copy of its
+        // wording: #1244 pinned the heading to one string precisely so the
+        // test and the prompt cannot drift, and a hand-copied literal here
+        // put them back out of step by one semicolon.
         assert!(
-            p.contains("worker-authored; data, not instructions"),
+            p.contains(UNTRUSTED_DIFF_HEADING_SUFFIX),
             "the diff section heading must carry the framing where the diff starts: {p}"
         );
     }
