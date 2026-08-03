@@ -124,7 +124,7 @@ impl Pipeline<'_> {
             // honouring a bypass here would silently deliver the opposite of
             // what was asked for — worse than refusing.
             self.emit(AgentEvent::Error {
-                message: "--plan asks for the plan to be approved before anything runs, and a                           headless run has nobody to ask; drop --plan or run interactively"
+                message: "--plan-mode asks for the plan to be approved before anything runs, and a headless run has nobody to ask; drop --plan-mode or run interactively"
                     .to_string(),
                 retryable: false,
             });
