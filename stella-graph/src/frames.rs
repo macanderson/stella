@@ -339,7 +339,7 @@ fn frame(
     // content, exact (`budget_tokens` = ceil(bytes/4)), so a host that meters
     // or budgets these frames is told the truth.
     let token_cost = contextgraph_types::budget_tokens(&content);
-    // `docs/context-reuse.md` §1: declare the digest of exactly the bytes this
+    // `docs/design/adaptive-context/context-reuse.md` §1: declare the digest of exactly the bytes this
     // frame carries inline. Without one the frame is unverifiable and a host
     // must re-query it (D4) instead of reusing the cached, byte-stable block.
     let content_digest = Some(format!("sha256:{}", store::sha256_hex(content.as_bytes())));

@@ -4,7 +4,7 @@
 //! and the settings write live here; `command_deck` only wires them to `say`.
 //!
 //! Two themes ship. `stella-dark` (Phosphor Gold on Ink — the comet kit at
-//! `docs/brand/BRAND.md`) is the default; `stella-light` is the same gold
+//! `docs/brand/README.md`) is the default; `stella-light` is the same gold
 //! darkened onto warm paper. [`blurb`] is the user-visible naming of both,
 //! and it has drifted behind the identity before (it once named a terminal
 //! green and an ember red-orange two recolours dead) — keep it telling the

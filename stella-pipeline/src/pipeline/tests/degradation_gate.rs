@@ -1,4 +1,4 @@
-//! The agent-degradation gate (`docs/verification-gate.md`, layer 1).
+//! The agent-degradation gate (`docs/design/verification-gate.md`, layer 1).
 //!
 //! A fixed matrix of full-pipeline scenarios — real triage, execution,
 //! verification ladder, and judge over scripted doubles — each pinning THREE

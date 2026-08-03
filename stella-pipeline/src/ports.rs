@@ -82,7 +82,7 @@ pub struct RecalledFrame {
     /// reconstructed rather than verified.
     ///
     /// `None` when the serving provider declared none — per
-    /// `docs/context-reuse.md` §1 such a frame is *not verifiable* and a host
+    /// `docs/design/adaptive-context/context-reuse.md` §1 such a frame is *not verifiable* and a host
     /// must re-query rather than reuse it, so the absence is meaningful and is
     /// carried rather than papered over with a locally recomputed hash.
     pub content_digest: Option<String>,
@@ -116,7 +116,7 @@ pub struct Recall {
     /// The frames selected for this turn, in the host's canonical render
     /// order.
     pub frames: Vec<RecalledFrame>,
-    /// The CGP usage report for the request (`docs/context-reuse.md` §2).
+    /// The CGP usage report for the request (`docs/design/adaptive-context/context-reuse.md` §2).
     /// `None` when the port has no CGP host behind it to report one.
     pub usage: Option<ContextUsage>,
     /// Wall-clock milliseconds this recall took, measured by the port that

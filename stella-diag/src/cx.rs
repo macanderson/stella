@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! Correlation without spans — `docs/design/diagnostics.md` §7.
+//! Correlation without spans — `docs/design/diagnostics/diagnostics.md` §7.
 //!
 //! `tracing`'s substantive advantage over a hand-rolled logger is span
 //! propagation, and hand-rolled loggers usually lose because they force every

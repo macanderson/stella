@@ -22,7 +22,7 @@
 //! Both are local, `egress: false` sources — the consent store passes them
 //! without a prompt; only an egress provider would gate.
 //!
-//! ## Context reuse (`docs/context-reuse.md`)
+//! ## Context reuse (`docs/design/adaptive-context/context-reuse.md`)
 //!
 //! Recall also honors the protocol's reuse guarantees, which is what makes a
 //! multi-turn session cheap rather than merely correct:
@@ -119,7 +119,7 @@ impl PlaneProvider for ScopedStore {
     }
     /// Domain scoping narrows *retrieval*, never *identity*: a frame this
     /// wrapper served is the store's frame, so revalidation is the store's
-    /// answer, unmodified (`docs/context-reuse.md` §4).
+    /// answer, unmodified (`docs/design/adaptive-context/context-reuse.md` §4).
     async fn verify(&self, request: &VerifyRequest) -> Result<VerifyResponse, ContextError> {
         PlaneProvider::verify(self.store.as_ref(), request).await
     }
@@ -195,7 +195,7 @@ impl ContextProvider for MemoryProvider {
     }
 
     /// Revalidate held identities through the same plane registry that served
-    /// them (`docs/context-reuse.md` §4). Every store-minted frame declares
+    /// them (`docs/design/adaptive-context/context-reuse.md` §4). Every store-minted frame declares
     /// `sha256:<content_hash>`, so the plane compares digests against the live
     /// rows and the host reuses only what verifies `valid` — no frame body
     /// travels in either direction.
@@ -332,7 +332,7 @@ pub enum Admission {
     ///
     /// The transport is up (scopes are only knowable from the handshake), but
     /// the host's own consent gate refuses every query to it and **the query
-    /// payload is never transmitted** (`docs/context-reuse.md` §4) — so it
+    /// payload is never transmitted** (`docs/design/adaptive-context/context-reuse.md` §4) — so it
     /// contributes nothing to a turn and no workspace content reaches it. The
     /// admission is reported as a refusal because that is what it is
     /// operationally: a source that will serve no frames until consent exists.
@@ -609,7 +609,7 @@ fn memory_capabilities() -> Capabilities {
                 .map(String::from)
                 .to_vec(),
         },
-        // `docs/context-reuse.md` §4: the plane compares each presented digest
+        // `docs/design/adaptive-context/context-reuse.md` §4: the plane compares each presented digest
         // against the live node's `content_hash`, so held memory frames are
         // revalidated instead of re-queried — and an unchanged set keeps
         // rendering byte-identically (§1).
@@ -649,7 +649,7 @@ pub struct AttributedContextFrame {
 }
 
 /// The identity triple that names a frame's exact bytes
-/// (`docs/context-reuse.md` §1) — the sort key for canonical composition and
+/// (`docs/design/adaptive-context/context-reuse.md` §1) — the sort key for canonical composition and
 /// the payload of a `context/verify` request.
 impl AttributedContextFrame {
     /// This frame's stable `(provider id, frame id, content digest)` identity.
@@ -661,9 +661,9 @@ impl AttributedContextFrame {
 /// One recall through the host: the frames that won selection, plus the CGP
 /// usage report for the request that produced them.
 pub struct HostRecall {
-    /// Selected frames, in canonical render order (`docs/context-reuse.md` §1).
+    /// Selected frames, in canonical render order (`docs/design/adaptive-context/context-reuse.md` §1).
     pub frames: Vec<AttributedContextFrame>,
-    /// The per-request cost roll-up (`docs/context-reuse.md` §2).
+    /// The per-request cost roll-up (`docs/design/adaptive-context/context-reuse.md` §2).
     pub usage: ContextUsage,
     /// What the host's own merge dropped, and why — Phase 2 (#713).
     ///
@@ -694,7 +694,7 @@ pub struct HostDroppedFrame {
 /// Fan `query` out through the host, **select** by score, and **render** in
 /// canonical order.
 ///
-/// The split is the whole point of `docs/context-reuse.md` §1. Selection is
+/// The split is the whole point of `docs/design/adaptive-context/context-reuse.md` §1. Selection is
 /// query-dependent: the highest-scoring frames win the frame and token budget,
 /// deduped by identity and re-capped across providers (each provider already
 /// respected the budget individually; the merge must too). Rendering is not:
@@ -713,7 +713,7 @@ pub struct HostDroppedFrame {
 ///
 /// It also returns the fan-out's **usage report** — the per-request roll-up of
 /// which providers served how many frames, at what token cost, against which
-/// budget (`docs/context-reuse.md` §2).
+/// budget (`docs/design/adaptive-context/context-reuse.md` §2).
 ///
 /// The report is taken from the fan-out **before** fusion, so it accounts for
 /// what each provider actually served and what the host rejected — a budget

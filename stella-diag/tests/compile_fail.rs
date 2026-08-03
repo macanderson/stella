@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! Property 1 of `docs/design/diagnostics.md` §12: **content cannot enter a
+//! Property 1 of `docs/design/diagnostics/diagnostics.md` §12: **content cannot enter a
 //! record.**
 //!
 //! This is the witness for §5.2, and it is a stronger artifact than a sentinel

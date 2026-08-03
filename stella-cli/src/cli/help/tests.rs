@@ -275,8 +275,7 @@ fn subcommand_help_keeps_claps_own_layout() {
 }
 
 /// The website's commands section, relative to the repository root. The site
-/// mirrors this module rather than curating its own order
-/// (docs/design/website-information-architecture.md § Commands), and the two
+/// mirrors this module rather than curating its own order, and the two
 /// tests below are the site twins of `every_command_is_grouped_exactly_once`:
 /// they run against the same GROUPS const, so the grouping cannot drift
 /// between the terminal and the site without a red test.

@@ -1,4 +1,4 @@
-// The line from docs/design/diagnostics.md §5.2, verbatim:
+// The line from docs/design/diagnostics/diagnostics.md §5.2, verbatim:
 //
 //     diag!(warn, "tools.write.denied", path = user_path);   // ← does not compile
 //

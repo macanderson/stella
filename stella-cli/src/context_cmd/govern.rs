@@ -1,5 +1,5 @@
 //! `stella context promote` / `stella context govern` — the regulated
-//! governance tier (#994, `docs/context-pr.md` §5.3/§9, ADR 0007).
+//! governance tier (#994, `docs/design/adaptive-context/context-pr.md` §5.3/§9, ADR 0007).
 //!
 //! Promotion is the grant that lets a record deny tool calls, and this module
 //! is where that grant becomes **accountable**: every enforcement transition

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! Errors, which are the real leak — `docs/design/diagnostics.md` §5.3.
+//! Errors, which are the real leak — `docs/design/diagnostics/diagnostics.md` §5.3.
 //!
 //! §5.2 stops a `String` reaching a field. That closes the obvious door and
 //! leaves the one people actually walk through: **error messages**.

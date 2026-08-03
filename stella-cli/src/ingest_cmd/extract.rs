@@ -6,7 +6,7 @@
 //! claim is mapped to a [`Record`], run through the deterministic safety
 //! [`gate`], probed against the tree for staleness, stamped with its
 //! content-derived identity, and written to `.stella/proposals/` as a
-//! `[[proposal]]` file in the shape of `docs/context-record-examples/05`.
+//! `[[proposal]]` file in the shape of `docs/design/adaptive-context/context-record-examples/05`.
 //!
 //! ## Why the safety work is here and not in the prompt
 //!

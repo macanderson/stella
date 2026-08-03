@@ -151,7 +151,7 @@ manifest a list of paths rather than anything more expressive.
 
 The `:root` block at the top of `index.html` mirrors the comet brand kit
 (v1.0) — Phosphor Gold `#FFB000` on Ink `#0B0B0C` over warm neutrals, set in
-JetBrains Mono. [`../docs/brand/`](../docs/brand/BRAND.md) is the normative
+JetBrains Mono. [`../docs/brand/`](../docs/brand/README.md) is the normative
 source (`css/tokens.css` holds the values); the same tokens live in
 `website/src/app/tokens.css`, and the surfaces move together. The block
 carries the whole core set even where this page uses only part of it. Do not

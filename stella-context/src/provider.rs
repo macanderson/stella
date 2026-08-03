@@ -47,7 +47,7 @@ pub trait ContextProvider: Send + Sync {
     async fn query(&self, q: &ContextQuery) -> Result<ContextQueryResult, ContextError>;
 
     /// Revalidate frame identities a host already holds, without any frame
-    /// body travelling in either direction (`docs/context-reuse.md` §4,
+    /// body travelling in either direction (`docs/design/adaptive-context/context-reuse.md` §4,
     /// `context/verify`).
     ///
     /// The digest is the ground truth: a provider compares the digest the host
@@ -147,7 +147,7 @@ impl ContextProvider for ContextStore {
             embeddings_fingerprint: Some(self.fingerprint().id()),
             // The store can answer `context/verify` honestly: every frame it
             // mints declares `sha256:<node.content_hash>`, and the same hash is
-            // re-read from the live row (`docs/context-reuse.md` §4).
+            // re-read from the live row (`docs/design/adaptive-context/context-reuse.md` §4).
             verify: true,
             ..Default::default()
         }
@@ -159,7 +159,7 @@ impl ContextProvider for ContextStore {
     }
 
     /// Compare each presented digest against the live node's `content_hash`
-    /// (`docs/context-reuse.md` §4, requirement V1).
+    /// (`docs/design/adaptive-context/context-reuse.md` §4, requirement V1).
     ///
     /// The store mints `content_digest` as `sha256:<content_hash>` over exactly
     /// the bytes it serves as `content`, so re-reading the row is a faithful
@@ -276,7 +276,7 @@ impl ProviderRegistry {
     }
 
     /// Fan a `context/verify` request out to the plane providers that advertise
-    /// the capability and merge their verdicts (`docs/context-reuse.md` §4).
+    /// the capability and merge their verdicts (`docs/design/adaptive-context/context-reuse.md` §4).
     ///
     /// Plane provider ids are not part of a `FrameId` — the whole plane is one
     /// CGP provider (`workspace-memory`) to the host — so an identity is
@@ -496,7 +496,7 @@ mod tests {
         );
     }
 
-    /// WITNESS (#451, `docs/context-reuse.md` §1): every store-minted frame
+    /// WITNESS (#451, `docs/design/adaptive-context/context-reuse.md` §1): every store-minted frame
     /// declares a `content_digest` naming exactly the bytes it serves. A frame
     /// without one is unverifiable and a host must re-query rather than reuse
     /// it (D4), which is precisely the cache-busting this issue removes.

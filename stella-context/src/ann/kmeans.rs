@@ -4,7 +4,7 @@
 //!
 //! Textbook k-means seeds its centroids at random (k-means++ included: its
 //! seeding is randomized, only its *distribution* is clever). This one may not.
-//! `docs/design/adaptive-context.md` §5.3 requires that identical inputs produce
+//! `docs/design/adaptive-context/adaptive-context.md` §5.3 requires that identical inputs produce
 //! byte-identical output, and the retrieval plane around it already keeps that
 //! bargain everywhere it ranks — every tie in `crate::retrieval` breaks on the
 //! lower node id precisely so the same store answers the same query the same

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
 //! Getting the ring onto disk — the second half of
-//! `docs/design/diagnostics.md` §7.4.
+//! `docs/design/diagnostics/diagnostics.md` §7.4.
 //!
 //! The ring is written **only** on a panic or a non-zero exit. That is the
 //! whole retention policy, and it is why the plane costs a successful run

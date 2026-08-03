@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The envelope — `docs/design/diagnostics.md` §5.1.
+//! The envelope — `docs/design/diagnostics/diagnostics.md` §5.1.
 //!
 //! One shape, shared by all seventeen crates:
 //!
