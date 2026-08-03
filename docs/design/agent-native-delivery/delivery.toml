@@ -1,0 +1,161 @@
+# =============================================================================
+# The `[delivery]` block of a project-scope `stella.toml`, rendered in full.
+#
+# This is the customer-facing surface of
+# `docs/design/agent-native-delivery.md` — the declarative statement of what a
+# class of work must produce before it may be called done (§6), and the one
+# switch that decides whether stated-but-unfiled follow-up work blocks
+# completion (§7).
+#
+# The values below ARE the shipped defaults, verbatim (§6.3). They are strict:
+# a default install refuses to close a defect without a regression witness and
+# a postmortem. That will be too strict for some teams and every knob exists
+# to loosen it — but a process framework with no opinion is a configuration
+# file with extra steps.
+#
+# Nothing here is built. Phases in §11.
+# =============================================================================
+
+[delivery]
+
+# Which provider manifest this workspace is bound to — the `name` field of a
+# `.stella/issues/<name>.toml` (§4.6). One binding per workspace. The monorepo
+# that files OSS bugs to GitHub and internal work to Jira is a real case and
+# is deferred, not denied (§12.1).
+provider = "jira-prod"
+
+# May a run proceed without an issue?
+#
+#   always      every run binds to an issue key before it may reach `built`
+#   non_trivial a run whose diff exceeds the triage floor must bind
+#   never       binding is optional; residue still applies (see below)
+#
+# `non_trivial` is the shipped default because typo fixes and one-line doc
+# edits should not each mint a ticket — that is backlog inflation by policy
+# rather than by accident (§10.1).
+require_issue = "non_trivial"
+
+# THE RESIDUE SWITCH (§7).
+#
+#   block   `done` is unreachable while any stated follow-up is undischarged.
+#           A hard gate, of the same character as tamper exclusion — not a
+#           warning an operator may scroll past.
+#   warn    the run completes; items land on the receipt. The migration
+#           setting, and the Phase 4 default.
+#   off     detection does not run.
+#
+# Ships as `block` from Phase 5. Set `warn` for the first two weeks on an
+# existing repository, read the receipts, then turn it up.
+residue = "block"
+
+# Filings per run before the gate stops filing and DECOMPOSES instead (§10.1).
+# Exceeding this does not file the sixth item: it files one child issue
+# carrying the remaining list, because a run producing more than five distinct
+# follow-ups has discovered that its scope was wrong, and the honest artifact
+# is a decomposition, not a pile.
+residue_budget = 5
+
+
+# =============================================================================
+# PER-CLASS POLICY
+# =============================================================================
+# Keys: defect | feature | epic | other — Stella's four classes (§3) and
+# nothing else. A customer's eleven issue types reach these four through the
+# provider manifest's [classes] block (§4), which is where customer vocabulary
+# belongs.
+#
+#   spec / plan   required | inherit | not_required
+#                 `inherit` resolves by walking up the parent edge to the
+#                 nearest ancestor carrying one (§5); no ancestor has one →
+#                 treated as `not_required`.
+#
+#   requires      a CLOSED vocabulary (§6.1). Every member is machine-checkable
+#                 without a model call, because a requirement Stella cannot
+#                 verify is a comment, and comments do not belong in a gate.
+#
+#   budget_usd    the per-issue spend ceiling handed to the run. Calibrate from
+#                 `stella stats --by-issue` once P3 has data; these numbers are
+#                 first guesses and should not survive contact with real ones.
+#
+#   close_on      integrated | proven | never
+#                 `never` leaves the tracker transition to a human — the
+#                 setting a regulated workspace wants.
+# =============================================================================
+
+# ── DEFECT ───────────────────────────────────────────────────────────────────
+# The strictest class, and the one this design's defaults are most opinionated
+# about. A defect that closes without proof that it cannot come back has not
+# been fixed; it has been made temporarily invisible.
+[delivery.class.defect]
+spec       = "not_required"
+plan       = "not_required"
+# `regression_witness`, not `witness`: the test must fail at the commit the
+# defect was REPORTED against, not merely at HEAD (§6.2). A flip against HEAD
+# proves the test exercises the new code — it does not prove the test would
+# have caught the bug.
+requires   = ["regression_witness", "postmortem"]
+budget_usd = 5.00
+close_on   = "integrated"
+
+# ── FEATURE ──────────────────────────────────────────────────────────────────
+[delivery.class.feature]
+spec       = "inherit"
+plan       = "required"
+requires   = ["witness"]
+budget_usd = 25.00
+close_on   = "integrated"
+
+# ── EPIC ─────────────────────────────────────────────────────────────────────
+# An epic is the unit of INTENT; an issue is the unit of PROOF (§5). An agent
+# that claims an epic must decompose it into children rather than work it, and
+# `work = "decompose_only"` is what enforces that rather than asking for it.
+[delivery.class.epic]
+spec = "required"
+plan = "required"
+work = "decompose_only"
+
+# ── OTHER ────────────────────────────────────────────────────────────────────
+# An issue type the provider manifest maps to nothing (§4).
+#
+# `refuse` will annoy people on day one, and it is still the right default: the
+# alternative — silently treating `Other` as `Feature` — applies the wrong
+# policy quietly, which is worse but easier to miss. The fix is one line in the
+# provider's [classes] block, and the error message says so. See §12.6.
+[delivery.class.other]
+work = "refuse"
+
+
+# =============================================================================
+# SINKS — where an artifact's output goes
+# =============================================================================
+# "…and have its outputs sent here" made declarative. A sink list is
+# all-or-nothing for gate purposes: an artifact counts as satisfied only when
+# EVERY sink accepted it, or journaled it `pending_sync` (§10.3). A postmortem
+# that reached the issue but not the channel is not delivered.
+#
+# Sink forms:
+#   issue_comment            a comment on the issue the run is bound to
+#   epic_comment             a comment on the nearest ancestor epic
+#   file:<path>              committed in the same change; `{issue_key}`,
+#                            `{epic_key}`, and `{date}` interpolate
+#   slack:#<channel>         via the configured Slack integration
+#   webhook:<integration>    POST to an `[integrations]` entry by name
+#
+# A sink is an EGRESS DESTINATION and sits on the same trust boundary as the
+# provider manifest itself (§4.3): an untrusted project scope contributes none.
+# =============================================================================
+
+[delivery.sinks.postmortem]
+to = [
+  "issue_comment",
+  "file:docs/postmortems/{issue_key}.md",
+  "slack:#eng-quality",
+]
+
+[delivery.sinks.receipt]
+to = ["issue_comment"]
+
+# Where a residue item filed as a NEW issue lands, when the run's issue has no
+# ancestor epic to parent it to. Absent → the provider's project/team default.
+[delivery.sinks.follow_up]
+to = ["issue_comment"]

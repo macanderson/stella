@@ -123,7 +123,7 @@ impl Pipeline<'_> {
             summary: format!("no witness test warranted: {}", reason.sentence()),
             deterministic: true,
             evidence_refs: vec![format!("warrant:{reason:?}")],
-            ladder: Some(Box::new(snapshot.clone())),
+            ladder: Some(Box::new(snapshot.with_rung(LadderRung::Waived))),
         };
         self.emit(AgentEvent::JudgeVerdict {
             passed: true,
@@ -150,7 +150,7 @@ impl Pipeline<'_> {
                 .to_string(),
             deterministic: false,
             evidence_refs: vec![],
-            ladder: Some(Box::new(snapshot.clone())),
+            ladder: Some(Box::new(snapshot.with_rung(LadderRung::Waived))),
         };
         self.emit(AgentEvent::JudgeVerdict {
             passed: true,

@@ -82,6 +82,7 @@ pub(crate) const ENGINE_ROOT_FIELDS: &[&str] = &[
     "headless_scope_bypass",
     "pipeline_max_revisions",
     "pipeline_candidates",
+    "model_timeout_secs",
     "agents",
 ];
 

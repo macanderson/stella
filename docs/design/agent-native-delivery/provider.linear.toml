@@ -1,0 +1,125 @@
+# =============================================================================
+# The SHIPPED Linear manifest — `include_str!`-embedded, shadowable by a
+# workspace `.stella/issues/linear.toml` of the same name.
+#
+# This file is the proof obligation of `docs/design/agent-native-delivery.md`
+# §4.5: if Linear cannot be expressed as a manifest, no customer's tracker can
+# be either, and the extension surface is decorative. Everything Stella
+# currently knows about Linear is compiled into `IssueBackend::Linear` and
+# `issue_ops.rs` — the GraphQL endpoint, that `ENG-123` is the identifier
+# shape, that Linear supplies a canonical branch name per issue, that a team
+# scopes creation. Every one of those facts appears below as data.
+#
+# Extracting Linear is therefore both the proof that the format is adequate
+# and the first migration onto it. It is filed as its own issue and is the
+# Phase 1 deliverable (§11).
+#
+# WHAT THIS FILE MUST NOT NEED: a `linear = true` special case anywhere in the
+# loader. If the shipped Linear manifest requires one field no customer
+# manifest can set, the format has failed and the field belongs in the `Issue`
+# struct (§3) instead.
+# =============================================================================
+
+schema_version = 1
+name    = "linear"
+kind    = "linear"
+enabled = true
+
+
+# ── CONNECTION ───────────────────────────────────────────────────────────────
+# `api_key_env` preserves today's `LINEAR_API_KEY` behavior exactly. The OAuth
+# path (`stella connect linear`) continues to write a token to
+# `~/.stella/integrations.json` and continues to win over the env var — that
+# is imperative STATE and stays where it is. This manifest is the declarative
+# half: which team, which endpoint, which vocabulary.
+[connection]
+api_url     = "https://api.linear.app/graphql"
+api_key_env = "LINEAR_API_KEY"
+# Scopes creation. Also what makes `ENG-123` resolvable without a search.
+team_key    = "ENG"
+
+
+# ── CLASSES ──────────────────────────────────────────────────────────────────
+# Linear ships no issue-type field at all: teams express type through labels.
+# So the default mapping is by label, and a team that uses different labels
+# edits three lines rather than waiting for a release.
+#
+# Note what this makes visible — today Stella has NO notion of a Linear issue's
+# class, which is precisely why it cannot apply a per-class delivery policy
+# (§6) to a Linear workspace. The manifest is what makes that possible.
+[classes]
+source  = "label"                      # label | issue_type | none
+defect  = ["Bug", "bug", "defect"]
+feature = ["Feature", "feature", "Improvement", "Chore"]
+epic    = ["Epic", "epic"]
+
+
+# ── STATES ───────────────────────────────────────────────────────────────────
+# Linear's workflow states carry a native `type` (`backlog`, `unstarted`,
+# `started`, `completed`, `canceled`), which maps onto Stella's three buckets
+# without naming a single state — so the shipped default keys off the type and
+# a team with a custom state only overrides what differs.
+[states]
+source  = "state_type"                 # state_type | name
+ready   = ["backlog", "unstarted", "started"]
+blocked = []                           # see [states.blocked_from] below
+closed  = ["completed", "canceled"]
+
+# Linear has no blocked state type; teams express it with a label or a
+# blocking relation. Both are supported, checked in order, first hit wins.
+[states.blocked_from]
+relations = ["blocks"]                 # an unresolved inbound `blocks` relation
+labels    = ["Blocked", "blocked"]
+
+[states.write]
+start   = "In Progress"
+review  = "In Review"
+close   = "Done"
+decline = "Canceled"
+# Applied as a label, since there is no state to transition to. The loader
+# resolves this against [states.blocked_from].labels and errors at load if it
+# names something unreachable.
+block   = "Blocked"
+
+
+# ── CAPABILITIES ─────────────────────────────────────────────────────────────
+[capabilities]
+sub_issues    = "native"    # Linear has real parent/child
+blocked_state = "label"     # degradation declared, not discovered (§4.2)
+close_reason  = true        # canceled vs completed
+comments      = true
+search        = "graphql"
+
+
+# ── FIELDS ───────────────────────────────────────────────────────────────────
+[fields]
+title       = "title"
+description = "description"
+parent      = "parent"
+
+[fields.write]
+# Linear custom fields are not generally available, so the shipped manifest
+# writes provenance to the receipt comment (§10.2) rather than to fields. A
+# customer on a plan that has them overrides this block.
+# execution_id = { custom_field = "..." }
+# spend_usd    = { custom_field = "..." }
+# spec_ref     = { custom_field = "..." }
+
+
+# ── BRANCH NAMING ────────────────────────────────────────────────────────────
+# `start_work_on_issue` currently hard-codes "ask Linear for its canonical
+# branch name, fall back to a derived one". That is a Linear-specific fact
+# living in shared code; here it is one key.
+#
+#   provider   — ask the tracker (Linear's `branchName`)
+#   template   — render `pattern` below
+#   none       — Stella derives `issue-<key>`
+[branch]
+source  = "provider"
+pattern = "{key}-{slug}"
+
+
+# ── PROVENANCE ───────────────────────────────────────────────────────────────
+[provenance]
+label      = "stella"
+decay_days = 30

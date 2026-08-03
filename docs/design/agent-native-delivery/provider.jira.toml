@@ -1,0 +1,157 @@
+# =============================================================================
+# .stella/issues/jira-prod.toml
+#
+# A COMPLETE issue-provider manifest for a Jira Cloud project, rendered in the
+# shape proposed by `docs/design/agent-native-delivery.md` §4. Nothing here is
+# built yet — this file is the target, and it exists so the §4 prose can be
+# read against a concrete artifact rather than a fragment.
+#
+# The example is deliberately a MESSY project, not a clean one: eleven
+# statuses, five issue types, two of them customer-invented, and three
+# mandatory create-screen fields Stella has no opinion about. A format that
+# only handles the tidy case is not a format.
+#
+# WHAT NEVER APPEARS IN THIS FILE: a secret. Every credential is the NAME of
+# an environment variable. This file is committed; `.env.local` is not.
+# =============================================================================
+
+schema_version = 1
+
+# The name the workspace binds to (`[delivery] provider = "jira-prod"`), and
+# the name a workspace manifest uses to shadow a shipped built-in (§4.5).
+name = "jira-prod"
+
+# jira | github | linear | exec
+#
+# The first three are transports Stella ships. `exec` (see
+# provider.acme.toml sketch in §4.4) hands the same verb set to an argv
+# command in the customer's own repository.
+kind = "jira"
+
+# A provider can be defined and switched off without deleting it. Deleting a
+# manifest to disable a tracker is not a config action.
+enabled = true
+
+
+# ── CONNECTION ───────────────────────────────────────────────────────────────
+# Shape only: endpoints, keys, and the NAMES of env vars.
+#
+# A provider that is `enabled` and whose named env var is unset is a STARTUP
+# error naming this file and this key (§4.3). The alternative is finding out
+# mid-turn, at the moment the tool fires.
+[connection]
+base_url       = "https://oxagen.atlassian.net"
+project_key    = "OPS"
+# Jira Cloud basic auth is email + API token, so two variables, not one.
+user_email_env = "JIRA_USER_EMAIL"
+api_key_env    = "JIRA_API_TOKEN"
+
+
+# ── CLASSES ──────────────────────────────────────────────────────────────────
+# The customer's issue-type vocabulary → Stella's four classes (§3).
+#
+# This block plus [states] IS the adaptation layer. Everything else in this
+# file is plumbing.
+#
+# An issue type that appears in none of these lists maps to `Other`, and
+# `[delivery.class.other]` decides whether `Other` may be worked at all
+# (shipped default: `work = "refuse"`). That is deliberate: a silent fallback
+# to `Feature` would apply the wrong delivery policy quietly, which is worse
+# than refusing loudly.
+[classes]
+# `Defect` carries the regression obligation (§6.2) — a witness test that
+# fails at the commit the defect was reported against, not merely at HEAD.
+defect  = ["Bug", "Defect", "Incident", "Production Issue"]
+feature = ["Story", "Task", "Improvement", "Spike"]
+# `Epic` is the spec anchor (§5) and is never worked directly.
+epic    = ["Epic", "Initiative"]
+
+
+# ── STATES ───────────────────────────────────────────────────────────────────
+# Every status reachable in the project's workflow maps to exactly one of
+# three buckets. Stella's model is `Open(Ready|Blocked)` or `Closed` and holds
+# nothing else (§3).
+#
+# A reachable status named in none of the three lists is a LOAD ERROR, not a
+# guess. Guessing here means guessing whether work is finished.
+[states]
+ready   = ["To Do", "In Progress", "In Review", "Ready for QA", "Reopened"]
+blocked = ["Blocked", "Waiting on Support", "On Hold"]
+closed  = ["Done", "Won't Do", "Duplicate", "Cannot Reproduce"]
+
+# Read and write are separate maps on purpose. Trackers routinely have several
+# statuses that READ as ready and exactly one Stella should TRANSITION into —
+# "Reopened" reads ready, but Stella must never set it.
+[states.write]
+start   = "In Progress"
+review  = "In Review"
+close   = "Done"
+decline = "Won't Do"
+block   = "Blocked"
+
+
+# ── CAPABILITIES ─────────────────────────────────────────────────────────────
+# Declared, not probed (§4.2). Probing costs a round trip per capability at
+# startup and still races a workflow edit; declaring is reviewable and fails
+# in the right place.
+#
+# Stella's response to a missing capability is DECLARED DEGRADATION: the
+# fallback is documented in §4.2's table, and it is reported by
+# `stella doctor` and on every run receipt. Nothing degrades quietly.
+[capabilities]
+sub_issues    = "native"   # native | link | label | none
+blocked_state = "status"   # status | label | link | none
+close_reason  = true
+comments      = true
+search        = "jql"      # jql | graphql | rest | none
+
+
+# ── FIELDS (READ) ────────────────────────────────────────────────────────────
+# Where Stella's four read-side nouns live on this provider. Jira's are
+# conventional; the block exists because ServiceNow's and Bugzilla's are not.
+[fields]
+title       = "summary"
+description = "description"
+parent      = "parent"
+# Optional. Read-only, used by `regression_witness` (§6.2) to find the commit
+# a defect was reported against. Absent → the merge-base with the default
+# branch is used instead.
+reported_at_commit = { custom_field = "customfield_10051" }
+
+
+# ── FIELDS (WRITE) ───────────────────────────────────────────────────────────
+# Stella's own provenance. EVERY entry is optional: anything absent falls back
+# to the structured receipt comment (§10.2), so a customer who cannot get
+# custom fields provisioned still gets every fact, just less queryably.
+[fields.write]
+execution_id = { custom_field = "customfield_10042" }
+spend_usd    = { custom_field = "customfield_10043" }
+# The pointer to the repo-canonical spec (§5). The repository holds the truth;
+# the tracker holds the index.
+spec_ref     = { custom_field = "customfield_10044" }
+
+
+# ── FIELDS (REQUIRED ON CREATE) ──────────────────────────────────────────────
+# The block that makes this format survive real Jira. Create screens routinely
+# demand fields Stella has no opinion about and cannot infer. Rather than fail
+# every `create` call, the customer states the constant once.
+#
+# These values are passed through verbatim and are NEVER load-bearing for
+# control flow (§3): if Stella branched on it, it would belong in the `Issue`
+# struct instead.
+[fields.required_on_create]
+components = ["Platform"]
+customfield_10030 = "Engineering"     # "Team", mandatory on this screen
+customfield_10077 = { id = "10412" }  # "Request Category", a select option
+
+
+# ── PROVENANCE ───────────────────────────────────────────────────────────────
+# How an agent-filed issue is marked. Load-bearing for three mechanisms in
+# §10.1: fingerprint dedup, the residue budget, and decay. An issue Stella
+# cannot recognize as its own can neither be deduped against nor decayed.
+[provenance]
+label       = "stella"
+# Days before an un-pulled, un-corroborated agent-filed issue auto-closes with
+# a comment recording that nobody wanted it. Any human touch removes the decay
+# clock permanently. `0` disables decay for this provider.
+decay_days  = 30

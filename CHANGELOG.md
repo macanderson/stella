@@ -55,6 +55,7 @@ skip the roll) were re-inserted the same way.
   reads as though the model said "conversation cleared". The rail glyph that used
   to carry that distinction is visual, and visual distinctions do not survive
   being read aloud. (#1258)
+## [0.6.79] — 2026-08-03
 
 ## [0.6.78] — 2026-08-03
 

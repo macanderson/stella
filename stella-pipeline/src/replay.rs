@@ -215,7 +215,15 @@ pub fn verdict_provenance(evidence: &JudgeEvidence) -> Option<String> {
     } else {
         "none".to_string()
     };
-    let mut out = format!("flip={flip}");
+    // The rung leads, because it is the literal answer to the question this
+    // function asks; everything after it is the evidence the rung was chosen
+    // from. Absent on verdicts recorded before the rung joined the snapshot
+    // (#1043), and not guessed at then — the surrounding flags cannot separate
+    // a deterministic pass from a waived review.
+    let mut out = match snapshot.rung {
+        Some(rung) => format!("rung={}; flip={flip}", rung.as_str()),
+        None => format!("flip={flip}"),
+    };
     if let Some(cmd) = &snapshot.tracked_command {
         out.push_str(&format!(" tracking `{cmd}`"));
     }

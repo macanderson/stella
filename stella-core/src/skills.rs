@@ -31,8 +31,11 @@
 //!      block).
 //!   4. **Auto-creation** ([`mine_skill_candidates`], [`decide_auto_creation`])
 //!      — mining recurring observations (style preferences, reflection
-//!      lessons) into new skill files once something has been "observed
-//!      enough", capped so it feels magical, not spammy.
+//!      lessons) into candidates once something has been "observed enough",
+//!      capped so it feels magical, not spammy. Since #1067 "observed enough"
+//!      is necessary but no longer sufficient: promotion also needs a measured
+//!      lift from [`appraisal`], which is likewise the module that decides
+//!      when a skill has stopped helping and should leave selection.
 //!   5. **Install vocabulary** ([`SkillInstallProposal`], [`InstallDecision`])
 //!      — the typed shape the registry-search/install glue and a future TUI
 //!      speak, so both sides agree on one contract.
@@ -63,6 +66,8 @@
 //! `crate::mining`, shared with the rules miner — they were briefly two
 //! identical private copies, which is exactly the divergence trap the shared
 //! module closes.
+
+pub mod appraisal;
 
 use std::collections::{HashMap, HashSet};
 
@@ -749,11 +754,35 @@ pub struct AutoCreateConfig {
     /// that silently spawns a dozen skill files would erode trust in the
     /// mechanism. The rest wait for the next session's mining pass.
     pub max_per_session: usize,
+    /// Whether a candidate must carry a measured lift before it is written
+    /// (#1067). When on, a candidate nothing has evaluated is **held** — it
+    /// stays a candidate the miner will re-raise, and an appraisal
+    /// ([`appraisal::appraise`]) is what turns it into a file.
+    ///
+    /// **Off by default, and the default is the honest part.** Promotion today
+    /// is frequency alone — observed enough times, therefore a skill — which
+    /// mints an unhelpful skill exactly as easily as a helpful one. The gate
+    /// is the fix, and it is built and tested. What is not built is the
+    /// evidence source it would gate on: measuring a *candidate* needs a
+    /// with-skill/without-skill run over a task set, and a skill that has
+    /// never been injected has no with-skill arm to observe. Until an
+    /// appraisal run exists to produce that arm, defaulting this on would stop
+    /// the shipped loop from minting anything at all, with no action a user
+    /// could take to satisfy it — a feature-disabling default wearing a
+    /// correctness argument.
+    ///
+    /// So the switch ships off and the mechanism ships complete. Turning it on
+    /// is a one-line change once the appraisal run lands, and every fixture
+    /// that decides what the gate does already exists.
+    pub require_measured_lift: bool,
 }
 
 impl Default for AutoCreateConfig {
     fn default() -> Self {
-        Self { max_per_session: 2 }
+        Self {
+            max_per_session: 2,
+            require_measured_lift: false,
+        }
     }
 }
 
@@ -766,6 +795,14 @@ pub enum AutoCreateSkip {
     /// The target path is already occupied — never clobber a hand-edited
     /// (or previously auto-created) skill.
     FileExists { path: String },
+    /// The candidate has not been shown to help (#1067). Held, not dropped:
+    /// the mining log keeps its observations, and the next appraisal can
+    /// promote it.
+    AwaitingEvaluation {
+        /// What the evaluation actually said — measured and found wanting, or
+        /// never measured at all. The two want different follow-ups.
+        evidence: appraisal::EvalEvidence,
+    },
 }
 
 /// The decision for one candidate: write it, or skip with a typed reason.
@@ -778,14 +815,27 @@ pub enum AutoCreateDecision {
 }
 
 /// Decide whether to auto-create `candidate` as `<target_dir>/<name>.md`.
+///
 /// `occupied_paths` MUST be the paths present on disk, not the paths that
 /// loaded successfully — a file absent from the loaded set is still a file
-/// (#737). Cap first, then no-clobber. Pure: writing is the caller's job.
+/// (#737). `evidence` is what an evaluation says about this candidate; pass
+/// [`appraisal::EvalEvidence::Unevaluated`] when nothing has appraised it.
+///
+/// Cap, then no-clobber, then the eval gate. The order of the first two is
+/// pinned by `migration_contract` and unchanged. The gate goes **last** on
+/// purpose: it is the most important check but the least *actionable* refusal,
+/// and when several apply the caller should hear the one it can do something
+/// about. A session that is over its cap has not looked at the filesystem, and
+/// a candidate whose file already exists does not need an evaluation to
+/// explain why nothing was written.
+///
+/// Pure: writing is the caller's job.
 pub fn decide_auto_creation(
     candidate: &SkillCandidate,
     target_dir: &str,
     occupied_paths: &[String],
     created_this_session: usize,
+    evidence: appraisal::EvalEvidence,
     config: &AutoCreateConfig,
 ) -> AutoCreateDecision {
     if created_this_session >= config.max_per_session {
@@ -799,6 +849,11 @@ pub fn decide_auto_creation(
     if occupied_paths.iter().any(|p| p == &path) {
         return AutoCreateDecision::Skip {
             reason: AutoCreateSkip::FileExists { path },
+        };
+    }
+    if config.require_measured_lift && evidence != appraisal::EvalEvidence::MeasuredLift {
+        return AutoCreateDecision::Skip {
+            reason: AutoCreateSkip::AwaitingEvaluation { evidence },
         };
     }
     AutoCreateDecision::Create { path }

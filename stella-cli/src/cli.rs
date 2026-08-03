@@ -191,6 +191,20 @@ pub(crate) struct GlobalArgs {
     #[arg(long, global = true, value_name = "SPEC", hide_short_help = true)]
     pub(crate) log_level: Option<String>,
 
+    /// Turn tools off for this run only, without editing settings.json.
+    ///
+    /// Same spelling as the settings `"tools"` table — a comma-separated list
+    /// of `name:on` / `name:off`, where a name is a tool, a group, or `*`.
+    /// `--tools '*:off,read_file:on,grep:on'` is a read-only run;
+    /// `--tools 'repo_push:off'` removes one capability.
+    ///
+    /// This scope can only narrow. It composes with settings by intersection,
+    /// so it can never switch on something an org or project policy turned
+    /// off — turning things off is always permitted, turning them on never
+    /// overrides a deny from higher up.
+    #[arg(long, global = true, value_name = "SPEC")]
+    pub(crate) tools: Option<String>,
+
     /// Write diagnostics as JSONL to a file (created 0600)
     ///
     /// Defaults to `info` where stderr defaults to `warn`, since a file
@@ -217,8 +231,11 @@ pub(crate) enum MigrateCmd {
 pub(crate) enum Command {
     /// Send a one-shot prompt (non-interactive)
     Run {
-        /// The prompt to send
-        prompt: String,
+        /// The prompt to send. Omit it to read the prompt from stdin when it
+        /// is piped (`cat spec.md | stella run`), or pass `-` to read stdin
+        /// explicitly even on a terminal. A prompt that begins with `-` needs
+        /// the usual `--` separator: `stella run -- --my-prompt`.
+        prompt: Option<String>,
 
         /// Use the raw step-loop instead of the staged pipeline (triage, plan,
         /// execute, verify, judge). The pipeline is the default; this flag
@@ -284,8 +301,10 @@ pub(crate) enum Command {
     /// witness, execute, verify) by default; --no-pipeline falls back to the
     /// raw step-loop.
     Goal {
-        /// What must be true when done — assessed by the judge each round
-        goal: String,
+        /// What must be true when done — assessed by the judge each round.
+        /// Omit it to read the goal from stdin when it is piped, or pass `-`
+        /// to read stdin explicitly.
+        goal: Option<String>,
 
         /// Use the raw step-loop instead of the staged pipeline for each
         /// working round. The pipeline is the default.

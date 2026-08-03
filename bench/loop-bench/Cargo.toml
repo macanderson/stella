@@ -22,6 +22,12 @@ name = "loop-bench"
 path = "src/main.rs"
 
 [dependencies]
+# The A/B comparison shape `--compare` emits (#876). Deliberately NOT a
+# harness-local report type: the promotion gates that read it — an adapter
+# (#836), a tuned knob (#831/#1065), an eval-gated skill (#1067) — must be
+# reading the same aggregates, the same guard set, and the same significance
+# test the offline harness applied, and two report types is two standards.
+stella-core = { path = "../../stella-core" }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

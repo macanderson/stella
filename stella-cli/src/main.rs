@@ -75,6 +75,7 @@ mod scoreboard_cmd;
 // The `/profile` posture planner (fast · balanced · pro · ultra).
 mod profile;
 // Phase 3 (#714): the adaptive-context proposal review surface.
+mod prompt_source;
 mod proposals_cmd;
 mod rules;
 mod runtime;
@@ -175,6 +176,7 @@ pub(crate) mod test_env {
     }
 }
 
+use std::io::IsTerminal;
 use std::process::ExitCode;
 
 use clap::{FromArgMatches, ValueEnum};
@@ -771,6 +773,16 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
     // carry something straight through. `main` is where the flag and the config
     // are both in hand.
     cfg.turn_budget = cli.globals.turn_budget;
+    // `--tools` is the lowest-authority scope (#1263): folded in AFTER
+    // settings so it can only narrow what they already allowed. `narrow_with`
+    // is the intersection, not a key-level merge, which is what lets the
+    // read-only idiom `*:off,read_file:on` mean what it says while still
+    // being unable to re-enable anything an org policy denied.
+    if let Some(spec) = cli.globals.tools.as_deref() {
+        let scope = stella_tools::policy::ToolPolicy::parse_spec(spec)
+            .map_err(|e| format!("--tools: {e}"))?;
+        cfg.tool_policy.narrow_with(&scope);
+    }
 
     // Correctness pass over the resolved settings — model-slug problems (an
     // unknown provider, a typo, an over-qualified slug that would 400 on the
@@ -797,6 +809,11 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             test_command,
             keep_witness,
         } => {
+            let prompt = prompt_source::resolve(
+                prompt,
+                std::io::stdin().is_terminal(),
+                prompt_source::read_stdin_to_string,
+            )?;
             signals::block_on_interruptible(
                 rt()?,
                 agent::run_one_shot(
@@ -834,6 +851,11 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             )?;
         }
         Command::Goal { goal, no_pipeline } => {
+            let goal = prompt_source::resolve(
+                goal,
+                std::io::stdin().is_terminal(),
+                prompt_source::read_stdin_to_string,
+            )?;
             signals::block_on_interruptible(
                 rt()?,
                 agent::run_goal_cmd(&cfg, &goal, cli.globals.budget, !no_pipeline),
