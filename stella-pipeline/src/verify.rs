@@ -590,24 +590,28 @@ impl From<LadderDecision> for LadderRung {
 /// evidence: { deterministic: true, .. } }`.
 ///
 /// The coverage status rides along (#1291) even when it credited the pass,
-/// and especially when it was `Unmeasured`: the deterministic badge means
-/// "a test went fail→pass", and a reader is entitled to know whether anyone
-/// checked that the test ran the changed lines. Stating it here is what keeps
-/// the default (unmeasured does not withhold) from being a *silent* pass.
+/// and it *leads* when it did not. The deterministic badge means "a test went
+/// fail→pass"; whether that test executed the changed lines is a separate
+/// question, and an unmeasured answer scores the candidate `Unverified` (see
+/// the `SubmitFast` arm in [`crate::pipeline`]). A reader must not have to
+/// reach the end of a sentence to learn the pass is unproven.
 pub fn deterministic_pass_evidence(
     tracked_cmd: Option<&str>,
     diff_lines: u32,
     diff_coverage: coverage::DiffCoverage,
 ) -> JudgeEvidence {
-    let summary = match tracked_cmd {
+    let observed = match tracked_cmd {
         Some(cmd) => format!(
-            "flip oracle: fail→pass of `{cmd}`; touched tests green; diff {diff_lines} lines within budget; {}",
-            diff_coverage.explain()
+            "flip oracle: fail→pass of `{cmd}`; touched tests green; diff {diff_lines} lines within budget"
         ),
         None => format!(
-            "touched tests green; diff {diff_lines} lines within budget (no flip command tracked); {}",
-            diff_coverage.explain()
+            "touched tests green; diff {diff_lines} lines within budget (no flip command tracked)"
         ),
+    };
+    let summary = if diff_coverage == coverage::DiffCoverage::Unmeasured {
+        format!("UNPROVEN — {}; {observed}", diff_coverage.explain())
+    } else {
+        format!("{observed}; {}", diff_coverage.explain())
     };
     JudgeEvidence {
         summary,

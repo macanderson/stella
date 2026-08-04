@@ -16,27 +16,34 @@
 //! tell whether the test ran this" are different findings and only one of them
 //! is about the work.
 //!
-//! # Unproven is not failed
+//! # Unproven is not failed — and unproven is not passed either
 //!
-//! Neither non-`Covered` answer may fail a candidate. `NotCovered` withholds
-//! the *deterministic* credit and sends the turn to the judge — the same
-//! treatment a tautological witness gets (#870) — and `Unmeasured` withholds
-//! nothing by default while still being stated in the verdict. A run is not
-//! broken by the absence of a way to check it, and a coverage tool that is not
-//! installed is exactly such an absence.
+//! Neither non-`Covered` answer may fail a candidate, and neither may be
+//! reported as a verified pass. The two rungs differ in *what they spend*:
 //!
-//! # Why `Unmeasured` does not withhold by default
+//! - **`NotCovered`** — positive evidence that the test ran none of the
+//!   changed lines. Withholds the deterministic credit and sends the turn to
+//!   the judge, the same treatment a tautological witness gets (#870). The
+//!   pass is worth a second opinion, because something concrete is wrong with
+//!   the evidence.
+//! - **`Unmeasured`** — nobody could tell. Keeps the fast-submit (no judge
+//!   call, no extra turn) but scores the candidate `Unverified` rather than
+//!   `DeterministicPass`, and the verdict's summary leads with `UNPROVEN`.
 //!
-//! Because the alternative was measured elsewhere and it is the same trap
-//! #1295 records: a gate whose condition holds on nearly every turn is not a
-//! gate, it is a tax. Most workspaces have no coverage tooling wired, so
-//! defaulting `Unmeasured` to "withhold the fast-submit" would route almost
-//! every deterministic pass through a paid judge call to be told what the
-//! evidence already said. What ships instead is honesty without the tax: the
-//! status rides in the verdict's evidence and in its ladder snapshot, so a
-//! reader can always tell a proven overlap from an unmeasured one, and
-//! `PipelineConfig::require_diff_coverage` turns the strict reading on for an
-//! operator who has the tooling and wants it enforced.
+//! That asymmetry is the whole design. A run is not broken by the absence of
+//! a way to check it, so an absent coverage tool must not cost a turn — but
+//! it must not buy the ladder's strongest badge either. Paying for the honest
+//! answer with a *ranking position* instead of a *model call* is what makes
+//! it affordable to be honest on every run, in every workspace, by default.
+//!
+//! Escalating instead was considered and rejected on the measurement #1295
+//! records: a gate whose condition holds on nearly every turn is not a gate,
+//! it is a tax. Most workspaces have no coverage tooling wired, so escalating
+//! `Unmeasured` would route almost every deterministic pass through a paid
+//! judge call to be told what the evidence already said.
+//! `PipelineConfig::require_diff_coverage` turns that stricter reading on for
+//! an operator who has the tooling and wants the overlap *enforced* rather
+//! than merely scored.
 //!
 //! # Parsing, and why it lives here
 //!
@@ -95,7 +102,7 @@ impl DiffCoverage {
             DiffCoverage::Unmeasured => {
                 "diff_coverage=unmeasured (no coverage tooling was available for this test \
                  command, so whether the test ran the changed lines is UNKNOWN — this is not a \
-                 finding that it did not)"
+                 finding that it did not, and not a verified pass either)"
             }
             DiffCoverage::Covered => {
                 "diff_coverage=covered (the test run executed lines the change added)"
@@ -108,10 +115,16 @@ impl DiffCoverage {
         }
     }
 
-    /// Whether this status may carry a deterministic fast-submit.
+    /// Whether this status may carry a deterministic fast-submit — that is,
+    /// whether the ladder may *skip the judge*.
+    ///
+    /// Distinct from whether the result is *proven*: an `Unmeasured` overlap
+    /// takes the fast-submit under the default setting but is still scored
+    /// `Unverified` (see the `SubmitFast` arm in `crate::pipeline`). This
+    /// answers "must a reviewer be bought?", not "was this verified?".
     ///
     /// `strict` is `PipelineConfig::require_diff_coverage`: off, only a
-    /// measured non-overlap withholds; on, an unmeasured overlap withholds
+    /// measured non-overlap escalates; on, an unmeasured overlap escalates
     /// too. `NotCovered` never credits under either setting.
     #[must_use]
     pub fn credits_a_deterministic_pass(self, strict: bool) -> bool {

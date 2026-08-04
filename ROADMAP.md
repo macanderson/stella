@@ -67,14 +67,21 @@ the test *constrains* the change well.
   audit — `cargo llvm-cov` (LCOV) and `pytest --cov` (coverage.py JSON), the
   two dialects `verify::fingerprint` can already read test output for — and
   `verify::coverage` intersects the executed lines with the diff's added
-  ones. Three-valued by design: a measured non-overlap withholds the
-  deterministic credit and escalates (**unproven**, never a failure, never a
-  deterministic red), while `unmeasured` — no tooling, no probe, an
-  unreadable report — is *stated* in the verdict and in the ladder snapshot
-  without withholding, because a gate that fires on every workspace without
-  coverage tooling is a tax rather than a check (the #1295 result).
-  `require_diff_coverage` turns the strict reading on for an operator who has
-  the tooling.
+  ones. Three-valued, and **neither non-`covered` answer is a pass**:
+  - `not_covered` (measured, no overlap) withholds the deterministic credit
+    and escalates to the judge — the flip is a coincidence, which is worth a
+    second opinion. Never a failure, never a deterministic red.
+  - `unmeasured` (no tooling, no probe, an unreadable report) takes the
+    fast-submit — no judge call, no extra turn — but is **scored
+    `Unverified`**, with the verdict summary leading `UNPROVEN` and the status
+    on the ladder snapshot. The honest answer costs a ranking position rather
+    than a model call, which is what makes it affordable by default; escalating
+    instead would tax every workspace without coverage tooling (the #1295
+    result). `require_diff_coverage` turns that stricter reading on for an
+    operator who has the tooling and wants the overlap enforced.
+
+  `PipelineOutcome::score` surfaces the grade so a host can see the
+  distinction a `verdict.deterministic` flag alone would hide.
 
 ## 2. Flakiness — protect the oracle's invariant from nondeterminism
 

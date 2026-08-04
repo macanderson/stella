@@ -1136,22 +1136,38 @@ async fn a_flip_whose_test_never_ran_the_changed_lines_is_unproven_not_failed() 
 }
 
 /// #1291, the honest-degradation half: a workspace with no coverage tooling
-/// keeps its deterministic pass — the alternative taxes every run to be told
-/// what the evidence already said — but the verdict SAYS the overlap was
-/// unmeasured, so the pass is never a silent one. Flipping
-/// `require_diff_coverage` on is what turns that statement into a gate.
+/// pays no judge call — the alternative taxes every run to be told what the
+/// evidence already said — but the run is scored **UNVERIFIED**, not as a
+/// deterministic pass. "A test passed and nobody could check it touched this
+/// change" is unproven, and the score is where the system makes its claim, so
+/// the honest answer costs a ranking position rather than a model call.
+/// Flipping `require_diff_coverage` on additionally turns it into an
+/// escalation.
 #[tokio::test]
-async fn an_unmeasurable_overlap_is_stated_and_only_gates_when_asked() {
+async fn an_unmeasurable_overlap_is_scored_unproven_without_costing_a_judge_call() {
     let provider = ScriptedProvider::new(vec![text_result("single"), text_result("done")]);
     let probe = ScriptedCoverage::unavailable();
     let (outcome, events) = run_with_coverage(&probe, false, &provider).await;
 
     let verdict = outcome.verdict.expect("a verdict was produced");
-    assert!(verdict.passed && verdict.deterministic);
-    assert!(!stages(&events).contains(&StageKind::Judge));
+    assert!(verdict.passed, "an unproven run is not a failed run");
+    assert!(
+        !stages(&events).contains(&StageKind::Judge),
+        "being honest about an unmeasured overlap must not cost a reviewer"
+    );
+    assert_eq!(
+        outcome.score,
+        Some(crate::candidate::CandidateScore::Unverified),
+        "an unmeasured overlap may not wear the ladder's strongest badge"
+    );
+    assert!(
+        verdict.summary.starts_with("UNPROVEN"),
+        "the verdict must LEAD with the finding, not bury it: {}",
+        verdict.summary
+    );
     assert!(
         verdict.summary.contains("diff_coverage=unmeasured"),
-        "an unmeasured overlap must be stated in the verdict, not omitted: {}",
+        "and must say which of the three answers it is: {}",
         verdict.summary
     );
     assert_eq!(
@@ -1182,5 +1198,40 @@ async fn an_unmeasurable_overlap_is_stated_and_only_gates_when_asked() {
     assert!(
         strict_verdict.passed,
         "strictness must not convert 'unproven' into 'wrong'"
+    );
+}
+
+/// The control for the downgrade above: when coverage IS measured and the
+/// test did run the changed lines, the deterministic badge is earned in full.
+/// Without this, "score unproven when unmeasured" would be indistinguishable
+/// from "never score a deterministic pass again".
+#[tokio::test]
+async fn a_measured_overlap_still_earns_the_deterministic_badge() {
+    let provider = ScriptedProvider::new(vec![text_result("single"), text_result("done")]);
+    // Line 12 is the line the shared diff adds; the suite executed it.
+    let probe = ScriptedCoverage::measuring(&[("src/lib.rs", &[11, 12, 13])]);
+    let (outcome, events) = run_with_coverage(&probe, false, &provider).await;
+
+    let verdict = outcome.verdict.expect("a verdict was produced");
+    assert!(verdict.passed && verdict.deterministic);
+    assert!(!stages(&events).contains(&StageKind::Judge));
+    assert_eq!(
+        outcome.score,
+        Some(crate::candidate::CandidateScore::DeterministicPass),
+        "a proven overlap is the ladder's strongest result, unchanged"
+    );
+    assert!(
+        !verdict.summary.starts_with("UNPROVEN"),
+        "a proven run must not be labelled unproven: {}",
+        verdict.summary
+    );
+    assert_eq!(
+        verdict
+            .ladder
+            .as_deref()
+            .expect("snapshot")
+            .diff_coverage
+            .as_deref(),
+        Some("covered")
     );
 }

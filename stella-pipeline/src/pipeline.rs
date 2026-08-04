@@ -394,23 +394,30 @@ pub struct PipelineConfig {
     /// which stays honest: the outcome is still `out_of_memory`, never a
     /// failing assertion.
     pub test_oom_retries: u32,
-    /// Require a *measured* diff-coverage overlap before a deterministic
-    /// fast-submit (#1291) — the strict reading of "did the test run the
+    /// Escalate to the judge when the diff-coverage overlap could not be
+    /// *measured* (#1291) — the strictest reading of "did the test run the
     /// changed lines?".
     ///
-    /// Off by default. A measured non-overlap withholds the fast-submit
-    /// either way (a test that never executed the change proves nothing about
-    /// it); this decides only what an **unmeasured** overlap does. Off, it
-    /// withholds nothing and the status is merely stated in the verdict; on,
-    /// it escalates to the judge, which is the honest reading for an operator
-    /// who has coverage tooling wired and wants "unproven" enforced rather
-    /// than reported.
+    /// Off by default, and note what the default does NOT mean: an unmeasured
+    /// overlap is already scored `Unverified` rather than `DeterministicPass`
+    /// (see the `SubmitFast` arm), so it never ships as a verified pass. What
+    /// this adds is *spending a judge call* on it.
     ///
-    /// The default is off for the reason `verify::coverage` records at
-    /// length: most workspaces have no coverage tooling, so a strict default
-    /// would route nearly every deterministic pass through a paid judge call
-    /// to be told what the evidence already said — the same "a gate that
-    /// fires everywhere is a tax" result #1295 measured.
+    /// The three positions, so the choice is legible:
+    ///
+    /// - measured overlap → deterministic pass, either way;
+    /// - measured NON-overlap → judge, either way (the flip is a coincidence,
+    ///   and that is worth a second opinion);
+    /// - unmeasured → scored unproven and shipped (off, the default), or
+    ///   escalated to the judge (on).
+    ///
+    /// Off is the default for the reason `verify::coverage` records at
+    /// length: most workspaces have no coverage tooling, so escalating would
+    /// route nearly every deterministic pass through a paid judge call to be
+    /// told what the evidence already said — the "a gate that fires
+    /// everywhere is a tax" result #1295 measured. Turning it on is for an
+    /// operator who has the tooling and wants the overlap enforced rather
+    /// than merely scored.
     pub require_diff_coverage: bool,
     /// Send a turn back for deterministic evidence when a model judge's PASS
     /// is the only thing behind it — no flip, no green test (#1295).
@@ -644,6 +651,20 @@ pub struct PipelineOutcome {
     pub total_cost_usd: f64,
     /// The final verification verdict, if verification ran.
     pub verdict: Option<Verdict>,
+    /// How strongly the selected candidate was verified (#1291).
+    ///
+    /// The same grade best-of-N ranks on, surfaced because it is where the
+    /// system's *claim* about a run lives, and one claim it makes is not
+    /// visible anywhere else: a run whose test flipped and went green but
+    /// whose diff-coverage overlap could not be measured is
+    /// [`CandidateScore::Unverified`], not `DeterministicPass`. That
+    /// distinction — "a test passed, and nobody could check it touched this
+    /// change" — is the whole of #1291's honest-degradation case, and a host
+    /// that could only read `verdict.deterministic` would see a pass and
+    /// nothing else.
+    ///
+    /// `None` when verification never ran far enough to grade the work.
+    pub score: Option<CandidateScore>,
     /// How many revision turns the selected candidate took.
     pub revisions: u32,
     /// How many candidates actually reached the worker (1 for single-shot).
@@ -1246,6 +1267,7 @@ impl<'a> Pipeline<'a> {
                 final_text: best.final_text,
                 total_cost_usd: total_cost,
                 verdict: best.verdict,
+                score: Some(best.score),
                 revisions: best.revisions,
                 candidates_run,
             });
@@ -1293,6 +1315,7 @@ impl<'a> Pipeline<'a> {
             final_text: best.final_text,
             total_cost_usd: total_cost,
             verdict: best.verdict,
+            score: Some(best.score),
             revisions: best.revisions,
             candidates_run,
         })
@@ -1527,6 +1550,9 @@ impl<'a> Pipeline<'a> {
             final_text: reply,
             total_cost_usd: *total_cost,
             verdict: None,
+            // The simple-lookup fast path never verifies, so there is nothing
+            // to grade — reported as ungraded rather than as a weak pass.
+            score: None,
             revisions: 0,
             candidates_run: 1,
         })
@@ -2480,10 +2506,25 @@ impl<'a> Pipeline<'a> {
                         passed: true,
                         evidence: evidence.clone(),
                     });
+                    // #1291: the deterministic *badge* is earned only when
+                    // something confirmed the test ran the changed lines. An
+                    // unmeasured overlap keeps the fast-submit — no judge
+                    // call, no extra turn, the run completes exactly as
+                    // before — but scores `Unverified`, because "a test
+                    // passed and nobody could check it touched this change"
+                    // is unproven, and the score is what the claim is made
+                    // in. Cheap by construction: the downgrade costs a
+                    // ranking position, never a model call.
+                    //
+                    // `evidence.deterministic` deliberately stays `true`:
+                    // the flip WAS a real test observation, and the
+                    // calibration cohorts (#871) partition by evidence kind,
+                    // not by coverage. Only the score moves.
+                    let proven = state.diff_coverage != DiffCoverage::Unmeasured;
                     return state.into_verified(
                         true,
                         &evidence,
-                        score_from_verification(true, None),
+                        score_from_verification(proven, None),
                     );
                 }
                 LadderDecision::NothingAttempted => {

@@ -431,18 +431,18 @@ pub struct AgentEngineConfig {
     /// the same UNVERIFIED relabel it takes while this is off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_evidence_for_lone_judge_pass: Option<Toggle>,
-    /// Require a MEASURED diff-coverage overlap before a deterministic
-    /// fast-submit (`stella_pipeline::PipelineConfig::require_diff_coverage`,
+    /// Escalate to the judge when the diff-coverage overlap could not be
+    /// measured (`stella_pipeline::PipelineConfig::require_diff_coverage`,
     /// #1291). Absent is off.
     ///
-    /// This does not decide whether coverage is checked — it always is, where
-    /// tooling exists, and a test that demonstrably never ran the changed
-    /// lines withholds the deterministic credit either way. What this decides
-    /// is what an *unmeasurable* overlap does: reported (off) or escalated to
-    /// the judge (on). Turn it on in a workspace that has coverage tooling
-    /// wired and wants "unproven" enforced rather than merely stated; leaving
-    /// it off in a workspace that has none avoids paying a judge call per run
-    /// to be told what the evidence already said.
+    /// This does not decide whether coverage is checked (it always is, where
+    /// tooling exists), nor whether an unmeasured overlap is honest about
+    /// itself — that is unconditional: such a run is scored UNVERIFIED rather
+    /// than as a deterministic pass, whatever this says. What this decides is
+    /// whether it also costs a judge call. Turn it on in a workspace that has
+    /// coverage tooling wired and wants the overlap enforced; leaving it off
+    /// avoids paying a reviewer per run to be told what the evidence already
+    /// said.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_require_diff_coverage: Option<Toggle>,
     /// Seconds of provider silence that end a single generation

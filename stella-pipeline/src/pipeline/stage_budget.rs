@@ -48,6 +48,8 @@ pub(super) fn aborted_before_execute(
         final_text: String::new(),
         total_cost_usd: total_cost,
         verdict: None,
+        // Nothing executed, so nothing was graded.
+        score: None,
         revisions: 0,
         candidates_run: 0,
     };
