@@ -74,7 +74,12 @@ pub fn hunk_selection_from_typed(text: &str, total: usize) -> Option<Vec<usize>>
         if from == 0 || from > to {
             return None;
         }
-        out.extend((from..=to).filter(|i| *i <= total).map(|i| i - 1));
+        // Clamp the range before walking it, never after. This parse runs
+        // inline in the key handler, so a typed `1-9999999999` filtered
+        // one value at a time would stop the deck redrawing and reading
+        // keys for as long as it counted. Bounding the range costs the
+        // same answer in as many steps as the card has hunks.
+        out.extend((from..=to.min(total)).map(|i| i - 1));
     }
     out.sort_unstable();
     out.dedup();
@@ -276,6 +281,27 @@ mod tests {
         assert_eq!(hunk_selection_from_typed("99", 2), Some(vec![]));
         for prose in ["", "  ", "keep the first one", "1 or 2", "-1", "3-1", "0"] {
             assert_eq!(hunk_selection_from_typed(prose, 4), None, "{prose:?}");
+        }
+    }
+
+    /// A typed upper bound is a bound, not a work list. `1-99` on a 2-hunk card
+    /// already had to answer `[0, 1]`; what this pins is the *cost* of getting
+    /// there, because the parse runs inline in the key handler and a range
+    /// walked one value at a time would stop the deck redrawing and reading
+    /// keys. Answered on a worker so reintroducing the walk fails in seconds
+    /// rather than hanging the suite until CI's timeout kills it.
+    #[test]
+    fn a_typed_upper_bound_costs_the_card_not_the_number() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(hunk_selection_from_typed(&format!("1-{}", usize::MAX), 3));
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            Ok(selection) => assert_eq!(selection, Some(vec![0, 1, 2])),
+            Err(_) => panic!(
+                "`1-{}` walked the typed range instead of clamping it",
+                usize::MAX
+            ),
         }
     }
 }
