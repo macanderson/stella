@@ -1293,7 +1293,7 @@ async fn aggregate_zai_stream(
 
     while let Some(chunk) = http::next_with_timeout(&mut stream, http::STREAM_IDLE_TIMEOUT)
         .await
-        .map_err(|e| e.with_partial(http::partial_usage(&usage, &text, pricing)))?
+        .map_err(|e| http::attach_partial(e, &usage, &text, pricing))?
     {
         decoder
             .push_bytes(&chunk)
@@ -1452,8 +1452,12 @@ async fn aggregate_zai_stream(
     // Transport, upholding the same "never a truncated Ok" promise as the
     // mid-stream error-frame path above.
     if !terminal_seen {
-        return Err(http::stream_ended_before_terminal(label, "[DONE]")
-            .with_partial(http::partial_usage(&usage, &text, pricing)));
+        return Err(http::attach_partial(
+            http::stream_ended_before_terminal(label, "[DONE]"),
+            &usage,
+            &text,
+            pricing,
+        ));
     }
 
     // Fallback terminator: a server that ends the stream without ever sending

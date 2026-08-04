@@ -708,7 +708,7 @@ async fn aggregate_openai_stream(
 
     'stream: while let Some(chunk) = http::next_with_timeout(&mut stream, http::STREAM_IDLE_TIMEOUT)
         .await
-        .map_err(|e| e.with_partial(http::partial_usage(&usage, &text, pricing)))?
+        .map_err(|e| http::attach_partial(e, &usage, &text, pricing))?
     {
         decoder
             .push_bytes(&chunk)
@@ -860,10 +860,12 @@ async fn aggregate_openai_stream(
     // whatever accumulated is a half-answer. Retryable Transport, upholding
     // the same "never a truncated Ok" promise as the mid-stream error paths.
     if !completed_seen {
-        return Err(
-            http::stream_ended_before_terminal("OpenAI", "response.completed")
-                .with_partial(http::partial_usage(&usage, &text, pricing)),
-        );
+        return Err(http::attach_partial(
+            http::stream_ended_before_terminal("OpenAI", "response.completed"),
+            &usage,
+            &text,
+            pricing,
+        ));
     }
 
     let tool_calls = tool_calls

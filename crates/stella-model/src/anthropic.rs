@@ -895,7 +895,7 @@ async fn aggregate_anthropic_stream(
     // real floor under the turn's spend.
     while let Some(chunk) = http::next_with_timeout(&mut stream, http::STREAM_IDLE_TIMEOUT)
         .await
-        .map_err(|e| e.with_partial(http::partial_usage(&usage, &text, pricing)))?
+        .map_err(|e| http::attach_partial(e, &usage, &text, pricing))?
     {
         decoder
             .push_bytes(&chunk)
@@ -1049,10 +1049,12 @@ async fn aggregate_anthropic_stream(
     // Transport, upholding the same "never a truncated Ok" promise as the
     // in-stream error path above.
     if !message_stop_seen {
-        return Err(
-            http::stream_ended_before_terminal("Anthropic", "message_stop")
-                .with_partial(http::partial_usage(&usage, &text, pricing)),
-        );
+        return Err(http::attach_partial(
+            http::stream_ended_before_terminal("Anthropic", "message_stop"),
+            &usage,
+            &text,
+            pricing,
+        ));
     }
 
     // The one content block the token limit could have cut: the last block
