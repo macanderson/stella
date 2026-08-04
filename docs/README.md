@@ -23,7 +23,7 @@ round trip to the site.
 | [`adr/`](adr/README.md) | Architecture Decision Records for the adaptive-context work — the ratified answers the specs below are built on. |
 | [`design/`](design/) | Design specifications and RFCs: the context frame, directive schema, storage map, Context PR workflow, telemetry receipts, the serve surface, [adaptive context](design/adaptive-context.md), [remote sandboxes](design/remote-sandboxes.md), [agent-native delivery](design/agent-native-delivery.md), and the [website information architecture](design/website-information-architecture.md). |
 | [`papers/`](papers/README.md) | The research notes behind Stella's design: [The Deterministic Engine](papers/deterministic-engine.md) and [Stella's Defensible Position](papers/stella-defensible-position.md). The live site links to these at their exact paths — don't move or rename them. |
-| [`brand/`](brand/README.md) | Logo, mark, wordmark, and icon assets, plus the design tokens under `tokens/`. The UI palette itself is not generated from here: `stella-tui/src/palette.rs` is the hand-maintained normative source, mirrored by `website/src/app/tokens.css` — edit the two together. |
+| [`brand/`](brand/README.md) | Logo, mark, wordmark, and icon assets, plus the design tokens under `tokens/`. The UI palette itself is not generated from here: `crates/stella-tui/src/palette.rs` is the hand-maintained normative source, mirrored by `website/src/app/tokens.css` — edit the two together. |
 | [`design/adaptive-context/context-reuse.md`](design/adaptive-context/context-reuse.md) | **Vendored, do not edit.** The Context Graph Protocol's normative contract for context identity, usage reports, consent, and verification — the document 46 rustdoc citations point at. Re-sync from upstream rather than patching it. |
 | [`why-stella.md`](why-stella.md) | The technical overview, written for someone evaluating Stella rather than contributing to it. |
 | [`design/adaptive-context/context-pr.md`](design/adaptive-context/context-pr.md) | The canonical Context PR specification: how durable steering is proposed, reviewed, published, and retired through Git. |
@@ -91,9 +91,9 @@ way to ask for one.
 
 A spec is **not** deleted just because its feature shipped. Several of the
 documents under `design/` are cited by `file §section` from Rust doc comments
-(`storage-map.md` from `stella-tools/src/registry.rs`, `scripts-index.md` from
-`stella-tools/src/scripts.rs`, `exploration-sharing.md` from
-`stella-tools/src/staleness.rs`, and others) — they are the normative reference
+(`storage-map.md` from `crates/stella-tools/src/registry.rs`, `scripts-index.md` from
+`crates/stella-tools/src/scripts.rs`, `exploration-sharing.md` from
+`crates/stella-tools/src/staleness.rs`, and others) — they are the normative reference
 the code points at, so renaming or removing one means chasing every citation in
 the same PR. What each spec's `**Status:**` header says is therefore load-bearing:
 update it when the feature lands, and mark a document *Superseded* with a link to

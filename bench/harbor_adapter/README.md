@@ -592,7 +592,7 @@ property, and an ambient source gives it up. All of these names stay on the
 scrub deny-list precisely so they cannot arrive by another route.
 
 Stella's own credential chain states the same split from the container's side
-in `stella-cli/src/config/aux.rs`, and `stella-cli/src/credential_handoff.rs`
+in `crates/stella-cli/src/config/aux.rs`, and `crates/stella-cli/src/credential_handoff.rs`
 enforces which names may cross the descriptor at all (`AWS_REGION` may not — it
 is not a secret).
 

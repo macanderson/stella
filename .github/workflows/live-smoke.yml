@@ -1,6 +1,6 @@
 # Opt-in LIVE provider smoke suite (issue #274) — one minimal REAL call per
 # adapter against the provider's own endpoint. See
-# `stella-model/tests/live_smoke.rs` for exactly what each test asserts (wire-
+# `crates/stella-model/tests/live_smoke.rs` for exactly what each test asserts (wire-
 # shape ACCEPTANCE — a 200 the adapter can parse back into a
 # `CompletionResult` — never model quality) and why it exists (the Anthropic
 # adapter shipped a legacy `thinking` shape for months with only wiremock

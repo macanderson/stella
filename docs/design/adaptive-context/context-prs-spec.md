@@ -103,7 +103,7 @@ payments-api/
 Rules that intentionally span repositories live in a dedicated `stella-context` repository. It is not a second source of truth for local rules; it is the source for organization and team policy.
 
 ```text
-stella-context/
+crates/stella-context/
   organization/
     security.yaml
     data-handling.yaml

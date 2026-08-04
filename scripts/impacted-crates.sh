@@ -30,23 +30,23 @@
 # edge exist in this tree, and a scoper that knows only the first is wrong in a
 # way that is invisible until CI disagrees with the local gate:
 #
-#   1. Ownership + reverse dependencies. A changed file under `stella-core/`
+#   1. Ownership + reverse dependencies. A changed file under `crates/stella-core/`
 #      belongs to `stella-core`, and every member that depends on it —
 #      through normal, dev OR build dependencies — must be re-checked. Dev
 #      dependencies count: crate A's *tests* can depend on B even when A's
 #      library does not.
 #
-#   2. Compile-time escapes. `stella-parity/src/lib.rs` does
+#   2. Compile-time escapes. `crates/stella-parity/src/lib.rs` does
 #      `include_str!("../../stella-cli/src/subsession.rs")`, and
-#      `stella-tools/tests/doc_truth.rs` does `include_str!("../../README.md")`.
+#      `crates/stella-tools/tests/doc_truth.rs` does `include_str!("../../README.md")`.
 #      No cargo edge names either one. These are resolved literally below, so
 #      touching that prompt file re-tests `stella-parity` even though nothing
 #      depends on `stella-cli`.
 #
-#   3. Run-time escapes. `stella-tools/tests/docs_in_sync.rs` walks
-#      `website/content/docs/agent-tools/*.mdx`; `stella-cli/src/main_tests.rs`
+#   3. Run-time escapes. `crates/stella-tools/tests/docs_in_sync.rs` walks
+#      `website/content/docs/agent-tools/*.mdx`; `crates/stella-cli/src/main_tests.rs`
 #      reads `website/content/docs/commands/meta.json`; and
-#      `stella-protocol/tests/wire_contract.rs` reads `docs/wire/`. These open
+#      `crates/stella-protocol/tests/wire_contract.rs` reads `docs/wire/`. These open
 #      files by path at run time, so no static scan can resolve their targets.
 #      They are detected — not enumerated in a hand-kept table that would rot —
 #      by the shape they all share: `env!("CARGO_MANIFEST_DIR")` climbed with

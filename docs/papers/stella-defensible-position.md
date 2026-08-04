@@ -18,9 +18,9 @@ status: living
 > read alongside:
 > - [The Context Graph Protocol: Advantages and Uniqueness](https://github.com/macanderson/context-graph-protocol/blob/main/docs/protocol-advantages.md) — the
 >   retrieval protocol's trust architecture.
-> - [`stella-core/src/lib.rs`](../../stella-core/src/lib.rs) and
->   [`stella-core/src/driver.rs`](../../stella-core/src/driver.rs) — the engine.
-> - [`stella-core/src/ports.rs`](../../stella-core/src/ports.rs) — the port
+> - [`crates/stella-core/src/lib.rs`](../../crates/stella-core/src/lib.rs) and
+>   [`crates/stella-core/src/driver.rs`](../../crates/stella-core/src/driver.rs) — the engine.
+> - [`crates/stella-core/src/ports.rs`](../../crates/stella-core/src/ports.rs) — the port
 >   boundary.
 
 ---
@@ -176,7 +176,7 @@ This is the property that makes `stella-core` **property-testable**. The
 engine's compaction strategy, loop detection, budget enforcement, and retry
 logic are exercised by `proptest` strategies that generate random
 conversation histories, budgets, and retry scenarios. Regression seeds in
-`stella-core/proptest-regressions/` capture failures and prevent regressions.
+`crates/stella-core/proptest-regressions/` capture failures and prevent regressions.
 
 An engine with embedded I/O cannot be property-tested this way. You cannot
 generate a random conversation history and run it through a loop that makes
@@ -209,7 +209,7 @@ loops on your API budget).
 Stella refuses to call a task done until a **witness test** proves it: a test
 that **fails on the old code** (the feature is genuinely absent) and **passes
 on the new code** (the feature is genuinely present). This is enforced by the
-`verify_done` tool (`stella-tools/src/verify.rs`).
+`verify_done` tool (`crates/stella-tools/src/verify.rs`).
 
 The verification runs in a **detached shadow git worktree** at `HEAD`:
 

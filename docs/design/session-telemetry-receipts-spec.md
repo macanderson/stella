@@ -64,7 +64,7 @@ compaction), #366 (per-turn `files_touched`), #368 (overflow summarizer),
 The fold is already most of the way there. This spec **indexes what the journal
 already carries** rather than duplicating it.
 
-- **`AgentEvent`** (`stella-protocol/src/event.rs`) — one internally-tagged
+- **`AgentEvent`** (`crates/stella-protocol/src/event.rs`) — one internally-tagged
   (`#[serde(tag = "type")]`) enum, additive-only, round-trip and legacy-parse
   tested. `--output-format stream-json` is `serde_json` of this enum, one line
   per event. This is the schema; everything below is new variants + fields on it.
@@ -73,13 +73,13 @@ already carries** rather than duplicating it.
   `estimated_input_tokens`, `cached_input_tokens`, `cache_write_tokens`,
   `cost_usd`, `duration_ms`, `retries`, `tool_calls`, `complete`, and
   `output_text` for management calls.
-- **`journal.jsonl`** (`stella-store/src/journal.rs`) — append-only per session.
+- **`journal.jsonl`** (`crates/stella-store/src/journal.rs`) — append-only per session.
   Only streaming `Text`/`Reasoning` deltas are coalesced; **`ToolResult` events
   are journaled whole** (verified: journal.rs:177-190 drops only `TextDelta`
   previews; #363 confirms up to 100 KB error outputs are stored full). Compaction
   stubbing the *live* `Vec<CompletionMessage>` never touches the historical event.
   **Therefore the journal already holds every tool-output preimage.**
-- **`memory_citations`** table (`stella-store/src/ddl.rs`) — the durable
+- **`memory_citations`** table (`crates/stella-store/src/ddl.rs`) — the durable
   write↔citation link already exists, keyed `(execution_id, memory_id)` where
   `memory_id` is a `nod_…` node id.
 - **Journal-replay equivalence** — replaying `journal.jsonl` through the deck's
@@ -995,7 +995,7 @@ productize per model only where it holds.
 Every item: new fields `#[serde(default)]`, new tables `IF NOT EXISTS`, old
 journals and `stream-json` consumers unaffected. No item adds a daemon, a
 background thread, or a network call; all emission rides the existing
-`EventSender` seam (`stella-core/src/event_sender.rs`) and the journal writer.
+`EventSender` seam (`crates/stella-core/src/event_sender.rs`) and the journal writer.
 Emitting a Tier B event for shadow measurement is not the same as building its UI
 or acting on it — the gate governs the latter.
 

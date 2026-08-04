@@ -461,7 +461,7 @@ in a different file.
 
 #### 8.4.3 The catalog moved and these digests did not (#1290)
 
-Sonnet 5's entry in `stella-model/src/catalog.rs` was corrected from 64,000 to
+Sonnet 5's entry in `crates/stella-model/src/catalog.rs` was corrected from 64,000 to
 its real 128,000. That number is the ceiling **every stella user** gets on the
 model, and it was wrong: Anthropic's own `GET /v1/models` reports
 `"max_tokens": 128000`, as does OpenRouter for the same model on the gateway

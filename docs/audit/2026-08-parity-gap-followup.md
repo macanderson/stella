@@ -64,16 +64,16 @@ The audit's "Where it does not" section, item by item.
 ### Closed since the audit
 
 **Sub-agent primitive — shipped.** The `task` tool is real and model-facing:
-`stella-tools/src/subagent.rs:161` declares it, delegating a self-contained
+`crates/stella-tools/src/subagent.rs:161` declares it, delegating a self-contained
 question to a child that sees only the prompt it is handed. Backed by
-`stella-core/src/subagent.rs` with carved budgets and forwarded metering.
+`crates/stella-core/src/subagent.rs` with carved budgets and forwarded metering.
 `stella-parity` records it as `Shipped` on the CLI with the witness
 `the_production_tool_stack_forwards_sub_agent_spend`.
 
 **Sessions over HTTP — shipped.** `POST /v1/sessions`, `GET|DELETE
 /v1/sessions/{id}`, `POST /v1/sessions/{id}/turns`, and
 `/v1/sessions/{id}/checkpoint` are all routed
-(`stella-serve/src/observe/event.rs:123-132`), with server-owned history on a
+(`crates/stella-serve/src/observe/event.rs:123-132`), with server-owned history on a
 byte-stable prefix — so an API consumer now gets the same prompt-cache
 discount the CLI gets. Witness:
 `a_session_threads_history_across_turns_on_a_stable_prefix`.
@@ -86,7 +86,7 @@ and `trials.jsonl`. The claim "it has never been run" is no longer true.
 ### Still open, verified in the tree
 
 **Grep has no context lines and no output modes.** Untouched. The schema at
-`stella-tools/src/grep.rs:187-194` accepts exactly three fields — `pattern`,
+`crates/stella-tools/src/grep.rs:187-194` accepts exactly three fields — `pattern`,
 `path`, `glob` — and the tool returns `file:line:text` and nothing else. There
 is no `-A/-B/-C`, no `files_with_matches` or `count` mode, no case-insensitivity
 flag, no file-type filter, no multiline. Every hit still costs a second turn to
@@ -96,7 +96,7 @@ This is the highest-leverage item on the list. The tool already shells to
 ripgrep and already builds an argv — context and output modes are additional
 `rg` flags plus schema fields, not new machinery.
 
-**No `@`-file mention.** `stella-cli/src/attachments.rs` scans prompt text for
+**No `@`-file mention.** `crates/stella-cli/src/attachments.rs` scans prompt text for
 path-shaped tokens, but only attaches *media* — images, audio, video, PDF. Text
 files are deliberately excluded (`attachments.rs:11-15`: "reading those is what
 the agent's own tools are for"). That reasoning is sound as a default and wrong
@@ -104,18 +104,18 @@ as an absolute: the user naming a file is a much stronger signal than the agent
 guessing, and it saves the read turn.
 
 **No stdin prompts.** `stella run` takes the prompt as a required positional
-`String` (`stella-cli/src/cli.rs:221`). Nothing reads a piped body; the only
+`String` (`crates/stella-cli/src/cli.rs:221`). Nothing reads a piped body; the only
 `stdin` reads in the CLI are the interactive REPL's line loop
-(`stella-cli/src/agent.rs:815`) and `stella auth set --stdin`. So
+(`crates/stella-cli/src/agent.rs:815`) and `stella auth set --stdin`. So
 `cat spec.md | stella run` is not expressible, and neither is a heredoc.
 
 Related and worth fixing in the same change: a prompt beginning with `-` is
 parsed as a flag.
 
-**No per-invocation tool policy.** `stella-tools/src/policy.rs:4` states the
+**No per-invocation tool policy.** `crates/stella-tools/src/policy.rs:4` states the
 constraint outright — a tool is on "unless something says otherwise, and there
 is exactly one way to say otherwise — a `tools` entry in `settings.json`". The
-global flag set (`stella-cli/src/cli.rs:87-192`) carries `--model`, `--budget`,
+global flag set (`crates/stella-cli/src/cli.rs:87-192`) carries `--model`, `--budget`,
 `--turn-budget`, `--output-format` and friends, and no tool switch. So
 "run this one task read-only" means editing settings and editing them back.
 
@@ -125,7 +125,7 @@ denials. A CLI flag would be one more scope folded in at the lowest authority,
 not a new mechanism.
 
 **No plan mode — partially closed.** Scope review exists and is genuinely good:
-`stella-pipeline/src/scope.rs` gates a plan behind user approval when it crosses
+`crates/stella-pipeline/src/scope.rs` gates a plan behind user approval when it crosses
 any of three thresholds (more than 5 steps, 8 files, or $1.00 estimated), and
 headless runs must opt into the bypass explicitly rather than auto-approving.
 
@@ -135,7 +135,7 @@ nothing, show me" for a task the estimator scores as small. Note that #1220 is
 already open on the estimator's weakness here — blast radius is currently
 approximated by `plan.len()`.
 
-**No per-hunk diff approval.** `stella-tui/src/diff.rs` renders diffs; it has no
+**No per-hunk diff approval.** `crates/stella-tui/src/diff.rs` renders diffs; it has no
 accept/reject/stage path. Approval is per-plan (scope review) or per-tool-call
 (the hook bus), never per-hunk.
 
@@ -154,13 +154,13 @@ repeats this shape. The fix is one shared destructure helper that distinguishes
 absent from wrong-typed, not per-tool edits.
 
 **`stella-serve` has no backpressure (dimension 23, 78).** Still unbounded, and
-the code says so at `stella-serve/src/server.rs:648-650`: turn reclamation
+the code says so at `crates/stella-serve/src/server.rs:648-650`: turn reclamation
 bounds the *count* of pinned turns, but "the frame channel itself is unbounded,
 so *one* abandoned turn can still buffer arbitrarily much before it settles."
 The comment even names the fix — a bounded channel in `Session`.
 
 **Ten tree-sitter grammars compile unconditionally (dimension 15, 86).**
-`stella-graph/Cargo.toml:24-33` pulls rust, python, typescript, javascript,
+`crates/stella-graph/Cargo.toml:24-33` pulls rust, python, typescript, javascript,
 sequel, go, java, c, and php with no feature gates. Every build pays for every
 grammar.
 
@@ -168,12 +168,12 @@ grammar.
 
 **Fuzz/property coverage (dimension 28, 72) — addressed.** The audit named three
 hand-enumerated surfaces. All three now have property tests:
-`stella-serve/tests/http.rs` (the SSE decoder),
-`stella-tools/tests/path_confinement_race.rs` (the path resolver), and
-`stella-core/src/loop_detect.rs` (the step loop). Seventeen `proptest!` sites
+`crates/stella-serve/tests/http.rs` (the SSE decoder),
+`crates/stella-tools/tests/path_confinement_race.rs` (the path resolver), and
+`crates/stella-core/src/loop_detect.rs` (the step loop). Seventeen `proptest!` sites
 across the workspace.
 
-**Exit codes (dimension 2, 87) — partially addressed.** `stella-cli/src/main.rs:464-468`
+**Exit codes (dimension 2, 87) — partially addressed.** `crates/stella-cli/src/main.rs:464-468`
 now exits `128 + signal` for an interrupted run, so a wrapping script can tell
 "the user stopped this" from "this failed". Every non-signal failure is still a
 single `ExitCode::FAILURE`, so the audit's specific complaint stands in reduced
@@ -184,12 +184,12 @@ verify this" indistinguishable from a crash to any harness reading exit status.
 ### Verified as unchanged
 
 **Auth is still one static bearer token (dimension 18, 78).** No scopes, no
-rotation, no mTLS — `stella-serve/src/http.rs:92-102` parses one
+rotation, no mTLS — `crates/stella-serve/src/http.rs:92-102` parses one
 `Authorization: Bearer` header, and `hostguard.rs:23` treats it as the whole
 perimeter.
 
 **The OS sandbox still covers `bash` alone (dimension 17, 82).**
-`stella-tools/src/sandbox.rs:13-23` — Seatbelt on macOS, bubblewrap on Linux,
+`crates/stella-tools/src/sandbox.rs:13-23` — Seatbelt on macOS, bubblewrap on Linux,
 selected by `STELLA_BASH_SANDBOX`. No other tool runs confined.
 
 > **Superseded (#1300).** This finding was resolved by removal, not by
@@ -208,7 +208,7 @@ Ordered by value per unit of work.
 
 1. **Grep context lines and output modes.** Add `-A/-B/-C`, `output_mode`
    (`content` / `files_with_matches` / `count`), `-i`, and a type filter to
-   `stella-tools/src/grep.rs`. The argv builder already exists; these are flags
+   `crates/stella-tools/src/grep.rs`. The argv builder already exists; these are flags
    and schema fields. Removes a per-search turn tax from every task.
 2. **Stdin prompts, and leading-dash prompts.** Read the prompt from stdin when
    it is piped or when the positional is `-`. Fixes `cat x | stella run` and the

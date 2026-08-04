@@ -6,7 +6,7 @@ status: implemented
 
 # Observability for `stella-serve` — a typed event at every boundary
 
-**Status:** **Built** — `stella-serve/src/observe/`, all four slices of §11 in
+**Status:** **Built** — `crates/stella-serve/src/observe/`, all four slices of §11 in
 one change. Corrects audit dimension 30 (Observability, 62/100) and closes
 [#930](https://github.com/macanderson/stella/issues/930). Two things below were
 changed *by* building them, and are marked **[amended]** where they appear:
@@ -34,7 +34,7 @@ shape of the gap:
 | Print statements in `stella-serve` | 10 — **all** in `src/main.rs` (2 `println!`, 8 `eprintln!`) |
 | Print statements in the `stella-serve` *library* | **0**, across 3,423 lines and 9 modules |
 | Direct dependency on `tracing` / `log` / any logger, any crate | **none**. `tracing` and `log` appear in `Cargo.lock` purely transitively, via `reqwest`/`hyper` |
-| `stella-core` typed event variants | 34 (`AgentEvent`, `stella-protocol/src/event.rs`) |
+| `stella-core` typed event variants | 34 (`AgentEvent`, `crates/stella-protocol/src/event.rs`) |
 
 So the server's entire observable surface is its startup banner and its exit
 code. Once `serve()` is running, the process is mute for the rest of its life.
@@ -129,7 +129,7 @@ These are not preferences; each one has already rejected an obvious approach.
 
 ## 4. Layer 1 — `ServeEvent`, the typed vocabulary
 
-A new module, `stella-serve/src/observe/event.rs`. This mirrors `AgentEvent`
+A new module, `crates/stella-serve/src/observe/event.rs`. This mirrors `AgentEvent`
 deliberately: same `#[serde(tag = ...)]` shape, same one-variant-per-boundary
 discipline, same habit of naming discarded work rather than letting it vanish.
 
@@ -221,7 +221,7 @@ Four implementations, none of which need a dependency:
 
 | Impl | Purpose |
 |---|---|
-| `JsonlSink` | one JSON object per line to stderr (or a file). Timestamps as epoch millis via `SystemTime` — the existing workspace convention (`stella-store/src/sessions.rs`), so no time crate |
+| `JsonlSink` | one JSON object per line to stderr (or a file). Timestamps as epoch millis via `SystemTime` — the existing workspace convention (`crates/stella-store/src/sessions.rs`), so no time crate |
 | `Metrics` | folds events into `AtomicU64` counters (§6) |
 | `Fanout` | `Vec<Arc<dyn Observer>>`; the server holds one of these |
 | `Capture` | test-only; a `Mutex<Vec<ServeEvent>>`. **This is what makes the acceptance criteria assertable** — tests match on typed variants, not on scraped stderr |
@@ -418,7 +418,7 @@ situation #930 lists — because a turn whose `steps` has not advanced while its
 
 ## 8. Redaction — content stays out, and it is proven
 
-Invariant 3's enforcement machinery (`stella-store/src/content_free.rs`) guards
+Invariant 3's enforcement machinery (`crates/stella-store/src/content_free.rs`) guards
 *egress*. Records here never egress, so that harness does not automatically
 apply. But "it stays on the box" is not a reason to put prompts in a log file:
 operators ship logs, and a log is the easiest accidental egress there is.

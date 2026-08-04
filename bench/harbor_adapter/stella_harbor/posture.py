@@ -145,9 +145,9 @@ _MODEL_TIMEOUT_CEILING = 21_600
 # is not a model property.
 #
 # `TestOutputCeilingParity` pins the caps here against
-# `stella-model/src/catalog.rs`, which is the authority. Change the catalog and
-# this must follow, which is the point: the two numbers used to be able to
-# drift apart silently, both still looking deliberate.
+# `crates/stella-model/src/catalog.rs`, which is the authority. Change the
+# catalog and this must follow, which is the point: the two numbers used to be
+# able to drift apart silently, both still looking deliberate.
 _DEFAULT_OUTPUT_CAP = 64_000
 _OUTPUT_CAP_BY_SLUG = {"claude-fable-5": 128_000}
 

@@ -8,7 +8,7 @@ status: implemented
 
 **Status:** Partially implemented — Phases 1–2 are shipped (`stella-graph`
 SQL parsing, the Diesel `table!` detector, and the pre-write gate in
-`stella-tools/src/schema_gate.rs` wired into the tool registry). Phase 3's
+`crates/stella-tools/src/schema_gate.rs` wired into the tool registry). Phase 3's
 canonical schema model and `code_graph_schema_links`, and Phase 4's semantic
 edges, are unbuilt and have been absorbed into the superseding spec:
 `docs/design/storage-map.md` (the vendor-agnostic storage map).
@@ -80,7 +80,7 @@ Layer 1: Live Schema Index (stella-graph)
 Extend `SymbolKind` with schema kinds:
 
 ```rust
-// stella-graph/src/symbol.rs
+// crates/stella-graph/src/symbol.rs
 pub enum SymbolKind {
     // existing...
     Function, Method, Struct, Class, Enum, Trait, Interface,
@@ -100,7 +100,7 @@ No schema change needed — the store is kind-agnostic.
 Add `tree-sitter-sql` as a workspace dependency and a new `Language::Sql`:
 
 ```rust
-// stella-graph/src/lang.rs
+// crates/stella-graph/src/lang.rs
 pub enum Language {
     Rust, Python, JavaScript, TypeScript, Tsx,
     Sql,  // new
@@ -110,7 +110,7 @@ pub enum Language {
 Tree-sitter query for SQL DDL:
 
 ```scheme
-; stella-graph/src/queries.rs
+; crates/stella-graph/src/queries.rs
 pub const SQL_SYMBOLS: &str = r#"
 (create_table statement name: (_) @name) @table
 (column_definition name: (_) @column_name) @column
@@ -156,7 +156,7 @@ The detector extracts:
 Merge SQL DDL + ORM hints into a canonical view:
 
 ```rust
-// stella-graph/src/schema.rs (new file)
+// crates/stella-graph/src/schema.rs (new file)
 pub struct SchemaObject {
     pub name: String,           // "payments"
     pub kind: SchemaKind,       // Table, Enum, View
@@ -181,7 +181,7 @@ ground truth). The ORM model is kept as a "code reference" edge.
 Add a new edge table:
 
 ```sql
--- stella-graph/src/store.rs MIGRATION
+-- crates/stella-graph/src/store.rs MIGRATION
 CREATE TABLE code_graph_schema_links (
     id INTEGER PRIMARY KEY,
     schema_symbol_id INTEGER NOT NULL REFERENCES code_graph_symbols(id) ON DELETE CASCADE,
@@ -222,7 +222,7 @@ Two triggers:
 - This is the critical fix for staleness: the agent's own writes trigger re-indexing
 
 ```rust
-// stella-cli/src/agent.rs — after tool execution
+// crates/stella-cli/src/agent.rs — after tool execution
 if matches!(op, FileOp::Create | FileOp::Update) {
     if is_schema_file(&path) {
         if let Some(injector) = &graph_injector {
@@ -267,7 +267,7 @@ against the live schema index. If a conflict exists, return a structured
 warning.
 
 ```rust
-// stella-tools/src/schema_gate.rs (new file)
+// crates/stella-tools/src/schema_gate.rs (new file)
 pub struct SchemaConflict {
     pub kind: ConflictKind,
     pub existing: String,  // "Table `payments` with columns: id, amount, currency, user_id"
@@ -288,7 +288,7 @@ pub enum ConflictKind {
 The gate runs as a **pre-write check** inside `write_file` and `edit_file`:
 
 ```rust
-// stella-tools/src/write.rs
+// crates/stella-tools/src/write.rs
 async fn execute(&self, input: &Value, root: &Path) -> ToolOutput {
     let path = /* ... */;
     let content = /* ... */;
@@ -358,7 +358,7 @@ never see the gate.
 A per-workspace override in `.stella/settings.json` (a `schema_gate.enabled`
 flag, or a `"warn"` strictness where the tool succeeds with a warning) is a
 possible future extension — the three-scope settings loader in
-`stella-cli/src/settings.rs` is the natural parse point — but it is
+`crates/stella-cli/src/settings.rs` is the natural parse point — but it is
 deliberately not implemented today.
 
 ---
@@ -369,12 +369,12 @@ deliberately not implemented today.
 
 **Files:**
 
-- `stella-graph/src/lang.rs` — add `Language::Sql`
-- `stella-graph/src/queries.rs` — add `SQL_SYMBOLS`, `SQL_IMPORTS` (empty)
-- `stella-graph/src/parse.rs` — add SQL grammar to `Grammars`
-- `stella-graph/src/walk.rs` — allow `.sql` files through
+- `crates/stella-graph/src/lang.rs` — add `Language::Sql`
+- `crates/stella-graph/src/queries.rs` — add `SQL_SYMBOLS`, `SQL_IMPORTS` (empty)
+- `crates/stella-graph/src/parse.rs` — add SQL grammar to `Grammars`
+- `crates/stella-graph/src/walk.rs` — allow `.sql` files through
 - `Cargo.toml` (workspace) — add `tree-sitter-sql`
-- `stella-cli/src/agent.rs` — post-write trigger for `.sql` files
+- `crates/stella-cli/src/agent.rs` — post-write trigger for `.sql` files
 
 **Delivers:** Every `CREATE TABLE` / `CREATE TYPE` in `.sql` files is in the
 code graph, live-indexed, and retrievable by name and domain.
@@ -383,9 +383,9 @@ code graph, live-indexed, and retrievable by name and domain.
 
 **Files:**
 
-- `stella-tools/src/schema_gate.rs` — conflict detection logic
-- `stella-tools/src/write.rs` / `edit.rs` — call the gate
-- `stella-tools/src/registry.rs` — hold `Option<Arc<SchemaIndex>>`
+- `crates/stella-tools/src/schema_gate.rs` — conflict detection logic
+- `crates/stella-tools/src/write.rs` / `edit.rs` — call the gate
+- `crates/stella-tools/src/registry.rs` — hold `Option<Arc<SchemaIndex>>`
 
 **Delivers:** Agent cannot write a `.sql` file that creates an existing table
 without seeing a conflict error.
@@ -394,9 +394,9 @@ without seeing a conflict error.
 
 **Files:**
 
-- `stella-graph/src/queries.rs` — ORM-specific query patterns per language
-- `stella-graph/src/schema.rs` — canonical merge of SQL DDL + ORM hints
-- `stella-graph/src/store.rs` — `code_graph_schema_links` table
+- `crates/stella-graph/src/queries.rs` — ORM-specific query patterns per language
+- `crates/stella-graph/src/schema.rs` — canonical merge of SQL DDL + ORM hints
+- `crates/stella-graph/src/store.rs` — `code_graph_schema_links` table
 
 **Delivers:** ORM models (Diesel, Django, SQLAlchemy, Prisma) are linked to
 their SQL tables. "All payment code" retrieval returns both the migration AND
@@ -406,8 +406,8 @@ the ORM model AND the handler functions.
 
 **Files:**
 
-- `stella-graph/src/parse.rs` — detect SQL string literals in function bodies
-- `stella-graph/src/schema.rs` — infer `query`/`mutation`/`handler` edges
+- `crates/stella-graph/src/parse.rs` — detect SQL string literals in function bodies
+- `crates/stella-graph/src/schema.rs` — infer `query`/`mutation`/`handler` edges
 
 **Delivers:** The graph knows which functions read/write each table. Foreign
 keys create inter-table edges. The schema graph is navigable bidirectionally.
