@@ -386,6 +386,45 @@ impl CompletionUsage {
     }
 }
 
+/// The accounting an adapter had already observed when an attempt died before
+/// its terminal usage frame arrived.
+///
+/// A mid-stream disconnect is not a total loss of accounting. The
+/// Anthropic-shaped dialects report the prompt's cost in `message_start`,
+/// inside the first few hundred bytes of the response, so a stream cut during
+/// generation has *already* delivered exact input, cache-read and cache-write
+/// counts. Before this type existed those numbers travelled exactly as far as
+/// the adapter's stack frame: [`crate::error::ProviderError`] carried a
+/// `String` and nothing else, the `?` on the next chunk dropped the whole
+/// envelope, and the turn was recorded as though the attempt had cost nothing.
+/// A user watching a dropped connection was told their accounting was
+/// "incomplete" for numbers the process had been holding a moment earlier.
+///
+/// Every field is a LOWER BOUND, and that is the point: it is a floor under
+/// real spend, never a substitute for a provider-attested total. `reported`
+/// on the inner [`CompletionUsage`] is therefore always `false`, which keeps a
+/// partial structurally unable to pass [`CompletionUsage::is_complete`] and so
+/// out of the settled-accounting path no matter how complete it looks.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct PartialUsage {
+    /// Counts observed before the failure. Input-side figures are the
+    /// provider's own when the dialect front-loads them; `output_tokens` is
+    /// whatever the last usage frame stated, or an estimate over the text
+    /// that actually arrived when no such frame did.
+    pub usage: CompletionUsage,
+    /// `usage` priced at the serving model's catalog rates, or `0.0` when the
+    /// adapter had no pricing row for the model. Never provider-attested.
+    pub cost_usd: f64,
+    /// Whether the input-side counts came from the provider's own frame
+    /// rather than a local estimate. `true` is the common case for
+    /// Anthropic-shaped streams and `false` for the OpenAI-shaped ones, which
+    /// send usage only at the end — the distinction a reader needs before
+    /// treating `usage.input_tokens` as fact.
+    #[serde(default)]
+    pub input_reported: bool,
+}
+
 /// Why the model stopped generating, normalized across providers. Lets the
 /// engine tell a natural stop from a truncation (`Length`) so an empty or
 /// cut-off turn is surfaced to the user instead of being recorded as a clean

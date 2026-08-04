@@ -283,7 +283,7 @@ impl GoogleApiError {
     fn into_provider_error(self, label: &str) -> ProviderError {
         let msg = format!("{label} stream error [{}]: {}", self.status, self.message);
         if self.code >= 500 || self.status == "UNAVAILABLE" || self.status == "INTERNAL" {
-            ProviderError::Transport(msg)
+            ProviderError::transport(msg)
         } else if self.code == 429 || self.status == "RESOURCE_EXHAUSTED" {
             ProviderError::RateLimited {
                 message: msg,
@@ -627,14 +627,14 @@ impl GeminiProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| ProviderError::Transport(e.to_string()))?;
+            .map_err(|e| ProviderError::transport(e.to_string()))?;
 
         if !response.status().is_success() {
             return Err(classify_google_error("Gemini", response, &self.model).await);
         }
 
         let (text, tool_calls, usage, finish_reason) =
-            aggregate_gemini_stream("Gemini", response, observer).await?;
+            aggregate_gemini_stream("Gemini", response, observer, self.pricing.as_ref()).await?;
         let cost_usd = self.pricing.map(|p| p.cost_usd(&usage)).unwrap_or(0.0);
         Ok(CompletionResult {
             text,
@@ -657,6 +657,7 @@ pub(crate) async fn aggregate_gemini_stream(
     label: &str,
     response: reqwest::Response,
     observer: Option<&dyn ToolCallObserver>,
+    pricing: Option<&Pricing>,
 ) -> Result<(String, Vec<ToolCall>, CompletionUsage, Option<FinishReason>), ProviderError> {
     let mut decoder = SseDecoder::new();
     let mut text = String::new();
@@ -672,7 +673,10 @@ pub(crate) async fn aggregate_gemini_stream(
     // and `push_bytes` reassembles multi-byte UTF-8 characters split across
     // chunk boundaries — decoding each chunk in isolation would spuriously
     // abort a CJK/emoji stream with `Malformed`.
-    while let Some(chunk) = http::next_with_timeout(&mut stream, http::STREAM_IDLE_TIMEOUT).await? {
+    while let Some(chunk) = http::next_with_timeout(&mut stream, http::STREAM_IDLE_TIMEOUT)
+        .await
+        .map_err(|e| e.with_partial(http::partial_usage(&usage, &text, pricing)))?
+    {
         decoder
             .push_bytes(&chunk)
             .map_err(|e| ProviderError::Malformed(e.to_string()))?;
@@ -763,10 +767,10 @@ pub(crate) async fn aggregate_gemini_stream(
     // anthropic/openai/zai). `label` — not a literal — is what makes vertex.rs,
     // which reuses this aggregator, report against its own name.
     if finish_raw.is_none() {
-        return Err(http::stream_ended_before_terminal(
-            label,
-            "a terminal finishReason",
-        ));
+        return Err(
+            http::stream_ended_before_terminal(label, "a terminal finishReason")
+                .with_partial(http::partial_usage(&usage, &text, pricing)),
+        );
     }
 
     let finish_reason = map_gemini_finish_reason(finish_raw.as_deref(), !tool_calls.is_empty());

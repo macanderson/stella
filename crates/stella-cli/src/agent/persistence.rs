@@ -48,6 +48,9 @@ pub(crate) fn spawn_renderer(
             persistence_complete: true,
         };
         let mut seq = 0u64;
+        // Split per condition, for the same reason the deck's forwarder splits
+        // them: a benign usage gap must not silence a later store fault.
+        let mut usage_warned = false;
         let mut store_warned = false;
         let mut stream_terminal = None;
         // The diagnostic timeline (docs/design/diagnostics/diagnostics.md §8). Built on the
@@ -72,14 +75,21 @@ pub(crate) fn spawn_renderer(
             if let Some((store, id)) = &execution
                 && !preview
             {
-                if !persist_event(store, *id, seq, &event, &provider_id) {
+                let persisted = persist_event_detailed(store, *id, seq, &event, &provider_id);
+                if !persisted.is_complete() {
                     outcome.persistence_complete = false;
-                    if !store_warned {
-                        eprintln!(
-                            "  {} store write failed — telemetry for this execution is incomplete",
-                            "⚠".yellow()
-                        );
-                        store_warned = true;
+                    // This path used to print "store write failed" for BOTH
+                    // conditions, so a dropped model stream on `stella run`
+                    // accused a database that was fine — the same mislabel the
+                    // deck had. Name what actually happened, once per
+                    // condition.
+                    let (warned, scope) = match persisted {
+                        PersistOutcome::StoreWriteFailed => (&mut store_warned, "this execution"),
+                        _ => (&mut usage_warned, "one model call"),
+                    };
+                    if !*warned && let Some(message) = persisted.message(scope) {
+                        *warned = true;
+                        eprintln!("  {} {message}", "⚠".yellow());
                     }
                 }
                 seq += 1;
@@ -286,6 +296,27 @@ fn enum_tag<T: serde::Serialize>(value: &T) -> String {
         .unwrap_or_else(|| "unknown".into())
 }
 
+/// A compact, human-readable rendering of recovered token counts — the
+/// difference between a warning a user can act on and one they can only worry
+/// about. Cache reads are named separately because they are the cheap part: a
+/// 14k-token prompt that was 12k cache hits is a very different number than
+/// one that was not, and collapsing them hides that.
+fn token_summary(partial: &stella_protocol::PartialUsage) -> String {
+    let input = partial.usage.input_tokens;
+    let cached = partial.usage.cached_input_tokens;
+    let output = partial.usage.output_tokens;
+    let qualifier = if partial.input_reported {
+        "reported"
+    } else {
+        "estimated"
+    };
+    if cached > 0 {
+        format!("{input} input ({cached} cached, {qualifier}) + {output} output tokens")
+    } else {
+        format!("{input} input ({qualifier}) + {output} output tokens")
+    }
+}
+
 pub(crate) fn warn_store_write_failed(what: &str) {
     eprintln!(
         "  {} store write failed — {what} for this execution is incomplete",
@@ -303,15 +334,21 @@ pub(crate) fn warn_store_write_failed(what: &str) {
 /// user "store write failed", sending them to look at a database that was
 /// perfectly fine. Splitting them lets each surface say what actually
 /// happened.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum PersistOutcome {
     /// Rows written and usage fully reported.
     Complete,
     /// An INSERT failed — a real persistence problem.
     StoreWriteFailed,
-    /// Everything was written, but the provider never delivered final usage,
-    /// so token/cost accounting for this turn is short.
-    UsageIncomplete,
+    /// Everything was written, but the provider never delivered final usage
+    /// for one attempt, so that attempt's accounting is short.
+    ///
+    /// Carries whatever the adapter salvaged from the failure, because the
+    /// difference between "we recovered 14k input tokens" and "we know
+    /// nothing" is the difference between a footnote and a real gap — and the
+    /// surface that renders this is the only place a user ever learns which
+    /// one happened.
+    UsageIncomplete(Option<stella_protocol::PartialUsage>),
 }
 
 impl PersistOutcome {
@@ -320,15 +357,28 @@ impl PersistOutcome {
     }
 
     /// The user-facing sentence for this outcome, or `None` when complete.
+    ///
+    /// `what` names the scope that actually failed. It is deliberately a
+    /// *call*, not a session: the earlier wording said "accounting for this
+    /// session is incomplete" for a single retried attempt, which reads as
+    /// "your whole run's books are wrong" and sent users looking for damage
+    /// that did not exist. One dropped attempt out of hundreds is a footnote,
+    /// and the sentence should sound like one.
     pub(crate) fn message(self, what: &str) -> Option<String> {
         match self {
             PersistOutcome::Complete => None,
             PersistOutcome::StoreWriteFailed => {
                 Some(format!("store write failed — {what} could not be written"))
             }
-            PersistOutcome::UsageIncomplete => Some(format!(
-                "provider reported no final usage — token and cost accounting for {what} is \
-                 incomplete (the work itself is unaffected)"
+            PersistOutcome::UsageIncomplete(Some(partial)) => Some(format!(
+                "{what} dropped before its final usage frame — recovered {} \
+                 (~${:.4}) as an estimate; every other call is accounted normally",
+                token_summary(&partial),
+                partial.cost_usd,
+            )),
+            PersistOutcome::UsageIncomplete(None) => Some(format!(
+                "{what} failed after dispatch with no usage reported — that one \
+                 attempt is unaccounted (the work itself is unaffected)"
             )),
         }
     }
@@ -356,6 +406,7 @@ pub(crate) fn persist_event_detailed(
     let recorded = store.record_event(execution_id, seq, event).is_ok();
     let mut telemetry_ok = true;
     let mut usage_complete = true;
+    let mut recovered = None;
     if let AgentEvent::StepUsage {
         role,
         provider,
@@ -407,8 +458,65 @@ pub(crate) fn persist_event_detailed(
             .is_ok();
         usage_complete = *complete;
         crate::model_catalog::note_wire_model(actual_provider, model);
-    } else if matches!(event, AgentEvent::UsageIncomplete { .. }) {
+    } else if let AgentEvent::UsageIncomplete {
+        role,
+        provider,
+        model,
+        duration_ms,
+        retries,
+        partial,
+        ..
+    } = event
+    {
         usage_complete = false;
+        recovered = *partial;
+        // A failed attempt that salvaged accounting gets a real telemetry row,
+        // flagged `usage_complete = false`. Before this the row was simply not
+        // written: `stella stats` showed the turn as though the dead attempt
+        // had never been dispatched, so a session with repeated drops
+        // under-reported its own token use with no trace that anything was
+        // missing. A flagged lower bound is recoverable information; silence
+        // is not.
+        //
+        // `cost_usd` here is catalog-priced, never provider-attested — the
+        // `usage_complete = false` flag is what tells a reader which kind of
+        // number they are looking at.
+        if let Some(partial) = partial {
+            let actual_provider = if provider.is_empty() {
+                legacy_provider_id
+            } else {
+                provider
+            };
+            telemetry_ok = store
+                .record_telemetry(
+                    execution_id,
+                    &TelemetryRow {
+                        step: seq,
+                        provider: actual_provider.to_string(),
+                        call_role: enum_tag(role),
+                        model: model.clone(),
+                        input_tokens: partial.usage.input_tokens,
+                        // No pre-dispatch estimate reaches this event, and
+                        // claiming one we do not have would be worse than
+                        // reporting the observed figure twice over.
+                        estimated_input_tokens: partial.usage.input_tokens,
+                        output_tokens: partial.usage.output_tokens,
+                        cache_read_tokens: partial.usage.cached_input_tokens,
+                        cache_miss_tokens: partial
+                            .usage
+                            .input_tokens
+                            .saturating_sub(partial.usage.cached_input_tokens),
+                        cache_write_tokens: partial.usage.cache_write_tokens,
+                        cost_usd: partial.cost_usd,
+                        duration_ms: *duration_ms,
+                        retries: retries.unwrap_or(0),
+                        // The attempt died before any tool call could settle.
+                        tool_calls: 0,
+                        usage_complete: false,
+                    },
+                )
+                .is_ok();
+        }
     } else if let AgentEvent::BlockRegistered {
         block_id,
         kind,
@@ -496,9 +604,126 @@ pub(crate) fn persist_event_detailed(
     if !recorded || !telemetry_ok {
         PersistOutcome::StoreWriteFailed
     } else if !usage_complete {
-        PersistOutcome::UsageIncomplete
+        PersistOutcome::UsageIncomplete(recovered)
     } else {
         PersistOutcome::Complete
+    }
+}
+
+#[cfg(test)]
+mod usage_recovery_tests {
+    use super::*;
+
+    fn partial(input: u64, cached: u64, output: u64, cost: f64) -> stella_protocol::PartialUsage {
+        stella_protocol::PartialUsage {
+            usage: stella_protocol::CompletionUsage {
+                input_tokens: input,
+                cached_input_tokens: cached,
+                output_tokens: output,
+                ..Default::default()
+            },
+            cost_usd: cost,
+            input_reported: true,
+        }
+    }
+
+    fn incomplete(partial: Option<stella_protocol::PartialUsage>) -> AgentEvent {
+        AgentEvent::UsageIncomplete {
+            role: stella_protocol::ModelCallRole::Worker,
+            provider: "anthropic".into(),
+            model: "claude-opus-5".into(),
+            reason: stella_protocol::UsageIncompleteReason::ProviderError,
+            duration_ms: 4_200,
+            retries: Some(1),
+            partial,
+        }
+    }
+
+    /// The storage half of the fix. A dropped attempt that salvaged real
+    /// numbers must leave a row behind — flagged, but present. Writing
+    /// nothing at all is what made `stella stats` under-report a session's
+    /// token use with no trace that anything was missing.
+    #[test]
+    fn a_recovered_attempt_lands_a_row_flagged_incomplete() {
+        let store = stella_store::Store::in_memory().expect("store");
+        let execution_id = store
+            .begin_execution("cli", "prompt", "anthropic", "claude-opus-5")
+            .expect("begin");
+
+        let outcome = persist_event_detailed(
+            &store,
+            execution_id,
+            0,
+            &incomplete(Some(partial(14_000, 12_000, 130, 0.0213))),
+            "anthropic",
+        );
+
+        let rows = store.telemetry_rows_after(0, 10).expect("rows");
+        assert_eq!(rows.len(), 1, "the salvaged attempt is recorded");
+        let row = &rows[0].telemetry;
+        assert_eq!(row.input_tokens, 14_000);
+        assert_eq!(row.cache_read_tokens, 12_000);
+        assert_eq!(row.cache_miss_tokens, 2_000, "miss = input - cached");
+        assert_eq!(row.output_tokens, 130);
+        assert!((row.cost_usd - 0.0213).abs() < f64::EPSILON);
+        assert!(
+            !row.usage_complete,
+            "a catalog-priced lower bound must never pass as settled accounting"
+        );
+        // And the execution as a whole is marked short.
+        assert!(!store.execution_usage_complete(execution_id).unwrap());
+        assert!(matches!(outcome, PersistOutcome::UsageIncomplete(Some(_))));
+    }
+
+    /// A failure that learned nothing writes no telemetry row. Recording a
+    /// zeroed one would be worse than silence: it reads as a real, free call.
+    #[test]
+    fn an_attempt_that_recovered_nothing_writes_no_row() {
+        let store = stella_store::Store::in_memory().expect("store");
+        let execution_id = store
+            .begin_execution("cli", "prompt", "anthropic", "claude-opus-5")
+            .expect("begin");
+
+        let outcome =
+            persist_event_detailed(&store, execution_id, 0, &incomplete(None), "anthropic");
+
+        assert!(store.telemetry_rows_after(0, 10).expect("rows").is_empty());
+        assert!(!store.execution_usage_complete(execution_id).unwrap());
+        assert!(matches!(outcome, PersistOutcome::UsageIncomplete(None)));
+    }
+
+    /// The wording defect from the report: one retried call must not be
+    /// described as the whole session, and when numbers were recovered the
+    /// sentence should say so rather than leaving the user to assume the
+    /// worst.
+    #[test]
+    fn the_warning_names_one_call_and_reports_what_was_recovered() {
+        let message = PersistOutcome::UsageIncomplete(Some(partial(14_000, 12_000, 130, 0.0213)))
+            .message("one model call")
+            .expect("an incomplete outcome has a sentence");
+        assert!(message.starts_with("one model call"), "{message}");
+        assert!(!message.contains("this session"), "{message}");
+        assert!(message.contains("14000 input"), "{message}");
+        assert!(message.contains("12000 cached"), "{message}");
+        assert!(message.contains("130 output"), "{message}");
+        assert!(message.contains("0.0213"), "{message}");
+
+        // With nothing recovered it stays honest about the gap, and still
+        // scopes itself to the one attempt.
+        let bare = PersistOutcome::UsageIncomplete(None)
+            .message("one model call")
+            .expect("still a sentence");
+        assert!(bare.contains("one attempt is unaccounted"), "{bare}");
+        assert!(!bare.contains("this session"), "{bare}");
+
+        // A genuine store failure keeps its own, more serious wording.
+        let store_failed = PersistOutcome::StoreWriteFailed
+            .message("this session")
+            .expect("a sentence");
+        assert!(
+            store_failed.contains("store write failed"),
+            "{store_failed}"
+        );
     }
 }
 

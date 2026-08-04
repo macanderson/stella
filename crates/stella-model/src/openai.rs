@@ -416,7 +416,7 @@ fn classify_openai_stream_error(code: Option<&str>, message: &str) -> ProviderEr
         || haystack.contains("unavailable")
         || haystack.contains("timeout")
     {
-        ProviderError::Transport(detail)
+        ProviderError::transport(detail)
     } else if haystack.contains("rate_limit")
         || (haystack.contains("rate") && haystack.contains("limit"))
     {
@@ -634,7 +634,7 @@ impl OpenAiProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| ProviderError::Transport(e.to_string()))?;
+            .map_err(|e| ProviderError::transport(e.to_string()))?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -650,7 +650,7 @@ impl OpenAiProvider {
         }
 
         let (text, tool_calls, usage, truncated_at_limit) =
-            aggregate_openai_stream(response, observer).await?;
+            aggregate_openai_stream(response, observer, self.pricing.as_ref()).await?;
         let cost_usd = self.pricing.map(|p| p.cost_usd(&usage)).unwrap_or(0.0);
         // Map onto the neutral vocabulary like every sibling adapter, so the
         // engine can tell a tool-calling stop from a natural one.
@@ -692,6 +692,7 @@ struct ToolCallAccumulator {
 async fn aggregate_openai_stream(
     response: reqwest::Response,
     observer: Option<&dyn ToolCallObserver>,
+    pricing: Option<&Pricing>,
 ) -> Result<(String, Vec<ToolCall>, CompletionUsage, bool), ProviderError> {
     let mut decoder = SseDecoder::new();
     let mut text = String::new();
@@ -705,8 +706,9 @@ async fn aggregate_openai_stream(
     let mut truncated_at_limit = false;
     let mut stream = response.bytes_stream();
 
-    'stream: while let Some(chunk) =
-        http::next_with_timeout(&mut stream, http::STREAM_IDLE_TIMEOUT).await?
+    'stream: while let Some(chunk) = http::next_with_timeout(&mut stream, http::STREAM_IDLE_TIMEOUT)
+        .await
+        .map_err(|e| e.with_partial(http::partial_usage(&usage, &text, pricing)))?
     {
         decoder
             .push_bytes(&chunk)
@@ -858,10 +860,10 @@ async fn aggregate_openai_stream(
     // whatever accumulated is a half-answer. Retryable Transport, upholding
     // the same "never a truncated Ok" promise as the mid-stream error paths.
     if !completed_seen {
-        return Err(http::stream_ended_before_terminal(
-            "OpenAI",
-            "response.completed",
-        ));
+        return Err(
+            http::stream_ended_before_terminal("OpenAI", "response.completed")
+                .with_partial(http::partial_usage(&usage, &text, pricing)),
+        );
     }
 
     let tool_calls = tool_calls
@@ -1593,7 +1595,7 @@ mod tests {
         };
 
         let err = provider.complete(req).await.unwrap_err();
-        assert!(matches!(err, ProviderError::Transport(_)));
+        assert!(matches!(err, ProviderError::Transport { .. }));
         assert!(err.is_retryable(), "5xx must be retryable");
     }
 
@@ -1628,7 +1630,7 @@ mod tests {
 
         let err = provider.complete(req).await.unwrap_err();
         // server_error ⇒ retryable Transport.
-        assert!(matches!(err, ProviderError::Transport(_)));
+        assert!(matches!(err, ProviderError::Transport { .. }));
         assert!(err.is_retryable());
     }
 
@@ -1749,7 +1751,7 @@ mod tests {
 
         let err = provider.complete(req).await.unwrap_err();
         assert!(
-            matches!(err, ProviderError::Transport(_)),
+            matches!(err, ProviderError::Transport { .. }),
             "expected Transport, got {err:?}"
         );
         assert!(err.is_retryable(), "a disconnect must be retryable");

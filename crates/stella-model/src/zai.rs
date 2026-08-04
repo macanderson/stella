@@ -744,7 +744,7 @@ fn classify_zai_stream_error(err: &ZaiStreamError, label: &str) -> ProviderError
         || code == "503"
         || code == "529"
     {
-        ProviderError::Transport(detail)
+        ProviderError::transport(detail)
     } else if code == "429" || (haystack.contains("rate") && haystack.contains("limit")) {
         // A `code: 429` frame carries no "rate limit" prose on some gateways,
         // so the numeric status is the only signal that this is throttling
@@ -1142,7 +1142,7 @@ impl ZaiProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| ProviderError::Transport(e.to_string()))?;
+            .map_err(|e| ProviderError::transport(e.to_string()))?;
 
         if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
             // Vendor pre-check ahead of the shared ladder — Z.ai overloads
@@ -1177,7 +1177,7 @@ impl ZaiProvider {
         }
 
         let (text, tool_calls, usage, finish_reason, reported_cost_usd) =
-            aggregate_zai_stream(response, &self.label, observer).await?;
+            aggregate_zai_stream(response, &self.label, observer, self.pricing.as_ref()).await?;
         // A gateway-reported cost (OpenRouter usage accounting) is
         // authoritative; catalog list pricing is the estimate for providers
         // that don't report one.
@@ -1261,6 +1261,7 @@ async fn aggregate_zai_stream(
     response: reqwest::Response,
     label: &str,
     observer: Option<&dyn ToolCallObserver>,
+    pricing: Option<&Pricing>,
 ) -> Result<
     (
         String,
@@ -1290,7 +1291,10 @@ async fn aggregate_zai_stream(
     let mut terminal_seen = false;
     let mut stream = response.bytes_stream();
 
-    while let Some(chunk) = http::next_with_timeout(&mut stream, http::STREAM_IDLE_TIMEOUT).await? {
+    while let Some(chunk) = http::next_with_timeout(&mut stream, http::STREAM_IDLE_TIMEOUT)
+        .await
+        .map_err(|e| e.with_partial(http::partial_usage(&usage, &text, pricing)))?
+    {
         decoder
             .push_bytes(&chunk)
             .map_err(|e| ProviderError::Malformed(e.to_string()))?;
@@ -1448,7 +1452,8 @@ async fn aggregate_zai_stream(
     // Transport, upholding the same "never a truncated Ok" promise as the
     // mid-stream error-frame path above.
     if !terminal_seen {
-        return Err(http::stream_ended_before_terminal(label, "[DONE]"));
+        return Err(http::stream_ended_before_terminal(label, "[DONE]")
+            .with_partial(http::partial_usage(&usage, &text, pricing)));
     }
 
     // Fallback terminator: a server that ends the stream without ever sending

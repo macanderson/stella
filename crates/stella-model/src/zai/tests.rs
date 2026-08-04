@@ -1010,7 +1010,7 @@ async fn complete_maps_5xx_to_retryable_transport() {
     };
 
     let err = provider.complete(req).await.unwrap_err();
-    assert!(matches!(err, ProviderError::Transport(_)));
+    assert!(matches!(err, ProviderError::Transport { .. }));
     assert!(err.is_retryable(), "5xx must be retryable");
 }
 
@@ -1043,7 +1043,7 @@ async fn complete_returns_err_on_mid_stream_error_frame_not_truncated_ok() {
 
     let err = provider.complete(req).await.unwrap_err();
     // server_error / overloaded ⇒ retryable Transport.
-    assert!(matches!(err, ProviderError::Transport(_)));
+    assert!(matches!(err, ProviderError::Transport { .. }));
     assert!(err.is_retryable());
 }
 
@@ -1080,7 +1080,7 @@ async fn complete_returns_transport_err_on_clean_eof_without_done() {
 
     let err = provider.complete(req).await.unwrap_err();
     assert!(
-        matches!(err, ProviderError::Transport(_)),
+        matches!(err, ProviderError::Transport { .. }),
         "expected Transport, got {err:?}"
     );
     assert!(err.is_retryable(), "a disconnect must be retryable");

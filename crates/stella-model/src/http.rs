@@ -9,7 +9,9 @@ use std::time::Duration;
 
 use futures_util::{Stream, StreamExt};
 use serde::Deserialize;
-use stella_protocol::ProviderError;
+use stella_protocol::{CompletionUsage, PartialUsage, ProviderError, tokens::estimate_tokens};
+
+use crate::catalog::Pricing;
 
 /// How long to wait for the initial TCP/TLS connection before giving up. A
 /// dead or black-holed provider endpoint should fail fast and retryably, not
@@ -107,7 +109,7 @@ pub(crate) fn unary_client() -> reqwest::Client {
 /// land. Ordinary transport faults (resets, DNS, TLS) stay retryable too.
 pub(crate) fn classify_unary_dispatch_error(label: &str, error: &reqwest::Error) -> ProviderError {
     if error.is_connect() {
-        return ProviderError::Transport(error.to_string());
+        return ProviderError::transport(error.to_string());
     }
     if error.is_timeout() {
         return ProviderError::Terminal(format!(
@@ -116,7 +118,7 @@ pub(crate) fn classify_unary_dispatch_error(label: &str, error: &reqwest::Error)
             UNARY_READ_TIMEOUT.as_secs()
         ));
     }
-    ProviderError::Transport(error.to_string())
+    ProviderError::transport(error.to_string())
 }
 
 /// Parse a `Retry-After` header (RFC 9110 §10.2.3) into a millisecond hint
@@ -397,7 +399,7 @@ pub(crate) fn classify_http_status(
             retry_after_ms,
         },
         s if s.is_server_error() => {
-            ProviderError::Transport(format!("{label} HTTP {status}: {}", body_snippet(body)))
+            ProviderError::transport(format!("{label} HTTP {status}: {}", body_snippet(body)))
         }
         _ => {
             let mut message = format!("{label} HTTP {status}: {}", body_snippet(body));
@@ -428,9 +430,9 @@ where
 {
     match tokio::time::timeout(idle, stream.next()).await {
         Ok(Some(Ok(item))) => Ok(Some(item)),
-        Ok(Some(Err(e))) => Err(ProviderError::Transport(e.to_string())),
+        Ok(Some(Err(e))) => Err(ProviderError::transport(e.to_string())),
         Ok(None) => Ok(None),
-        Err(_elapsed) => Err(ProviderError::Transport(format!(
+        Err(_elapsed) => Err(ProviderError::transport(format!(
             "stream idle timeout: no data for {}s",
             idle.as_secs()
         ))),
@@ -481,9 +483,48 @@ pub(crate) fn truncated_tool_input_error(
 /// never be committed as a successful completion. Shared by every streaming
 /// adapter so the disconnect classifies as retryable `Transport` uniformly.
 pub(crate) fn stream_ended_before_terminal(provider: &str, terminal_event: &str) -> ProviderError {
-    ProviderError::Transport(format!(
+    ProviderError::transport(format!(
         "{provider} stream ended before {terminal_event} — connection closed mid-response"
     ))
+}
+
+/// Package whatever accounting a dying stream had already accumulated, so it
+/// rides out on the error instead of dying with the aggregator's stack frame.
+///
+/// This is the recovery half of the two error paths every streaming adapter
+/// has — a mid-stream transport fault ([`next_with_timeout`]) and a clean EOF
+/// with no terminal event ([`stream_ended_before_terminal`]). Both used to
+/// discard a `CompletionUsage` that, on the Anthropic-shaped dialects, already
+/// held the provider's own exact input and cache figures from the opening
+/// frame. The turn was then recorded as if the attempt had been free.
+///
+/// Two deliberate choices about truth:
+///
+/// - `reported` is forced to `false`. The dialects that stream a *running*
+///   output count (Anthropic's `message_delta`) set it mid-flight, so a
+///   partial can arrive here already flagged as authoritative; letting that
+///   through would launder a half-answer into the settled-accounting path.
+/// - A zero `output_tokens` is replaced by an estimate over the text that did
+///   arrive. Those tokens were generated and are billable, and a zero we know
+///   to be wrong is worse than an approximation we can label — the estimate is
+///   never mistaken for provider truth because `input_reported` describes only
+///   the input side and `reported` stays false regardless.
+pub(crate) fn partial_usage(
+    usage: &CompletionUsage,
+    text: &str,
+    pricing: Option<&Pricing>,
+) -> PartialUsage {
+    let input_reported = usage.input_tokens > 0;
+    let mut observed = *usage;
+    observed.reported = false;
+    if observed.output_tokens == 0 {
+        observed.output_tokens = estimate_tokens(text);
+    }
+    PartialUsage {
+        cost_usd: pricing.map_or(0.0, |p| p.cost_usd(&observed)),
+        usage: observed,
+        input_reported,
+    }
 }
 
 #[cfg(test)]
@@ -685,7 +726,7 @@ mod tests {
             err.is_retryable(),
             "idle timeout must be retryable: {err:?}"
         );
-        assert!(matches!(err, ProviderError::Transport(_)));
+        assert!(matches!(err, ProviderError::Transport { .. }));
     }
 
     #[tokio::test]
@@ -931,6 +972,6 @@ mod tests {
             "gpt-5.5",
         );
         assert!(server_error.is_retryable());
-        assert!(matches!(server_error, ProviderError::Transport(_)));
+        assert!(matches!(server_error, ProviderError::Transport { .. }));
     }
 }
