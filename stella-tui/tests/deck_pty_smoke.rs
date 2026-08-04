@@ -28,7 +28,8 @@ use std::time::{Duration, Instant};
 /// Generous: CI machines are slow, the first frame waits out crossterm's
 /// keyboard-enhancement probe (which this pty never answers), and the demo
 /// paces its scripted scenario at one event per 500ms — the scope-review
-/// card this test answers is the LAST of those events, ~30s in.
+/// card this test answers is the LAST of those events, ~20s in (re-checked
+/// when the scenario grew the task/witness events; still well inside WAIT).
 const WAIT: Duration = Duration::from_secs(60);
 
 /// `cargo test` builds examples by default, so the demo binary normally sits

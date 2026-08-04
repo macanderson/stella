@@ -1021,6 +1021,7 @@ mod tests {
                     steps: vec![],
                     estimated_files: 1,
                     estimated_cost_usd: None,
+                    ..Default::default()
                 },
             },
             AgentEvent::AskUser {

@@ -48,7 +48,7 @@ fn slash_popup_windows_the_selection_into_view() {
     // Select the very last command: without windowing it renders off the
     // bottom of the popup box and never appears in the buffer.
     let mut buf = Buffer::empty(area);
-    render_slash_popup(&menu, 14, area, &mut buf);
+    render_slash_popup(&menu, 14, &[], area, &mut buf);
     let text = buffer_text(&buf);
     assert!(text.contains("/cmd14"), "selected row is visible:\n{text}");
     assert!(
@@ -60,7 +60,7 @@ fn slash_popup_windows_the_selection_into_view() {
 
     // Selecting the top shows the head and hides the tail instead.
     let mut buf = Buffer::empty(area);
-    render_slash_popup(&menu, 0, area, &mut buf);
+    render_slash_popup(&menu, 0, &[], area, &mut buf);
     let text = buffer_text(&buf);
     assert!(text.contains("/cmd00"), "top row visible:\n{text}");
     assert!(!text.contains("/cmd14"), "tail hidden:\n{text}");
@@ -85,7 +85,7 @@ fn slash_popup_survives_a_selection_past_the_filtered_end() {
     let mut buf = Buffer::empty(area);
     // selected far past the 3 matches — the render-side clamp keeps it in
     // view; all three rows fit so nothing scrolls.
-    render_slash_popup(&menu, 99, area, &mut buf);
+    render_slash_popup(&menu, 99, &[], area, &mut buf);
     let text = buffer_text(&buf);
     assert!(text.contains("/cmd02"), "last row still shown:\n{text}");
     assert!(

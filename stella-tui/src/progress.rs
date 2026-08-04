@@ -1,5 +1,14 @@
-//! The full-width run progress bar that sits directly above the composer —
-//! the deck's sole activity indicator (it replaced the garble spinner).
+//! The unified stage stepper + progress row that sits directly above the
+//! composer — the deck's sole activity indicator (it replaced the garble
+//! spinner, and then absorbed the separate stage word-list):
+//!
+//! ```text
+//! ✓ plan   ▸ execute   ████████░░░░░░░░ 50%   · verify            43 tok/s
+//! ```
+//!
+//! Completed stages lead with `✓`, the active stage carries `▸` plus the
+//! determinate track and its percent, pending stages trail dimmed, and the
+//! live token rate holds the right edge.
 //!
 //! ## Honesty
 //!
@@ -14,10 +23,11 @@
 //!   `plan → execute → verify`: completed phases fill solid, the active phase
 //!   fills to its midpoint, and the percent is derived from that position. It
 //!   moves only when the engine actually emits a new `Stage` event.
-//! - The **shimmer** (a brighter leading band plus a dimmer trailing echo) and
-//!   the **pulsing head** are the *only* indeterminate cues, and they signal
-//!   liveness (`AgentStatus::Running`) — never progress. They ride *on top of*
-//!   the determinate fill and never advance it.
+//! - The **shimmer** (a light band sweeping the filled region) is the *only*
+//!   indeterminate cue, and it signals liveness (`AgentStatus::Running`) —
+//!   never progress. It rides *on top of* the determinate fill and never
+//!   advances it; it is a scrubbed `theme::lighten` toward white, gated on
+//!   `no_anim`.
 //! - The fill rides the brand **gold** gradient (deep gold → Phosphor Gold)
 //!   — activity is the accent, so the deck's sole activity indicator is
 //!   unmistakable against the quiet warm-neutral chrome everywhere else.
@@ -53,8 +63,6 @@ use crate::theme::{self, ColorMode};
 /// The shimmer sweep's period, in ms — one pass of the light band across the
 /// filled region (a brisker sweep than before for a livelier read).
 const SHIMMER_PERIOD_MS: u64 = 1_100;
-/// The head-pulse period, in ms — a gentle brighten/dim at the fill frontier.
-const PULSE_PERIOD_MS: u64 = 700;
 
 /// The three display phases the bar collapses the real [`StageKind`] pipeline
 /// onto. The engine's ten stages are conditional and unordered-in-advance, so a
@@ -223,45 +231,48 @@ impl ProgressState {
     }
 }
 
-/// Render the progress bar for the focused agent into `area` (one row).
+/// Render the progress row for the focused agent into `area` (one row).
 pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     if area.height == 0 || area.width == 0 {
         return;
     }
-    let state = ProgressState::derive(model.agents.get(ui.focused), model.now_ms, ui.no_anim);
-    render_state(&state, model.now_ms, ui.color_mode, area, buf);
-}
-
-/// The label chunk (`✓ plan · ▸ execute · verify`) as styled spans, plus its
-/// display width. Done = success green, Active = gold (matches the fill),
-/// Pending = dim.
-fn label_line(state: &ProgressState) -> (Vec<Span<'static>>, usize) {
-    let mut spans = Vec::new();
-    let mut width = 0usize;
-    for (i, name) in PHASE_LABELS.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::styled("  ", Style::default().fg(theme::HAIRLINE)));
-            width += 2;
-        }
-        let (glyph, color, bold) = match state.segments[i] {
-            SegState::Done => ("✓", theme::SUCCESS_BRIGHT, false),
-            SegState::Active if state.phase == RunPhase::Error => ("✗", theme::DANGER, true),
-            SegState::Active => ("▸", theme::ACCENT, true),
-            SegState::Pending => ("·", theme::TEXT_DIM, false),
-        };
-        let mut style = Style::default().fg(color);
-        if bold {
-            style = style.add_modifier(Modifier::BOLD);
-        }
-        spans.push(Span::styled(format!("{glyph} {name}"), style));
-        width += 2 + name.chars().count(); // glyph + space + name
+    let mut state = ProgressState::derive(model.agents.get(ui.focused), model.now_ms, ui.no_anim);
+    // With more than one lane emitting, the honest figure is the workspace's
+    // summed rate, labelled `combined` (D5) — a single lane keeps its own
+    // unlabelled rate.
+    let (combined_rate, contributors) = model.combined_tok_per_s();
+    let combined = contributors > 1;
+    if combined && state.phase == RunPhase::Running {
+        state.tok_per_s = combined_rate;
     }
-    (spans, width)
+    render_state(&state, model.now_ms, ui.color_mode, combined, area, buf);
 }
 
-/// The right-aligned telemetry (`NN%  ·  <tok/s>`) as styled spans plus width.
-/// Percent in primary text, the rest dim; ETA omitted (no honest estimate).
-fn telemetry_line(state: &ProgressState) -> (Vec<Span<'static>>, usize) {
+/// One stepper element: `✓ plan` done (success), `▸ execute` active (accent,
+/// bold — `✗` on error), `· verify` pending (dim). The unified stepper row
+/// interleaves these with the track (D2).
+fn stepper_span(state: &ProgressState, i: usize) -> (Span<'static>, usize) {
+    let name = PHASE_LABELS[i];
+    let (glyph, color, bold) = match state.segments[i] {
+        SegState::Done => ("✓", theme::SUCCESS_BRIGHT, false),
+        SegState::Active if state.phase == RunPhase::Error => ("✗", theme::DANGER, true),
+        SegState::Active => ("▸", theme::ACCENT, true),
+        SegState::Pending => ("·", theme::TEXT_DIM, false),
+    };
+    let mut style = Style::default().fg(color);
+    if bold {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    (
+        Span::styled(format!("{glyph} {name}"), style),
+        2 + name.chars().count(),
+    )
+}
+
+/// The right-edge telemetry: `NN tok/s` dim while running (` combined` when
+/// more than one lane contributes), `idle` / `100% · done` / `failed` for the
+/// other phases. The percent lives beside the track now, not out here.
+fn telemetry_line(state: &ProgressState, combined: bool) -> (Vec<Span<'static>>, usize) {
     match state.phase {
         RunPhase::Idle => (
             vec![Span::styled("idle", Style::default().fg(theme::TEXT_DIM))],
@@ -283,80 +294,186 @@ fn telemetry_line(state: &ProgressState) -> (Vec<Span<'static>>, usize) {
             )],
             6,
         ),
-        RunPhase::Running => {
-            let pct = format!("{}%", state.pct);
-            let mut spans = vec![Span::styled(
-                pct.clone(),
-                Style::default().fg(theme::TEXT_PRIMARY),
-            )];
-            let mut width = pct.chars().count();
-            if let Some(tps) = state.tok_per_s {
-                let tail = format!("  ·  {tps} tok/s");
-                width += tail.chars().count();
-                spans.push(Span::styled(tail, Style::default().fg(theme::TEXT_DIM)));
+        RunPhase::Running => match state.tok_per_s {
+            Some(tps) => {
+                let text = if combined {
+                    format!("{tps} tok/s combined")
+                } else {
+                    format!("{tps} tok/s")
+                };
+                let w = text.chars().count();
+                (
+                    vec![Span::styled(text, Style::default().fg(theme::TEXT_DIM))],
+                    w,
+                )
             }
-            (spans, width)
-        }
+            None => (Vec::new(), 0),
+        },
     }
 }
 
-/// Paint the derived state into `area`. Split out from the frame composer so tests can
-/// drive it with a hand-built [`ProgressState`] and a fixed clock.
-fn render_state(state: &ProgressState, now_ms: u64, mode: ColorMode, area: Rect, buf: &mut Buffer) {
+/// Paint the derived state into `area` as the unified stepper row (D2):
+///
+/// ```text
+/// ✓ plan   ▸ execute   ████████░░░░░░░░ 50%   · verify            43 tok/s
+/// ```
+///
+/// Completed stages lead, the determinate track and its percent follow the
+/// ACTIVE stage's label, pending stages trail, and the live token rate holds
+/// the right edge. On a narrow row the stage labels drop first, then the
+/// telemetry — the track itself survives to the narrowest widths. Split out
+/// from the frame composer so tests can drive it with a hand-built
+/// [`ProgressState`] and a fixed clock.
+fn render_state(
+    state: &ProgressState,
+    now_ms: u64,
+    mode: ColorMode,
+    combined: bool,
+    area: Rect,
+    buf: &mut Buffer,
+) {
     let y = area.y;
     let total = area.width as usize;
-    let (labels, label_w) = label_line(state);
-    let (telem, telem_w) = telemetry_line(state);
+    let (telem, telem_w) = telemetry_line(state, combined);
 
-    // Zone layout: labels (left) · bar (middle, gets the rest) · telemetry
-    // (right). On a narrow row, drop the labels first, then the telemetry, so
-    // the bar itself always survives — it is the load-bearing element.
-    let gap = 2usize; // one space either side of the bar
-    let mut bar_x = area.x as usize;
-    let mut bar_w = total;
-    let mut show_labels = false;
-    let mut show_telem = false;
-
-    if total >= label_w + telem_w + gap + 8 {
-        show_labels = true;
-        show_telem = true;
-        bar_x = area.x as usize + label_w + 1;
-        bar_w = total - label_w - telem_w - gap;
-    } else if total >= telem_w + 1 + 10 {
-        show_telem = true;
-        bar_x = area.x as usize;
-        bar_w = total - telem_w - 1;
+    // Idle keeps its flat dim groove across the row — a stepper with no run
+    // to step through would be noise.
+    if state.phase == RunPhase::Idle {
+        let bar_w = total.saturating_sub(telem_w + 1);
+        render_track(state, now_ms, mode, area.x, y, bar_w as u16, buf);
+        render_right_telem(telem, telem_w, area, buf);
+        return;
     }
 
-    if show_labels {
-        Paragraph::new(Line::from(labels)).render(
+    // The stepper: labels before the track (done + active), labels after
+    // (pending). On Complete every label is done and the full green track
+    // trails them.
+    const GAP: usize = 3;
+    let active = state
+        .segments
+        .iter()
+        .position(|s| *s == SegState::Active)
+        .unwrap_or(PHASE_LABELS.len() - 1);
+    let mut before: Vec<Span<'static>> = Vec::new();
+    let mut before_w = 0usize;
+    let mut after: Vec<Span<'static>> = Vec::new();
+    let mut after_w = 0usize;
+    for i in 0..PHASE_LABELS.len() {
+        let (span, w) = stepper_span(state, i);
+        if i <= active {
+            if before_w > 0 {
+                before.push(Span::raw(" ".repeat(GAP)));
+                before_w += GAP;
+            }
+            before.push(span);
+            before_w += w;
+        } else {
+            after.push(Span::raw(" ".repeat(GAP)));
+            after.push(span);
+            after_w += GAP + w;
+        }
+    }
+
+    // The percent readout beside the track (running/error only — Complete's
+    // lives in the right-edge telemetry as `100% · done`).
+    let pct_text = match state.phase {
+        RunPhase::Running | RunPhase::Error => format!(" {}%", state.pct),
+        _ => String::new(),
+    };
+    let pct_w = pct_text.chars().count();
+
+    /// The track never renders thinner than this in the full layout.
+    const MIN_TRACK: usize = 8;
+    /// And never fatter than this — slack goes to breathing room instead.
+    const MAX_TRACK: usize = 24;
+
+    let fixed = before_w + 1 + pct_w + after_w + telem_w + if telem_w > 0 { 2 } else { 0 };
+    if total >= fixed + MIN_TRACK {
+        // Full layout: stepper labels + track + percent + telemetry.
+        let track_w = (total - fixed).min(MAX_TRACK);
+        let mut x = area.x;
+        let line_w = (before_w).min(total) as u16;
+        Paragraph::new(Line::from(before)).render(
             Rect {
-                x: area.x,
+                x,
                 y,
-                width: label_w as u16,
+                width: line_w,
                 height: 1,
             },
             buf,
         );
+        x += line_w + 1;
+        render_track(state, now_ms, mode, x, y, track_w as u16, buf);
+        x += track_w as u16;
+        let mut tail: Vec<Span<'static>> = Vec::new();
+        if !pct_text.is_empty() {
+            tail.push(Span::styled(
+                pct_text,
+                Style::default().fg(theme::TEXT_PRIMARY),
+            ));
+        }
+        tail.extend(after);
+        let tail_w = (pct_w + after_w).min((area.x + area.width).saturating_sub(x) as usize);
+        if tail_w > 0 {
+            Paragraph::new(Line::from(tail)).render(
+                Rect {
+                    x,
+                    y,
+                    width: tail_w as u16,
+                    height: 1,
+                },
+                buf,
+            );
+        }
+        render_right_telem(telem, telem_w, area, buf);
+    } else if total >= pct_w + telem_w + 2 + 6 {
+        // Narrow: drop the labels; keep track + percent + telemetry.
+        let track_w = total - pct_w - telem_w - if telem_w > 0 { 2 } else { 0 };
+        render_track(state, now_ms, mode, area.x, y, track_w as u16, buf);
+        if pct_w > 0 {
+            Paragraph::new(Line::from(Span::styled(
+                pct_text,
+                Style::default().fg(theme::TEXT_PRIMARY),
+            )))
+            .render(
+                Rect {
+                    x: area.x + track_w as u16,
+                    y,
+                    width: pct_w as u16,
+                    height: 1,
+                },
+                buf,
+            );
+        }
+        render_right_telem(telem, telem_w, area, buf);
+    } else {
+        // Narrowest: the track alone — the load-bearing element.
+        render_track(state, now_ms, mode, area.x, y, area.width, buf);
     }
-    if show_telem {
-        let telem_x = area.x + (total - telem_w) as u16;
-        Paragraph::new(Line::from(telem).alignment(ratatui::layout::Alignment::Right)).render(
-            Rect {
-                x: telem_x,
-                y,
-                width: telem_w as u16,
-                height: 1,
-            },
-            buf,
-        );
-    }
-
-    render_track(state, now_ms, mode, bar_x as u16, y, bar_w as u16, buf);
 }
 
-/// Paint just the fill track (gradient fill, dim groove, notches, shimmer,
-/// pulsing head) into `[x, x+w)` on row `y`.
+/// Right-align the telemetry spans on the row (no-op when empty).
+fn render_right_telem(telem: Vec<Span<'static>>, telem_w: usize, area: Rect, buf: &mut Buffer) {
+    if telem_w == 0 || telem_w > area.width as usize {
+        return;
+    }
+    let x = area.x + (area.width as usize - telem_w) as u16;
+    Paragraph::new(Line::from(telem)).render(
+        Rect {
+            x,
+            y: area.y,
+            width: telem_w as u16,
+            height: 1,
+        },
+        buf,
+    );
+}
+
+/// Paint just the fill track (gradient fill, dim groove, shimmer) into
+/// `[x, x+w)` on row `y`. The shimmer is the one permitted motion — a
+/// scrubbed `theme::lighten` toward white over the gradient, never
+/// accumulated state — and it stays gated on `no_anim` via
+/// [`ProgressState::animate`].
 fn render_track(
     state: &ProgressState,
     now_ms: u64,
@@ -372,9 +489,6 @@ fn render_track(
     }
     let truecolor = mode.is_truecolor();
     let fill_cells = (state.fill * w as f64).round() as usize;
-    // Notch columns mark the plan|execute|verify boundaries at 1/3 and 2/3.
-    let notch1 = w / 3;
-    let notch2 = (2 * w) / 3;
 
     // Shimmer: a light band whose center sweeps left→right within the filled
     // region only. A pure function of the clock — no persisted state.
@@ -384,27 +498,12 @@ fn render_track(
     } else {
         None
     };
-    // Head pulse amount at the frontier.
-    let pulse = if state.animate {
-        let t = (now_ms % PULSE_PERIOD_MS) as f64 / PULSE_PERIOD_MS as f64;
-        0.2 + 0.5 * (0.5 - (t - 0.5).abs()) * 2.0 // triangle 0.2→0.7→0.2
-    } else {
-        0.30
-    };
     let head = fill_cells.saturating_sub(1); // last filled cell
 
     for i in 0..w {
         let Some(cell) = buf.cell_mut((x + i as u16, y)) else {
             continue;
         };
-
-        // A notch marks a plan|execute|verify boundary — a thin divider glyph
-        // that reads even with color stripped.
-        if (i == notch1 || i == notch2) && w >= 6 {
-            cell.set_symbol("┊");
-            cell.set_fg(theme::HAIRLINE);
-            continue;
-        }
 
         if i < fill_cells {
             // The fill is a glyph (not a background), so the bar's *shape* reads
@@ -421,38 +520,24 @@ fn render_track(
                 theme::ACCENT
             };
 
-            // Shimmer: two light bands (a bright leader and a dimmer trailing
-            // echo, half a period behind) sweep left→right within the filled
-            // region — a livelier double-pulse rather than one flat glint. On
-            // truecolor a lightened RGB has no indexed fallback, so it
-            // degrades to a single moving highlight cell.
+            // The shimmer, scrubbed off the clock. On non-truecolor a
+            // lightened RGB has no indexed fallback, so it degrades to a
+            // single highlight cell on the solid ACCENT fill.
             if let Some(center) = shimmer_center {
                 if truecolor {
                     let d = (i as f64 - center).abs();
                     if d < 2.5 {
                         fg = theme::lighten(fg, 0.45 * (1.0 - d / 2.5));
                     }
-                    let echo_center =
-                        (center - fill_cells as f64 * 0.5).rem_euclid(fill_cells.max(1) as f64);
-                    let de = (i as f64 - echo_center).abs();
-                    if de < 1.5 {
-                        fg = theme::lighten(fg, 0.2 * (1.0 - de / 1.5));
-                    }
                 } else if i == center.round() as usize {
                     fg = theme::ACCENT;
                 }
             }
 
-            // Pulsing head at the frontier: crimson on error, a lifted gradient
-            // cell on truecolor, else a single bright cell.
-            if i == head {
-                if state.phase == RunPhase::Error {
-                    fg = theme::DANGER;
-                } else if truecolor {
-                    fg = theme::lighten(fg, pulse);
-                } else {
-                    fg = theme::ACCENT;
-                }
+            // The frontier cell turns crimson on failure — the fill freezes at
+            // the stage the run reached and the head says why it stopped.
+            if i == head && state.phase == RunPhase::Error {
+                fg = theme::DANGER;
             }
 
             // A completed run reads as a solid success-green bar.
@@ -694,7 +779,7 @@ mod tests {
             let state = ProgressState::derive(focused(&exec), exec.now_ms, false);
             let area = Rect::new(0, 0, w, 1);
             let mut buf = Buffer::empty(area);
-            render_state(&state, 1234, ColorMode::Truecolor, area, &mut buf);
+            render_state(&state, 1234, ColorMode::Truecolor, false, area, &mut buf);
             // The bar painted a filled glyph for a mid-run state on any width.
             let filled = (0..w).any(|x| buf.cell((x, 0)).is_some_and(|c| c.symbol() == "█"));
             assert!(filled, "width {w} should paint a fill");
@@ -732,7 +817,7 @@ mod tests {
         let state = ProgressState::derive(focused(&exec), exec.now_ms, false);
         let area = Rect::new(0, 0, 40, 1);
         let mut buf = Buffer::empty(area);
-        render_state(&state, 1234, ColorMode::Truecolor, area, &mut buf);
+        render_state(&state, 1234, ColorMode::Truecolor, false, area, &mut buf);
         theme::degrade_buffer(&mut buf, ColorMode::None);
         let filled = (0..40)
             .filter(|&x| buf.cell((x, 0)).is_some_and(|c| c.symbol() == "█"))

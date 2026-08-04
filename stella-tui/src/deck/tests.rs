@@ -508,6 +508,7 @@ fn scope_review_marks_the_agent_waiting_for_input() {
                 steps: vec![],
                 estimated_files: 2,
                 estimated_cost_usd: None,
+                ..Default::default()
             },
         },
     ));

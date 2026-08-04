@@ -208,12 +208,18 @@ mod tests {
             command: "cargo test clear_reset".into(),
             passed: false,
             tree: ProofTree::Baseline,
+            run: None,
+            runs_required: None,
+            seed: None,
         });
         assert_eq!(band_height(&state), 0, "nothing has gone wrong yet");
         state.apply(&ProofStep::Oracle {
             command: "cargo test clear_reset".into(),
             passed: true,
             tree: ProofTree::Candidate,
+            run: None,
+            runs_required: None,
+            seed: None,
         });
         assert!(state.flip.achieved());
         assert_eq!(

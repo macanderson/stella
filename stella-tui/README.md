@@ -42,8 +42,11 @@ and the TUI communicate over two channels and never call each other directly.
 | [`src/composer.rs`](src/composer.rs) | The input model: textarea semantics, `classify_enter`, paste chips, and the slash popup shared by both surfaces. |
 | [`src/views/*.rs`](src/views) | One module per deck tab (session · agents · installed · traces · graph · files · skills · mcp · issues · settings), each exposing `render(model, ui, area, buf)`. `engine` is the exception: the config editor SETTINGS hosts, with its own `render_panel` and key handler. |
 | [`src/diff.rs`](src/diff.rs), [`src/syntax.rs`](src/syntax.rs), [`src/markdown.rs`](src/markdown.rs), [`src/textline.rs`](src/textline.rs) | Shared text presentation — one implementation each of "how a diff looks", source coloring, markdown, and the event→wording table (also consumed by `stella-cli`'s plain renderer). |
-| [`src/theme.rs`](src/theme.rs), [`src/palette.rs`](src/palette.rs) | Every color and glyph. `palette.rs` is **generated** from `docs/brand/tokens.json`; `theme.rs` is the only module allowed to reference it. |
-| [`src/progress.rs`](src/progress.rs), [`src/cache_panel.rs`](src/cache_panel.rs), [`src/splash.rs`](src/splash.rs) | Chrome widgets: the run progress bar, the statline's cache cells, and the launch mark held over session init. |
+| [`src/theme.rs`](src/theme.rs), [`src/palette.rs`](src/palette.rs) | Every color and glyph. `palette.rs` mirrors the brand kit at `docs/brand/`; `theme.rs` is the only module allowed to reference it. |
+| [`src/statline.rs`](src/statline.rs) | The four-zone statline (identity │ resources │ money │ attention): `statline_items` is the one decision function — zone drops and the collapse-under-a-card rule included. |
+| [`src/progress.rs`](src/progress.rs), [`src/cache_panel.rs`](src/cache_panel.rs), [`src/splash.rs`](src/splash.rs) | Chrome widgets: the unified stage stepper + progress row, the cache formatters behind the statline/context overlay, and the launch mark held over session init. |
+| [`src/views/cards.rs`](src/views/cards.rs) + [`task_card`](src/views/task_card.rs) · [`scope_card`](src/views/scope_card.rs) · [`witness_card`](src/views/witness_card.rs) · [`models_card`](src/views/models_card.rs) · [`budget_card`](src/views/budget_card.rs) | The floating cards over one shared chrome; their modal key handlers live in [`src/deck_ui/cards.rs`](src/deck_ui/cards.rs). The witness panel is the staged pipeline's surface (`/pipeline` stays the toggle). |
+| [`src/views/subagents.rs`](src/views/subagents.rs) | The SESSION tab's nested `└─ ◆` subagent blocks under the lead's header. |
 | [`src/scroll.rs`](src/scroll.rs), [`src/input.rs`](src/input.rs), [`src/graph.rs`](src/graph.rs), [`src/resource.rs`](src/resource.rs), [`src/attach.rs`](src/attach.rs), [`src/clipboard.rs`](src/clipboard.rs) | Small leaf modules: line-exact viewport math, the outbound message enum, the graph snapshot types, CPU/MEM sampling, pasted-path detection, `⌃V` clipboard capture. |
 | [`src/fleet_dashboard.rs`](src/fleet_dashboard.rs) | A separate full-screen surface for `stella fleet` — its own fold (`FleetMsg`), its own `run`, monotonic `Instant` clocks only. |
 | [`src/scenario.rs`](src/scenario.rs) | A deterministic scripted multi-agent scenario, driving both `examples/deck_demo.rs` and the snapshot test. |
@@ -93,10 +96,13 @@ never claims Esc, so a typed draft survives an interrupt.
 as `RunOptions::slash_commands` / `DeckOptions::slash_commands`, so the CLI owns
 it; `SlashKind` only distinguishes built-in from user-authored rows by glyph.
 `handle_slash_key`
-([`src/deck_ui.rs:1634`](src/deck_ui.rs)) intercepts only the deck-local ones —
+([`src/deck_ui.rs`](src/deck_ui.rs)) intercepts only the deck-local ones —
 `/files`, `/diff`, `/graph`, `/agents`, `/skills`, `/mcp`, `/mcp-search`,
-`/settings`, `/sessions`, `/context`, `/inspect`, `/inbox` — because they change
-view state the driver has no say over. Everything else, `/help` included, is
+`/settings`, `/sessions`, `/context`, `/inspect`, `/inbox`, and the five
+floating cards `/tasks`, `/scope`, `/witness`, `/models`, `/budget` — because
+they change view state the driver has no say over. (`/budget` renders locally
+but its *edit* leaves as `WorkspaceInput::SetBudget`; the deck shows only the
+cap the budget stream folds back.) Everything else, `/help` included, is
 enqueued as a prompt so the answer lands in the transcript.
 
 **Terminal restoration survives panics in raw mode** — read

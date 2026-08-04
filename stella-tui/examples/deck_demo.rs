@@ -162,6 +162,40 @@ async fn main() -> std::io::Result<()> {
                 // (the shell's out-of-band echo); a real engine would also
                 // drop the prompt from its own backlog here.
                 WorkspaceInput::QueueRemove { .. } | WorkspaceInput::QueueClear => {}
+                // The task card's skip: the demo plays the engine's part and
+                // folds an updated board back with the task cancelled — the
+                // same round-trip the real driver steers the model through.
+                WorkspaceInput::TaskSkip { agent, id } => {
+                    let mut tasks = stella_tui::scenario::demo_tasks(5);
+                    if let Some(task) = tasks.iter_mut().find(|t| t.id == id) {
+                        task.status = stella_protocol::TaskStatus::Cancelled;
+                    }
+                    let _ = react_tx.send(Inbound::Event {
+                        agent,
+                        event: AgentEvent::TaskUpdate { tasks },
+                    });
+                }
+                // A scope-change proposal needs the planner; the demo notes it.
+                WorkspaceInput::ScopeChangeRequest { .. } => {
+                    let _ = react_tx.send(Inbound::Notice(
+                        "scope change requested — the demo has no planner to re-propose"
+                            .to_string(),
+                    ));
+                }
+                // The budget cap folds straight back through a BudgetTick, the
+                // same stream the real driver's guard reports on.
+                WorkspaceInput::SetBudget { limit_usd } => {
+                    let _ = react_tx.send(Inbound::Event {
+                        agent: "lead".to_string(),
+                        event: AgentEvent::BudgetTick {
+                            spent_usd: 0.039,
+                            limit_usd: Some(2.5),
+                            mode: stella_protocol::BudgetMode::Observed,
+                            session_spent_usd: Some(0.054),
+                            session_limit_usd: limit_usd,
+                        },
+                    });
+                }
                 // The Graph tab's file picker re-roots on a file. The demo has
                 // no code-graph store, so it synthesizes a minimal neighborhood
                 // centered on the pick — enough to show the pick → re-root

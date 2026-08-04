@@ -267,6 +267,7 @@ fn scope_review_sets_then_clears_on_next_stage() {
             steps: vec!["s1".into(), "s2".into()],
             estimated_files: 12,
             estimated_cost_usd: Some(1.0),
+            ..Default::default()
         },
     });
     assert!(model.pending_scope_review.is_some());
@@ -299,6 +300,7 @@ fn an_approved_plan_outlives_the_gate_that_carried_it() {
             steps: vec!["gate on relevance".into(), "pin the scope".into()],
             estimated_files: 9,
             estimated_cost_usd: Some(1.4),
+            ..Default::default()
         },
     });
     model.apply(&AgentEvent::Stage {
@@ -347,6 +349,7 @@ fn a_turn_that_dies_at_the_gate_records_no_approval() {
                 steps: vec!["s1".into()],
                 estimated_files: 1,
                 estimated_cost_usd: None,
+                ..Default::default()
             },
         });
         model.apply(&terminal);
@@ -377,6 +380,7 @@ fn scope_review_clears_on_error_and_complete() {
                 steps: vec![],
                 estimated_files: 1,
                 estimated_cost_usd: None,
+                ..Default::default()
             },
         });
         assert!(model.pending_scope_review.is_some());

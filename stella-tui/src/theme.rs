@@ -98,6 +98,15 @@ pub const DANGER: Color = palette::DANGER;
 /// Danger (bright — legible removed-line / error text on the dark backdrop).
 pub const DANGER_BRIGHT: Color = palette::DANGER;
 
+/// The oracle's **pre-flip** state — the one place red carries meaning in the
+/// deck (D6): the `red` token in the witness panel's author line and its
+/// `red ──▸ green` result line. A healthy, *expected* state ("the test fails
+/// before the patch — good"), so it deliberately does not share a value with
+/// [`DANGER`]: a failure hue on the very state the pipeline is supposed to
+/// produce would teach readers to ignore the failure hue. Nothing else may
+/// take this role.
+pub const ORACLE_PRE_FLIP: Color = palette::ORACLE_RED;
+
 // ── Categorical hues (deliberately NOT brand) ───────────────────────────────
 //
 // A few surfaces need more mutually-distinguishable colours than a one-hue
@@ -199,6 +208,11 @@ pub const BAD: Color = DANGER_BRIGHT;
 pub const RUN: Color = VIOLET;
 /// Paused / held — violet.
 pub const HELD: Color = VIOLET;
+/// A subagent's identity mark — the `◆` beside a nested lane in SESSION and
+/// the statline's `◆ N sub` count. Aliased to [`TEAL`] (categorical): a
+/// subagent is not the brand, not a status, and must never be confusable
+/// with the lead's gold `✦`.
+pub const SUBAGENT: Color = TEAL;
 
 // ── Runtime theme (the `/theme` switch) ──────────────────────────────────────
 //
@@ -596,6 +610,12 @@ const FALLBACKS: &[(Color, u8, u8)] = &[
     (SUCCESS, 78, 10),
     (WARNING, 178, 3),
     (DANGER, 204, 9),
+    // Nearest cube entry to #F87171 is 203 (255,95,95) — one step from
+    // DANGER's 204, so the two stay distinct at 256 colours. At 16 colours
+    // there is only one red (9) and the pre-flip state shares it with
+    // danger; the `red ──▸ green` wording, not the hue, carries the meaning
+    // there (the same glyph-over-hue rule every status obeys).
+    (ORACLE_PRE_FLIP, 203, 9),
     (VIOLET, 98, 13),
     (AMBER, 179, 3),
     (TEAL, 44, 6),
@@ -697,6 +717,7 @@ const LIGHT_REMAP: &[(Color, Color)] = &[
     (SUCCESS, palette::SUCCESS_INK),
     (WARNING, palette::WARNING_INK),
     (DANGER, palette::DANGER_INK),
+    (ORACLE_PRE_FLIP, palette::ORACLE_RED_INK),
     // Inline code — a darker sage, 5.26:1 on paper.
     (CODE, Color::Rgb(0x2A, 0x71, 0x50)),
     // Categorical hues, darkened for AA on the warm paper (RUN/HELD/NUMBER==
@@ -780,6 +801,23 @@ pub fn status_color(status: AgentStatus) -> Color {
         AgentStatus::Done => OK,
         AgentStatus::Failed => BAD,
         AgentStatus::Killed => BAD,
+    }
+}
+
+/// The statline stage dot's color, by pipeline stage — the planning stages
+/// read as process (violet), execution as live work (the accent, the one
+/// status that takes gold), the verification stages as the teal categorical
+/// (checking is neither activity nor a verdict), and the wind-down stages
+/// dim. `Complete` is the sole outcome here and takes success — paired with
+/// the stage *word* beside the dot, so hue never carries the meaning alone.
+pub fn stage_color(stage: stella_protocol::StageKind) -> Color {
+    use stella_protocol::StageKind as S;
+    match stage {
+        S::Triage | S::ContextRecall | S::Plan | S::ScopeReview | S::Witness => RUN,
+        S::Execute => ACCENT,
+        S::Verify | S::Judge => TEAL,
+        S::Reflect | S::ContextWrite => MUTED,
+        S::Complete => OK,
     }
 }
 

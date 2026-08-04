@@ -1039,6 +1039,7 @@ fn esc_still_aborts_a_pending_scope_review() {
                 steps: vec![],
                 estimated_files: 3,
                 estimated_cost_usd: None,
+                ..Default::default()
             },
         },
     });
@@ -1161,6 +1162,7 @@ fn focused_scope_gate_routes_decision_to_that_agent() {
                 steps: vec![],
                 estimated_files: 3,
                 estimated_cost_usd: None,
+                ..Default::default()
             },
         },
     });
@@ -1188,6 +1190,7 @@ fn scope_decision_latches_until_a_fresh_review_rearms() {
                 steps: vec![],
                 estimated_files: 3,
                 estimated_cost_usd: None,
+                ..Default::default()
             },
         },
     };

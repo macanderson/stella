@@ -779,6 +779,12 @@ pub struct DeckUi {
     /// the detail can say "reconstructing…" instead of rendering an empty
     /// transcript that reads like "the model was sent nothing".
     pub inspect_pending: bool,
+    /// The floating card overlays (`/tasks` · `/scope` · `/witness` ·
+    /// `/models` · `/budget`): which one is up, plus the task card's
+    /// selection and the budget editor's input buffer. One struct so the
+    /// mutual-exclusion rule (raising one lowers the others) lives in one
+    /// place — see [`cards::CardState`].
+    pub cards: cards::CardState,
     /// Driver requests queued by handlers/ingest beyond the one action a key
     /// can return (e.g. opening CONTEXT refreshes both skills and MCP; a
     /// finished OAuth login refreshes the MCP snapshot). The shell drains
@@ -869,6 +875,7 @@ impl Default for DeckUi {
             inbox_open: false,
             notifications: Vec::new(),
             inbox_sel: 0,
+            cards: cards::CardState::default(),
             pending_inputs: Vec::new(),
             engine: crate::views::engine::EngineOverlay::default(),
             tools: crate::views::tools::ToolsOverlay::default(),
@@ -1453,6 +1460,7 @@ fn push_single_line(buf: &mut String, text: &str) {
     buf.extend(text.chars().filter(|&c| c != '\n' && c != '\r'));
 }
 
+pub mod cards;
 /// Map one key to a [`DeckAction`]. Pure over `(key, model)`, mutating `ui`.
 ///
 /// ## Esc precedence
@@ -1463,9 +1471,11 @@ fn push_single_line(buf: &mut String, text: &str) {
 /// surface claims Esc ahead of rules 3 onward, at the gate that hands it the
 /// keyboard: the INSTALLED AGENTS sub-modes, the ISSUES sub-modes, the Graph
 /// file picker, the ENGINE panel, the SESSIONS / INBOX / CONTEXT / INSPECT
-/// overlays, and the SKILLS preview/prompt overlays. (The SKILLS *panes* are
-/// the exception: they claim typing but not Esc, so it reaches the rules
-/// below.)
+/// overlays, the floating cards (`/tasks` · `/scope` · `/witness` ·
+/// `/models` · `/budget` — Esc closes the topmost card before anything else
+/// it currently does; see [`cards::handle_card_key`]), and the SKILLS
+/// preview/prompt overlays. (The SKILLS *panes* are the exception: they
+/// claim typing but not Esc, so it reaches the rules below.)
 ///
 /// 1. splash up — any key, Esc included, dismisses it
 /// 2. help overlay open — Esc/`q`/`?` close it; other keys scroll it
@@ -1731,6 +1741,12 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     }
     if ui.inspect_open {
         return handle_inspect_key(key, ui);
+    }
+    // The floating cards (`/tasks` · `/scope` · `/witness` · `/models` ·
+    // `/budget`) are modal exactly like the overlays above: the topmost card
+    // claims every key — Esc closes it before any other Esc meaning fires.
+    if let Some(action) = cards::handle_card_key(key, model, ui) {
+        return action;
     }
 
     // FULL emptiness — chips included (`Composer::is_empty`), matching the
@@ -2074,6 +2090,29 @@ fn handle_slash_key(
                 ui.set_tab(DeckTab::Mcp);
                 ui.mcp.mode = McpMode::Search;
                 ui.mcp.status = None;
+                DeckAction::Handled
+            }
+            // The floating cards: pure view state, so the driver has no say.
+            // `/budget` only *renders* locally — the edit it takes leaves as
+            // `WorkspaceInput::SetBudget` from the card's own key handler.
+            "/tasks" => {
+                ui.cards.raise(cards::Card::Tasks);
+                DeckAction::Handled
+            }
+            "/scope" => {
+                ui.cards.raise(cards::Card::Scope);
+                DeckAction::Handled
+            }
+            "/witness" => {
+                ui.cards.raise(cards::Card::Witness);
+                DeckAction::Handled
+            }
+            "/models" => {
+                ui.cards.raise(cards::Card::Models);
+                DeckAction::Handled
+            }
+            "/budget" => {
+                ui.cards.raise(cards::Card::Budget);
                 DeckAction::Handled
             }
             // Everything else — including `/help` — is enqueued for the
