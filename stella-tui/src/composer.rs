@@ -510,6 +510,15 @@ pub fn handle_edit_key(key: KeyEvent, composer: &mut Composer) -> bool {
 pub struct ComposerLayout {
     /// The wrapped display rows (chips rendered as their `[pasted: …]` form).
     pub rows: Vec<String>,
+    /// Byte offset into [`Self::display`] where each row's text begins —
+    /// always `rows.len()` entries. What lets a renderer overlay
+    /// display-wide byte ranges (see [`crate::highlight`]) onto wrapped
+    /// rows exactly, soft wraps included.
+    pub row_starts: Vec<usize>,
+    /// The unwrapped display text the rows were cut from (chips + buffer) —
+    /// the one string prompt-keyword matching runs over, kept here so
+    /// matcher and rows can never disagree about what was laid out.
+    pub display: String,
     /// Row index the cursor sits on.
     pub cursor_row: usize,
     /// Display-width column of the cursor within `rows[cursor_row]`.
@@ -529,6 +538,7 @@ pub fn layout(composer: &Composer, width: usize) -> ComposerLayout {
     display.push_str(composer.buffer());
 
     let mut rows: Vec<String> = vec![String::new()];
+    let mut row_starts: Vec<usize> = vec![0];
     let mut col = 0usize;
     let (mut cursor_row, mut cursor_col) = (0usize, 0usize);
     for (idx, ch) in display.char_indices() {
@@ -538,12 +548,16 @@ pub fn layout(composer: &Composer, width: usize) -> ComposerLayout {
                 (cursor_row, cursor_col) = (rows.len() - 1, col);
             }
             rows.push(String::new());
+            // The `\n` itself is display text no row carries — the next row
+            // starts one byte past it.
+            row_starts.push(idx + 1);
             col = 0;
             continue;
         }
         let w = ch.width().unwrap_or(0);
         if col + w > width && col > 0 {
             rows.push(String::new());
+            row_starts.push(idx);
             col = 0;
         }
         if idx == cursor_at {
@@ -557,12 +571,15 @@ pub fn layout(composer: &Composer, width: usize) -> ComposerLayout {
         // insertion point visually lives on a fresh row.
         if col >= width {
             rows.push(String::new());
+            row_starts.push(display.len());
             col = 0;
         }
         (cursor_row, cursor_col) = (rows.len() - 1, col);
     }
     ComposerLayout {
         rows,
+        row_starts,
+        display,
         cursor_row,
         cursor_col,
     }
@@ -1073,6 +1090,29 @@ mod tests {
         let l = layout(&c, 4);
         assert_eq!(l.rows, vec!["日本", "語"]);
         assert_eq!((l.cursor_row, l.cursor_col), (1, 2));
+    }
+
+    #[test]
+    fn layout_reports_where_each_row_starts_in_the_display_text() {
+        // "abcdef\ngh" at width 4: "abcd" starts at 0 (soft wrap), "ef" at 4,
+        // and "gh" at 7 — one past the `\n` no row carries. The offsets are
+        // what lets display-wide keyword ranges land on wrapped rows exactly
+        // (see `crate::highlight`).
+        let c = typed("abcdef\ngh");
+        let l = layout(&c, 4);
+        assert_eq!(l.display, "abcdef\ngh");
+        assert_eq!(l.row_starts, vec![0, 4, 7]);
+        assert_eq!(l.rows.len(), l.row_starts.len(), "always in lockstep");
+        // The cursor-past-a-full-row fresh row starts at the display's end.
+        let full = layout(&typed("abcd"), 4);
+        assert_eq!(full.row_starts, vec![0, 4]);
+        // Chips are display text too — the buffer's rows start after them.
+        let mut chipped = Composer::with_paste_threshold(2);
+        chipped.paste("a\nb\nc");
+        chipped.insert_char('x');
+        let cl = layout(&chipped, 40);
+        assert_eq!(cl.display, "[pasted: 3 lines] x");
+        assert_eq!(cl.row_starts, vec![0]);
     }
 
     #[test]
