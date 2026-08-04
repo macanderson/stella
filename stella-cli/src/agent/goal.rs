@@ -178,21 +178,11 @@ pub(crate) async fn run_raw_one_shot(
         set.close_all().await;
     }
     // Terminal registry status + the headless → `/inbox` flow (failure
-    // always notifies; success only past the looked-away threshold).
-    let run_secs = crate::memory::unix_now_secs().saturating_sub(started_unix);
-    let notify = if outcome.is_err() {
-        Some((
-            format!("{}: run FAILED", presence.name()),
-            crate::command_deck::prompt_line(prompt, 160),
-        ))
-    } else if run_secs >= 60 {
-        Some((
-            format!("{}: run finished ({run_secs}s)", presence.name()),
-            crate::command_deck::prompt_line(prompt, 160),
-        ))
-    } else {
-        None
-    };
+    // always notifies; success only past the looked-away threshold —
+    // `SessionPresence::one_shot_notification`, shared with the pipeline path).
+    let run_secs =
+        u64::try_from(crate::memory::unix_now_secs().saturating_sub(started_unix)).unwrap_or(0);
+    let notify = presence.one_shot_notification(outcome.is_ok(), run_secs, prompt);
     presence.finish(outcome.is_ok(), notify);
     outcome
 }
@@ -714,9 +704,9 @@ async fn run_goal_pipeline_turn(
             // the even slot, the round's judge the odd slot beside it (the
             // `+ 1` lives in `Engine::assess`). All rounds share one
             // execution_id, and receipts key on `(turn_instance, step,
-            // call_seq)` with steps restarting per turn — without this,
-            // every round overwrites the previous round's step manifests.
-            let round_turn = u32::try_from(2 * round.saturating_sub(1)).unwrap_or(u32::MAX);
+            // call_seq)` with steps restarting per turn — the slot math is
+            // `stella_core::goal`'s, shared with the raw and served loops.
+            let round_turn = stella_core::goal::goal_round_turn_offset(round);
             let pipeline_config = PipelineConfig {
                 engine: EngineConfig {
                     turn_instance: round_turn,
@@ -755,11 +745,9 @@ async fn run_goal_pipeline_turn(
                 steering: None,
             };
             let pipeline = Pipeline::new(ports, tx.clone(), pipeline_config);
-            let round_goal = format!(
-                "GOAL: {goal}\n\nWork toward this goal. An independent judge will assess the \
-                 result after each working round from the transcript evidence; keep your work \
-                 verifiable (run tests, show outputs)."
-            );
+            // The same kickoff wording as the raw goal loop and the served
+            // one — `stella_core::goal` owns the bytes for all three.
+            let round_goal = stella_core::goal::goal_kickoff_text(goal);
             match pipeline.run(&round_goal, messages, budget).await {
                 Ok(outcome) => {
                     total_cost_usd += outcome.total_cost_usd;
@@ -827,15 +815,9 @@ async fn run_goal_pipeline_turn(
                 break;
             }
 
-            let feedback = if verdict.feedback.trim().is_empty() {
-                verdict.reasoning.clone()
-            } else {
-                verdict.feedback.clone()
-            };
-            messages.push(CompletionMessage::user(format!(
-                "The judge assessed the goal as NOT yet met.\nJudge feedback: {feedback}\n\n\
-                 Continue working toward the goal: {goal}"
-            )));
+            messages.push(CompletionMessage::user(
+                stella_core::goal::judge_feedback_text(goal, &verdict),
+            ));
         }
 
         // An explicit break result (abort/error/judge-down) stands. If the goal

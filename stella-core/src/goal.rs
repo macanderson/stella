@@ -104,6 +104,57 @@ pub struct GoalJudgeVerdict {
     pub feedback: String,
 }
 
+/// The kickoff message every goal loop opens with.
+///
+/// Shared by [`Engine::run_goal`], the CLI's staged-pipeline goal loop, and
+/// `stella-serve`'s `drive_goal`: a served goal round and a CLI goal round
+/// must put byte-identical words in front of the model or they are two
+/// features wearing one name. All three surfaces used to carry their own
+/// copy of this string with a comment promising exactly that — this function
+/// is the promise made structural.
+#[must_use]
+pub fn goal_kickoff_text(goal: &str) -> String {
+    format!(
+        "GOAL: {goal}\n\nWork toward this goal. An independent judge will assess the \
+         result after each working round from the transcript evidence; keep your work \
+         verifiable (run tests, show outputs)."
+    )
+}
+
+/// The message that carries a judge's "not yet" back to the worker — the
+/// other half of the [`goal_kickoff_text`] contract, shared by the same
+/// three goal loops.
+///
+/// An empty `feedback` field falls back to the verdict's `reasoning` (the
+/// judge explained *why* even when it offered no next action); the fallback
+/// lives here so no surface re-implements it differently.
+#[must_use]
+pub fn judge_feedback_text(goal: &str, verdict: &GoalJudgeVerdict) -> String {
+    let feedback = if verdict.feedback.trim().is_empty() {
+        &verdict.reasoning
+    } else {
+        &verdict.feedback
+    };
+    format!(
+        "The judge assessed the goal as NOT yet met.\nJudge feedback: {feedback}\n\n\
+         Continue working toward the goal: {goal}"
+    )
+}
+
+/// The receipt turn-slot offset of `round`'s worker calls: worker rounds
+/// take even slots (0, 2, 4, …) and each round's judge takes the odd slot
+/// beside them ([`Engine::assess`] adds the `+ 1`), so no two model calls in
+/// a goal arc share a `(turn_instance, step, call_seq)` receipt key within
+/// one execution.
+///
+/// Shared by the same three goal loops as [`goal_kickoff_text`] — a surface
+/// that re-derived the slot math differently would silently overwrite a
+/// sibling round's step manifests in the store.
+#[must_use]
+pub fn goal_round_turn_offset(round: usize) -> u32 {
+    u32::try_from(round.saturating_sub(1).saturating_mul(2)).unwrap_or(u32::MAX)
+}
+
 const JUDGE_SYSTEM_PROMPT: &str = "You are an impartial judge assessing whether a coding agent \
      has fully met a stated goal. Judge from EVIDENCE, never from claims: use your read-only \
      tools (read_file, grep, glob, explorations, ci_status, search_issues) to verify the work \
@@ -135,20 +186,13 @@ impl Engine<'_> {
         goal_config: &GoalConfig,
     ) -> GoalOutcome {
         let starting_cost_usd = budget.session_spent_usd();
-        messages.push(CompletionMessage::user(format!(
-            "GOAL: {goal}\n\nWork toward this goal. An independent judge will assess the \
-             result after each working round from the transcript evidence; keep your work \
-             verifiable (run tests, show outputs)."
-        )));
+        messages.push(CompletionMessage::user(goal_kickoff_text(goal)));
 
         for round in 1..=goal_config.max_rounds {
             budget.begin_turn();
-            // Each round is its own turn for receipt purposes: worker rounds
-            // take even slots above the caller's base and each round's judge
-            // takes the odd slot beside it (see `assess`), so no two model
-            // calls in the goal arc share a `(turn_instance, step, call_seq)`
-            // receipt key within the execution.
-            let round_offset = u32::try_from(2 * round.saturating_sub(1)).unwrap_or(u32::MAX);
+            // Each round is its own turn for receipt purposes — see
+            // `goal_round_turn_offset` for the even/odd slot rule.
+            let round_offset = goal_round_turn_offset(round);
             let round_engine =
                 self.with_turn_instance(self.config.turn_instance.saturating_add(round_offset));
             match round_engine.run_turn(messages, budget, events).await {
@@ -202,15 +246,7 @@ impl Engine<'_> {
                 };
             }
 
-            let feedback = if verdict.feedback.trim().is_empty() {
-                verdict.reasoning.clone()
-            } else {
-                verdict.feedback.clone()
-            };
-            messages.push(CompletionMessage::user(format!(
-                "The judge assessed the goal as NOT yet met.\nJudge feedback: {feedback}\n\n\
-                 Continue working toward the goal: {goal}"
-            )));
+            messages.push(CompletionMessage::user(judge_feedback_text(goal, &verdict)));
         }
 
         GoalOutcome::Unmet {
@@ -1170,5 +1206,40 @@ mod tests {
         let cut = truncate_chars(s, 4);
         assert_eq!(cut, "héll…");
         assert_eq!(truncate_chars("short", 10), "short");
+    }
+
+    /// The three goal loops (core, CLI pipeline, serve) share these helpers so
+    /// their prompts and receipt slots cannot drift — pin the exact wording
+    /// and slot math the shared functions promise.
+    #[test]
+    fn shared_goal_loop_helpers_pin_wording_and_slot_math() {
+        assert_eq!(
+            goal_kickoff_text("ship it"),
+            "GOAL: ship it\n\nWork toward this goal. An independent judge will assess the \
+             result after each working round from the transcript evidence; keep your work \
+             verifiable (run tests, show outputs)."
+        );
+        let verdict = GoalJudgeVerdict {
+            met: false,
+            reasoning: "tests missing".into(),
+            feedback: "add a test".into(),
+        };
+        assert_eq!(
+            judge_feedback_text("ship it", &verdict),
+            "The judge assessed the goal as NOT yet met.\nJudge feedback: add a test\n\n\
+             Continue working toward the goal: ship it"
+        );
+        // Whitespace-only feedback falls back to the reasoning.
+        let bare = GoalJudgeVerdict {
+            met: false,
+            reasoning: "tests missing".into(),
+            feedback: "  ".into(),
+        };
+        assert!(judge_feedback_text("ship it", &bare).contains("Judge feedback: tests missing"));
+        // Worker rounds take even slots; `Engine::assess` adds the judge's +1.
+        assert_eq!(goal_round_turn_offset(1), 0);
+        assert_eq!(goal_round_turn_offset(2), 2);
+        assert_eq!(goal_round_turn_offset(3), 4);
+        assert_eq!(goal_round_turn_offset(usize::MAX), u32::MAX);
     }
 }

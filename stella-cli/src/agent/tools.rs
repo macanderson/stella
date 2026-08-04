@@ -149,7 +149,7 @@ impl RepoStatusPort for GitRepoStatus {
     async fn tracked_fingerprints(&self) -> std::collections::HashMap<String, String> {
         let mut out = std::collections::HashMap::new();
         let mut cmd = tokio::process::Command::new("git");
-        stella_tools::exec::scrub_sensitive_env(&mut cmd);
+        scrub_model_subprocess(&mut cmd);
         cmd.args([
             "-c",
             "core.quotePath=false",
@@ -598,6 +598,9 @@ fn resolve_head(root: &std::path::Path) -> Option<String> {
     for var in stella_tools::exec::GIT_REPO_ENV_VARS {
         cmd.env_remove(var);
     }
+    // Same credential-scrub policy as every other git spawn in this file —
+    // this was the one site that skipped it (sync `Command`, so the std form).
+    stella_tools::exec::scrub_sensitive_std_env(&mut cmd);
     let out = cmd.output().ok()?;
     if !out.status.success() {
         return None;
@@ -632,7 +635,7 @@ fn test_process(invocation: &TestInvocation, root: &std::path::Path) -> tokio::p
     for var in stella_tools::exec::GIT_REPO_ENV_VARS {
         cmd.env_remove(var);
     }
-    stella_tools::exec::scrub_sensitive_env(&mut cmd);
+    scrub_model_subprocess(&mut cmd);
     cmd
 }
 
@@ -640,7 +643,7 @@ fn test_process(invocation: &TestInvocation, root: &std::path::Path) -> tokio::p
 impl DiagnosticRunner for GitDiagnosticRunner {
     async fn run_diagnostic(&self, invocation: &DiagnosticInvocation) -> CmdOutcome {
         let mut cmd = tokio::process::Command::new("git");
-        stella_tools::exec::scrub_sensitive_env(&mut cmd);
+        scrub_model_subprocess(&mut cmd);
         match invocation {
             DiagnosticInvocation::GitDiff => match self.baseline_commit() {
                 Some(baseline) => {
