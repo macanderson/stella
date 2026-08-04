@@ -108,6 +108,28 @@ const SNAPSHOT_IDENT: [&str; 4] = [
     "user.email=pipeline@stella.invalid",
 ];
 
+/// Tool scratch directories that `adopt` never carries into the user's tree.
+///
+/// Deliberately short, and deliberately NOT build outputs (`target`, `dist`,
+/// `build`) — producing one of those is frequently the whole job, and the same
+/// reasoning keeps them out of `stella_tools::shell_touch::SKIP_DIRS`. What is
+/// listed here is scratch written by *running* code, which no task asks for.
+///
+/// The seal is a blanket `git add -A`, so anything a candidate's test run left
+/// behind is committed into `sealed`. That is right for the seal — it is a
+/// forensic record of the candidate — and wrong for adoption, which is the
+/// user's tree. It also closes a gap the withhold list cannot: withholding an
+/// authored witness does not withhold the `__pycache__/<witness>.cpython-*.pyc`
+/// that running it produced, so a run could ship the shadow of a file it had
+/// deliberately kept back.
+const ADOPT_CACHE_EXCLUDES: &[&str] = &[
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".tox",
+];
+
 /// Shadow names carry pid + a process-wide counter (the `verify_done`
 /// pattern): concurrent candidates must never collide on a path.
 static SHADOW_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -701,10 +723,21 @@ impl GitCandidateWorkspace {
         // `literal` disables glob interpretation: a path is a path, never a
         // pattern, so a witness filename containing `*` or `[` cannot widen
         // the exclusion into production code.
-        let exclusions: Vec<String> = withhold
+        let mut exclusions: Vec<String> = withhold
             .iter()
             .map(|path| format!(":(exclude,literal){path}"))
             .collect();
+        // `glob`, not `literal`: these ARE patterns, and a leading `**/` is
+        // git's "in any directory", so a top-level `__pycache__/x.pyc` and a
+        // nested `a/b/__pycache__/x.pyc` both drop out. Appended to the same
+        // vec as the withheld paths, so they reach the name-status listing and
+        // the applied patch identically — the invariant above is what keeps the
+        // event stream from claiming a file the user's tree does not have.
+        exclusions.extend(
+            ADOPT_CACHE_EXCLUDES
+                .iter()
+                .map(|dir| format!(":(exclude,glob)**/{dir}/**")),
+        );
         let mut name_args = vec![
             "diff",
             "--name-status",
