@@ -251,6 +251,47 @@ fn a_recall_block_splits_per_item_and_resolves_memory_frames_to_their_records() 
 }
 
 #[test]
+fn a_record_bullet_resolves_to_its_handle_sigil_included() {
+    // The volatile record channel renders `- <statement> ^<handle>` with an
+    // optional ` [enforced]` marker (records::render::bullet). The handle —
+    // sigil included — is the id the block row carries, because it is the
+    // exact string `cite_memory` accepts for a record: the join from a
+    // rendered record to its citation works verbatim, which is what makes
+    // ContextUseKind::Cited reachable for directives at all.
+    let content = recall_message(
+        "## Relevant context\n\
+         - New dependencies must clear the deny.toml allowlist. ^license-allowlist\n\
+         - Never force-push to main. ^no-force-push [enforced]\n",
+    );
+    let segments = split_recall(&content);
+    assert_eq!(segments.len(), 3);
+    assert_eq!(
+        segments[1].memory_id.as_deref(),
+        Some("^license-allowlist"),
+        "the sigil rides the id so it can never be mistaken for a nod_… key"
+    );
+    assert_eq!(
+        segments[2].memory_id.as_deref(),
+        Some("^no-force-push"),
+        "the [enforced] marker peels off before the handle is read"
+    );
+    // Prose that merely contains a caret mints no join key, and a tail token
+    // outside the slug charset is prose, not a handle.
+    let prose = recall_message(
+        "## Relevant context\n\
+         - Use the ^caret syntax mid-sentence for anchors\n\
+         - The exponent operator is ^2\n",
+    );
+    let segments = split_recall(&prose);
+    assert_eq!(segments[1].memory_id, None);
+    assert_eq!(
+        segments[2].memory_id, None,
+        "a letterless tail (`^2`) is arithmetic, not a handle — the parser \
+         requires at least one letter beyond the slug charset"
+    );
+}
+
+#[test]
 fn a_bracketed_prefix_that_is_not_a_record_id_is_not_read_as_one() {
     // A memory whose text happens to open with a bracket must not be
     // mistaken for a record id. A wrong `memory_id` is worse than none:

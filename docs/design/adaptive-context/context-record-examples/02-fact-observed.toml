@@ -23,14 +23,14 @@ source_digest = "sha256:6b1f9d0e4a7c8823b5e1f00d92aa41c7cc55e1930b2d7f4a6e88c102
 repo          = "git@github.com:acme/web.git"
 commit        = "9f2c1ab"
 ingest_run_id = "ing_01J8XQ4M2K7ZP3VN5T0R9WB6HC"
-extracted_at  = 2026-07-27T09:00:00Z
+extracted_at  = "2026-07-27T09:00:00Z"
 extractor     = "claude-opus-5"
 
 
 [[record]]
 lineage_id  = "ctx.acme.web.staging-endpoint"
-record_id   = "rec_staging_endpoint_77de1049ba3c"
-record_hash = "sha256:77de1049ba3c8f21e6570cd4192ab8e3357f0c6d9b41e2a80fd35c7169ae4b28"
+record_id   = "rec_acme_web_staging_endpoint_7184ff1eea68"
+record_hash = "sha256:f615af37a9632ab5efec152d818b0eb9a7efc3ae8ba172fb97f40dfdcc5302c5"
 kind        = "fact"
 statement   = "The staging API is served from https://api.staging.acme.dev."
 tags        = ["environments"]
@@ -49,7 +49,7 @@ tags        = ["environments"]
   [record.truth]
   basis        = "measured"
   confidence   = 90
-  verified_at  = 2026-07-25T11:30:00Z
+  verified_at  = "2026-07-25T11:30:00Z"
   ttl          = "P14D"
   on_expiry    = "stale"    # stale = keep citing, with a warning | drop | block
   review_every = "P14D"
@@ -71,8 +71,8 @@ tags        = ["environments"]
 # schedule, so it is a separate record with its own probe.
 [[record]]
 lineage_id  = "ctx.acme.web.no-local-staging"
-record_id   = "rec_no_local_staging_5b2ec8f0d613"
-record_hash = "sha256:5b2ec8f0d61374a9c02e8b15fd3760ea94c1d8b207f6539ae4c0182bb7d95f43"
+record_id   = "rec_acme_web_no_local_staging_e80cfb7f5ab6"
+record_hash = "sha256:00e55314786dcb1ac1aabb0ec9e2553b6473a4e84b140408936944e78e04435a"
 kind        = "fact"
 statement   = "The docker-compose stack defines a dev environment only; it has no staging service."
 tags        = ["environments", "tooling"]
@@ -91,7 +91,7 @@ tags        = ["environments", "tooling"]
   [record.truth]
   basis        = "measured"
   confidence   = 85
-  verified_at  = 2026-07-25T11:30:00Z
+  verified_at  = "2026-07-25T11:30:00Z"
   review_every = "P30D"
 
     [record.truth.probe]

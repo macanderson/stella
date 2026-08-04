@@ -9,14 +9,19 @@
 //! them mid-session would mutate the cached prefix and re-bill it on
 //! every subsequent call.
 //!
-//! `cite_memory` — the feedback half of the loop: when a recalled memory
-//! (injected into the turn by `stella-cli`'s recall block, each line tagged
-//! with its stable `nod_…` id) actually informs the model's work, the model
-//! cites it here with a usefulness score and a truthfulness verdict. The
-//! citations accumulate in a session ledger ([`CitationLedger`], shared with
-//! `ToolRegistry`) and are persisted per execution by the CLI at turn end —
-//! they feed `stella memory`'s inspection view and the rule-promotion
-//! eligibility gate (`stella-store`).
+//! `cite_memory` — the feedback half of the loop: when a piece of injected
+//! context actually informs the model's work, the model cites it here with a
+//! usefulness score and a truthfulness verdict. Two citable shapes, matching
+//! the two things the prompt tags: a recalled memory's stable `nod_…` id
+//! (`stella-cli`'s recall block) and a context record's `^handle` (the
+//! rendered rule channels — both the cached "Workspace rules" block, whose
+//! heading asks for exactly this citation, and the per-turn volatile block).
+//! The citations accumulate in a session ledger ([`CitationLedger`], shared
+//! with `ToolRegistry`) and are persisted per execution by the CLI at turn
+//! end — memory citations feed `stella memory`'s inspection view and the
+//! rule-promotion eligibility gate (`stella-store`); record citations feed
+//! the context-use attribution ledger (`ContextUseKind::Cited`), joining the
+//! `^handle` the receipts plane recorded for the rendered block.
 
 use std::sync::{Arc, Mutex};
 
@@ -132,6 +137,27 @@ fn is_memory_id(id: &str) -> bool {
         .is_some_and(|hex| hex.len() == 24 && hex.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
+/// The `^handle` shape the rendered record channels show the model: `^` plus
+/// a slugged record handle — exactly the characters
+/// `stella-core::records::handle::slug` can emit (lowercase, digits, `-`).
+/// The sigil is kept on the stored citation so a record citation can never be
+/// mistaken for a memory id anywhere downstream: the two namespaces stay
+/// disjoint in `memory_citations` the same way they are disjoint in the
+/// prompt.
+fn is_record_handle(id: &str) -> bool {
+    id.strip_prefix('^').is_some_and(|handle| {
+        // At least one letter, matching the receipts-plane parser
+        // (`record_handle_of`): the two ends of the citation join must agree
+        // on what a handle is, or a citation could name an id no block row
+        // will ever carry.
+        handle.chars().any(|c| c.is_ascii_lowercase())
+            && handle.len() <= 128
+            && handle
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    })
+}
+
 pub struct CiteMemory(pub CitationLedger);
 
 #[async_trait]
@@ -139,15 +165,16 @@ impl Tool for CiteMemory {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "cite_memory".into(),
-            description: "Cite a recalled memory (a `[nod_…]`-tagged line from the injected \
-                          relevant-context block) that actually informed your work this turn: \
-                          score how useful it was and say whether its content still holds. \
-                          Cite only memories you genuinely used."
+            description: "Cite a piece of injected context that actually informed your work \
+                          this turn — a recalled memory (a `[nod_…]`-tagged line from the \
+                          relevant-context block) or a workspace rule/record (a `^handle` as \
+                          shown beside its statement): score how useful it was and say whether \
+                          its content still holds. Cite only context you genuinely used."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "memory_id": { "type": "string", "description": "The memory's [nod_…] id as shown in the recalled context" },
+                    "memory_id": { "type": "string", "description": "The memory's [nod_…] id or the record's ^handle, exactly as shown in the injected context" },
                     "useful_score": { "type": "integer", "minimum": 1, "maximum": 5, "description": "How useful the memory was for the actual work (1 = misleading/wasted effort, 5 = decisive)" },
                     "truthful": { "type": "boolean", "description": "Does the memory's content still hold true, as verified against the workspace this turn?" },
                     "remark": { "type": "string", "description": "One short sentence: how the memory helped, or what no longer holds" }
@@ -164,11 +191,11 @@ impl Tool for CiteMemory {
             Ok(v) => v,
             Err(message) => return ToolOutput::Error { message },
         };
-        if !is_memory_id(memory_id) {
+        if !is_memory_id(memory_id) && !is_record_handle(memory_id) {
             return ToolOutput::Error {
                 message: format!(
-                    "`{memory_id}` is not a memory id — cite the [nod_…] id exactly as shown \
-                     in the recalled context block"
+                    "`{memory_id}` is neither a memory id nor a record handle — cite the \
+                     [nod_…] id or the ^handle exactly as shown in the injected context"
                 ),
             };
         }
@@ -289,6 +316,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cite_memory_accepts_a_record_handle_with_its_sigil() {
+        let ledger: CitationLedger = Arc::default();
+        let tool = CiteMemory(ledger.clone());
+        let root = std::env::temp_dir();
+
+        // The `^handle` exactly as the rendered rule channels show it — the
+        // shape the cached heading ("cite the ^handle of any you apply") asks
+        // the model to hand back.
+        let ok = tool
+            .execute(
+                &cite_input("^license-allowlist", 5, true, "kept the dep out"),
+                &root,
+            )
+            .await;
+        assert!(!ok.is_error(), "{ok:?}");
+        assert_eq!(
+            ledger.lock().unwrap().clone(),
+            vec![MemoryCitation {
+                memory_id: "^license-allowlist".into(),
+                useful_score: 5,
+                truthful: true,
+                remark: "kept the dep out".into(),
+            }],
+            "the sigil is stored with the citation, keeping the two namespaces disjoint"
+        );
+    }
+
+    #[tokio::test]
     async fn cite_memory_rejects_malformed_input_without_recording() {
         let ledger: CitationLedger = Arc::default();
         let tool = CiteMemory(ledger.clone());
@@ -299,6 +354,12 @@ mod tests {
             cite_input("mem_0123456789abcdef01234567", 4, true, "r"),
             cite_input("nod_short", 4, true, "r"),
             cite_input("anything else", 4, true, "r"),
+            // Not the handle shape the rule channels show: a bare sigil, an
+            // unslugged name, and a handle missing its sigil (ambiguous with
+            // prose — the model must hand back what it was shown).
+            cite_input("^", 4, true, "r"),
+            cite_input("^Not A Slug", 4, true, "r"),
+            cite_input("license-allowlist", 4, true, "r"),
             // Score out of the 1-5 range.
             cite_input(NOD_A, 0, true, "r"),
             cite_input(NOD_A, 6, true, "r"),

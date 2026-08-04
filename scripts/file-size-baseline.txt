@@ -20,7 +20,6 @@
 1576 stella-cli/src/candidate_ws.rs
 4581 stella-cli/src/command_deck.rs
 1515 stella-cli/src/fleet_cmd.rs
-1526 stella-cli/src/memory/tests.rs
 2129 stella-core/src/bus.rs
 2764 stella-core/src/driver.rs
 3661 stella-core/src/driver/tests.rs

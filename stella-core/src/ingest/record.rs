@@ -352,8 +352,14 @@ pub struct Steering {
     /// Tie-break precedence when two records conflict (higher wins).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub precedence: Option<u32>,
-    /// When the record applies — drives selection for volatile records and
-    /// scoring for cached ones.
+    /// When the record applies. Drives per-turn selection on the volatile
+    /// channel ([`records::select`][sel]): a scoped `may`/`info` record — or a
+    /// `must`/`should` one the sweep demoted — renders only on turns whose
+    /// facts match. Cached-channel records are injected unconditionally
+    /// regardless of scope (the prefix must stay byte-stable), where this
+    /// field still feeds conflict detection and `stella context explain`.
+    ///
+    /// [sel]: super::super::records::select
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub applies_to: Option<AppliesTo>,
 }

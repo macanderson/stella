@@ -108,9 +108,11 @@ a superseding ADR.
 
 - `origin` — **frozen**: `user`, `system`, `observed`, `inferred`, `imported`
 - `status` — **frozen**: `active`, `retracted`, `archived`
-  (there is deliberately no `superseded` — a replaced record is `archived` and
-  carries `superseded_by`; `retracted` means the claim was _wrong_, `archived`
-  means it was _replaced_)
+  (there is deliberately no `superseded` — a replaced record is `archived`,
+  and its successor points back at it with a `derived_from` link; the forward
+  `supersedes` pointer lives in the lifecycle ledger's append, never in the
+  immutable file. `retracted` means the claim was _wrong_, `archived` means
+  it was _replaced_)
 - `kind` — `memory`, `fact`, `rule`, `preference`, `constraint`, `procedure`
 - `sharing_scope` — `personal`, `repository`, `organization`
 - `steering.force` — `must`, `should`, `may`, `info`

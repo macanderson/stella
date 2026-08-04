@@ -8,7 +8,8 @@
 > provenance, score, `token_cost`, citation label, temporal profile, and
 > representation) and **all wire semantics** are defined normatively by the
 > **Context Graph Protocol (CGP)** — not by this document. Stella consumes the CGP
-> types directly (`contextgraph-types`, pinned in `stella-cli/Cargo.toml`; used by
+> types directly (`contextgraph-types`, pinned in the root `Cargo.toml`'s
+`[workspace.dependencies]`; used by
 > `stella-graph` and `stella-context`). All three paths below are in the **CGP
 > repository**, not this one: `SPEC.md`, `docs/adr/0007-protocol-product-boundary.md`,
 > and the reconciliation delta table `docs/adaptive-context-reconciliation.md`.

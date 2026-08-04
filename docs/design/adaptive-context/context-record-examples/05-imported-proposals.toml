@@ -29,7 +29,7 @@ source_uri    = "CLAUDE.md"
 source_digest = "sha256:6b1f9d0e4a7c8823b5e1f00d92aa41c7cc55e1930b2d7f4a6e88c1029dd3c021"
 repo          = "git@github.com:acme/web.git"
 commit        = "9f2c1ab"
-extracted_at  = 2026-07-27T09:00:00Z
+extracted_at  = "2026-07-27T09:00:00Z"
 extractor     = "claude-opus-5"
 
 
@@ -39,7 +39,7 @@ candidate_id  = "pkg-manager-a41f9c2b"
 proposal_kind = "directive"
 status        = "eligible"
 confidence    = 95
-observed_at   = 2026-07-27T09:00:00Z
+observed_at   = "2026-07-27T09:00:00Z"
 # Imported content is gated differently from mined behavior: an explicit
 # instruction in a tracked repo file is top-tier evidence and does not need the
 # distinct-task threshold that an inferred pattern must clear.
@@ -69,7 +69,7 @@ eligibility   = "explicit_instruction"
 
   [proposal.refutation]
   verdict     = "supported"
-  checked_at  = 2026-07-27T09:00:04Z
+  checked_at  = "2026-07-27T09:00:04Z"
   probe_kind  = "path_exists"
   detail      = "pnpm-lock.yaml present; no package-lock.json or yarn.lock in tree."
 
@@ -80,7 +80,7 @@ candidate_id  = "node-version-88b1e5df"
 proposal_kind = "directive"
 status        = "eligible"
 confidence    = 90
-observed_at   = 2026-07-27T09:00:00Z
+observed_at   = "2026-07-27T09:00:00Z"
 eligibility   = "explicit_instruction"
 
   [proposal.record]
@@ -108,7 +108,7 @@ eligibility   = "explicit_instruction"
   # the agent something false, with a `must`, on every single turn.
   [proposal.refutation]
   verdict     = "refuted"
-  checked_at  = 2026-07-27T09:00:05Z
+  checked_at  = "2026-07-27T09:00:05Z"
   probe_kind  = "file_contains"
   detail      = ".nvmrc contains 22.11.0; package.json engines.node is >=22. Source document is stale."
   recommend   = "ignore"
@@ -124,7 +124,7 @@ candidate_id  = "pr-descriptions-1d09fa77"
 proposal_kind = "directive"
 status        = "eligible"
 confidence    = 80
-observed_at   = 2026-07-27T09:00:00Z
+observed_at   = "2026-07-27T09:00:00Z"
 eligibility   = "explicit_instruction"
 
   [proposal.record]
@@ -153,7 +153,7 @@ eligibility   = "explicit_instruction"
   # machine-checked — folding it into "supported" would launder it.
   [proposal.refutation]
   verdict    = "unfalsifiable"
-  checked_at = 2026-07-27T09:00:05Z
+  checked_at = "2026-07-27T09:00:05Z"
   probe_kind = "none"
   detail     = "Normative preference; no probe kind can judge it. Measure compliance instead."
 
@@ -164,7 +164,7 @@ candidate_id  = "reset-env-4ba7c012"
 proposal_kind = "directive"
 status        = "dismissed"
 confidence    = 40
-observed_at   = 2026-07-27T09:00:00Z
+observed_at   = "2026-07-27T09:00:00Z"
 eligibility   = "explicit_instruction"
 dismissed_reason = "quarantined_executable"
 
@@ -207,7 +207,7 @@ candidate_id  = "deploy-compound-70cc9a31"
 proposal_kind = "directive"
 status        = "dismissed"
 confidence    = 60
-observed_at   = 2026-07-27T09:00:00Z
+observed_at   = "2026-07-27T09:00:00Z"
 dismissed_reason = "compound_claim"
 
   [proposal.record]
