@@ -295,7 +295,10 @@ pub(crate) fn render_hunk_review(
                 },
             ),
             Span::styled(
-                format!("  {position}  +{} −{}", hunk.lines_added, hunk.lines_removed),
+                format!(
+                    "  {position}  +{} −{}",
+                    hunk.lines_added, hunk.lines_removed
+                ),
                 Style::new().fg(theme::TEXT_TERTIARY),
             ),
         ]));
@@ -319,7 +322,10 @@ pub(crate) fn render_hunk_review(
         ))
     } else {
         Line::from(vec![
-            Span::styled("↑↓", Style::new().fg(theme::INK).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "↑↓",
+                Style::new().fg(theme::INK).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" move  ", Style::new().fg(theme::TEXT_TERTIARY)),
             Span::styled(
                 "space",
@@ -336,7 +342,11 @@ pub(crate) fn render_hunk_review(
             Span::styled(
                 format!("⏎ apply {keeping} of {}", proposal.hunks.len()),
                 Style::new()
-                    .fg(if keeping == 0 { theme::DANGER } else { theme::OK })
+                    .fg(if keeping == 0 {
+                        theme::DANGER
+                    } else {
+                        theme::OK
+                    })
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(

@@ -110,10 +110,10 @@ use crate::interactive::{AskUserIo, FREE_TEXT_LABEL, InteractiveToolSet, SkillRe
 
 mod authoring;
 mod forwarder;
+mod hunk_gate;
 mod lead_control;
 mod model_cmd;
 mod profile_cmd;
-mod hunk_gate;
 mod scope_gate;
 mod theme_cmd;
 use crate::memory::{SessionMemory, inject_recall_block};

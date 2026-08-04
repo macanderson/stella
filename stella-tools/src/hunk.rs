@@ -180,7 +180,10 @@ pub fn render(old: &[&str], new: &[&str], hunk: &Hunk) -> String {
         if lines.len() > RENDER_MAX_LINES {
             // A leading space keeps the marker out of any consumer counting
             // `+`/`-` body lines (`stella_tui::diff::count_diff_lines`).
-            out.push_str(&format!(" … ({} more lines)\n", lines.len() - RENDER_MAX_LINES));
+            out.push_str(&format!(
+                " … ({} more lines)\n",
+                lines.len() - RENDER_MAX_LINES
+            ));
         }
     };
     push(' ', &old[old_from..hunk.old_start]);
@@ -337,7 +340,9 @@ mod tests {
     #[test]
     fn two_distant_edits_are_two_hunks() {
         let old = numbered(30);
-        let new = old.replace("line 2\n", "TWO\n").replace("line 25\n", "TWENTY-FIVE\n");
+        let new = old
+            .replace("line 2\n", "TWO\n")
+            .replace("line 25\n", "TWENTY-FIVE\n");
         let hunks = split(&old, &new);
         assert_eq!(hunks.len(), 2, "{hunks:?}");
         assert_eq!(hunks[0].old_start, 1);
@@ -351,7 +356,9 @@ mod tests {
     #[test]
     fn nearby_edits_coalesce_into_one_hunk() {
         let old = numbered(30);
-        let new = old.replace("line 10\n", "TEN\n").replace("line 13\n", "THIRTEEN\n");
+        let new = old
+            .replace("line 10\n", "TEN\n")
+            .replace("line 13\n", "THIRTEEN\n");
         assert_eq!(split(&old, &new).len(), 1);
     }
 
@@ -360,9 +367,17 @@ mod tests {
     #[test]
     fn accepting_all_reproduces_new_and_rejecting_all_reproduces_old() {
         let cases = [
-            (numbered(30), numbered(30).replace("line 2\n", "TWO\n").replace("line 25\n", "X\n")),
+            (
+                numbered(30),
+                numbered(30)
+                    .replace("line 2\n", "TWO\n")
+                    .replace("line 25\n", "X\n"),
+            ),
             ("a\nb\nc".to_string(), "a\nB\nc".to_string()),
-            ("no trailing newline".to_string(), "rewritten, still none".to_string()),
+            (
+                "no trailing newline".to_string(),
+                "rewritten, still none".to_string(),
+            ),
             ("".to_string(), "created\n".to_string()),
             ("deleted\n".to_string(), "".to_string()),
             ("a\n".to_string(), "a\nb\nc\n".to_string()),
@@ -382,7 +397,9 @@ mod tests {
     #[test]
     fn rejecting_one_of_two_hunks_applies_exactly_the_other() {
         let old = numbered(30);
-        let new = old.replace("line 2\n", "TWO\n").replace("line 25\n", "TWENTY-FIVE\n");
+        let new = old
+            .replace("line 2\n", "TWO\n")
+            .replace("line 25\n", "TWENTY-FIVE\n");
         let (ol, nl) = (split_lines(&old), split_lines(&new));
         let hunks = split_at(&ol, &nl);
         assert_eq!(hunks.len(), 2);
@@ -444,8 +461,14 @@ mod tests {
         let (ol, nl) = (split_lines("a\nb"), split_lines("a\nB"));
         let hunks = split_at(&ol, &nl);
         let text = render(&ol, &nl, &hunks[0]);
-        assert!(text.contains("-b\n\\ No newline at end of file\n"), "{text}");
-        assert!(text.contains("+B\n\\ No newline at end of file\n"), "{text}");
+        assert!(
+            text.contains("-b\n\\ No newline at end of file\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("+B\n\\ No newline at end of file\n"),
+            "{text}"
+        );
     }
 
     /// Beyond the DP cap the split degrades to one whole-region hunk rather
