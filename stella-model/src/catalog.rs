@@ -234,6 +234,55 @@ impl Catalog {
                 // from, so a later refresh confirms this rather than fighting
                 // it. Seeded so the offline floor is not the engine's 16384.
                 .with_max_output_tokens(Some(131_072)),
+                // The two roles a GLM pipeline needs that its *worker* cannot
+                // fill. A head-to-head pins the worker to the opponent's model,
+                // so judge and triage have to be somebody else — and the
+                // authored-witness tier refuses outright when the judge
+                // resolves to the worker, on the grounds that a model cannot
+                // independently corroborate itself. Seeded for exactly the
+                // reason given for `claude-sonnet-5` below: unlisted here is
+                // *unreachable* inside a benchmark container, not merely
+                // unpriced, and a run configured with one dies at startup
+                // having emitted nothing to say why.
+                //
+                // `glm-5.1` is the strongest z.ai model that is not the worker,
+                // which is what a judge and witness author ought to be.
+                CatalogEntry::new(
+                    "glm-5.1",
+                    "zai",
+                    "glm",
+                    204_800,
+                    ToolDialect::OpenaiJson,
+                    // OpenRouter's published rates for `z-ai/glm-5.1`, read
+                    // 2026-08-04. Cache writes are not billed separately, so
+                    // that field carries the input rate rather than a guess.
+                    Pricing {
+                        input_usd_per_mtok: 0.966,
+                        output_usd_per_mtok: 3.036,
+                        cached_input_usd_per_mtok: 0.1794,
+                        cache_write_usd_per_mtok: 0.966,
+                    },
+                )
+                .with_reasoning(Some(true)),
+                // `glm-4.5-air` is the cheap end of the family, which is the
+                // right end for triage: it emits a three-line classification
+                // and never touches the workspace, so a frontier model there
+                // buys nothing and bills a reasoning pass per turn for a
+                // decision that needs none.
+                CatalogEntry::new(
+                    "glm-4.5-air",
+                    "zai",
+                    "glm",
+                    131_072,
+                    ToolDialect::OpenaiJson,
+                    Pricing {
+                        input_usd_per_mtok: 0.13,
+                        output_usd_per_mtok: 0.85,
+                        cached_input_usd_per_mtok: 0.025,
+                        cache_write_usd_per_mtok: 0.13,
+                    },
+                )
+                .with_reasoning(Some(true)),
                 // Anthropic's mainstream model, and the one a head-to-head is
                 // most likely to be run on. Its absence was not a gap in
                 // coverage so much as a hard stop: the seed is the OFFLINE
@@ -741,6 +790,26 @@ mod tests {
     static RUNTIME_CATALOG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     use super::*;
+
+    /// A GLM pipeline needs a judge and a triage model that are *not* the
+    /// worker: a head-to-head pins the worker to the opponent's model, and the
+    /// authored-witness tier refuses when the judge resolves to the worker.
+    ///
+    /// Seeding is what makes them reachable. A benchmark container runs with
+    /// `STELLA_CATALOG_AUTO_REFRESH=0`, so an unseeded slug is not merely
+    /// unpriced there — it is unresolvable, and the run dies at startup having
+    /// emitted no events at all. That failure cost a whole measured match and
+    /// is invisible from the trial logs, which is why it is pinned here.
+    #[test]
+    fn the_zai_pipeline_roles_resolve_offline() {
+        let catalog = Catalog::seed();
+        for slug in ["glm-5.2", "glm-5.1", "glm-4.5-air"] {
+            assert!(
+                catalog.resolve_for("zai", slug).is_ok(),
+                "`{slug}` must resolve from the offline seed"
+            );
+        }
+    }
 
     #[test]
     fn resolve_known_slug_succeeds() {

@@ -36,6 +36,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
+from .pricing import price_for, trial_cost
+
 __all__ = [
     "EVENTS_NAME",
     "INFRASTRUCTURE_FAILURES",
@@ -45,6 +47,7 @@ __all__ = [
     "TrialMetrics",
     "aggregate",
     "leaders",
+    "priced_cost",
 ]
 
 EVENTS_NAME = "agent/stella-events.jsonl"
@@ -132,6 +135,12 @@ class TrialMetrics:
     #: ``None`` = not judged yet. Never coerced: "not yet" and "no" are
     #: different answers and a solve rate that conflates them is wrong.
     resolved: bool | None = None
+    #: The verifier's raw score, when it gave one. Kept alongside
+    #: :attr:`resolved` because a task graded 0.6 is a different result from
+    #: one graded 0, and a pass/fail bit throws that away — partial credit is
+    #: the only signal a scoreboard has about *solution quality* rather than
+    #: mere completion.
+    reward: float | None = None
     failure: str = ""
     #: ``True`` when :attr:`failure` names a harness or host fault rather than
     #: something the agent did. Such a trial is left *unjudged* — see
@@ -143,7 +152,13 @@ class TrialMetrics:
     tokens_out: int = 0
     cache_read: int = 0
     cache_write: int = 0
+    #: What the agent said it spent. Kept for the record but never compared
+    #: across seats: each agent prices from its own table, and two tables
+    #: subtracted from each other is not a cost difference.
     total_cost: float = 0.0
+    #: List-price cost recomputed from this trial's own token counts using one
+    #: shared table. ``None`` when the model is unpriced — missing beats wrong.
+    priced_cost: float | None = None
     clock_time: float = 0.0
     #: Seconds since the trial last wrote anything — its liveness.
     age_s: float | None = None
@@ -151,12 +166,27 @@ class TrialMetrics:
     models: tuple[str, ...] = ()
     has_video: bool = False
 
+    @property
+    def cache_hit_rate(self) -> float | None:
+        """Share of prompt tokens served from cache, 0-100.
+
+        Reported as a rate rather than a raw count because the count rewards
+        being verbose: an agent that sends twice the context gets twice the
+        cache reads while paying more in absolute terms. The rate asks the
+        question that actually matters — of everything this agent put in front
+        of the model, how much did it avoid paying full price for.
+        """
+        if self.tokens_in <= 0:
+            return None
+        return min(100.0, self.cache_read / self.tokens_in * 100.0)
+
     def to_json(self) -> dict[str, Any]:
         return {
             "task": self.task,
             "trial": self.trial,
             "status": self.status,
             "resolved": self.resolved,
+            "reward": self.reward,
             "failure": self.failure,
             "infrastructure": self.infrastructure,
             "steps": self.steps,
@@ -166,6 +196,10 @@ class TrialMetrics:
             "cache_read": self.cache_read,
             "cache_write": self.cache_write,
             "total_cost": round(self.total_cost, 6),
+            "priced_cost": (
+                round(self.priced_cost, 6) if self.priced_cost is not None else None
+            ),
+            "cache_hit_rate": self.cache_hit_rate,
             "clock_time": round(self.clock_time, 2),
             "age_s": self.age_s,
             "cap_hits": self.cap_hits,
@@ -305,13 +339,26 @@ class MetricsReader:
             metrics.age_s = age
             metrics.status = "done" if events["complete"] else "running"
 
+        configured = ""
         result = _load_json(trial_dir / RESULT_NAME)
         if result is not None:
             metrics.status = "done"
             verdict = result.get("verifier_result")
             verdict = verdict if isinstance(verdict, dict) else result
-            reward = verdict.get("reward")
+            # Harbor 0.6.1 nests the score: `verifier_result.rewards.reward`.
+            # Reading only the flat `verifier_result.reward` finds nothing, and
+            # nothing is indistinguishable from "not judged yet" — so a solved
+            # task sat unjudged forever and the solve rate stayed 0% while the
+            # verifier had already said 1.0 on disk. Both shapes are accepted
+            # because the flat one is what older bundles carry.
+            rewards = verdict.get("rewards")
+            reward = (
+                rewards.get("reward")
+                if isinstance(rewards, dict)
+                else verdict.get("reward")
+            )
             if isinstance(reward, (int, float)):
+                metrics.reward = float(reward)
                 metrics.resolved = reward >= 1
             exception = result.get("exception_info")
             if isinstance(exception, dict) and exception.get("exception_type"):
@@ -326,6 +373,30 @@ class MetricsReader:
             wall = _iso_seconds(result.get("started_at"), result.get("finished_at"))
             if wall is not None:
                 metrics.clock_time = wall
+            # Harbor records the model it was launched with; prefer it over the
+            # stream's, which can name a role's model rather than the seat's.
+            configured = (
+                ((result.get("config") or {}).get("agent") or {}).get("model_name") or ""
+            )
+            if configured and configured not in metrics.models:
+                metrics.models = (*metrics.models, configured)
+
+        # One table, both seats. See pricing.py for why self-reported cost is
+        # recorded but never compared. The configured seat model is tried first:
+        # a single process can log several roles' `step_usage` (judge, triage)
+        # into one stream, so the stream's first-seen model may name a role
+        # rather than the seat — pricing on that would mis-cost the whole trial.
+        for name in (configured, *metrics.models, ""):
+            price = price_for(name)
+            if price is not None:
+                metrics.priced_cost = trial_cost(
+                    price,
+                    tokens_in=metrics.tokens_in,
+                    tokens_out=metrics.tokens_out,
+                    cache_read=metrics.cache_read,
+                    cache_write=metrics.cache_write,
+                )
+                break
 
         # A running trial has no finish timestamp, so wall clock has to come
         # from the events file's own span rather than from Harbor.
@@ -377,6 +448,19 @@ def aggregate(trials: Iterable[TrialMetrics]) -> dict[str, Any]:
         "cache_read": sum(t.cache_read for t in trials),
         "cache_write": sum(t.cache_write for t in trials),
         "total_cost": sum(t.total_cost for t in trials),
+        # Comparable spend: every seat priced from the same table. `None` when
+        # no trial had a priced model, so the column stays empty rather than
+        # reading as a free run.
+        "priced_cost": (
+            sum(t.priced_cost for t in trials if t.priced_cost is not None)
+            if any(t.priced_cost is not None for t in trials)
+            else None
+        ),
+        "cache_hit_rate": (
+            sum(t.cache_read for t in trials) / sum(t.tokens_in for t in trials) * 100.0
+            if sum(t.tokens_in for t in trials) > 0
+            else None
+        ),
         "tools": sum(t.tools for t in trials),
         "steps": sum(t.steps for t in trials),
         "cap_hits": sum(t.cap_hits for t in trials),
