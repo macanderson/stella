@@ -935,3 +935,48 @@ class TestOfflineTaskSource:
     def test_the_package_directory_comes_from_the_pinned_name(self):
         from arenabench.registry import TERMINAL_BENCH_21
         assert TERMINAL_BENCH_21.package_dir == "terminal-bench-2-1"
+
+    def _launched_command(self, tmp_path: Path, monkeypatch, export: bool) -> list[str]:
+        """The argv `_launch` actually hands Harbor, with the process stubbed."""
+        if export:
+            self._export(tmp_path, tasks=("alpha",))
+            monkeypatch.setenv("ARENABENCH_DATASETS", str(tmp_path))
+        else:
+            monkeypatch.setenv("ARENABENCH_DATASETS", str(tmp_path / "nope"))
+        monkeypatch.setattr("arenabench.runner.shutil.which", lambda _: "/usr/bin/harbor")
+
+        seen: dict = {}
+
+        class _Fake:
+            def __init__(self, command, **kwargs):
+                seen["command"] = command
+                self.returncode = None
+
+            def poll(self):
+                return None
+
+        monkeypatch.setattr("arenabench.runner.subprocess.Popen", _Fake)
+        spec = MatchSpec.from_json({
+            "dataset": "terminal-bench-2.1", "tasks": ["alpha"],
+            "contestants": [{"name": "s", "agent": "stella",
+                             "engine": {"api": "openrouter", "model": "x/y"}}],
+        })
+        runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
+        match = runner.create(spec)
+        runner._launch(match, spec.contestants[0])
+        return seen["command"]
+
+    def test_an_export_is_filtered_by_bare_task_name(self, tmp_path: Path, monkeypatch):
+        """Names are namespaced by the registry, not by the task. An export on
+        disk is just directories and answers to the bare name — sending the
+        qualified form matches nothing and ends the match at once."""
+        command = self._launched_command(tmp_path, monkeypatch, export=True)
+        assert "--path" in command and "--dataset" not in command
+        assert command[command.index("--include-task-name") + 1] == "alpha"
+
+    def test_a_registry_ref_is_filtered_by_qualified_task_name(
+        self, tmp_path: Path, monkeypatch
+    ):
+        command = self._launched_command(tmp_path, monkeypatch, export=False)
+        assert "--dataset" in command and "--path" not in command
+        assert command[command.index("--include-task-name") + 1] == "terminal-bench/alpha"

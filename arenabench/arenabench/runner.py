@@ -381,8 +381,16 @@ class MatchRunner:
                 "--agent-setup-timeout-multiplier",
                 str(match.spec.setup_timeout_multiplier),
             ]
+        # Task names are namespaced by the *registry*, not by the task itself.
+        # Filtering a ref'd dataset therefore needs `<namespace>/<task>`, while
+        # an export on disk is just directories and answers to the bare name.
+        # Sending the wrong form matches nothing and Harbor exits immediately —
+        # loudly, at least, rather than by quietly running fewer tasks.
         for task in match.spec.tasks:
-            command += ["--include-task-name", f"{match.dataset.namespace}/{task}"]
+            command += [
+                "--include-task-name",
+                task if local_path is not None else f"{match.dataset.namespace}/{task}",
+            ]
 
         env = _base_environment()
         env.update(contestant.env)
