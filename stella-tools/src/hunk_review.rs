@@ -157,7 +157,7 @@ impl<'a> HunkGate<'a> {
                 "edit_file" => serde_json::json!({ "edits": [input.clone()] }),
                 _ => input.clone(),
             };
-            for path in batch_paths(&batch) {
+            for path in batch_paths(&batch, &self.root) {
                 let before = crate::rootfd::read_confined_lossy(&self.root, &path)?;
                 let after = crate::apply_edits::simulate_batch(&batch, &path, &before)?;
                 changes.push(FileChange {
@@ -246,10 +246,12 @@ impl<'a> HunkGate<'a> {
 }
 
 /// Paths an `apply_edits` batch touches, in first-touch order, as the batch
-/// named them. Deduplicated on the *normalized* path so two spellings of one
-/// file are simulated once, while the name used for reads and writes stays the
-/// one the call supplied.
-fn batch_paths(batch: &Value) -> Vec<String> {
+/// named them. Deduplicated on the *normalized* path — the same key
+/// `apply_edits`' validate phase groups by, and with the same fallback to the
+/// raw string when a path will not resolve — so two spellings of one file are
+/// simulated once, while the name used for reads and writes stays the one the
+/// call supplied.
+fn batch_paths(batch: &Value, root: &std::path::Path) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for edit in batch
@@ -261,7 +263,7 @@ fn batch_paths(batch: &Value) -> Vec<String> {
         let Some(path) = edit.get("path").and_then(Value::as_str) else {
             continue;
         };
-        let key = crate::file_touch::normalize_workspace_path(std::path::Path::new(""), path)
+        let key = crate::file_touch::normalize_workspace_path(root, path)
             .unwrap_or_else(|| path.to_string());
         if seen.insert(key) {
             out.push(path.to_string());
@@ -724,6 +726,35 @@ mod tests {
         assert!(!content.contains("hunk review"), "{content}");
         let landed = std::fs::read_to_string(dir.path().join("a.rs")).unwrap();
         assert!(landed.contains("TWO\n") && landed.contains("TWENTY-FIVE\n"));
+    }
+
+    /// Two spellings of one path are one file. Without normalizing against the
+    /// real workspace root the dedup key falls back to the raw string, and the
+    /// batch would be simulated — and reviewed — as two independent files.
+    #[tokio::test]
+    async fn two_spellings_of_one_path_are_reviewed_as_one_file() {
+        let (dir, reg, _) = fixture();
+        let io = ScriptedIo::accepting(vec![0, 1]);
+        let gate = HunkGate::new(
+            &reg,
+            Some(io.clone() as Arc<dyn HunkReviewIo>),
+            dir.path().to_path_buf(),
+        );
+
+        let out = gate
+            .execute(
+                "apply_edits",
+                &serde_json::json!({ "edits": [
+                    edit("a.rs", "line 2\n", "TWO\n"),
+                    edit("./a.rs", "line 25\n", "TWENTY-FIVE\n"),
+                ]}),
+            )
+            .await;
+        assert!(!out.is_error(), "{out:?}");
+        let proposal = io.proposal().expect("a card was raised");
+        let mut paths: Vec<&str> = proposal.hunks.iter().map(|h| h.path.as_str()).collect();
+        paths.dedup();
+        assert_eq!(paths.len(), 1, "one file, however it is spelled: {paths:?}");
     }
 
     /// Read-only and opaque tools pass straight through.
