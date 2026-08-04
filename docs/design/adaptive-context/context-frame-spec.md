@@ -1,6 +1,7 @@
 # Context Frame Specification
 
-<!-- NORMATIVE-HOME: macanderson/context-graph-protocol @ v0.1.2 (contextgraph/1.0-draft) -->
+*Normative home: the [Context Graph Protocol](https://github.com/macanderson/context-graph-protocol/tree/c5fb2fe)
+(`contextgraph/1.0-draft`).*
 
 > **Normative home — read this first.** The *atomic* Context Frame (one retrieval
 > envelope: a single snippet/symbol/fact/doc/memory/episode/graph node with its

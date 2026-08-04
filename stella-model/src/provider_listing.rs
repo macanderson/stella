@@ -13,12 +13,16 @@
 //!   `supported_parameters` (which is where per-model reasoning/tool
 //!   support comes from).
 //! - **Anthropic** — `GET {base}/v1/models`, `x-api-key` + versioned,
-//!   paginated via `after_id`/`has_more`. Ids and display names only.
+//!   paginated via `after_id`/`has_more`. Ids, display names, and the two
+//!   token limits — `max_tokens` (the OUTPUT ceiling) and `max_input_tokens`
+//!   (the context window). No pricing.
 //! - **Gemini** — `GET {base}/models`, `x-goog-api-key`, paginated via
 //!   `pageToken`. Carries token limits, `thinking`, and the generation
 //!   methods used to filter out non-chat rows (embeddings, imagen, aqa).
 //! - **OpenAI-compatible** — `GET {base}/models`, bearer auth: OpenAI,
-//!   xAI, DeepSeek, Z.ai, local servers, custom gateways. Ids only.
+//!   xAI, DeepSeek, Z.ai, local servers, custom gateways. Ids, plus whichever
+//!   limit fields the particular gateway chose to publish — the shape is
+//!   standardized, the field names are not.
 //!
 //! This module only fetches and parses (same division of labor as
 //! `modelsdev`); merging into the on-disk catalog belongs to `stella-cli`.
@@ -203,6 +207,24 @@ fn build_url(base: &str, path: &str, params: &[(&str, &str)]) -> Result<String, 
     Ok(url.into())
 }
 
+/// The first of `names` this row carries as a non-negative integer.
+///
+/// The OpenAI-compatible "standard" is a shape, not a schema: gateways that
+/// agree on `{"data": [{"id": ...}]}` disagree on what the limit fields are
+/// called. Trying an ordered list beats picking one name and silently
+/// learning nothing from every gateway that chose a different one.
+fn first_u64(row: &serde_json::Value, names: &[&str]) -> Option<u64> {
+    names.iter().find_map(|name| {
+        row.get(*name)
+            .and_then(|v| v.as_u64())
+            // A published zero is "no limit stated", not "a limit of zero" —
+            // and it must not be carried, because downstream a `Some(0)`
+            // ceiling is filtered back out to the engine default anyway while
+            // still overwriting a real value the master list already knew.
+            .filter(|v| *v > 0)
+    })
+}
+
 // OpenRouter
 
 /// A USD-per-TOKEN decimal string ("0.000003") → USD per million tokens.
@@ -315,6 +337,21 @@ fn parse_anthropic_page(body: &str) -> Result<(Vec<ProviderModel>, Option<String
                     .get("display_name")
                     .and_then(|v| v.as_str())
                     .map(str::to_string),
+                // The two limits Anthropic's listing publishes. Note the
+                // names do NOT match the shape every other provider uses:
+                // the output ceiling is `max_tokens` (the request parameter
+                // it bounds), and the context window is `max_input_tokens`.
+                // There is no `context_window` field to fall back on.
+                //
+                // Read here because #1290 found the first-party route had no
+                // way to learn a ceiling at all: this parser kept the id and
+                // the display name and dropped everything else, so the seed
+                // was the ONLY source of an Anthropic ceiling and a wrong seed
+                // stayed wrong through every refresh. It was wrong — Sonnet 5
+                // read 64000 against a real 128000 — and no amount of
+                // refreshing could have corrected it.
+                context_window: row.get("max_input_tokens").and_then(|v| v.as_u64()),
+                max_output_tokens: row.get("max_tokens").and_then(|v| v.as_u64()),
                 ..ProviderModel::default()
             })
         })
@@ -504,7 +541,17 @@ pub fn parse_openai_compatible(label: &str, body: &str) -> Result<Vec<ProviderMo
                     .or_else(|| row.get("name"))
                     .and_then(|v| v.as_str())
                     .map(str::to_string),
-                context_window: row.get("context_length").and_then(|v| v.as_u64()),
+                context_window: first_u64(row, &["context_length", "context_window"]),
+                // The output ceiling, where the gateway publishes one. Only
+                // the two UNAMBIGUOUS names are read (#1290): a bare
+                // `max_tokens` means the output cap on some OpenAI-shaped
+                // listings and the whole context window on others, and
+                // guessing wrong in the "it's the output cap" direction seeds
+                // a ceiling several times the model's real one — which the
+                // engine would then ask for on the wire and the provider
+                // would reject. A missing ceiling costs a fallback to the
+                // engine default; a wrong one costs every request.
+                max_output_tokens: first_u64(row, &["max_output_tokens", "max_completion_tokens"]),
                 ..ProviderModel::default()
             })
         })
@@ -607,19 +654,42 @@ mod tests {
 
     #[test]
     fn anthropic_page_parses_ids_and_pagination_cursor() {
+        // Shaped after the real document (fields verified against the live
+        // endpoint on 2026-08-03, #1290): the OUTPUT ceiling is `max_tokens`
+        // and the context window is `max_input_tokens`. Neither name matches
+        // what any other provider in this module uses, which is why reading
+        // them needs a fixture rather than an assumption.
         let body = r#"{
             "data": [
-                {"type": "model", "id": "claude-fable-5", "display_name": "Claude Fable 5"},
-                {"type": "model", "id": "claude-haiku-4-5-20251001"}
+                {
+                    "type": "model",
+                    "id": "claude-fable-5",
+                    "display_name": "Claude Fable 5",
+                    "max_tokens": 128000,
+                    "max_input_tokens": 1000000
+                },
+                {"type": "model", "id": "claude-haiku-4-5-20251001", "max_tokens": 64000},
+                {"type": "model", "id": "claude-legacy-no-limits"}
             ],
             "has_more": true,
             "last_id": "claude-haiku-4-5-20251001"
         }"#;
         let (models, next) = parse_anthropic_page(body).expect("page parses");
-        assert_eq!(models.len(), 2);
+        assert_eq!(models.len(), 3);
         assert_eq!(models[0].id, "claude-fable-5");
         assert_eq!(models[0].display_name.as_deref(), Some("Claude Fable 5"));
-        // The listing carries no capability/pricing data — stays unknown.
+        assert_eq!(models[0].max_output_tokens, Some(128_000));
+        assert_eq!(models[0].context_window, Some(1_000_000));
+        // Per model, never shared: the same page carries a model whose real
+        // ceiling is half its sibling's. A parser that read one row's limit
+        // and applied it family-wide would pass every other assertion here.
+        assert_eq!(models[1].max_output_tokens, Some(64_000));
+        // A row that omits the limits stays unknown rather than inheriting a
+        // neighbour's — `None` lets the catalog merge keep whatever the
+        // master list already knew for it.
+        assert_eq!(models[2].max_output_tokens, None);
+        assert_eq!(models[2].context_window, None);
+        // The listing still carries no pricing or capability data.
         assert_eq!(models[0].supports_reasoning, None);
         assert_eq!(next.as_deref(), Some("claude-haiku-4-5-20251001"));
 
@@ -677,6 +747,36 @@ mod tests {
         assert_eq!(models[0].supports_reasoning, None);
         assert!(parse_openai_compatible("OpenAI", r#"{"data": []}"#).is_err());
         assert!(parse_openai_compatible("OpenAI", r#"{"models": []}"#).is_err());
+    }
+
+    /// The OpenAI-compatible shape is standardized; its limit FIELD NAMES are
+    /// not. Read the unambiguous ones, and — the part that matters — refuse to
+    /// read a bare `max_tokens`, which means the output cap on some gateways
+    /// and the whole context window on others. Reading it the wrong way round
+    /// seeds a ceiling many times the model's real one, which the engine then
+    /// asks for on the wire and the provider rejects: a missing ceiling costs
+    /// one fallback, a wrong one costs every request (#1290).
+    #[test]
+    fn openai_compatible_reads_unambiguous_limits_and_refuses_the_ambiguous_one() {
+        let body = r#"{"object": "list", "data": [
+            {"id": "a", "max_output_tokens": 32000, "context_window": 400000},
+            {"id": "b", "max_completion_tokens": 8192, "context_length": 128000},
+            {"id": "c", "max_tokens": 999999},
+            {"id": "d", "max_output_tokens": 0}
+        ]}"#;
+        let models = parse_openai_compatible("Gateway", body).expect("parses");
+        assert_eq!(models[0].max_output_tokens, Some(32_000));
+        assert_eq!(models[0].context_window, Some(400_000));
+        assert_eq!(models[1].max_output_tokens, Some(8_192));
+        assert_eq!(models[1].context_window, Some(128_000));
+        // The ambiguous name is deliberately NOT read.
+        assert_eq!(
+            models[2].max_output_tokens, None,
+            "a bare `max_tokens` is not a reliable output cap on this shape"
+        );
+        // A published zero is "no limit stated", not a ceiling of zero — and
+        // carrying it would overwrite a real value the master list knew.
+        assert_eq!(models[3].max_output_tokens, None);
     }
 
     #[tokio::test]

@@ -835,6 +835,7 @@ fn cfg_for(provider_id: &str) -> Config {
         reward_policy: stella_pipeline::reward::RewardPolicy::default(),
         authority: crate::settings::AuthorityPolicy::default(),
         credential_advisories: Vec::new(),
+        aux_credentials: Default::default(),
     }
 }
 
@@ -1247,6 +1248,7 @@ fn configured_provider(provider_id: &str) -> ConfiguredProvider {
     ConfiguredProvider {
         config,
         api_key: ApiKey::new("dummy-key-unused-offline"),
+        aux: Default::default(),
     }
 }
 
@@ -1315,6 +1317,7 @@ fn judge_build_failure_falls_back_to_the_worker() {
             seeded: true,
         },
         api_key: ApiKey::new("dummy-key-unused-offline"),
+        aux: Default::default(),
     };
     let configured = vec![configured_provider("zai"), faux];
     assert!(

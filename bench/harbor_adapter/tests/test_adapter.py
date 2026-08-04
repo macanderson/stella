@@ -50,7 +50,7 @@ from stella_harbor import (  # noqa: E402 - after importorskip by design
     _stream_to_envelope,
     _sum_step_usage,
     _validated_public_base_url,
-    _verify_compose_containers_exclude_credential,
+    _verify_compose_containers_exclude_credentials,
 )
 from stella_harbor.atif import envelope_accounting, envelope_to_trajectory  # noqa: E402
 from stella_harbor.credential_bundle import (  # noqa: E402
@@ -636,10 +636,9 @@ class TestForwardedEnv:
 
         agent = _bare_agent()
         agent.model_name = "anthropic/claude-fable-5"
-        assert agent._selected_provider_credential() == (
-            "ANTHROPIC_API_KEY",
-            "sk-anthropic-real",
-        )
+        assert agent._selected_provider_credentials().credentials == {
+            "ANTHROPIC_API_KEY": "sk-anthropic-real",
+        }
 
     def test_selects_one_key_from_host_bundle_without_ambient_copy(
         self, monkeypatch: pytest.MonkeyPatch
@@ -655,14 +654,117 @@ class TestForwardedEnv:
             agent = _bare_agent()
             agent.model_name = "openrouter/deepseek/deepseek-v4-pro"
 
-            assert agent._selected_provider_credential() == (
-                "OPENROUTER_API_KEY",
-                secret,
-            )
+            assert agent._selected_provider_credentials().credentials == {
+                "OPENROUTER_API_KEY": secret,
+            }
             assert agent._host_credential_source == HOST_CREDENTIAL_SOURCE
             assert agent._host_credential_name == "OPENROUTER_API_KEY"
         finally:
             handle.close()
+
+    def test_selects_the_whole_bedrock_set_and_its_region_from_the_bundle(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#1301: a route whose credential is a set, not a single secret."""
+        access_key = "AKIATESTACCESSKEYID"
+        secret_key = "test-bedrock-secret-access-key"
+        session_token = "test-bedrock-session-token"
+        for name in (
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "AWS_REGION",
+            "AWS_DEFAULT_REGION",
+        ):
+            monkeypatch.delenv(name, raising=False)
+        handle = create_anonymous_credential_bundle(
+            {
+                "AWS_ACCESS_KEY_ID": access_key,
+                "AWS_SECRET_ACCESS_KEY": secret_key,
+                "AWS_SESSION_TOKEN": session_token,
+            },
+            {"AWS_REGION": "eu-central-1"},
+        )
+        try:
+            monkeypatch.setenv(HOST_CREDENTIAL_BUNDLE_FD_ENV, str(handle.fileno()))
+            agent = _bare_agent()
+            agent.model_name = "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+
+            selected = agent._selected_provider_credentials()
+
+            # Declaration order is the wire contract: Stella pairs the pipe's
+            # lines with STELLA_CREDENTIAL_HANDOFF_TARGET positionally.
+            assert list(selected.credentials) == [
+                "AWS_ACCESS_KEY_ID",
+                "AWS_SECRET_ACCESS_KEY",
+                "AWS_SESSION_TOKEN",
+            ]
+            assert selected.credentials["AWS_SECRET_ACCESS_KEY"] == secret_key
+            assert selected.routing == {"AWS_REGION": "eu-central-1"}
+            assert agent._host_credential_source == HOST_CREDENTIAL_SOURCE
+            assert agent._host_credential_name == (
+                "AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN"
+            )
+        finally:
+            handle.close()
+
+    def test_a_bedrock_bundle_missing_the_secret_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A partial set would sign nothing and arrive as a provider 403."""
+        for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"):
+            monkeypatch.delenv(name, raising=False)
+        handle = create_anonymous_credential_bundle(
+            {"AWS_ACCESS_KEY_ID": "AKIATESTACCESSKEYID"},
+            {"AWS_REGION": "us-east-1"},
+        )
+        try:
+            monkeypatch.setenv(HOST_CREDENTIAL_BUNDLE_FD_ENV, str(handle.fileno()))
+            agent = _bare_agent()
+            agent.model_name = "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+            with pytest.raises(RuntimeError, match="AWS_SECRET_ACCESS_KEY"):
+                agent._selected_provider_credentials()
+        finally:
+            handle.close()
+
+    def test_a_bedrock_bundle_without_a_region_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Region is routing, not a credential — and still mandatory.
+
+        Defaulting it (Stella's own chain falls back to us-east-1) would decide
+        silently which AWS region a published number came from.
+        """
+        for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"):
+            monkeypatch.delenv(name, raising=False)
+        handle = create_anonymous_credential_bundle(
+            {
+                "AWS_ACCESS_KEY_ID": "AKIATESTACCESSKEYID",
+                "AWS_SECRET_ACCESS_KEY": "test-bedrock-secret-access-key",
+            }
+        )
+        try:
+            monkeypatch.setenv(HOST_CREDENTIAL_BUNDLE_FD_ENV, str(handle.fileno()))
+            agent = _bare_agent()
+            agent.model_name = "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+            with pytest.raises(RuntimeError, match="AWS_REGION"):
+                agent._selected_provider_credentials()
+        finally:
+            handle.close()
+
+    def test_the_bedrock_region_is_routing_not_a_credential(self) -> None:
+        # Never scrubbed as a secret — a region is disclosed evidence, and
+        # treating it as a credential would keep it out of the manifest that
+        # makes a Bedrock number reproducible.
+        assert not adapter_module._is_credential_env_name("AWS_REGION")
+        assert adapter_module._is_credential_env_name("AWS_SECRET_ACCESS_KEY")
+        # The launcher is the sole source of it: an image that defines its own
+        # is still refused before the handoff.
+        assert "AWS_REGION" in adapter_module._PROVIDER_ROUTE_CONFIG_ENV
+        # And it is not a Harbor-extra a task may set — the registered claim
+        # environment is unchanged, so `--env AWS_REGION=…` still fails closed
+        # rather than being accepted and silently ignored.
+        assert "AWS_REGION" not in adapter_module._CLAIM_CONTAINER_ENV
 
     def test_rejects_unregistered_harbor_extra_env(
         self, monkeypatch: pytest.MonkeyPatch
@@ -835,7 +937,7 @@ class TestSecureCredentialExec:
                     "STELLA_TRUST_PROJECT": "1",
                     "HTTPS_PROXY": "http://task-proxy.invalid:8080",
                 },
-                credential=secret,
+                credentials=(secret,),
             )
         )
 
@@ -868,6 +970,93 @@ class TestSecureCredentialExec:
         assert observed["host_env"]["HTTPS_PROXY"] == ""
         assert observed["host_env"]["NO_PROXY"] == "*"
 
+    def test_a_bedrock_set_is_stdin_only_while_the_region_rides_the_argv(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#1301: several secrets on one pipe, region as an ordinary variable."""
+        access_key = "AKIATESTACCESSKEYID"
+        secret_key = "test-bedrock-secret-access-key"
+        session_token = "test-bedrock-session-token"
+        observed: dict[str, object] = {}
+
+        class _ComposeEnv:
+            def to_env_dict(self, *, include_os_env: bool) -> dict[str, str]:
+                assert include_os_env is True
+                return {"DOCKER_HOST": "unix:///safe/docker.sock"}
+
+        class _Process:
+            returncode = 0
+
+            async def communicate(self, input: bytes):
+                observed["stdin"] = bytes(input)
+                return b"one event\n", None
+
+            def terminate(self) -> None:  # pragma: no cover - success path
+                raise AssertionError("unexpected terminate")
+
+        async def _spawn(*args: str, **kwargs: object) -> _Process:
+            observed["argv"] = args
+            observed["host_env"] = kwargs["env"]
+            return _Process()
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _spawn)
+        environment = SimpleNamespace(
+            session_id="trial/bedrock",
+            environment_dir=tmp_path,
+            _docker_compose_paths=[],
+            _env_vars=_ComposeEnv(),
+            _compose_task_env={},
+            _persistent_env={},
+            task_env_config=SimpleNamespace(workdir="/workspace"),
+            _resolve_user=lambda _user: "agent",
+        )
+
+        asyncio.run(
+            _secure_exec_with_credential_fd(
+                environment,
+                command=[
+                    _INSTALL_PATH,
+                    "--model",
+                    "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                    "run",
+                    "task",
+                ],
+                env={
+                    "STELLA_CREDENTIAL_HANDOFF_FD": "0",
+                    "STELLA_CREDENTIAL_HANDOFF_TARGET": (
+                        "AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN"
+                    ),
+                    "AWS_REGION": "eu-central-1",
+                },
+                credentials=(access_key, secret_key, session_token),
+            )
+        )
+
+        # One line per declared target, in declaration order — Stella pairs
+        # them positionally.
+        assert observed["stdin"] == (
+            f"{access_key}\n{secret_key}\n{session_token}\n".encode()
+        )
+        argv = "\0".join(observed["argv"])
+        for value in (access_key, secret_key, session_token):
+            assert value not in argv, "a secret reached the Docker argv"
+        assert "AWS_SECRET_ACCESS_KEY=" not in argv
+        # The region is not a secret and does reach the container as argv.
+        assert "AWS_REGION=eu-central-1" in observed["argv"]
+
+    def test_a_credential_containing_a_newline_is_refused(self) -> None:
+        # It would silently re-frame the pipe, handing Stella one value under
+        # the name of another.
+        with pytest.raises(RuntimeError, match="line break"):
+            asyncio.run(
+                _secure_exec_with_credential_fd(
+                    SimpleNamespace(),
+                    command=[_INSTALL_PATH, "--model", "bedrock/model", "run", "t"],
+                    env={},
+                    credentials=("AKIATESTACCESSKEYID", "secret\nAWS_REGION=elsewhere"),
+                )
+            )
+
     def test_rejects_non_stella_launcher_argv(self) -> None:
         with pytest.raises(RuntimeError, match="direct stella argv"):
             asyncio.run(
@@ -875,7 +1064,7 @@ class TestSecureCredentialExec:
                     SimpleNamespace(),
                     command=["bash", "-c", "stella run task"],
                     env={},
-                    credential="test-secret",
+                    credentials=("test-secret",),
                 )
             )
 
@@ -937,8 +1126,8 @@ class TestContainerCredentialPreflight:
         monkeypatch.setattr(adapter_module, "_captured_process", fake_captured)
 
         asyncio.run(
-            _verify_compose_containers_exclude_credential(
-                self._environment(tmp_path), credential
+            _verify_compose_containers_exclude_credentials(
+                self._environment(tmp_path), (credential,)
             )
         )
 
@@ -974,8 +1163,8 @@ class TestContainerCredentialPreflight:
 
         with pytest.raises(RuntimeError) as caught:
             asyncio.run(
-                _verify_compose_containers_exclude_credential(
-                    self._environment(tmp_path), credential
+                _verify_compose_containers_exclude_credentials(
+                    self._environment(tmp_path), (credential,)
                 )
             )
         assert credential not in str(caught.value)
@@ -983,7 +1172,7 @@ class TestContainerCredentialPreflight:
     @pytest.mark.parametrize(
         "inherited",
         [
-            "STELLA_BASH_SANDBOX=0",
+            "STELLA_DATA_DIR=/workspace/hostile-state",
             "OPENROUTER_API_KEY=decoy",
             "OPENAI_BASE_URL=https://attacker.invalid/v1",
             "BASH_ENV=/workspace/hostile.sh",
@@ -1021,8 +1210,8 @@ class TestContainerCredentialPreflight:
 
         with pytest.raises(RuntimeError, match="forbidden inherited environment"):
             asyncio.run(
-                _verify_compose_containers_exclude_credential(
-                    self._environment(tmp_path), credential
+                _verify_compose_containers_exclude_credentials(
+                    self._environment(tmp_path), (credential,)
                 )
             )
 
@@ -1062,8 +1251,8 @@ class TestContainerCredentialPreflight:
 
         monkeypatch.setattr(adapter_module, "_captured_process", fake_captured)
         asyncio.run(
-            _verify_compose_containers_exclude_credential(
-                self._environment(tmp_path), credential
+            _verify_compose_containers_exclude_credentials(
+                self._environment(tmp_path), (credential,)
             )
         )
 
@@ -1092,8 +1281,8 @@ class TestContainerCredentialPreflight:
         monkeypatch.setattr(adapter_module, "_captured_process", fake_captured)
         with pytest.raises(RuntimeError, match="exactly one main"):
             asyncio.run(
-                _verify_compose_containers_exclude_credential(
-                    self._environment(tmp_path), credential
+                _verify_compose_containers_exclude_credentials(
+                    self._environment(tmp_path), (credential,)
                 )
             )
 

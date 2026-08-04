@@ -66,6 +66,12 @@ fn tuned_engine_config(
     {
         engine.compaction_budget_tokens = budget;
     }
+    // What the model itself can write, once the catalog has answered — kept
+    // so the per-model override below can be clamped to it rather than
+    // trusted to be sane. `None` means the catalog has no ceiling for this
+    // row, which is the case the seed and provider discovery exist to make
+    // rare (#1290).
+    let mut model_ceiling: Option<u32> = None;
     if let Ok(entry) = stella_model::catalog::Catalog::current().resolve_for(provider_id, model_id)
     {
         let window = entry.context_window as u64;
@@ -90,9 +96,31 @@ fn tuned_engine_config(
         // so an explicit `params.max_tokens` overrides it.
         if let Some(ceiling) = entry.max_output_tokens.filter(|c| *c > 0) {
             engine.max_output_tokens = Some(ceiling);
+            model_ceiling = Some(ceiling);
         }
     }
     if let Some(settings) = &cfg.engine_settings {
+        // The operator's deliberate per-model cap (`[models.output_caps]`),
+        // between the model's own ceiling above and the per-agent tuning
+        // below. That ordering is the whole design: the DEFAULT is always the
+        // model's maximum, and spending less than it is something someone has
+        // to ask for by name. Nothing here can make the default lower.
+        //
+        // Clamped to the model's ceiling rather than obeyed blindly. Asking
+        // for more than the model can write is not a bigger answer, it is a
+        // provider-side rejection on every step — and the operator who typed
+        // an extra digit meant "as much as possible", which is what the
+        // catalog number already is. Clamping grants that; forwarding it
+        // breaks the run. When the ceiling is unknown the entry is honored
+        // as written: there is nothing to clamp against, and refusing it
+        // would leave the engine's global default in place, which is lower
+        // than anything the operator would have been typing here.
+        if let Some(cap) = settings.model_output_cap(provider_id, model_id) {
+            engine.max_output_tokens = Some(match model_ceiling {
+                Some(ceiling) => cap.min(ceiling),
+                None => cap,
+            });
+        }
         let tuning = crate::engine_config::tuning_for(settings, kind);
         if tuning.temperature.is_some() {
             engine.temperature = tuning.temperature;
@@ -304,6 +332,13 @@ pub(crate) fn apply_pipeline_tuning(cfg: &Config, mut config: PipelineConfig) ->
         // produce a result at all.
         config.candidates = Some(candidates);
     }
+    // Tri-state on purpose (#1295): absent keeps the pipeline's default, and
+    // both `on` and `off` are explicit selections. Collapsing absent into
+    // `false` here would silently pin every run that never mentioned the key
+    // to whichever side this file happened to prefer.
+    if let Some(demand) = engine.pipeline_judge_evidence_demand {
+        config.judge_evidence_demand = demand.is_on();
+    }
     config
 }
 
@@ -457,6 +492,7 @@ fn pin_role(
         entry.api_key.clone(),
         entry.config.base_url.to_string(),
         None,
+        entry.aux.clone(),
     ) {
         Ok(provider) => {
             for &role in roles {
@@ -737,6 +773,7 @@ pub(crate) fn build_provider(cfg: &Config) -> Result<Box<dyn Provider>, String> 
         cfg.api_key.clone(),
         cfg.effective_base_url().to_string(),
         cfg.base_url_override.as_deref(),
+        cfg.aux_credentials.clone(),
     )
 }
 
@@ -747,7 +784,10 @@ pub(crate) fn build_provider(cfg: &Config) -> Result<Box<dyn Provider>, String> 
 /// catalog check — live in exactly one place. `effective_base_url` is the
 /// base URL requests go to (override-or-default); `base_url_override` is the
 /// raw `--base-url`, which only the Vertex/Bedrock arms consume (they build
-/// region/project-scoped URLs themselves).
+/// region/project-scoped URLs themselves). `aux` carries whatever the provider
+/// needs beyond one key — Bedrock's AWS secret access key, optional session
+/// token, and region — already resolved through the credential chain by
+/// `config::aux::provider_aux`; empty for every other provider.
 ///
 /// The catalog is consulted first (provider-scoped, since the same slug
 /// legitimately exists on several providers — `gemini-3-pro` on both `gemini`
@@ -771,6 +811,7 @@ fn build_provider_parts(
     api_key: ApiKey,
     effective_base_url: String,
     base_url_override: Option<&str>,
+    aux: stella_model::AuxCredentials,
 ) -> Result<Box<dyn Provider>, String> {
     // The full anti-invalid-slug ladder, for EVERY provider (not just seeded
     // ones): the seed floor always passes; a provider whose master-list rows
@@ -807,6 +848,7 @@ fn build_provider_parts(
         api_key,
         effective_base_url,
         base_url_override,
+        aux,
     ))
     .map_err(|error| error.to_string())
 }
@@ -895,6 +937,7 @@ pub(crate) fn resolve_cross_family_judge(
         entry.api_key.clone(),
         entry.config.base_url.to_string(),
         None,
+        entry.aux.clone(),
     )
     .ok()?;
     Some((judge, decision.model_ref.provider))

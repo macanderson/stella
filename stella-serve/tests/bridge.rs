@@ -71,6 +71,8 @@ fn spec_for(prompt: &str) -> SessionSpec {
         observer: stella_serve::observe::null_observer(),
         on_settled: None,
         checkpoint: None,
+        extensions: stella_serve::Extensions::new(),
+        calibration: None,
     }
 }
 

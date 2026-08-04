@@ -43,7 +43,7 @@ the single credential deny-list rather than growing a second one that drifts.
 | [`src/project.rs`](src/project.rs), [`src/scripts.rs`](src/scripts.rs), [`src/diagnostics.rs`](src/diagnostics.rs), [`src/impact.rs`](src/impact.rs) | Build/test/lint/format as thin verbs over the scripts index, structured typecheck output, and the importer-edge blast radius behind `run_tests` `scope: "impacted"`. |
 | [`src/process.rs`](src/process.rs) | The long-running process group (`start_process`/`read_output`/`send_stdin`/`stop_process`) for servers, REPLs, watchers. |
 | [`src/repo.rs`](src/repo.rs), [`src/ci.rs`](src/ci.rs) | Vendor-neutral `repo_*` tools behind the `RepoBackend` port (`GitCli` is the only adapter), and `ci_status` via `gh`. |
-| [`src/bash.rs`](src/bash.rs), [`src/sandbox.rs`](src/sandbox.rs) | The default-on shell (withheld with `"tools": {"bash": "off"}`) and its opt-in OS confinement (`sandbox-exec` / `bwrap`, `STELLA_BASH_SANDBOX`, which wraps `bash` only). |
+| [`src/bash.rs`](src/bash.rs) | The default-on shell, withheld with `"tools": {"bash": "off"}`. No per-command OS confinement: the `STELLA_BASH_SANDBOX` Seatbelt/`bwrap` wrapper was removed in #1300 because it bounded this one tool while every other spawn path went around it. |
 | [`src/web.rs`](src/web.rs), [`src/web_extract.rs`](src/web_extract.rs) | The opt-in web family, and the pure HTML/CSS extraction behind it (no I/O in `web_extract.rs`, so it unit-tests without a network). |
 | [`src/issues.rs`](src/issues.rs), [`src/issue_ops.rs`](src/issue_ops.rs), [`src/github_rest.rs`](src/github_rest.rs), [`src/tracker_auth.rs`](src/tracker_auth.rs) | Issue-tracker tools, the backend-dispatching operations shared with the Command Deck, a minimal GitHub REST client, and the `stella connect` OAuth store. |
 | [`src/media.rs`](src/media.rs), [`src/media/`](src/media) | `generate_image`/`generate_video`/`poll_video` over `stella-media`'s port, plus the always-on client-side `generate_svg` and the host-attested process-free authority marker. |
@@ -142,8 +142,10 @@ got.
 - **Turning `bash` off removes the shell *tool*, not the shell *capability*.** `build_project`
   and `run_tests` take a `command` override, `verify_done` a `test_cmd`, and `run_script` composes
   a line from the scripts index — all four are always-on and all four reach `bash -c` through
-  `exec::run`. `STELLA_BASH_SANDBOX` does not cover them either; only the `bash` tool spawns
-  through `src/sandbox.rs`. The one fence that spans the whole class is the registry's
+  `exec::run`. There is no per-command OS confinement to fall back on: `STELLA_BASH_SANDBOX`
+  wrapped the `bash` tool alone and was removed for exactly that reason (#1300 — isolation is
+  the container the process runs in, `docs/design/remote-sandboxes.md` §2). The one fence that
+  spans the whole class is the registry's
   `command.started` policy chain (`ToolRegistry::command_line_for` enumerates every member), so a
   deployment that needs shell execution actually bounded must gate on that chain — not on the
   `tools.bash` switch. Any new tool that can reach `bash -c` must be added to that enumeration.

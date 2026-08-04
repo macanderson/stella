@@ -66,6 +66,7 @@ def extract_trial(result_path: Path) -> dict[str, Any]:
     metadata = _dict(agent_result.get("metadata"))
     accounting = _dict(metadata.get("stella_accounting"))
     fields = _dict(accounting.get("fields"))
+    stream = _dict(metadata.get("stella_stream"))
 
     reward = _number(rewards.get("reward"))
     exception_type = exception_info.get("exception_type")
@@ -133,6 +134,30 @@ def extract_trial(result_path: Path) -> dict[str, Any]:
         "engine_posture_sha256": metadata.get("stella_engine_posture_sha256"),
         "assurance_arm": metadata.get("stella_assurance_arm"),
         "assurance_tiers_sha256": metadata.get("stella_assurance_tiers_sha256"),
+        # The verification-ladder A/B's whole input (#1284), and the reason it
+        # is here rather than derived later: the job tree these fields come from
+        # is not committed, so a comparison that reads it can only be run while
+        # the run is still on the disk that produced it. Four questions, four
+        # fields — which arm the posture *declared*, who the independent author
+        # was, whether the tier actually *fired* on this task, and what Stella
+        # itself claimed about the work the external reward then graded.
+        "witness_author_model": metadata.get("stella_witness_author_model"),
+        "witness_authored_state": metadata.get("stella_witness_authored_state"),
+        "witness_authored_count": _int(stream.get("witness_authored_count")),
+        "witness_warranted_count": _int(stream.get("witness_warranted_count")),
+        # Tri-state, and it must stay that way through the JSON round trip: a
+        # trial killed before the ladder closed made no claim, which is not the
+        # same datum as claiming failure.
+        "self_verdict_passed": (
+            stream.get("self_verdict_passed")
+            if isinstance(stream.get("self_verdict_passed"), bool)
+            else None
+        ),
+        "self_verdict_deterministic": (
+            stream.get("self_verdict_deterministic")
+            if isinstance(stream.get("self_verdict_deterministic"), bool)
+            else None
+        ),
         "binary_sha256": metadata.get("stella_binary_sha256"),
         "source_commit": metadata.get("stella_source_commit"),
         "harbor_version": metadata.get("stella_harbor_version"),

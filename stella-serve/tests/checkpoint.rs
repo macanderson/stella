@@ -15,6 +15,13 @@
 //!    **store**, not the session registry, which is the only version of the
 //!    feature a crashed server can benefit from;
 //! 3. a host can reclaim one, because nothing else ever will.
+//!
+//! And one claim about what those bytes are *worth* (#1302): what comes off
+//! the wire reconstitutes the turn it came from, transcript and money meter
+//! alike. A writer whose output nothing can read would be a different gap, not
+//! a closed one, so it is asserted rather than assumed — while the half that
+//! genuinely is missing, a wire verb that hands a resume point *back*, stays
+//! declared in `stella-parity`'s `turn.checkpoint_resume` row.
 
 mod common;
 
@@ -114,27 +121,24 @@ async fn next_frame(sse: &mut tokio::io::BufReader<tokio::net::TcpStream>) -> se
         .expect("the stream must not end early")
 }
 
-/// The witness for the `turn.checkpoint` API row: a served turn's resume point
-/// exists at the step boundary and is gone once the turn ends.
+/// Drive a turn across its first step boundary: answer the model with
+/// `first_result`, answer the tool call it asks for, and return the step-two
+/// `provider_request` frame.
 ///
-/// Two steps, not one, because a single-step turn never reaches
-/// `StepOutcome::Continue` and so never checkpoints — the seam under test only
-/// exists *between* steps. The model asks for a tool on step one; answering it
-/// commits the step, and the step-two provider request is proof the persist
-/// already ran (`drive_turn` persists before it loops).
-#[tokio::test]
-async fn a_served_turn_writes_a_resume_point_at_every_step_boundary() {
-    let (addr, store) = start_durable_server().await;
-    let session_id = create_session(addr).await;
-    let turn_id = create_session_turn(addr, &session_id).await;
-    let path = format!("/v1/sessions/{session_id}/checkpoint");
-
-    let mut sse = open_sse(addr, &format!("/v1/turns/{turn_id}/events"), TOKEN).await;
-
-    // Step one: the model calls a tool.
+/// That frame is the synchronization point these tests need. Two steps, not
+/// one, because a single-step turn never reaches `StepOutcome::Continue` and so
+/// never checkpoints — the seam under test only exists *between* steps — and
+/// seeing step two's request is proof the step-one persist already ran, since
+/// `drive_turn` persists before it loops.
+async fn cross_the_first_step_boundary(
+    addr: std::net::SocketAddr,
+    turn_id: &str,
+    sse: &mut tokio::io::BufReader<tokio::net::TcpStream>,
+    first_result: serde_json::Value,
+) -> serde_json::Value {
     let mut answered_provider = 0;
-    let second = loop {
-        let frame = next_frame(&mut sse).await;
+    loop {
+        let frame = next_frame(sse).await;
         match frame["type"].as_str() {
             Some("provider_request") if answered_provider == 0 => {
                 let (status, body) = post_json(
@@ -144,7 +148,7 @@ async fn a_served_turn_writes_a_resume_point_at_every_step_boundary() {
                     &json!({
                         "request_id": frame["request_id"],
                         "status": "ok",
-                        "result": model_wants_echo(),
+                        "result": first_result,
                     })
                     .to_string(),
                 )
@@ -170,7 +174,26 @@ async fn a_served_turn_writes_a_resume_point_at_every_step_boundary() {
             Some("provider_request") => break frame,
             _ => {}
         }
-    };
+    }
+}
+
+/// The witness for the `turn.checkpoint` API row: a served turn's resume point
+/// exists at the step boundary and is gone once the turn ends.
+///
+/// Why the turn has to run two steps is
+/// [`cross_the_first_step_boundary`]'s own doc — the seam under test exists
+/// only *between* steps.
+#[tokio::test]
+async fn a_served_turn_writes_a_resume_point_at_every_step_boundary() {
+    let (addr, store) = start_durable_server().await;
+    let session_id = create_session(addr).await;
+    let turn_id = create_session_turn(addr, &session_id).await;
+    let path = format!("/v1/sessions/{session_id}/checkpoint");
+
+    let mut sse = open_sse(addr, &format!("/v1/turns/{turn_id}/events"), TOKEN).await;
+
+    // Step one: the model calls a tool, the host answers, step two opens.
+    let second = cross_the_first_step_boundary(addr, &turn_id, &mut sse, model_wants_echo()).await;
 
     // The claim, over the wire.
     let (status, body) = get_checkpoint(addr, &path).await;
@@ -228,6 +251,75 @@ async fn a_served_turn_writes_a_resume_point_at_every_step_boundary() {
             .unwrap(),
         None,
         "and the store agrees with the route"
+    );
+}
+
+/// What the route hands back is a *resumable turn*, not merely bytes that
+/// parse: the transcript the engine left, the step to run next, and the money
+/// already spent (#1302).
+///
+/// This is the claim the `turn.checkpoint` row rests on and the one
+/// `turn.checkpoint_resume` is measured against. The rows have been wrong in
+/// this area before — in the pessimistic direction — because "serve writes a
+/// checkpoint" and "a host can do something with it" are separate facts and
+/// only the first one had a test. A writer whose output no reader can use is a
+/// different gap, not a closed one, so the reader half is asserted here
+/// against the same wire body a crashed host would fetch.
+///
+/// `TurnState::from_checkpoint` is exactly what `Engine::resume_turn`
+/// delegates to (`stella-core/src/driver.rs`); it is called directly because
+/// building an `Engine` would need a provider and a tool executor that
+/// reconstitution never reaches.
+///
+/// What this deliberately does **not** claim is that *serve* resumes. No route
+/// accepts a checkpoint back, on purpose — a resumed turn's first act is a
+/// reverse request only a host can answer (`crate::checkpoint`'s module docs)
+/// — so the continuing is the host's, in the host's process, and the missing
+/// wire verb stays declared in `stella-parity`.
+#[tokio::test]
+async fn a_served_resume_point_reconstitutes_the_turn_it_came_from() {
+    let (addr, _store) = start_durable_server().await;
+    let session_id = create_session(addr).await;
+    let turn_id = create_session_turn(addr, &session_id).await;
+
+    let mut sse = open_sse(addr, &format!("/v1/turns/{turn_id}/events"), TOKEN).await;
+
+    // A priced model call: a money meter that reads zero either way would
+    // prove nothing about whether spend survives the hop.
+    let mut first = model_wants_echo();
+    first["cost_usd"] = json!(0.25);
+    let _step_two = cross_the_first_step_boundary(addr, &turn_id, &mut sse, first).await;
+
+    let (status, body) =
+        get_checkpoint(addr, &format!("/v1/sessions/{session_id}/checkpoint")).await;
+    assert!(status.contains("200"), "{status} {body}");
+
+    // The host's side of the seam, over the bytes the host actually receives.
+    let resumed = stella_engine::TurnState::from_checkpoint(
+        stella_engine::decode_checkpoint(&body).expect("the wire body decodes as a Checkpoint"),
+        &stella_engine::EngineConfig::default(),
+    );
+
+    assert_eq!(
+        resumed.step(),
+        1,
+        "a resumed turn continues at the step that had not run, not from zero"
+    );
+    let transcript = serde_json::to_string(resumed.messages()).expect("the transcript serializes");
+    assert!(
+        transcript.contains("do the thing"),
+        "the request the turn was answering survives: {transcript}"
+    );
+    assert!(
+        transcript.contains("echoed"),
+        "so does the completed step's tool result — which is what makes resuming cheaper than \
+         restarting, since that work is not re-run: {transcript}"
+    );
+    assert!(
+        (resumed.total_cost_usd() - 0.25).abs() < 1e-9,
+        "and the money spent before the crash comes back with it, so a continued turn charges \
+         against what it already spent instead of starting the meter over: got {}",
+        resumed.total_cost_usd()
     );
 }
 

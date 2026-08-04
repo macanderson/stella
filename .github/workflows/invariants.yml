@@ -1,0 +1,46 @@
+name: invariants
+
+# The architectural invariants live in AGENTS.md and nowhere else, and the
+# numbering that Rust doc comments cite by ("AGENTS.md invariant #3") must keep
+# resolving (#630). CONTRIBUTING.md and README.md each carried a drifted second
+# copy before this guard existed.
+#
+# This was previously one step of `normative-home.yml`, alongside two doc-citation
+# guards that have since been retired: citations now point at the public docs
+# site by path and at internal design docs by URL, neither of which a repo-local
+# checker can usefully validate. The invariant guard is a different thing — it is
+# about one file having one copy of one numbered list — so it kept its job and
+# got its own workflow.
+#
+# Rust sources are in the path filter because the citation half reads them: a
+# `#N` written into a .rs comment is exactly how a citation goes stale.
+# Isolated from ci.yml / docs.yml so it can never block the core build.
+on:
+  pull_request:
+    paths:
+      - "**/*.md"
+      - "**/*.rs"
+      - "scripts/check-invariants.sh"
+      - ".github/workflows/invariants.yml"
+  push:
+    branches: [main]
+    paths:
+      - "**/*.md"
+      - "**/*.rs"
+      - "scripts/check-invariants.sh"
+      - ".github/workflows/invariants.yml"
+  workflow_dispatch:
+
+# Checkout + one read-only shell check.
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: invariants check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check the architectural invariants have one home and stable numbering
+        run: bash scripts/check-invariants.sh

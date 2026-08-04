@@ -304,6 +304,21 @@ def _recorded(run_dir: Path) -> dict[str, Any]:
     return out
 
 
+def _arm_mismatch(recorded_arm: Any, witness_author: str | None) -> bool:
+    """Does the operator's `--witness-author` contradict what the trials ran?
+
+    Only a recorded arm this script recognizes can contradict anything: v1
+    evidence records no arm at all (#1007 predates it) and a run whose trials
+    disagree is already reported as a `DISAGREEMENT` elsewhere. Both pass
+    through here rather than being refused for a question they cannot answer.
+    """
+    if recorded_arm == "witness-off":
+        return witness_author is not None
+    if recorded_arm == "witness-on":
+        return witness_author is None
+    return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
@@ -361,6 +376,21 @@ def main() -> int:
 
     trial_dirs = _trial_dirs(job_dir, run_dir)
     recorded = _recorded(run_dir)
+    if _arm_mismatch(recorded.get("assurance_arm"), witness_author):
+        # An A/B is run from one shell, and the author stays exported across
+        # both arms — so finalizing the control arm picks up the treatment's
+        # author unless the operator unsets it (#1284). The digests below would
+        # already disagree and `_drift` would withhold the body, but
+        # `engine.witness_author_model` is operator-supplied and would still
+        # name a model that arm never used. Refusing costs one rerun of a free
+        # script; recording it mislabels the arm of a paid run.
+        print(
+            f"FATAL: the trials recorded assurance arm {recorded['assurance_arm']!r}, "
+            f"but --witness-author says {witness_author!r}. Finalize the control "
+            "arm with `env -u STELLA_WITNESS_AUTHOR_MODEL`.",
+            file=sys.stderr,
+        )
+        return 1
     host = _host(Path(args.host_json) if args.host_json else None)
 
     manifest: dict[str, Any] = {

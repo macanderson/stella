@@ -469,17 +469,16 @@ fi
 # ── The part that is easy to get wrong ───────────────────────────────────────
 hdr "make gate vs CI"
 cat <<'EOF'
-  make gate  runs: no-scratch, action-pins, doc-citations, invariants, file-size,
+  make gate  runs: no-scratch, action-pins, invariants, file-size,
              doc-warnings (RUSTDOCFLAGS=-D warnings), fmt --check, clippy, test.
              It stops at the FIRST failure; CI reports all of them in one run.
 
-  make check is the fast subset — it skips tests, doc-citations AND rustdoc.
+  make check is the fast subset — it skips tests AND rustdoc.
              Passing `make check` does not mean CI will pass.
 
-  Green locally, red in CI, three ways:
+  Green locally, red in CI, two ways:
     - release smoke   CI also runs `cargo build --workspace --release`
                       (thin LTO). Not in any make target.
-    - normative-home  scripts/check-normative-home.sh runs in CI only.
     - supply chain    `cargo deny` is a SEPARATE required check (the CI job
                       keeps the name "cargo deny + cargo audit" for branch
                       protection; cargo-audit itself was dropped in #919).

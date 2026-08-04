@@ -1,0 +1,60 @@
+{
+  "schema": "stella-witness-ab-preregistration-v1",
+  "issue": "https://github.com/macanderson/stella/issues/1284",
+  "status": "plan_fixed_run_not_started",
+  "status_note": "The design, outcomes, seeds and decision rule below are fixed and were written before any data existed. The run has not been executed: it needs a spend-capable credential and a host able to run the task images. The fields under `to_be_recorded_before_the_first_paid_call` are the run's identity and must be filled in — and this file committed — before the first paid call, not after.",
+  "plan_fixed_at": "2026-08-03",
+  "question": "Does an authored witness — a failing test written by a model independent of the worker — earn its cost, measured against the same task set run with that tier off?",
+  "design": "two arms, paired by task, one variable: STELLA_WITNESS_AUTHOR_MODEL unset (control) vs set to a second model on the worker's provider (treatment)",
+  "arms": {
+    "control": {
+      "assurance_arm": "witness-off",
+      "witness_author_model": null,
+      "authored_witness": "off — no author independent of the worker",
+      "model_judge": "on, same model as the worker"
+    },
+    "treatment": {
+      "assurance_arm": "witness-on",
+      "witness_author_model": "a second provider/model on the worker's provider, carried by Stella's offline seed catalog",
+      "authored_witness": "on",
+      "model_judge": "on, independent of the worker"
+    }
+  },
+  "shared": "same SUT commit and binary, same dataset digest, same task list, same budget cap, attempts=1, retries=0, same concurrency, same host",
+  "outcomes": {
+    "primary": "tasks passed, paired by task over the fixed denominator; reported as gained/lost/both/neither with an exact McNemar test over the discordant pairs",
+    "secondary": "trials whose own verdict claimed the work passed while the external grader scored it zero, overall and restricted to model-opined verdicts (self_verdict_deterministic=false)",
+    "cost": "total spend, treatment/control ratio, spend per additional task passed; wall clock reported but not treated as a time measurement while #960 keeps every trial at its agent timeout"
+  },
+  "analysis": {
+    "tool": "bench/evidence/compare_arms.py",
+    "reward_rule": "the external verifier's reward is authoritative; a trial that produced no reward scores 0 and stays in the denominator; a task absent from an arm scores 0 in that arm",
+    "bootstrap_seed": 20260803,
+    "bootstrap_draws": 50000,
+    "significance_alpha": 0.05,
+    "cost_ratio_ceiling": 1.5
+  },
+  "decision_rule": {
+    "reject": "the treatment arm loses more tasks than it gains at p < 0.05, OR wrong 'this passed' calls increase",
+    "adopt": "the treatment arm gains more tasks than it loses, AND that gain is significant at p < 0.05 or accompanied by fewer wrong 'this passed' calls, AND its spend is at most 1.5x the control arm",
+    "inconclusive": "anything else — the default does not change",
+    "adopted_means": "the witness arm becomes the default posture for benchmark runs"
+  },
+  "refusals": {
+    "not_one_experiment": "a trial that records no assurance arm, an arm whose trials disagree about which arm they ran, or two arms on different SUT commits or binaries",
+    "tier_never_fired": "the treatment arm authored no witness on any task — a posture that declares the rung is not a run that exercised it (#1147)"
+  },
+  "rules": "no reruns, no outcome-selected stops, no task excluded, no threshold moved after data; operational aborts are disclosed and relaunch under a new job name; failures published in the per-task table",
+  "to_be_recorded_before_the_first_paid_call": {
+    "prereg_url": null,
+    "registered_at": null,
+    "sut_commit": null,
+    "binary_sha256": null,
+    "dataset": null,
+    "worker_model": null,
+    "witness_author_model": null,
+    "taskset_sha256": null,
+    "denominator": null,
+    "budget_usd_per_trial": null
+  }
+}

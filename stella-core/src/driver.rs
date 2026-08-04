@@ -89,7 +89,7 @@ use crate::compaction::compact_measured;
 use crate::receipts::TranscriptRevision;
 use lifecycle::{step_outcome_label, turn_outcome_payload};
 
-mod lifecycle;
+pub mod lifecycle;
 mod loop_evidence;
 mod truncation;
 use crate::estimator::{CalibrationMap, estimate_conversation_tokens};
@@ -612,6 +612,19 @@ impl<'a> Engine<'a> {
 
     /// Attribute this engine's provider calls to a concrete pipeline role.
     /// Ordinary execution defaults to [`stella_protocol::ModelCallRole::Worker`].
+    /// The role this engine attributes its model calls to — the reader for
+    /// [`Engine::with_call_role`].
+    ///
+    /// Public because a host that drives [`Engine::run_step`] itself owns the
+    /// turn framing (`stella-serve`), and the `agent.turn.started` payload
+    /// names the role. Without this the host would have to keep its own copy
+    /// of the engine's default, which is a second source of truth for a value
+    /// it does not own.
+    #[must_use]
+    pub fn call_role(&self) -> stella_protocol::ModelCallRole {
+        self.call_role
+    }
+
     pub fn with_call_role(mut self, role: stella_protocol::ModelCallRole) -> Self {
         self.call_role = role;
         self
@@ -817,11 +830,7 @@ impl<'a> Engine<'a> {
             name: StageKind::Execute,
         });
         self.emit_lifecycle(bus::names::AGENT_TURN_STARTED, || {
-            serde_json::json!({
-                "message_count": messages.len(),
-                "max_steps": self.config.max_steps,
-                "role": self.call_role,
-            })
+            lifecycle::turn_started_payload(messages.len(), self.config.max_steps, self.call_role)
         });
         // The turn's state is OWNED for the duration and written back to the
         // caller's borrows when it drops — including on the hard-cancel path,
@@ -1139,17 +1148,12 @@ impl<'a> Engine<'a> {
         // than each attempt — a retried call is one request from an
         // observer's point of view, and the retries are already reported as
         // their own `AgentEvent`s.
-        //
-        // Payload hygiene: counts and identifiers, never transcript content.
-        // A message count says how large the request was without saying what
-        // was in it, which is what an observer applying policy at this
-        // boundary actually needs.
         self.emit_lifecycle(bus::names::MODEL_REQUEST_STARTED, || {
-            serde_json::json!({
-                "step": state.step,
-                "message_count": state.messages.len(),
-                "role": self.call_role,
-            })
+            lifecycle::model_request_started_payload(
+                state.step,
+                state.messages.len(),
+                self.call_role,
+            )
         });
         // Wall clock around the whole call including its retries, because that
         // is what a continuation would actually cost again — not the duration
@@ -1184,14 +1188,7 @@ impl<'a> Engine<'a> {
             }
         };
         self.emit_lifecycle(bus::names::MODEL_REQUEST_COMPLETED, || {
-            serde_json::json!({
-                "step": state.step,
-                "model": committed.result.model,
-                "cost_usd": committed.result.cost_usd,
-                "input_tokens": committed.result.usage.input_tokens,
-                "output_tokens": committed.result.usage.output_tokens,
-                "tool_calls": committed.result.tool_calls.len(),
-            })
+            lifecycle::model_request_completed_payload(state.step, &committed.result)
         });
         state.last_step = Some(step_started.elapsed());
         state.calibration_model = Some(committed.result.model.clone());
@@ -1278,8 +1275,8 @@ impl<'a> Engine<'a> {
     ///   reopen the conversation at the checkpoint's step boundary, so the
     ///   completed steps' work is not re-run — see `stella-parity`'s
     ///   `turn.checkpoint_resume` row.
-    /// - **`stella-serve`** drives steps and would use this directly, but has
-    ///   no store to read a checkpoint back from (same row, API side).
+    /// - **`stella-serve`** stores one and hands it back on request but accepts
+    ///   none in return, so continuing is the host's call (same row, API side).
     ///
     /// So the production callers are embedders, and the in-tree exercise of it
     /// is `stella-engine`'s test suite. Anything that changes on either surface

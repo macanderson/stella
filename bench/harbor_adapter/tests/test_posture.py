@@ -36,8 +36,16 @@ from stella_harbor import (  # noqa: E402 - after importorskip by design
     _benchmark_engine_posture,
     _stream_to_envelope,
     resolve_candidates,
+    resolve_judge_evidence_demand,
     resolve_max_revisions,
     resolve_model_timeout,
+)
+
+# Imported from the module rather than the package: these two are internals of
+# the posture's ceiling policy, not part of what the adapter re-exports.
+from stella_harbor.posture import (  # noqa: E402 - after importorskip by design
+    _BENCHMARKED_SLUGS,
+    _SUB_CEILING_RATIONALE,
 )
 
 
@@ -389,6 +397,7 @@ class TestAttemptCountArms:
             triage_model="openrouter/anthropic/claude-haiku-4.5",
             max_revisions=4,
             candidates=2,
+            judge_evidence_demand=True,
             model_timeout_secs=1572,
         )
         allowed_roots = {
@@ -403,6 +412,7 @@ class TestAttemptCountArms:
             "headless_scope_bypass",
             "pipeline_max_revisions",
             "pipeline_candidates",
+            "pipeline_judge_evidence_demand",
             "model_timeout_secs",
             "agents",
         }
@@ -440,6 +450,38 @@ class TestAttemptCountArms:
             resolve_max_revisions("40")
         with pytest.raises(ValueError, match="candidates must be between"):
             resolve_candidates("20")
+
+    def test_the_corroboration_ask_is_a_selectable_arm(self) -> None:
+        """#1295, the same omit-when-unset rule the attempt counts follow.
+
+        The vocabulary is the setting's own (`on`/`off`), plus `1`/`0` for a
+        shell with an integer to hand. A bare `true` is refused rather than
+        guessed at: the CLI parses this key as a `Toggle`, so a JSON bool would
+        be a run that dies at launch wearing a posture that claims it ran.
+        """
+        assert resolve_judge_evidence_demand(None) is None
+        assert resolve_judge_evidence_demand("on") is True
+        assert resolve_judge_evidence_demand(" OFF ") is False
+        assert resolve_judge_evidence_demand("1") is True
+        assert resolve_judge_evidence_demand("0") is False
+        for lost in ("", "   ", "true", "yes"):
+            with pytest.raises(ValueError, match="must be one of on/off"):
+                resolve_judge_evidence_demand(lost)
+
+        unset, _unset_json, unset_digest = _benchmark_engine_posture(self._MODEL)
+        assert "pipeline_judge_evidence_demand" not in unset
+        on, _on_json, on_digest = _benchmark_engine_posture(
+            self._MODEL, judge_evidence_demand=True
+        )
+        off, _off_json, off_digest = _benchmark_engine_posture(
+            self._MODEL, judge_evidence_demand=False
+        )
+        assert on["pipeline_judge_evidence_demand"] == "on"
+        assert off["pipeline_judge_evidence_demand"] == "off"
+        # Three distinct digests: the two arms cannot be confused with each
+        # other, and neither can be confused with the historical posture that
+        # never mentioned the key.
+        assert len({unset_digest, on_digest, off_digest}) == 3
 
 
 class TestModelTimeoutArm:
@@ -728,6 +770,104 @@ class TestWitnessStreamObservation:
         assert envelope["_stella_stream"]["proof_step_counts"] == {}
 
 
+class TestSelfVerdictStreamObservation:
+    """What Stella claimed about its own work, beside what it was graded.
+
+    The A/B in #1284 turns on comparing the two. Stella's claim is a
+    `judge_verdict` event and the grade is the verifier's reward, which the
+    agent never sees — so a trial is the only place they meet, and the event
+    stream is the only place the claim exists.
+    """
+
+    @staticmethod
+    def _stream(*events: dict) -> dict:
+        envelope = _stream_to_envelope(
+            "\n".join(json.dumps(event) for event in events), process_returned=True
+        )
+        assert envelope is not None
+        return envelope["_stella_stream"]
+
+    def test_a_model_opinion_and_a_flip_oracle_are_told_apart(self) -> None:
+        """`deterministic` is the difference between two instruments.
+
+        #1284 measures the *judge's* agreement with the official grader.
+        Folding an oracle verdict in under the same name reports the ladder's
+        aggregate as the judge's reliability.
+        """
+        opinion = self._stream(
+            {
+                "type": "judge_verdict",
+                "passed": True,
+                "evidence": {"summary": "looks right", "deterministic": False},
+            },
+            {"type": "complete", "status": "completed", "cost_usd": 0.5},
+        )
+        assert opinion["self_verdict_passed"] is True
+        assert opinion["self_verdict_state"] == "passed"
+        assert opinion["self_verdict_deterministic"] is False
+
+        oracle = self._stream(
+            {
+                "type": "judge_verdict",
+                "passed": True,
+                "evidence": {
+                    "summary": "flip oracle: fail→pass on `pytest -q`",
+                    "deterministic": True,
+                },
+            },
+            {"type": "complete", "status": "completed", "cost_usd": 0.5},
+        )
+        assert oracle["self_verdict_deterministic"] is True
+
+    def test_the_last_verdict_is_the_one_the_trial_ended_on(self) -> None:
+        """A revised candidate is judged again; the reward grades the last one."""
+        stream = self._stream(
+            {
+                "type": "judge_verdict",
+                "passed": False,
+                "evidence": {"summary": "test still red", "deterministic": True},
+            },
+            {
+                "type": "judge_verdict",
+                "passed": True,
+                "evidence": {"summary": "flip observed", "deterministic": True},
+            },
+            {"type": "complete", "status": "completed", "cost_usd": 0.5},
+        )
+        assert stream["self_verdict_passed"] is True
+        assert stream["self_verdict_count"] == 2
+
+    def test_a_trial_that_closed_no_verdict_claimed_nothing(self) -> None:
+        """Silence is not a failed verdict.
+
+        An interrupted trial made no claim about its work, and scoring that as
+        a truthful "it failed" credits the agent with honesty it never showed —
+        on exactly the trials most likely to be re-read.
+        """
+        stream = self._stream(
+            {"type": "complete", "status": "completed", "cost_usd": 0.5}
+        )
+        assert stream["self_verdict_passed"] is None
+        assert stream["self_verdict_state"] == "not_reported"
+        assert stream["self_verdict_deterministic"] is None
+        assert stream["self_verdict_count"] == 0
+
+    def test_an_abstention_is_counted_and_is_not_a_verdict(self) -> None:
+        """#973: every evidence channel blind is a stated outcome of its own."""
+        stream = self._stream(
+            {
+                "type": "proof",
+                "step": {
+                    "kind": "verification_unavailable",
+                    "reason": "no oracle, no test result, unreadable tree",
+                },
+            },
+            {"type": "complete", "status": "completed", "cost_usd": 0.5},
+        )
+        assert stream["verification_unavailable_count"] == 1
+        assert stream["self_verdict_state"] == "not_reported"
+
+
 class TestWitnessArmEndToEnd:
     """Env knob -> posture -> container -> trial metadata."""
 
@@ -830,6 +970,11 @@ class TestWitnessArmEndToEnd:
                 "type": "proof",
                 "step": {"kind": "witness_unavailable", "reason": reason},
             },
+            {
+                "type": "judge_verdict",
+                "passed": True,
+                "evidence": {"summary": "reads correct", "deterministic": False},
+            },
             {"type": "complete", "status": "completed", "cost_usd": 0.42},
         ]
         (tmp_path / "stella-events.jsonl").write_text(
@@ -861,6 +1006,12 @@ class TestWitnessArmEndToEnd:
         assert context.metadata["stella_stream"]["witness_unavailable_reasons"] == [
             reason
         ]
+        # The control arm's whole shape, in one trial: no witness could be
+        # authored, and a model judge — the worker's own model — declared the
+        # work done anyway. Whether the grader agreed is the comparison #1284
+        # runs, and it needs this field to be a field.
+        assert context.metadata["stella_self_verdict_state"] == "passed"
+        assert context.metadata["stella_stream"]["self_verdict_deterministic"] is False
 
 
 _CATALOG_RS = (
@@ -1048,8 +1199,47 @@ class TestOutputCeilingParity:
         assert _CATALOG_RS.is_file(), f"{_CATALOG_RS} is missing"
         assert _seeded_output_ceilings(), "no seeded ceiling was parsed"
 
-    def test_posture_caps_every_seeded_model_at_its_own_ceiling(self) -> None:
+    def test_every_bookable_model_has_a_seeded_ceiling(self) -> None:
+        """An arm can only book a model the catalog has a ceiling for.
+
+        Without this, the check below passes vacuously for any model whose
+        seed row lost its ceiling: `_parse_output_ceilings` omits rows with no
+        `with_max_output_tokens`, so the model silently drops out of the
+        parity loop and inherits the engine's global 16384 — the exact
+        failure the loop exists to catch, hidden by the loop's own filter.
+        """
+        seeded = _seeded_output_ceilings()
+        by_slug = {model.rsplit("/", 1)[-1] for model in seeded}
+        missing = sorted(_BENCHMARKED_SLUGS - by_slug)
+        assert not missing, (
+            f"these models can be booked by an arm but carry no seeded "
+            f"ceiling: {missing}. They would run at the engine default "
+            f"(16384) instead of their own budget."
+        )
+
+    def test_posture_caps_every_bookable_model_at_its_own_ceiling(self) -> None:
+        """The cap matches the model's ceiling, or the gap is declared.
+
+        Two distinct failures live here and only one of them is a bug:
+
+        - Capping ABOVE the ceiling is always wrong. It is not a longer
+          answer, it is a request the provider rejects.
+        - Capping BELOW the ceiling is sometimes right — matching a
+          comparator that stops lower is the point of a head-to-head — but it
+          must be a decision someone recorded, not a literal that drifted out
+          of step with the catalog and still looks deliberate.
+
+        So a gap is legal exactly when `_SUB_CEILING_RATIONALE` explains it.
+        That is what turns "both numbers look intentional" from the hazard
+        this class was written about into a property the suite can check.
+        """
+        checked = 0
         for model, ceiling in _seeded_output_ceilings().items():
+            slug = model.rsplit("/", 1)[-1]
+            if slug not in _BENCHMARKED_SLUGS:
+                # Not bookable, so it has no posture to be wrong about; see
+                # `_BENCHMARKED_SLUGS` for why the scope is deliberate.
+                continue
             posture, _, _ = _benchmark_engine_posture(model)
             for role, agent in posture["agents"].items():
                 params = agent.get("params")
@@ -1058,10 +1248,22 @@ class TestOutputCeilingParity:
                     # a three-line classification, so the cap never binds.
                     assert role == "triage", f"{role} unexpectedly has no cap"
                     continue
-                assert params["max_tokens"] == ceiling, (
-                    f"{model} role {role}: the posture caps at "
-                    f"{params['max_tokens']} but the catalog seeds the model's "
-                    f"ceiling at {ceiling}. Whichever moved, the benchmark is "
-                    "now capping itself away from the comparator — raise the "
-                    "posture, or correct the catalog."
+                cap = params["max_tokens"]
+                checked += 1
+                assert cap <= ceiling, (
+                    f"{model} role {role}: the posture asks for {cap} but the "
+                    f"model's ceiling is {ceiling}. Over-asking is refused by "
+                    "the provider on every step, not answered at length."
                 )
+                if cap == ceiling:
+                    continue
+                assert _SUB_CEILING_RATIONALE.get(slug, "").strip(), (
+                    f"{model} role {role}: the posture caps at {cap} while the "
+                    f"catalog seeds the model's ceiling at {ceiling}, and "
+                    "nothing says why. If the benchmark should stop lower "
+                    "than the model can write, record the reason in "
+                    "`_SUB_CEILING_RATIONALE`; if it should not, raise the "
+                    "posture. An undeclared gap is the benchmark capping "
+                    "itself away from the comparator by accident."
+                )
+        assert checked, "no bookable model was checked — the loop is inert"

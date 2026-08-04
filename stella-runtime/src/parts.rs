@@ -130,6 +130,7 @@ pub fn build_provider(parts: &ProviderParts) -> Result<Box<dyn Provider>, Runtim
         parts.api_key.clone(),
         parts.base_url.clone(),
         parts.base_url_override.as_deref(),
+        &parts.aux,
     )
     .map_err(|reason| RuntimeError::Provider {
         provider: parts.id.clone(),

@@ -28,7 +28,7 @@ from .credential_bundle import (
     create_anonymous_credential_bundle,
     credential_values_from_environment,
     is_credential_env_name,
-    provider_credential_for_model,
+    provider_credentials_for_model,
     sanitized_harbor_environment,
 )
 from .host_attestation import (
@@ -3755,6 +3755,11 @@ def _validated_runtime_identity(
     """Recompute every runtime field bound by the immutable public intent."""
     binary, source_commit = _validate_claim_environment(environ)
     python_executable, adapter_sha256 = _resolve_harbor_executable()
+    # The runtime identity binds a claim, and a claim is single-secret by
+    # construction: `provider_key_fingerprint_sha256` below names one key and is
+    # reconciled against that provider's own key API. `_validate_claim_command`
+    # already pins the claim route to OpenRouter, so a multi-secret route never
+    # reaches here — it takes the bundle/handoff path without an attestation.
     if len(credentials) != 1:
         raise RuntimeError("runtime identity requires exactly one provider credential")
     credential = next(iter(credentials.values()))
@@ -4162,13 +4167,20 @@ def exec_harbor_securely(
     source_env = dict(os.environ if environ is None else environ)
     _validate_claim_command(command, source_env)
     models = _literal_model_arguments(command)
-    credentials = provider_credential_for_model(source_env, models[0])
+    selected = provider_credentials_for_model(source_env, models[0])
+    credentials = selected.credentials
+    # The claim attestation is single-secret by construction — it fingerprints
+    # one provider key and reconciles it against that provider's own key/credit
+    # API — and `_validate_claim_command` already pins the claim route to
+    # OpenRouter. A multi-secret route (Bedrock) reaches the same bundle and the
+    # same descriptor handoff, but not this attestation, which is why the
+    # fingerprint below can still name exactly one value.
     provider_credential = next(iter(credentials.values()))
     management_credential = source_env.get("OPENROUTER_MANAGEMENT_API_KEY")
     if (
         not isinstance(management_credential, str)
         or not management_credential
-        or management_credential == provider_credential
+        or management_credential in credentials.values()
     ):
         raise RuntimeError(
             "secure launcher requires a distinct non-empty "
@@ -4205,7 +4217,7 @@ def exec_harbor_securely(
         clock=clock,
         sleeper=sleeper,
     )
-    handle = create_anonymous_credential_bundle(credentials)
+    handle = create_anonymous_credential_bundle(credentials, selected.routing)
     try:
         fd = handle.fileno()
         mark_only_bundle_fd_inheritable(fd)
@@ -4234,7 +4246,10 @@ def exec_harbor_securely(
         host_preflight = _verify_public_host_preflight(
             command,
             public_intent_attestation=public_intent_attestation,
-            forbidden_credentials=(provider_credential, management_credential),
+            forbidden_credentials=(
+                *selected.secret_values(),
+                management_credential,
+            ),
             docker_executable=docker_executable,
             reader=public_source,
             host_probe=host_probe or probe_host,
@@ -4245,7 +4260,7 @@ def exec_harbor_securely(
             models,
             public_intent_attestation,
             host_preflight,
-            (provider_credential, management_credential),
+            (*selected.secret_values(), management_credential),
         )
         forwarded_command = _isolated_harbor_command(
             python_executable,

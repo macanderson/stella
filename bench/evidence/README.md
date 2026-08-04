@@ -13,7 +13,9 @@ about itself was therefore unfalsifiable. This directory is where that stops.
 ```
 score_dev_baseline.py     scoring: trials.jsonl -> pass@1 + two 95% intervals
 make_manifest.py          identity: freeze every input that can move the number
-tests/                    what keeps the two of them honest
+compare_arms.py           two arms of one experiment -> did the change pay?
+witness-ab/               the authored-witness A/B: protocol, plan, decision rule
+tests/                    what keeps the three of them honest
 <run-id>/
   run-manifest.json       the frozen inputs, and why the run is not a claim
   preregistration.json    what was fixed before the first trial
@@ -29,6 +31,16 @@ tests/                    what keeps the two of them honest
 | Run | What | Result |
 |---|---|---|
 | [`tb21-hh10-20260731`](tb21-hh10-20260731/) | Matched head-to-head, native x86_64 host, `glm-5.2`, effort `max`, no budget cap | Stella **58/89 = 65.2%** · Claude Code **44/89 = 49.4%** |
+
+### Investigations in here
+
+Not runs — a directory that carries a question, the harness that answers it, and
+what is known so far. Listed apart from the table above because none of them
+produces a pass rate, and a reader scanning for one must not find these.
+
+| Investigation | Question | State |
+|---|---|---|
+| [`judge-evidence-demand-1295`](judge-evidence-demand-1295/) | How often is a model judge's pass the only thing behind a turn, and is asking for corroboration worth a turn? | Precondition measured from committed evidence; the two-arm run is scripted but **unrun** (no funded credential) |
 
 Reproducing a published number needs only that run directory:
 
@@ -46,6 +58,29 @@ commit and Harbor version **the trial itself recorded**, so the manifest states
 the run's identity by collapsing 89 independent observations of it rather than by
 recomputing it from whatever checkout the manifest happened to be built in. Those
 are the same thing only while the run is still warm.
+
+Since #1284 a row also carries what the trial's own verification ladder did:
+which witness state it reached, and whether Stella itself claimed the work
+passed. That claim and the external grader's reward are two independent
+opinions of the same work, and their disagreement — a task failed while
+reporting success — is invisible to the score. It lived only in the uncommitted
+job tree, so it evaporated with it; carried here, the honesty of a published run
+is recomputable from the run directory like everything else.
+
+### Comparing two arms
+
+```bash
+python bench/evidence/compare_arms.py <control>/trials.jsonl <treatment>/trials.jsonl \
+  --tasks 89 --markdown <run-id>/results.md
+```
+
+Pairs two runs by task and reports what changed: tasks gained and lost with an
+exact McNemar test, wrong "this passed" calls fixed and introduced by name, and
+spend per additional task passed. It refuses — non-zero exit, `"verdict":
+"refused"`, numbers still printed — when the two files are not the two arms of
+one experiment, or when the treatment arm declared a verification tier it never
+exercised. See [`witness-ab/`](witness-ab/) for the experiment it was written
+for and the decision rule it applies.
 
 ### Reading a descriptive total
 

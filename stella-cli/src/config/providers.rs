@@ -44,6 +44,7 @@ impl ProviderConfig {
         api_key: stella_model::ApiKey,
         base_url: String,
         base_url_override: Option<&str>,
+        aux: stella_model::AuxCredentials,
     ) -> stella_runtime::ProviderParts {
         stella_runtime::ProviderParts {
             id: self.id.to_string(),
@@ -54,6 +55,7 @@ impl ProviderConfig {
             api_key,
             base_url,
             base_url_override: base_url_override.map(str::to_string),
+            aux,
         }
     }
 }
@@ -193,9 +195,14 @@ pub static PROVIDERS: &[ProviderConfig] = &[
     },
     ProviderConfig {
         id: "bedrock",
-        // The standard AWS chain vars; AWS_SECRET_ACCESS_KEY (and optional
-        // AWS_SESSION_TOKEN / AWS_REGION) are resolved in `build_provider`.
-        // Last in preference order on purpose — see the doc comment above.
+        // The access key id. Its companions — AWS_SECRET_ACCESS_KEY, the
+        // optional AWS_SESSION_TOKEN, and AWS_REGION — travel beside it as
+        // `AuxCredentials`, resolved through the same chain by
+        // `config::aux::provider_aux` (which also documents the AWS credential
+        // sources that are deliberately NOT supported). Last in preference
+        // order on purpose — see the doc comment above; auto-detection
+        // additionally requires the secret, so an unrelated AWS_ACCESS_KEY_ID
+        // in a shell cannot select a provider that then fails to build.
         env_var: "AWS_ACCESS_KEY_ID",
         env_var_aliases: &[],
         display_name: "Amazon Bedrock",

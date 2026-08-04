@@ -18,23 +18,35 @@ round trip to the site.
 | [`design/`](design/) | Design specifications and RFCs: the context frame, directive schema, storage map, Context PR workflow, telemetry receipts, the serve surface, [adaptive context](design/adaptive-context.md), [remote sandboxes](design/remote-sandboxes.md), [agent-native delivery](design/agent-native-delivery.md), and the [website information architecture](design/website-information-architecture.md). |
 | [`papers/`](papers/README.md) | The research notes behind Stella's design: [The Deterministic Engine](papers/deterministic-engine.md) and [Stella's Defensible Position](papers/stella-defensible-position.md). The live site links to these at their exact paths — don't move or rename them. |
 | [`brand/`](brand/README.md) | Logo, mark, wordmark, and icon assets, plus the design tokens under `tokens/`. The UI palette itself is not generated from here: `stella-tui/src/palette.rs` is the hand-maintained normative source, mirrored by `website/src/app/tokens.css` — edit the two together. |
-| [`context-reuse.md`](context-reuse.md) | **Vendored, do not edit.** The Context Graph Protocol's normative contract for context identity, usage reports, consent, and verification — the document 46 rustdoc citations point at. Re-sync from upstream rather than patching it. |
+| [`design/adaptive-context/context-reuse.md`](design/adaptive-context/context-reuse.md) | **Vendored, do not edit.** The Context Graph Protocol's normative contract for context identity, usage reports, consent, and verification — the document 46 rustdoc citations point at. Re-sync from upstream rather than patching it. |
 | [`why-stella.md`](why-stella.md) | The technical overview, written for someone evaluating Stella rather than contributing to it. |
-| [`context-pr.md`](context-pr.md) | The canonical Context PR specification: how durable steering is proposed, reviewed, published, and retired through Git. |
-| [`replay-golden-trajectories.md`](replay-golden-trajectories.md) | How the golden-trajectory replay fixtures are recorded and refreshed. |
+| [`design/adaptive-context/context-pr.md`](design/adaptive-context/context-pr.md) | The canonical Context PR specification: how durable steering is proposed, reviewed, published, and retired through Git. |
+| [`design/replay-golden-trajectories.md`](design/replay-golden-trajectories.md) | How the golden-trajectory replay fixtures are recorded and refreshed. |
 
-Three documents — [`design/context-frame-spec.md`](design/context-frame-spec.md),
+### How to cite a document
+
+**Cite the public docs by path; cite everything else by URL.** A citation in
+Rust source or in prose should name a page on the docs site
+(<https://stella.oxagen.sh>) or a `website/content/docs/` path, because that is
+the address a reader can actually follow and the one that survives a refactor of
+this directory. An internal design spec, an ADR, or an upstream contract is
+still fair to cite — link it by URL rather than by repo-relative path, so the
+citation resolves for someone reading the rendered docs rather than a checkout.
+
+Three documents — [`design/adaptive-context/context-frame-spec.md`](design/adaptive-context/context-frame-spec.md),
 [`design/directive-schema.md`](design/directive-schema.md), and the vendored
-[`context-reuse.md`](context-reuse.md) — carry a `NORMATIVE-HOME:` header
-pinning the Context Graph Protocol release they defer to instead of restating
-its wire semantics. `scripts/check-normative-home.sh` fails CI if that pin
-drifts from the exact `contextgraph-*` version in the root `Cargo.toml`'s
-`[workspace.dependencies]`, so repin the docs — re-vendoring the vendored
-copy's body — and bump the dependency in the same PR. The check discovers files by the
-marker written as an HTML comment, so prose that merely *names* the convention —
-this paragraph — is not itself treated as a pinned document. (Do not paste the
-comment form into prose: the guard matches the literal text and would then fail
-on a file that carries no pin.)
+[`design/adaptive-context/context-reuse.md`](design/adaptive-context/context-reuse.md)
+— defer to the Context Graph Protocol for their wire semantics instead of
+restating them, and each opens with a URL pointing at the CGP revision it
+defers to. Update that link when the `contextgraph-*` dependency moves.
+
+None of this is gated. There used to be two CI checks here —
+`check-normative-home.sh`, which compared a `NORMATIVE-HOME:` header against the
+`contextgraph-*` git rev, and `check-doc-citations.sh`, which required every
+`docs/**.md` path named in a Rust comment to resolve. Both assumed code cites
+internal specs by repo-relative path, which under the rule above it no longer
+does — and a repo-local checker cannot follow a URL. So the guards were retired
+rather than reworked. Getting a citation right is a review responsibility now.
 
 A spec is **not** deleted just because its feature shipped. Several of the
 documents under `design/` are cited by `file §section` from Rust doc comments
@@ -56,6 +68,6 @@ citation at unrelated prose, and because both the old and the new target render
 as ordinary text, nothing surfaces the drift. The citation still *looks*
 authoritative, which is what makes it worse than no citation at all. For a
 document with numbered headings use `§N`; for one without, name the heading
-(`docs/adr/0001-semantic-taxonomy.md § Open questions`). This is enforced —
-`scripts/check-doc-citations.sh` fails the gate on a `path.md:N` citation in any
-tracked markdown file.
+(`docs/adr/0001-semantic-taxonomy.md § Open questions`). This is a convention,
+not a gate: the check that enforced it was retired along with the rest of the
+citation guards, so it holds only as far as review does.

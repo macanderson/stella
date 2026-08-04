@@ -69,7 +69,6 @@ A red gate is an automatic "not yet":
 ```bash
 ./scripts/check-no-scratch.sh
 ./scripts/check-action-pins.sh
-./scripts/check-doc-citations.sh
 ./scripts/check-invariants.sh
 ./scripts/check-file-size.sh
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
@@ -78,14 +77,14 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Or just `make gate`, which is the nine of them in order.
+Or just `make gate`, which is the eight of them in order.
 
-CI enforces the same steps (split across `ci.yml` and `normative-home.yml`,
-plus a release smoke build) and one more that needs no local toolchain:
-`scripts/check-normative-home.sh` (in `normative-home.yml`, asserting the
-CGP release pinned in `docs/**` still matches the exact `contextgraph-*`
-version in the root `Cargo.toml`'s `[workspace.dependencies]`). Run that one
-by hand if you touched a `NORMATIVE-HOME:` document.
+CI enforces the same steps, split across `ci.yml` (plus a release smoke build)
+and `invariants.yml`, which runs `check-invariants.sh` on its own because it
+triggers on the `docs/**` and `*.md` paths that `ci.yml` deliberately ignores.
+
+Nothing gates doc citations. Cite the public docs site by path and anything
+internal by URL — see `docs/README.md § How to cite a document`.
 
 **Run `make hooks` once per clone.** It points `core.hooksPath` at `.githooks`,
 whose `pre-push` hook runs `make gate` and aborts the push if it fails — so a

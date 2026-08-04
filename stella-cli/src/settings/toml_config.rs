@@ -121,11 +121,31 @@ pub struct ModelsSection {
     /// would make it impossible for a project to narrow the user's list.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed: Option<Vec<String>>,
+    /// `[models.output_caps]` — deliberately spend FEWER output tokens than a
+    /// model can write, per model:
+    ///
+    /// ```toml
+    /// [models.output_caps]
+    /// "anthropic/claude-sonnet-5" = 64000   # match a comparator that stops here
+    /// "deepseek-chat" = 32000               # any route
+    /// ```
+    ///
+    /// Still policy over the catalog rather than a model table, which is what
+    /// keeps it inside this section's contract: the catalog remains the
+    /// authority on what a model CAN write, and an unlisted model needs no
+    /// entry — it simply gets its own maximum. Deleting an entry restores the
+    /// correct default rather than leaving a stale number behind, which is
+    /// precisely the rotting a hand-written model list does.
+    ///
+    /// Merges per KEY across scopes, unlike `allowed` above — see
+    /// `AgentEngineConfig::overlay`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_caps: Option<BTreeMap<String, u32>>,
 }
 
 impl ModelsSection {
     fn is_empty(&self) -> bool {
-        self.allowed.is_none()
+        self.allowed.is_none() && self.output_caps.is_none()
     }
 }
 
@@ -159,6 +179,8 @@ pub struct AgentsSection {
     pub pipeline_max_revisions: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_candidates: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_judge_evidence_demand: Option<Toggle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_timeout_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -559,6 +581,7 @@ pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection) {
         headless_scope_bypass: cfg.headless_scope_bypass,
         pipeline_max_revisions: cfg.pipeline_max_revisions,
         pipeline_candidates: cfg.pipeline_candidates,
+        pipeline_judge_evidence_demand: cfg.pipeline_judge_evidence_demand,
         model_timeout_secs: cfg.model_timeout_secs,
         compaction_budget_tokens: cfg.compaction_budget_tokens,
         tool_result_horizon_steps: cfg.tool_result_horizon_steps,
@@ -569,6 +592,7 @@ pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection) {
     };
     let models = ModelsSection {
         allowed: cfg.allowed_models.clone(),
+        output_caps: cfg.model_output_caps.clone(),
     };
     (agents, models)
 }
@@ -620,12 +644,14 @@ fn lower_agents(agents: AgentsSection, models: ModelsSection) -> Option<AgentEng
         pipeline_worker_model: agents.pipeline_worker_model,
         pipeline_triage_model: agents.pipeline_triage_model,
         allowed_models: models.allowed,
+        model_output_caps: models.output_caps,
         auto_mode: agents.auto_mode,
         effort_auto: agents.effort_auto,
         reasoning_auto: agents.reasoning_auto,
         headless_scope_bypass: agents.headless_scope_bypass,
         pipeline_max_revisions: agents.pipeline_max_revisions,
         pipeline_candidates: agents.pipeline_candidates,
+        pipeline_judge_evidence_demand: agents.pipeline_judge_evidence_demand,
         model_timeout_secs: agents.model_timeout_secs,
         compaction_budget_tokens: agents.compaction_budget_tokens,
         tool_result_horizon_steps: agents.tool_result_horizon_steps,
