@@ -805,6 +805,20 @@ pub enum AgentEvent {
     /// pauses on this event and waits for approval above configured
     /// thresholds; headless requires a flag to bypass.
     ScopeReview { proposal: ScopeProposal },
+    /// Interactive gate before a mutating tool call writes (#1265): the host
+    /// pauses on this event and waits for the reviewer to choose which of the
+    /// proposed hunks to apply.
+    ///
+    /// A sibling of `ScopeReview` at a different granularity — that one gates a
+    /// *plan* before it runs, this one gates a *write* before it lands, so a
+    /// call carrying one wanted and one unwanted change stops being
+    /// all-or-nothing. The answer returns through the host's own decision
+    /// channel and the card is cleared by a `ToolResult` carrying this
+    /// proposal's `id`, exactly as `AskUser` is; there is no separate answer
+    /// event. Runs with no reviewer never emit this at all — the gate is not
+    /// installed rather than installed and auto-approving, because a mutation
+    /// gate that answers itself is worse than no gate.
+    HunkReview { proposal: HunkProposal },
     /// The agent asked the user a multiple-choice question (the `ask_user`
     /// tool). BINDING renderer contract: present the structured `options`
     /// AND always exactly one additional free-text option — the user can
@@ -982,6 +996,7 @@ agent_event_tags! {
     Proof => "proof",
     JudgeVerdict => "judge_verdict",
     ScopeReview => "scope_review",
+    HunkReview => "hunk_review",
     AskUser => "ask_user",
     MediaProgress => "media_progress",
     MediaComplete => "media_complete",
@@ -1284,6 +1299,45 @@ pub struct ScopeProposal {
     /// `read-only`, `none`), when stated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shell_policy: Option<String>,
+}
+
+/// What a `HunkReview` gate presents for per-hunk approval before a mutating
+/// tool call writes anything (#1265).
+///
+/// The hunks are a **flat, ordered list across every file the call touches**,
+/// not a per-file tree: the reviewer's answer is a set of indices into this
+/// list, and one flat coordinate space is what keeps that answer unambiguous
+/// when two files change in the same call.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct HunkProposal {
+    /// Correlates the decision — and the synthetic `ToolResult` that clears the
+    /// card — back to this review. Distinct from the model's tool-call id: one
+    /// call raises one review, but the review is the host's object, not the
+    /// model's.
+    pub id: String,
+    /// The tool whose write is being reviewed (`apply_edits`, `edit_file`,
+    /// `write_file`) — the card names it so a reviewer knows what declining
+    /// costs.
+    pub tool: String,
+    /// Every proposed hunk, in file-then-position order.
+    pub hunks: Vec<ProposedHunk>,
+}
+
+/// One reviewable hunk: which file, what it does, and how it renders.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ProposedHunk {
+    /// Workspace-relative path of the file this hunk changes.
+    pub path: String,
+    /// The hunk as unified-diff text, `@@` header included — ready for
+    /// `stella_tui::diff::body_lines` with no further parsing.
+    pub diff: String,
+    /// Lines this hunk adds. Authoritative: taken from the decomposition, never
+    /// re-counted from `diff` (which is capped and carries context lines).
+    pub lines_added: u32,
+    /// Lines this hunk removes, on the same terms.
+    pub lines_removed: u32,
 }
 
 /// Which kind of media artifact a job produces.
