@@ -81,7 +81,11 @@ if [ "${1:-}" = "--update" ]; then
     echo "# must be split instead. Raising an existing ceiling is allowed but is"
     echo "# never silent — it lands as a visible diff here, to be justified in"
     echo "# review like any other change."
-    current_sizes | awk -v limit="$LIMIT" '$1 > limit' | sort -k2
+    # LC_ALL=C: byte-order collation, so the baseline regenerates identically
+    # on every machine. A UTF-8 locale sorts punctuation differently (macOS
+    # orders agent_tests.rs before agent.rs), which reshuffles untouched lines
+    # and buries the one ceiling that actually moved.
+    current_sizes | awk -v limit="$LIMIT" '$1 > limit' | LC_ALL=C sort -k2
   } >"$baseline.tmp"
   mv "$baseline.tmp" "$baseline"
   echo "check-file-size: baseline updated — $(grep -cv '^#' "$baseline") grandfathered file(s) over $LIMIT lines."
