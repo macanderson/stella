@@ -155,11 +155,16 @@ pub fn render(old: &[&str], new: &[&str], hunk: &Hunk) -> String {
     let old_count = lead + hunk.old_len + trail;
     let new_count = lead + hunk.new_len + trail;
 
+    // Ranges are 1-based, except that a zero-length one names the line it sits
+    // *after*, which is `0` at the top of a file. `diff` and `git` both emit
+    // `@@ -0,0` for a create, and a strict parser reads `-1,0` as a different
+    // position rather than as a typo.
+    let start = |from: usize, count: usize| if count == 0 { from } else { from + 1 };
     let mut out = format!(
         "@@ -{},{} +{},{} @@\n",
-        old_from + 1,
+        start(old_from, old_count),
         old_count,
-        new_from + 1,
+        start(new_from, new_count),
         new_count
     );
     let mut push = |prefix: char, lines: &[&str]| {
@@ -469,6 +474,22 @@ mod tests {
             text.contains("+B\n\\ No newline at end of file\n"),
             "{text}"
         );
+    }
+
+    /// A side with no lines is numbered from the line it sits after — `0` at
+    /// the top of a file — which is what `diff` and `git` emit for a create.
+    #[test]
+    fn render_numbers_an_empty_side_from_zero() {
+        let (ol, nl) = (split_lines(""), split_lines("created\n"));
+        let hunks = split_at(&ol, &nl);
+        let text = render(&ol, &nl, &hunks[0]);
+        assert!(text.starts_with("@@ -0,0 +1,1 @@\n"), "{text}");
+
+        // The mirror image: a delete empties the new side.
+        let (ol, nl) = (split_lines("deleted\n"), split_lines(""));
+        let hunks = split_at(&ol, &nl);
+        let text = render(&ol, &nl, &hunks[0]);
+        assert!(text.starts_with("@@ -1,1 +0,0 @@\n"), "{text}");
     }
 
     /// Beyond the DP cap the split degrades to one whole-region hunk rather
