@@ -54,9 +54,11 @@ fn full_deck_frame_composes_every_band_at_80_cols() {
                 "deck @{w}×{h} missing {needle:?}:\n{text}"
             );
         }
-        // The full zone set needs the width; at 190 every zone renders.
+        // The full zone set needs the width; at 190 every zone renders. The
+        // hit rate rides `ctx` and `saved` moved to the context overlay, so
+        // neither is its own cell here any more.
         if w >= 120 {
-            for needle in ["ctx", "cpu", "cache", "turn $", "run $", "saved"] {
+            for needle in ["ctx", "% hit)", "cpu", "session", "turn $", "run $"] {
                 assert!(
                     text.contains(needle),
                     "deck @{w}×{h} missing zone item {needle:?}:\n{text}"

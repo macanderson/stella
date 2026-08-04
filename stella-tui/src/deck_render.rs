@@ -726,31 +726,18 @@ fn render_context_overlay(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
     }
 
     // The session vitals that left the statline (D1): cache volumes, the
-    // warmth countdown, engine and pipeline state. Diagnostics, not
-    // glanceables — this overlay is where a reader who wants them looks.
+    // savings figure, the warmth countdown, engine and pipeline state.
+    // Diagnostics, not glanceables — this overlay is where a reader who wants
+    // them looks. `saved` joined them when zone C narrowed to `turn` + `run`:
+    // it is a cumulative session total, so it answers a question asked at the
+    // end of a run, not one glanced at mid-turn.
     lines.push(Line::default());
     lines.push(Line::from(Span::styled(
         "  SESSION VITALS",
         theme::accent().add_modifier(Modifier::BOLD),
     )));
     let dim = Style::default().fg(theme::TEXT_TERTIARY);
-    let focused = model.agents.get(ui.focused);
-    lines.push(Line::from(vec![
-        Span::styled("  cache ", dim),
-        Span::styled(
-            cache_panel::cache_volumes(
-                model.cache_hit_tokens(),
-                model.total_cache_write_tokens(),
-                model.total_input_tokens(),
-            ),
-            Style::default().fg(theme::INK),
-        ),
-        Span::styled("  ·  warmth ", dim),
-        Span::styled(
-            cache_panel::fmt_warmth(focused.and_then(|a| a.cache_warmth_secs(model.now_ms))),
-            Style::default().fg(theme::INK),
-        ),
-    ]));
+    lines.push(Line::from(cache_panel::vitals_spans(model, ui.focused)));
     lines.push(Line::from(vec![
         Span::styled("  engine ", dim),
         Span::styled(

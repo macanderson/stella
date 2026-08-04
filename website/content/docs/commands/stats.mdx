@@ -39,7 +39,7 @@ Every row also carries three cache-economics columns, derived at display time fr
 <CardGrid size="md">
   <OptionCard name="HIT%">
     Cache-read tokens over total input tokens for that row — the same figure the deck's
-    `CACHE` statline cell shows for the live session.
+    statline shows for the live session, as the `(78% hit)` qualifier on its `ctx` meter.
   </OptionCard>
   <OptionCard name="SAVED ($)">
     Estimated USD saved by prompt caching, priced at **today's** catalog rates — not the
@@ -60,7 +60,7 @@ Every row also carries three cache-economics columns, derived at display time fr
 A `0%` `HIT%` across several turns on an opt-in provider (Anthropic, Bedrock, or Claude-via-OpenRouter) with `CACHE WR` also at `0` usually means the opt-in cache marker never reached the wire — check your adapter config before assuming the model just isn't cacheable. If `CACHE WR` is nonzero but `HIT%` stays low, the prompt prefix is likely being rewritten between turns instead of reused.
 
 <Callout type="info">
-The deck's statline shows the same `CACHE`/`SAVED`/`WARMTH` cells live per session, plus a per-agent breakdown in the Agents tab (`Cache`/`Warmth` columns) and a countdown to when each agent's cached prefix expires.
+The deck shows the same figures live per session: the hit rate rides the statline's `ctx` meter as `(78% hit)`, and the saved-dollars and warmth countdown sit in the session-context overlay's **SESSION VITALS** section (`→` from an empty prompt, or `/context`). There is also a per-agent breakdown in the Agents tab (`Cache`/`Warmth` columns), including a countdown to when each agent's cached prefix expires.
 </Callout>
 
 ## Examples

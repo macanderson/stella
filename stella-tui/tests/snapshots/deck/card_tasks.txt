@@ -42,4 +42,4 @@
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
 >>>
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
- ✦ lead · ● execute │ turn $0.04
+ ✦ lead ● execute │ turn $0.04

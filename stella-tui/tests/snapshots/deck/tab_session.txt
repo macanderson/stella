@@ -42,4 +42,4 @@
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
 >>>
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
- ✦ lead · ● execute │ ctx 8.2k/200k · cache 63% │ turn $0.04 · run $0.05 of $7.50 · saved $0.00          ✦ 1 lead · ◆ 2 sub · ⇢ #981 open … · ✉ 0 · queue empty
+ ✦ lead (glm-5.2) ● execute 5/7 │ ctx 8.2k/200k (63% hit) │ turn $0.04 · run $0.05 of $7.50              ✦ 1 lead · ◆ 2 sub · ⇢ #981 open … · ✉ 0 · queue empty

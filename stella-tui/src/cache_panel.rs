@@ -170,6 +170,54 @@ pub(crate) fn fmt_tokens(n: u64) -> String {
     }
 }
 
+/// The whole SESSION VITALS cache row: `cache 50% hit · 105.3M rd · 40.0K wr
+/// ·  warmth 4:12  ·  saved $1.23`, for the lane at `focused`.
+///
+/// Built here rather than inline in `deck_render` for the reason this module
+/// exists: the formatting is then unit-testable without a frame, and the
+/// overlay renderer stays a layout function. `saved` joined this row when the
+/// statline's zone C narrowed to `turn` + `run` — it is a cumulative session
+/// total, so it answers a question asked at the end of a run, not one glanced
+/// at mid-turn.
+pub fn vitals_spans(model: &WorkspaceModel, focused: usize) -> Vec<Span<'static>> {
+    let dim = Style::default().fg(theme::TEXT_TERTIARY);
+    let ink = Style::default().fg(theme::INK);
+    let savings = model.total_cache_savings_usd();
+    vec![
+        Span::styled("  cache ", dim),
+        Span::styled(
+            cache_volumes(
+                model.cache_hit_tokens(),
+                model.total_cache_write_tokens(),
+                model.total_input_tokens(),
+            ),
+            ink,
+        ),
+        Span::styled("  ·  warmth ", dim),
+        Span::styled(
+            fmt_warmth(
+                model
+                    .agents
+                    .get(focused)
+                    .and_then(|a| a.cache_warmth_secs(model.now_ms)),
+            ),
+            ink,
+        ),
+        Span::styled("  ·  saved ", dim),
+        Span::styled(
+            fmt_savings(savings),
+            // Negative savings — the write premium outran the reads it bought
+            // — is the incident worth surfacing, so it keeps its own color
+            // rather than reading as an ordinary total.
+            if savings < 0.0 {
+                Style::default().fg(theme::DANGER_BRIGHT)
+            } else {
+                Style::default().fg(theme::SUCCESS_BRIGHT)
+            },
+        ),
+    ]
+}
+
 /// The statline's optional second row: a low-hit-rate diagnosis, prefixed
 /// with a warning glyph and rendered in `CacheCause::hint`'s full-sentence
 /// wording — byte-identical to what `stella stats` prints for the same
@@ -303,6 +351,28 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn the_vitals_row_carries_volumes_warmth_and_the_savings_that_left_the_statline() {
+        let mut m = WorkspaceModel::new();
+        m.now_ms = 1_000;
+        m.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
+        {
+            let a = &mut m.agents[0];
+            a.tokens_in = 200_000;
+            a.cache_read_tokens = 150_000;
+            a.cache_write_tokens = 40_000;
+            a.cache_savings_usd = 1.23;
+        }
+        let text: String = vitals_spans(&m, 0)
+            .iter()
+            .map(|s| s.content.to_string())
+            .collect();
+        assert!(text.contains("75% hit · 150.0K rd · 40.0K wr"), "{text}");
+        assert!(text.contains("warmth"), "{text}");
+        // The figure zone C stopped carrying has to live somewhere.
+        assert!(text.contains("saved $1.23"), "{text}");
     }
 
     #[test]
