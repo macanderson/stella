@@ -2041,6 +2041,9 @@ impl<'a> Pipeline<'a> {
                     command: cmd.command.to_string(),
                     passed,
                     tree: ProofTree::Baseline,
+                    run: None,
+                    runs_required: None,
+                    seed: None,
                 });
                 if !passed {
                     flip_halt = Some(Arc::new(FlipHalt::new(cmd.command)));
@@ -2373,6 +2376,9 @@ impl<'a> Pipeline<'a> {
                                 command: cmd.command.to_string(),
                                 passed,
                                 tree: ProofTree::Candidate,
+                                run: None,
+                                runs_required: None,
+                                seed: None,
                             });
                         }
                         // An unobservable confirmation confirms nothing:

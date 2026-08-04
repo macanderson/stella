@@ -136,6 +136,9 @@ impl<'a> Pipeline<'a> {
                             command: cmd.command.to_string(),
                             passed,
                             tree: ProofTree::Candidate,
+                            run: None,
+                            runs_required: None,
+                            seed: None,
                         });
                         // The same combined output the oracle saw: this tail
                         // becomes `SealedFailure::output`, the sole input to

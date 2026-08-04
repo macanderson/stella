@@ -779,6 +779,12 @@ pub struct DeckUi {
     /// the detail can say "reconstructing…" instead of rendering an empty
     /// transcript that reads like "the model was sent nothing".
     pub inspect_pending: bool,
+    /// The floating card overlays (`/tasks` · `/scope` · `/witness` ·
+    /// `/models` · `/budget`): which one is up, plus the task card's
+    /// selection and the budget editor's input buffer. One struct so the
+    /// mutual-exclusion rule (raising one lowers the others) lives in one
+    /// place — see [`cards::CardState`].
+    pub cards: cards::CardState,
     /// Driver requests queued by handlers/ingest beyond the one action a key
     /// can return (e.g. opening CONTEXT refreshes both skills and MCP; a
     /// finished OAuth login refreshes the MCP snapshot). The shell drains
@@ -869,6 +875,7 @@ impl Default for DeckUi {
             inbox_open: false,
             notifications: Vec::new(),
             inbox_sel: 0,
+            cards: cards::CardState::default(),
             pending_inputs: Vec::new(),
             engine: crate::views::engine::EngineOverlay::default(),
             tools: crate::views::tools::ToolsOverlay::default(),
@@ -1453,6 +1460,7 @@ fn push_single_line(buf: &mut String, text: &str) {
     buf.extend(text.chars().filter(|&c| c != '\n' && c != '\r'));
 }
 
+pub mod cards;
 /// Map one key to a [`DeckAction`]. Pure over `(key, model)`, mutating `ui`.
 ///
 /// ## Esc precedence

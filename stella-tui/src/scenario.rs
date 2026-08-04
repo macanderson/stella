@@ -9,7 +9,7 @@
 use serde_json::json;
 use stella_protocol::{
     AgentEvent, ContextFrameRef, FileChangeKind, JudgeEvidence, ModelCallRole, PrStatus,
-    ProviderShare, ScopeProposal, StageKind, ToolCall, ToolOutput,
+    ProofStep, ProviderShare, ScopeProposal, StageKind, ToolCall, ToolOutput,
 };
 
 use crate::envelope::{AgentMeta, AgentStatus, Inbound};
@@ -220,6 +220,15 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                     .into(),
             },
         ),
+        // The task board (`task_*` tools): a full snapshot per change, so the
+        // task card, its slash-menu live hint, and the statline collapse all
+        // have real rows to render.
+        ev(
+            lead,
+            AgentEvent::TaskUpdate {
+                tasks: demo_tasks(4),
+            },
+        ),
         ev(
             lead,
             AgentEvent::StepUsage {
@@ -247,8 +256,51 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 spent_usd: 0.021,
                 limit_usd: Some(2.5),
                 mode: stella_protocol::BudgetMode::Observed,
-                session_spent_usd: None,
-                session_limit_usd: None,
+                session_spent_usd: Some(0.021),
+                session_limit_usd: Some(7.50),
+            },
+        ),
+        // ── the witness is authored before the worker executes ──────────
+        // The proof events the witness panel folds: triage bought a witness,
+        // an independent model authored the failing test, and the oracle
+        // confirmed it red on the untouched tree. Fixed seed/fingerprint so
+        // the goldens stay byte-stable.
+        ev(
+            lead,
+            AgentEvent::Stage {
+                name: StageKind::Witness,
+            },
+        ),
+        ev(
+            lead,
+            AgentEvent::Proof {
+                step: ProofStep::Assurance {
+                    witness: true,
+                    judge: false,
+                },
+            },
+        ),
+        ev(
+            lead,
+            AgentEvent::Proof {
+                step: ProofStep::WitnessAuthored {
+                    path: "apps/app/automations/triggers.test.ts".into(),
+                    command: "pnpm --filter app test:unit triggers".into(),
+                    fingerprint: "sha256:9f3c1d2e4a5b6c7d8e9f".into(),
+                },
+            },
+        ),
+        ev(
+            lead,
+            AgentEvent::Proof {
+                step: ProofStep::Oracle {
+                    command: "pnpm --filter app test:unit triggers".into(),
+                    passed: false,
+                    tree: stella_protocol::ProofTree::Baseline,
+                    run: None,
+                    runs_required: Some(3),
+                    seed: Some(7741),
+                },
             },
         ),
         // ── two subagents are dispatched ────────────────────────────────
@@ -327,11 +379,68 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 spent_usd: 0.039,
                 limit_usd: Some(2.5),
                 mode: stella_protocol::BudgetMode::Observed,
-                session_spent_usd: None,
-                session_limit_usd: None,
+                session_spent_usd: Some(0.039),
+                session_limit_usd: Some(7.50),
             },
         ),
-        // ── auth subagent creates a file, then asks a question ──────────
+        // ── the oracle replays against the patched tree ─────────────────
+        // Two of the three required deterministic replays have passed — the
+        // witness panel's `execute` record is live at `run 2 of 3` with the
+        // pinned seed.
+        ev(
+            lead,
+            AgentEvent::Proof {
+                step: ProofStep::Oracle {
+                    command: "pnpm --filter app test:unit triggers".into(),
+                    passed: true,
+                    tree: stella_protocol::ProofTree::Candidate,
+                    run: Some(1),
+                    runs_required: Some(3),
+                    seed: Some(7741),
+                },
+            },
+        ),
+        ev(
+            lead,
+            AgentEvent::Proof {
+                step: ProofStep::Oracle {
+                    command: "pnpm --filter app test:unit triggers".into(),
+                    passed: true,
+                    tree: stella_protocol::ProofTree::Candidate,
+                    run: Some(2),
+                    runs_required: Some(3),
+                    seed: Some(7741),
+                },
+            },
+        ),
+        // The board moves: the triggers task completes, the workflows task
+        // goes active — restamping the task card's elapsed/cost anchors.
+        ev(
+            lead,
+            AgentEvent::TaskUpdate {
+                tasks: demo_tasks(5),
+            },
+        ),
+        // ── auth subagent: an approved scope, a file, then a question ───
+        // The scope approves silently (ScopeReview followed by a non-review
+        // stage), so the subagent's SESSION vitals can carry its write globs
+        // without raising a gate card.
+        ev(
+            auth,
+            AgentEvent::ScopeReview {
+                proposal: ScopeProposal {
+                    summary: "wire the automations triggers API".into(),
+                    steps: vec!["add the route".into(), "wire the guard".into()],
+                    estimated_files: 3,
+                    estimated_cost_usd: Some(0.15),
+                    repo: Some("macanderson/web-app".into()),
+                    branch: Some("feat/automations-triggers".into()),
+                    write_globs: vec!["apps/api/routes/v1/**".into()],
+                    read_globs: vec!["apps/api/**".into()],
+                    shell_policy: Some("allowlisted".into()),
+                },
+            },
+        ),
         ev(
             auth,
             AgentEvent::Stage {
@@ -448,6 +557,8 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
             },
         ),
         // ── lead proposes a larger scope change (gate) ──────────────────
+        // Carries the full scope-card grid facts (repo/branch, globs, shell
+        // policy) so `/scope` renders every labeled row from scripted data.
         ev(
             lead,
             AgentEvent::ScopeReview {
@@ -461,10 +572,52 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                     ],
                     estimated_files: 11,
                     estimated_cost_usd: Some(0.42),
+                    repo: Some("macanderson/web-app".into()),
+                    branch: Some("feat/automations-store".into()),
+                    write_globs: vec![
+                        "packages/automations/**".into(),
+                        "apps/app/automations/**".into(),
+                    ],
+                    read_globs: vec!["apps/**".into(), "packages/**".into()],
+                    shell_policy: Some("allowlisted".into()),
                 },
             },
         ),
     ]
+}
+
+/// The demo task board: `tasks_done` rows completed, the next in progress,
+/// the rest pending — first snapshot 4 of 7 done (the exact fraction the
+/// task card's title advertises), second 5 of 7 after the triggers task
+/// lands.
+fn demo_tasks(tasks_done: usize) -> Vec<stella_protocol::TaskItem> {
+    use stella_protocol::{TaskItem, TaskStatus};
+    let rows = [
+        ("1", "Scaffold the automations routes"),
+        ("2", "List view with live filters"),
+        ("3", "Editor panel plumbing"),
+        ("4", "Persist automation drafts"),
+        ("5", "Wire the triggers API"),
+        ("6", "Workflows canvas"),
+        ("7", "Verify: witness suite green"),
+    ];
+    rows.iter()
+        .enumerate()
+        .map(|(i, (id, subject))| TaskItem {
+            id: (*id).to_string(),
+            subject: (*subject).to_string(),
+            description: (i == tasks_done)
+                .then(|| "Route POST/GET /v1/automations/triggers through the org guard".into()),
+            status: if i < tasks_done {
+                TaskStatus::Completed
+            } else if i == tasks_done {
+                TaskStatus::InProgress
+            } else {
+                TaskStatus::Pending
+            },
+            owner: (i <= tasks_done).then(|| "lead".to_string()),
+        })
+        .collect()
 }
 
 #[cfg(test)]

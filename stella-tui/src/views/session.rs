@@ -686,6 +686,7 @@ mod tests {
                     steps: vec![],
                     estimated_files: 3,
                     estimated_cost_usd: None,
+                    ..Default::default()
                 },
             },
         });
@@ -729,6 +730,7 @@ mod tests {
                     steps: vec![],
                     estimated_files: 3,
                     estimated_cost_usd: None,
+                    ..Default::default()
                 },
             },
         });

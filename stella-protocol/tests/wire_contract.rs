@@ -432,6 +432,9 @@ fn all_proof_steps() -> Vec<ProofStep> {
             command: "cargo test".into(),
             passed: true,
             tree: ProofTree::Candidate,
+            run: Some(2),
+            runs_required: Some(3),
+            seed: Some(7741),
         },
     ]
 }
@@ -693,6 +696,11 @@ fn sample_events() -> Vec<AgentEvent> {
                 steps: vec!["read".into(), "edit".into()],
                 estimated_files: 12,
                 estimated_cost_usd: Some(1.5),
+                repo: Some("macanderson/stella".into()),
+                branch: Some("feat/router".into()),
+                write_globs: vec!["src/router/**".into()],
+                read_globs: vec!["src/**".into()],
+                shell_policy: Some("allowlisted".into()),
             },
         },
         AgentEvent::ScopeReview {
@@ -701,6 +709,7 @@ fn sample_events() -> Vec<AgentEvent> {
                 steps: vec![],
                 estimated_files: 1,
                 estimated_cost_usd: None,
+                ..Default::default()
             },
         },
         AgentEvent::AskUser {
@@ -1028,6 +1037,9 @@ fn sample_events() -> Vec<AgentEvent> {
             command: "cargo test -p x".into(),
             passed: false,
             tree,
+            run: None,
+            runs_required: None,
+            seed: None,
         },
     }));
     events.extend(

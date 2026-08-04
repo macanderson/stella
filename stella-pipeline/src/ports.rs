@@ -1174,6 +1174,7 @@ mod tests {
             steps: vec!["a".into()],
             estimated_files: 1,
             estimated_cost_usd: None,
+            ..Default::default()
         };
         assert_eq!(
             AlwaysAbortGate.review(&proposal).await,

@@ -523,6 +523,7 @@ mod tests_support {
             steps: steps.iter().map(|s| (*s).to_string()).collect(),
             estimated_files: 9,
             estimated_cost_usd: Some(1.40),
+            ..Default::default()
         }
     }
 
@@ -875,11 +876,17 @@ mod tests {
             command: "cargo test w".into(),
             passed: false,
             tree: ProofTree::Baseline,
+            run: None,
+            runs_required: None,
+            seed: None,
         });
         state.apply(&ProofStep::Oracle {
             command: "cargo test w".into(),
             passed: true,
             tree: ProofTree::Candidate,
+            run: None,
+            runs_required: None,
+            seed: None,
         });
         assert_eq!(state.summary().value, "flip ✓ red→green");
     }

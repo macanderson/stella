@@ -21,7 +21,9 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use stella_protocol::{AgentEvent, CiStatus, FileChangeKind, PrStatus};
+use stella_protocol::{
+    AgentEvent, CiStatus, FileChangeKind, PrStatus, ProofStep, ProofTree, StageKind, TaskStatus,
+};
 
 use crate::envelope::{AgentId, AgentMeta, AgentStatus, Inbound};
 use crate::model::SessionModel;
@@ -176,6 +178,40 @@ pub struct AgentEntry {
     /// over agent lifetime is an average, not a rate). The token twin of
     /// [`crate::model::Hud::turn_start_spent_usd`].
     pub turn_start_tokens_out: u64,
+    /// The in-progress task the board most recently flipped active, stamped
+    /// `(id, started_ms, cost_usd at that moment)` when a `TaskUpdate` fold
+    /// moves the active task. The task card's `elapsed · $cost` row divides
+    /// against these — per-task cost does not arrive on the wire, but the
+    /// spend delta since the task went active is a fact this fold owns.
+    /// Derived from `Inbound` + [`WorkspaceModel::now_ms`], so replay
+    /// reconstructs it.
+    pub active_task: Option<ActiveTaskStamp>,
+    /// Wall-clock ms each witness phase was entered, stamped as the proof
+    /// events fold through: author on `Stage::Witness` / `WitnessAuthored`,
+    /// execute on the first candidate oracle run, result when the flip
+    /// resolves. Folded from `Inbound` + `now_ms` like [`Self::active_task`];
+    /// the witness panel derives per-phase elapsed from consecutive stamps.
+    pub witness_phase_ms: WitnessPhaseStamps,
+}
+
+/// The stamp behind the task card's live `elapsed · $cost` readout — see
+/// [`AgentEntry::active_task`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct ActiveTaskStamp {
+    /// The `TaskItem::id` currently in progress.
+    pub id: String,
+    /// When the board flipped it active (deck clock).
+    pub started_ms: u64,
+    /// The agent's spend at that moment — cost since is the difference.
+    pub cost_at_start_usd: f64,
+}
+
+/// When each witness phase began — see [`AgentEntry::witness_phase_ms`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WitnessPhaseStamps {
+    pub author_ms: Option<u64>,
+    pub execute_ms: Option<u64>,
+    pub result_ms: Option<u64>,
 }
 
 impl AgentEntry {
@@ -203,6 +239,8 @@ impl AgentEntry {
             turn_started_ms: None,
             last_turn_ms: None,
             turn_start_tokens_out: 0,
+            active_task: None,
+            witness_phase_ms: WitnessPhaseStamps::default(),
         }
     }
 
@@ -240,6 +278,29 @@ impl AgentEntry {
         } else {
             self.cost_usd / secs * 3600.0
         }
+    }
+
+    /// The LIVE turn's token rate: output tokens since this turn's
+    /// `PromptStarted` over the turn's own elapsed. `None` whenever there is
+    /// nothing honest to divide — not running, no turn clock, or no tokens
+    /// emitted this turn yet (a lifetime average dressed as a rate is exactly
+    /// what this refuses to be). One implementation, shared by the progress
+    /// row and the statline's collapsed forms.
+    pub fn live_tok_per_s(&self, now_ms: u64) -> Option<u64> {
+        if self.status != AgentStatus::Running {
+            return None;
+        }
+        let start = self.turn_started_ms?;
+        let elapsed_ms = now_ms.saturating_sub(start);
+        let turn_tokens = self.tokens_out.saturating_sub(self.turn_start_tokens_out);
+        (elapsed_ms > 0 && turn_tokens > 0).then(|| turn_tokens.saturating_mul(1000) / elapsed_ms)
+    }
+
+    /// Whether this lane is a subagent (registered with the `subagent` role) —
+    /// the split the SESSION tab's nested rows and the statline's
+    /// `✦ lead · ◆ sub` counts read.
+    pub fn is_subagent(&self) -> bool {
+        self.meta.role == "subagent"
     }
 }
 
@@ -299,6 +360,13 @@ pub struct WorkspaceModel {
     /// cell while any agent is active, which includes a lead that is only
     /// monitoring subagents its own session spawned.
     pub active_role: Option<PipelineRole>,
+    /// The session-level spend cap, folded from the newest
+    /// `AgentEvent::BudgetTick` that carried a `session_limit_usd`. `None`
+    /// until the driver meters one. Drives the statline's `run $X of $Y`
+    /// form and the scope card's budget row; `/budget` edits it by sending
+    /// [`crate::envelope::WorkspaceInput::SetBudget`] out — the new cap
+    /// arrives back here as a fold, never as a local write.
+    pub budget_cap_usd: Option<f64>,
 }
 
 /// The three roles the statline surfaces.
@@ -417,6 +485,34 @@ impl WorkspaceModel {
         self.agents.iter().map(|a| a.cache_read_tokens).sum()
     }
 
+    /// How many lanes are registered as subagents.
+    pub fn subagent_count(&self) -> usize {
+        self.agents.iter().filter(|a| a.is_subagent()).count()
+    }
+
+    /// How many lanes are NOT subagents (the lead count the statline shows
+    /// beside the subagent count).
+    pub fn lead_count(&self) -> usize {
+        self.agents.len() - self.subagent_count()
+    }
+
+    /// The summed live-turn token rate across every running lane, plus how
+    /// many lanes contributed. More than one contributor means the honest
+    /// figure is the workspace's combined rate, labelled `combined` (D5) —
+    /// a single lane keeps its own unlabelled rate.
+    pub fn combined_tok_per_s(&self) -> (Option<u64>, usize) {
+        let rates: Vec<u64> = self
+            .agents
+            .iter()
+            .filter_map(|a| a.live_tok_per_s(self.now_ms))
+            .collect();
+        if rates.is_empty() {
+            (None, 0)
+        } else {
+            (Some(rates.iter().sum()), rates.len())
+        }
+    }
+
     /// Cumulative input tokens across all agents — the denominator of the
     /// session cache-hit rate. `cache_hit_tokens ⊆ total_input_tokens` by the
     /// `CompletionUsage` contract, so the ratio never exceeds 1.
@@ -512,6 +608,9 @@ impl WorkspaceModel {
                     self.agents[idx].turn_started_ms = Some(ts);
                     self.agents[idx].last_turn_ms = None;
                     self.agents[idx].turn_start_tokens_out = self.agents[idx].tokens_out;
+                    // The witness clocks belong to one turn, like the proof
+                    // rail they annotate (`push_user_prompt` just reset it).
+                    self.agents[idx].witness_phase_ms = WitnessPhaseStamps::default();
                     // Flip to Running now so the progress bar reads in-progress
                     // from the instant of submission — a driver command (e.g.
                     // `/init`) emits no stage events, and the prior turn may have
@@ -558,6 +657,8 @@ impl WorkspaceModel {
                     entry.turn_started_ms = None;
                     entry.last_turn_ms = None;
                     entry.turn_start_tokens_out = 0;
+                    entry.active_task = None;
+                    entry.witness_phase_ms = WitnessPhaseStamps::default();
                 }
             }
             // The driver flipped staged-pipeline routing (`/pipeline`) — the
@@ -709,8 +810,65 @@ impl WorkspaceModel {
                 AgentEvent::Error {
                     retryable: false, ..
                 } => entry.end_turn(now),
+                // The board's active task moved: restamp the elapsed/cost
+                // anchors the task card divides against. Same-id snapshots
+                // (a re-emitted board) keep the original stamp.
+                AgentEvent::TaskUpdate { tasks } => {
+                    let active = tasks.iter().find(|t| t.status == TaskStatus::InProgress);
+                    match (active, entry.active_task.as_ref()) {
+                        (Some(t), Some(stamp)) if stamp.id == t.id => {}
+                        (Some(t), _) => {
+                            entry.active_task = Some(ActiveTaskStamp {
+                                id: t.id.clone(),
+                                started_ms: now,
+                                cost_at_start_usd: entry.cost_usd,
+                            });
+                        }
+                        (None, _) => entry.active_task = None,
+                    }
+                }
+                // Witness phase entry stamps (the witness panel's per-phase
+                // clocks). `get_or_insert` keeps the FIRST observation — a
+                // re-emitted step must not restart a phase clock.
+                AgentEvent::Stage {
+                    name: StageKind::Witness,
+                } => {
+                    entry.witness_phase_ms.author_ms.get_or_insert(now);
+                }
+                AgentEvent::Proof { step } => match step {
+                    ProofStep::WitnessAuthored { .. } => {
+                        entry.witness_phase_ms.author_ms.get_or_insert(now);
+                    }
+                    ProofStep::Oracle {
+                        tree: ProofTree::Candidate,
+                        passed,
+                        ..
+                    } => {
+                        entry.witness_phase_ms.execute_ms.get_or_insert(now);
+                        if *passed {
+                            entry.witness_phase_ms.result_ms.get_or_insert(now);
+                        }
+                    }
+                    _ => {}
+                },
+                // A verdict closes the witness run whichever way it went.
+                AgentEvent::JudgeVerdict { .. } => {
+                    if entry.witness_phase_ms.execute_ms.is_some() {
+                        entry.witness_phase_ms.result_ms.get_or_insert(now);
+                    }
+                }
                 _ => {}
             }
+        }
+        // The session-level spend cap rides the budget stream; the newest
+        // tick that names one wins (a tick without one leaves the cap alone —
+        // most ticks only meter the turn).
+        if let AgentEvent::BudgetTick {
+            session_limit_usd: Some(cap),
+            ..
+        } = event
+        {
+            self.budget_cap_usd = Some(*cap);
         }
 
         // Cross-agent read-models.

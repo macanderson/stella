@@ -171,6 +171,13 @@ pub const WARNING: Color = Color::Rgb(0xEA, 0xB3, 0x08);
 /// Error / failed / removed (6.62:1 on ground).
 pub const DANGER: Color = Color::Rgb(0xFF, 0x5C, 0x7A);
 
+/// The oracle's pre-flip state — the witness surface's `red` token, the one
+/// sanctioned red-as-meaning in the deck (D6). A true signal red, kept
+/// distinct from [`DANGER`]'s pink-red so "the test is red before the patch"
+/// (a healthy, expected state) never shares a value with "something failed".
+/// 7.05:1 on [`GROUND`].
+pub const ORACLE_RED: Color = Color::Rgb(0xF8, 0x71, 0x71);
+
 // ── Status (light ground) ───────────────────────────────────────
 //
 // The same three meanings, darkened along their own hue until they clear AA
@@ -190,6 +197,10 @@ pub const WARNING_INK: Color = Color::Rgb(0x8A, 0x54, 0x05);
 
 /// Error on a light ground -- 5.06:1 on [`PAPER`].
 pub const DANGER_INK: Color = Color::Rgb(0xC8, 0x1E, 0x3E);
+
+/// The oracle's pre-flip red on a light ground — [`ORACLE_RED`] darkened
+/// along its own hue until it clears AA on paper (5.3:1 on [`PAPER`]).
+pub const ORACLE_RED_INK: Color = Color::Rgb(0xB9, 0x1C, 0x1C);
 
 // ── Ground (light) ──────────────────────────────────────────────
 //
@@ -258,7 +269,7 @@ pub const DATA_4: Color = Color::Rgb(0x2F, 0xD3, 0xC6);
 /// `every_dark_palette_value_has_a_fallback` -- without a hand-maintained
 /// second list. Names match the kit's token vocabulary at
 /// `docs/brand/css/tokens.css`.
-pub const ALL: [(&str, Color); 35] = [
+pub const ALL: [(&str, Color); 37] = [
     ("void", VOID),
     ("ground", GROUND),
     ("surface", SURFACE),
@@ -283,6 +294,8 @@ pub const ALL: [(&str, Color); 35] = [
     ("success-ink", SUCCESS_INK),
     ("warning-ink", WARNING_INK),
     ("danger-ink", DANGER_INK),
+    ("oracle-red", ORACLE_RED),
+    ("oracle-red-ink", ORACLE_RED_INK),
     ("paper", PAPER),
     ("snow", SNOW),
     ("paper-raised", PAPER_RAISED),

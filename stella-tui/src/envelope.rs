@@ -882,6 +882,21 @@ pub enum WorkspaceInput {
         step: u64,
         call_seq: u64,
     },
+    /// Task card (`/tasks`): ask the driver to skip one still-open task on
+    /// `agent`'s board. Send-and-forget — the row's state changes only when
+    /// the driver's next `TaskUpdate` snapshot folds back, so the card can
+    /// never show a skip the engine refused.
+    TaskSkip { agent: AgentId, id: String },
+    /// Scope card (`/scope`), post-approval `e`: ask the driver to open a
+    /// scope-change proposal for `agent`'s locked scope. The deck never edits
+    /// scope locally — a granted change arrives back as a fresh
+    /// `ScopeReview` fold.
+    ScopeChangeRequest { agent: AgentId },
+    /// Budget editor (`/budget`): set (or with `None` clear) the session
+    /// spend cap. The deck renders only the cap the budget stream folds back
+    /// (`AgentEvent::BudgetTick::session_limit_usd`), so an ignored or
+    /// clamped request never shows a cap that is not in force.
+    SetBudget { limit_usd: Option<f64> },
     /// Tear down the deck.
     Quit,
 }
