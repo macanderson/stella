@@ -53,6 +53,7 @@ mod graph;
 mod outcome;
 mod output;
 mod persistence;
+mod presence;
 mod prompt;
 mod tools;
 
@@ -72,6 +73,7 @@ pub(crate) use persistence::{
     close_event_stream, persist_event, persist_event_detailed, record_execution_end,
     spawn_renderer, warn_store_write_failed,
 };
+pub(crate) use presence::SessionPresence;
 pub(crate) use prompt::*;
 // `tool_policy` is a top-level module (`main.rs`); the re-export keeps every
 // session driver's `agent::PolicyToolSet` reading as "the agent's tool stack".
@@ -606,19 +608,7 @@ async fn run_pipeline_one_shot(
     // notification (or the SESSIONS overlay) replays the journal.
     let run_ok = matches!(&result, Ok(o) if matches!(o.status, PipelineStatus::Completed));
     let run_secs = turn_start.elapsed().as_secs();
-    let notify = if !run_ok {
-        Some((
-            format!("{}: run FAILED", presence.name()),
-            crate::command_deck::prompt_line(prompt, 160),
-        ))
-    } else if run_secs >= 60 {
-        Some((
-            format!("{}: run finished ({run_secs}s)", presence.name()),
-            crate::command_deck::prompt_line(prompt, 160),
-        ))
-    } else {
-        None
-    };
+    let notify = presence.one_shot_notification(run_ok, run_secs, prompt);
     presence.finish(run_ok, notify);
 
     match &result {
@@ -1036,27 +1026,16 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             if let Err(e) = &result {
                 eprintln!("  {} {}\n", "Error:".red().bold(), e);
             }
-            // Failures reflect too (minus the user's own soft stop) — the
-            // one-shot pipeline path has always treated a failed run as a
-            // high-value learning signal; interactive paths now match
-            // (issue #373, item 7).
-            if should_reflect_on(&result)
-                && turn_warrants_reflection(&messages[turn_start..])
-                && let Some(m) = &mut memory
-            {
-                let mut report = m
-                    .reflect_and_record(
-                        &*provider,
-                        &cfg.model_id,
-                        &messages,
-                        false,
-                        result.is_ok(),
-                        remaining_budget(&budget),
-                    )
-                    .await;
-                settle_reflection_budget(&mut report, &mut budget);
-                surface_reflection(&report, OutputFormat::Text);
-            }
+            reflect_on_interactive_turn(
+                &*provider,
+                cfg,
+                &mut memory,
+                &messages,
+                turn_start,
+                &result,
+                &mut budget,
+            )
+            .await;
             continue;
         }
 
@@ -1129,26 +1108,16 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         if let Err(e) = &result {
             eprintln!("  {} {}\n", "Error:".red().bold(), e);
         }
-        // Same reflect-on-failure policy as the `/goal` block above and the
-        // one-shot pipeline path (issue #373, item 7): a soft stop is a user
-        // choice and stays excluded; a real failure is a learning signal.
-        if should_reflect_on(&result)
-            && turn_warrants_reflection(&messages[turn_start..])
-            && let Some(m) = &mut memory
-        {
-            let mut report = m
-                .reflect_and_record(
-                    &*provider,
-                    &cfg.model_id,
-                    &messages,
-                    false,
-                    result.is_ok(),
-                    remaining_budget(&budget),
-                )
-                .await;
-            settle_reflection_budget(&mut report, &mut budget);
-            surface_reflection(&report, OutputFormat::Text);
-        }
+        reflect_on_interactive_turn(
+            &*provider,
+            cfg,
+            &mut memory,
+            &messages,
+            turn_start,
+            &result,
+            &mut budget,
+        )
+        .await;
     }
 
     if let Some(set) = &mcp {
@@ -1194,6 +1163,43 @@ pub(crate) async fn record_turn_episode(
     // all.
     m.record_episode(prompt, episode_outcome, &turn_files, started_unix, None)
         .await;
+}
+
+/// Post-turn reflection for one interactive REPL turn, shared by the plain
+/// prompt handler and `/goal` — the two carried byte-identical copies of
+/// this block, which is exactly the drift this helper removes.
+///
+/// Failures reflect too (the one-shot pipeline path has always treated a
+/// failed run as a high-value learning signal); only a user-chosen soft stop
+/// is excluded (`should_reflect_on`, issue #373 item 7). The gate reads only
+/// this turn's message slice (`turn_start..`) so a conversational turn never
+/// spends a model call.
+async fn reflect_on_interactive_turn(
+    provider: &dyn Provider,
+    cfg: &Config,
+    memory: &mut Option<SessionMemory>,
+    messages: &[CompletionMessage],
+    turn_start: usize,
+    result: &Result<(), String>,
+    budget: &mut BudgetGuard,
+) {
+    if should_reflect_on(result)
+        && turn_warrants_reflection(&messages[turn_start..])
+        && let Some(m) = memory
+    {
+        let mut report = m
+            .reflect_and_record(
+                provider,
+                &cfg.model_id,
+                messages,
+                false,
+                result.is_ok(),
+                remaining_budget(budget),
+            )
+            .await;
+        settle_reflection_budget(&mut report, budget);
+        surface_reflection(&report, OutputFormat::Text);
+    }
 }
 
 /// Surface a post-turn [`ReflectionReport`] for human text output. Machine
@@ -2016,117 +2022,6 @@ pub(crate) fn begin_execution(
             Some((store.clone(), id))
         }
         Err(_) => None,
-    }
-}
-
-/// A headless/plain session's presence in the machine-wide registry: the
-/// deck's SESSIONS overlay finds it live and — because every execution links
-/// back via [`begin_execution`]'s `session` — can replay it long after it
-/// ended. Registration is best-effort throughout: a failed registry write
-/// never disturbs the run.
-pub(crate) struct SessionPresence {
-    registry: stella_store::SessionRegistry,
-    record: stella_store::SessionRecord,
-    name: String,
-    /// This session's durable record, carried so [`Self::finish`] can compact
-    /// it. Cloning the handle rather than re-opening the record keeps the
-    /// compaction pointed at the session that was actually bound, whatever the
-    /// driver did in between.
-    durability: crate::durability::SessionDurability,
-}
-
-impl SessionPresence {
-    /// Announce the session (status In Progress), titled from the workspace
-    /// and the prompt/goal that started it, and bind this session's durability
-    /// to `tools`.
-    ///
-    /// The binding is done HERE, rather than left to each headless driver,
-    /// because this is the moment the session acquires the identity durability
-    /// is keyed on. A driver that announced without binding would run a whole
-    /// session whose turns checkpoint nowhere — and the failure would be
-    /// silent, because an unbound sink is indistinguishable from a session
-    /// that simply never crashed.
-    pub(crate) fn announce(cfg: &Config, prompt: &str, tools: &Arc<ToolRegistry>) -> Self {
-        let name = cfg
-            .workspace_root
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| cfg.workspace_root.display().to_string());
-        let mut record = stella_store::SessionRecord::new(
-            cfg.workspace_root.display().to_string(),
-            name.clone(),
-        );
-        record.title = format!("{name}: {}", crate::command_deck::prompt_line(prompt, 48));
-        record.summary = crate::command_deck::prompt_line(prompt, 240);
-        let registry = stella_store::SessionRegistry::open_default();
-        let _ = registry.upsert(&record);
-        // stderr, not stdout: `--output-format json` owns stdout, and a
-        // durability advisory must never land inside a machine-readable
-        // document.
-        if let Some(warning) =
-            crate::durability::bind_session(&cfg.durability, tools, &cfg.workspace_root, &record.id)
-        {
-            eprintln!("  {warning}");
-        }
-        Self {
-            registry,
-            record,
-            name,
-            durability: cfg.durability.clone(),
-        }
-    }
-
-    /// The registry id — what executions link to and notifications carry.
-    pub(crate) fn id(&self) -> &str {
-        &self.record.id
-    }
-
-    /// The workspace's display name (notification titles).
-    pub(crate) fn name(&self) -> &str {
-        &self.name
-    }
-
-    /// A new prompt is running: refresh the summary (and the title, if the
-    /// session was announced before its first real prompt).
-    pub(crate) fn update_prompt(&mut self, prompt: &str) {
-        self.record.summary = crate::command_deck::prompt_line(prompt, 240);
-        self.record.status = stella_store::SessionStatus::InProgress;
-        self.record.title = format!(
-            "{}: {}",
-            self.name,
-            crate::command_deck::prompt_line(prompt, 48)
-        );
-        let _ = self.registry.upsert(&self.record);
-    }
-
-    /// Between turns an interactive session waits on the human.
-    pub(crate) fn needs_input(&mut self) {
-        self.record.status = stella_store::SessionStatus::NeedsInput;
-        let _ = self.registry.upsert(&self.record);
-    }
-
-    /// Terminal status, plus an optional persist-until-read inbox
-    /// notification linked to this session — the headless → `/inbox` flow:
-    /// a finished `stella run` surfaces in every deck's inbox, and `Enter`
-    /// replays it.
-    pub(crate) fn finish(&mut self, ok: bool, notify: Option<(String, String)>) {
-        self.record.status = if ok {
-            stella_store::SessionStatus::Complete
-        } else {
-            stella_store::SessionStatus::Error
-        };
-        let _ = self.registry.upsert(&self.record);
-        // The headless counterpart of the deck's exit compaction. A one-shot
-        // run writes fewer objects than a long deck session, but it is also the
-        // shape that runs a hundred times in a loop from a script — which is
-        // exactly how a workspace accumulates loose objects nobody is watching.
-        self.durability.compact();
-        if let Some((title, body)) = notify {
-            let _ = stella_store::NotificationStore::open_default().push(
-                &stella_store::Notification::new(title, body, self.record.id.clone())
-                    .with_session_id(self.record.id.clone()),
-            );
-        }
     }
 }
 

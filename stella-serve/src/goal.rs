@@ -61,26 +61,11 @@ pub struct GoalRun {
     pub judge_provider_id: Option<String>,
 }
 
-/// The seed message a goal run opens with — byte-identical to
-/// [`Engine::run_goal`]'s, because a served goal round and a CLI goal round
-/// must put the same words in front of the model or they are two features
-/// wearing one name.
-fn seed_message(goal: &str) -> CompletionMessage {
-    CompletionMessage::user(format!(
-        "GOAL: {goal}\n\nWork toward this goal. An independent judge will assess the \
-         result after each working round from the transcript evidence; keep your work \
-         verifiable (run tests, show outputs)."
-    ))
-}
-
-/// The message that carries a judge's "not yet" back to the worker — again
-/// byte-identical to the CLI's.
-fn feedback_message(goal: &str, feedback: &str) -> CompletionMessage {
-    CompletionMessage::user(format!(
-        "The judge assessed the goal as NOT yet met.\nJudge feedback: {feedback}\n\n\
-         Continue working toward the goal: {goal}"
-    ))
-}
+// The seed and feedback wording is `stella_core::goal`'s
+// (`goal_kickoff_text` / `judge_feedback_text`): a served goal round and a
+// CLI goal round must put the same words in front of the model or they are
+// two features wearing one name — this file used to carry its own copies
+// with a comment promising byte-identity that nothing enforced.
 
 /// Drive a judged goal run to its outcome (#1297).
 ///
@@ -121,11 +106,13 @@ pub(crate) async fn drive_goal(
     bus: Option<&HookBus>,
 ) -> DrivenTurn {
     let sender = EventSender::new(events.clone());
-    messages.push(seed_message(&run.goal));
+    messages.push(CompletionMessage::user(
+        stella_core::goal::goal_kickoff_text(&run.goal),
+    ));
 
     for round in 1..=run.config.max_rounds {
         budget.begin_turn();
-        let offset = u32::try_from(2 * round.saturating_sub(1)).unwrap_or(u32::MAX);
+        let offset = stella_core::goal::goal_round_turn_offset(round);
         let round_engine = engine.with_turn_instance(base_turn.saturating_add(offset));
         let driven = crate::session::drive_turn(
             &round_engine,
@@ -198,12 +185,9 @@ pub(crate) async fn drive_goal(
                 budget,
             };
         }
-        let feedback = if verdict.feedback.trim().is_empty() {
-            verdict.reasoning
-        } else {
-            verdict.feedback
-        };
-        messages.push(feedback_message(&run.goal, &feedback));
+        messages.push(CompletionMessage::user(
+            stella_core::goal::judge_feedback_text(&run.goal, &verdict),
+        ));
     }
 
     DrivenTurn {

@@ -716,6 +716,25 @@ fn entry_body(
                 out,
             );
         }
+        TranscriptEntry::HunkReview { tool, hunks, files } => {
+            push_note(
+                "⏸ hunks",
+                loud(theme::WARNING_BRIGHT),
+                vec![
+                    Span::styled(tool.clone(), value()),
+                    Span::styled(
+                        format!(
+                            "  ·  {} · {}",
+                            plural(*hunks as u64, "hunk", "hunks"),
+                            plural(*files as u64, "file", "files")
+                        ),
+                        quiet(),
+                    ),
+                ],
+                width,
+                out,
+            );
+        }
         TranscriptEntry::AskUser { question, options } => {
             push_note(
                 "? ask",

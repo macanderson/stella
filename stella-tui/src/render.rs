@@ -230,6 +230,143 @@ pub(crate) fn render_scope_review(
         .render(area, buf);
 }
 
+/// Rows one hunk claims on the card: its header line plus a capped slice of
+/// its diff body. Capped because a card that scrolls off the frame hides the
+/// hunk a reviewer is about to accept, and the Files tab is where a full diff
+/// is read — this band exists to decide, not to browse.
+pub(crate) const HUNK_CARD_DIFF_ROWS: usize = 6;
+
+/// How tall the hunk-review band needs to be: one row per hunk header, up to
+/// [`HUNK_CARD_DIFF_ROWS`] of body for the hunk under the cursor, plus borders,
+/// title and the footer legend. Capped so a fifty-hunk proposal cannot eat the
+/// transcript.
+#[must_use]
+pub(crate) fn hunk_review_height(hunks: usize) -> u16 {
+    let rows = hunks + HUNK_CARD_DIFF_ROWS + 4;
+    (rows as u16).min(20)
+}
+
+/// The per-hunk approval card (#1265).
+///
+/// One row per hunk — number, mark, path, `@@` position, counts — with the
+/// diff of the hunk under the cursor expanded beneath. The footer always names
+/// how many hunks `⏎` would apply, which is the safeguard that lets the card
+/// arrive pre-marked accepted without becoming a gate that answers itself.
+pub(crate) fn render_hunk_review(
+    proposal: &stella_protocol::HunkProposal,
+    marks: Option<&crate::deck_ui::HunkMarks>,
+    answered: bool,
+    area: Rect,
+    buf: &mut Buffer,
+) {
+    let cursor = marks.map_or(0, |m| m.cursor);
+    let accepted = |i: usize| marks.is_none_or(|m| m.accepted.get(i).copied().unwrap_or(false));
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    for (i, hunk) in proposal.hunks.iter().enumerate() {
+        let keep = accepted(i);
+        let (glyph, tone) = if keep {
+            ("✓", theme::OK)
+        } else {
+            ("✗", theme::DANGER)
+        };
+        let position = hunk.diff.lines().next().unwrap_or("@@").trim().to_string();
+        lines.push(Line::from(vec![
+            Span::styled(
+                if i == cursor { "▸ " } else { "  " }.to_string(),
+                Style::new().fg(theme::ACCENT),
+            ),
+            Span::styled(
+                format!("{}. ", i + 1),
+                Style::new().fg(theme::TEXT_TERTIARY),
+            ),
+            Span::styled(
+                format!("{glyph} "),
+                Style::new().fg(tone).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                hunk.path.clone(),
+                if keep {
+                    Style::new().fg(theme::INK)
+                } else {
+                    // A declined hunk stays legible but visibly out of the set —
+                    // dimming is the whole signal that ⏎ will not write it.
+                    Style::new().fg(theme::TEXT_TERTIARY)
+                },
+            ),
+            Span::styled(
+                format!(
+                    "  {position}  +{} −{}",
+                    hunk.lines_added, hunk.lines_removed
+                ),
+                Style::new().fg(theme::TEXT_TERTIARY),
+            ),
+        ]));
+    }
+    // The hunk under the cursor, rendered through the one shared diff body so
+    // this surface looks like every other diff in the deck.
+    if let Some(hunk) = proposal.hunks.get(cursor) {
+        lines.extend(
+            crate::diff::body_lines(&hunk.diff, Some(&hunk.path))
+                .into_iter()
+                .take(HUNK_CARD_DIFF_ROWS),
+        );
+    }
+    let keeping = (0..proposal.hunks.len()).filter(|i| accepted(*i)).count();
+    lines.push(if answered {
+        Line::from(Span::styled(
+            "decision sent — awaiting engine…",
+            Style::new()
+                .fg(theme::TEXT_TERTIARY)
+                .add_modifier(Modifier::ITALIC),
+        ))
+    } else {
+        Line::from(vec![
+            Span::styled(
+                "↑↓",
+                Style::new().fg(theme::INK).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" move  ", Style::new().fg(theme::TEXT_TERTIARY)),
+            Span::styled(
+                "space",
+                Style::new().fg(theme::INK).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" toggle  ", Style::new().fg(theme::TEXT_TERTIARY)),
+            Span::styled(
+                "esc",
+                Style::new().fg(theme::DANGER).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" decline all  ·  ", Style::new().fg(theme::TEXT_TERTIARY)),
+            // The count is the safeguard: the reviewer is never asked to press
+            // ⏎ without being told exactly what it writes.
+            Span::styled(
+                format!("⏎ apply {keeping} of {}", proposal.hunks.len()),
+                Style::new()
+                    .fg(if keeping == 0 {
+                        theme::DANGER
+                    } else {
+                        theme::OK
+                    })
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "  ·  or type 1 3, 2-4, all, none",
+                Style::new().fg(theme::TEXT_TERTIARY),
+            ),
+        ])
+    });
+    // Warning-bordered like the scope card, and for the same reason: this is
+    // the deck waiting on *you*, and it is the gate that decides whether bytes
+    // land in the user's files.
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().fg(theme::WARNING_BRIGHT))
+        .title(format!(" review {} ", proposal.tool));
+    Paragraph::new(Text::from(lines))
+        .block(block)
+        .render(area, buf);
+}
+
 pub(crate) fn render_ask_user(
     prompt: &AskUserPrompt,
     answered: bool,
