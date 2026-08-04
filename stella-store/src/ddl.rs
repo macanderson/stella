@@ -19,7 +19,7 @@
 /// ([`crate::enterprise_telemetry`]) — they are deliberately absent here, since
 /// the fresh-file probe must answer "has the versioned schema ever been
 /// created?" and those tables are created after it runs.
-pub(crate) const TABLES: [&str; 19] = [
+pub(crate) const TABLES: [&str; 20] = [
     "executions",
     "forgotten",
     "events",
@@ -39,6 +39,7 @@ pub(crate) const TABLES: [&str; 19] = [
     "context_blocks",
     "step_manifest",
     "step_receipt",
+    "foundry_tools",
 ];
 
 /// `executions` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — the spine every other table
@@ -550,4 +551,37 @@ pub(crate) const STEP_RECEIPT_DDL: &str = "CREATE TABLE IF NOT EXISTS step_recei
        compiled_frame_id TEXT,
        frame_hash TEXT,
        PRIMARY KEY (execution_id, turn_instance, step, call_seq)
+     );";
+
+/// `foundry_tools` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — the tool-foundry
+/// adoption ledger (#830): one row per self-authored tool this workspace has
+/// approved, holding the witness that proved it and the human decision that
+/// enabled it.
+///
+/// `name` is the PRIMARY KEY because one tool name is one capability: a second
+/// adoption of the same name is a *replacement* (new bytes, new proof), not a
+/// second grant, and the writer's upsert clears `enabled` accordingly.
+///
+/// The digests are the tamper baseline. They pin the exact manifest and script
+/// bytes the witness ran against, so an edit after adoption is detectable
+/// rather than inherited — the same tamper-exclusion posture the pipeline's
+/// witness protocol takes toward its own test artifact.
+///
+/// `enabled` defaults to 0 and `enabled_at` to NULL, which is the schema-level
+/// statement of #830's guardrail: adoption alone grants nothing.
+///
+/// No index beyond the implicit one on the primary key. The table holds one
+/// row per self-authored tool in a workspace — single digits, realistically —
+/// and every reader either fetches by name or scans the lot.
+pub(crate) const FOUNDRY_TOOLS_DDL: &str = "CREATE TABLE IF NOT EXISTS foundry_tools (
+       name TEXT PRIMARY KEY,
+       signature TEXT NOT NULL DEFAULT '',
+       manifest_digest TEXT NOT NULL,
+       script_digest TEXT NOT NULL,
+       witness TEXT NOT NULL DEFAULT '',
+       witness_input TEXT NOT NULL DEFAULT '{}',
+       witness_expect TEXT NOT NULL DEFAULT '',
+       enabled INTEGER NOT NULL DEFAULT 0,
+       adopted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       enabled_at TEXT
      );";

@@ -3393,6 +3393,7 @@ dependencies = [
  "stella-protocol",
  "stella-store",
  "tempfile",
+ "thiserror 2.0.19",
  "tokio",
  "toml",
  "wiremock",

@@ -12,9 +12,10 @@ use rusqlite::{Connection, TransactionBehavior, params};
 
 use crate::ddl::{
     AGENT_USES_DDL, CONTEXT_BLOCKS_DDL, EXECUTION_REFLECTION_DDL, EXECUTIONS_DDL, FORGOTTEN_DDL,
-    MCP_USAGE_DDL, MEMORY_CITATIONS_DDL, PULL_REQUESTS_DDL, REFLECTIONS_DDL, RULES_TABLE,
-    SKILL_USAGE_DDL, STEP_MANIFEST_DDL, STEP_RECEIPT_DDL, TABLES, TASKS_DDL, TELEMETRY_INDEX,
-    TOOL_CALLS_DDL, UNCHANGED_TABLES, events_ddl, files_touched_ddl, telemetry_ddl,
+    FOUNDRY_TOOLS_DDL, MCP_USAGE_DDL, MEMORY_CITATIONS_DDL, PULL_REQUESTS_DDL, REFLECTIONS_DDL,
+    RULES_TABLE, SKILL_USAGE_DDL, STEP_MANIFEST_DDL, STEP_RECEIPT_DDL, TABLES, TASKS_DDL,
+    TELEMETRY_INDEX, TOOL_CALLS_DDL, UNCHANGED_TABLES, events_ddl, files_touched_ddl,
+    telemetry_ddl,
 };
 use crate::{Result, StoreError};
 
@@ -32,7 +33,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 19] = [
+pub(crate) const MIGRATIONS: [Migration; 20] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -117,6 +118,13 @@ pub(crate) const MIGRATIONS: [Migration; 19] = [
     // nullable — the honest value for a block whose preimage the store no
     // longer holds.
     migrate_v18_to_v19,
+    // v19 → v20: the additive `foundry_tools` table — the tool-foundry
+    // adoption ledger (#830). Purely additive; no existing table is touched,
+    // so no rebuild, no dedupe, no backfill. A file that predates it simply
+    // has no adoptions, which is the correct starting state: every
+    // self-authored tool already on disk becomes unadopted, and therefore
+    // withheld, until someone runs `stella tools --adopt` on it.
+    migrate_v19_to_v20,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -139,7 +147,9 @@ pub(crate) const MIGRATIONS: [Migration; 19] = [
     //              left as a hole.
     //   v18 → v19: CLAIMED above by the token-unit reconciliation (#925).
     //
-    // Nothing is reserved now: take v19 → v20 and add your own line here.
+    //   v19 → v20: CLAIMED above by the tool-foundry adoption ledger (#830).
+    //
+    // Nothing is reserved now: take v20 → v21 and add your own line here.
     // If a reserved phase ships without needing its slot, delete its line
     // rather than leaving a hole — index order is the contract.
 ];
@@ -174,6 +184,7 @@ pub(crate) fn create_latest_schema(tx: &rusqlite::Transaction<'_>) -> Result<()>
     tx.execute_batch(STEP_MANIFEST_DDL)?;
     tx.execute_batch(STEP_RECEIPT_DDL)?;
     tx.execute_batch(FORGOTTEN_DDL)?;
+    tx.execute_batch(FOUNDRY_TOOLS_DDL)?;
     Ok(())
 }
 
@@ -405,6 +416,15 @@ fn migrate_v4_to_v5(tx: &rusqlite::Transaction<'_>) -> Result<()> {
 /// touched, so no rebuild, no dedupe, no backfill.
 fn migrate_v5_to_v6(tx: &rusqlite::Transaction<'_>) -> Result<()> {
     tx.execute_batch(MCP_USAGE_DDL)?;
+    Ok(())
+}
+
+/// v19 → v20: the additive `foundry_tools` adoption ledger (#830), mirroring
+/// [`migrate_v3_to_v4`]. Nothing is backfilled: a workspace upgrading into
+/// this schema has approved no self-authored tools, so the empty table is the
+/// truthful starting state rather than a gap to fill in.
+fn migrate_v19_to_v20(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+    tx.execute_batch(FOUNDRY_TOOLS_DDL)?;
     Ok(())
 }
 

@@ -545,8 +545,31 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 }
             };
         }
-        Some(Command::Tools { validate, author }) => {
+        Some(Command::Tools {
+            validate,
+            author,
+            adopt,
+            enable,
+            disable,
+            foundry,
+        }) => {
+            // The tool-foundry protocol's three decisions are three flags, in
+            // the order a tool travels through them: author -> adopt (prove)
+            // -> enable (approve). `clap` makes them mutually exclusive, so
+            // this is a first-match chain rather than a state machine.
             return match (validate, author) {
+                _ if *foundry => tool_foundry::adopt::run_tools_foundry_report(),
+                _ if adopt.is_some() => {
+                    tool_foundry::adopt::run_tools_adopt(adopt.as_deref().unwrap_or_default())
+                }
+                _ if enable.is_some() => tool_foundry::adopt::run_tools_enable(
+                    enable.as_deref().unwrap_or_default(),
+                    true,
+                ),
+                _ if disable.is_some() => tool_foundry::adopt::run_tools_enable(
+                    disable.as_deref().unwrap_or_default(),
+                    false,
+                ),
                 // `--author` (name optional) stages a tool-foundry proposal
                 // as a reviewable manifest+script pair — or lists proposals.
                 (_, Some(name)) => tool_foundry::run_tools_author(name.as_deref()),

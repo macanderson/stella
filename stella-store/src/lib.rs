@@ -154,6 +154,7 @@ pub mod durable;
 pub mod efficacy;
 pub mod enterprise_telemetry;
 pub mod forget;
+pub mod foundry;
 pub mod home;
 pub mod identity;
 pub mod integrity;
@@ -186,6 +187,7 @@ pub use drain::{
 };
 pub use efficacy::FinishedExecution;
 pub use forget::{ContextSurface, SurfaceSuppression, is_restatement, is_suppressed};
+pub use foundry::{AdoptedTool, FoundryReuse};
 pub use integrity::{IntegrityDepth, IntegrityReport, StoreQuarantine};
 // The sidecar journal's writer is deliberately NOT re-exported at the top
 // level: `SessionJournal` here names the DB read-model reassembled by

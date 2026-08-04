@@ -5,12 +5,18 @@
 //! (`stella_core::tool_foundry`) mines `bash` receipts and *proposes* a tool;
 //! this module *authors* one — a complete `<name>.toml` manifest and
 //! `<name>.sh` script, both rendered as text for the caller to write under
-//! `.stella/tools/proposed/`. That directory is the whole guardrail:
-//! discovery ([`crate::custom::discover`]) only scans `*.toml` files directly
-//! in `.stella/tools/`, so nothing staged in the `proposed/` subdirectory
-//! registers, advertises, or executes. A human reviews the staged pair and
-//! enables the tool by moving the manifest up one directory — the same
-//! zero-ceremony path any hand-written custom tool takes.
+//! `.stella/tools/proposed/`. Discovery ([`crate::custom::discover`]) only
+//! scans `*.toml` files directly in `.stella/tools/`, so nothing staged in the
+//! `proposed/` subdirectory registers, advertises, or executes.
+//!
+//! Staging is only the first guardrail, and on its own a weak one — it makes a
+//! tool inert by putting it somewhere unread, which means moving the file is
+//! the whole approval. [`crate::foundry_gate`] replaces that with a standing
+//! check: an authored manifest carries a typed `[foundry]` table, and a
+//! manifest carrying one registers only while the workspace's adoption ledger
+//! says it was proven ([`crate::foundry_witness`]), enabled by a human, and
+//! still holds the bytes that were proven. So a hand-move now grants nothing,
+//! and the path forward is `stella tools --adopt` then `--enable`.
 //!
 //! **Authorship is proven before it is returned.** [`author`] feeds its own
 //! rendered manifest back through [`crate::custom::parse_manifest`] — the
@@ -27,7 +33,7 @@
 //! inject shell syntax into the authored command. What a value *can* still do
 //! is start with `-` and be read as a flag by the underlying program;
 //! argument-position vetting is exactly what the human review before adoption
-//! (and the later witness/gating slices) is for.
+//! is for.
 
 use stella_core::{ParamKind, ProposedTool, ToolParameter};
 
@@ -59,13 +65,14 @@ pub struct AuthoredTool {
 }
 
 /// Wire shape of the manifest body. Field order is load-bearing for the TOML
-/// serializer: every scalar and array precedes `input_schema`, the one table,
-/// so serialization can never emit a value after a table.
+/// serializer: every scalar and array precedes the two tables (`foundry`,
+/// `input_schema`), so serialization can never emit a value after a table.
 #[derive(serde::Serialize)]
 struct ManifestBody<'a> {
     name: &'a str,
     description: String,
     command: [String; 1],
+    foundry: crate::foundry_gate::FoundryProvenance,
     input_schema: serde_json::Value,
 }
 
@@ -93,6 +100,12 @@ pub fn author(proposal: &ProposedTool) -> Result<AuthoredTool, String> {
         name: &name,
         description: description_for(proposal),
         command: [format!("./{PROPOSED_DIR}/{script_filename}")],
+        foundry: crate::foundry_gate::FoundryProvenance {
+            authored_by: crate::foundry_gate::AUTHORED_BY.to_string(),
+            signature: proposal.signature.clone(),
+            occurrences: proposal.occurrences as u32,
+            witness_input: witness_input_for(&proposal.parameters),
+        },
         input_schema: input_schema_for(&proposal.parameters),
     };
     let toml_body = toml::to_string_pretty(&body)
@@ -180,6 +193,39 @@ fn description_for(proposal: &ProposedTool) -> String {
     )
 }
 
+/// The input the capability witness will run this tool with: the FIRST value
+/// actually observed at each hole, typed to match the schema.
+///
+/// Real observed arguments, not invented ones. A witness over made-up input
+/// proves the tool runs on input nobody has ever given it — the receipts are
+/// the whole reason there is a proposal here, and they are the only arguments
+/// known to have worked. Stamping them into the manifest is also what lets
+/// adoption happen long after those receipts have rolled out of the
+/// detector's mining window (see [`crate::foundry_witness`]).
+///
+/// A numeric hole whose observed value will not parse as a number is left
+/// out rather than smuggled through as a string: the schema says `number`,
+/// and an input that violates the tool's own schema is not a witness. The
+/// missing key makes the witness report `NoWitnessInput`, which is the
+/// honest answer.
+fn witness_input_for(parameters: &[ToolParameter]) -> serde_json::Value {
+    let mut input = serde_json::Map::new();
+    for param in parameters {
+        let Some(example) = param.examples.first() else {
+            continue;
+        };
+        let value = match param.kind {
+            ParamKind::Str | ParamKind::Path => serde_json::Value::String(example.clone()),
+            ParamKind::Number => match example.parse::<serde_json::Number>() {
+                Ok(number) => serde_json::Value::Number(number),
+                Err(_) => continue,
+            },
+        };
+        input.insert(param.name.clone(), value);
+    }
+    serde_json::Value::Object(input)
+}
+
 /// JSON Schema for the tool input: one required property per hole, typed
 /// string/number, described by what was actually observed at that position.
 fn input_schema_for(parameters: &[ToolParameter]) -> serde_json::Value {
@@ -225,7 +271,8 @@ fn provenance_header(proposal: &ProposedTool, name: &str) -> String {
          # nothing under proposed/ is registered, advertised, or executable.\n\
          #\n\
          # To pre-flight:  stella tools --validate {PROPOSED_DIR}\n\
-         # To enable:      mv {PROPOSED_DIR}/{name}.toml .stella/tools/\n\
+         # To adopt:       stella tools --adopt {name}    (runs its witness)\n\
+         # To enable:      stella tools --enable {name}   (the human approval)\n\
          #\n\
          # Evidence: {} invocations, {} distinct argument sets.\n",
         proposal.occurrences, proposal.distinct_arguments,

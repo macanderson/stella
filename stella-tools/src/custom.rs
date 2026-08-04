@@ -129,6 +129,10 @@ pub struct CustomTool {
     pub env: HashMap<String, String>,
     /// Manifest file this tool was loaded from (for diagnostics / listing).
     pub source: PathBuf,
+    /// The `[foundry]` table, present only on manifests Stella authored for
+    /// itself. `None` for every hand-written manifest, which is what keeps
+    /// [`crate::foundry_gate`] governing self-authored tools and nothing else.
+    pub foundry: Option<crate::foundry_gate::FoundryProvenance>,
 }
 
 impl CustomTool {
@@ -177,6 +181,11 @@ struct RawManifest {
     // bools, strings, arrays and nested tables all round-trip).
     #[serde(default)]
     input_schema: Option<Value>,
+    // Absent on every hand-written manifest. Unknown fields are ignored by
+    // this deserializer, so adding it cannot reject a manifest that predates
+    // it — a `[foundry]` table only ever *adds* the gate's constraints.
+    #[serde(default)]
+    foundry: Option<crate::foundry_gate::FoundryProvenance>,
 }
 
 /// `true` iff `name` matches `^[a-z][a-z0-9_]{1,63}$` (a lowercase letter then
@@ -240,6 +249,7 @@ pub fn parse_manifest(text: &str, source: &Path) -> Result<CustomTool, String> {
         input_schema,
         env: raw.env,
         source: source.to_path_buf(),
+        foundry: raw.foundry,
     })
 }
 
@@ -967,6 +977,7 @@ command = []"#;
             input_schema: serde_json::json!({ "type": "object" }),
             env: HashMap::new(),
             source: path,
+            foundry: None,
         }
     }
 
@@ -1229,6 +1240,7 @@ command = []"#;
             input_schema: serde_json::json!({ "type": "object" }),
             env: HashMap::new(),
             source: dir.path().join("t.toml"),
+            foundry: None,
         };
         let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
         match out {
