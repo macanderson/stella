@@ -1,3 +1,9 @@
+---
+id: context-graph-protocol-build-prompt
+title: "Context Graph Protocol Lifecycle Build Prompt"
+status: living
+---
+
 # Context Graph Protocol Lifecycle Build Prompt
 
 > **Reconciled — historical input.** This build prompt was addressed at the
@@ -6,8 +12,8 @@
 > lifecycle record taxonomy / capabilities / scope → **CGP #28**; append write
 > path → **#5**; resolve + reference-frame budget → **#50**; digest + provenance
 > → **#12**; RFC 3339 temporal → **#10**; `SPEC.md` completeness → **#49**. See
-> the CGP reconciliation delta table (`docs/adaptive-context-reconciliation.md`)
-> and `docs/adr/0007-protocol-product-boundary.md`, tracked in
+> the CGP reconciliation delta table ([reconciliation delta table](https://github.com/macanderson/context-graph-protocol/blob/c5fb2fe/docs/adaptive-context-reconciliation.md))
+> and [`adr/0007-protocol-product-boundary.md`](https://github.com/macanderson/context-graph-protocol/blob/c5fb2fe/docs/adr/0007-protocol-product-boundary.md), tracked in
 > [context-graph-protocol#27](https://github.com/macanderson/context-graph-protocol/issues/27).
 > **The CGEP rename this prompt proposed is rejected** — the protocol is Context
 > Graph Protocol (CGP) on the `contextgraph/*` namespace. Read this prompt as the

@@ -1,3 +1,9 @@
+---
+id: context-pr
+title: "Context PRs"
+status: living
+---
+
 # Context PRs
 
 **Status:** Canonical specification  
@@ -10,10 +16,10 @@ This document is the single source of truth for what a Context PR is, what it
 changes, and how one moves through proposal, review, publication, and
 retirement. It consolidates and supersedes earlier Context-PR drafts. It is
 consistent with, and defers to, the record semantics defined in
-[`docs/design/adaptive-context.md`](design/adaptive-context.md)
+[`docs/design/adaptive-context/adaptive-context.md`](design/adaptive-context.md)
 and the frame/sharing model in
-[`docs/design/context-frame-spec.md`](design/context-frame-spec.md). Per
-[`docs/design/context-graph-protocol-build-prompt.md`](design/context-graph-protocol-build-prompt.md),
+[`docs/design/adaptive-context/context-frame-spec.md`](design/context-frame-spec.md). Per
+[`docs/design/adaptive-context/context-graph-protocol-build-prompt.md`](design/context-graph-protocol-build-prompt.md),
 Context PR workflows are **host policy, not protocol mechanism**: nothing in
 this document belongs in the context graph wire protocol.
 

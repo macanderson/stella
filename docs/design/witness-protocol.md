@@ -1,3 +1,9 @@
+---
+id: witness-protocol
+title: "The Witness Protocol, adapted"
+status: living
+---
+
 # The Witness Protocol, adapted
 
 Status: approved for implementation — §4 and §7 land in `stella-pipeline`; §5 records what is deliberately declined

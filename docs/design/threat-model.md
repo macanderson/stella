@@ -1,3 +1,9 @@
+---
+id: threat-model
+title: "Stella Threat Model"
+status: living
+---
+
 # Stella Threat Model
 
 Status: descriptive — this documents the posture as shipped, not a plan

@@ -1,0 +1,68 @@
+name: docs-guards
+
+# Two guards over prose. Neither needs a Rust toolchain, which is why they live
+# here rather than in ci.yml -- that workflow deliberately ignores `docs/**` and
+# `*.md`, and this one triggers on exactly those paths.
+#
+#  1. doc-links (scripts/check-doc-links.py): every citation resolves to a
+#     document that has declared an identity. Documents are addressed by a
+#     frontmatter `id`, not by path, so moving one cannot break a citation to
+#     it; `docs/manifest.json` records id -> path so the tool can repoint the
+#     legacy path-form citations by itself. This replaces check-doc-citations.sh
+#     and check-normative-home.sh, which validated paths and so were brittle in
+#     exactly the way their subject was -- and which only ever read Rust
+#     comments, missing 16 dead markdown-to-markdown links.
+#
+#  2. invariants (scripts/check-invariants.sh): the architectural invariants
+#     live in AGENTS.md and nowhere else, and the numbering that Rust doc
+#     comments cite by ("AGENTS.md invariant #3") keeps resolving (#630).
+#     CONTRIBUTING.md and README.md each carried a drifted second copy before
+#     this existed.
+#
+# Rust sources are in the path filter because both read them: a citation added
+# to a .rs comment is exactly how one goes stale.
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "**/*.md"
+      - "**/*.rs"
+      - "scripts/check-doc-links.py"
+      - "scripts/check-invariants.sh"
+      - ".github/workflows/docs-guards.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "**/*.md"
+      - "**/*.rs"
+      - "scripts/check-doc-links.py"
+      - "scripts/check-invariants.sh"
+      - ".github/workflows/docs-guards.yml"
+  workflow_dispatch:
+
+# Checkout plus read-only checks.
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: docs guards
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # The link checker rewrites files in `fix` mode, so the regexes deciding
+      # what gets rewritten are tested before they are trusted on the tree.
+      - name: doc-links selftest
+        if: ${{ !cancelled() }}
+        run: python3 scripts/check-doc-links.py selftest
+
+      - name: every doc citation resolves to an identified document
+        if: ${{ !cancelled() }}
+        run: python3 scripts/check-doc-links.py check
+
+      - name: the architectural invariants have one home and stable numbering
+        if: ${{ !cancelled() }}
+        run: bash scripts/check-invariants.sh

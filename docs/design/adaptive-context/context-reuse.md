@@ -1,3 +1,9 @@
+---
+id: context-reuse
+title: "Context reuse: identity, accounting, consent, and verification"
+status: vendored
+---
+
 # Context reuse: identity, accounting, consent, and verification
 
 *Normative home: the [Context Graph Protocol](https://github.com/macanderson/context-graph-protocol/tree/c5fb2fe)
@@ -6,7 +12,7 @@
 <!--
   VENDORED — do not edit this copy.
 
-  Source: macanderson/context-graph-protocol, docs/context-reuse.md
+  Source: macanderson/context-graph-protocol, docs/design/adaptive-context/context-reuse.md
   Rev:    c5fb2fec5820494ab6921dc088c03d7f43301fa7
 
   This is the normative contract cited by 23 rustdoc comments across five
@@ -15,13 +21,13 @@
   dangled: `cargo doc` rendered them as plain text. Vendoring makes them
   resolve offline for a reader working without a network.
 
-  Nothing checks this copy against upstream. The two guards that used to —
-  check-normative-home.sh and check-doc-citations.sh — were retired when doc
-  citations moved to public-docs paths and upstream URLs, so keeping this file
-  honest is a review responsibility, not a CI one. To re-sync, bump the
-  manifests and re-fetch:
+  Nothing checks these bytes against upstream. `scripts/check-doc-links.py`
+  guarantees that citations to this document resolve and that a cited §N is a
+  section it actually has -- but it reads only this file, so it cannot know
+  whether the body matches the rev the header claims. That half stays a review
+  responsibility. To re-sync, bump the manifests and re-fetch:
 
-      gh api "repos/macanderson/context-graph-protocol/contents/docs/context-reuse.md?ref=<rev>" \
+      gh api "repos/macanderson/context-graph-protocol/contents/docs/design/adaptive-context/context-reuse.md?ref=<rev>" \
         --jq .content | base64 -d
 
   Upstream is dual-licensed MIT OR Apache-2.0 (LICENSE-MIT / LICENSE-APACHE in
@@ -35,7 +41,7 @@
      anchors) are CGP-repo-relative and have no counterpart in this workspace,
      because only this one document is vendored. Read them at
      https://github.com/macanderson/context-graph-protocol/blob/c5fb2fe/docs/
-     — e.g. .../docs/protocol-surface.md.
+     — e.g. .../docs/protocol-surface.md. <!-- doc-links:ignore -->
 
   A second caveat used to live here and is now resolved: the intro numbered four
   guarantees while the document shipped only §1, §2 and §4, so a rustdoc comment
@@ -47,7 +53,7 @@
   alone leaves a copy that *claims* a rev it does not match, and no check will
   say so. That is exactly how this file spent a commit pinned at one rev with
   another rev's body — §3 existed upstream and was missing here. Re-fetch with
-  the command above (or `git show <rev>:docs/context-reuse.md` from a checkout),
+  the command above (or `git show <rev>:docs/design/adaptive-context/context-reuse.md` from a checkout),
   keeping this header and replacing everything below it.
 -->
 

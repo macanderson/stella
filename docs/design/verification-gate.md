@@ -1,3 +1,9 @@
+---
+id: verification-gate
+title: "The verification gate — how CI says whether a change helps or hurts the agent"
+status: living
+---
+
 # The verification gate — how CI says whether a change helps or hurts the agent
 
 Experiments on the agent loop fail in a specific, ugly way: the change ships,

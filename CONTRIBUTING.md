@@ -70,6 +70,7 @@ A red gate is an automatic "not yet":
 ./scripts/check-no-scratch.sh
 ./scripts/check-action-pins.sh
 ./scripts/check-invariants.sh
+python3 ./scripts/check-doc-links.py check
 ./scripts/check-file-size.sh
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 cargo fmt --check
@@ -77,14 +78,17 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Or just `make gate`, which is the eight of them in order.
+Or just `make gate`, which is the nine of them in order.
 
 CI enforces the same steps, split across `ci.yml` (plus a release smoke build)
-and `invariants.yml`, which runs `check-invariants.sh` on its own because it
-triggers on the `docs/**` and `*.md` paths that `ci.yml` deliberately ignores.
+and `docs-guards.yml`, which runs the two prose guards on their own because they
+trigger on the `docs/**` and `*.md` paths that `ci.yml` deliberately ignores.
 
-Nothing gates doc citations. Cite the public docs site by path and anything
-internal by URL — see `docs/README.md § How to cite a document`.
+**Cite a document by its id, not its path.** `doc:context-reuse §4` resolves no
+matter where the file moves; a document with no frontmatter `id` is not citable
+at all (`make doc-adopt DOC=…` gives it one). Legacy path citations repair
+themselves — `make doc-links-fix` repoints them after a move. Cite anything
+outside this repository by URL. See `docs/README.md § How to cite a document`.
 
 **Run `make hooks` once per clone.** It points `core.hooksPath` at `.githooks`,
 whose `pre-push` hook runs `make gate` and aborts the push if it fails — so a

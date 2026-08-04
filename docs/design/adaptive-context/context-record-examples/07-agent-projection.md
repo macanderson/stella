@@ -1,3 +1,9 @@
+---
+id: 07-agent-projection
+title: "What the agent actually sees"
+status: living
+---
+
 # What the agent actually sees
 
 The records in `01`–`06` are governance artifacts: git-tracked, hashable,
