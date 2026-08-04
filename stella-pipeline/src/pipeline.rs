@@ -191,28 +191,6 @@ const NOTHING_ATTEMPTED_NUDGE: &str = "This turn ended without calling a single 
      file, running the command, applying the edit. Reasoning about a solution, or stating one in \
      prose, does not perform it.";
 
-/// What a revision turn is told when the only thing behind its PASS was a
-/// model judge's opinion — no flip, no green test (#1295).
-///
-/// Only reachable with `PipelineConfig::require_evidence_for_lone_judge_pass`
-/// on; see that field for why the default is off and what to measure before
-/// changing it.
-///
-/// Written as a request for *evidence*, not as a verdict on the work, and the
-/// distinction is the message's whole job. The reviewer did not find a defect
-/// — it approved — so telling the worker to "fix" something invites it to
-/// churn code that may well be correct. What is missing is a check, and the
-/// cheapest real one is a test that fails on the old behaviour: that is the
-/// same fail→pass evidence the ladder would have credited on its own.
-const LONE_JUDGE_PASS_EVIDENCE_REQUEST: &str = "The reviewer approved this work, but nothing \
-     mechanical corroborates it: no test went from failing to passing, and no test suite was \
-     observed green. The change is not being rejected — what is missing is a CHECK, not a fix. \
-     Produce one now: add or point at a test that fails on the previous behaviour and passes on \
-     this one, and run it so its result is on the record. If the change genuinely cannot be \
-     tested (it is configuration, documentation, or a pure rename), say so in one line and state \
-     what a reader should verify by hand instead — do not rewrite working code to manufacture \
-     something to test.";
-
 /// One observation of the working tree by [`Pipeline::gather_diff`].
 ///
 /// `available` is the field that did not exist and had to: without it, "the
@@ -419,33 +397,6 @@ pub struct PipelineConfig {
     /// operator who has the tooling and wants the overlap enforced rather
     /// than merely scored.
     pub require_diff_coverage: bool,
-    /// Send a turn back for deterministic evidence when a model judge's PASS
-    /// is the only thing behind it — no flip, no green test (#1295).
-    ///
-    /// **Off by default, and that default is measured rather than assumed.**
-    /// The behaviour was built, measured on Terminal-Bench, and switched off:
-    /// `LadderInputs::judge_pass_stands_alone` held on *most* turns there, so
-    /// the request cost a turn nearly everywhere instead of on the risky
-    /// minority — and with 7 trials in 20 already lost to the harness's
-    /// 900-second wall, buying turns where wall-clock binds loses more tasks
-    /// than it recovers. #1225 changed the input to that measurement (every
-    /// benchmark task folder is now a git repository, so the diff and touch
-    /// channels can see), which is why the knob exists instead of the
-    /// behaviour simply being deleted.
-    ///
-    /// **Measure before turning it on.** `stella calibration` reports the
-    /// current rate from recorded verdicts (`replay::CalibrationReport`'s
-    /// judge-alone cohort) — the same "read what is already persisted"
-    /// discipline as #871, so measuring costs a command rather than a
-    /// benchmark arm. A minority rate is the condition this was designed
-    /// for; a majority rate reproduces the result that switched it off.
-    ///
-    /// When on, an uncorroborated judge PASS spends one revision asking for
-    /// evidence and re-verifies. It never *fails* the run: with revisions
-    /// exhausted the turn takes the same UNVERIFIED relabel it takes when
-    /// this is off, because a run is not broken by the absence of a way to
-    /// check it.
-    pub require_evidence_for_lone_judge_pass: bool,
     /// Ask for corroboration when a model judge passes and nothing
     /// deterministic stands behind it (#1295): spend one revision demanding
     /// the evidence instead of recording the pass as UNVERIFIED on the spot.
@@ -542,7 +493,6 @@ impl Default for PipelineConfig {
             max_revisions: 2,
             test_oom_retries: 1,
             require_diff_coverage: false,
-            require_evidence_for_lone_judge_pass: false,
             // On (#1295). Off is the historical setting, and the reason it was
             // off — the ask fired on turns that could never answer it — is now
             // a precondition of raising it at all rather than a property of
@@ -2855,25 +2805,6 @@ impl<'a> Pipeline<'a> {
                         // `Unverified` score keeps it from tying a genuinely
                         // verified sibling in best-of-N.
                         if inputs.judge_pass_stands_alone() {
-                            // Ask for evidence instead of relabelling — but
-                            // only when the operator has switched it on
-                            // (#1295), and only while a revision is left to
-                            // spend. Both halves of that guard matter: the
-                            // request is worth a turn exactly when this
-                            // condition is the suspicious minority, and the
-                            // last word must never be "failed for want of
-                            // evidence" (see the fallthrough below).
-                            if self.config.require_evidence_for_lone_judge_pass
-                                && state.revisions < self.config.max_revisions
-                            {
-                                if let Err(reason) = self
-                                    .revise_candidate(
-                                        engine,
-                                        surface,
-                                        budget,
-                                        LONE_JUDGE_PASS_EVIDENCE_REQUEST,
-                                        total,
-                                        &mut state,
                             // Ask for the missing evidence once, if asking can
                             // be answered at all (#1295 — the predicate states
                             // why `effective_cmd` decides that).
@@ -2894,26 +2825,6 @@ impl<'a> Pipeline<'a> {
                                 {
                                     return CandidateResult::aborted(state.messages, reason);
                                 }
-                                continue;
-                            }
-                            // The default, and the measured one. Sending back
-                            // was built and measured, and the measurement is
-                            // why it is off: this condition held on MOST
-                            // Terminal-Bench turns, because those tasks
-                            // frequently expose no suite the agent can point
-                            // at — so the request cost a turn nearly
-                            // everywhere rather than on the bad ones. Stella
-                            // already loses 7 trials in 20 to the harness's
-                            // 900-second wall, and buying turns when
-                            // wall-clock is the binding constraint costs more
-                            // tasks than it recovers. `stella calibration`
-                            // reports the current rate so that number can be
-                            // re-taken rather than re-argued.
-                            //
-                            // The cheaper route to the same end is upstream:
-                            // with shell writes now reaching the ledger,
-                            // `file_change_events` carries real evidence on
-                            // turns that used to arrive here blind.
                                 // Re-observe from the top: the revised tree
                                 // gets a fresh test run and the ladder
                                 // re-decides over it. A turn that produced the

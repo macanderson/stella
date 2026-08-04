@@ -73,6 +73,11 @@ fn spec_with(extensions: Vec<Arc<dyn ServeExtension>>) -> SessionSpec {
         checkpoint: None,
         extensions,
         calibration: None,
+        // Neither is the subject here: these scenarios drive a single turn and
+        // assert on what the hook plane saw, so the goal loop and sub-agents
+        // stay off — their own acceptance lives in `goal_and_subagents.rs`.
+        goal: None,
+        sub_agents: None,
     }
 }
 

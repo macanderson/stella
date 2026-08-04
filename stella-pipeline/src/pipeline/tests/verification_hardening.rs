@@ -763,6 +763,11 @@ async fn a_persistent_memory_kill_is_never_a_deterministic_test_failure() {
     let config = PipelineConfig {
         test_command: Some("cargo test -p x".into()),
         diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
+        // Same reason as the scenario above: the subject is that a memory
+        // kill is reported as `out_of_memory` rather than as a red suite. The
+        // #1295 ask fires after that, on the judge's pass, and would spend a
+        // revision this scenario neither scripts nor is about.
+        judge_evidence_demand: false,
         ..PipelineConfig::default()
     };
     let pipeline = Pipeline::new(
@@ -830,154 +835,6 @@ async fn a_persistent_memory_kill_is_never_a_deterministic_test_failure() {
         runner.test_runs(),
         3,
         "baseline + the killed run + its one bounded retry — retries never run away"
-    );
-}
-
-/// One `Pipeline` run over scripted ports whose only interesting property is
-/// the judge branch: no test observation is ever available, so the ladder can
-/// only escalate, and the judge's PASS stands alone (#1295).
-async fn run_lone_judge_pass(
-    require_evidence: bool,
-    max_revisions: u32,
-    provider: &ScriptedProvider,
-    tests: Vec<TestScript>,
-) -> (PipelineOutcome, Vec<AgentEvent>, u32) {
-    let resolver = OneProvider(provider);
-    let runner = ScriptedRunner::scripted(tests, "@@ -1 +1 @@\n-old\n+new");
-    let tools = EmptyTools;
-    let recall = NoContextRecall;
-    let repo = NoRepoStructure;
-    let repo_status = NoRepoStatus;
-    let approvals = AutoApproveGate;
-    let sleeper = NoopSleeper;
-    let router = router();
-    let (tx, mut rx) = mpsc::unbounded_channel();
-
-    let config = PipelineConfig {
-        test_command: Some("cargo test -p x".into()),
-        diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
-        require_evidence_for_lone_judge_pass: require_evidence,
-        max_revisions,
-        ..PipelineConfig::default()
-    };
-    let pipeline = Pipeline::new(
-        PipelinePorts {
-            router: &router,
-            providers: &resolver,
-            tools: &tools,
-            recall: &recall,
-            repo: &repo,
-            repo_status: &repo_status,
-            touches: &NoFileTouches,
-            diagnostics: &runner,
-            tests: &runner,
-            lint: None,
-            mutation: None,
-            coverage: None,
-            approvals: &approvals,
-            sleeper: &sleeper,
-            hooks: None,
-            candidate_workspaces: None,
-            mcp_prefetch: None,
-            steering: None,
-        },
-        tx,
-        config,
-    );
-
-    let mut messages = vec![CompletionMessage::system("sys")];
-    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
-    let outcome = pipeline
-        .run("Make the thing work", &mut messages, &mut budget)
-        .await
-        .expect("run succeeds");
-    let events = drain(&mut rx);
-    let executes = stages(&events)
-        .iter()
-        .filter(|stage| **stage == StageKind::Execute)
-        .count() as u32;
-    (outcome, events, executes)
-}
-
-/// #1295, the default: a judge PASS with nothing mechanical behind it is
-/// RELABELLED, not sent back. This is the measured behaviour — the condition
-/// held on most Terminal-Bench turns, so gating on it would tax nearly every
-/// run — and it stays the default until `stella calibration` says the rate
-/// has become a minority.
-#[tokio::test]
-async fn a_lone_judge_pass_is_relabelled_unverified_by_default() {
-    let provider = ScriptedProvider::new(vec![
-        text_result("single"),
-        text_result("done"),
-        text_result("PASS — the change reads correct"),
-    ]);
-    let (outcome, _events, executes) = run_lone_judge_pass(
-        false,
-        2,
-        &provider,
-        // Never observable: the ladder can only escalate.
-        vec![TestScript::TimeOut, TestScript::TimeOut],
-    )
-    .await;
-
-    let verdict = outcome.verdict.expect("a verdict was produced");
-    assert!(verdict.passed, "an unverifiable run is not a failed run");
-    assert!(
-        verdict.summary.starts_with("UNVERIFIED:"),
-        "the pass must be relabelled, not laundered: {}",
-        verdict.summary
-    );
-    assert_eq!(executes, 1, "no extra turn is bought while the knob is off");
-}
-
-/// #1295, switched on: the same turn spends one revision asking for
-/// deterministic evidence — and, when the revisions run out with the evidence
-/// still absent, lands on exactly the same UNVERIFIED relabel. Asking for a
-/// check must never become a way to fail a run for not having one.
-#[tokio::test]
-async fn requesting_evidence_costs_a_revision_and_still_never_fails_the_run() {
-    let provider = ScriptedProvider::new(vec![
-        text_result("single"),
-        text_result("done"),
-        text_result("PASS — the change reads correct"),
-        // The revision turn, then the re-verification's judge call.
-        text_result("added a test, but could not run it"),
-        text_result("PASS — still nothing mechanical, but the change reads correct"),
-    ]);
-    let (outcome, _events, executes) = run_lone_judge_pass(
-        true,
-        1,
-        &provider,
-        vec![
-            TestScript::TimeOut,
-            TestScript::TimeOut,
-            TestScript::TimeOut,
-        ],
-    )
-    .await;
-
-    assert_eq!(
-        executes, 2,
-        "the uncorroborated pass buys exactly one revision turn"
-    );
-    let verdict = outcome.verdict.expect("a verdict was produced");
-    assert!(
-        verdict.passed,
-        "running out of revisions must not convert 'unproven' into 'wrong'"
-    );
-    assert!(
-        verdict.summary.starts_with("UNVERIFIED:"),
-        "the terminal state is the same relabel the default takes: {}",
-        verdict.summary
-    );
-    let asked = provider
-        .prompts()
-        .iter()
-        .any(|prompt| prompt.contains("what is missing is a CHECK, not a fix"));
-    assert!(
-        asked,
-        "the revision turn must carry the evidence request, framed as a request for a check \
-         rather than a verdict on the work"
     );
 }
 

@@ -664,18 +664,6 @@ fn run_session(
         // drains `POST /steer` messages into the transcript at the same
         // boundary. The sender half stays on the registry entry.
         let (gate, steering) = control_ports.into_ports();
-        let mut engine = Engine::with_sleeper(&provider, &tools, spec.config, &sleeper)
-            .with_gate(&gate)
-            .with_steering(&*steering);
-        // Both attachments are by reference for the engine's lifetime, so the
-        // owners have to outlive it — hence the bindings above rather than
-        // temporaries here.
-        if let Some(bus) = &bus {
-            engine = engine.with_bus(bus);
-        }
-        if let Some(calibration) = &spec.calibration {
-            engine = engine.with_calibration(calibration);
-        }
 
         // The engine emits `AgentEvent`s; wrap each as a frame for the host. The
         // reverse-RPC request frames bypass this and go straight to `frame_tx`
@@ -719,11 +707,17 @@ fn run_session(
             );
             Arc::new(crate::subagents::ServedSubAgents::new(
                 Arc::new(child_provider),
+                // The same hook plane the parent's executor carries (#1298).
+                // An operator policy that can refuse a tool call must not be
+                // escapable by delegating that call to a child: the child
+                // remotes to the same host, on the same account, through the
+                // same reverse-RPC — so it meets the same gate.
                 Arc::new(RemoteToolExecutor::new(
                     advertised.clone(),
                     frame_tx.clone(),
                     pending.clone(),
                     spec.reverse_request_timeout,
+                    bus.clone(),
                 )),
                 spec.config.clone(),
                 effective,
@@ -747,9 +741,22 @@ fn run_session(
             Some(delegating) => delegating,
             None => &tools,
         };
-        let engine = Engine::with_sleeper(&provider, tool_view, spec.config.clone(), &sleeper)
+        // Built over `tool_view` rather than `tools`: with sub-agents allowed
+        // the delegating view IS this turn's tool set (#1297), and with none
+        // allowed it is `tools` itself, so one construction covers both.
+        //
+        // Every attachment below is by reference for the engine's lifetime, so
+        // the owners have to outlive it — hence the bindings above rather than
+        // temporaries here.
+        let mut engine = Engine::with_sleeper(&provider, tool_view, spec.config.clone(), &sleeper)
             .with_gate(&gate)
             .with_steering(&*steering);
+        if let Some(bus) = &bus {
+            engine = engine.with_bus(bus);
+        }
+        if let Some(calibration) = &spec.calibration {
+            engine = engine.with_calibration(calibration);
+        }
 
         let outcome = match &spec.goal {
             // A judged multi-round run (#1297). Its judge announces its own
@@ -776,20 +783,22 @@ fn run_session(
                     spec.budget,
                     &event_tx,
                     cancel,
+                    bus.as_ref(),
                 )
                 .await
             }
-            None => drive_turn(&engine, spec.messages, spec.budget, &event_tx, cancel).await,
+            None => {
+                drive_turn(
+                    &engine,
+                    spec.messages,
+                    spec.budget,
+                    &event_tx,
+                    cancel,
+                    bus.as_ref(),
+                )
+                .await
+            }
         };
-        let outcome = drive_turn(
-            &engine,
-            spec.messages,
-            spec.budget,
-            &event_tx,
-            cancel,
-            bus.as_ref(),
-        )
-        .await;
         let messages = outcome.messages;
         let budget = outcome.budget;
         let outcome = outcome.outcome;
