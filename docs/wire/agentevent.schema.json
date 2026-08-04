@@ -469,6 +469,13 @@
           "minimum": 0,
           "type": "integer"
         },
+        "diff_coverage": {
+          "description": "Whether the test run executed the lines the change added (#1291):\n`covered`, `not_covered`, or `unmeasured`.\n\nA string rather than a bool because the third value is the whole\npoint. \"The test did not run the changed lines\" and \"no coverage tool\ncould say\" are different findings, and only the first is about the\nwork — collapsing them into `Option<bool>` would put the reader back\nwhere #973 found them, reading a statement about the instrument as a\nstatement about the world.\n\nAbsent on snapshots recorded before this existed, and on every run\nwhere no coverage probe was wired — which a reader must treat as\n`unmeasured`, never as either verdict.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "diff_lines": {
           "description": "Lines changed, and the budget they were judged against.",
           "format": "uint32",

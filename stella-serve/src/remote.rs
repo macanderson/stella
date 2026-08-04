@@ -91,6 +91,12 @@ fn timed_out(pending: &Pending, request_id: &str, kind: ReverseKind, started: In
 /// pretend its tools failed.
 pub(crate) const DEFAULT_REVERSE_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// Mints [`RemoteProvider`] instance tags. Process-wide rather than
+/// per-session because uniqueness only has to hold within one turn's
+/// [`Pending`] registry, and a global counter reaches that without threading
+/// an allocator through every construction site.
+static PROVIDER_INSTANCES: AtomicU64 = AtomicU64::new(0);
+
 /// Hand one streamed fragment to the engine's observer, on the channel that
 /// keeps answer text and thinking apart. A `None` observer (the plain
 /// `complete_ref` path) drops the fragment: the aggregated result is
@@ -119,6 +125,21 @@ impl Sleeper for TokioSleeper {
 /// [`ServerFrame::ProviderRequest`] and blocks the step on the host's answer.
 pub(crate) struct RemoteProvider {
     id: String,
+    /// What this provider's calls are FOR (#1297), stamped onto every request
+    /// frame so a host can route a judge or a sub-agent to a different model
+    /// than the worker. One per purpose: a turn that runs a judged goal loop
+    /// builds two of these, not one shared instance with a mutable role.
+    role: stella_protocol::ModelCallRole,
+    /// Disambiguates this provider's request ids from every other provider
+    /// sharing the turn's [`Pending`] registry (#1297).
+    ///
+    /// Load-bearing since a turn stopped meaning one provider: the counter
+    /// below starts at zero per instance, so a worker and a sub-agent's
+    /// provider would both mint `prov-0`, and the second registration would
+    /// collide with the first's parked request. A process-wide instance tag
+    /// costs one atomic per provider and makes that collision
+    /// unrepresentable rather than unlikely.
+    instance: u64,
     frames: crate::backlog::FrameSink,
     pending: Pending,
     counter: AtomicU64,
@@ -134,11 +155,31 @@ impl RemoteProvider {
     ) -> Self {
         Self {
             id,
+            role: stella_protocol::ModelCallRole::Worker,
+            instance: PROVIDER_INSTANCES.fetch_add(1, Ordering::Relaxed),
             frames,
             pending,
             counter: AtomicU64::new(0),
             timeout,
         }
+    }
+
+    /// The same remoted provider, announcing a different role — the judge of
+    /// a goal run, or a sub-agent's own calls (#1297).
+    ///
+    /// A separate instance rather than a setter: the role is stamped on every
+    /// frame this provider emits, and two agents share one turn's frame sink,
+    /// so a mutable role would be a race between the worker's next call and
+    /// the judge's.
+    pub(crate) fn with_role(mut self, role: stella_protocol::ModelCallRole) -> Self {
+        self.role = role;
+        self
+    }
+
+    /// This provider's id — what a host reads off the request frame to pick a
+    /// model. Cloned per frame; ids are short.
+    pub(crate) fn id_string(&self) -> String {
+        self.id.clone()
     }
 }
 
@@ -163,7 +204,11 @@ impl RemoteProvider {
         if self.pending.is_cancelled() {
             return Err(ProviderError::Cancelled);
         }
-        let request_id = format!("prov-{}", self.counter.fetch_add(1, Ordering::Relaxed));
+        let request_id = format!(
+            "prov-{}-{}",
+            self.instance,
+            self.counter.fetch_add(1, Ordering::Relaxed)
+        );
         let (tx, mut rx) = oneshot::channel();
         let (feed, mut deltas) = mpsc::unbounded_channel::<ProviderDelta>();
         // Register before emitting so the entry always exists by the time the
@@ -178,6 +223,8 @@ impl RemoteProvider {
             .frames
             .send(ServerFrame::ProviderRequest {
                 request_id: request_id.clone(),
+                provider_id: self.id.clone(),
+                role: self.role,
                 // The one boundary that genuinely needs the copy #921 removed
                 // from the engine: this frame outlives the call, crossing from
                 // the session thread to the server runtime, so it cannot

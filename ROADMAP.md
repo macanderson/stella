@@ -62,11 +62,26 @@ the test *constrains* the change well.
   witness bytes take to disk — so the refusal lands *inside the author's own
   turn* and costs no extra model invocation, rather than after a baseline run
   and a repair turn as sketched here.
-- **Diff-coverage overlap.** Where coverage tooling is available (e.g.
-  `cargo llvm-cov`), check that the witness actually executes some of the
-  changed lines. A flip whose test never touches the diff is a coincidence,
-  not evidence. Make this an *optional* ladder input so environments without
-  coverage tooling degrade gracefully.
+- **Diff-coverage overlap.** *Done (#1291).* A `CoverageProbe` port runs the
+  tracked command under the workspace's own coverage tool in the pre-submit
+  audit — `cargo llvm-cov` (LCOV) and `pytest --cov` (coverage.py JSON), the
+  two dialects `verify::fingerprint` can already read test output for — and
+  `verify::coverage` intersects the executed lines with the diff's added
+  ones. Three-valued, and **neither non-`covered` answer is a pass**:
+  - `not_covered` (measured, no overlap) withholds the deterministic credit
+    and escalates to the judge — the flip is a coincidence, which is worth a
+    second opinion. Never a failure, never a deterministic red.
+  - `unmeasured` (no tooling, no probe, an unreadable report) takes the
+    fast-submit — no judge call, no extra turn — but is **scored
+    `Unverified`**, with the verdict summary leading `UNPROVEN` and the status
+    on the ladder snapshot. The honest answer costs a ranking position rather
+    than a model call, which is what makes it affordable by default; escalating
+    instead would tax every workspace without coverage tooling (the #1295
+    result). `require_diff_coverage` turns that stricter reading on for an
+    operator who has the tooling and wants the overlap enforced.
+
+  `PipelineOutcome::score` surfaces the grade so a host can see the
+  distinction a `verdict.deterministic` flag alone would hide.
 
 ## 2. Flakiness — protect the oracle's invariant from nondeterminism
 
@@ -87,12 +102,23 @@ can produce a *false flip* (fails for an unrelated reason, then passes).
   summary count must equal the names parsed), so a truncated tail can never
   fail an honest fix; every dark input degrades to the exit code.
 - **Typed timeout/infra outcomes.** *Done (#860).* `CmdOutcome` carries
-  `CmdKind {Completed, TimedOut, Infra}`; verification consumes
+  `CmdKind {Completed, TimedOut, OutOfMemory, Infra}`; verification consumes
   `assertion_result()`, so an infra "failure" can neither lock the oracle
   nor read as a deterministic red (it escalates with `test_run=<label>` in
-  evidence), and the witness fail-first gate degrades honestly. Signal-killed
-  stays `Completed` (a segfaulting test is a real failure); OOM-kill is the
-  documented residual ambiguity.
+  evidence), and the witness fail-first gate degrades honestly. A
+  segfaulting test stays `Completed` — that is a real failure.
+- **Out-of-memory kills.** *Done (#1294).* The residual ambiguity #860 left
+  is closed: `stella_pipeline::oom` classifies a run the machine killed for
+  memory (`SIGKILL`, exit `137`, or a runtime's own allocation-failure
+  message on a run that failed), the runner reports it as
+  `CmdKind::OutOfMemory`, and every test run in the pipeline goes through
+  one retrying entry point (`run_test_observed`, `test_oom_retries`, one
+  retry by default). Retry rather than revise is the whole point: the run
+  observed no assertion, so telling a worker its work failed asks it to
+  "fix" code no test ever judged. A kill that survives its retry escalates
+  with `test_run=out_of_memory` — its own word, never `infra_failure` and
+  never a deterministic red. The kernel log is deliberately not read (see
+  the module docs for why attribution there is unsafe).
 
 ## 3. Secondary deterministic evidence (without weakening L-E11)
 
@@ -139,7 +165,18 @@ Lint/typecheck are rightly excluded from the flip oracle. But they can still
   observations in the same stream), so `replay::calibration` folds it and
   `stella calibration` reports the judge's measured false-positive rate
   beside the deterministic cohort's — unmeasured stays unmeasured, never 0%.
-  Revert detection and threshold auto-tuning wait on real measured data.
+- **An answer key: reverts, and verdicts that arrive late.** *Done (#1293).*
+  Two gaps in the first slice are closed. `replay::ground_truth` reads git's
+  own `This reverts commit <sha>` marker, so a human undoing Stella's work is
+  a ground-truth source — counted apart from red CI, because a revert is a
+  later and better-informed statement. And `calibration_pending` carries a
+  session's unsettled passes out of the fold with the commits and PRs they
+  cover, so a terminal verdict recorded in *another* session (or a revert
+  landing weeks later) still reconciles them. The asymmetry is deliberate and
+  enforced: a revert settles a pass as a false positive, while the ABSENCE of
+  one confirms nothing and leaves the pass out of every denominator.
+  Threshold auto-tuning still waits on real measured data — which this is the
+  instrument for.
 - **Distress guidance earlier for repeated identical failures.** *Already
   satisfied (#868, closed).* The trigger fires on the second consecutive
   deterministic failure unconditionally — the timing this item asked for —

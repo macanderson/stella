@@ -107,6 +107,21 @@ pub struct SessionSpec {
     /// named a sink outright has said exactly where its checkpoints go, and
     /// this field is the server's convenience, not an override of it.
     pub checkpoint: Option<crate::checkpoint::TurnCheckpoint>,
+    /// Run this turn as a judged multi-round goal run rather than a single
+    /// turn (#1297). `None` — the default — is the pre-#1297 behavior
+    /// exactly.
+    ///
+    /// A mode on a turn rather than its own resource because everything a
+    /// goal run needs from the transport is already here and already
+    /// witnessed: the SSE stream carries its rounds, cancel stops it at a step
+    /// boundary, and the settlement hook writes its transcript back. See
+    /// [`GoalRun`](crate::GoalRun)'s own module for the full argument.
+    pub goal: Option<crate::goal::GoalRun>,
+    /// What this turn's sub-agents may do (#1297), after the operator's
+    /// [`crate::SubAgentPolicy`] has clamped the caller's request. `None`
+    /// advertises no `task` tool at all, so the model never learns children
+    /// exist — the default, and the whole of the pre-#1297 behavior.
+    pub sub_agents: Option<crate::subagents::EffectiveSubAgents>,
     /// The operator's hook plane for this turn (#1298), installed on a
     /// freshly-minted `HookBus` before the first step runs.
     ///
@@ -439,10 +454,10 @@ impl Drop for Session {
 /// means owning a [`TurnState`] instead, so they come back as values — which
 /// is also what makes the transcript available to checkpoint *between* steps
 /// rather than only after the turn.
-struct DrivenTurn {
-    outcome: TurnOutcome,
-    messages: Vec<CompletionMessage>,
-    budget: BudgetGuard,
+pub(crate) struct DrivenTurn {
+    pub(crate) outcome: TurnOutcome,
+    pub(crate) messages: Vec<CompletionMessage>,
+    pub(crate) budget: BudgetGuard,
 }
 
 /// Drive one turn as a loop over [`Engine::run_step`], the step-scoped facade
@@ -477,7 +492,7 @@ struct DrivenTurn {
 ///   claimed otherwise. The consequence, stated so it is not discovered:
 ///   what survives is the turn that died *without* unwinding (a `SIGKILL`, a
 ///   panic, a lost machine), not the tail of a graceful drain.
-async fn drive_turn(
+pub(crate) async fn drive_turn(
     engine: &Engine<'_>,
     messages: Vec<CompletionMessage>,
     budget: BudgetGuard,
@@ -632,6 +647,10 @@ fn run_session(
             pending.clone(),
             spec.reverse_request_timeout,
         );
+        // Kept before the executor takes ownership: a sub-agent gets its own
+        // remoted executor over the same advertised set, so the schemas have
+        // to survive the move.
+        let advertised = spec.tools.clone();
         let tools = RemoteToolExecutor::new(
             spec.tools,
             frame_tx.clone(),
@@ -682,6 +701,86 @@ fn run_session(
             fold.finish()
         });
 
+        // Sub-agents (#1297), when the operator's policy and the caller's
+        // request agree. Built before the engine because the engine borrows
+        // the tool set, and the delegating view IS the tool set once children
+        // are allowed — a host tool call still remotes exactly as before; only
+        // `task` is executed here.
+        let spend_ledger: stella_core::subagent::SubAgentSpendLedger = Default::default();
+        let dispatcher = spec.sub_agents.as_ref().map(|effective| {
+            let child_provider = crate::remote::RemoteProvider::new(
+                effective
+                    .provider_id
+                    .clone()
+                    .unwrap_or_else(|| provider.id_string()),
+                frame_tx.clone(),
+                pending.clone(),
+                spec.reverse_request_timeout,
+            );
+            Arc::new(crate::subagents::ServedSubAgents::new(
+                Arc::new(child_provider),
+                Arc::new(RemoteToolExecutor::new(
+                    advertised.clone(),
+                    frame_tx.clone(),
+                    pending.clone(),
+                    spec.reverse_request_timeout,
+                )),
+                spec.config.clone(),
+                effective,
+                event_tx.clone(),
+                Arc::clone(&spend_ledger),
+            )) as Arc<dyn stella_core::subagent::SubAgentDispatcher>
+        });
+        let delegating =
+            dispatcher
+                .as_ref()
+                .zip(spec.sub_agents.as_ref())
+                .map(|(dispatcher, effective)| {
+                    crate::subagents::DelegatingTools::new(
+                        &tools,
+                        Arc::clone(dispatcher),
+                        effective.child_steps,
+                        Arc::clone(&spend_ledger),
+                    )
+                });
+        let tool_view: &dyn stella_core::ports::ToolExecutor = match &delegating {
+            Some(delegating) => delegating,
+            None => &tools,
+        };
+        let engine = Engine::with_sleeper(&provider, tool_view, spec.config.clone(), &sleeper)
+            .with_gate(&gate)
+            .with_steering(&*steering);
+
+        let outcome = match &spec.goal {
+            // A judged multi-round run (#1297). Its judge announces its own
+            // provider id and `role: judge` on every frame, so a host can
+            // route it to a different family than the worker — the property
+            // the goal loop exists for, and the one the engine cannot enforce
+            // because the host owns the model calls.
+            Some(run) => {
+                let judge_provider = crate::remote::RemoteProvider::new(
+                    run.judge_provider_id
+                        .clone()
+                        .unwrap_or_else(|| provider.id_string()),
+                    frame_tx.clone(),
+                    pending.clone(),
+                    spec.reverse_request_timeout,
+                )
+                .with_role(stella_protocol::ModelCallRole::Judge);
+                crate::goal::drive_goal(
+                    &engine,
+                    &judge_provider,
+                    run,
+                    spec.config.turn_instance,
+                    spec.messages,
+                    spec.budget,
+                    &event_tx,
+                    cancel,
+                )
+                .await
+            }
+            None => drive_turn(&engine, spec.messages, spec.budget, &event_tx, cancel).await,
+        };
         let outcome = drive_turn(
             &engine,
             spec.messages,
@@ -695,6 +794,16 @@ fn run_session(
         let budget = outcome.budget;
         let outcome = outcome.outcome;
 
+        // Release everything holding a clone of the event sender BEFORE
+        // closing the channel, in dependency order: the engine borrows the
+        // tool view, the tool view holds the dispatcher, and the dispatcher
+        // holds the sender a child emits its metering on. Miss one and
+        // `event_rx.recv()` never returns `None`, the forwarder never drains,
+        // and a turn that has already produced its `Complete` event hangs
+        // without ever emitting its terminal frame.
+        drop(engine);
+        drop(delegating);
+        drop(dispatcher);
         // Close the event channel so the forwarder drains and exits before the
         // terminal frame — a well-behaved host thus sees every event first.
         drop(event_tx);

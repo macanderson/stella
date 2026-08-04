@@ -1095,6 +1095,7 @@ fn sample_events() -> Vec<AgentEvent> {
                         new_diag_warnings: 1,
                         witness_intact: Some(true),
                         witness_mutation: Some(true),
+                        diff_coverage: Some("covered".into()),
                     })),
                 },
             }),

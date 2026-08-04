@@ -316,6 +316,22 @@ export interface LadderSnapshot {
   diff_available: boolean;
   diff_budget: number;
   /**
+   * Whether the test run executed the lines the change added (#1291):
+   * `covered`, `not_covered`, or `unmeasured`.
+   *
+   * A string rather than a bool because the third value is the whole
+   * point. "The test did not run the changed lines" and "no coverage tool
+   * could say" are different findings, and only the first is about the
+   * work — collapsing them into `Option<bool>` would put the reader back
+   * where #973 found them, reading a statement about the instrument as a
+   * statement about the world.
+   *
+   * Absent on snapshots recorded before this existed, and on every run
+   * where no coverage probe was wired — which a reader must treat as
+   * `unmeasured`, never as either verdict.
+   */
+  diff_coverage?: string | null;
+  /**
    * Lines changed, and the budget they were judged against.
    */
   diff_lines: number;

@@ -80,6 +80,7 @@ async fn run_scenario(s: Scenario) {
             tests: &runner,
             lint: lint.as_ref().map(|l| l as &dyn LintProbe),
             mutation: None,
+            coverage: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,

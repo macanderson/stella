@@ -99,6 +99,7 @@ pub(crate) mod candidate_narration;
 pub(crate) mod candidate_steering;
 pub mod flip_halt;
 pub(crate) mod mcp_prefetch;
+pub mod oom;
 pub mod pipeline;
 pub mod plan;
 pub mod ports;
@@ -109,6 +110,7 @@ pub mod triage;
 pub mod verify;
 pub mod witness;
 
+pub use oom::{ExitFacts, killed_by_oom};
 pub use pipeline::{
     Pipeline, PipelineConfig, PipelineError, PipelineOutcome, PipelineRoleOverrides,
     PipelineRunError, PipelineStatus, RoleCallOverrides, Verdict,
@@ -116,11 +118,11 @@ pub use pipeline::{
 pub use ports::{
     AdoptedChange, AlwaysAbortGate, ApprovalGate, ArtifactIdentity, ArtifactKind,
     CandidateWorkspace, CandidateWorkspacePort, CmdKind, CmdOutcome, ContextRecallPort,
-    DiagnosticInvocation, DiagnosticRunner, FileTouchPort, LineMutation, LintProbe, LintRecord,
-    McpPrefetchPort, MutantOutcome, MutationProbe, NoContextRecall, NoFileTouches, NoRepoStatus,
-    NoRepoStructure, PipelinePorts, ProviderResolver, Recall, RecalledFrame, RepoStatusPort,
-    RepoStructurePort, ScopeDecision, StdioApprovalGate, TestInvocation, TestRunner,
-    WorkspaceError,
+    CoverageProbe, DiagnosticInvocation, DiagnosticRunner, FileTouchPort, LineMutation, LintProbe,
+    LintRecord, McpPrefetchPort, MutantOutcome, MutationProbe, NoContextRecall, NoFileTouches,
+    NoRepoStatus, NoRepoStructure, PipelinePorts, ProviderResolver, Recall, RecalledFrame,
+    RepoStatusPort, RepoStructurePort, ScopeDecision, StdioApprovalGate, TestInvocation,
+    TestRunner, WorkspaceError,
 };
 pub use reward::{
     DiscardReason, OutcomeWeights, RewardLabel, RewardPolicy, RewardShaping, Settlement,

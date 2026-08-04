@@ -188,6 +188,14 @@ pub struct ServeConfig {
     /// deployment decision (a mounted volume, a replicated table) that this
     /// crate cannot guess and must not invent — see `crate::checkpoint`.
     pub checkpoints: Option<Arc<dyn crate::checkpoint::CheckpointStore>>,
+    /// What this deployment allows a turn's sub-agents to do (#1297).
+    ///
+    /// `Default` allows none: children spend money on the host's account, and
+    /// a deployment that has not thought about that should not discover it
+    /// from a request body. Turning them on is
+    /// [`ServeConfig::with_sub_agents`], and every caller-settable knob is
+    /// bounded by the policy — see [`crate::SubAgentPolicy`].
+    pub sub_agents: crate::SubAgentPolicy,
     /// The operator's hook extensions, installed on every served turn (#1298).
     ///
     /// Empty — the default, and what the shipping binary ships — is the
@@ -257,6 +265,17 @@ impl ServeConfig {
             allowed_hosts: Vec::new(),
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
             checkpoints: None,
+            sub_agents: crate::SubAgentPolicy::default(),
+        }
+    }
+
+    /// Allow served turns to delegate to sub-agents, under `policy` (#1297).
+    ///
+    /// Off by default; see [`ServeConfig::sub_agents`] for why the safe
+    /// posture is the default one.
+    #[must_use]
+    pub fn with_sub_agents(mut self, policy: crate::SubAgentPolicy) -> Self {
+        self.sub_agents = policy;
             extensions: crate::extensions::Extensions::new(),
         }
     }
@@ -419,6 +438,9 @@ pub(crate) struct ServerState {
     /// See [`ServeConfig::checkpoints`]. `None` leaves every turn's
     /// `checkpoint_sink` unset, which is exactly today's behavior.
     checkpoints: Option<Arc<dyn crate::checkpoint::CheckpointStore>>,
+    /// See [`ServeConfig::sub_agents`] — the operator's ceilings on what a
+    /// turn's children may do (#1297).
+    sub_agents: crate::SubAgentPolicy,
     /// See [`ServeConfig::extensions`]. Cloned onto every `SessionSpec` — one
     /// `Arc` bump per turn, and the same handler set for every turn, which is
     /// what makes "the operator decides" checkable rather than per-request.
@@ -443,6 +465,13 @@ impl ServerState {
 
     pub(crate) fn session_idle_ttl(&self) -> Duration {
         self.session_idle_ttl
+    }
+
+    /// This deployment's sub-agent ceilings (#1297). Every `sub_agents` block
+    /// on a turn request passes through `SubAgentPolicy::clamp` before it can
+    /// affect anything.
+    pub(crate) fn sub_agent_policy(&self) -> crate::SubAgentPolicy {
+        self.sub_agents
     }
 
     /// The configured checkpoint store, if this deployment has one.
@@ -872,6 +901,7 @@ pub async fn serve_until(
         sessions: crate::sessions::SessionRegistry::new(),
         session_idle_ttl: config.session_idle_ttl,
         checkpoints: config.checkpoints.clone(),
+        sub_agents: config.sub_agents,
         extensions: config.extensions,
         calibration: crate::calibration::CalibrationRegistry::new(),
         host_policy,
@@ -1309,6 +1339,7 @@ mod tests {
                 lifecycle
             },
             checkpoints: None,
+            sub_agents: crate::SubAgentPolicy::default(),
             extensions: crate::extensions::Extensions::new(),
             calibration: crate::calibration::CalibrationRegistry::new(),
         };
@@ -1326,6 +1357,8 @@ mod tests {
             turn: TurnRef::new(turn_id),
             observer: crate::observe::null_observer(),
             on_settled: None,
+            goal: None,
+            sub_agents: None,
             checkpoint: None,
             extensions: crate::extensions::Extensions::new(),
             calibration: None,

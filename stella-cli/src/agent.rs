@@ -46,6 +46,7 @@ use crate::runtime::{SystemClock, TokioSleeper};
 use crate::tui;
 use stella_context::EpisodeOutcome;
 
+mod coverage;
 mod engine;
 mod goal;
 mod graph;
@@ -428,6 +429,7 @@ async fn run_pipeline_one_shot(
             tests: &ws_ports.test_runner,
             lint: Some(&ws_ports.lint_probe),
             mutation: Some(&ws_ports.mutation_probe),
+            coverage: Some(&ws_ports.coverage_probe),
             approvals: if approval_capability == PipelineApprovalCapability::Stdio {
                 &stdio_gate
             } else {

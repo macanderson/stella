@@ -55,6 +55,8 @@ host  ──POST /v1/turns──►  stella-serve  ──►  Session (dedicated
 | [`src/remote.rs`](src/remote.rs) | The two remoted port impls, plus `TokioSleeper` for the engine's retry backoff. |
 | [`src/pending.rs`](src/pending.rs) | `Pending`, the `request_id` → one-shot registry shared across the two runtimes. Open it when a resolve POST returns 409. |
 | [`src/frame.rs`](src/frame.rs) | The wire vocabulary: `ServerFrame`, `TurnOutcomeWire`, `ToolResultIn`, `ProviderResultIn`, `ProviderErrorWire`. Every wire-shape change starts here. |
+| [`src/goal.rs`](src/goal.rs) | Judged multi-round runs (#1297): `GoalRun`, and the round loop driven over the same step driver a single turn uses. |
+| [`src/subagents.rs`](src/subagents.rs) | Sub-agents (#1297): the operator's `SubAgentPolicy`, the dispatcher that runs a child on the same remoted ports, and the `task` tool layered over the host's stack. |
 | [`src/server.rs`](src/server.rs) | `serve` — accept loop, bearer auth, the connection fold (one record per connection), route classification, the turn registry, and a rustdoc list of the operational limits the deployment must supply. |
 | [`src/routes.rs`](src/routes.rs) | The endpoint handlers and the wire types they parse — the five `/v1/turns` routes (including `cancel`), `/healthz`, `/v1/metrics`, `/v1/calibration`, and the host-supplied ceilings (`max_steps`, `reverse_request_timeout_ms`). |
 | [`src/extensions.rs`](src/extensions.rs) | `ServeExtension` — the operator's per-turn hook plane (#1298), and the argument for why registration is operator-only and no route reaches it. |
@@ -129,6 +131,18 @@ and the removal under one lock on purpose: removing first and re-inserting on a
 mismatch leaves a window where the id is absent, so a correctly kinded resolve
 racing a mis-kinded one is rejected as unknown — the host gets a 409 for a result
 it will not send twice, and the engine step stays parked forever.
+
+**A turn is not always one agent (#1297).** A `goal` block runs judged rounds
+until an independent judge says the goal is met; a `sub_agents` block lets the
+model delegate research to a read-only child. Both put several agents behind
+one turn id, which is why `ProviderRequest` carries `provider_id` and `role`:
+a host reads them to route the judge — or the children — to a different model
+than the worker. Both fields are additive, so a single-model host answers
+every request with its one model exactly as before. The caller's knobs are
+bounded by the server (`MAX_SERVED_GOAL_ROUNDS`, `ServeConfig::sub_agents`),
+and sub-agents are **off by default** because children spend money on the
+host's account. Shapes and a worked example:
+[`docs/design/serve-surface.md`](../docs/design/serve-surface.md#judged-multi-round-runs-and-sub-agents-1297).
 
 **Provider failures are classified by the host, not re-derived here.**
 `ProviderErrorWire` mirrors `ProviderError`'s taxonomy on the wire; the engine

@@ -270,6 +270,7 @@ async fn run_scenario(
             tests: &runner,
             lint: None,
             mutation: None,
+            coverage: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,

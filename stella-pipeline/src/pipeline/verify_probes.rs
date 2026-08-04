@@ -7,6 +7,40 @@
 use super::*;
 
 impl<'a> Pipeline<'a> {
+    /// Run one test invocation, retrying an out-of-memory kill (#1294).
+    ///
+    /// **The** entry point for running a test command anywhere in this crate —
+    /// the baseline, the witness baseline, the post-execute observation and
+    /// the pre-submit confirmation all go through here, so "an OOM kill is
+    /// retried" is one fact rather than four call sites that have to remember
+    /// it.
+    ///
+    /// Retry is the correct response precisely because an OOM kill is *not*
+    /// evidence: the run observed no assertion, so there is nothing to feed
+    /// back to a worker and nothing to revise. It is also the one
+    /// unobservable outcome where a second attempt can plausibly differ — a
+    /// timeout re-times-out on the same deadline, a missing toolchain stays
+    /// missing, but memory pressure is a property of the moment.
+    ///
+    /// Bounded by `PipelineConfig::test_oom_retries` and *only* retried while
+    /// the outcome is still an OOM: a retry that completes (pass or fail), or
+    /// that fails some other way, is returned immediately. The last attempt's
+    /// outcome is what the caller sees, so a run that OOMs every time still
+    /// reports `out_of_memory` — never a fabricated pass or fail.
+    pub(super) async fn run_test_observed(
+        &self,
+        tests: &dyn TestRunner,
+        invocation: &TestInvocation,
+    ) -> CmdOutcome {
+        let mut outcome = tests.run_test(invocation).await;
+        let mut retries = self.config.test_oom_retries;
+        while outcome.is_out_of_memory() && retries > 0 {
+            retries -= 1;
+            outcome = tests.run_test(invocation).await;
+        }
+        outcome
+    }
+
     /// The regression veto's evidence (#861): `(new errors, new warnings,
     /// sample)` of lint/typecheck records the candidate introduced over its
     /// pre-execution baseline. `(0, 0, "")` whenever either snapshot is
@@ -86,7 +120,7 @@ impl<'a> Pipeline<'a> {
     ) -> (Option<bool>, String, Option<&'static str>) {
         match cmd {
             Some(cmd) => {
-                let post = surface.tests.run_test(cmd.invocation).await;
+                let post = self.run_test_observed(surface.tests, cmd.invocation).await;
                 match post.assertion_result() {
                     Some(passed) => {
                         // Output rides along for the same-failure rule
@@ -163,6 +197,11 @@ impl<'a> Pipeline<'a> {
             new_diag_warnings: inputs.new_diag_warnings,
             witness_intact,
             witness_mutation: state.witness_mutation,
+            // #1291: always stated, including `unmeasured` — a reader must be
+            // able to tell "the test ran the change" from "nobody looked",
+            // and the absence of the field would be a third, unintended
+            // meaning.
+            diff_coverage: Some(inputs.diff_coverage.as_str().to_string()),
         }
     }
 }

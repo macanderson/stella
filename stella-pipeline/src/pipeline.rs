@@ -69,10 +69,11 @@ use crate::candidate_narration::{
 use crate::candidate_steering::SteeringFanOut;
 use crate::plan::{PlanStep, build_planner_prompt, parse_plan, plan_repair_prompt};
 use crate::ports::{
-    ApprovalGate, CandidateWorkspace, CandidateWorkspacePort, ContextRecallPort,
-    DiagnosticInvocation, DiagnosticRunner, FileTouchPort, LintProbe, LintRecord, McpPrefetchPort,
-    MutantOutcome, MutationProbe, PipelinePorts, ProviderResolver, Recall, RecalledFrame,
-    RepoStatusPort, RepoStructurePort, ScopeDecision, TestInvocation, TestRunner, WorkspaceError,
+    ApprovalGate, CandidateWorkspace, CandidateWorkspacePort, CmdOutcome, ContextRecallPort,
+    CoverageProbe, DiagnosticInvocation, DiagnosticRunner, FileTouchPort, LintProbe, LintRecord,
+    McpPrefetchPort, MutantOutcome, MutationProbe, PipelinePorts, ProviderResolver, Recall,
+    RecalledFrame, RepoStatusPort, RepoStructurePort, ScopeDecision, TestInvocation, TestRunner,
+    WorkspaceError,
 };
 use crate::scope::{
     MAX_SCOPE_REVISIONS, PlannedScope, ScopeEstimate, ScopeVerdict, apply_trim, build_proposal,
@@ -86,6 +87,7 @@ use stella_core::driver::TurnHalt;
 use stella_protocol::ToolOutput;
 
 use crate::flip_halt::{FlipHalt, command_of};
+use crate::verify::coverage::DiffCoverage;
 use crate::verify::{
     FlipOracle, JudgeVerdict as ModelJudgeVerdict, LadderDecision, LadderInputs,
     deterministic_fail_evidence, deterministic_pass_evidence, evidence_demand_is_worth_a_turn,
@@ -188,6 +190,28 @@ const NOTHING_ATTEMPTED_NUDGE: &str = "This turn ended without calling a single 
      describes. Carry out the task now with tool calls that change the workspace — writing the \
      file, running the command, applying the edit. Reasoning about a solution, or stating one in \
      prose, does not perform it.";
+
+/// What a revision turn is told when the only thing behind its PASS was a
+/// model judge's opinion — no flip, no green test (#1295).
+///
+/// Only reachable with `PipelineConfig::require_evidence_for_lone_judge_pass`
+/// on; see that field for why the default is off and what to measure before
+/// changing it.
+///
+/// Written as a request for *evidence*, not as a verdict on the work, and the
+/// distinction is the message's whole job. The reviewer did not find a defect
+/// — it approved — so telling the worker to "fix" something invites it to
+/// churn code that may well be correct. What is missing is a check, and the
+/// cheapest real one is a test that fails on the old behaviour: that is the
+/// same fail→pass evidence the ladder would have credited on its own.
+const LONE_JUDGE_PASS_EVIDENCE_REQUEST: &str = "The reviewer approved this work, but nothing \
+     mechanical corroborates it: no test went from failing to passing, and no test suite was \
+     observed green. The change is not being rejected — what is missing is a CHECK, not a fix. \
+     Produce one now: add or point at a test that fails on the previous behaviour and passes on \
+     this one, and run it so its result is on the record. If the change genuinely cannot be \
+     tested (it is configuration, documentation, or a pure rename), say so in one line and state \
+     what a reader should verify by hand instead — do not rewrite working code to manufacture \
+     something to test.";
 
 /// One observation of the working tree by [`Pipeline::gather_diff`].
 ///
@@ -354,6 +378,74 @@ pub struct PipelineConfig {
     pub diagnostics_veto_warnings: bool,
     /// Maximum revision turns per candidate when verification fails.
     pub max_revisions: u32,
+    /// How many times a test run that died of an out-of-memory kill (#1294)
+    /// is re-run before the pipeline accepts the non-observation.
+    ///
+    /// Retry, not revise, is the whole point: an OOM kill says nothing about
+    /// the code, so feeding it back as a failure asks a model to "fix" work
+    /// that may be correct. Re-running is what a human does by hand, and it
+    /// is the only response that can produce the observation the pipeline
+    /// actually wanted.
+    ///
+    /// `1` by default — one retry converts the common case (a transient peak,
+    /// a sibling process that happened to be the fatter target) while keeping
+    /// the worst case bounded at two runs of a suite that may be minutes
+    /// long. `0` disables the retry and reports the first non-observation,
+    /// which stays honest: the outcome is still `out_of_memory`, never a
+    /// failing assertion.
+    pub test_oom_retries: u32,
+    /// Escalate to the judge when the diff-coverage overlap could not be
+    /// *measured* (#1291) — the strictest reading of "did the test run the
+    /// changed lines?".
+    ///
+    /// Off by default, and note what the default does NOT mean: an unmeasured
+    /// overlap is already scored `Unverified` rather than `DeterministicPass`
+    /// (see the `SubmitFast` arm), so it never ships as a verified pass. What
+    /// this adds is *spending a judge call* on it.
+    ///
+    /// The three positions, so the choice is legible:
+    ///
+    /// - measured overlap → deterministic pass, either way;
+    /// - measured NON-overlap → judge, either way (the flip is a coincidence,
+    ///   and that is worth a second opinion);
+    /// - unmeasured → scored unproven and shipped (off, the default), or
+    ///   escalated to the judge (on).
+    ///
+    /// Off is the default for the reason `verify::coverage` records at
+    /// length: most workspaces have no coverage tooling, so escalating would
+    /// route nearly every deterministic pass through a paid judge call to be
+    /// told what the evidence already said — the "a gate that fires
+    /// everywhere is a tax" result #1295 measured. Turning it on is for an
+    /// operator who has the tooling and wants the overlap enforced rather
+    /// than merely scored.
+    pub require_diff_coverage: bool,
+    /// Send a turn back for deterministic evidence when a model judge's PASS
+    /// is the only thing behind it — no flip, no green test (#1295).
+    ///
+    /// **Off by default, and that default is measured rather than assumed.**
+    /// The behaviour was built, measured on Terminal-Bench, and switched off:
+    /// `LadderInputs::judge_pass_stands_alone` held on *most* turns there, so
+    /// the request cost a turn nearly everywhere instead of on the risky
+    /// minority — and with 7 trials in 20 already lost to the harness's
+    /// 900-second wall, buying turns where wall-clock binds loses more tasks
+    /// than it recovers. #1225 changed the input to that measurement (every
+    /// benchmark task folder is now a git repository, so the diff and touch
+    /// channels can see), which is why the knob exists instead of the
+    /// behaviour simply being deleted.
+    ///
+    /// **Measure before turning it on.** `stella calibration` reports the
+    /// current rate from recorded verdicts (`replay::CalibrationReport`'s
+    /// judge-alone cohort) — the same "read what is already persisted"
+    /// discipline as #871, so measuring costs a command rather than a
+    /// benchmark arm. A minority rate is the condition this was designed
+    /// for; a majority rate reproduces the result that switched it off.
+    ///
+    /// When on, an uncorroborated judge PASS spends one revision asking for
+    /// evidence and re-verifies. It never *fails* the run: with revisions
+    /// exhausted the turn takes the same UNVERIFIED relabel it takes when
+    /// this is off, because a run is not broken by the absence of a way to
+    /// check it.
+    pub require_evidence_for_lone_judge_pass: bool,
     /// Ask for corroboration when a model judge passes and nothing
     /// deterministic stands behind it (#1295): spend one revision demanding
     /// the evidence instead of recording the pass as UNVERIFIED on the spot.
@@ -448,6 +540,9 @@ impl Default for PipelineConfig {
             diff_budget_lines: 400,
             diagnostics_veto_warnings: false,
             max_revisions: 2,
+            test_oom_retries: 1,
+            require_diff_coverage: false,
+            require_evidence_for_lone_judge_pass: false,
             // On (#1295). Off is the historical setting, and the reason it was
             // off — the ask fired on turns that could never answer it — is now
             // a precondition of raising it at all rather than a property of
@@ -582,6 +677,20 @@ pub struct PipelineOutcome {
     pub total_cost_usd: f64,
     /// The final verification verdict, if verification ran.
     pub verdict: Option<Verdict>,
+    /// How strongly the selected candidate was verified (#1291).
+    ///
+    /// The same grade best-of-N ranks on, surfaced because it is where the
+    /// system's *claim* about a run lives, and one claim it makes is not
+    /// visible anywhere else: a run whose test flipped and went green but
+    /// whose diff-coverage overlap could not be measured is
+    /// [`CandidateScore::Unverified`], not `DeterministicPass`. That
+    /// distinction — "a test passed, and nobody could check it touched this
+    /// change" — is the whole of #1291's honest-degradation case, and a host
+    /// that could only read `verdict.deterministic` would see a pass and
+    /// nothing else.
+    ///
+    /// `None` when verification never ran far enough to grade the work.
+    pub score: Option<CandidateScore>,
     /// How many revision turns the selected candidate took.
     pub revisions: u32,
     /// How many candidates actually reached the worker (1 for single-shot).
@@ -739,6 +848,11 @@ struct CandidateState {
     /// Some(false) = it stayed green under every observed mutant
     /// (tautological — the fast-submit was withheld); None = never run.
     witness_mutation: Option<bool>,
+    /// The diff-coverage audit's finding (#1291): whether the passing test
+    /// run executed the lines this candidate added. `Unmeasured` both before
+    /// the audit runs and wherever it cannot be made — the two are the same
+    /// claim, which is none.
+    diff_coverage: DiffCoverage,
     revisions: u32,
     /// How many of those revisions were spent asking for corroboration of a
     /// standalone judge pass rather than fixing a failure (#1295). Capped at
@@ -805,6 +919,8 @@ struct CandidateSurface<'c> {
     tests: &'c dyn TestRunner,
     /// The witness mutation check (#870); rooted per surface via `cwd`.
     mutation: Option<&'c dyn MutationProbe>,
+    /// The diff-coverage check (#1291); rooted per surface via `cwd`.
+    coverage: Option<&'c dyn CoverageProbe>,
     /// The lint probe for the regression veto (#861); rooted per surface
     /// via `cwd`.
     lint: Option<&'c dyn LintProbe>,
@@ -831,6 +947,7 @@ pub struct Pipeline<'a> {
     tests: &'a dyn TestRunner,
     lint: Option<&'a dyn LintProbe>,
     mutation: Option<&'a dyn MutationProbe>,
+    coverage: Option<&'a dyn CoverageProbe>,
     approvals: &'a dyn ApprovalGate,
     sleeper: &'a dyn Sleeper,
     hooks: Option<(&'a Hooks, &'a dyn HookRunner)>,
@@ -891,6 +1008,7 @@ impl<'a> Pipeline<'a> {
             tests: ports.tests,
             lint: ports.lint,
             mutation: ports.mutation,
+            coverage: ports.coverage,
             approvals: ports.approvals,
             sleeper: ports.sleeper,
             hooks: ports.hooks,
@@ -1181,6 +1299,7 @@ impl<'a> Pipeline<'a> {
                 final_text: best.final_text,
                 total_cost_usd: total_cost,
                 verdict: best.verdict,
+                score: Some(best.score),
                 revisions: best.revisions,
                 candidates_run,
             });
@@ -1228,6 +1347,7 @@ impl<'a> Pipeline<'a> {
             final_text: best.final_text,
             total_cost_usd: total_cost,
             verdict: best.verdict,
+            score: Some(best.score),
             revisions: best.revisions,
             candidates_run,
         })
@@ -1462,6 +1582,9 @@ impl<'a> Pipeline<'a> {
             final_text: reply,
             total_cost_usd: *total_cost,
             verdict: None,
+            // The simple-lookup fast path never verifies, so there is nothing
+            // to grade — reported as ungraded rather than as a weak pass.
+            score: None,
             revisions: 0,
             candidates_run: 1,
         })
@@ -1611,6 +1734,7 @@ impl<'a> Pipeline<'a> {
             tests: self.tests,
             lint: self.lint,
             mutation: self.mutation,
+            coverage: self.coverage,
             repo_status: self.repo_status,
             cwd: None,
             hook_runner: None,
@@ -1947,7 +2071,7 @@ impl<'a> Pipeline<'a> {
         if assessment.class.verifies_unconditionally()
             && let Some(cmd) = self.effective_test_command(None)
         {
-            let pre = surface.tests.run_test(cmd.invocation).await;
+            let pre = self.run_test_observed(surface.tests, cmd.invocation).await;
             // #860: only a completed run is an oracle observation. A baseline
             // that timed out or never spawned observed no assertion, so it
             // must not lock the oracle's `Failing` precondition — that is how
@@ -2021,6 +2145,7 @@ impl<'a> Pipeline<'a> {
             },
             lint_baseline,
             witness_mutation: None,
+            diff_coverage: DiffCoverage::Unmeasured,
             revisions: 0,
             evidence_demands: 0,
             witness_paths: Vec::new(),
@@ -2241,13 +2366,15 @@ impl<'a> Pipeline<'a> {
                 diff_available: state.diff_available,
                 file_change_events: state.file_changes,
                 mutating_actions: state.mutating_actions,
-                // Filled by the pre-submit audit below (#861, #870) — the
-                // lint and mutation probes only run when a fast-submit is
-                // imminent.
+                // Filled by the pre-submit audit below (#861, #870, #1291) —
+                // the lint, coverage and mutation probes only run when a
+                // fast-submit is imminent.
                 new_diag_errors: 0,
                 new_diag_warnings: 0,
                 veto_warnings: self.config.diagnostics_veto_warnings,
                 witness_tautological: false,
+                diff_coverage: DiffCoverage::Unmeasured,
+                require_diff_coverage: self.config.require_diff_coverage,
             };
 
             // Pre-submit audit (#859, #861): a deterministic pass is about
@@ -2278,7 +2405,13 @@ impl<'a> Pipeline<'a> {
                 // then escalates instead of fast-submitting, with
                 // `unstable_flip=true` in the evidence.
                 if matches!(ladder_decision(&inputs), LadderDecision::SubmitFast) {
-                    let confirmation = surface.tests.run_test(cmd.invocation).await;
+                    // Through the retrying runner (#1294) for a reason worth
+                    // stating: an OOM'd confirmation demotes the oracle to
+                    // `Unstable` below, which is a real cost paid for a run
+                    // that observed nothing. Retrying first is what keeps a
+                    // memory kill from silently withdrawing a deterministic
+                    // pass the candidate had earned.
+                    let confirmation = self.run_test_observed(surface.tests, cmd.invocation).await;
                     match confirmation.assertion_result() {
                         Some(passed) => {
                             state.oracle.confirm(passed);
@@ -2298,6 +2431,27 @@ impl<'a> Pipeline<'a> {
                         None => state.oracle.confirm(false),
                     }
                     inputs.flip_achieved = state.oracle.is_flipped();
+                }
+
+                // Diff coverage (#1291): did the passing run execute the
+                // lines this candidate added? Ordered after the confirmation
+                // (a flip that could not be reproduced makes the question
+                // moot) and before the mutation check (one instrumented run
+                // beats up to three witness runs). Every unavailable path —
+                // no probe wired, no tooling for this dialect, an unreadable
+                // report — leaves the status `Unmeasured`, which withholds
+                // nothing unless the operator asked for strictness. A
+                // measured non-overlap withholds the deterministic credit and
+                // escalates: unproven, never failed.
+                if matches!(ladder_decision(&inputs), LadderDecision::SubmitFast)
+                    && let Some(probe) = surface.coverage
+                {
+                    let changed =
+                        crate::verify::coverage::changed_lines(&state.diff_text, &witness_paths);
+                    let report = probe.covered_lines(surface.cwd, cmd.invocation).await;
+                    inputs.diff_coverage =
+                        crate::verify::coverage::overlap(&changed, report.as_ref());
+                    state.diff_coverage = inputs.diff_coverage;
                 }
 
                 // Mutation check (#870), last because it is the most
@@ -2378,16 +2532,32 @@ impl<'a> Pipeline<'a> {
                     let mut evidence = deterministic_pass_evidence(
                         state.oracle.tracked_command(),
                         state.diff_lines,
+                        state.diff_coverage,
                     );
                     evidence.ladder = Some(Box::new(snapshot.clone()));
                     self.emit(AgentEvent::JudgeVerdict {
                         passed: true,
                         evidence: evidence.clone(),
                     });
+                    // #1291: the deterministic *badge* is earned only when
+                    // something confirmed the test ran the changed lines. An
+                    // unmeasured overlap keeps the fast-submit — no judge
+                    // call, no extra turn, the run completes exactly as
+                    // before — but scores `Unverified`, because "a test
+                    // passed and nobody could check it touched this change"
+                    // is unproven, and the score is what the claim is made
+                    // in. Cheap by construction: the downgrade costs a
+                    // ranking position, never a model call.
+                    //
+                    // `evidence.deterministic` deliberately stays `true`:
+                    // the flip WAS a real test observation, and the
+                    // calibration cohorts (#871) partition by evidence kind,
+                    // not by coverage. Only the score moves.
+                    let proven = state.diff_coverage != DiffCoverage::Unmeasured;
                     return state.into_verified(
                         true,
                         &evidence,
-                        score_from_verification(true, None),
+                        score_from_verification(proven, None),
                     );
                 }
                 LadderDecision::NothingAttempted => {
@@ -2588,6 +2758,15 @@ impl<'a> Pipeline<'a> {
                             "; unstable_flip=true (the flip's confirmation re-run did not pass)",
                         );
                     }
+                    if inputs.diff_coverage != DiffCoverage::Unmeasured {
+                        // #1291: stated only when it was actually measured.
+                        // An `unmeasured` line here would be pure noise in a
+                        // judge prompt — the ladder already escalated for some
+                        // other reason, and "nobody looked" adds nothing to
+                        // reason from. It stays on the snapshot either way.
+                        evidence_summary.push_str("; ");
+                        evidence_summary.push_str(inputs.diff_coverage.explain());
+                    }
                     if state.witness_mutation == Some(false) {
                         // #870: the witness reacted to the change without
                         // constraining it — it stayed green while the
@@ -2676,6 +2855,25 @@ impl<'a> Pipeline<'a> {
                         // `Unverified` score keeps it from tying a genuinely
                         // verified sibling in best-of-N.
                         if inputs.judge_pass_stands_alone() {
+                            // Ask for evidence instead of relabelling — but
+                            // only when the operator has switched it on
+                            // (#1295), and only while a revision is left to
+                            // spend. Both halves of that guard matter: the
+                            // request is worth a turn exactly when this
+                            // condition is the suspicious minority, and the
+                            // last word must never be "failed for want of
+                            // evidence" (see the fallthrough below).
+                            if self.config.require_evidence_for_lone_judge_pass
+                                && state.revisions < self.config.max_revisions
+                            {
+                                if let Err(reason) = self
+                                    .revise_candidate(
+                                        engine,
+                                        surface,
+                                        budget,
+                                        LONE_JUDGE_PASS_EVIDENCE_REQUEST,
+                                        total,
+                                        &mut state,
                             // Ask for the missing evidence once, if asking can
                             // be answered at all (#1295 — the predicate states
                             // why `effective_cmd` decides that).
@@ -2696,6 +2894,26 @@ impl<'a> Pipeline<'a> {
                                 {
                                     return CandidateResult::aborted(state.messages, reason);
                                 }
+                                continue;
+                            }
+                            // The default, and the measured one. Sending back
+                            // was built and measured, and the measurement is
+                            // why it is off: this condition held on MOST
+                            // Terminal-Bench turns, because those tasks
+                            // frequently expose no suite the agent can point
+                            // at — so the request cost a turn nearly
+                            // everywhere rather than on the bad ones. Stella
+                            // already loses 7 trials in 20 to the harness's
+                            // 900-second wall, and buying turns when
+                            // wall-clock is the binding constraint costs more
+                            // tasks than it recovers. `stella calibration`
+                            // reports the current rate so that number can be
+                            // re-taken rather than re-argued.
+                            //
+                            // The cheaper route to the same end is upstream:
+                            // with shell writes now reaching the ledger,
+                            // `file_change_events` carries real evidence on
+                            // turns that used to arrive here blind.
                                 // Re-observe from the top: the revised tree
                                 // gets a fresh test run and the ladder
                                 // re-decides over it. A turn that produced the

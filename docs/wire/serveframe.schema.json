@@ -1953,6 +1953,13 @@
           "minimum": 0,
           "type": "integer"
         },
+        "diff_coverage": {
+          "description": "Whether the test run executed the lines the change added (#1291):\n`covered`, `not_covered`, or `unmeasured`.\n\nA string rather than a bool because the third value is the whole\npoint. \"The test did not run the changed lines\" and \"no coverage tool\ncould say\" are different findings, and only the first is about the\nwork — collapsing them into `Option<bool>` would put the reader back\nwhere #973 found them, reading a statement about the instrument as a\nstatement about the world.\n\nAbsent on snapshots recorded before this existed, and on every run\nwhere no coverage probe was wired — which a reader must treat as\n`unmeasured`, never as either verdict.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "diff_lines": {
           "description": "Lines changed, and the budget they were judged against.",
           "format": "uint32",
@@ -3158,13 +3165,21 @@
       "type": "object"
     },
     {
-      "description": "The engine needs the host to run a model completion and POST the result\nback ([`ProviderResultIn`]) keyed by `request_id`. The host owns the\nmodel call (metering, gateway, BYOK); the engine only orchestrates.",
+      "description": "The engine needs the host to run a model completion and POST the result\nback ([`ProviderResultIn`]) keyed by `request_id`. The host owns the\nmodel call (metering, gateway, BYOK); the engine only orchestrates.\n\n`provider_id` and `role` say **which agent** is asking (#1297). One\nturn used to mean one model, so neither was needed; a judged goal run\nand a turn that spawns sub-agents both put several agents behind one\nturn id, and a host that cannot tell them apart cannot route the judge\nto a different family — which is the entire point of an independent\njudge. Both are additive: a host that ignores them behaves exactly as\nbefore, answering every request with the turn's one model.",
       "properties": {
+        "provider_id": {
+          "description": "The provider the caller asked to serve THIS call: the turn's own\n`provider_id`, or the override on its goal/sub-agent block.",
+          "type": "string"
+        },
         "request": {
           "$ref": "#/$defs/CompletionRequest"
         },
         "request_id": {
           "type": "string"
+        },
+        "role": {
+          "$ref": "#/$defs/ModelCallRole",
+          "description": "What the call is for, so a host can route by role rather than by\nstring-matching a provider id."
         },
         "type": {
           "const": "provider_request",
@@ -3174,6 +3189,8 @@
       "required": [
         "type",
         "request_id",
+        "provider_id",
+        "role",
         "request"
       ],
       "type": "object"

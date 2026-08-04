@@ -345,6 +345,10 @@ pub(crate) struct WorkspacePorts {
     pub(crate) lint_probe: ToolchainLintProbe,
     /// The witness mutation check (#870), rooted at the session tree.
     pub(crate) mutation_probe: FsMutationProbe,
+    /// The diff-coverage check (#1291), rooted at the session tree. Spawns
+    /// nothing until a fast-submit is imminent, and answers "unmeasured" for
+    /// every dialect it cannot instrument.
+    pub(crate) coverage_probe: super::coverage::ToolchainCoverageProbe,
     pub(crate) test_runner: TypedTestRunner,
     /// Used for best-of-N and for candidate-local authored witnesses at N=1.
     pub(crate) candidate_workspaces: crate::candidate_ws::GitCandidateWorkspaces,
@@ -434,6 +438,7 @@ pub(crate) fn workspace_ports(
         diagnostic_runner: GitDiagnosticRunner::new(root.clone()),
         lint_probe: ToolchainLintProbe { root: root.clone() },
         mutation_probe: FsMutationProbe { root: root.clone() },
+        coverage_probe: super::coverage::ToolchainCoverageProbe { root: root.clone() },
         test_runner: TypedTestRunner { root },
         candidate_workspaces,
         mcp_prefetch: mcp.map(crate::candidate_ws::McpPrefetchAdapter::new),
@@ -726,11 +731,51 @@ async fn run_command(mut cmd: tokio::process::Command) -> CmdOutcome {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout_tail = truncate_tail(&stdout, 100_000);
+    let stderr_tail = truncate_tail(&stderr, 20_000);
+    // #1294: the runner is the only party that can see a Unix termination
+    // signal — past this point the outcome carries an `exit_code` and the
+    // fact is gone. Classifying here is what lets the pipeline tell "the
+    // machine ran out of memory" (nothing was learned; retry) from "the test
+    // failed" (the code is wrong; revise), rather than reporting one as the
+    // other.
+    let kind = out_of_memory_kind(&output.status, &stdout_tail, &stderr_tail);
     CmdOutcome {
         exit_code: output.status.code().unwrap_or(-1),
-        stdout_tail: truncate_tail(&stdout, 100_000),
-        stderr_tail: truncate_tail(&stderr, 20_000),
-        kind: CmdKind::Completed,
+        stdout_tail,
+        stderr_tail,
+        kind,
+    }
+}
+
+/// Classify a finished process as an out-of-memory kill or an ordinary
+/// completed run (#1294).
+///
+/// Both tails are scanned, joined: a runtime that dies of allocation failure
+/// may say so on either stream (`cargo` on stderr, a Node harness on stdout),
+/// and reading only one would make detection depend on which runner happened
+/// to be in use. The signal — the strongest evidence and the only one that is
+/// not text — is readable exclusively here; a Windows host reports no signal,
+/// so the marker rule is the whole of the detection there.
+fn out_of_memory_kind(
+    status: &std::process::ExitStatus,
+    stdout_tail: &str,
+    stderr_tail: &str,
+) -> CmdKind {
+    #[cfg(unix)]
+    let signal = std::os::unix::process::ExitStatusExt::signal(status);
+    #[cfg(not(unix))]
+    let signal = None;
+    let output = format!("{stdout_tail}\n{stderr_tail}");
+    let facts = stella_pipeline::ExitFacts {
+        signal,
+        exit_code: status.code(),
+        output: &output,
+    };
+    if stella_pipeline::killed_by_oom(facts) {
+        CmdKind::OutOfMemory
+    } else {
+        CmdKind::Completed
     }
 }
 

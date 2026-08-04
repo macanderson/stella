@@ -18,7 +18,9 @@
 
 use serde::{Deserialize, Serialize};
 use stella_core::TurnOutcome;
-use stella_protocol::{AgentEvent, CompletionRequest, CompletionResult, ProviderError, ToolOutput};
+use stella_protocol::{
+    AgentEvent, CompletionRequest, CompletionResult, ModelCallRole, ProviderError, ToolOutput,
+};
 
 /// One frame emitted by the engine toward the host over the outbound stream.
 ///
@@ -46,8 +48,22 @@ pub enum ServerFrame {
     /// The engine needs the host to run a model completion and POST the result
     /// back ([`ProviderResultIn`]) keyed by `request_id`. The host owns the
     /// model call (metering, gateway, BYOK); the engine only orchestrates.
+    ///
+    /// `provider_id` and `role` say **which agent** is asking (#1297). One
+    /// turn used to mean one model, so neither was needed; a judged goal run
+    /// and a turn that spawns sub-agents both put several agents behind one
+    /// turn id, and a host that cannot tell them apart cannot route the judge
+    /// to a different family — which is the entire point of an independent
+    /// judge. Both are additive: a host that ignores them behaves exactly as
+    /// before, answering every request with the turn's one model.
     ProviderRequest {
         request_id: String,
+        /// The provider the caller asked to serve THIS call: the turn's own
+        /// `provider_id`, or the override on its goal/sub-agent block.
+        provider_id: String,
+        /// What the call is for, so a host can route by role rather than by
+        /// string-matching a provider id.
+        role: ModelCallRole,
         request: CompletionRequest,
     },
     /// The turn reached a step boundary and is **holding** there, because
@@ -295,6 +311,8 @@ mod tests {
 
         let provider = serde_json::to_value(ServerFrame::ProviderRequest {
             request_id: "prov-0".to_string(),
+            provider_id: "mock".to_string(),
+            role: ModelCallRole::Worker,
             request: CompletionRequest {
                 messages: Vec::new(),
                 max_output_tokens: None,

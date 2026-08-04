@@ -164,6 +164,7 @@ async fn run_probed(
             tests: &diagnostics,
             lint: None,
             mutation: None,
+            coverage: None,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,

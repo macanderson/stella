@@ -348,10 +348,18 @@ pub static CAPABILITIES: &[Capability] = &[
                         default",
             witness: "distinct_families_route_a_cross_family_judge",
         },
-        api: SurfacePosture::Deferred {
-            waiting_on: "a goals resource (or a mode flag on turns): judged multi-round runs — a \
-                         defining capability for agent-app hosts — cannot be requested over the \
-                         wire at all",
+        // Shipped in #1297 as the mode flag this row named as its second
+        // acceptable shape, deliberately not as a `/v1/goals` resource:
+        // every transport concern a goal run has — streaming its progress,
+        // stopping it, keeping the work already done — is a turn concern that
+        // already exists and is already witnessed. A parallel resource would
+        // restate all of them with its own id space and its own bugs.
+        api: SurfacePosture::Shipped {
+            mechanism: "a `goal` block on POST /v1/turns (and POST /v1/sessions/{id}/turns): \
+                        judged rounds driven as a loop over the step driver, each round's \
+                        verdict on the existing GET /v1/turns/{id}/events stream, stopped by \
+                        POST /v1/turns/{id}/cancel with completed rounds kept",
+            witness: "a_goal_run_is_requestable_over_the_wire_and_streams_its_rounds",
         },
     },
     Capability {
@@ -362,10 +370,18 @@ pub static CAPABILITIES: &[Capability] = &[
             mechanism: "the task tool via SessionSubAgents; deck lanes; fleet workers",
             witness: "the_production_tool_stack_forwards_sub_agent_spend",
         },
-        api: SurfacePosture::Deferred {
-            waiting_on: "sub-agent wiring in serve's session assembly: the engine machinery and \
-                         the SubAgent event vocabulary are wire-ready, but a served turn's tool \
-                         stack installs no task tool, so children cannot exist",
+        // Shipped in #1297. The engine machinery was ready; what a served
+        // turn lacked was the handle (no `task` in a host-advertised tool
+        // stack) and the operator's answer to "may this deployment spend on
+        // children at all", which is `ServeConfig::sub_agents` and defaults
+        // to no.
+        api: SurfacePosture::Shipped {
+            mechanism: "a `sub_agents` block on POST /v1/turns layers the task tool over the \
+                        host's remoted stack; children run on the same reverse-RPC ports \
+                        (announcing their own provider_id and role), read-only and one level \
+                        deep by construction, with pool/steps/provider clamped by \
+                        ServeConfig::sub_agents",
+            witness: "a_served_turn_can_delegate_to_a_sub_agent",
         },
     },
     Capability {
@@ -534,7 +550,7 @@ mod tests {
 
     /// API sources a witness may live in: the serve crate's unit tests plus
     /// its end-to-end suites.
-    fn api_sources() -> [&'static str; 12] {
+    fn api_sources() -> [&'static str; 11] {
         [
             include_str!("../../stella-serve/src/server.rs"),
             include_str!("../../stella-serve/tests/calibration.rs"),
@@ -548,6 +564,7 @@ mod tests {
             include_str!("../../stella-serve/tests/step_cancel.rs"),
             include_str!("../../stella-serve/tests/http.rs"),
             include_str!("../../stella-serve/tests/hostguard.rs"),
+            include_str!("../../stella-serve/tests/goal_and_subagents.rs"),
         ]
     }
 

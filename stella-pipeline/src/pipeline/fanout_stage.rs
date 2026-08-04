@@ -273,6 +273,7 @@ impl<'a> Pipeline<'a> {
             tests: ws.tests(),
             lint: self.lint,
             mutation: self.mutation,
+            coverage: self.coverage,
             repo_status: ws.repo_status(),
             cwd: Some(ws.root()),
             hook_runner: bound_hook_runner

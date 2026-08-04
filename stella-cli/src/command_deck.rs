@@ -4381,6 +4381,7 @@ async fn run_lead_pipeline_turn(
             tests: &ws_ports.test_runner,
             lint: Some(&ws_ports.lint_probe),
             mutation: Some(&ws_ports.mutation_probe),
+            coverage: Some(&ws_ports.coverage_probe),
             approvals: scope_gate,
             sleeper: &TokioSleeper,
             hooks: cfg

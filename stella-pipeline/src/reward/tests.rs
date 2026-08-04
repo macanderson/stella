@@ -38,6 +38,7 @@ fn snapshot(rung: Option<LadderRung>) -> LadderSnapshot {
         new_diag_warnings: 0,
         witness_intact: None,
         witness_mutation: None,
+        diff_coverage: None,
     }
 }
 
