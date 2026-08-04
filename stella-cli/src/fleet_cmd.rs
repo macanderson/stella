@@ -49,9 +49,9 @@ use std::time::Duration;
 use colored::Colorize;
 use stella_core::{Engine, TurnOutcome};
 use stella_fleet::{
-    CiWatchOutcome, CommitRecord, Fleet, FleetConfig, FleetRunReport, FleetWorker, GhCli, Ledger,
-    Monitor, MonitorError, Plan, SystemGhCli, SystemGitCli, Task, TaskId, TimeoutReason,
-    WatchConfig, WorkerControls, WorkerOutcome, WorktreeManager,
+    CiWatchOutcome, Fleet, FleetConfig, FleetRunReport, FleetWorker, GhCli, Ledger, Monitor,
+    MonitorError, Plan, SystemGhCli, SystemGitCli, Task, TaskId, TimeoutReason, WatchConfig,
+    WorkerControls, WorkerOutcome, WorktreeManager,
 };
 use stella_protocol::{AgentEvent, CompletionMessage, PrStatus};
 use stella_tools::ToolRegistry;
@@ -511,6 +511,10 @@ impl FleetWorker for EngineWorker {
         let root = workspace_root.to_path_buf();
         let claim_holder = format!("{}/{}", self.run_id, task.id);
         let task_id = task.id.clone();
+        // Published by the worker the moment it opens an execution, so this
+        // side can still read the attempt's real spend if the worker never
+        // reports one (#1216).
+        let spend = crate::fleet_spend::SpendRecovery::default();
 
         // Dispatch → the row flips to Running the instant the wave picks it up.
         if let Some(d) = &self.dash {
@@ -531,6 +535,7 @@ impl FleetWorker for EngineWorker {
         // state drops before the dispatch frame's earlier-declared guard),
         // and `stop_or_abandoned` reads the closure as stop.
         let (abandon_tx, abandon_rx) = tokio::sync::oneshot::channel::<()>();
+        let worker_spend = spend.clone();
         std::thread::spawn(move || {
             let result = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -547,22 +552,22 @@ impl FleetWorker for EngineWorker {
                         controls,
                         abandon_rx,
                         worker_dash,
+                        worker_spend,
                     ))
                 });
             let _ = tx.send(result);
         });
-        let failed = |reason: String| WorkerOutcome {
-            cost_usd: 0.0,
-            commits: Vec::new(),
-            summary: reason,
-            success: false,
-        };
         let outcome = match rx.await {
             Ok(Ok(outcome)) => outcome,
             // A worker that can't even start (provider, git) is a failed
             // attempt with a named reason — never a panic, never a hang.
-            Ok(Err(e)) => failed(format!("worker error: {e}")),
-            Err(_) => failed("worker thread died before reporting".to_string()),
+            Ok(Err(e)) => {
+                crate::fleet_spend::unreported_outcome(&spend, format!("worker error: {e}"))
+            }
+            Err(_) => crate::fleet_spend::unreported_outcome(
+                &spend,
+                "worker thread died before reporting".into(),
+            ),
         };
         // Only now may the abandon line close: the worker has already
         // reported, so the closure signals nothing.
@@ -654,10 +659,11 @@ async fn run_task(
     controls: WorkerControls,
     abandoned: tokio::sync::oneshot::Receiver<()>,
     dash: Option<mpsc::UnboundedSender<FleetMsg>>,
+    spend: crate::fleet_spend::SpendRecovery,
 ) -> Result<WorkerOutcome, String> {
-    // Snapshot where this workspace starts so the commit report is
-    // exactly this worker's commits — correct for isolated worktrees
-    // (== the fleet base) and for sequential shared-tree tasks alike.
+    // Where this workspace starts. In an ISOLATED worktree this is the whole
+    // attribution story — one writer, so the whole advance to `HEAD` is this
+    // worker's. Under the shared tree it is not: see `crate::fleet_commits`.
     let start_sha = git_stdout(root, &["rev-parse", "--verify", "HEAD"]).await?;
 
     // The COORDINATION store lives at the original workspace root — shared
@@ -680,10 +686,20 @@ async fn run_task(
     // registry they run against.
     crate::subagent::install_for_session(&cfg, &registry)?;
     let active_rules = crate::rules::enforce_workspace_rules(&registry, root, &cfg.authority);
+    // Commit attribution (#1216): records the `HEAD` advance this worker is
+    // observed making. It sits UNDER the claim tap on purpose — the tap holds
+    // the workspace-wide commit lane across the call, so the window this
+    // observes is one no sibling can commit inside.
+    let committed = crate::fleet_commits::CommitObserver::new(
+        &*registry,
+        SystemGitCli,
+        root.to_path_buf(),
+        task.id.clone(),
+    );
     // Claim-on-first-write (crate::claims): tool-level write claims + the
-    // transient build lane, coordinated across every writer in the
-    // workspace. Same holder as the fleet's declared claims — re-entrant.
-    let claims = crate::claims::ClaimTap::new(&*registry, claims_store, claim_holder);
+    // transient build and commit lanes, coordinated across every writer in
+    // the workspace. Same holder as the fleet's declared claims — re-entrant.
+    let claims = crate::claims::ClaimTap::new(&committed, claims_store, claim_holder);
     // A fleet worker runs the operator's tool policy, same as every other
     // driver — an isolated worktree is not a different trust posture.
     let permitted = agent::PolicyToolSet::new(&claims, agent::session_tool_policy(&cfg));
@@ -692,6 +708,10 @@ async fn run_task(
     // parallel workers never contend on a single SQLite writer.
     let store = agent::open_store(root);
     let execution = agent::begin_execution(&store, "fleet", &task.prompt, &cfg, None);
+    // From here on this attempt's spend is durable in the store even if this
+    // thread never lives to report it — publish the handle that makes it
+    // readable from the dispatch side (#1216).
+    spend.publish(&execution);
 
     let mut messages = vec![CompletionMessage::system(
         // Each worker is its own session in its own workspace, so its
@@ -943,7 +963,7 @@ async fn run_task(
         rendered.persistence_complete,
         force_incomplete,
     );
-    let commits = collect_commits(root, &start_sha, &task.id).await;
+    let commits = crate::fleet_commits::for_attempt(&committed, root, &start_sha, task).await;
     Ok(WorkerOutcome {
         cost_usd: spent,
         commits,
@@ -953,7 +973,7 @@ async fn run_task(
 }
 
 fn finalize_fleet_execution(
-    execution: &Option<(std::sync::Arc<stella_store::Store>, i64)>,
+    execution: &crate::fleet_spend::ExecutionHandle,
     registry: &ToolRegistry,
     outcome_label: &str,
     cost_usd: f64,
@@ -974,38 +994,6 @@ fn finalize_fleet_execution(
         cost_usd,
         persistence_complete && !force_incomplete,
     )
-}
-
-/// The commits this workspace gained since `start_sha`, oldest first, as
-/// ledger-ready records.
-async fn collect_commits(root: &Path, start_sha: &str, task_id: &str) -> Vec<CommitRecord> {
-    let Ok(branch) = git_stdout(root, &["rev-parse", "--abbrev-ref", "HEAD"]).await else {
-        return Vec::new();
-    };
-    let range = format!("{start_sha}..HEAD");
-    let Ok(log) = git_stdout(
-        root,
-        &["log", "--reverse", "--format=%H%x1f%s%x1f%ct", &range],
-    )
-    .await
-    else {
-        return Vec::new();
-    };
-    log.lines()
-        .filter_map(|line| {
-            let mut parts = line.split('\u{1f}');
-            let sha = parts.next()?.to_string();
-            let message = parts.next()?.to_string();
-            let timestamp_ms = parts.next()?.parse::<u64>().ok()?.saturating_mul(1000);
-            Some(CommitRecord {
-                sha,
-                branch: branch.clone(),
-                task_id: task_id.to_string(),
-                message,
-                timestamp_ms,
-            })
-        })
-        .collect()
 }
 
 /// Run `git -C root <args>` and return trimmed stdout, or the stderr as the
@@ -1148,6 +1136,8 @@ fn render_report(plan: &Plan, report: &FleetRunReport, ledger_path: &Path) {
 /// the serde form of [`stella_fleet::Plan`].
 #[cfg(test)]
 mod tests {
+    use stella_fleet::CommitRecord;
+
     use super::*;
 
     /// The #803 cancellation seam, pinned from both directions: dropping the

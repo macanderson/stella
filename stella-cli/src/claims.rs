@@ -21,14 +21,19 @@
 //!    than [`STALE_CLAIM_MAX_AGE_SECS`] is swept at session start (a dead
 //!    process cannot release its own).
 //!
-//! The build lane is the one **transient** claim: `run_tests` /
-//! `build_project` / `diagnostics` — and the manifest-verb executors that
-//! can rewrite the tree (`run_lint`, `format_code`, `run_script`) — serialize under the
-//! well-known pseudo-path [`BUILD_CLAIM`] for the duration of the call
-//! only (with a bounded wait, not a hard refusal — build contention is
-//! routine, edit contention is signal). This kills the phantom-failure
-//! class where one worker's test run observes a sibling's half-written
-//! edit (or a sibling formatter's half-rewritten tree).
+//! Two **transient** lanes sit beside the per-path claims — see
+//! [`transient_lane`]. They serialize a tool for the duration of its CALL
+//! (a bounded wait, not a hard refusal — lane contention is routine, edit
+//! contention is signal), not to the end of the turn:
+//!
+//! - [`BUILD_CLAIM`] — `run_tests` / `build_project` / `diagnostics`, and the
+//!   manifest-verb executors that can rewrite the tree (`run_lint`,
+//!   `format_code`, `run_script`). This kills the phantom-failure class where
+//!   one worker's test run observes a sibling's half-written edit (or a
+//!   sibling formatter's half-rewritten tree).
+//! - [`COMMIT_CLAIM`] — `repo_commit`. One shared tree means one `HEAD`, and
+//!   the fleet ledger has to name WHICH task moved it; the lane is what makes
+//!   the answer decidable (#1216).
 //!
 //! A missing/failed store degrades to no coordination rather than no work —
 //! the same observability-loss-not-work-stoppage contract as every other
@@ -56,14 +61,52 @@ use stella_store::Store;
 /// relative path, so it can never collide with a genuine claim.
 pub(crate) const BUILD_CLAIM: &str = "//build";
 
-/// How long a build/test call waits for the build lane before giving up.
-const BUILD_WAIT_MS: u64 = 60_000;
-/// Poll cadence while waiting for the build lane.
-const BUILD_POLL_MS: u64 = 500;
-/// How many dead build-lane holders one acquire may reap before it stops
+/// The pseudo-path serializing commit CREATION across every writer in the
+/// workspace — the same unrepresentable-path trick as [`BUILD_CLAIM`], for a
+/// different reason.
+///
+/// Under a shared tree every worker commits onto one `HEAD`, and the fleet
+/// ledger claims to be "the authoritative record" of which task made which
+/// commit. Re-deriving that after the fact from `git log <start>..HEAD` reads
+/// a sibling's interleaved commits as this worker's (#1216). The only
+/// race-free answer is "the `HEAD` advance observed while this lane was
+/// held", which is what [`crate::fleet_commits::CommitObserver`] reads —
+/// sitting *inside* this tap so its window is exactly the lane's.
+///
+/// The two halves are joined by [`transient_lane`]: the observer watches the
+/// tools this function routes here and no others, so a tool added to the arm
+/// below is observed by construction rather than by memory.
+pub(crate) const COMMIT_CLAIM: &str = "//commit";
+
+/// How long a call waits for its transient lane before giving up.
+const LANE_WAIT_MS: u64 = 60_000;
+/// Poll cadence while waiting for a lane.
+const LANE_POLL_MS: u64 = 500;
+/// How many dead lane holders one acquire may reap before it stops
 /// retrying immediately and falls back to the polled wait. Bounds the only
 /// arm of the acquire loop that does not sleep.
-const MAX_BUILD_LANE_REAPS: u32 = 8;
+const MAX_LANE_REAPS: u32 = 8;
+
+/// The transient lane `name` serializes under for the duration of one call,
+/// or `None` for a tool that needs no lane.
+pub(crate) fn transient_lane(name: &str) -> Option<&'static str> {
+    match name {
+        "run_tests" | "build_project" | "diagnostics" | "run_lint" | "format_code"
+        | "run_script" => Some(BUILD_CLAIM),
+        "repo_commit" => Some(COMMIT_CLAIM),
+        _ => None,
+    }
+}
+
+/// The lane's name in a refusal a model reads. `//build` is a path, not
+/// prose.
+fn lane_label(lane: &str) -> &'static str {
+    if lane == COMMIT_CLAIM {
+        "commit"
+    } else {
+        "build/test"
+    }
+}
 
 /// Claims older than this are swept at session start (crash hygiene).
 pub(crate) const STALE_CLAIM_MAX_AGE_SECS: u64 = 6 * 3600;
@@ -243,22 +286,15 @@ impl ToolExecutor for ClaimTap<'_> {
             }
         }
 
-        // The build lane: transient, bounded-wait serialization so a test
-        // run never observes a sibling's half-written tree — and a sibling
-        // never observes a formatter/linter/script mid-rewrite.
-        if matches!(
-            name,
-            "run_tests"
-                | "build_project"
-                | "diagnostics"
-                | "run_lint"
-                | "format_code"
-                | "run_script"
-        ) {
+        // A transient lane: bounded-wait serialization so a test run never
+        // observes a sibling's half-written tree — and a sibling never
+        // observes a formatter/linter/script mid-rewrite, or a commit racing
+        // a commit.
+        if let Some(lane) = transient_lane(name) {
             let mut waited = 0u64;
             let mut reaps = 0u32;
             let acquired = loop {
-                match store.acquire_file_lock(BUILD_CLAIM, &self.holder) {
+                match store.acquire_file_lock(lane, &self.holder) {
                     Ok(true) => break true,
                     // A dead process cannot release the lane; reap it and
                     // retry immediately instead of waiting out the bound.
@@ -270,27 +306,25 @@ impl ToolExecutor for ClaimTap<'_> {
                     // rescue it. One dead holder needs one reap; the bound
                     // covers a genuine pile-up after a multi-worker crash and
                     // otherwise falls through to the waited path below.
-                    Ok(false)
-                        if reaps < MAX_BUILD_LANE_REAPS
-                            && self.reap_dead_holder(store, BUILD_CLAIM) =>
-                    {
+                    Ok(false) if reaps < MAX_LANE_REAPS && self.reap_dead_holder(store, lane) => {
                         reaps += 1;
                     }
-                    Ok(false) if waited < BUILD_WAIT_MS => {
-                        tokio::time::sleep(std::time::Duration::from_millis(BUILD_POLL_MS)).await;
-                        waited += BUILD_POLL_MS;
+                    Ok(false) if waited < LANE_WAIT_MS => {
+                        tokio::time::sleep(std::time::Duration::from_millis(LANE_POLL_MS)).await;
+                        waited += LANE_POLL_MS;
                     }
                     Ok(false) => {
                         let rival = store
-                            .file_lock_holder(BUILD_CLAIM)
+                            .file_lock_holder(lane)
                             .ok()
                             .flatten()
                             .unwrap_or_else(|| "(released meanwhile)".to_string());
                         return ToolOutput::Error {
                             message: format!(
-                                "the build/test lane has been held by `{rival}` for over \
-                                 {}s — retry shortly",
-                                BUILD_WAIT_MS / 1000
+                                "the {} lane has been held by `{rival}` for over {}s — retry \
+                                 shortly",
+                                lane_label(lane),
+                                LANE_WAIT_MS / 1000
                             ),
                         };
                     }
@@ -301,7 +335,7 @@ impl ToolExecutor for ClaimTap<'_> {
             };
             let output = self.inner.execute(name, input).await;
             if acquired {
-                let _ = store.release_file_lock(BUILD_CLAIM, &self.holder);
+                let _ = store.release_file_lock(lane, &self.holder);
             }
             return output;
         }
@@ -408,6 +442,50 @@ mod tests {
             );
             store.release_file_lock(BUILD_CLAIM, "ses-1/req:2").unwrap();
         }
+    }
+
+    /// The commit lane's load-bearing property, and the reason
+    /// [`crate::fleet_commits`] can attribute a shared tree's `HEAD` advance
+    /// at all: the lane is held for the whole inner call — so a rival cannot
+    /// commit inside the window the observer nested there — and released the
+    /// moment it returns, so the next commit is not made to wait.
+    #[tokio::test]
+    async fn the_commit_lane_is_held_across_the_call_and_freed_after_it() {
+        /// Asks, from inside the call, who holds the commit lane.
+        struct HolderDuringCall(Arc<Store>, std::sync::Mutex<Option<String>>);
+
+        #[async_trait]
+        impl ToolExecutor for HolderDuringCall {
+            fn schemas(&self) -> Vec<ToolSchema> {
+                Vec::new()
+            }
+            async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+                *self.1.lock().unwrap() = self.0.file_lock_holder(COMMIT_CLAIM).unwrap();
+                ToolOutput::Ok {
+                    content: "committed".into(),
+                }
+            }
+        }
+
+        let store = store();
+        let inner = HolderDuringCall(store.clone(), std::sync::Mutex::new(None));
+        let tap = ClaimTap::new(&inner, Some(store.clone()), "fleet-1/t1");
+
+        assert!(
+            !tap.execute("repo_commit", &serde_json::json!({}))
+                .await
+                .is_error()
+        );
+
+        assert_eq!(
+            inner.1.lock().unwrap().as_deref(),
+            Some("fleet-1/t1"),
+            "the commit ran while this worker held the lane"
+        );
+        assert!(
+            store.acquire_file_lock(COMMIT_CLAIM, "fleet-1/t2").unwrap(),
+            "and the lane is free again for the next commit"
+        );
     }
 
     #[tokio::test]
