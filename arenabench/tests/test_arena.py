@@ -888,3 +888,50 @@ class TestInfrastructureFailuresAreNotLosses:
         assert totals["judged"] == 2
         assert totals["solve_rate"] == 100.0
         assert totals["infrastructure"] == 8
+
+
+class TestOfflineTaskSource:
+    """Reading tasks from an export instead of resolving them mid-run.
+
+    Harbor resolves a registry ref against its backend once per task, at run
+    time. One failed lookup raises out of the job and takes every remaining
+    trial with it — the failure that ended two measured matches here, at task
+    3 and task 7, killing both contestants together.
+    """
+
+    def _export(self, tmp_path: Path, tasks=("alpha", "beta")) -> Path:
+        root = tmp_path / "terminal-bench-2.1" / "terminal-bench-2-1"
+        for name in tasks:
+            d = root / name
+            d.mkdir(parents=True)
+            (d / "task.toml").write_text(f'[task]\nname = "terminal-bench/{name}"\n')
+        return root
+
+    def test_an_export_is_found_and_is_the_directory_harbor_wants(
+        self, tmp_path: Path, monkeypatch
+    ):
+        expected = self._export(tmp_path)
+        monkeypatch.setenv("ARENABENCH_DATASETS", str(tmp_path))
+        assert DEFAULT_REGISTRY.local_run_path("terminal-bench-2.1") == expected
+
+    def test_no_export_means_no_path_rather_than_a_wrong_one(
+        self, tmp_path: Path, monkeypatch
+    ):
+        monkeypatch.setenv("ARENABENCH_DATASETS", str(tmp_path / "empty"))
+        assert DEFAULT_REGISTRY.local_run_path("terminal-bench-2.1") is None
+
+    def test_harbors_own_cache_is_never_offered_as_a_run_path(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """The cache nests each task under its content hash. ArenaBench can
+        enumerate that, but `--path` reads it as an empty dataset — which fails
+        the run with 'no tasks matched' rather than anything diagnostic."""
+        cached = tmp_path / "terminal-bench-2.1" / "terminal-bench-2-1" / "alpha" / "deadbeef"
+        cached.mkdir(parents=True)
+        (cached / "task.toml").write_text('[task]\nname = "terminal-bench/alpha"\n')
+        monkeypatch.setenv("ARENABENCH_DATASETS", str(tmp_path))
+        assert DEFAULT_REGISTRY.local_run_path("terminal-bench-2.1") is None
+
+    def test_the_package_directory_comes_from_the_pinned_name(self):
+        from arenabench.registry import TERMINAL_BENCH_21
+        assert TERMINAL_BENCH_21.package_dir == "terminal-bench-2-1"
