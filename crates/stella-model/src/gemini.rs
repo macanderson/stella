@@ -675,7 +675,7 @@ pub(crate) async fn aggregate_gemini_stream(
     // abort a CJK/emoji stream with `Malformed`.
     while let Some(chunk) = http::next_with_timeout(&mut stream, http::STREAM_IDLE_TIMEOUT)
         .await
-        .map_err(|e| e.with_partial(http::partial_usage(&usage, &text, pricing)))?
+        .map_err(|e| http::attach_partial(e, &usage, &text, pricing))?
     {
         decoder
             .push_bytes(&chunk)
@@ -767,10 +767,12 @@ pub(crate) async fn aggregate_gemini_stream(
     // anthropic/openai/zai). `label` — not a literal — is what makes vertex.rs,
     // which reuses this aggregator, report against its own name.
     if finish_raw.is_none() {
-        return Err(
-            http::stream_ended_before_terminal(label, "a terminal finishReason")
-                .with_partial(http::partial_usage(&usage, &text, pricing)),
-        );
+        return Err(http::attach_partial(
+            http::stream_ended_before_terminal(label, "a terminal finishReason"),
+            &usage,
+            &text,
+            pricing,
+        ));
     }
 
     let finish_reason = map_gemini_finish_reason(finish_raw.as_deref(), !tool_calls.is_empty());

@@ -509,27 +509,128 @@ pub(crate) fn stream_ended_before_terminal(provider: &str, terminal_event: &str)
 ///   to be wrong is worse than an approximation we can label — the estimate is
 ///   never mistaken for provider truth because `input_reported` describes only
 ///   the input side and `reported` stays false regardless.
+///
+/// Returns `None` when nothing was observed at all. That case is real and
+/// common on the OpenAI-shaped dialects, which send usage only in the final
+/// chunk: a stream cut early there has no counts and no text. Attaching a
+/// zeroed envelope would be strictly worse than attaching nothing, because
+/// downstream it is indistinguishable from a genuine call that cost nothing —
+/// the exact misreading this whole change exists to stop.
 pub(crate) fn partial_usage(
     usage: &CompletionUsage,
     text: &str,
     pricing: Option<&Pricing>,
-) -> PartialUsage {
+) -> Option<PartialUsage> {
+    if usage.input_tokens == 0 && usage.output_tokens == 0 && text.is_empty() {
+        return None;
+    }
     let input_reported = usage.input_tokens > 0;
     let mut observed = *usage;
     observed.reported = false;
     if observed.output_tokens == 0 {
         observed.output_tokens = estimate_tokens(text);
     }
-    PartialUsage {
+    Some(PartialUsage {
         cost_usd: pricing.map_or(0.0, |p| p.cost_usd(&observed)),
         usage: observed,
         input_reported,
+    })
+}
+
+/// Hang whatever [`partial_usage`] salvaged onto `error`, leaving it untouched
+/// when there was nothing to salvage. The one call every streaming adapter
+/// makes at its two loss sites.
+pub(crate) fn attach_partial(
+    error: ProviderError,
+    usage: &CompletionUsage,
+    text: &str,
+    pricing: Option<&Pricing>,
+) -> ProviderError {
+    match partial_usage(usage, text, pricing) {
+        Some(partial) => error.with_partial(partial),
+        None => error,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pricing() -> Pricing {
+        Pricing {
+            input_usd_per_mtok: 3.0,
+            output_usd_per_mtok: 15.0,
+            cached_input_usd_per_mtok: 0.3,
+            cache_write_usd_per_mtok: 3.75,
+        }
+    }
+
+    /// A stream cut before anything arrived has nothing to report, and must
+    /// say so. A zeroed envelope here is indistinguishable downstream from a
+    /// real call that cost nothing — the misreading this whole path exists to
+    /// prevent. This is the normal early-drop case on the OpenAI-shaped
+    /// dialects, which send usage only in the final chunk.
+    #[test]
+    fn nothing_observed_yields_no_partial_at_all() {
+        assert!(partial_usage(&CompletionUsage::default(), "", Some(&pricing())).is_none());
+    }
+
+    /// Text without a usage frame still counts: those tokens were generated
+    /// and are billable, so an estimate beats a zero we know to be wrong.
+    #[test]
+    fn streamed_text_alone_is_enough_to_report_an_estimate() {
+        let partial = partial_usage(&CompletionUsage::default(), "hello there", Some(&pricing()))
+            .expect("text that arrived is recoverable");
+        assert!(partial.usage.output_tokens > 0);
+        assert!(
+            !partial.input_reported,
+            "no input frame arrived, so the input side is not the provider's"
+        );
+        assert!(!partial.usage.is_complete());
+    }
+
+    /// The Anthropic-shaped case: `message_start` already reported the input
+    /// side, so it is the provider's own figure and is priced as such.
+    #[test]
+    fn a_reported_input_frame_is_marked_as_the_providers_own() {
+        let usage = CompletionUsage {
+            input_tokens: 14_000,
+            cached_input_tokens: 12_000,
+            // Mid-flight `message_delta` can set this before the stream dies.
+            reported: true,
+            ..Default::default()
+        };
+        let partial = partial_usage(&usage, "Hello", Some(&pricing()))
+            .expect("reported input is recoverable");
+        assert!(partial.input_reported);
+        assert_eq!(partial.usage.input_tokens, 14_000);
+        // 2k uncached @ $3 + 12k cached @ $0.30, plus the estimated output at
+        // $15 — the cache split is the point: billing all 14k at the input
+        // rate would be $0.042, over four times the truth.
+        let expected = 0.006 + 0.0036 + (partial.usage.output_tokens as f64 / 1_000_000.0) * 15.0;
+        assert!(
+            (partial.cost_usd - expected).abs() < 1e-9,
+            "cache split must be priced: got {}, expected {expected}",
+            partial.cost_usd
+        );
+        assert!(
+            !partial.usage.is_complete(),
+            "a mid-flight `reported` flag must never survive into a partial"
+        );
+    }
+
+    /// `attach_partial` must leave an error alone when there is nothing to
+    /// hang on it, rather than decorating it with an empty envelope.
+    #[test]
+    fn attach_partial_is_a_no_op_when_nothing_was_observed() {
+        let err = attach_partial(
+            ProviderError::transport("connect refused"),
+            &CompletionUsage::default(),
+            "",
+            Some(&pricing()),
+        );
+        assert!(err.partial_usage().is_none());
+    }
 
     #[test]
     fn client_builds_without_panicking() {
