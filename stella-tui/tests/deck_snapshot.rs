@@ -80,14 +80,14 @@ fn deck_renders_every_tab_with_real_content() {
     // subagent rows under the lead's header.
     let session = render_tab(&model, DeckTab::Session, 190, 44);
     for needle in [
-        "✦",          // statline zone A brand glyph
-        "ctx ",       // zone B resource meter
-        "run $",      // zone C money
-        "✓ plan",     // stepper: completed stage
-        "▸ execute",  // stepper: active stage beside the track
-        "◆",          // a nested subagent's identity mark
-        "subagent",   // its dim role word
-        "returns:",   // its contract line
+        "✦",         // statline zone A brand glyph
+        "ctx ",      // zone B resource meter
+        "run $",     // zone C money
+        "✓ plan",    // stepper: completed stage
+        "▸ execute", // stepper: active stage beside the track
+        "◆",         // a nested subagent's identity mark
+        "subagent",  // its dim role word
+        "returns:",  // its contract line
     ] {
         assert!(
             session.contains(needle),

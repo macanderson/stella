@@ -647,8 +647,16 @@ fn deck_render_snapshots_pin_the_floating_cards() {
     use stella_tui::deck_ui::cards::Card;
     let model = fixture_model();
     for (card, name, description) in [
-        (Card::Tasks, "card_tasks", "the /tasks board card over SESSION"),
-        (Card::Scope, "card_scope", "the /scope grid card over SESSION"),
+        (
+            Card::Tasks,
+            "card_tasks",
+            "the /tasks board card over SESSION",
+        ),
+        (
+            Card::Scope,
+            "card_scope",
+            "the /scope grid card over SESSION",
+        ),
         (
             Card::Witness,
             "card_witness",

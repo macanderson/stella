@@ -135,18 +135,19 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, frame: Rect, buf: &mut Bu
             ui.accessible,
         ));
         // ⏎ expands the selected row into its long-form description.
-        if selected && ui.cards.tasks_expanded {
-            if let Some(description) = &task.description {
-                let text = if ui.accessible {
-                    format!("· detail {description}")
-                } else {
-                    format!("     {}", cards::truncate_cols(description, inner_w - 6))
-                };
-                rows.push(Line::from(Span::styled(
-                    text,
-                    Style::new().fg(theme::TEXT_TERTIARY),
-                )));
-            }
+        if selected
+            && ui.cards.tasks_expanded
+            && let Some(description) = &task.description
+        {
+            let text = if ui.accessible {
+                format!("· detail {description}")
+            } else {
+                format!("     {}", cards::truncate_cols(description, inner_w - 6))
+            };
+            rows.push(Line::from(Span::styled(
+                text,
+                Style::new().fg(theme::TEXT_TERTIARY),
+            )));
         }
     }
 

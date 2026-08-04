@@ -2085,19 +2085,21 @@ mod tests {
     /// recorded before they existed still parses with each absent.
     #[test]
     fn proof_oracle_roundtrips_replay_facts_and_stays_additive() {
-        let event = AgentEvent::Proof {
-            step: ProofStep::Oracle {
-                command: "cargo test -p x".into(),
-                passed: true,
-                tree: ProofTree::Candidate,
-                run: Some(2),
-                runs_required: Some(3),
-                seed: Some(7741),
-            },
+        let step = ProofStep::Oracle {
+            command: "cargo test -p x".into(),
+            passed: true,
+            tree: ProofTree::Candidate,
+            run: Some(2),
+            runs_required: Some(3),
+            seed: Some(7741),
         };
+        let event = AgentEvent::Proof { step: step.clone() };
         let json = serde_json::to_string(&event).unwrap();
         let back: AgentEvent = serde_json::from_str(&json).unwrap();
-        assert_eq!(event, back);
+        match back {
+            AgentEvent::Proof { step: parsed } => assert_eq!(parsed, step),
+            other => panic!("unexpected variant: {other:?}"),
+        }
 
         let legacy = r#"{"type":"proof","step":{"kind":"oracle","command":"cargo test","passed":false,"tree":"baseline"}}"#;
         let old: AgentEvent = serde_json::from_str(legacy).unwrap();

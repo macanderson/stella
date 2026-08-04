@@ -56,7 +56,11 @@ fn rows(model: &WorkspaceModel, accessible: bool) -> Vec<String> {
 fn a_registered_subagent_gets_its_nested_block_under_the_lead() {
     let model = model_with_subagent();
     let frame = rows(&model, false).join("\n");
-    for needle in ["└─ ◆ sub:auth", "subagent", "returns: wire the API → lead inbox"] {
+    for needle in [
+        "└─ ◆ sub:auth",
+        "subagent",
+        "returns: wire the API → lead inbox",
+    ] {
         assert!(frame.contains(needle), "missing {needle:?}:\n{frame}");
     }
 }

@@ -462,54 +462,6 @@ fn the_footer_hides_the_steer_marker_when_nothing_is_running() {
     );
 }
 
-/// One committed model call, carrying `input`/`cached` usage — the fold
-/// that feeds the CACHE cell.
-fn step_usage(input: u64, cached: u64) -> AgentEvent {
-    AgentEvent::StepUsage {
-        output_text: None,
-        step: 1,
-        role: stella_protocol::ModelCallRole::Worker,
-        provider: "test".into(),
-        model: "glm".into(),
-        input_tokens: input,
-        output_tokens: 0,
-        cached_input_tokens: cached,
-        cache_write_tokens: 0,
-        estimated_input_tokens: 0,
-        cost_usd: 0.0,
-        duration_ms: 1,
-        retries: 0,
-        tool_calls: 0,
-        complete: true,
-        finish_reason: None,
-    }
-}
-
-/// The running model plus one metered step with the given cache usage.
-fn model_with_cache(input: u64, cached: u64) -> WorkspaceModel {
-    let mut m = running_model_with_queue();
-    m.apply_inbound(&Inbound::Event {
-        agent: "lead".into(),
-        event: step_usage(input, cached),
-    });
-    m
-}
-
-/// One `Pr` event folded onto the running model.
-fn model_with_pr(number: Option<u64>, ci: Option<stella_protocol::CiStatus>) -> WorkspaceModel {
-    let mut m = running_model_with_queue();
-    m.apply_inbound(&Inbound::Event {
-        agent: "lead".into(),
-        event: AgentEvent::Pr {
-            url: "https://github.com/x/y/pull/183".into(),
-            status: stella_protocol::PrStatus::Open,
-            number,
-            ci,
-        },
-    });
-    m
-}
-
 #[test]
 fn queue_popup_lists_prompts_and_arms_the_clear_confirm() {
     let model = running_model_with_queue();

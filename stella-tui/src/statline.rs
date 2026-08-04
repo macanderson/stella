@@ -493,6 +493,7 @@ fn fmt_k(n: u64) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     use stella_protocol::{AgentEvent, StageKind};

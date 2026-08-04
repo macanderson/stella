@@ -39,7 +39,11 @@ const MAX_BLOCKS: usize = 2;
 /// The band's height for this frame: 0 when the focused lane is a subagent
 /// (its own session is the view) or no subagents exist.
 pub fn band_height(model: &WorkspaceModel, ui: &DeckUi) -> u16 {
-    if model.agents.get(ui.focused).is_some_and(|a| a.is_subagent()) {
+    if model
+        .agents
+        .get(ui.focused)
+        .is_some_and(|a| a.is_subagent())
+    {
         return 0;
     }
     let subs = model.subagent_count();
@@ -69,7 +73,11 @@ fn block(sub: &AgentEntry, now_ms: u64, width: usize, accessible: bool) -> Vec<L
     // The vitals: model · ctx · spend, plus the sub's approved write scope
     // when its own fold carries one.
     let model_id = sub.meta.model.clone().unwrap_or_else(|| "—".to_string());
-    let ctx = format!("{}/{}", fmt_k(sub.context_tokens), fmt_k(crate::statline::CTX_WINDOW));
+    let ctx = format!(
+        "{}/{}",
+        fmt_k(sub.context_tokens),
+        fmt_k(crate::statline::CTX_WINDOW)
+    );
     let scope = sub
         .model
         .approved_scope
@@ -87,14 +95,20 @@ fn block(sub: &AgentEntry, now_ms: u64, width: usize, accessible: bool) -> Vec<L
             ),
             Style::new().fg(theme::TEXT_PRIMARY),
         ))];
-        let mut vitals = format!("· model {model_id} · ctx {ctx} · spend ${:.2}", sub.cost_usd);
+        let mut vitals = format!(
+            "· model {model_id} · ctx {ctx} · spend ${:.2}",
+            sub.cost_usd
+        );
         if let Some(scope) = &scope {
             vitals.push_str(&format!(" · scope {scope}"));
         }
         rows.push(Line::from(Span::styled(vitals, dim)));
         if let Some(tool) = last_tool_line(sub) {
             rows.push(Line::from(Span::styled(
-                format!("· last tool {}", cards::truncate_cols(&tool, width.saturating_sub(14))),
+                format!(
+                    "· last tool {}",
+                    cards::truncate_cols(&tool, width.saturating_sub(14))
+                ),
                 dim,
             )));
         } else {

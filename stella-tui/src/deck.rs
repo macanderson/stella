@@ -852,10 +852,8 @@ impl WorkspaceModel {
                     _ => {}
                 },
                 // A verdict closes the witness run whichever way it went.
-                AgentEvent::JudgeVerdict { .. } => {
-                    if entry.witness_phase_ms.execute_ms.is_some() {
-                        entry.witness_phase_ms.result_ms.get_or_insert(now);
-                    }
+                AgentEvent::JudgeVerdict { .. } if entry.witness_phase_ms.execute_ms.is_some() => {
+                    entry.witness_phase_ms.result_ms.get_or_insert(now);
                 }
                 _ => {}
             }

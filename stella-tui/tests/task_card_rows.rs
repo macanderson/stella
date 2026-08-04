@@ -75,16 +75,28 @@ fn each_row_state_has_its_own_glyph_and_the_active_row_its_live_readout() {
         .iter()
         .position(|l| l.contains("of 3 done"))
         .unwrap_or_else(|| panic!("no card title row:\n{text}"));
-    let card: Vec<String> = lines[title..title + 5].iter().map(|l| l.to_string()).collect();
+    let card: Vec<String> = lines[title..title + 5]
+        .iter()
+        .map(|l| l.to_string())
+        .collect();
     let row_with = |needle: &str| {
         card.iter()
             .find(|l| l.contains(needle))
             .unwrap_or_else(|| panic!("no card row carries {needle:?}:\n{text}"))
             .to_string()
     };
-    assert!(row_with("finished thing").contains('✓'), "done rows carry ✓");
-    assert!(row_with("active thing").contains('▸'), "the active row carries ▸");
-    assert!(row_with("queued thing").contains('○'), "queued rows carry ○");
+    assert!(
+        row_with("finished thing").contains('✓'),
+        "done rows carry ✓"
+    );
+    assert!(
+        row_with("active thing").contains('▸'),
+        "the active row carries ▸"
+    );
+    assert!(
+        row_with("queued thing").contains('○'),
+        "queued rows carry ○"
+    );
     // The active task's elapsed · cost readout: 72 seconds since the board
     // flipped it active.
     assert!(
@@ -92,8 +104,14 @@ fn each_row_state_has_its_own_glyph_and_the_active_row_its_live_readout() {
         "the active row shows its live elapsed:\n{text}"
     );
     // The title: counts + the mini done-fraction bar.
-    assert!(text.contains("1 of 3 done"), "the title carries the fraction");
-    assert!(text.contains('▰'), "the title carries the mini bar's fill glyph");
+    assert!(
+        text.contains("1 of 3 done"),
+        "the title carries the fraction"
+    );
+    assert!(
+        text.contains('▰'),
+        "the title carries the mini bar's fill glyph"
+    );
     // The selection affordance is a glyph, not just a tint — the golden
     // suite strips style, so a style-only selection would be invisible.
     assert!(

@@ -1286,6 +1286,20 @@ export type ProofStep = {
   command: string;
   kind: "oracle";
   passed: boolean;
+  /**
+   * Which candidate replay this observation is (1-based). `None` on
+   * baseline runs and on single-run oracles.
+   */
+  run?: number | null;
+  /**
+   * How many passing candidate replays the flip requires, when the
+   * oracle runs more than one.
+   */
+  runs_required?: number | null;
+  /**
+   * The deterministic seed the replay pinned, when one was pinned.
+   */
+  seed?: number | null;
   tree: ProofTree;
 };
 
@@ -1323,8 +1337,18 @@ export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
 /**
  * What a `ScopeReview` gate presents for approval before a large plan
  * executes (L-E5).
+ *
+ * The fields after `estimated_cost_usd` are the scope-card grid's facts
+ * (repo/branch, read/write globs, shell policy) — all additive
+ * (`serde(default)`), so streams recorded before they existed parse with
+ * every one absent, and a proposal that names none serializes exactly as it
+ * always has.
  */
 export interface ScopeProposal {
+  /**
+   * The branch the work lands on, when named.
+   */
+  branch?: string | null;
   /**
    * Projected spend, when the planner could estimate one.
    */
@@ -1335,6 +1359,20 @@ export interface ScopeProposal {
    */
   estimated_files: number;
   /**
+   * Path globs the plan reads beyond its write set. Empty = not stated.
+   */
+  read_globs?: string[];
+  /**
+   * The repository the scope binds to (`owner/name`, or a workspace
+   * path), when the planner named one.
+   */
+  repo?: string | null;
+  /**
+   * The shell policy in force for the run (e.g. `allowlisted`,
+   * `read-only`, `none`), when stated.
+   */
+  shell_policy?: string | null;
+  /**
    * The plan's steps, in the order the worker will attempt them.
    */
   steps: string[];
@@ -1342,6 +1380,10 @@ export interface ScopeProposal {
    * One line describing the work, for the approval prompt's headline.
    */
   summary: string;
+  /**
+   * Path globs the plan intends to WRITE within. Empty = not stated.
+   */
+  write_globs?: string[];
 }
 
 /**
@@ -1640,6 +1682,10 @@ export type ServerFrame = {
   reason?: string | null;
   type: "turn_held";
 } | {
+  proposal: ScopeProposal;
+  request_id: string;
+  type: "scope_review_request";
+} | {
   type: "turn_released";
 } | {
   outcome: TurnOutcomeWire;
@@ -1655,6 +1701,7 @@ export type KnownTypeTag =
   | "tool_request"
   | "provider_request"
   | "turn_held"
+  | "scope_review_request"
   | "turn_released"
   | "turn_complete";
 

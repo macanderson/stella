@@ -56,8 +56,13 @@ fn zones_drop_whole_in_the_documented_order_as_the_row_narrows() {
 
     // Wide: all four zones render.
     let full = statline_row(&model, 200);
-    for needle in ["✦", "lead", "●", "ctx", "cpu", "cache", "turn", "run", "saved", "✉"] {
-        assert!(full.contains(needle), "at 200 cols {needle:?} renders:\n{full}");
+    for needle in [
+        "✦", "lead", "●", "ctx", "cpu", "cache", "turn", "run", "saved", "✉",
+    ] {
+        assert!(
+            full.contains(needle),
+            "at 200 cols {needle:?} renders:\n{full}"
+        );
     }
 
     // As the row narrows, items leave whole and in order: `cpu` before the
@@ -83,7 +88,10 @@ fn zones_drop_whole_in_the_documented_order_as_the_row_narrows() {
         }
         assert!(row.contains('✦'), "the brand survives {w} cols:\n{row}");
         if w >= 24 {
-            assert!(row.contains('✉'), "the inbox badge survives {w} cols:\n{row}");
+            assert!(
+                row.contains('✉'),
+                "the inbox badge survives {w} cols:\n{row}"
+            );
         }
     }
     let (cpu, ctx, turn, run) = (
@@ -92,9 +100,18 @@ fn zones_drop_whole_in_the_documented_order_as_the_row_narrows() {
         turn_gone_at.expect("turn drops somewhere"),
         run_gone_at.expect("run drops somewhere"),
     );
-    assert!(cpu >= ctx, "cpu ({cpu}) drops before the rest of zone B ({ctx})");
-    assert!(ctx >= turn, "zone B ({ctx}) drops before zone C's turn ({turn})");
-    assert!(turn >= run, "zone C keeps only run for a while ({turn} vs {run})");
+    assert!(
+        cpu >= ctx,
+        "cpu ({cpu}) drops before the rest of zone B ({ctx})"
+    );
+    assert!(
+        ctx >= turn,
+        "zone B ({ctx}) drops before zone C's turn ({turn})"
+    );
+    assert!(
+        turn >= run,
+        "zone C keeps only run for a while ({turn} vs {run})"
+    );
 }
 
 #[test]

@@ -128,7 +128,9 @@ fn red_tokens_carry_the_oracle_pre_flip_role_and_nothing_else_on_the_panel_does(
     let mut role_cells = 0usize;
     for y in 0..area.height {
         for x in 0..area.width {
-            let Some(cell) = buf.cell((x, y)) else { continue };
+            let Some(cell) = buf.cell((x, y)) else {
+                continue;
+            };
             if cell.fg != theme::ORACLE_PRE_FLIP {
                 continue;
             }
