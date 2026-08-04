@@ -85,7 +85,7 @@ from .exit_cause import (
     build_exit_cause_report,
     probe_sigkill_cause,
 )
-from .git_baseline import run_git_baseline
+from .git_baseline import ensure_git, run_git_baseline
 from .portability import raise_for_loader_failure
 from .posture import (
     _ASSURANCE_TIERS_VERSION,
@@ -1361,6 +1361,7 @@ class StellaAgent(BaseInstalledAgent):
         else:
             self._host_credential_source = ENV_CREDENTIAL_SOURCE
             self._container_credential_absence_verified = False
+        await ensure_git(self, environment)
         binary_path = _locate_binary()
         self._binary_sha256 = _sha256_file(binary_path)
         self._binary_sha256_verified = False

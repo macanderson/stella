@@ -114,6 +114,7 @@ mod lead_control;
 mod model_cmd;
 mod profile_cmd;
 mod scope_gate;
+mod settle;
 mod theme_cmd;
 use crate::memory::{SessionMemory, inject_recall_block};
 use crate::runtime::{SystemClock, TokioSleeper};
@@ -844,6 +845,12 @@ pub async fn run_deck_session(
     // at the loop top, where the guard is free (budget aborts happen at
     // safe boundaries only).
     let mut unmetered_spend: f64 = 0.0;
+    // Inputs that reached the driver during a turn's post-turn bookkeeping
+    // (see [`settle::run_while_listening`]) that that window could not
+    // service itself — a
+    // worker control, a SKILLS-tab op. They run at the idle arm below, ahead
+    // of the backlog, in arrival order.
+    let mut deferred: VecDeque<WorkspaceInput> = VecDeque::new();
     // PR/CI reconcile: polls `gh` for the workspace's current-branch PR and
     // its checks, feeding the footer's PR cell, the store mirror, and
     // failing-CI inbox notifications. The nudge skips the wait after turns
@@ -872,7 +879,14 @@ pub async fn run_deck_session(
         }
         // Take the next prompt: backlog first (unless held), else wait for
         // deck input.
-        let next = if dispatch.held() {
+        //
+        // A pending `deferred` input pre-empts the backlog. It arrived FIRST —
+        // during the previous turn's bookkeeping — and it is the kind of input
+        // that cannot wait behind a prompt: a `Stop` aimed at a worker must not
+        // sit out the whole turn a queued prompt is about to start. Each one
+        // falls through the idle-arm match below, which `continue`s, so the
+        // loop drains them in order and only then pops the backlog.
+        let next = if dispatch.held() || !deferred.is_empty() {
             None
         } else {
             queue.pop_front()
@@ -887,9 +901,14 @@ pub async fn run_deck_session(
         let prompt = match next {
             Some(text) => text,
             None => {
-                let wake = tokio::select! {
-                    input = sub_rx.recv() => IdleWake::Input(input),
-                    msg = sup_rx.recv() => IdleWake::Sup(msg),
+                let wake = match deferred.pop_front() {
+                    // Serviced before the channel is read, so a deferred input
+                    // keeps its place ahead of anything typed since.
+                    Some(input) => IdleWake::Input(Some(input)),
+                    None => tokio::select! {
+                        input = sub_rx.recv() => IdleWake::Input(input),
+                        msg = sup_rx.recv() => IdleWake::Sup(msg),
+                    },
                 };
                 let input = match wake {
                     // The driver holds a live `sup_tx`, so `None` cannot
@@ -1999,21 +2018,46 @@ pub async fn run_deck_session(
                         });
                     }
                 }
-                authoring::record_and_reflect_turn(
-                    &mut memory,
-                    &prompt,
-                    &outcome,
-                    &registry,
-                    files_before,
-                    started_unix,
-                    &messages,
-                    reflect_start,
-                    &*provider,
-                    cfg,
-                    &mut budget,
-                    &in_tx,
-                )
-                .await;
+                // A turn that ended by asking is not a turn that is over. Say
+                // so BEFORE the bookkeeping below, not after: the whole point
+                // is that the user is reading this screen right now, deciding
+                // whether they are expected to answer. `WaitingInput` renders
+                // `needs input` with a `?` where `done`/`✓` would have been,
+                // and — unlike `Done` — is not `is_terminal()`, so nothing
+                // downstream reads the session as finished. See [`settle`].
+                if outcome.is_ok() && settle::ends_with_a_question(&messages[reflect_start..]) {
+                    let _ = in_tx.send(Inbound::Status {
+                        agent: LEAD.to_string(),
+                        status: AgentStatus::WaitingInput,
+                    });
+                }
+                // Bookkeeping runs behind the settle window, which keeps reading
+                // the deck across it. Before this, the reflection model call
+                // inside `record_and_reflect_turn` left the driver deaf for as
+                // long as that call took, with the deck already painted done —
+                // so a prompt typed at a finished-looking turn queued and never
+                // ran.
+                deferred.extend(
+                    settle::run_while_listening(
+                        authoring::record_and_reflect_turn(
+                            &mut memory,
+                            &prompt,
+                            &outcome,
+                            &registry,
+                            files_before,
+                            started_unix,
+                            &messages,
+                            reflect_start,
+                            &*provider,
+                            cfg,
+                            &mut budget,
+                            &in_tx,
+                        ),
+                        &mut sub_rx,
+                        &mut queue,
+                    )
+                    .await,
+                );
                 // Name the workspace state this turn ended at, so it can be
                 // read back by turn number rather than by commit id
                 // (`WorkJournal::read_at_turn`). A turn that ABORTED is still a

@@ -355,15 +355,15 @@ pub enum AgentEvent {
     /// Additive to the wire contract: older consumers never see it.
     LoopDetected {
         turn_instance: u32,
-        /// `"exact_repeat"` | `"short_cycle"` — mirrors
+        /// `"exact_repeat"` | `"short_cycle"` | `"stagnation"` — mirrors
         /// `stella-core::loop_detect::LoopVerdict` (kept as a string here so
         /// `stella-protocol` never depends on `stella-core`).
         kind: String,
         /// Tool names of the repeated signature, in cycle order (one entry
-        /// for an exact repeat).
+        /// for an exact repeat or a stagnating tool).
         pattern: Vec<String>,
-        /// Consecutive identical calls (exact repeat) or full cycles (short
-        /// cycle) observed.
+        /// Consecutive identical calls (exact repeat), full cycles (short
+        /// cycle), or consecutive no-progress calls (stagnation) observed.
         repeats: usize,
         /// The human-readable evidence — same text the paired
         /// `Steered`/`Error` carries.

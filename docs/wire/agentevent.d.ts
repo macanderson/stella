@@ -930,19 +930,19 @@ export type AgentEvent = {
    */
   evidence: string;
   /**
-   * `"exact_repeat"` | `"short_cycle"` — mirrors
+   * `"exact_repeat"` | `"short_cycle"` | `"stagnation"` — mirrors
    * `stella-core::loop_detect::LoopVerdict` (kept as a string here so
    * `stella-protocol` never depends on `stella-core`).
    */
   kind: string;
   /**
    * Tool names of the repeated signature, in cycle order (one entry
-   * for an exact repeat).
+   * for an exact repeat or a stagnating tool).
    */
   pattern: string[];
   /**
-   * Consecutive identical calls (exact repeat) or full cycles (short
-   * cycle) observed.
+   * Consecutive identical calls (exact repeat), full cycles (short
+   * cycle), or consecutive no-progress calls (stagnation) observed.
    */
   repeats: number;
   turn_instance: number;

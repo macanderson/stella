@@ -1,0 +1,421 @@
+---
+title: stella.toml
+description: The comment-preserving, schema-versioned TOML config format — where each scope's file lives, what moved from settings.json, what stays identical, and what is not built yet.
+---
+
+`stella.toml` is Stella's config file in TOML instead of JSON. It reads across the same
+three scopes as [`settings.json`](/docs/configuration/settings), merges by the same rules,
+and is gated by the same [project trust boundary](/docs/configuration/settings#the-project-trust-boundary)
+— the file format changed, nothing about who is trusted did. What TOML adds is what JSON
+structurally cannot hold: comments that survive a write, and a `[meta]` block that turns
+forward compatibility into a mechanism instead of a warning.
+
+<Callout type="info">
+  This page documents the **TOML shape**. For the full meaning of every section — merge
+  rules, the trust boundary, worked examples — [settings.json](/docs/configuration/settings)
+  remains the canonical reference; the two formats lower into the same `Settings` and behave
+  identically once loaded. This page exists to answer the questions specific to the file
+  itself: where it lives, what its keys are called, and what changed in the port.
+</Callout>
+
+## Where each scope's file lives
+
+<CardGrid size="sm">
+  <SpecCard
+    title="project"
+    meta={[
+      { label: "Preference", value: "highest", mono: false },
+      { label: "Path", value: <code>{"<repo>/stella.toml"}</code> },
+    ]}
+  >
+    At the **repository root**, not under `.stella/` — a committed, human-reviewed file
+    belongs where `Cargo.toml` and `pyproject.toml` live, in a PR diff rather than three
+    directories deep.
+  </SpecCard>
+  <SpecCard
+    title="user"
+    meta={[
+      { label: "Preference", value: "lowest", mono: false },
+      { label: "Path", value: <code>~/.stella/stella.toml</code> },
+    ]}
+  >
+    Your personal defaults — the same role `~/.stella/settings.json` plays today.
+  </SpecCard>
+  <SpecCard
+    title="managed"
+    meta={[
+      { label: "Preference", value: "middle, but a ceiling", mono: false },
+      { label: "Path", value: <code>STELLA_MANAGED_SETTINGS</code> },
+    ]}
+  >
+    Or the platform default — `/Library/Application Support/stella/stella.toml` on macOS,
+    `/etc/stella/stella.toml` elsewhere. Deployed by an administrator, and the extension on
+    that one named file decides its format; there is never a second managed file competing
+    with it.
+  </SpecCard>
+</CardGrid>
+
+The scope hierarchy — precedence, the trust boundary, which fields merge per-field versus
+whole-block versus concatenate — is unchanged from JSON. See
+[The scope hierarchy](/docs/configuration/settings#the-scope-hierarchy) for the full rules;
+<SettingsCascadeDiagram /> shows the same shape either format reads through.
+
+## Getting there: `stella migrate config`
+
+```bash
+stella migrate config          # write the TOML for every scope that has JSON
+stella migrate config --dry-run
+```
+
+Every value it writes is serialized from the `settings.json` stella actually parsed —
+never re-typed — and the generated file is re-parsed and re-validated before it touches
+disk. The original JSON is never deleted; you remove it once you've confirmed the TOML
+says what you meant. Full walkthrough: [`stella migrate`](/docs/commands/migrate).
+
+## TOML and settings.json are never merged
+
+If both files exist at a scope, Stella reads the TOML **whole** and ignores the JSON —
+never a field-by-field composite of the two. A composite would make "which file configures
+this?" unanswerable from either file alone; the actual failure mode that guards against is
+someone editing the JSON, seeing no effect, and having nothing to look at.
+
+```text
+! ~/.stella/stella.toml and ~/.stella/settings.json both exist — reading the TOML and
+  IGNORING the JSON. Delete the JSON once you have confirmed the migration.
+```
+
+This notice prints once per launch, at every scope where it applies. A missing TOML file
+falls back to the JSON exactly as before; a missing file at either format is fine and is
+simply skipped.
+
+## The `[meta]` block
+
+The one section with no JSON equivalent — `settings.json` has no version field at all, so a
+typo and a key from a future release look identical to serde. `[meta]` is what makes that
+distinguishable.
+
+<CardGrid size="md">
+  <OptionCard name="meta.schema_version">
+    This build reads exactly one schema version. A file naming a version this build does
+    not understand is a **named load error** telling you to upgrade stella or pin the file
+    back — never a silent partial read. A file with no `[meta]` block at all is version 1 by
+    definition, which is what will eventually make it safe to stop reading `settings.json`.
+  </OptionCard>
+  <OptionCard name="meta.scope">
+    Self-declared as `"user"`, `"managed"`, or `"project"` — checked against the file's
+    actual **location**, not the other way around. The path decides the scope; this field
+    only has to agree with it. A project file declaring `scope = "managed"` is refused with
+    a named error, because that mismatch is either a copy-paste mistake or an attempt to
+    borrow authority the file's location does not grant.
+  </OptionCard>
+</CardGrid>
+
+```toml title="stella.toml"
+[meta]
+schema_version = 1
+scope          = "project"   # "user" | "managed" | "project"
+```
+
+## What moved, and why
+
+Four things changed shape in the port. Everything else kept its name.
+
+| settings.json | stella.toml | Why |
+| --- | --- | --- |
+| `enable_recap` (bare root key) | `[run].recap` | TOML attaches a bare key to whatever `[table]` precedes it — move one line in the file and it silently reassigns. Every scalar gets a table home; there are no bare keys at the document root. |
+| `agent_engine_config` | `[agents]` | Shorter, and the JSON name described the Rust struct rather than the thing it configures. |
+| `agent_engine_config.agents.<name>` | `[agents.<name>]` | One nesting level removed. Safe today because the agent set is **closed** — `default`, `worker`, `judge`, `triage` are struct fields, not map keys, so a per-agent table can never collide with a root field. |
+| `agent_engine_config.allowed_models` | `[models].allowed` | Promoted out of the agents block — it's a statement about models, not about any one agent. Still replaces wholesale across scopes rather than concatenating. |
+
+`trace_capture` and `create_worktrees` needed no such move: both shipped straight into
+their `[run]` table home, so neither ever had a bare-root JSON form to retire.
+
+## Every section, in the TOML shape
+
+Merge rules below are identical to their JSON counterparts — restated here only so this
+page is a complete reference on its own; see the linked section for the full explanation.
+
+### `[run]`
+
+<CardGrid size="md">
+  <OptionCard name="run.recap" defaultValue="off">
+    Was the bare `enable_recap`. See
+    [The end-of-run recap](/docs/configuration/settings#the-end-of-run-recap).
+  </OptionCard>
+  <OptionCard name="run.trace_capture" defaultValue="off">
+    Same name as JSON. See
+    [Trajectory trace capture](/docs/configuration/settings#trajectory-trace-capture).
+  </OptionCard>
+  <OptionCard name="run.create_worktrees" defaultValue="ask">
+    `"always"`, `"ask"`, or `"never"` — whether a run does its work in a throwaway git
+    worktree instead of your checkout. An empty string, `null`, or the key being absent
+    all mean `"ask"`; anything else is a hard parse error.
+  </OptionCard>
+</CardGrid>
+
+```toml title="stella.toml"
+[run]
+recap          = "on"
+trace_capture  = "off"
+create_worktrees = "ask"
+```
+
+### `[providers]`
+
+Identical shape and rules to JSON's `providers` map — a table keyed by provider id,
+merged per-id and per-field. See [The providers map](/docs/configuration/settings#the-providers-map).
+
+```toml title="stella.toml"
+[providers.zai]
+name          = "ZAI Provider"
+base_url      = "https://api.z.ai/api/coding/paas/v4"
+api_key_env   = "ZAI_API_KEY"
+default_model = "n-5.2"
+```
+
+<Callout type="warn">
+  **A literal `api_key` is refused at project scope.** `<repo>/stella.toml` sits next to
+  `README.md` and is committed and reviewed like source, so a plaintext secret in it leaks
+  into version control the moment someone runs `git add .` — unlike `.stella/settings.json`,
+  which was at least one gitignore line away from that mistake. The refusal is enforced on
+  both the load path and `stella migrate config`'s write path, from one check, so a key
+  sitting in an untracked `settings.json` can never be silently copied into the committed
+  file. Use `api_key_env = "..."` to name an environment variable, or
+  `stella auth set <provider>` to store it in
+  [`credentials.toml`](/docs/configuration/credentials) instead — owner-only permissions,
+  never committed. User and managed scope keep accepting `api_key` unchanged.
+</Callout>
+
+### `[models]`
+
+<CardGrid size="md">
+  <OptionCard name="models.allowed">
+    Was `agent_engine_config.allowed_models`. Replaces wholesale across scopes — one
+    vocabulary, so a project can narrow the user's list without needing to restate it.
+  </OptionCard>
+  <OptionCard name="models.output_caps">
+    Per-model output-token ceilings, merged **per key** (unlike `allowed` above). See
+    [`[models.output_caps]`](/docs/configuration/agent-engine-config#modelsoutput_caps--this-workspace)
+    for the full precedence chain.
+  </OptionCard>
+</CardGrid>
+
+```toml title="stella.toml"
+[models]
+allowed = ["anthropic/claude-fable-5", "zai/glm-5.2", "openrouter/openai/gpt-5.5"]
+
+[models.output_caps]
+"anthropic/claude-sonnet-5" = 64000
+"deepseek-chat"             = 32000
+```
+
+### `[agents]`
+
+The flattened, closed-set engine config — see
+[Agent engine config](/docs/configuration/agent-engine-config) for the full schema, model
+precedence, auto modes, and generation parameters, all unchanged. Flattening
+`[agents.judge]` (rather than the JSON nesting's `[agents.agents.judge]`) is safe only
+because exactly four names exist and none of them can collide with a root scalar like
+`default_model`.
+
+```toml title="stella.toml"
+[agents]
+default_model         = "zai/glm-5.2"
+pipeline_judge_model  = "anthropic/claude-fable-5"
+pipeline_triage_model = "deepseek/deepseek-chat"
+auto_mode             = "off"
+effort_auto           = "on"
+
+[agents.judge]
+provider  = "openrouter"
+model     = "openai/gpt-5.5"
+effort    = "high"
+reasoning = "on"
+
+  [agents.judge.params]
+  temperature = 0.2
+  max_tokens  = 4096
+```
+
+### `[tools]`
+
+Same open map, same deny-list, same name-over-group-over-`"*"` precedence as
+[The tools section](/docs/configuration/settings#the-tools-section). The one TOML-specific
+wrinkle: `*` is not a valid bare TOML key, so the wildcard needs quotes.
+
+```toml title="stella.toml"
+[tools]
+bash    = "off"
+process = "off"
+"*"     = "on"
+```
+
+### `[hooks]`
+
+Same schema and the same **concatenate-across-scopes** rule (the one block that isn't
+per-field or whole-block last-wins) as [Lifecycle hooks](/docs/agent-tools/hooks) — and the
+same project-trust gate. TOML expresses the event arrays as
+[array-of-tables](https://toml.io/en/v1.0.0#array-of-tables) rather than JSON's bracketed
+arrays:
+
+```toml title="stella.toml"
+[[hooks.PreToolUse]]
+matcher = "bash"
+  [[hooks.PreToolUse.hooks]]
+  type      = "command"
+  command   = "./scripts/guard.sh"
+  timeoutMs = 5000
+```
+
+### `[mcp]`
+
+`registry_url` carries over unchanged — see [The mcp section](/docs/configuration/settings#the-mcp-section).
+
+<Callout type="warn">
+  **`[mcp.servers]` parses, but does nothing yet.** MCP servers still load exclusively from
+  [`.stella/mcp.toml`](/docs/agent-tools/mcp). A `stella.toml` declaring `[mcp.servers.*]`
+  entries loads without error and prints a startup notice naming the count — stated loudly
+  rather than silently dropped — but those servers will not start until the fold lands.
+  Keep server definitions in `.stella/mcp.toml` for now.
+</Callout>
+
+```toml title="stella.toml"
+[mcp]
+registry_url = "https://registry.example.internal/mcp"
+```
+
+### `[context]` and `[context_providers]`
+
+Unchanged shape and rules — whole-block last-wins for `context`, per-entry last-wins for
+`context_providers`. See [The context block](/docs/configuration/settings#the-context-block)
+and [External context providers](/docs/configuration/settings#external-context-providers).
+
+### `[ui]`
+
+Unchanged — see [The ui section](/docs/configuration/settings#the-ui-section).
+
+```toml title="stella.toml"
+[ui]
+theme = "stella-light"
+```
+
+### `[reward]`
+
+What a finished turn's verdict is worth as a training label (#1043). Whole-block last-wins,
+like `[ui]`; carries no credential or egress authority, so a project setting a weight is
+stating an opinion about its own judge, not borrowing permission.
+
+<CardGrid size="sm">
+  <OptionCard name="reward.deterministic_weight" defaultValue="1.0">
+    Magnitude of a deterministic pass or fail — the unit every other weight is measured
+    against.
+  </OptionCard>
+  <OptionCard name="reward.judge_weight" defaultValue="0.5">
+    Magnitude of a model judge's pass or fail. `0.0` **discards** judged turns from
+    training rather than scoring them as zero — a discard is a refusal to claim anything; a
+    zero is a claim that a neutral outcome was observed. A value above
+    `deterministic_weight` is refused: a model's opinion may never outrank a test's
+    observation.
+  </OptionCard>
+  <OptionCard name="reward.per_step" defaultValue="0.02">
+    Subtracted per model call.
+  </OptionCard>
+  <OptionCard name="reward.per_usd" defaultValue="0.5">
+    Subtracted per USD spent.
+  </OptionCard>
+  <OptionCard name="reward.per_revision" defaultValue="0.1">
+    Subtracted per verification round after the first.
+  </OptionCard>
+</CardGrid>
+
+```toml title="stella.toml"
+[reward]
+judge_weight = 0.3   # trust this workspace's judge less than the 0.5 default
+```
+
+### `[authority]` — managed scope only
+
+Unchanged — see [Managed authority ceilings](/docs/configuration/settings#managed-authority-ceilings).
+Present in a user or project `stella.toml`, it is ignored; only the file at the
+managed-scope path grants it.
+
+### `[enterprise_telemetry]` — managed scope only
+
+Unchanged — see [Enterprise telemetry enrollment](/docs/configuration/settings#enterprise-telemetry-enrollment).
+Round-trips as an untyped table and is validated fail-open by its own adapter, so its shape
+is not pinned by this schema.
+
+## Comments and edits survive a write
+
+The whole reason to migrate: `stella.toml` is edited through
+[`toml_edit`](https://docs.rs/toml_edit), which rewrites only the keys a save actually
+touches and preserves everything else — comments, key order, blank lines — byte-for-byte.
+`/theme`, the tool-switch editor, and the [engine config panel](/docs/configuration/agent-engine-config#the-config-panel-in-the-command-deck)
+all edit `stella.toml` in place once one exists for that scope. A `settings.json` re-render
+through `serde_json::Value` cannot make this promise — JSON has nothing to preserve besides
+keys — which is why comment loss was the risk this whole format port was built to avoid.
+
+## What is not built yet
+
+Phase 1 — the format port covered on this page — is complete. `docs/design/config-system/DESIGN.md`
+lays out five further phases that are **design only**, not yet functional: pipeline-stage
+toggles, an open (non-four-name) agent set with per-agent tool scope, `[models]` pin /
+track_latest policy, provider fallback (`provider_preference`), and declarative
+`[integrations.<id>]` blocks for tools with interchangeable backends. None of those keys do
+anything if you write them today — read the design doc on GitHub if you want the plan before
+it ships:
+[`docs/design/config-system/DESIGN.md`](https://github.com/macanderson/stella/blob/main/docs/design/config-system/DESIGN.md).
+
+## A complete example file
+
+Everything above, in one project-scope file:
+
+```toml title="stella.toml"
+[meta]
+schema_version = 1
+scope          = "project"
+
+[run]
+recap = "on"
+
+[providers.zai]
+base_url      = "https://api.z.ai/api/coding/paas/v4"
+api_key_env   = "ZAI_API_KEY"
+default_model = "n-5.2"
+
+[models]
+allowed = ["zai/glm-5.2", "anthropic/claude-fable-5"]
+
+[agents]
+default_model = "zai/glm-5.2"
+auto_mode     = "on"
+
+[tools]
+process     = "off"
+read_output = "on"
+
+[[hooks.PreToolUse]]
+matcher = "bash"
+  [[hooks.PreToolUse.hooks]]
+  type      = "command"
+  command   = "./scripts/guard.sh"
+  timeoutMs = 5000
+
+[ui]
+theme = "stella-dark"
+```
+
+Check what actually resolved — the same two commands regardless of which format loaded it:
+
+```bash
+stella config
+stella models
+```
+
+## Security
+
+Same posture as `settings.json`: a `stella.toml` may carry an `api_key` in plaintext at
+user or managed scope, so treat it like any other secret file at those scopes. Project
+scope removes the temptation entirely — see [`[providers]`](#providers) above — which is
+the one thing the JSON format could never enforce, because `.stella/settings.json` had no
+single canonical location to enforce it from.

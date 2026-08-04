@@ -9,12 +9,13 @@
 //! | Verdict | Meaning | In `loop_broken()`? |
 //! |---|---|---|
 //! | `solved` | the verifier passed it; reward wins | no |
-//! | `NOT-RUN` | the task was requested but harbor never produced a trial dir | **yes** |
+//! | `NOT-RUN` | the task (or one of its trials) was requested but harbor never produced a trial dir | **yes** |
 //! | `UNREADABLE` | the stream had lines but not one parsed as an event — schema drift or plumbing, not loop evidence | no |
 //! | `STUCK-LOOP` | the engine's own `loop_detected` fired and the task did not pass | **yes** |
 //! | `BUDGET-CAP` | the harness's `STELLA_BUDGET` denied the turn — a cost decision, not a loop defect | no |
 //! | `SILENT-DEATH` | zero tool calls and no terminal event: the loop vanished | **yes** |
 //! | `ZERO-WORK` | zero tool calls with a stated terminal event | **yes** |
+//! | `CRASHED` | work happened, then harbor recorded the trial as having raised | no |
 //! | `ran (unsolved)` | did real work, did not pass | no |
 //!
 //! The informational verdicts (`UNREADABLE`, `BUDGET-CAP`) are deliberately
@@ -26,6 +27,34 @@
 //! until the cap trips is exactly the defect this harness exists to catch —
 //! the cap firing is a symptom there, not the cause.
 //!
+//! # `CRASHED`, and why it sits where it does (#1299)
+//!
+//! A trial that dies partway through used to report `ran (unsolved)` — the
+//! same words as a turn that tried the task and got it wrong. An
+//! infrastructure failure wearing a capability failure's label sends the
+//! operator hunting a reasoning bug that does not exist, and the two are not
+//! even the same *kind* of fact: one says the agent was wrong, the other says
+//! the agent never finished being anything.
+//!
+//! It is the **lowest-precedence** verdict above `ran (unsolved)`, which is
+//! deliberate in both directions:
+//!
+//! * A crash never displaces a red verdict. A trial that did nothing and then
+//!   died is still `SILENT-DEATH`/`ZERO-WORK` and still gates red — the crash
+//!   record is added to its row as the explanation it previously lacked
+//!   ("vanished in stage `plan`" now comes with harbor's exception), rather
+//!   than replacing a gating verdict with a non-gating one. Naming a failure
+//!   better must never make the gate weaker.
+//! * `CRASHED` therefore only ever replaces `ran (unsolved)`, which does not
+//!   gate either. So it costs the gate nothing and buys the table a true
+//!   statement, which is exactly the trade this verdict is for.
+//!
+//! The signal is harbor's own `exception_info`, not an inference from the
+//! stream's shape. A turn that did its work and ended without a clean
+//! `complete` may simply have exited on a step cap; treating that as a death
+//! would invent crashes. "Harbor recorded that this raised" is an observation,
+//! and the harness reports observations.
+//!
 //! # The second gate: a pass-rate floor (#873)
 //!
 //! The nightly CI job also wants to notice the day the agent stops *solving*
@@ -36,12 +65,17 @@
 //! the pass rate this harness produces is a flash-tier model's under a cap:
 //! a floor is only meaningful once a job's own history has established one.
 
+pub mod artifacts;
 pub mod compare;
+pub mod reconcile;
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde_json::Value;
+
+use crate::artifacts::{StepStream, TrialArtifacts};
+use crate::reconcile::{Reconciliation, Requested, reported_task_name};
 
 /// The per-task loop + context signals, distilled from one trial's event
 /// stream and its verifier reward.
@@ -111,9 +145,27 @@ pub struct TrialReport {
     /// loop evidence (#611).
     pub unparsable_lines: u32,
     /// The task was requested this run but harbor produced no trial directory
-    /// at all. Synthesized by [`analyze`]; gates red — a task that never
-    /// launched must not read as a smaller, healthy run (#611).
+    /// for it. Synthesized by [`analyze`]; gates red — a task that never
+    /// launched must not read as a smaller, healthy run (#611). With
+    /// `--trials N` this covers a *partial* launch too: a task that produced
+    /// three of five trial dirs gets two `NOT-RUN` rows, so the denominator
+    /// is the sample that was asked for rather than the one that survived
+    /// (#1299).
     pub not_run: bool,
+    /// Harbor recorded this trial as having raised — `"<Type>: <message>"`
+    /// off its `result.json` (or `exception.txt`). The crash signal: an
+    /// observation harbor made, never an inference from the stream (#1299).
+    pub crash: Option<String>,
+    /// The adapter's SIGKILL post-mortem (#1178) when it wrote one: `oom-kill`
+    /// vs `external-teardown` vs `unattributed`, with its detail. Both 137s
+    /// look identical from the exit code, and which one it was decides whether
+    /// the fix is a memory limit or a timeout.
+    pub exit_cause: Option<String>,
+    /// Harbor step names this trial's stream(s) came from, in execution order.
+    /// Empty for an ordinary single-step trial. Distinct from `stages`, which
+    /// is Stella's own pipeline within one turn: these are harbor's steps,
+    /// each a separate agent invocation (#1299).
+    pub step_names: Vec<String>,
     /// The last `error` event's message, truncated for the table. Retryable
     /// warnings land here too — it is the most recent explanation, not a
     /// verdict.
@@ -139,6 +191,14 @@ impl TrialReport {
         self.parsed_lines == 0 && self.unparsable_lines > 0
     }
 
+    /// Harbor recorded this trial as having raised: it did not finish, whatever
+    /// its reward says. See the crate docs for why this is read off harbor's
+    /// record rather than inferred from the stream (#1299).
+    #[must_use]
+    pub fn crashed(&self) -> bool {
+        self.crash.is_some()
+    }
+
     /// The one-line loop verdict — the thing the reward number hides. See the
     /// crate docs for the ratified vocabulary and precedence.
     #[must_use]
@@ -159,6 +219,10 @@ impl TrialReport {
             } else {
                 "ZERO-WORK"
             }
+        } else if self.crashed() {
+            // Below every gating verdict on purpose: a crash explains a
+            // zero-work death, it does not excuse it. See the crate docs.
+            "CRASHED"
         } else {
             "ran (unsolved)"
         }
@@ -197,23 +261,60 @@ impl TrialReport {
     }
 }
 
+/// One run's distilled trials, and the requested-vs-reported check they were
+/// taken over.
+///
+/// The two travel together on purpose: a set of rows is only interpretable
+/// next to the question of whether it is all the rows there should be. Keeping
+/// the reconciliation in a second place a caller has to remember to consult is
+/// how a percentage over a shrunken denominator gets published (#1299).
+#[derive(Debug, Default, Clone)]
+pub struct Analysis {
+    /// The per-trial reports, sorted by task.
+    pub trials: Vec<TrialReport>,
+    /// Requested vs reported. `None` for `--analyze-only`, which asked for
+    /// nothing in particular and so has nothing to reconcile against.
+    pub reconciliation: Option<Reconciliation>,
+}
+
+impl Analysis {
+    /// The run-level counts both gates read.
+    #[must_use]
+    pub fn tally(&self) -> Tally {
+        tally(&self.trials)
+    }
+
+    /// No trial artifacts at all — infrastructure, not a loop regression.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.trials.is_empty()
+    }
+}
+
 /// Walk `<job_dir>/<task>__<id>/` trials and distill each into a report.
 ///
-/// `requested` is the task set this run resolved. When present it does two
-/// things (#611): trial dirs for tasks outside it are skipped — a stale job
-/// directory from an earlier run must not contaminate this one's gate — and
-/// requested tasks with no trial dir at all are synthesized as `NOT-RUN` rows
-/// that count toward the gate, so a task harbor never launched cannot read as
-/// a smaller, healthy run. Pass `None` for `--analyze-only`, which reads
-/// whatever a finished jobs dir holds.
+/// `requested` is what this run asked harbor for. When present it does three
+/// things:
 ///
-/// One known blind spot, which under-reports rather than inventing a signal:
-/// only single-step trials are found. A multi-step dataset relocates its logs
-/// to `steps/<name>/agent/` and removes the trial-root `agent/`, so every
-/// trial reports as "no event stream".
-pub fn analyze(job_dir: &Path, requested: Option<&[String]>) -> Vec<TrialReport> {
-    let mut reports = Vec::new();
-    let mut seen: Vec<String> = Vec::new();
+/// * trial dirs no requested task claims are skipped — a stale job directory
+///   from an earlier run must not contaminate this one's gate (#611) — and
+///   counted, so the skip is visible rather than silent (#1299);
+/// * requested trials with no directory become `NOT-RUN` rows that gate red,
+///   at *trial* granularity: three dirs for a five-trial task yields two
+///   `NOT-RUN` rows, so the denominator is the sample that was asked for
+///   (#611 for the task case, #1299 for the trial case);
+/// * every attribution is recorded in the returned [`Reconciliation`], which
+///   is what makes a mismatch loud.
+///
+/// Pass `None` for `--analyze-only`, which reads whatever a finished jobs dir
+/// holds and reconciles nothing.
+///
+/// Multi-step trials are read too (#1299): harbor relocates each step's logs
+/// into `steps/<name>/agent/` and removes the trial-root `agent/`, so those
+/// streams are found there and folded by [`fold_steps`].
+pub fn analyze(job_dir: &Path, requested: Option<Requested<'_>>) -> Analysis {
+    let mut trials = Vec::new();
+    let mut reconciliation = requested.map(|request| request.reconciliation());
     if let Ok(entries) = std::fs::read_dir(job_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -222,56 +323,143 @@ pub fn analyze(job_dir: &Path, requested: Option<&[String]>) -> Vec<TrialReport>
             }
             let name = entry.file_name().to_string_lossy().to_string();
             // Trial dirs are `<task>__<trialid>`; skip config.json etc.
-            let Some((task, _)) = name.split_once("__") else {
+            let Some((dir_prefix, _)) = name.split_once("__") else {
                 continue;
             };
-            if let Some(wanted) = requested
-                && !wanted.iter().any(|t| t == task)
-            {
-                continue;
-            }
-            seen.push(task.to_string());
-            let events_path = path.join("agent").join("stella-events.jsonl");
-            // A trial with no readable stream is the WORST outcome — the agent
-            // never started, or died before writing a line — so it must not be
-            // dropped from the table. Skipping it made a launch failure look
-            // like a clean run with fewer rows, and left the gate green.
-            let mut report = match std::fs::read_to_string(&events_path) {
-                Ok(raw) => distill_events(task, &raw),
-                Err(err) => TrialReport {
-                    task: task.to_string(),
-                    zero_work: true,
-                    last_error: Some(truncate(
-                        &format!("no event stream ({}): {err}", events_path.display()),
-                        90,
-                    )),
-                    ..Default::default()
-                },
+            let found = artifacts::read_trial(&path);
+            let task = match (requested, reconciliation.as_mut()) {
+                (Some(request), Some(record)) => {
+                    let (matched, ambiguous) =
+                        request.match_dir(dir_prefix, found.task_name.as_deref());
+                    let Some(task) = matched else {
+                        record.skipped(dir_prefix);
+                        continue;
+                    };
+                    record.saw(task, ambiguous.then_some(dir_prefix));
+                    task.to_string()
+                }
+                _ => reported_task_name(dir_prefix, found.task_name.as_deref()),
             };
-            let (reward, problem) = read_reward(&path);
-            report.reward = reward;
-            if let Some(problem) = problem {
-                report.last_error = Some(match report.last_error.take() {
-                    Some(existing) => truncate(&format!("{existing}; {problem}"), 90),
-                    None => truncate(&problem, 90),
-                });
-            }
-            reports.push(report);
+            trials.push(distill_trial(&task, &found));
         }
     }
-    if let Some(wanted) = requested {
-        for task in wanted {
-            if !seen.iter().any(|t| t == task) {
-                reports.push(TrialReport {
-                    task: task.clone(),
+    if let Some(record) = &reconciliation {
+        for (task, short) in record.missing() {
+            for _ in 0..short {
+                trials.push(TrialReport {
+                    task: task.to_string(),
                     not_run: true,
                     ..Default::default()
                 });
             }
         }
     }
-    reports.sort_by(|a, b| a.task.cmp(&b.task));
-    reports
+    trials.sort_by(|a, b| a.task.cmp(&b.task));
+    Analysis {
+        trials,
+        reconciliation,
+    }
+}
+
+/// Fold one trial directory's artifacts into its report.
+fn distill_trial(task: &str, found: &TrialArtifacts) -> TrialReport {
+    let mut report = distill_streams(task, &found.streams);
+    report.reward = found.reward;
+    // Truncated to the same width as `last_error`: both print as a `└` line
+    // under the row, and a longer one wraps the terminal rather than the cell.
+    report.crash = found.crash.as_deref().map(|crash| truncate(crash, 90));
+    report.exit_cause = found.exit_cause.as_deref().map(|cause| truncate(cause, 90));
+    if let Some(problem) = &found.reward_problem {
+        report.last_error = Some(match report.last_error.take() {
+            Some(existing) => truncate(&format!("{existing}; {problem}"), 90),
+            None => truncate(problem, 90),
+        });
+    }
+    report
+}
+
+/// Distill every stream a trial produced — one for a single-step trial, one
+/// per harbor step otherwise — and fold them into a single report.
+fn distill_streams(task: &str, streams: &[StepStream]) -> TrialReport {
+    let steps: Vec<TrialReport> = streams
+        .iter()
+        .map(|stream| match &stream.raw {
+            Ok(raw) => distill_events(task, raw),
+            // A trial with no readable stream is the WORST outcome — the agent
+            // never started, or died before writing a line — so it must not be
+            // dropped from the table. Skipping it made a launch failure look
+            // like a clean run with fewer rows, and left the gate green.
+            Err(problem) => TrialReport {
+                task: task.to_string(),
+                zero_work: true,
+                last_error: Some(truncate(problem, 90)),
+                ..Default::default()
+            },
+        })
+        .collect();
+    let mut report = fold_steps(&steps);
+    report.step_names = streams
+        .iter()
+        .filter_map(|stream| stream.step.clone())
+        .collect();
+    report
+}
+
+/// Fold a multi-step trial's per-step reports into one row.
+///
+/// Counters sum, because the trial did all of it. Two fields do not, and both
+/// choices are about not letting an early step vouch for a late one:
+///
+/// * `terminal_event` is the **last** step's. A trial that completed step one
+///   and then vanished in step two ended by vanishing, and an `any` fold would
+///   report it as having said goodbye.
+/// * `zero_work` is recomputed from the summed tool calls, so it means "this
+///   trial never did anything", not "some step didn't" — a step that only
+///   reads is a normal part of a multi-step task.
+///
+/// `budget_capped` *is* an `any`: the cap is per-trial, so once it fires the
+/// remaining steps were never given a fair chance either.
+#[must_use]
+pub fn fold_steps(steps: &[TrialReport]) -> TrialReport {
+    if let [single] = steps {
+        return single.clone();
+    }
+    let mut folded = TrialReport {
+        task: steps.first().map(|s| s.task.clone()).unwrap_or_default(),
+        ..Default::default()
+    };
+    let mut seen_stage = std::collections::BTreeSet::new();
+    for step in steps {
+        folded.model_calls = folded.model_calls.saturating_add(step.model_calls);
+        folded.tool_calls = folded.tool_calls.saturating_add(step.tool_calls);
+        folded.file_writes = folded.file_writes.saturating_add(step.file_writes);
+        folded.project_overview_calls = folded
+            .project_overview_calls
+            .saturating_add(step.project_overview_calls);
+        folded.graph_query_calls = folded
+            .graph_query_calls
+            .saturating_add(step.graph_query_calls);
+        folded.loop_detected = folded.loop_detected.saturating_add(step.loop_detected);
+        folded.retries = folded.retries.saturating_add(step.retries);
+        folded.parsed_lines = folded.parsed_lines.saturating_add(step.parsed_lines);
+        folded.unparsable_lines = folded
+            .unparsable_lines
+            .saturating_add(step.unparsable_lines);
+        folded.tokens = folded.tokens.saturating_add(step.tokens);
+        folded.spend_usd += step.spend_usd;
+        folded.budget_capped |= step.budget_capped;
+        folded.terminal_event = step.terminal_event;
+        for stage in &step.stages {
+            if seen_stage.insert(stage.clone()) {
+                folded.stages.push(stage.clone());
+            }
+        }
+        if step.last_error.is_some() {
+            folded.last_error.clone_from(&step.last_error);
+        }
+    }
+    folded.zero_work = folded.tool_calls == 0;
+    folded
 }
 
 /// Read the verifier's reward for one trial. Returns the reward and, when the
@@ -280,28 +468,11 @@ pub fn analyze(job_dir: &Path, requested: Option<&[String]>) -> Vec<TrialReport>
 /// (#611). A *missing* file stays a quiet `None`: the trial simply never
 /// reached the verifier.
 ///
-/// Harbor accepts EITHER `verifier/reward.txt` or `verifier/reward.json`
-/// (`harbor.models.trial.paths.TrialPaths`); only the text form is read here,
-/// because the terminal-bench mapper writes exactly that. A dataset passed via
-/// `--dataset` whose verifier emits the JSON form reports `None` for every
-/// trial, which reads as "never reached the verifier" — under-crediting, never
-/// over-crediting, so the loop gate stays honest.
+/// See [`artifacts::read_reward`] for the sources and their order; this is the
+/// path-only form, for a caller that has not already read `result.json`.
 pub fn read_reward(trial_dir: &Path) -> (Option<f64>, Option<String>) {
-    let path = trial_dir.join("verifier").join("reward.txt");
-    match std::fs::read_to_string(&path) {
-        Ok(content) => match content.trim().parse::<f64>() {
-            Ok(reward) => (Some(reward), None),
-            Err(_) => (
-                None,
-                Some(format!(
-                    "unreadable reward.txt: unparsable `{}`",
-                    truncate(content.trim(), 20)
-                )),
-            ),
-        },
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => (None, None),
-        Err(err) => (None, Some(format!("unreadable reward.txt: {err}"))),
-    }
+    let found = artifacts::read_trial(trial_dir);
+    (found.reward, found.reward_problem)
 }
 
 /// The heart of the tool: turn one event stream into loop + context signals.
@@ -417,6 +588,12 @@ pub struct Tally {
     pub solved: usize,
     /// Trials whose loop misbehaved ([`TrialReport::loop_broken`]).
     pub loop_broken: usize,
+    /// Trials harbor recorded as having raised (#1299). Counted from the crash
+    /// record itself rather than from the `CRASHED` verdict, so it is the
+    /// number of trials that did not finish — including the ones whose verdict
+    /// a higher-precedence signal claimed (a crash that also died having done
+    /// nothing is `SILENT-DEATH`, and is still a crash).
+    pub crashed: usize,
 }
 
 /// Fold the per-trial reports into the run-level counts.
@@ -426,6 +603,7 @@ pub fn tally(reports: &[TrialReport]) -> Tally {
         total: reports.len(),
         solved: reports.iter().filter(|r| r.passed()).count(),
         loop_broken: reports.iter().filter(|r| r.loop_broken()).count(),
+        crashed: reports.iter().filter(|r| r.crashed()).count(),
     }
 }
 
@@ -448,12 +626,71 @@ pub fn below_pass_floor(reports: &[TrialReport], min_pass: usize) -> bool {
     min_pass > 0 && tally(reports).solved < min_pass
 }
 
+/// The JSON a CI consumer trends over time.
+///
+/// An object, where a single run used to emit a bare array of trials (#1299).
+/// The rows alone are not interpretable: `6 solved` means one thing over eight
+/// requested trials and another over six, and the artifact that carries the
+/// rows without the reconciliation is exactly the artifact that publishes the
+/// flattering number. The tally rides along for the same reason it is printed
+/// under the table — so a consumer trends the counts the exit code was decided
+/// from, rather than a second tally of its own that can drift from them.
+#[derive(Debug, serde::Serialize)]
+pub struct JsonReport<'a> {
+    /// The per-trial rows, sorted by task. What the array used to hold.
+    pub trials: &'a [TrialReport],
+    /// The run-level counts both gates read.
+    pub tally: Tally,
+    /// Requested vs reported; `null` for `--analyze-only`.
+    pub reconciliation: Option<&'a Reconciliation>,
+}
+
+/// Render an [`Analysis`] for a machine.
+#[must_use]
+pub fn json_report(analysis: &Analysis) -> JsonReport<'_> {
+    JsonReport {
+        trials: &analysis.trials,
+        tally: analysis.tally(),
+        reconciliation: analysis.reconciliation.as_ref(),
+    }
+}
+
 /// Width of the rendered table, in columns: 24 (task) + 14 (verdict) + 6 + 6 +
 /// 5 + 4 + 4 for the counters + 7 for `$`, plus the nine separator spaces and
 /// the six of `reward`. The verdict column is exactly as wide as the longest
 /// verdict string, `ran (unsolved)` — an 8-wide column overflowed it and
 /// shifted every counter on that row.
 const TABLE_WIDTH: usize = 85;
+
+pub fn print_analysis(analysis: &Analysis) {
+    print_table(&analysis.trials);
+    if let Some(record) = &analysis.reconciliation {
+        print_reconciliation(record);
+    }
+}
+
+/// The requested-vs-reported block. Printed only when the two disagree —
+/// a run whose accounting is exact should not have to be read to learn that.
+///
+/// It goes *after* the table because it is a statement about the table: these
+/// are the rows that should have been above and were not, and these are the
+/// rows above that this run did not ask for.
+pub fn print_reconciliation(record: &Reconciliation) {
+    let findings = record.findings();
+    if findings.is_empty() {
+        return;
+    }
+    println!("\nRECONCILIATION: requested and reported do not match");
+    for finding in findings {
+        println!("  ✗ {finding}");
+    }
+    if record.contaminated() {
+        println!(
+            "  ⚠ every figure above is computed over a task set that is not the one \
+             requested — treat the percentages as unsourced until this is resolved."
+        );
+    }
+}
 
 pub fn print_table(reports: &[TrialReport]) {
     println!(
@@ -495,6 +732,25 @@ pub fn print_table(reports: &[TrialReport]) {
                 ""
             );
         }
+        // The crash line prints even for a row whose verdict is something
+        // else, including `solved` (#1299). The verdict column holds one word
+        // and precedence already spent it; "harbor recorded this as having
+        // raised" is a separate fact, and the row is where an operator will
+        // look for it.
+        if let Some(crash) = &r.crash {
+            println!("{:>26}└ crashed: {crash}", "");
+        }
+        if let Some(cause) = &r.exit_cause {
+            println!("{:>26}└ exit cause: {cause}", "");
+        }
+        if !r.step_names.is_empty() {
+            println!(
+                "{:>26}└ folded from {} harbor step(s): {}",
+                "",
+                r.step_names.len(),
+                r.step_names.join(" → ")
+            );
+        }
         if r.project_overview_calls > 0 {
             overview_used += 1;
         }
@@ -510,6 +766,7 @@ pub fn print_table(reports: &[TrialReport]) {
         total: n,
         solved,
         loop_broken,
+        crashed,
     } = tally(reports);
     println!("{}", "─".repeat(TABLE_WIDTH));
     println!(
@@ -521,6 +778,17 @@ pub fn print_table(reports: &[TrialReport]) {
         println!(
             "  ⚠ {loop_broken} task(s) exercised the loop badly — that is a correctness \
              signal independent of the model or the reward."
+        );
+    }
+    // Said separately from the loop count, and in these words, because the
+    // conclusion to draw is the opposite one: a crash is the harness or the
+    // machine failing, and reading it as the agent being wrong is a week spent
+    // tuning prompts against an OOM (#1299).
+    if crashed > 0 {
+        println!(
+            "  ⚠ {crashed}/{n} trial(s) did not finish — harbor recorded an exception. \
+             Those are infrastructure outcomes, NOT the model getting the task wrong; \
+             the {solved}/{n} pass rate is over a run that partly did not happen."
         );
     }
     // A per-verdict tally, so a run is greppable at a glance.

@@ -294,7 +294,7 @@ changing code inside a crate you don't already know.
 | Change REPL rendering / panels / keybindings | [`stella-tui`](stella-tui/README.md) | Pure-fold ratatui REPL — the Command Deck, the default interactive shell on a TTY. |
 | Touch shared types crossing a crate boundary | [`stella-protocol`](stella-protocol/README.md) | **Zero logic, zero I/O — types only.** |
 | Resolve where `~/.stella` is — home dir, stella home, the user-tier data dir | [`stella-home`](stella-home/README.md) | **A leaf with NO dependencies at all**, which is what lets `stella-store` and `stella-observatory` share it (the observatory must not link the store). Every resolver has a pure `resolve_*` half that reads no environment. |
-| Emit a diagnostic — a record explaining *why* the program did something | [`stella-diag`](stella-diag/README.md) | **A leaf: `serde` only, so anything may depend on it.** Field values cannot hold a `String`, a `Path`, or model output — that is a compile error, not a review question. Design: [`docs/design/diagnostics.md`](docs/design/diagnostics.md). |
+| Emit a diagnostic — a record explaining *why* the program did something | [`stella-diag`](stella-diag/README.md) | **A leaf: `serde` only, so anything may depend on it.** Field values cannot hold a `String`, a `Path`, or model output — that is a compile error, not a review question. Design: [`docs/design/diagnostics/diagnostics.md`](docs/design/diagnostics/diagnostics.md). |
 | Persistence: executions, events, telemetry (SQLite) | [`stella-store`](stella-store/README.md) | |
 | Retrieval: graph, embeddings, episodic memory | [`stella-context`](stella-context/README.md) | |
 | Tree-sitter code indexing | [`stella-graph`](stella-graph/README.md) | |
