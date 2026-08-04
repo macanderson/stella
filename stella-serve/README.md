@@ -173,6 +173,14 @@ is why each row carries `samples`. `drift_ratio` is the raw measured gap;
 `applied_factor` is the bounded correction actually multiplied into estimates,
 and the two are deliberately different numbers.
 
+The key is host-supplied — `provider_id` comes off the turn request — so the
+registry bounds both how many it tracks (64) and how long each key may be
+(128). Past a bound a turn is refused a map and runs uncalibrated rather than
+the process growing a permanent entry per distinct string a host sends;
+refusals are counted in the report's `untracked_turns`, since a cap that
+quietly stopped measuring would read exactly like a provider with no drift. A
+climbing count means a host is minting per-request provider ids.
+
 ## Gotchas
 
 - **Event frames and reverse-RPC frames are not mutually ordered.** Agent events

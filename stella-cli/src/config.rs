@@ -345,6 +345,19 @@ pub struct Config {
     /// the engine decline to start a continuation it cannot finish, ending
     /// with a truthful partial instead of being destroyed mid-flight.
     pub turn_budget: Option<std::time::Duration>,
+    /// `--max-output-tokens`: a per-invocation ceiling on what one step may
+    /// write, always BELOW what the model can (#1290). `None` — the normal
+    /// case — leaves every role asking for the model's own maximum.
+    ///
+    /// Stamped from the flag in `main` like [`Self::turn_budget`], for the
+    /// same reason: `Config::load` never consults it, and threading a
+    /// straight-through value into that signature would widen it for nothing.
+    ///
+    /// Outranks both settings surfaces (`[models.output_caps]` and per-agent
+    /// `params.max_tokens`) because it is the most specific statement anyone
+    /// can make — this invocation, right now — and it is the one an operator
+    /// reaches for when a configured value is the thing going wrong.
+    pub max_output_tokens: Option<u32>,
     /// User-invoked plan mode (#1264): force the scope-review gate for this
     /// run whatever the plan's size. Stamped from `--plan` in `main`, like
     /// [`Self::turn_budget`], because `Config::load` has no view of the
@@ -733,6 +746,7 @@ impl Config {
                     // Stamped by the caller that holds the parsed CLI; see the
                     // field's doc comment.
                     turn_budget: None,
+                    max_output_tokens: None,
                     plan_mode: false,
                     // Unbound: the session whose sidecar this points at is
                     // resolved by the driver, after config load. See the
@@ -944,6 +958,7 @@ impl Config {
             model_pinned_by_flag: false,
             // Likewise stamped by the caller that holds the parsed CLI.
             turn_budget: None,
+            max_output_tokens: None,
             plan_mode: false,
             // Unbound until a driver resolves this run's session record — see
             // the field's doc comment.

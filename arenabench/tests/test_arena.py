@@ -888,3 +888,95 @@ class TestInfrastructureFailuresAreNotLosses:
         assert totals["judged"] == 2
         assert totals["solve_rate"] == 100.0
         assert totals["infrastructure"] == 8
+
+
+class TestOfflineTaskSource:
+    """Reading tasks from an export instead of resolving them mid-run.
+
+    Harbor resolves a registry ref against its backend once per task, at run
+    time. One failed lookup raises out of the job and takes every remaining
+    trial with it — the failure that ended two measured matches here, at task
+    3 and task 7, killing both contestants together.
+    """
+
+    def _export(self, tmp_path: Path, tasks=("alpha", "beta")) -> Path:
+        root = tmp_path / "terminal-bench-2.1" / "terminal-bench-2-1"
+        for name in tasks:
+            d = root / name
+            d.mkdir(parents=True)
+            (d / "task.toml").write_text(f'[task]\nname = "terminal-bench/{name}"\n')
+        return root
+
+    def test_an_export_is_found_and_is_the_directory_harbor_wants(
+        self, tmp_path: Path, monkeypatch
+    ):
+        expected = self._export(tmp_path)
+        monkeypatch.setenv("ARENABENCH_DATASETS", str(tmp_path))
+        assert DEFAULT_REGISTRY.local_run_path("terminal-bench-2.1") == expected
+
+    def test_no_export_means_no_path_rather_than_a_wrong_one(
+        self, tmp_path: Path, monkeypatch
+    ):
+        monkeypatch.setenv("ARENABENCH_DATASETS", str(tmp_path / "empty"))
+        assert DEFAULT_REGISTRY.local_run_path("terminal-bench-2.1") is None
+
+    def test_harbors_own_cache_is_never_offered_as_a_run_path(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """The cache nests each task under its content hash. ArenaBench can
+        enumerate that, but `--path` reads it as an empty dataset — which fails
+        the run with 'no tasks matched' rather than anything diagnostic."""
+        cached = tmp_path / "terminal-bench-2.1" / "terminal-bench-2-1" / "alpha" / "deadbeef"
+        cached.mkdir(parents=True)
+        (cached / "task.toml").write_text('[task]\nname = "terminal-bench/alpha"\n')
+        monkeypatch.setenv("ARENABENCH_DATASETS", str(tmp_path))
+        assert DEFAULT_REGISTRY.local_run_path("terminal-bench-2.1") is None
+
+    def test_the_package_directory_comes_from_the_pinned_name(self):
+        from arenabench.registry import TERMINAL_BENCH_21
+        assert TERMINAL_BENCH_21.package_dir == "terminal-bench-2-1"
+
+    def _launched_command(self, tmp_path: Path, monkeypatch, export: bool) -> list[str]:
+        """The argv `_launch` actually hands Harbor, with the process stubbed."""
+        if export:
+            self._export(tmp_path, tasks=("alpha",))
+            monkeypatch.setenv("ARENABENCH_DATASETS", str(tmp_path))
+        else:
+            monkeypatch.setenv("ARENABENCH_DATASETS", str(tmp_path / "nope"))
+        monkeypatch.setattr("arenabench.runner.shutil.which", lambda _: "/usr/bin/harbor")
+
+        seen: dict = {}
+
+        class _Fake:
+            def __init__(self, command, **kwargs):
+                seen["command"] = command
+                self.returncode = None
+
+            def poll(self):
+                return None
+
+        monkeypatch.setattr("arenabench.runner.subprocess.Popen", _Fake)
+        spec = MatchSpec.from_json({
+            "dataset": "terminal-bench-2.1", "tasks": ["alpha"],
+            "contestants": [{"name": "s", "agent": "stella",
+                             "engine": {"api": "openrouter", "model": "x/y"}}],
+        })
+        runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
+        match = runner.create(spec)
+        runner._launch(match, spec.contestants[0])
+        return seen["command"]
+
+    def test_an_export_is_filtered_by_bare_task_name(self, tmp_path: Path, monkeypatch):
+        """Names are namespaced by the registry, not by the task. An export on
+        disk is just directories and answers to the bare name — sending the
+        qualified form matches nothing and ends the match at once."""
+        command = self._launched_command(tmp_path, monkeypatch, export=True)
+        assert "--path" in command and "--dataset" not in command
+        assert command[command.index("--include-task-name") + 1] == "alpha"
+
+    def test_a_registry_ref_is_filtered_by_qualified_task_name(
+        self, tmp_path: Path, monkeypatch
+    ):
+        command = self._launched_command(tmp_path, monkeypatch, export=False)
+        assert "--dataset" in command and "--path" not in command
+        assert command[command.index("--include-task-name") + 1] == "terminal-bench/alpha"

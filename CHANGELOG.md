@@ -56,6 +56,9 @@ skip the roll) were re-inserted the same way.
   before truncation, so exactly the turns the measurement is made of were filed
   as ordinary ones; it is now appended by the episode writer, after truncation,
   on every surface that records an episode.
+## [0.6.87] — 2026-08-04
+
+## [0.6.86] — 2026-08-04
 
 ## [0.6.85] — 2026-08-04
 
