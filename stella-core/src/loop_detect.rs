@@ -9,7 +9,7 @@
 //! drives) a real, typed verdict it can act on early: steer or abort with
 //! a clear reason instead of grinding to the cap.
 //!
-//! Two failure modes are detected, matching real agent stuck-loop
+//! Three failure modes are detected, matching real agent stuck-loop
 //! signatures:
 //!
 //! 1. **Exact repeat** — the same tool called with byte-identical input,
@@ -21,6 +21,16 @@
 //!    `read_file` again; or the period-3 read → failing edit → failing
 //!    test grind). Invisible to exact-repeat detection because no single
 //!    call repeats consecutively.
+//! 3. **Stagnation** — the same tool called over and over with arguments
+//!    that keep *changing*, every call still returning byte-identical
+//!    output. Invisible to both checks above: no input repeats, so there is
+//!    no exact repeat, and the arguments never settle into a fixed cycle
+//!    either. This is the shape a model falls into when it is fiddling with
+//!    one call's parameters instead of changing strategy — the observed
+//!    case was `grep` on one file with a regex alternation the model kept
+//!    reshuffling (`a|b|c|a|b` → `a|b|c|a`), 38 consecutive calls returning
+//!    the same 906 bytes. Varying the arguments is not progress; learning
+//!    something is, and byte-identical output proves nothing was learned.
 //!
 //! **Progress is part of the loop definition.** A repeat or cycle only
 //! counts when the *outputs* are byte-identical too: identical input with
@@ -111,6 +121,16 @@ pub struct LoopDetectionConfig {
     /// cycle is only evidence once it has actually recurred, so the lowest
     /// meaningful value is `2`.
     pub short_cycle_repeats: usize,
+    /// Consecutive calls to the SAME tool that all produced byte-identical
+    /// output — whatever their arguments — required to flag stagnation.
+    /// `0` or `1` disable the check.
+    ///
+    /// Deliberately looser than [`Self::exact_repeat_threshold`]: an
+    /// identical input repeated is unambiguous evidence, while a *varying*
+    /// input is weaker on its own, so it takes more of it before the
+    /// detector will speak. Six consecutive searches that each came back
+    /// with the same bytes is a model turning knobs, not one exploring.
+    pub stagnation_threshold: usize,
 }
 
 impl Default for LoopDetectionConfig {
@@ -122,10 +142,17 @@ impl Default for LoopDetectionConfig {
     /// step-driver's belt-and-suspenders backstop
     /// (`EngineConfig::max_steps`, 200 by default), so a stuck turn costs
     /// a handful of wasted calls, never a whole cap's worth.
+    ///
+    /// Stagnation sits at double the exact-repeat threshold. It is the
+    /// backstop for the two above rather than a peer of them: it asks only
+    /// "did this tool tell us anything new", which is true of *every*
+    /// stuck shape, so it must be the slowest to fire or it would preempt
+    /// the tighter, better-described verdicts.
     fn default() -> Self {
         Self {
             exact_repeat_threshold: 3,
             short_cycle_repeats: 3,
+            stagnation_threshold: 6,
         }
     }
 }
@@ -160,6 +187,15 @@ pub enum LoopVerdict {
         pattern: Vec<ToolCall>,
         repeats: usize,
     },
+    /// `count` consecutive calls to `tool` at the end of the inspected
+    /// history all produced byte-identical output, at or above
+    /// `LoopDetectionConfig::stagnation_threshold`, while their inputs did
+    /// NOT all match — the arguments moved and the answer did not.
+    ///
+    /// The weakest of the three verdicts and the last one checked: it makes
+    /// no claim about the *shape* of the repetition, only that the tool
+    /// stopped being informative.
+    Stagnant { tool: String, count: usize },
 }
 
 impl LoopVerdict {
@@ -185,6 +221,11 @@ impl LoopVerdict {
                     names.join(" → ")
                 ))
             }
+            LoopVerdict::Stagnant { tool, count } => Some(format!(
+                "the last {count} `{tool}` calls used DIFFERENT arguments but every one \
+                 returned byte-identical output — varying the arguments is not learning \
+                 anything, so this tool has nothing left to tell you here"
+            )),
         }
     }
 }
@@ -207,15 +248,23 @@ impl LoopVerdict {
 /// unresolved output still matches nothing — an identity is evidence about
 /// an output that was observed, never a substitute for observing one.
 fn same_record(a: &CallRecord<'_>, b: &CallRecord<'_>) -> bool {
-    a.call.name == b.call.name
-        && a.call.input == b.call.input
-        && match (&a.output, &b.output) {
-            (Some(a_out), Some(b_out)) => match (&a.identity, &b.identity) {
-                (Some(a_id), Some(b_id)) => a_id == b_id,
-                _ => a_out == b_out,
-            },
-            _ => false,
-        }
+    a.call.name == b.call.name && a.call.input == b.call.input && same_output(a, b)
+}
+
+/// Whether two records produced the same *information*, ignoring what was
+/// asked. Split out of [`same_record`] because [`detect_stagnation`] needs
+/// exactly this half: it asks "did the tool tell us anything new" without
+/// asking whether the arguments matched. Every rule stated in `same_record`'s
+/// docs about identities and unresolved outputs lives here, so the two checks
+/// can never drift apart on what "the same output" means.
+fn same_output(a: &CallRecord<'_>, b: &CallRecord<'_>) -> bool {
+    match (&a.output, &b.output) {
+        (Some(a_out), Some(b_out)) => match (&a.identity, &b.identity) {
+            (Some(a_id), Some(b_id)) => a_id == b_id,
+            _ => a_out == b_out,
+        },
+        _ => false,
+    }
 }
 
 /// Inspect the tail of recent tool calls for a non-progress loop.
@@ -233,15 +282,22 @@ fn same_record(a: &CallRecord<'_>, b: &CallRecord<'_>) -> bool {
 /// 2. **Short cycle** (see the module docs), shortest period first so the
 ///    tightest description of the evidence wins (a period-2 loop is never
 ///    reported as the period-4 loop it also technically is).
+/// 3. **Stagnation** (see the module docs), checked LAST because it is the
+///    weakest claim: "this tool stopped being informative" is true of every
+///    exact repeat and every same-tool cycle too, so checking it earlier
+///    would swallow both of the better-described verdicts above.
 ///
 /// Never panics on any input — empty history, a single call, history
 /// shorter than every threshold, and a zeroed-out `config` (which disables
-/// both checks) all return `NoLoop` rather than indexing out of bounds.
+/// every check) all return `NoLoop` rather than indexing out of bounds.
 pub fn detect_loop(records: &[CallRecord<'_>], config: LoopDetectionConfig) -> LoopVerdict {
     if let Some(verdict) = detect_exact_repeat(records, config.exact_repeat_threshold) {
         return verdict;
     }
     if let Some(verdict) = detect_short_cycle(records, config.short_cycle_repeats) {
+        return verdict;
+    }
+    if let Some(verdict) = detect_stagnation(records, config.stagnation_threshold) {
         return verdict;
     }
     LoopVerdict::NoLoop
@@ -326,6 +382,51 @@ fn detect_short_cycle(records: &[CallRecord<'_>], repeats_threshold: usize) -> O
         }
     }
     None
+}
+
+/// Count the trailing run of records that call the same tool as the last
+/// record AND produced the same output as it ([`same_output`]); report
+/// `Stagnant` if that run is `>= threshold` and its inputs are not all
+/// identical. `threshold < 2` and empty `records` both return `None`.
+///
+/// The all-same-input guard hands a run of byte-identical calls back to
+/// [`detect_exact_repeat`], which describes it far better — mirroring
+/// [`detect_short_cycle`]'s all-same guard, and for the same reason: with
+/// exact-repeat detection disabled (`threshold < 2`) this check would
+/// otherwise start reporting exact repeats under a vaguer name.
+///
+/// Note what is deliberately NOT required: that the inputs differ from each
+/// other pairwise, or differ in any particular way. A run of `a, a, b, b, c`
+/// stagnates just as a run of `a, b, c, d, e` does — what makes it stagnation
+/// is that none of them moved the answer.
+fn detect_stagnation(records: &[CallRecord<'_>], threshold: usize) -> Option<LoopVerdict> {
+    if threshold < 2 {
+        return None;
+    }
+    let last = records.last()?;
+    // `same_output(last, last)` is false for an unresolved output, so a
+    // trailing call whose result is not in the window yields a count of 0 and
+    // never fires — the same "a loop can only be PROVEN by observed outputs"
+    // rule the other two checks follow.
+    let count = records
+        .iter()
+        .rev()
+        .take_while(|record| record.call.name == last.call.name && same_output(record, last))
+        .count();
+    if count < threshold {
+        return None;
+    }
+    let run = &records[records.len() - count..];
+    if run
+        .iter()
+        .all(|record| record.call.input == last.call.input)
+    {
+        return None;
+    }
+    Some(LoopVerdict::Stagnant {
+        tool: last.call.name.clone(),
+        count,
+    })
 }
 
 #[cfg(test)]
@@ -418,6 +519,7 @@ mod tests {
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 3,
             short_cycle_repeats: 100, // disable short-cycle for this test
+            stagnation_threshold: 0,  // disabled: this test isolates another check
         };
         assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
     }
@@ -428,6 +530,7 @@ mod tests {
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 3,
             short_cycle_repeats: 100,
+            stagnation_threshold: 0, // disabled: this test isolates another check
         };
         let verdict = detect_loop(&records, config);
         assert_eq!(
@@ -449,6 +552,7 @@ mod tests {
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 3,
             short_cycle_repeats: 100,
+            stagnation_threshold: 0, // disabled: this test isolates another check
         };
         match detect_loop(&records, config) {
             LoopVerdict::ExactRepeat { count, .. } => assert_eq!(count, 5),
@@ -499,6 +603,7 @@ mod tests {
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 3,
             short_cycle_repeats: 100,
+            stagnation_threshold: 0, // disabled: this test isolates another check
         };
         assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
     }
@@ -516,6 +621,7 @@ mod tests {
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 3,
             short_cycle_repeats: 100,
+            stagnation_threshold: 0, // disabled: this test isolates another check
         };
         assert!(detect_loop(&records, config).is_loop());
     }
@@ -543,6 +649,7 @@ mod tests {
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 3,
             short_cycle_repeats: 100,
+            stagnation_threshold: 0, // disabled: this test isolates another check
         };
         assert!(
             detect_loop(&records, config).is_loop(),
@@ -569,6 +676,7 @@ mod tests {
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 3,
             short_cycle_repeats: 100,
+            stagnation_threshold: 0, // disabled: this test isolates another check
         };
         assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
     }
@@ -587,6 +695,7 @@ mod tests {
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 3,
             short_cycle_repeats: 100,
+            stagnation_threshold: 0, // disabled: this test isolates another check
         };
         assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
     }
@@ -604,6 +713,7 @@ mod tests {
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 3,
             short_cycle_repeats: 100,
+            stagnation_threshold: 0, // disabled: this test isolates another check
         };
         assert!(detect_loop(&records, config).is_loop());
     }
@@ -615,6 +725,7 @@ mod tests {
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 100, // disable exact-repeat for this test
             short_cycle_repeats: 3,
+            stagnation_threshold: 0, // disabled: this test isolates another check
         };
         assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
     }
@@ -634,6 +745,7 @@ mod tests {
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 100,
             short_cycle_repeats: 3,
+            stagnation_threshold: 0, // disabled: this test isolates another check
         };
         let verdict = detect_loop(&records, config);
         match &verdict {
@@ -657,6 +769,7 @@ mod tests {
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 100,
             short_cycle_repeats: 3,
+            stagnation_threshold: 0, // disabled: this test isolates another check
         };
         match detect_loop(&records, config) {
             LoopVerdict::ShortCycle { repeats, .. } => assert_eq!(repeats, 5),
@@ -703,6 +816,7 @@ mod tests {
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 100,
             short_cycle_repeats: 3,
+            stagnation_threshold: 0, // disabled: this test isolates another check
         };
         let verdict = detect_loop(&records, config);
         match &verdict {
@@ -735,6 +849,7 @@ mod tests {
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 100,
             short_cycle_repeats: 2,
+            stagnation_threshold: 0, // disabled: this test isolates another check
         };
         assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
     }
@@ -757,6 +872,7 @@ mod tests {
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 100,
             short_cycle_repeats: 2,
+            stagnation_threshold: 0, // disabled: this test isolates another check
         };
         match detect_loop(&records, config) {
             LoopVerdict::ShortCycle { pattern, repeats } => {
@@ -788,6 +904,7 @@ mod tests {
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 100,
             short_cycle_repeats: 2,
+            stagnation_threshold: 0, // disabled: this test isolates another check
         };
         assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
     }
@@ -802,6 +919,7 @@ mod tests {
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 0, // disabled
             short_cycle_repeats: 1,
+            stagnation_threshold: 0, // disabled: this test isolates another check
         };
         assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
     }
@@ -894,7 +1012,8 @@ mod tests {
         for threshold in [0, 1] {
             let config = LoopDetectionConfig {
                 exact_repeat_threshold: threshold,
-                short_cycle_repeats: 0, // also disabled, so overall NoLoop
+                short_cycle_repeats: 0,  // also disabled, so overall NoLoop
+                stagnation_threshold: 0, // ditto
             };
             assert_eq!(
                 detect_loop(&records, config),
@@ -917,6 +1036,7 @@ mod tests {
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 0,
             short_cycle_repeats: 0,
+            stagnation_threshold: 0, // disabled: this test isolates another check
         };
         assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
     }
@@ -930,6 +1050,7 @@ mod tests {
         let config = LoopDetectionConfig {
             exact_repeat_threshold: usize::MAX,
             short_cycle_repeats: usize::MAX,
+            stagnation_threshold: 0, // disabled: this test isolates another check
         };
         assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
     }
@@ -964,6 +1085,167 @@ mod tests {
         assert!(evidence.contains("read_file"));
         assert!(evidence.contains("edit_file"));
         assert!(evidence.contains('3'));
+    }
+
+    // ---- stagnation: same tool, moving arguments, unmoving answer --------
+
+    /// One `grep` whose pattern differs from every other, over one file,
+    /// always finding the same thing — the field shape from the journal of
+    /// the turn that motivated this check.
+    fn grep_variant(pattern: &str) -> CallRecord<'static> {
+        call(
+            "grep",
+            serde_json::json!({ "pattern": pattern, "path": "stella-tui/src/deck.rs" }),
+            "118:    /// Cumulative prompt-cache *write* tokens",
+        )
+    }
+
+    /// THE regression. A model reshuffling one regex alternation gets a
+    /// different `input` every call and byte-identical output every call.
+    /// Neither exact-repeat (inputs never match) nor short-cycle (the
+    /// arguments never settle into a period) can see it; before stagnation
+    /// existed this ran 38 calls deep on a live turn.
+    #[test]
+    fn a_tool_whose_arguments_move_but_whose_answer_never_does_is_a_loop() {
+        let records: Vec<CallRecord<'static>> = (0..6)
+            .map(|i| grep_variant(&format!("cache_write|total_cache|savings_{i}")))
+            .collect();
+        let verdict = detect_loop(&records, LoopDetectionConfig::default());
+        match &verdict {
+            LoopVerdict::Stagnant { tool, count } => {
+                assert_eq!(tool, "grep");
+                assert_eq!(*count, 6);
+            }
+            other => panic!("expected Stagnant, got {other:?}"),
+        }
+        assert!(verdict.is_loop());
+        let evidence = verdict.evidence().expect("stagnation has evidence");
+        assert!(evidence.contains("grep"), "evidence names the tool");
+        assert!(
+            evidence.contains("DIFFERENT arguments"),
+            "evidence must say why this is not an exact repeat: {evidence}"
+        );
+    }
+
+    #[test]
+    fn stagnation_below_the_threshold_is_not_a_loop() {
+        // Five is exploration; the default only speaks at six.
+        let records: Vec<CallRecord<'static>> = (0..5)
+            .map(|i| grep_variant(&format!("pattern_{i}")))
+            .collect();
+        assert_eq!(
+            detect_loop(&records, LoopDetectionConfig::default()),
+            LoopVerdict::NoLoop
+        );
+    }
+
+    #[test]
+    fn a_tool_that_keeps_answering_differently_never_stagnates() {
+        // Six searches, six different answers: the arguments moved AND the
+        // answer moved. That is exactly what productive searching looks
+        // like, and it must survive however long it goes on.
+        let records: Vec<CallRecord<'static>> = (0..6)
+            .map(|i| {
+                call(
+                    "grep",
+                    serde_json::json!({ "pattern": format!("p{i}") }),
+                    &format!("src/lib.rs:{i}: hit"),
+                )
+            })
+            .collect();
+        assert_eq!(
+            detect_loop(&records, LoopDetectionConfig::default()),
+            LoopVerdict::NoLoop
+        );
+    }
+
+    #[test]
+    fn another_tool_interleaved_breaks_the_stagnation_run() {
+        // A model that greps, reads what it found, then greps again is
+        // acting on the results. Only an UNBROKEN run of one tool telling
+        // us nothing counts, so the run is measured from the tail.
+        let mut records: Vec<CallRecord<'static>> =
+            (0..5).map(|i| grep_variant(&format!("p{i}"))).collect();
+        records.push(read("src/deck.rs"));
+        records.extend((5..9).map(|i| grep_variant(&format!("p{i}"))));
+        assert_eq!(
+            detect_loop(&records, LoopDetectionConfig::default()),
+            LoopVerdict::NoLoop,
+            "the trailing grep run is 4 — the read reset it"
+        );
+    }
+
+    #[test]
+    fn identical_calls_are_reported_as_an_exact_repeat_not_stagnation() {
+        // Stagnation is the vaguer description of the same evidence, so it
+        // must never claim a run exact-repeat describes precisely.
+        let records = vec![grep_variant("same"); 8];
+        match detect_loop(&records, LoopDetectionConfig::default()) {
+            LoopVerdict::ExactRepeat { count, .. } => assert_eq!(count, 8),
+            other => panic!("expected ExactRepeat to win, got {other:?}"),
+        }
+        // And with exact-repeat disabled it still refuses to relabel them:
+        // the all-same-input guard holds on its own, not by ordering luck.
+        let config = LoopDetectionConfig {
+            exact_repeat_threshold: 0,
+            short_cycle_repeats: 0,
+            stagnation_threshold: 3,
+        };
+        assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
+    }
+
+    #[test]
+    fn stagnation_needs_observed_outputs_like_every_other_check() {
+        // Unresolved results prove nothing, however many there are.
+        let records: Vec<CallRecord<'static>> = (0..8)
+            .map(|i| record("grep", serde_json::json!({ "pattern": i }), None))
+            .collect();
+        assert_eq!(
+            detect_loop(&records, LoopDetectionConfig::default()),
+            LoopVerdict::NoLoop
+        );
+    }
+
+    #[test]
+    fn zero_or_one_stagnation_threshold_disables_that_check() {
+        let records: Vec<CallRecord<'static>> =
+            (0..10).map(|i| grep_variant(&format!("p{i}"))).collect();
+        for threshold in [0, 1] {
+            let config = LoopDetectionConfig {
+                exact_repeat_threshold: 0,
+                short_cycle_repeats: 0,
+                stagnation_threshold: threshold,
+            };
+            assert_eq!(
+                detect_loop(&records, config),
+                LoopVerdict::NoLoop,
+                "threshold {threshold} should disable stagnation detection"
+            );
+        }
+    }
+
+    #[test]
+    fn stagnation_compares_identities_when_compaction_rewrote_the_outputs() {
+        // The #554 rule applies here too: the older results were stubbed in
+        // place, but their pre-compaction identities still match, so the run
+        // is still evidence.
+        let records: Vec<CallRecord<'static>> = (0..6)
+            .map(|i| {
+                let stubbed = i < 4;
+                with_identity(
+                    call(
+                        "grep",
+                        serde_json::json!({ "pattern": format!("p{i}") }),
+                        if stubbed { "[evicted]" } else { "118: hit" },
+                    ),
+                    "blk_same",
+                )
+            })
+            .collect();
+        assert!(
+            detect_loop(&records, LoopDetectionConfig::default()).is_loop(),
+            "matching identities must survive an in-place rewrite here too"
+        );
     }
 
     /// Small, deliberately overlapping alphabet of names/inputs/outputs so
@@ -1004,25 +1286,30 @@ mod tests {
             records in proptest::collection::vec(arb_call_record(), 0..16),
             exact_repeat_threshold in 0usize..8,
             short_cycle_repeats in 0usize..8,
+            stagnation_threshold in 0usize..8,
         ) {
-            let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats };
+            let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats, stagnation_threshold };
             let verdict = detect_loop(&records, config);
             // Whatever the verdict, `is_loop`/`evidence` must not panic either.
             let _ = verdict.is_loop();
             let _ = verdict.evidence();
         }
 
-        /// Property: history shorter than both thresholds is always
-        /// `NoLoop` — there's no way for either check to have enough
-        /// evidence (the shortest cycle period is 2).
+        /// Property: history shorter than EVERY threshold is always
+        /// `NoLoop` — there's no way for any check to have enough evidence
+        /// (the shortest cycle period is 2).
         #[test]
         fn short_history_is_always_no_loop(
             records in proptest::collection::vec(arb_call_record(), 0..12),
             exact_repeat_threshold in 2usize..8,
             short_cycle_repeats in 1usize..8,
+            stagnation_threshold in 2usize..8,
         ) {
-            if records.len() < exact_repeat_threshold && records.len() < 2 * short_cycle_repeats {
-                let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats };
+            if records.len() < exact_repeat_threshold
+                && records.len() < 2 * short_cycle_repeats
+                && records.len() < stagnation_threshold
+            {
+                let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats, stagnation_threshold };
                 prop_assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
             }
         }
@@ -1038,6 +1325,7 @@ mod tests {
             records in proptest::collection::vec(arb_call_record(), 0..16),
             exact_repeat_threshold in 2usize..8,
             short_cycle_repeats in 2usize..8,
+            stagnation_threshold in 2usize..8,
         ) {
             let records: Vec<CallRecord<'static>> = records
                 .into_iter()
@@ -1047,7 +1335,7 @@ mod tests {
                     record
                 })
                 .collect();
-            let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats };
+            let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats, stagnation_threshold };
             prop_assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
         }
     }

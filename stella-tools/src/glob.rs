@@ -213,6 +213,16 @@ fn fd_command(search_dir: &std::path::Path, pattern: &str) -> Command {
     fd.arg("--exclude").arg(".git");
     fd.arg("--type").arg("f");
     fd.arg("--color").arg("never");
+    // Single-threaded, for the same reason `grep` passes `--sort path`: `fd`
+    // walks in PARALLEL, so the same glob over the same unchanged tree
+    // answers in a different order every call — and because `--max-results`
+    // stops the walk early, a capped search returns a different SET too.
+    // `stella_core::loop_detect` proves a turn is stuck by finding
+    // byte-identical tool output, so a search that never repeats itself is a
+    // search it can never catch looping. Sorting the lines afterwards would
+    // fix the order and quietly leave the set arbitrary, which reads as a fix
+    // and is not one — the walk itself has to be deterministic.
+    fd.arg("--threads").arg("1");
     fd.arg("--max-results").arg(MAX_RESULTS.to_string());
     fd.arg("--").arg(pattern).arg(search_dir);
     crate::subprocess_env::scrub_sensitive_env(&mut fd);

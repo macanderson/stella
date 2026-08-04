@@ -2002,6 +2002,7 @@ async fn period_three_cycle_with_no_progress_steers_then_aborts() {
         loop_detection: LoopDetectionConfig {
             exact_repeat_threshold: 3,
             short_cycle_repeats: 2,
+            stagnation_threshold: 0, // disabled: this test isolates the cycle check
         },
         ..EngineConfig::default()
     };
@@ -2137,8 +2138,8 @@ async fn run_synthetic_survival_turn(dialect: &str, id_style: fn(u32) -> String)
         script: TokioMutex::new(script),
         calls: Arc::new(AtomicU32::new(0)),
     };
-    // A tool executor returning a constant 600-char output — the context
-    // pressure half of the exit criterion.
+    // A tool executor returning a 600-char output — the context pressure
+    // half of the exit criterion.
     struct GrowingTools;
     #[async_trait]
     impl ToolExecutor for GrowingTools {
@@ -2151,9 +2152,18 @@ async fn run_synthetic_survival_turn(dialect: &str, id_style: fn(u32) -> String)
                 speculation_safe: false,
             }]
         }
-        async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+        async fn execute(&self, _name: &str, input: &Value) -> ToolOutput {
+            // Consistently "large" per compaction's threshold, and DISTINCT
+            // per call. Distinctness is not cosmetic: 200 commands that all
+            // answer with the same bytes is a stagnant turn by
+            // `loop_detect`'s definition and would be aborted on the
+            // evidence — correctly, but this test is about surviving
+            // context pressure across provider dialects, not about loop
+            // detection. Real work answers differently each step; the
+            // fixture has to as well or it tests the wrong thing.
+            let tag = input.get("cmd").and_then(|v| v.as_str()).unwrap_or("?");
             ToolOutput::Ok {
-                content: "x".repeat(600), // consistently "large" per compaction's threshold
+                content: format!("{tag}: {}", "x".repeat(600)),
             }
         }
     }
@@ -3358,6 +3368,7 @@ mod budget_boundaries;
 mod compute_passes;
 mod context_efficiency;
 mod lifecycle_bus;
+mod loop_abort;
 mod steer_midturn;
 mod usage_completeness;
 mod zero_copy_request;

@@ -1673,6 +1673,7 @@ impl<'a> Engine<'a> {
                 pattern.iter().map(|c| c.name.clone()).collect(),
                 *repeats,
             ),
+            LoopVerdict::Stagnant { tool, count } => ("stagnation", vec![tool.clone()], *count),
         };
         let reason = verdict
             .evidence()

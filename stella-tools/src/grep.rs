@@ -423,6 +423,29 @@ impl Tool for Grep {
         rg.arg("--max-columns")
             .arg(MAX_COLUMNS.to_string())
             .arg("--max-columns-preview");
+        // Deterministic file order, and it is load-bearing rather than a
+        // nicety. `rg` walks directories in PARALLEL, so the same search over
+        // the same unchanged tree emits its matching files in a different
+        // order on every call. Three things break on that:
+        //
+        // - `stella_core::loop_detect` decides a turn is making progress by
+        //   comparing tool output BYTES. A reordered result is a different
+        //   result, so a model re-running one search forever looks like a
+        //   model learning something new every time, and no rung of the
+        //   detector can fire. That is not hypothetical: it is why a live
+        //   turn ran one `grep` dozens of times before anything stopped it.
+        // - `stella_core::compaction`'s dedup pass collapses byte-identical
+        //   tool results. Reordered duplicates each keep a full copy.
+        // - The agent re-reads its own earlier search and sees the answer
+        //   move, which invites the re-search that started the loop.
+        //
+        // Sorting AFTER capture cannot fix it: `truncate_middle` below caps
+        // the raw bytes before anything is parsed into lines, so an unordered
+        // walk drops a different set of files each call and no later sort can
+        // put back what was already cut. The order has to be right at the
+        // source. `--sort path` costs `rg`'s parallelism, which is the price
+        // of a search tool that answers the same question the same way.
+        rg.arg("--sort").arg("path");
         // `rg` skips dot-prefixed entries by default, so a search under
         // `.github/`, `.cargo/` or any dotfile came back "(no matches)" —
         // which an agent reads as "that code does not exist". The `grep`
