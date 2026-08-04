@@ -79,16 +79,16 @@ submodule beside the file, the split this crate has already made four times —
 [`src/agent/`](src/agent) (`tools.rs`, `engine.rs`, `goal.rs`, `coverage.rs`, …)
 beside [`src/agent.rs`](src/agent.rs), [`src/command_deck/`](src/command_deck)
 beside [`src/command_deck.rs`](src/command_deck.rs),
-[`src/agent_tests/`](src/agent_tests) beside
-[`src/agent_tests.rs`](src/agent_tests.rs), and
+[`src/agent/tests/`](src/agent/tests) beside
+[`src/agent/tests.rs`](src/agent/tests.rs), and
 [`src/candidate_ws/`](src/candidate_ws) beside
 [`src/candidate_ws.rs`](src/candidate_ws.rs) — and code you touch in a god
 file is a candidate to extract into one.
 
 | God file | Ceiling (lines) |
 |---|---|
-| [`src/agent.rs`](src/agent.rs) | 2271 |
-| [`src/agent_tests.rs`](src/agent_tests.rs) | 1750 |
+| [`src/agent.rs`](src/agent.rs) | 2270 |
+| [`src/agent/tests.rs`](src/agent/tests.rs) | 1747 |
 | [`src/candidate_ws.rs`](src/candidate_ws.rs) | 1585 |
 | [`src/command_deck.rs`](src/command_deck.rs) | 4754 |
 | [`src/fleet_cmd.rs`](src/fleet_cmd.rs) | 1506 |
@@ -102,7 +102,7 @@ file), never as a planning assumption.
 
 | Path | What it holds |
 |---|---|
-| [`src/main.rs`](src/main.rs), [`src/main_tests.rs`](src/main_tests.rs) | The whole clap surface (`Cli`, `GlobalArgs`, `Command` and its nested subcommand enums) and the two-phase `run()` dispatch — open it to add a command or a global flag — plus the argument-surface fence guarding it. |
+| [`src/main.rs`](src/main.rs), [`src/tests.rs`](src/tests.rs) | The whole clap surface (`Cli`, `GlobalArgs`, `Command` and its nested subcommand enums) and the two-phase `run()` dispatch — open it to add a command or a global flag — plus the argument-surface fence guarding it. |
 | [`src/agent.rs`](src/agent.rs) + [`src/agent/`](src/agent) | Agent wiring: `run_one_shot` / `run_interactive` / `run_init`, and submodules for engine tuning (`engine.rs`), judged rounds (`goal.rs`), the session code-graph (`graph.rs`), pipeline-status projection (`outcome.rs`), headless output (`output.rs`), event persistence (`persistence.rs`), prompt assembly (`prompt.rs`), registry/port construction (`tools.rs`). |
 | [`src/config.rs`](src/config.rs), [`src/settings.rs`](src/settings.rs) + [`src/settings/`](src/settings), [`src/engine_config.rs`](src/engine_config.rs), [`src/settings_check.rs`](src/settings_check.rs) | Which provider/model/key this invocation runs on; the three-scope `settings.json` merge behind it; `agent_engine_config` → per-agent resolution; and the launch-time slug validation that turns a typo into a startup warning instead of a provider `400`. |
 | [`src/env_files.rs`](src/env_files.rs) | Project-scoped `.env` loading with shell-wins precedence and the execution-hijack refusal list. |
@@ -142,7 +142,7 @@ Every field of `GlobalArgs` must carry `global = true`. clap accepts a plain
 root-level flag only *before* the subcommand token, so a non-global field is
 silently unreachable where users actually type it — `stella fleet … --budget 5`
 died with "unexpected argument". `every_root_flag_is_global` in
-[`src/main_tests.rs`](src/main_tests.rs) fails the suite instead, and its
+[`src/tests.rs`](src/tests.rs) fails the suite instead, and its
 corollary `no_subcommand_flag_reuses_a_global_name` reserves those names
 CLI-wide — which is why `connect linear` takes `--paste-key`, not `--api-key`.
 
@@ -255,8 +255,8 @@ make test-cli            # = cargo test -p stella-cli
 ```
 
 Almost all of it is in-crate unit tests, wired with `#[cfg(test)] #[path = …]`
-from the module they cover: [`src/main_tests.rs`](src/main_tests.rs) (argument
-surface), [`src/agent_tests.rs`](src/agent_tests.rs) (prompt assembly, provider
+from the module they cover: [`src/tests.rs`](src/tests.rs) (argument
+surface), [`src/agent/tests.rs`](src/agent/tests.rs) (prompt assembly, provider
 routing, usage completeness), [`src/config/tests.rs`](src/config/tests.rs) (key
 resolution, the provider-parity matrix), plus the `settings`/`memory`
 private-state and quarantine suites. [`tests/inspect_cli.rs`](tests/inspect_cli.rs)

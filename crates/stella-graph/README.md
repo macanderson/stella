@@ -91,7 +91,7 @@ extract per-language decoding into a submodule rather than grow the file.
 | [`src/generated.rs`](src/generated.rs) | The per-file half: `.gitattributes linguist-generated`, `*.min.*`, and the minified-content heuristic (issue #272). |
 | [`src/watch.rs`](src/watch.rs) | The live re-index pipeline: `notify` event source → debounce → one transactional apply, plus the `WatchInjector` test seam. |
 | [`src/frames.rs`](src/frames.rs) | Query → `ContextFrame` assembly: citation labels, provenance, score bands, budget packing. |
-| [`src/storage/mod.rs`](src/storage/mod.rs) | The storage map's canonical model (layer / namespace / relation / field) and `StorageExtractor`. |
+| [`src/storage.rs`](src/storage.rs) | The storage map's canonical model (layer / namespace / relation / field) and `StorageExtractor`. |
 | [`src/storage/sql.rs`](src/storage/sql.rs), [`prisma.rs`](src/storage/prisma.rs), [`ts.rs`](src/storage/ts.rs), [`py.rs`](src/storage/py.rs) | One adapter per source family: SQL DDL; Prisma; Drizzle/TypeORM/Mongoose/DynamoDB; Django/SQLAlchemy. |
 | [`src/manifest.rs`](src/manifest.rs) | `stella.storage.toml` — the committed half of the storage map (layers, intent, redirects, stubs) merged at snapshot time. |
 | [`src/error.rs`](src/error.rs) | `GraphError`. |

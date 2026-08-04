@@ -339,9 +339,9 @@ governs:
 
 | Crate | God files (ceiling) |
 |---|---|
-| `stella-cli` | `src/command_deck.rs` (4754), `src/agent.rs` (2271), `src/agent_tests.rs` (1750), `src/candidate_ws.rs` (1585), `src/fleet_cmd.rs` (1506) |
+| `stella-cli` | `src/command_deck.rs` (4754), `src/agent.rs` (2270), `src/agent/tests.rs` (1747), `src/candidate_ws.rs` (1585), `src/fleet_cmd.rs` (1506) |
 | `stella-core` | `src/driver/tests.rs` (3672), `src/driver.rs` (2765), `src/bus.rs` (2129) |
-| `stella-model` | `src/openai.rs` (2072), `src/zai/tests.rs` (1843), `src/anthropic/tests.rs` (1677), `src/zai.rs` (1572) |
+| `stella-model` | `src/openai.rs` (2072), `src/zai/tests.rs` (1844), `src/anthropic/tests.rs` (1677), `src/zai.rs` (1570) |
 | `stella-pipeline` | `src/pipeline.rs` (3691), `src/pipeline/tests.rs` (2621) |
 | `stella-protocol` | `src/event.rs` (2906) |
 | `stella-store` | `src/tests.rs` (2264), `src/lib.rs` (2080), `src/usage.rs` (1916) |

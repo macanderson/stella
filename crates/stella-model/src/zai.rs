@@ -1531,5 +1531,3 @@ async fn aggregate_zai_stream(
 
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-mod vision_tests;

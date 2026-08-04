@@ -319,12 +319,12 @@ mod tests {
             include_str!("gemini/tests.rs"),
             include_str!("vertex.rs"),
             include_str!("zai/tests.rs"),
-            include_str!("zai/tests/error_classify_tests.rs"),
-            include_str!("zai/tests/openrouter_effort_tests.rs"),
-            include_str!("zai/tests/openrouter_stream_tests.rs"),
-            include_str!("zai/tests/stream_frame_tests.rs"),
-            include_str!("zai/tests/zai_effort_tests.rs"),
-            include_str!("zai/vision_tests.rs"),
+            include_str!("zai/tests/error_classify.rs"),
+            include_str!("zai/tests/openrouter_effort.rs"),
+            include_str!("zai/tests/openrouter_stream.rs"),
+            include_str!("zai/tests/stream_frame.rs"),
+            include_str!("zai/tests/vision.rs"),
+            include_str!("zai/tests/zai_effort.rs"),
         ]
     }
 

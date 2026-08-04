@@ -272,7 +272,7 @@ Adding a deck tab:
 2. Write `src/views/<tab>.rs` exposing
    `render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer)`,
    pulling every color from `theme` and recording viewport metrics onto
-   `ui.metrics`. Register it in [`src/views/mod.rs`](src/views/mod.rs).
+   `ui.metrics`. Register it in [`src/views.rs`](src/views.rs).
 3. Add the match arm in `render_deck` ([`src/deck_render.rs`](src/deck_render.rs)).
 4. Add a `handle_<tab>_key` in [`src/deck_ui.rs`](src/deck_ui.rs) and wire it
    into the per-tab dispatch, taking `composer_empty` and honoring the

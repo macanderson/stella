@@ -1654,11 +1654,12 @@ fn xai_reasoning_effort_support_denies_only_the_original_grok4() {
     assert!(xai_supports_reasoning_effort("grok-3-mini"));
 }
 
-mod error_classify_tests;
-mod openrouter_effort_tests;
-mod openrouter_stream_tests;
-mod stream_frame_tests;
-mod zai_effort_tests;
+mod error_classify;
+mod openrouter_effort;
+mod openrouter_stream;
+mod stream_frame;
+mod vision;
+mod zai_effort;
 
 #[test]
 fn rejects_disabled_reasoning_matches_the_upstream_wording_only() {
