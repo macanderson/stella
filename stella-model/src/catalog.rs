@@ -603,7 +603,12 @@ impl Catalog {
                         cache_write_usd_per_mtok: 0.76,
                     },
                 )
-                .with_reasoning(Some(true)),
+                .with_reasoning(Some(true))
+                // Same ceiling as the direct `zai/glm-5.2` row: a route is not
+                // a model property. Without its own ceiling this gateway row
+                // silently falls to the engine's global 16384 and truncates
+                // before the worker can emit a tool call.
+                .with_max_output_tokens(Some(131_072)),
                 // The judge and triage seats for that same gateway route. A
                 // pipeline is only a pipeline if all three roles resolve; seed
                 // the worker alone and the run dies at startup exactly as it
