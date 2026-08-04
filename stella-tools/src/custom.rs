@@ -160,10 +160,98 @@ pub struct ToolDiagnostic {
 
 /// The result of scanning the tool directories: everything that loaded, plus a
 /// typed diagnostic for everything that did not.
+///
+/// A `DiscoveryReport` is a **gated** result. The only way to obtain one from
+/// the filesystem is [`crate::foundry_gate::gate_report`] — see
+/// [`UngatedDiscovery`] for why.
 #[derive(Debug, Clone, Default)]
 pub struct DiscoveryReport {
     pub tools: Vec<CustomTool>,
     pub diagnostics: Vec<ToolDiagnostic>,
+}
+
+/// What a directory scan found, before the tool-foundry gate has ruled on it.
+///
+/// # Why discovery does not simply return the tools
+///
+/// The gate ([`crate::foundry_gate`]) decides whether a *self-authored* tool
+/// may register: whether the workspace adopted it, whether a human enabled it,
+/// and whether its bytes still match the ones its witness ran against. That
+/// decision is worthless if a caller can skip it, and skipping it is the easy
+/// mistake — a new discovery site is three lines and reads as complete.
+///
+/// It happened. The gate first shipped applied at the session's discovery
+/// path, while the plain `stella tools` listing and the best-of-N candidate
+/// surface each discovered tools on their own paths and offered whatever they
+/// found. The listing advertised tools the session withheld. Patching those
+/// two sites fixed the instances and left the shape: a fourth path would have
+/// been ungated too, silently, and fail-**open**.
+///
+/// So the tools do not leave this type. `Vec<CustomTool>` — the thing a
+/// [`CustomToolSet`] needs in order to execute anything — can only be got by
+/// handing this to the gate. Forgetting is a compile error rather than an
+/// unapproved capability, and a caller who does not care about foundry tools
+/// still has to say so (an empty ledger withholds them, which is the safe
+/// direction).
+///
+/// # What it will tell you without gating
+///
+/// Information, never capability: what was found ([`names`](Self::names)), what
+/// was skipped and why ([`diagnostics`](Self::diagnostics)), and whether any of
+/// it is self-authored at all ([`has_foundry_authored`](Self::has_foundry_authored),
+/// which lets a host skip opening the ledger when there is nothing to rule on).
+/// None of those hand back something runnable.
+#[derive(Debug, Clone, Default)]
+pub struct UngatedDiscovery {
+    tools: Vec<CustomTool>,
+    diagnostics: Vec<ToolDiagnostic>,
+}
+
+impl UngatedDiscovery {
+    /// The names of every manifest that loaded — including ones the gate will
+    /// go on to withhold, because a withheld tool still occupies its name on
+    /// disk. This is the question a duplicate-name check wants.
+    pub fn names(&self) -> Vec<&str> {
+        self.tools.iter().map(|tool| tool.name.as_str()).collect()
+    }
+
+    /// Manifests that could not be loaded, and why.
+    pub fn diagnostics(&self) -> &[ToolDiagnostic] {
+        &self.diagnostics
+    }
+
+    /// Whether the scan found nothing at all — no tools and no diagnostics.
+    pub fn is_empty(&self) -> bool {
+        self.tools.is_empty() && self.diagnostics.is_empty()
+    }
+
+    /// Whether any manifest here claims foundry authorship, i.e. whether the
+    /// gate has anything to rule on. A host uses this to avoid reading the
+    /// adoption ledger for the overwhelmingly common workspace that has no
+    /// self-authored tools at all.
+    pub fn has_foundry_authored(&self) -> bool {
+        self.tools.iter().any(|tool| {
+            tool.foundry
+                .as_ref()
+                .is_some_and(|p| p.is_foundry_authored())
+        })
+    }
+
+    /// Hand the contents to the gate. Crate-private: this is the seam the type
+    /// exists to protect, and [`crate::foundry_gate::gate_report`] is its one
+    /// caller.
+    pub(crate) fn into_parts(self) -> (Vec<CustomTool>, Vec<ToolDiagnostic>) {
+        (self.tools, self.diagnostics)
+    }
+
+    /// Build one from parts already in hand — for a producer that found
+    /// manifests some way other than a directory scan. Crate-private, and
+    /// harmless either way: constructing one grants nothing, since getting the
+    /// tools back out still means going through the gate.
+    #[cfg(test)]
+    pub(crate) fn from_parts(tools: Vec<CustomTool>, diagnostics: Vec<ToolDiagnostic>) -> Self {
+        Self { tools, diagnostics }
+    }
 }
 
 /// Wire shape of a manifest file. Kept private — callers see [`CustomTool`],
@@ -256,7 +344,7 @@ pub fn parse_manifest(text: &str, source: &Path) -> Result<CustomTool, String> {
 /// Discover custom tools for `workspace_root`, reading the user-global
 /// location from `$HOME`. Thin env-reading wrapper over [`discover_in`] — tests
 /// inject a home directory directly rather than mutating the process env.
-pub fn discover(workspace_root: &Path) -> DiscoveryReport {
+pub fn discover(workspace_root: &Path) -> UngatedDiscovery {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     discover_in_scopes(workspace_root, home.as_deref(), true)
 }
@@ -265,7 +353,7 @@ pub fn discover(workspace_root: &Path) -> DiscoveryReport {
 /// user-global home. Workspace wins on name collisions; a `None` home skips the
 /// global scan entirely. Never fails: unreadable or malformed manifests become
 /// diagnostics, not errors.
-pub fn discover_in(workspace_root: &Path, home: Option<&Path>) -> DiscoveryReport {
+pub fn discover_in(workspace_root: &Path, home: Option<&Path>) -> UngatedDiscovery {
     discover_in_scopes(workspace_root, home, true)
 }
 
@@ -278,8 +366,8 @@ pub fn discover_in_scopes(
     workspace_root: &Path,
     home: Option<&Path>,
     include_workspace: bool,
-) -> DiscoveryReport {
-    let mut report = DiscoveryReport::default();
+) -> UngatedDiscovery {
+    let mut report = UngatedDiscovery::default();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // Workspace first so it wins collisions, then user-global.
@@ -303,7 +391,7 @@ pub fn discover_in_scopes(
 fn load_dir(
     dir: &Path,
     seen: &mut std::collections::HashSet<String>,
-    report: &mut DiscoveryReport,
+    report: &mut UngatedDiscovery,
 ) {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,

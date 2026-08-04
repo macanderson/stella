@@ -355,7 +355,9 @@ fn remove_pair(manifest_path: &Path, script_path: &Path) {
 /// silently replaces something.
 fn run_witness(root: &Path, candidate: &CustomTool) -> Result<WitnessVerdict, String> {
     let home = crate::paths::home();
-    let others: Vec<CustomTool> = custom::discover_in(root, home.as_deref())
+    // World A is the surface as it really is, so these go through the gate
+    // like any other registration — a withheld tool is not part of it.
+    let others: Vec<CustomTool> = gate_discovery(custom::discover_in(root, home.as_deref()), root)
         .tools
         .into_iter()
         .filter(|tool| tool.name != candidate.name)
@@ -397,33 +399,35 @@ impl ToolExecutor for Builtins {
     }
 }
 
-/// Apply the adoption gate to a discovery report — the session's registration
-/// path for self-authored tools.
+/// Rule on a discovery scan with this workspace's adoption ledger — the host
+/// half of the gate, and the **only** thing in the CLI that turns an
+/// [`custom::UngatedDiscovery`] into tools a session can register.
+///
+/// The type is what makes that true. Discovery hands back a value whose tools
+/// cannot be read, so a new discovery path cannot quietly skip this the way the
+/// listing and the candidate surface once did — it will not compile.
 ///
 /// Two properties worth stating plainly:
 ///
 /// - **Free for everyone else.** A workspace whose manifests are all
-///   hand-written never opens the ledger; the gate has nothing to decide and
-///   returns the report untouched.
+///   hand-written never opens the ledger: `has_foundry_authored` answers `false`
+///   and the gate returns without a filesystem touch.
 /// - **Fails closed.** If the store cannot be opened, every foundry tool is
-///   gated against an *empty* ledger and therefore withheld. An unreadable
+///   ruled on against an *empty* ledger and therefore withheld. An unreadable
 ///   authority record is not permission to skip the authority check — the same
 ///   posture the gate takes toward a script it cannot digest.
 pub(crate) fn gate_discovery(
-    report: custom::DiscoveryReport,
+    found: custom::UngatedDiscovery,
     root: &Path,
 ) -> custom::DiscoveryReport {
-    if !report.tools.iter().any(|tool| {
-        tool.foundry
-            .as_ref()
-            .is_some_and(|p| p.is_foundry_authored())
-    }) {
-        return report;
-    }
-    let adopted = Store::open(root)
-        .and_then(|store| store.adopted_foundry_tools())
-        .unwrap_or_default();
-    stella_tools::foundry_gate::gate_report(report, &adopted, root)
+    let adopted = if found.has_foundry_authored() {
+        Store::open(root)
+            .and_then(|store| store.adopted_foundry_tools())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    stella_tools::foundry_gate::gate_report(found, &adopted, root)
 }
 
 /// The two paths an adopted pair occupies — one spelling, so the writer, the

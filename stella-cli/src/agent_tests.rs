@@ -1699,7 +1699,8 @@ async fn a_customer_registered_tool_is_covered_by_the_policy() {
         "name = \"deploy_to_staging\"\ndescription = \"ship it\"\ncommand = [\"./deploy.sh\"]",
     )
     .unwrap();
-    let custom_tools = stella_tools::custom::discover_in_scopes(root.path(), None, true).tools;
+    let found = stella_tools::custom::discover_in_scopes(root.path(), None, true);
+    let custom_tools = crate::tool_foundry::adopt::gate_discovery(found, root.path()).tools;
     assert_eq!(custom_tools.len(), 1, "fixture must register one tool");
 
     // On: the tool is there, so the fixture proves the *policy* withheld it
