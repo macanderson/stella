@@ -574,6 +574,68 @@ impl Catalog {
                         cache_write_usd_per_mtok: 0.0,
                     },
                 ),
+                // GLM through the gateway, for the one job the z.ai coding
+                // plan cannot do: a *concurrent* head-to-head. That plan caps
+                // requests per minute, and a pipeline agent spends ~3 calls
+                // per step to a single-model agent's 1 — so under a shared cap
+                // it throttles roughly 3x sooner and the scoreboard measures
+                // the quota rather than the agents. Metered access removes the
+                // cap; seeding the row is what makes it reachable, since a
+                // benchmark container cannot refresh the catalog.
+                //
+                // Same slug both sides: OpenRouter also serves an
+                // Anthropic-shaped `/v1/messages`, so Claude Code and Stella
+                // can be pointed at one provider and one model id.
+                CatalogEntry::new(
+                    "z-ai/glm-5.2",
+                    "openrouter",
+                    "glm",
+                    200_000,
+                    ToolDialect::OpenaiJson,
+                    // OpenRouter's published rates, read 2026-08-04. Superseded
+                    // per call by the gateway's own usage accounting; this is
+                    // the floor for frames that carry no cost. No separate
+                    // cache-write line is quoted, so a write bills as input.
+                    Pricing {
+                        input_usd_per_mtok: 0.76,
+                        output_usd_per_mtok: 2.42,
+                        cached_input_usd_per_mtok: 0.14,
+                        cache_write_usd_per_mtok: 0.76,
+                    },
+                )
+                .with_reasoning(Some(true)),
+                // The judge and triage seats for that same gateway route. A
+                // pipeline is only a pipeline if all three roles resolve; seed
+                // the worker alone and the run dies at startup exactly as it
+                // does with no worker at all.
+                CatalogEntry::new(
+                    "z-ai/glm-5.1",
+                    "openrouter",
+                    "glm",
+                    204_800,
+                    ToolDialect::OpenaiJson,
+                    Pricing {
+                        input_usd_per_mtok: 0.966,
+                        output_usd_per_mtok: 3.036,
+                        cached_input_usd_per_mtok: 0.1794,
+                        cache_write_usd_per_mtok: 0.966,
+                    },
+                )
+                .with_reasoning(Some(true)),
+                CatalogEntry::new(
+                    "z-ai/glm-4.5-air",
+                    "openrouter",
+                    "glm",
+                    131_072,
+                    ToolDialect::OpenaiJson,
+                    Pricing {
+                        input_usd_per_mtok: 0.13,
+                        output_usd_per_mtok: 0.85,
+                        cached_input_usd_per_mtok: 0.025,
+                        cache_write_usd_per_mtok: 0.13,
+                    },
+                )
+                .with_reasoning(Some(true)),
                 // The OpenRouter provider's default model. Unlike `auto`
                 // above, this row names ONE model, so the numbers are
                 // knowable and belong here: the entry is what clamps
@@ -807,6 +869,17 @@ mod tests {
             assert!(
                 catalog.resolve_for("zai", slug).is_ok(),
                 "`{slug}` must resolve from the offline seed"
+            );
+        }
+        // The gateway route carries the same worker model. It exists because
+        // the z.ai plan's per-minute cap cannot support a concurrent
+        // head-to-head, and an unseeded row there fails exactly as loudly as
+        // an unseeded row anywhere else: not at all, until the run dies.
+        for slug in ["z-ai/glm-5.2", "z-ai/glm-5.1", "z-ai/glm-4.5-air"] {
+            assert!(
+                catalog.resolve_for("openrouter", slug).is_ok(),
+                "the metered GLM route needs `{slug}` too — a pipeline is only a \
+                 pipeline if every role resolves"
             );
         }
     }
