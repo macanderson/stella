@@ -73,7 +73,6 @@ pub mod diff;
 pub mod envelope;
 pub mod fleet_dashboard;
 pub mod graph;
-pub mod highlight;
 pub mod markdown;
 pub mod notice;
 pub mod palette;

@@ -2011,14 +2011,9 @@ fn handle_help_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
     }
 }
 
-/// Route one submitted prompt. A view-only slash command short-circuits
-/// first — see [`view_command`] — because it is not a prompt at all: it
-/// changes what the user is looking at, takes effect the moment ⏎ lands,
-/// and never touches the queue, the routing card, or a held dispatch.
-///
-/// Of what remains: the first submission after a double-Esc hold goes to the
-/// FRONT of the queue (and is what releases the hold) so it runs before the
-/// returned prompt; everything else appends. This is an explicit
+/// Route one submitted prompt. The first submission after a double-Esc hold
+/// goes to the FRONT of the queue (and is what releases the hold) so it runs
+/// before the returned prompt; everything else appends. This is an explicit
 /// [`WorkspaceInput::EnqueueFront`] rather than a driver-side "held"
 /// reinterpretation of a plain Enqueue: the deck mirrors every queue edit
 /// locally at send time, and a message whose meaning depended on driver
@@ -2029,12 +2024,6 @@ fn handle_help_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
 /// where it belongs. A held dispatch skips the card: the double-Esc already
 /// *was* the user saying "run mine next".
 fn submit_prompt(ui: &mut DeckUi, model: &WorkspaceModel, text: String) -> DeckAction {
-    // Ahead of even the held check: a hold is about which PROMPT runs next,
-    // and a view switch is not a prompt — it must neither spend the hold's
-    // front slot nor release the hold.
-    if let Some(action) = view_command(ui, text.trim()) {
-        return action;
-    }
     if ui.dispatch_held {
         ui.dispatch_held = false;
         return DeckAction::Send(WorkspaceInput::EnqueueFront { text });
@@ -2058,11 +2047,9 @@ fn slash_matches(ui: &DeckUi) -> Vec<String> {
 /// single-session REPL (`crate::ui`) via `crate::composer` so both surfaces
 /// stay consistent by construction.
 ///
-/// The popup's ⏎ takes the same road every submission takes
-/// ([`submit_prompt`]), so selecting a command from the menu can never mean
-/// something different from typing the same text in full: view-only commands
-/// act on the UI immediately, everything else is enqueued for the driver,
-/// which owns the session-level vocabulary (`/clear`, `/init`, …).
+/// Deck-local commands (tab switches, the help overlay) are intercepted here
+/// and act on the UI directly; everything else is enqueued for the driver,
+/// which owns the session-level vocabulary (`/clear`, `/models`, `/init`, …).
 fn handle_slash_key(
     key: KeyEvent,
     matches: &[String],
@@ -2071,126 +2058,93 @@ fn handle_slash_key(
 ) -> Option<DeckAction> {
     match handle_slash_popup_key(key, matches, &mut ui.composer, &mut ui.slash_selected)? {
         SlashPopupOutcome::Handled => Some(DeckAction::Handled),
-        SlashPopupOutcome::Submit(text) => Some(submit_prompt(ui, model, text)),
+        SlashPopupOutcome::Submit(text) => Some(match text.as_str() {
+            // Only the tab-switch commands are deck-local (they change view
+            // state the driver has no say over). `/diff` opens the diff
+            // viewer; `/files` shows the file tree, so it must also *close* a
+            // diff left open from a prior view.
+            "/files" | "/diff" => {
+                ui.set_tab(DeckTab::Files);
+                ui.files_diff_open = text == "/diff";
+                DeckAction::Handled
+            }
+            "/graph" => {
+                ui.set_tab(DeckTab::Graph);
+                DeckAction::Handled
+            }
+            // `/agents` opens the AGENTS tab directly, on the INSTALLED
+            // AGENTS pane (the configured-on-disk view the command has
+            // always been about) — and asks the driver, which owns the
+            // definitions on disk, for a fresh list.
+            "/agents" => {
+                ui.set_tab(DeckTab::Agents);
+                ui.agents_pane = AgentsPane::Installed;
+                ui.installed.busy = true;
+                DeckAction::Send(WorkspaceInput::AgentsRefresh)
+            }
+            // `/skills` opens the SKILLS tab directly and asks the driver —
+            // which owns the skills on disk — for a fresh installed list.
+            "/skills" => {
+                ui.set_tab(DeckTab::Skills);
+                ui.skills.status = Some("loading skills…".to_string());
+                DeckAction::Send(WorkspaceInput::Skill(SkillOp::List))
+            }
+            "/mcp" => {
+                ui.set_tab(DeckTab::Mcp);
+                DeckAction::Handled
+            }
+            // `/settings` opens the SETTINGS tab — the home of all config
+            // (deck-local view state, like the tab switches above).
+            "/settings" => {
+                ui.set_tab(DeckTab::Settings);
+                DeckAction::Handled
+            }
+            // The three transcript-page overlays are deck-local view state,
+            // exactly like the tab switches above (their keyboard shortcuts:
+            // empty-prompt `←` / `→`, and the footer's ✉ badge for the inbox).
+            "/sessions" => open_sessions_overlay(ui),
+            "/context" => open_context_overlay(ui),
+            "/inspect" => open_inspect_overlay(ui),
+            "/inbox" => open_inbox_overlay(ui),
+            // `/mcp-search` jumps straight into the MCP tab's registry
+            // search — THE way to begin looking for a server from anywhere
+            // (the old `/`-on-the-MCP-tab trigger collided with the command
+            // menu and is gone; `s` on the tab is the local equivalent).
+            "/mcp-search" => {
+                ui.set_tab(DeckTab::Mcp);
+                ui.mcp.mode = McpMode::Search;
+                ui.mcp.status = None;
+                DeckAction::Handled
+            }
+            // The floating cards: pure view state, so the driver has no say.
+            // `/budget` only *renders* locally — the edit it takes leaves as
+            // `WorkspaceInput::SetBudget` from the card's own key handler.
+            "/tasks" => {
+                ui.cards.raise(cards::Card::Tasks);
+                DeckAction::Handled
+            }
+            "/scope" => {
+                ui.cards.raise(cards::Card::Scope);
+                DeckAction::Handled
+            }
+            "/witness" => {
+                ui.cards.raise(cards::Card::Witness);
+                DeckAction::Handled
+            }
+            "/models" => {
+                ui.cards.raise(cards::Card::Models);
+                DeckAction::Handled
+            }
+            "/budget" => {
+                ui.cards.raise(cards::Card::Budget);
+                DeckAction::Handled
+            }
+            // Everything else — including `/help` — is enqueued for the
+            // driver, which owns the session vocabulary and answers into the
+            // transcript (a transient overlay would leave no record).
+            _ => submit_prompt(ui, model, text),
+        }),
     }
-}
-
-/// Execute `text` as a **view-only** slash command, or `None` when it is not
-/// one.
-///
-/// These commands change what the user is *looking at* — a tab switch, an
-/// overlay, a floating card — never what any agent is doing. So they take
-/// effect the instant they are submitted, on every path a submission can
-/// arrive by: the slash popup's ⏎, a fully-typed ⏎ with the popup closed or
-/// filtered away, mid-turn while the lead is running, even during a
-/// double-Esc hold. None of them may enter the prompt queue: a view switch
-/// parked behind a running turn is a command that appears to do nothing until
-/// the agent finishes, and the driver could only answer it with a no-op
-/// anyway — the deck owns all of this state. (The refreshes some of them send
-/// — `AgentsRefresh`, `Skill(List)`, `SessionsRefresh`, `InspectRefresh` —
-/// are serviced at the driver's mid-turn recv site too, so "immediate" holds
-/// while a turn runs.)
-///
-/// Anything NOT in this table — driver commands (`/clear`, `/init`, `/model
-/// <id>`, …), custom ⚡ commands, unknown slashes — is prompt-shaped and
-/// keeps the normal routing: it *can* be steering or new work, the deck
-/// can't know, so it is treated exactly like a typed prompt.
-///
-/// Matched against the *whole* trimmed input, the same rule the driver's
-/// dispatcher applies: every view command is no-argument, so `/diff main` is
-/// a prompt, not a view switch discarding its arguments.
-fn view_command(ui: &mut DeckUi, text: &str) -> Option<DeckAction> {
-    Some(match text {
-        // `/diff` opens the diff viewer; `/files` shows the file tree, so it
-        // must also *close* a diff left open from a prior view.
-        "/files" | "/diff" => {
-            ui.set_tab(DeckTab::Files);
-            ui.files_diff_open = text == "/diff";
-            DeckAction::Handled
-        }
-        "/graph" => {
-            ui.set_tab(DeckTab::Graph);
-            DeckAction::Handled
-        }
-        // `/agents` opens the AGENTS tab directly, on the INSTALLED
-        // AGENTS pane (the configured-on-disk view the command has
-        // always been about) — and asks the driver, which owns the
-        // definitions on disk, for a fresh list.
-        "/agents" => {
-            ui.set_tab(DeckTab::Agents);
-            ui.agents_pane = AgentsPane::Installed;
-            ui.installed.busy = true;
-            DeckAction::Send(WorkspaceInput::AgentsRefresh)
-        }
-        // `/skills` opens the SKILLS tab directly and asks the driver —
-        // which owns the skills on disk — for a fresh installed list.
-        "/skills" => {
-            ui.set_tab(DeckTab::Skills);
-            ui.skills.status = Some("loading skills…".to_string());
-            DeckAction::Send(WorkspaceInput::Skill(SkillOp::List))
-        }
-        "/mcp" => {
-            ui.set_tab(DeckTab::Mcp);
-            DeckAction::Handled
-        }
-        // `/settings` opens the SETTINGS tab — the home of all config
-        // (deck-local view state, like the tab switches above).
-        "/settings" => {
-            ui.set_tab(DeckTab::Settings);
-            DeckAction::Handled
-        }
-        // The three transcript-page overlays are deck-local view state,
-        // exactly like the tab switches above (their keyboard shortcuts:
-        // empty-prompt `←` / `→`, and the footer's ✉ badge for the inbox).
-        "/sessions" => open_sessions_overlay(ui),
-        "/context" => open_context_overlay(ui),
-        "/inspect" => open_inspect_overlay(ui),
-        "/inbox" => open_inbox_overlay(ui),
-        // `/help` opens the same overlay the `?` key opens — identical to
-        // the driver's `Inbound::ShowHelp` ingest, minus the round trip
-        // (which used to park `/help` behind a running turn).
-        "/help" => {
-            ui.help_open = true;
-            ui.help_scroll = ScrollState::default();
-            ui.help_scroll.follow = false;
-            ui.help_scroll.top = 0;
-            DeckAction::Handled
-        }
-        // `/mcp-search` jumps straight into the MCP tab's registry
-        // search — THE way to begin looking for a server from anywhere
-        // (the old `/`-on-the-MCP-tab trigger collided with the command
-        // menu and is gone; `s` on the tab is the local equivalent).
-        "/mcp-search" => {
-            ui.set_tab(DeckTab::Mcp);
-            ui.mcp.mode = McpMode::Search;
-            ui.mcp.status = None;
-            DeckAction::Handled
-        }
-        // The floating cards: pure view state, so the driver has no say.
-        // `/budget` only *renders* locally — the edit it takes leaves as
-        // `WorkspaceInput::SetBudget` from the card's own key handler.
-        "/tasks" => {
-            ui.cards.raise(cards::Card::Tasks);
-            DeckAction::Handled
-        }
-        "/scope" => {
-            ui.cards.raise(cards::Card::Scope);
-            DeckAction::Handled
-        }
-        "/witness" => {
-            ui.cards.raise(cards::Card::Witness);
-            DeckAction::Handled
-        }
-        "/models" => {
-            ui.cards.raise(cards::Card::Models);
-            DeckAction::Handled
-        }
-        "/budget" => {
-            ui.cards.raise(cards::Card::Budget);
-            DeckAction::Handled
-        }
-        _ => return None,
-    })
 }
 
 /// The queue editor's modal keys. Everything the design doc promises for the

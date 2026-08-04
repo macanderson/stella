@@ -280,51 +280,9 @@ fn the_prompt_prefix_is_a_steady_uniform_accent() {
 }
 
 #[test]
-fn a_typed_slash_command_lights_gold_mark_and_violet_slug_live() {
-    // The prompt-keyword treatment (see `crate::highlight`): the moment
-    // `/files` sits in the composer, the dispatch `/` is gold and the slug
-    // violet — uniform for every slash command, live before ⏎.
-    let mut ui = DeckUi::default();
-    for c in "/files".chars() {
-        ui.composer.insert_char(c);
-    }
-    let layout = crate::composer::layout(&ui.composer, 40);
-    let area = Rect::new(0, 0, 40, 4);
-    let mut buf = Buffer::empty(area);
-    render_composer(&layout, area, &mut buf);
-    let text = buffer_text(&buf);
-    assert!(text.starts_with(">>> /files"), "typed row intact:\n{text}");
-    // Col 4 (after the `>>> ` prefix) is the mark; 5..10 are the slug.
-    assert_eq!(
-        buf.cell((4, 0)).unwrap().fg,
-        crate::theme::GOLD,
-        "the dispatch mark is gold"
-    );
-    assert!(
-        (5..10u16).all(|x| buf.cell((x, 0)).unwrap().fg == crate::theme::VIOLET),
-        "every slug cell is the deck's violet"
-    );
-    // The prose after the command keeps the body style: type an argument and
-    // the highlight must stop at the head token.
-    for c in " main".chars() {
-        ui.composer.insert_char(c);
-    }
-    let layout = crate::composer::layout(&ui.composer, 40);
-    let mut buf = Buffer::empty(area);
-    render_composer(&layout, area, &mut buf);
-    assert_ne!(
-        buf.cell((11, 0)).unwrap().fg,
-        crate::theme::VIOLET,
-        "'main' is prose, not part of the command"
-    );
-}
-
-#[test]
 fn composer_cursor_position_sits_right_after_the_prefix_on_an_empty_composer() {
     let layout = ComposerLayout {
         rows: vec![String::new()],
-        row_starts: vec![0],
-        display: String::new(),
         cursor_row: 0,
         cursor_col: 0,
     };
@@ -338,8 +296,6 @@ fn composer_cursor_position_sits_right_after_the_prefix_on_an_empty_composer() {
 fn composer_cursor_position_offsets_by_the_composer_areas_origin() {
     let layout = ComposerLayout {
         rows: vec!["hi".into()],
-        row_starts: vec![0],
-        display: "hi".into(),
         cursor_row: 0,
         cursor_col: 2,
     };
@@ -356,12 +312,6 @@ fn composer_cursor_position_tracks_the_caret_through_the_scroll_window() {
     // actually drawn.
     let layout = ComposerLayout {
         rows: (0..9).map(|i| format!("row{i}")).collect(),
-        // Hard-broken rows: each "rowN" is 4 bytes + the `\n` no row carries.
-        row_starts: (0..9).map(|i| i * 5).collect(),
-        display: (0..9)
-            .map(|i| format!("row{i}"))
-            .collect::<Vec<_>>()
-            .join("\n"),
         cursor_row: 8,
         cursor_col: 4, // "row8" is 4 columns wide
     };
@@ -374,8 +324,6 @@ fn composer_cursor_position_tracks_the_caret_through_the_scroll_window() {
 fn composer_cursor_position_is_none_for_a_degenerate_area() {
     let layout = ComposerLayout {
         rows: vec![String::new()],
-        row_starts: vec![0],
-        display: String::new(),
         cursor_row: 0,
         cursor_col: 0,
     };
