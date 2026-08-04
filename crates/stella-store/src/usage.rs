@@ -1859,7 +1859,10 @@ mod tests {
 
     #[test]
     fn usage_db_path_honors_the_data_dir_override() {
-        // SAFETY: single-threaded test; we set and read one process env var.
+        // Not "single-threaded" as this used to claim — see crate::test_env.
+        let _lock = crate::test_env::lock();
+        let _restore = crate::test_env::EnvRestore::capture(&["STELLA_DATA_DIR"]);
+        // SAFETY: lock held for the whole test; `_restore` undoes this on drop.
         unsafe {
             std::env::set_var("STELLA_DATA_DIR", "/tmp/stella-usage-test");
         }
@@ -1867,9 +1870,6 @@ mod tests {
             usage_db_path(),
             PathBuf::from("/tmp/stella-usage-test/usage.db")
         );
-        unsafe {
-            std::env::remove_var("STELLA_DATA_DIR");
-        }
     }
 
     #[cfg(unix)]
