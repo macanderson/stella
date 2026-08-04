@@ -1,3 +1,9 @@
+---
+id: adaptive-context
+title: "Adaptive Context"
+status: living
+---
+
 # Adaptive Context
 
 **Status:** Specification — supersedes the 2026-07 spec bundle

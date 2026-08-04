@@ -21,7 +21,7 @@ fn ab_control_fires_exactly_once_per_rate_not_every_turn() {
     // turn, silently disabling recall. The turn-counter schedule must
     // suppress exactly turns rate, 2*rate, 3*rate — and no others.
     let rate = 10;
-    let suppressed: Vec<u32> = (1..=30).filter(|&t| ab_control_turn(t, rate)).collect();
+    let suppressed: Vec<u64> = (1..=30).filter(|&t| ab_control_turn(t, rate)).collect();
     assert_eq!(
         suppressed,
         vec![10, 20, 30],

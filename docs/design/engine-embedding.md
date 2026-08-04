@@ -1,3 +1,9 @@
+---
+id: engine-embedding
+title: "Stella as an embeddable gen-AI engine — architecture, surfaces, and the parity contract"
+status: living
+---
+
 # Stella as an embeddable gen-AI engine — architecture, surfaces, and the parity contract
 
 **Status:** descriptive of the tree as of 2026-08, plus a gap register. The

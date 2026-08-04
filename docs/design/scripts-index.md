@@ -1,3 +1,9 @@
+---
+id: scripts-index
+title: "Project scripts index"
+status: implemented
+---
+
 # Project scripts index
 
 **Status:** Implemented — this document is the reference for shipped behaviour,

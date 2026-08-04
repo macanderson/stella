@@ -200,6 +200,26 @@ impl Store {
         Ok(())
     }
 
+    /// The spend one execution has already SETTLED: the sum of the durable
+    /// per-call receipts it wrote as it ran.
+    ///
+    /// `executions.cost_usd` is written once, at close-out, so a driver that
+    /// died mid-turn leaves it at its `0` default while the `telemetry` rows
+    /// beside it record real money. This is the recovery read for that case —
+    /// a dead fleet worker's attempt reports what its receipts prove instead
+    /// of `$0`, which is the direction that under-counts a `--budget` gate
+    /// (#1216). An execution with no landed model call settles at `0.0`,
+    /// which is the truth and not a fallback.
+    pub fn execution_settled_cost_usd(&self, execution_id: i64) -> Result<f64> {
+        self.lock()
+            .query_row(
+                "SELECT COALESCE(SUM(cost_usd), 0) FROM telemetry WHERE execution_id = ?1",
+                params![execution_id],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+    }
+
     /// Permanently downgrade one execution's accounting state.
     pub fn mark_execution_usage_incomplete(&self, execution_id: i64) -> Result<()> {
         self.lock().execute(
@@ -219,5 +239,65 @@ impl Store {
                 |row| row.get(0),
             )
             .map_err(Into::into)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(step: u64, cost_usd: f64) -> TelemetryRow {
+        TelemetryRow {
+            step,
+            provider: "zai".into(),
+            call_role: "worker".into(),
+            model: "glm-5.2".into(),
+            input_tokens: 1_000,
+            estimated_input_tokens: 900,
+            output_tokens: 100,
+            cache_read_tokens: 0,
+            cache_miss_tokens: 1_000,
+            cache_write_tokens: 0,
+            cost_usd,
+            duration_ms: 500,
+            retries: 0,
+            tool_calls: 1,
+            usage_complete: true,
+        }
+    }
+
+    /// The recovery read for a driver that died mid-turn: nothing closed the
+    /// execution row, so `executions.cost_usd` is still at its `0` default —
+    /// while the per-call receipts underneath it are durable and add up to
+    /// real money.
+    #[test]
+    fn settled_cost_sums_the_receipts_of_an_execution_that_never_closed() {
+        let store = Store::in_memory().unwrap();
+        let id = store
+            .begin_execution("fleet", "p", "zai", "glm-5.2")
+            .unwrap();
+        store.record_telemetry(id, &row(0, 0.02)).unwrap();
+        store.record_telemetry(id, &row(1, 0.03)).unwrap();
+
+        let summary = store.execution_summary(id).unwrap().unwrap();
+        assert_eq!(summary.cost_usd, 0.0, "the unclosed row reads $0");
+        assert!(
+            (store.execution_settled_cost_usd(id).unwrap() - 0.05).abs() < 1e-9,
+            "its receipts do not"
+        );
+    }
+
+    /// No landed model call settles at `$0` — the truth, not a fallback — and
+    /// an execution that does not exist reads the same way rather than
+    /// erroring.
+    #[test]
+    fn settled_cost_with_no_receipts_is_zero() {
+        let store = Store::in_memory().unwrap();
+        let id = store
+            .begin_execution("fleet", "p", "zai", "glm-5.2")
+            .unwrap();
+
+        assert_eq!(store.execution_settled_cost_usd(id).unwrap(), 0.0);
+        assert_eq!(store.execution_settled_cost_usd(id + 404).unwrap(), 0.0);
     }
 }

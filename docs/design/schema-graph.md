@@ -1,3 +1,9 @@
+---
+id: schema-graph
+title: "Design: Schema-Aware Code Graph for Zero Schema Drift"
+status: implemented
+---
+
 # Design: Schema-Aware Code Graph for Zero Schema Drift
 
 **Status:** Partially implemented — Phases 1–2 are shipped (`stella-graph`

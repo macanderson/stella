@@ -1,3 +1,9 @@
+---
+id: exploration-sharing
+title: "Design: Session-Shared Exploration Maps"
+status: implemented
+---
+
 # Design: Session-Shared Exploration Maps
 
 **Status:** Largely implemented — this is now a reference for shipped behaviour,
@@ -44,8 +50,8 @@ systems failure with five concrete causes, all verifiable in code:
 This is the same *passive-vs-active* failure the schema-graph spec identified
 for schema drift (`docs/design/schema-graph.md`, "Retrieval is passive — the
 agent must think to look"), and the same two-surfaces problem the telemetry
-spec diagnosed for the code graph (`docs/design/telemetry-data-plane-spec.md`
-§0.1). The fix follows the same playbook: make the knowledge **live** (staleness
+spec diagnosed for the code graph (the telemetry data-plane spec, removed
+when the site superseded it -- recover it from git history). The fix follows the same playbook: make the knowledge **live** (staleness
 tracked per file, continuously), make consultation **active** (injected and
 hinted, not merely available), and make production **expected** (nudged at the
 moment the ledger shows unmapped exploration happened).
@@ -221,7 +227,7 @@ computes it:
   response should say so).
 
 The ledger already records every `read_file`/`grep`-adjacent touch with
-reasons (`docs/design/file-touch-telemetry.md`), so the manifest is exactly
+reasons (`website/content/docs/telemetry/files-touched.mdx`), so the manifest is exactly
 "the evidence this map was built from" — with zero extra model tokens.
 
 ---
@@ -393,7 +399,7 @@ design explicitly invites).
 
 The graph is where agents (are supposed to) start: `neighbors` is the
 documented orientation op with no grep equivalent
-(`docs/design/graph-tool-analysis.md`). Surface coverage there:
+(`website/content/docs/commands/graph.mdx`). Surface coverage there:
 
 - `graph_query {op: neighbors, target: <file>}` appends, when the file
   appears in any exploration manifest:
@@ -495,10 +501,12 @@ All signals already flow through `store.db`; no new telemetry plumbing:
 - **Production rate:** sessions that triggered the §4d nudge and saved vs
   ignored.
 - **Causal check:** the existing recall A/B suppression
-  (`AB_RECALL_RATE`, `stella-cli/src/agent.rs:123-126`) already
-  suppresses the recall block on ~1/10 turns; since exploration pointer frames
-  ride that block, the same mechanism measures their marginal value with zero
-  new experiment code.
+  (`context.retrieval.ab_recall_rate`, armed by
+  `SessionMemory::arm_recall_control`) suppresses recall on every `rate`-th
+  turn — every tenth by default, counted durably per workspace so one-shot
+  surfaces take part too (#1221); since exploration pointer frames ride that
+  block, the same mechanism measures their marginal value with zero new
+  experiment code.
 
 ---
 
@@ -550,7 +558,7 @@ re-implemented.
 | Fleet worktree isolation (`stella-fleet/src/fleet.rs`) | Workers get read access to the primary map store; orchestrator saves wave-produced maps (§7) | **Extended** — one plumbed parameter |
 | Memory citations economy (`cite_memory`, `memory_citations`) | Reused verbatim for map-usefulness feedback; feeds refresh prioritization (§5) | **Wired** |
 | Reflection machinery + `reflections.jsonl` (`stella-cli/src/memory.rs`) | Carries the save-side nudge (§4d) | **Wired** |
-| Recall A/B suppression (`AB_RECALL_RATE`) | Measures pointer-frame value for free (§9) | **Wired** |
+| Recall A/B suppression (`context.retrieval.ab_recall_rate`) | Measures pointer-frame value for free (§9) | **Wired** — armed on every driver over a durable schedule (#1221) |
 | Workspace memories `.stella/memories/*.md` → system prompt | Distinct by design: memories are durable *lessons*, explorations are *maps of code as of a state*. Boundary: content describing "how area X works" belongs in an exploration (stalenessable), not a memory (not) | **Untouched** — boundary now stated |
 | Episodes (`stella-context/src/writeback.rs`) | Already recalled by the store; unchanged. Explorations are the durable, refreshable complement to episodic one-turn summaries | **Untouched** |
 | Compaction & dedup (`stella-core/src/compaction.rs`) | Already dedups byte-identical repeated tool outputs, so re-reading a map inside one session is near-free; unchanged | **Untouched** |

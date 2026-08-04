@@ -1,3 +1,9 @@
+---
+id: context-record-examples
+title: "Context record examples"
+status: living
+---
+
 # Context record examples
 
 Worked examples of the TOML context-record surface. For the fields they cover
@@ -5,7 +11,7 @@ these are **the schema reference**: [ADR 0012](../adr/0012-context-record-field-
 ratified that schema on 2026-07-30 and retired this file's former "illustrative,
 not ratified" caveat, and `stella-core/src/records/` implements it.
 
-`docs/context-pr.md` remains the canonical specification for the workflow around
+`docs/design/adaptive-context/context-pr.md` remains the canonical specification for the workflow around
 records, and none of these files is loaded by the engine — they are examples, not
 fixtures. What changed is that the shapes below are now decided rather than
 proposed, so a disagreement with one is a disagreement with a ratified ADR.
@@ -188,7 +194,7 @@ an 86% overhead on the text payload for no added meaning.
 
 The cost is not only tokens. A summary that drops a qualifier ("in CI", "for new
 code") changes what the agent does, so two fields that can disagree about what a
-rule says is a correctness hazard, not just duplication. And `docs/context-pr.md`
+rule says is a correctness hazard, not just duplication. And `docs/design/adaptive-context/context-pr.md`
 §6.2 already excludes presentational `name` / `description` from the canonical
 record — by that logic they are not part of the record's meaning at all.
 

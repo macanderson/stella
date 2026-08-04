@@ -91,6 +91,10 @@ pub(crate) async fn run_raw_one_shot(
         // recall, or are refused with a reason (#453).
         m.register_external_providers(|message| eprintln!("  {} {message}", "!".yellow()))
             .await;
+        // The A/B recall control, armed before the one recall this process
+        // makes (#1221). The counter is durable, so "every rate-th turn"
+        // means something on a surface that is one turn per process.
+        m.arm_recall_control();
     }
     // Phase 2 (#713): carried forward rather than emitted here — the turn's
     // event channel is created inside `run_turn`, after the messages recall
@@ -271,7 +275,12 @@ pub async fn run_goal_cmd(
         SessionMemory::open_for_session(&cfg.workspace_root, true, &cfg.authority, &active_rules);
     // Phase 2 (#713): carried to the turn runner, which owns the event channel.
     let mut recall_event = None;
-    if let Some(m) = &memory {
+    if let Some(m) = &mut memory {
+        // One arm for the whole goal run (#1221): the judged rounds below are
+        // stages of one turn — they share this run's episode, so they must
+        // share its arm, and re-arming per round would count one prompt as N
+        // turns of the schedule.
+        m.arm_recall_control();
         if use_pipeline {
             // Pipeline rounds recall frames through their own port (wired to
             // this same store in `run_goal_pipeline_turn`) and emit their own

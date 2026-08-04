@@ -28,7 +28,7 @@ fallback, integrations).
 **Still read as before:** `.stella/mcp.toml`, `.stella/domains.toml`,
 `.stella/tools/*.toml`, `~/.stella/credentials.toml`,
 `~/.stella/integrations.json`, and project `.env` files. See
-[`docs/filesystem-layout.md`](../../filesystem-layout.md) for the full
+[`docs/design/filesystem-layout.md`](../../filesystem-layout.md) for the full
 on-disk map.
 
 **Companion files:** [`stella.today.toml`](./stella.today.toml) renders every

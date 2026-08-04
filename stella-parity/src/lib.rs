@@ -458,11 +458,39 @@ pub static CAPABILITIES: &[Capability] = &[
             mechanism: "`stella run` (default pipeline path) with the scope-review approval gate",
             witness: "non_tty_text_run_wiring_stays_headless_and_json_run_wiring_never_bypasses_scope_review",
         },
-        api: SurfacePosture::Deferred {
-            waiting_on: "a runs resource (or moving the approval boundary into the engine): serve \
-                         does not link stella-pipeline, so the product's defining verification \
-                         ladder — and the approval gate with it — is structurally unreachable \
-                         from the API",
+        // Shipped in #1288, as the mode flag this row's `waiting_on` named as
+        // the alternative to a `/v1/runs` resource: `pipeline` on `POST
+        // /v1/turns` (and `POST /v1/sessions/{id}/turns`) drives the turn
+        // through `Pipeline::run` instead of a bare engine step loop, over
+        // the SAME transport every other turn already uses — the SSE
+        // stream, `POST /v1/turns/{id}/cancel`, and the settlement hook all
+        // work unchanged, exactly as `goal.loop` (#1297) established for its
+        // own mode flag. The one genuinely new wire primitive is the
+        // approval gate: `ServerFrame::ScopeReviewRequest` and `POST
+        // /v1/turns/{id}/approve`, symmetric with `tool-result` /
+        // `provider-result` (`stella-serve/src/pipeline_run.rs`,
+        // `stella-serve/src/remote.rs::RemoteApprovalGate`). Verification's
+        // process-launching ports (`TestRunner`, `DiagnosticRunner`) are
+        // remoted through the SAME `ToolRequest`/`ToolResultIn` frames every
+        // tool call already crosses (`RemoteVerificationRunner`) — not a new
+        // containment decision, `tools.local_execution`'s posture below
+        // applied to two more typed callers.
+        //
+        // Declared, not silent, follow-up (`pipeline_run.rs`'s own module
+        // docs carry the full list): context recall, repo structure, lint,
+        // mutation, coverage, and candidate-workspace isolation are not
+        // wired yet (every one of those ports is designed to degrade open
+        // when absent, so a served run still verifies — it just cannot
+        // isolate best-of-N candidates or measure diff coverage yet); the
+        // witness-author role rides the worker's provider rather than
+        // getting its own id the way judge does; and `pipeline` is refused
+        // alongside `goal`/`sub_agents` on the same turn rather than
+        // composed with them.
+        api: SurfacePosture::Shipped {
+            mechanism: "a `pipeline` block on POST /v1/turns and POST /v1/sessions/{id}/turns \
+                        drives the turn through Pipeline::run; POST /v1/turns/{id}/approve \
+                        resolves the scope-review gate",
+            witness: "a_pipeline_run_is_requestable_over_the_wire_and_its_approval_gate_round_trips",
         },
     },
     Capability {

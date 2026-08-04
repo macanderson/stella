@@ -59,23 +59,30 @@ A red gate is an automatic "not yet":
 ```bash
 make gate                # = no-scratch + action-pins + cargo-install-pins
                          #   + license-allowlist-parity + shellcheck
-                         #   + invariants + file-size
+                         #   + invariants + doc-links + file-size
                          #   + wire-schema + rustdoc -D warnings + fmt --check
                          #   + clippy -D warnings + test --workspace
 ```
 
-CI enforces the same twelve steps split across two workflows:
+CI enforces the same thirteen steps split across two workflows:
 `/.github/workflows/ci.yml`'s required job runs everything except `invariants`
-and adds a release smoke build (thin LTO); `invariants.yml` runs that one on its
-own, because it triggers on `docs/**` and `*.md` paths that `ci.yml` ignores.
+and `doc-links`, and adds a release smoke build (thin LTO); `docs-guards.yml`
+runs those two, because they trigger on the `docs/**` and `*.md` paths `ci.yml`
+ignores.
 
-**Doc citations are not gated.** Cite the public docs site by path and anything
-internal — a design spec, an ADR, an upstream contract — by URL. See
-`docs/README.md § How to cite a document`. Two guards used to enforce a
-repo-relative citation style here (`check-normative-home.sh`, which matched a
-`NORMATIVE-HOME:` header against the `contextgraph-*` git rev, and
-`check-doc-citations.sh`, which required every cited `docs/**.md` path and `§N`
-to resolve); both were retired with the style they enforced.
+**Cite a document by its id, not its path.** Every document under `docs/` that
+anything cites carries frontmatter with a stable `id`, and a citation names that
+id — `doc:context-reuse §4`. Moving the file cannot break it. A document with no
+`id` is deliberately not citable; `make doc-adopt DOC=…` gives it one. Legacy
+path citations still work and repair themselves: `docs/manifest.json` records
+id → path, so `make doc-links-fix` repoints them after a move. Anything outside
+this repository is cited by URL. See `docs/README.md § How to cite a document`,
+and `make doc-report` for what has gone stale.
+
+This replaces two path-based guards (`check-normative-home.sh`,
+`check-doc-citations.sh`) that were brittle in exactly the way their subject
+was, and that only ever read Rust comments — 16 dead markdown-to-markdown links
+had accumulated underneath them.
 
 Three rungs, each a superset of the one above:
 
@@ -324,7 +331,7 @@ editing Stella's own code should know what lives where:
 |---|---|
 | `.stella/memories/*.md` | Durable lessons baked into the byte-stable system prompt prefix. Sorted by filename, loaded once per session. (Write side: the `save_memory` tool.) |
 | `.stella/skills/<slug>/SKILL.md` | Auto-promoted skills from recurring reflection lessons. Never enforced — selected and injected as volatile context. |
-| `.stella/rules/*.toml` | Published **context records** — this repository's own steering policy, one record per file ([`docs/context-pr.md`](docs/context-pr.md)). The one part of `.stella/` that is **tracked in Git**, because a record only steers a teammate's session if it travels with the repository. Beside them, `governance.toml` sets the governance mode (this repo is `regulated`) and `promotions.jsonl` is the hash-chained ledger of enforcement grants; `stella context validate` re-verifies both in CI on every PR. Edit through `stella context keep` / `promote`, not by hand. |
+| `.stella/rules/*.toml` | Published **context records** — this repository's own steering policy, one record per file ([`docs/design/adaptive-context/context-pr.md`](docs/design/adaptive-context/context-pr.md)). The one part of `.stella/` that is **tracked in Git**, because a record only steers a teammate's session if it travels with the repository. Beside them, `governance.toml` sets the governance mode (this repo is `regulated`) and `promotions.jsonl` is the hash-chained ledger of enforcement grants; `stella context validate` re-verifies both in CI on every PR. Edit through `stella context keep` / `promote`, not by hand. |
 | `.stella/tools/*.toml` | Developer-defined custom script tools. Also scanned at `~/.stella/tools/`. |
 | `.stella/settings.json` | Project-scope provider config (overrides built-ins or defines new providers) and tool switches (`tools.bash: "off"` withholds the shell tool — every built-in, the shell included, is registered by default since #710). Merged per-field with org-managed and user scopes. |
 | `.stella/mcp.toml` | MCP server config — extra tools merged into the registry at session start. |

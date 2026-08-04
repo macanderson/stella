@@ -44,18 +44,19 @@ Manual version bumps are therefore only needed for the hand-cut flows below.
 Two things, and they are not the same thing:
 
 - **[`CHANGELOG.md`](CHANGELOG.md)** — the durable record, one section per
-  version. Contributors still write the best entries: add a bullet under
-  `## [Unreleased]` in the PR whenever a user would notice the change, and
-  the release rolls your words verbatim. When a release arrives with
-  `[Unreleased]` empty — most releases, at one release per merge —
-  `auto-tag.yml` drafts the section from the **released diff** instead
+  version, and **CI writes it, not PRs.** `auto-tag.yml` drafts the section
+  for every release from the **released diff**
   ([`scripts/changelog-ai.sh`](scripts/changelog-ai.sh), the same AI Gateway
   key and model as the release notes) and injects it before the roll, at both
   roll sites (the tagged release commit and the version-sync PR), so the tag
-  and main record identical text. A release whose diff has nothing
-  user-facing gets a one-line `_Internal: …_` note. If the key is unset or
-  the call fails, the roll proceeds with an empty section exactly as before —
-  drafting is best-effort, never release-blocking.
+  and main record identical text. The draft **replaces** whatever sits under
+  `[Unreleased]` — contributors and coding agents should leave that section
+  alone rather than hand-write entries in a PR; a split between hand-written
+  and drafted entries is what used to make this file inconsistent. A release
+  whose diff has nothing user-facing gets a one-line `_Internal: …_` note. If
+  the AI Gateway key is unset or the call fails, the roll proceeds with
+  whatever was already under `[Unreleased]` (normally nothing) exactly as
+  before — drafting is best-effort, never release-blocking.
 - **GitHub Release notes** — generated at publish time by `release.yml` from
   the commit range. Release-note prose, not a curated record, and not
   something to edit by hand.

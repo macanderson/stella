@@ -96,14 +96,12 @@ const MEMORY_PROMPT_BUDGET_CHARS: usize = 16_000;
 /// `explorations` tool call away.
 const EXPLORATION_INDEX_BUDGET_CHARS: usize = 2_000;
 
-/// A/B recall measurement rate (Proposal 4): `1/N` turns suppress recall
-/// entirely so the outcome can be compared against recalled turns. 10 means
-/// ~10% of turns are control turns. 0 disables the A/B mechanism.
-///
-/// Deliberately *not* `STELLA_`-prefixed: that prefix means "environment
-/// variable" everywhere else in this workspace, and this is a compile-time
-/// constant with no override.
-pub(crate) const AB_RECALL_RATE: u32 = 10;
+// The A/B recall measurement rate lived here as a `pub(crate)` constant every
+// driver had to pass by hand, and exactly one of them did. It is now
+// `context.retrieval.ab_recall_rate` (`crate::settings`), read once at session
+// open and applied by `SessionMemory::arm_recall_control` — one door, no
+// per-driver copy of the schedule, and a workspace can turn the control off
+// without editing this file (#1221).
 
 /// Assemble the session's system prompt from a `base` instruction set plus
 /// the workspace's saved memories and the workspace rules section (Tier 1

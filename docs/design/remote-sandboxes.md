@@ -1,3 +1,9 @@
+---
+id: remote-sandboxes
+title: "Design: Remote sandboxes — one sandbox type, on your disk or someone else's"
+status: proposed
+---
+
 # Design: Remote sandboxes — one sandbox type, on your disk or someone else's
 
 **Status:** Proposed · **Date:** 2026-08-02 · **Nothing here is built.**

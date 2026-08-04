@@ -1379,7 +1379,11 @@ pub async fn run_deck_session(
         // Phase 2 (#713): the deck recalled and reported nothing. The event
         // is carried to `run_lead_turn`, which owns the turn's channel.
         let mut recall_event = None;
-        if let Some(m) = &memory {
+        if let Some(m) = &mut memory {
+            // The A/B control, armed before either branch recalls (#1221): on a
+            // control turn the pipeline's own port goes frameless with the
+            // block, so a deck pipeline turn is a real arm.
+            m.arm_recall_control();
             if pipeline_on {
                 // The pipeline recalls frames itself (its port is this same
                 // store) and renders them into its one volatile recall+goal

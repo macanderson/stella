@@ -35,6 +35,7 @@ __all__ = [
     "Dataset",
     "Registry",
     "DEFAULT_REGISTRY",
+    "export_root",
     "harbor_cache_root",
     "sample_tasks",
 ]
@@ -115,6 +116,15 @@ class Dataset:
         _, _, digest = self.harbor_id.partition("@")
         return digest
 
+    @property
+    def package_dir(self) -> str:
+        """Directory name ``harbor download --export`` writes tasks under.
+
+        The last segment of the package name, so ``terminal-bench/
+        terminal-bench-2-1@sha256:…`` exports into ``terminal-bench-2-1/``.
+        """
+        return self.name_only.rsplit("/", 1)[-1]
+
     def to_json(self, task_count: int | None = None) -> dict[str, Any]:
         return {
             "key": self.key,
@@ -139,6 +149,18 @@ def harbor_cache_root() -> Path:
     if override:
         return Path(override).expanduser() / "tasks" / "packages"
     return Path.home() / ".cache" / "harbor" / "tasks" / "packages"
+
+
+def export_root() -> Path:
+    """Where ArenaBench keeps datasets exported for offline running.
+
+    Overridable with ``ARENABENCH_DATASETS`` so a CI runner or a second
+    checkout can keep its own copy.
+    """
+    override = os.environ.get("ARENABENCH_DATASETS")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".arenabench" / "datasets"
 
 
 def _read_task_toml(path: Path, fallback_name: str) -> Task | None:
@@ -219,6 +241,40 @@ class Registry:
             roots.append(Path(env_override).expanduser())
         roots.append(harbor_cache_root() / dataset.namespace)
         return roots
+
+    def local_run_path(self, key: str) -> Path | None:
+        """A directory ``harbor run --path`` accepts, if one has been exported.
+
+        **This is what makes a long match survivable.** Given a registry ref,
+        Harbor resolves every task against its Supabase backend *at run time* —
+        one round trip per task, even though the tasks are already unpacked on
+        disk. A single failed lookup raises out of the job and kills every
+        remaining trial: two measured runs here died that way at task 3 and
+        task 7, taking both contestants down together and leaving a scoreboard
+        that looked like an agent result.
+
+        Running from an export removes the network from the hot path entirely.
+        Provenance is unchanged and not weakened: the export is produced *from*
+        the pinned digest, so the bytes are the pinned bytes — the digest is
+        resolved once, at download, instead of ninety times under load.
+
+        Harbor's own cache is deliberately not offered here. It nests each task
+        under its content hash (``<task>/<sha>/task.toml``), which ArenaBench
+        can enumerate but ``--path`` reads as an empty dataset.
+        """
+        dataset = self.get(key)
+        if dataset is None:
+            return None
+        roots = []
+        explicit = self.export_dirs.get(key)
+        if explicit:
+            roots.append(Path(explicit))
+        roots.append(export_root() / key)
+        for root in roots:
+            candidate = root / dataset.package_dir
+            if candidate.is_dir() and any(candidate.glob("*/task.toml")):
+                return candidate
+        return None
 
     def tasks(self, key: str) -> list[Task]:
         """Every task in a dataset, sorted by name. Empty if not materialised.

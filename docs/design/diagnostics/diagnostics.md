@@ -1,3 +1,9 @@
+---
+id: diagnostics
+title: "Diagnostics for the workspace — the fourth plane, and why content in a log must not compile"
+status: proposed
+---
+
 # Diagnostics for the workspace — the fourth plane, and why content in a log must not compile
 
 **Status:** **Proposed.** Generalises the shipped, crate-scoped design in
@@ -440,7 +446,7 @@ listed as lost, and §7 recovers the correlation.
 `code` is stable and public, in the way `rustc`'s `E0308` is: operators alert on
 it, docs link it, and it outlives the message text.
 
-`docs/reference/diagnostics.md` is **generated** from the facet registry by a
+`docs/reference/diagnostics.md` is **generated** from the facet registry by a <!-- doc-links:ignore -->
 `make` target, one section per code: what it means, what fields it carries, what
 to do about it. `scripts/check-diagnostic-codes.sh` fails the gate on an
 undocumented code, a duplicated code, or a documented code no longer emitted.
@@ -481,7 +487,7 @@ are the ones that change a user's life.
 | **4** | `or_diag`, `check-silent-discards.sh`, ceilings, and the first crate cleaned (`stella-store`) | starts the ratchet falling |
 | **5** | `log_error!`, `PathClass`, `Redacted` ceiling script | the field vocabulary the remaining crates need |
 | **6** | `DomainBridge`; property 6; `stella-model`, `stella-tools`, `stella-cli` facets | the merged timeline |
-| **7** | `docs/reference/diagnostics.md` generator + gate (§11); the off-by-default `otel` feature (§10) | the public surface, and the deferred dependency on its own terms |
+| **7** | `docs/reference/diagnostics.md` generator + gate (§11) <!-- doc-links:ignore -->; the off-by-default `otel` feature (§10) | the public surface, and the deferred dependency on its own terms |
 
 ---
 

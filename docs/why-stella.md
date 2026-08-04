@@ -1,3 +1,9 @@
+---
+id: why-stella
+title: "Why stella"
+status: living
+---
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="brand/wordmark-paper.svg">

@@ -336,6 +336,11 @@ async fn run_pipeline_one_shot(
         if let Some((_, id)) = &execution {
             m.set_execution_id(*id);
         }
+        // The A/B control, armed before anything recalls (#1221): a control
+        // turn leaves BOTH the block below and the pipeline's own recall port
+        // frameless, and the durable schedule is what lets a
+        // one-turn-per-process surface produce an arm at all.
+        m.arm_recall_control();
     }
     if let Some(m) = &memory {
         // Frames ride the pipeline's own recall port below (`recall:` in the
@@ -987,7 +992,10 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             // Phase 2 (#713): carried to `run_goal_turn`, which owns the
             // event channel this turn's telemetry rides.
             let mut recall_event = None;
-            if let Some(m) = &memory {
+            if let Some(m) = &mut memory {
+                // Same schedule as the plain prompts above (#1221): one
+                // interleaved sequence per workspace, not one per command.
+                m.arm_recall_control();
                 let recalled = m.recall_block_reported(goal).await;
                 recall_event = recalled.telemetry_event();
                 inject_recall_block(&mut messages, recalled.text);
@@ -1072,10 +1080,11 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
 
         let mut recall_event = None;
         if let Some(m) = &mut memory {
-            // Proposal 4: A/B recall measurement — on ~1/10 turns (the A/B
-            // rate), suppress recall so the outcome is comparable to recalled
-            // turns. The suppressed flag rides with the turn for attribution.
-            m.maybe_suppress_recall(AB_RECALL_RATE);
+            // Proposal 4: A/B recall measurement — on every `rate`-th turn in
+            // this workspace, suppress recall so the outcome is comparable to
+            // recalled turns. The suppressed flag rides with the turn for
+            // attribution.
+            m.arm_recall_control();
             let recalled = m.recall_block_reported(input).await;
             recall_event = recalled.telemetry_event();
             inject_recall_block(&mut messages, recalled.text);
@@ -1178,21 +1187,13 @@ pub(crate) async fn record_turn_episode(
     } else {
         EpisodeOutcome::Failure
     };
-    // Proposal 4: tag the episode summary when recall was suppressed (A/B
-    // control turn) so future analysis can compare recalled vs control.
-    let ab_tag = if m.recall_was_suppressed() {
-        " [ab-control]"
-    } else {
-        ""
-    };
-    m.record_episode(
-        &format!("{prompt}{ab_tag}"),
-        episode_outcome,
-        &turn_files,
-        started_unix,
-        None,
-    )
-    .await;
+    // Proposal 4's `[ab-control]` tag is appended by `record_episode` itself,
+    // from the suppression flag this turn was armed with — it used to be
+    // composed into the prompt here, where a 240-character prompt truncated it
+    // away, and where the three other episode-writing surfaces never had it at
+    // all.
+    m.record_episode(prompt, episode_outcome, &turn_files, started_unix, None)
+        .await;
 }
 
 /// Surface a post-turn [`ReflectionReport`] for human text output. Machine

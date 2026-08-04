@@ -56,6 +56,15 @@ real money spent, and nothing can reconstruct it once written. The in-memory
 `BudgetGuard` is the *gate*; the ledger is the *record*, and dispatch writes
 both.
 
+Both halves of that record are decided by the **worker**, not by this crate:
+`WorkerOutcome` carries them in and `finish_attempt` stamps them verbatim. A
+shared-tree run makes that a load-bearing detail — every worker of the wave
+commits onto one `HEAD`, so *which* commits are a task's cannot be re-derived
+from the shared log afterwards, and a worker that dies mid-attempt still owes
+the ledger the money it already spent. `stella-cli`'s fleet worker answers
+both at its own seam (`fleet_commits.rs`, `fleet_cmd.rs`); a caller wiring
+this crate to its own `FleetWorker` inherits the same obligation.
+
 **A fleet `run_id` is not an `execution_id` and not a session id.** It is the
 top of the hierarchy above — one multi-agent fan-out — and it is owned by this
 crate. `execution_id` is one row of `stella-store`'s `executions` table (one

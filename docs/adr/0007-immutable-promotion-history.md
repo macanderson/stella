@@ -1,3 +1,9 @@
+---
+id: 0007-immutable-promotion-history
+title: "ADR 0007: Immutable Promotion History"
+status: living
+---
+
 # ADR 0007: Immutable Promotion History
 
 - Status: Accepted — ratified by repository owner 2026-07-23 (was: Proposed)

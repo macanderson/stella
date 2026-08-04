@@ -216,7 +216,7 @@ judge-pass never beats a warned deterministic pass.
 | — | §1 diff-coverage (needs a coverage-tooling decision), §3 impacted selection as ladder evidence (see the design constraint above) | Remaining |
 
 The per-PR degradation gate (`pipeline/tests/degradation_gate.rs`, PR #1038,
-`docs/verification-gate.md`) now pins every decision and its spend, so each
+`docs/design/verification-gate.md`) now pins every decision and its spend, so each
 later change to this pipeline lands against a matrix that fails loudly on
 drift.
 

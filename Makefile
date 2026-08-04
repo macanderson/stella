@@ -28,7 +28,7 @@ CARGO_SCOPE ?= --workspace
 # wire-schema is separated out because it runs the two schema exporters, which
 # is a cargo build.
 GATE_GUARDS_FAST := no-scratch action-pins cargo-install-pins license-allowlist-parity \
-                    repro-wiring shellcheck invariants file-size
+                    repro-wiring shellcheck invariants doc-links file-size
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 .PHONY: help
@@ -149,6 +149,27 @@ repro-wiring: ## Assert both release paths build through scripts/repro-build.sh 
 .PHONY: invariants
 invariants: ## Assert the architectural invariants have one home and stable numbering (#630)
 	@./scripts/check-invariants.sh
+
+.PHONY: doc-links
+doc-links: ## Assert every doc citation resolves to an identified document
+	@python3 ./scripts/check-doc-links.py check
+
+.PHONY: doc-links-fix
+doc-links-fix: ## Repoint citations after a doc moved, and rewrite docs/manifest.json
+	@python3 ./scripts/check-doc-links.py fix
+
+.PHONY: doc-links-fix-by-name
+doc-links-fix-by-name: ## ...also repoint broken paths by filename (a guess — read the list first)
+	@python3 ./scripts/check-doc-links.py fix --by-name
+
+.PHONY: doc-report
+doc-report: ## Which documents are stale, superseded, or cited by nothing
+	@python3 ./scripts/check-doc-links.py report
+
+.PHONY: doc-adopt
+doc-adopt: ## Scaffold frontmatter onto a document so it can be cited: make doc-adopt DOC=path
+	@test -n "$(DOC)" || { echo "usage: make doc-adopt DOC=docs/design/thing.md"; exit 2; }
+	@python3 ./scripts/check-doc-links.py init $(DOC)
 
 .PHONY: wire-schema
 wire-schema: ## Assert docs/wire/ still describes the AgentEvent wire format (#971)

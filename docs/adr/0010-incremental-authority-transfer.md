@@ -1,3 +1,9 @@
+---
+id: 0010-incremental-authority-transfer
+title: "ADR 0010: Incremental Authority Transfer"
+status: living
+---
+
 # ADR 0010: Incremental Authority Transfer
 
 - Status: **Accepted** — ratified by repository owner 2026-07-26 (was: Proposed).

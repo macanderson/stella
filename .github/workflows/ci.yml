@@ -3,11 +3,10 @@ name: ci
 on:
   pull_request:
     # Prose-only changes can't break the Rust build — don't spend an hour of
-    # CI on them. The site is still built by docs.yml, and `invariants.yml`
-    # triggers on `**/*.md` so a second copy of the AGENTS.md invariant list
-    # cannot land here unnoticed; it is deliberately isolated from this
-    # workflow. Doc citations themselves are not gated anywhere — see
-    # `docs/README.md § How to cite a document`.
+    # CI on them. Nothing here goes ungated: the site is built by docs.yml, and
+    # `docs-guards.yml` triggers on `docs/**` and `**/*.md` to run the two
+    # prose guards (doc citations resolve; the AGENTS.md invariant list has one
+    # copy). It is deliberately isolated from this workflow.
     # (`*.md` matches the repo root only — GitHub's `*` stops at `/` — so a
     # crate's own README still pays the gate, which is what we want.)
     paths-ignore:

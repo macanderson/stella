@@ -1,3 +1,9 @@
+---
+id: filesystem-layout
+title: "Where Stella puts things on your disk"
+status: living
+---
+
 # Where Stella puts things on your disk
 
 Every path Stella reads or writes, what lives there, and whether it is safe to

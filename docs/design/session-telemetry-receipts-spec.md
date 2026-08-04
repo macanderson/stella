@@ -1,3 +1,9 @@
+---
+id: session-telemetry-receipts-spec
+title: "Session Telemetry & Context Receipts — Schema Spec"
+status: living
+---
+
 # Session Telemetry & Context Receipts — Schema Spec
 
 Status: proposed for implementation — extends epic **#364** ("Context receipts").
