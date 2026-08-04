@@ -17,16 +17,13 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Tabs, Widget};
 use unicode_width::UnicodeWidthChar;
 
-use stella_protocol::{CiStatus, PrStatus};
-
 use crate::cache_panel;
 use crate::composer::{ComposerLayout, layout as composer_layout, split_row_at};
-use crate::deck::{DeckTab, PrInfo, WorkspaceModel};
+use crate::deck::{DeckTab, WorkspaceModel};
 use crate::deck_ui::{DeckUi, InstalledMode, IssuesMode};
 use crate::panel_guard::{guarded_band, guarded_overlay};
 use crate::render::{render_slash_popup, scroll_window_start, slash_popup_area};
-use crate::role_panel;
-use crate::textline::{self, pr_status_label, stage_label};
+use crate::textline;
 use crate::{notice, splash, theme, views};
 
 /// The accent prompt prefix on every composer row. Chrome, not content — it
@@ -73,20 +70,16 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     let text_w = (area.width as usize).saturating_sub(PROMPT_PREFIX_W + COMPOSER_GUTTER_W);
     let c_layout = composer_layout(&ui.composer, text_w.max(1));
     let composer_h = c_layout.rows.len().clamp(1, DECK_COMPOSER_MAX_ROWS) as u16;
-    // The statline grows a third row only when the focused agent has earned a
-    // low-hit-rate diagnosis (#267) — the common case stays the compact
-    // label-over-value pair; a session that needs the warning gets it without
-    // permanently taxing every other session's content area.
+    // The statline is one zoned row (D1); it grows a second only when the
+    // focused agent has earned a low-hit-rate diagnosis (#267) — a session
+    // that needs the warning gets it without permanently taxing every other
+    // session's content area.
     let has_diagnosis = model
         .agents
         .get(ui.focused)
         .and_then(|a| a.cache_diagnosis(cache_panel::LOW_HIT_RATE_THRESHOLD))
         .is_some();
-    // 2 rows (labels over values) + the always-on MODELS row + the diagnosis
-    // row when one is earned. MODELS is permanent by design: which pins are
-    // serving triage, worker and judge is the thing a scored run is read
-    // against, so it must never be the row that got dropped.
-    let statline_h = if has_diagnosis { 4 } else { 3 };
+    let statline_h = if has_diagnosis { 2 } else { 1 };
     let bands = Layout::vertical([
         Constraint::Length(3),          // tab bar
         Constraint::Min(1),             // active view
@@ -129,7 +122,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         render_composer_footer(model, ui, &c_layout, bands[5], b)
     });
     guarded_band(buf, bands[6], "statline", |b| {
-        render_status_bar(model, ui, bands[6], b)
+        crate::statline::render(model, ui, bands[6], b)
     });
     let composer_cursor = composer_cursor_position(&c_layout, bands[4]);
 
@@ -140,8 +133,11 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     if let Some(menu) = slash.filter(|m| !m.is_empty()) {
         let selected = ui.slash_selected.min(menu.matches.len().saturating_sub(1));
         let popup = slash_popup_area(area, bands[4], menu.matches.len());
+        // Live values in descriptions, read from the model at render time —
+        // never cached in `DeckUi` (D3).
+        let live = slash_live_hints(model, ui);
         guarded_band(buf, popup, "slash menu", |b| {
-            render_slash_popup(&menu, selected, popup, b)
+            render_slash_popup(&menu, selected, &live, popup, b)
         });
     }
     if ui.queue_open {
@@ -186,13 +182,36 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     }
     if ui.context_open {
         guarded_overlay(buf, area, "context", |b| {
-            render_context_overlay(ui, area, b)
+            render_context_overlay(model, ui, area, b)
         });
     }
     if ui.inspect_open {
         guarded_overlay(buf, area, "inspect", |b| {
             render_inspect_overlay(ui, area, b)
         });
+    }
+    // The floating cards (`/tasks` · `/scope` · `/witness` · `/models` ·
+    // `/budget`): at most one is up (`CardState::raise` lowers the rest);
+    // help and the startup notice still win the top of the stack below.
+    if let Some(card) = ui.cards.open {
+        use crate::deck_ui::cards::Card;
+        match card {
+            Card::Tasks => guarded_overlay(buf, area, "tasks card", |b| {
+                views::task_card::render(model, ui, area, b)
+            }),
+            Card::Scope => guarded_overlay(buf, area, "scope card", |b| {
+                views::scope_card::render(model, ui, area, b)
+            }),
+            Card::Witness => guarded_overlay(buf, area, "witness panel", |b| {
+                views::witness_card::render(model, ui, area, b)
+            }),
+            Card::Models => guarded_overlay(buf, area, "models card", |b| {
+                views::models_card::render(model, ui, area, b)
+            }),
+            Card::Budget => guarded_overlay(buf, area, "budget card", |b| {
+                views::budget_card::render(model, ui, area, b)
+            }),
+        }
     }
     // (The former ENGINE overlay is gone: the engine panel is the full-width
     // body of the SETTINGS tab — see `views::settings::render`.)
@@ -225,6 +244,9 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         || ui.inbox_open
         || ui.context_open
         || ui.inspect_open
+        // The floating cards are modal while up (their handler owns every
+        // key ahead of the composer — see `deck_ui::cards`).
+        || ui.cards.is_open()
         || slash_open
         // The routing card holds the user's words and owns every key until
         // they say where they go — it is checked first in `handle_deck_key`.
@@ -244,6 +266,47 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     if !overlay_owns_keyboard && let Some(pos) = composer_cursor {
         frame.set_cursor_position(pos);
     }
+}
+
+/// The slash popup's live description overrides, read from the model at
+/// render time so a row like `/inbox` carries its current unread count.
+/// Recomputed per frame — never cached in `DeckUi` (D3).
+fn slash_live_hints(model: &WorkspaceModel, ui: &DeckUi) -> Vec<(String, String)> {
+    let mut hints = Vec::new();
+    let unread = ui.notifications.iter().filter(|n| !n.read).count();
+    if unread > 0 {
+        hints.push(("/inbox".to_string(), format!("{unread} unread")));
+    }
+    if let Some(agent) = model.agents.get(ui.focused) {
+        let tasks = &agent.model.tasks;
+        if !tasks.is_empty() {
+            let done = tasks
+                .iter()
+                .filter(|t| t.status == stella_protocol::TaskStatus::Completed)
+                .count();
+            hints.push((
+                "/tasks".to_string(),
+                format!("task board — {done} of {} done", tasks.len()),
+            ));
+        }
+        if !agent.model.proof.is_empty() {
+            hints.push((
+                "/witness".to_string(),
+                crate::views::witness_card::phase_label(&agent.model.proof),
+            ));
+        }
+    }
+    match model.budget_cap_usd {
+        Some(cap) => hints.push((
+            "/budget".to_string(),
+            format!("run ${:.2} of ${cap:.2} · edit the cap", model.total_cost()),
+        )),
+        None => hints.push((
+            "/budget".to_string(),
+            format!("run ${:.2} · set a spend cap", model.total_cost()),
+        )),
+    }
+    hints
 }
 
 /// The deck's tab navigation bar.
@@ -572,7 +635,7 @@ fn render_inbox_overlay(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &m
 /// The CONTEXT overlay (empty-prompt `→`, `/context`): what THIS session is
 /// running with — the active skills and the MCP servers — without leaving
 /// the transcript. Read-only; management stays on the SKILLS/MCP tabs.
-fn render_context_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
+fn render_context_overlay(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
     let w = area.width.saturating_sub(8).min(96);
     let h = area.height.saturating_sub(6).min(area.height);
     let popup = Rect {
@@ -661,6 +724,46 @@ fn render_context_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
         }
         lines.push(Line::from(spans));
     }
+
+    // The session vitals that left the statline (D1): cache volumes, the
+    // warmth countdown, engine and pipeline state. Diagnostics, not
+    // glanceables — this overlay is where a reader who wants them looks.
+    lines.push(Line::default());
+    lines.push(Line::from(Span::styled(
+        "  SESSION VITALS",
+        theme::accent().add_modifier(Modifier::BOLD),
+    )));
+    let dim = Style::default().fg(theme::TEXT_TERTIARY);
+    let focused = model.agents.get(ui.focused);
+    lines.push(Line::from(vec![
+        Span::styled("  cache ", dim),
+        Span::styled(
+            cache_panel::cache_volumes(
+                model.cache_hit_tokens(),
+                model.total_cache_write_tokens(),
+                model.total_input_tokens(),
+            ),
+            Style::default().fg(theme::INK),
+        ),
+        Span::styled("  ·  warmth ", dim),
+        Span::styled(
+            cache_panel::fmt_warmth(focused.and_then(|a| a.cache_warmth_secs(model.now_ms))),
+            Style::default().fg(theme::INK),
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  engine ", dim),
+        Span::styled(
+            format!("{} active", model.active_count()),
+            Style::default().fg(theme::INK),
+        ),
+        Span::styled("  ·  pipeline ", dim),
+        if model.pipeline {
+            Span::styled("on", Style::default().fg(theme::SUCCESS_BRIGHT))
+        } else {
+            Span::styled("off", dim)
+        },
+    ]));
 
     lines.push(Line::default());
     lines.push(Line::from(Span::styled(
@@ -1284,401 +1387,6 @@ fn render_composer_footer(
     };
     Paragraph::new(Line::from(left)).render(left_area, buf);
     render_right(right, area, buf);
-}
-
-/// The statline: labeled cells (dim micro-label over bright value) separated by
-/// hairlines, with the brand pinned left and the ethos chip pinned right.
-/// Two rows tall; the context/token meter is kept prominent.
-///
-/// `pub(crate)`: the cache-panel tests in [`crate::cache_panel`] render a full
-/// statline to assert on the CACHE / SAVED / WARMTH cells, so they call this
-/// from outside the file — the assertions live next to the formatters they
-/// exercise rather than in this module's own test file.
-pub(crate) fn render_status_bar(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer) {
-    if area.height == 0 {
-        return;
-    }
-    let top_y = area.y;
-    let bot_y = area.y + (area.height.saturating_sub(1)).min(1);
-
-    let dim = Style::default().fg(theme::TEXT_TERTIARY);
-    let val = Style::default().fg(theme::TEXT_PRIMARY);
-    let sep = Style::default().fg(theme::HAIRLINE);
-
-    // ── the cells, left → right (brand + ethos are pinned separately) ──────
-    let cpu = f64::from(model.global_cpu_pct);
-    let focused = model.agents.get(ui.focused);
-    // Current window occupancy = the latest call's prompt size, not the
-    // session's cumulative input (which dwarfs the window after a few turns).
-    let ctx_tokens = focused.map_or(0, |a| a.context_tokens);
-    const CTX_WINDOW: u64 = 200_000;
-    let ctx_frac = (ctx_tokens as f64 / CTX_WINDOW as f64).min(1.0);
-
-    // STAGE with a steady dot. It used to pulse on truecolor terminals via an
-    // interpolated `lighten`, which carried no information the stage word did
-    // not already carry AND had no `theme::FALLBACKS` entry — so the one cell
-    // that animated was also the one cell `degrade_buffer` could not narrow
-    // for a 256/16-colour terminal. A theme token is both quieter and
-    // recolourable.
-    let stage_txt = focused
-        .and_then(|a| a.model.hud.stage)
-        .map(stage_label)
-        .unwrap_or("idle");
-    let dot_color = theme::ACCENT_DEEP;
-
-    // Cache economics panel (#267/#269) — CACHE hit%/volumes, SAVED dollars,
-    // WARMTH countdown; the pricing/TTL math already happened in the producer.
-    let cache_total = model.total_input_tokens();
-    let cache_spans = cache_panel::cache_cell(
-        model.cache_hit_tokens(),
-        model.total_cache_write_tokens(),
-        cache_total,
-    );
-    let saved_spans = cache_panel::saved_cell(model.total_cache_savings_usd(), cache_total > 0);
-    let warmth_spans =
-        cache_panel::warmth_cell(focused.and_then(|a| a.cache_warmth_secs(model.now_ms)));
-
-    // PIPELINE: ON when the session drives the staged pipeline, OFF for the
-    // raw engine loop (`model.pipeline`).
-    let (pipeline_txt, pipeline_style) = if model.pipeline {
-        ("ON", Style::default().fg(theme::SUCCESS_BRIGHT))
-    } else {
-        ("OFF", dim)
-    };
-
-    // (label, value, priority) in SVG order. Higher priority survives a narrow
-    // row longer; STAGE and CONTEXT are must-keep (`MUST_KEEP`) because the
-    // stage and the token meter are the load-bearing cells.
-    const MUST_KEEP: u8 = 9;
-    let mut cells: Vec<(&str, Vec<Span<'static>>, u8)> = vec![
-        (
-            "AGENT",
-            vec![Span::styled(
-                focused
-                    .map(|a| a.meta.id.clone())
-                    .unwrap_or_else(|| "—".into()),
-                val,
-            )],
-            5,
-        ),
-        (
-            "STAGE",
-            vec![
-                Span::styled("● ", Style::default().fg(dot_color)),
-                Span::styled(stage_txt.to_string(), val),
-            ],
-            MUST_KEEP,
-        ),
-        // No MODEL cell: the three pipeline pins moved to their own row below
-        // (`role_panel`). Three `provider/model` slugs measured 210 columns
-        // inside this row with the ethos chip kept, against the 160 the row is
-        // designed around — and the chip is dropped before any data cell, so
-        // no cell priority could have saved it. A dedicated row is what makes
-        // all three visible at every width instead of none of them.
-        (
-            "CPU",
-            vec![
-                Span::styled(
-                    meter_bar(cpu / 100.0),
-                    Style::default().fg(theme::gauge_color(cpu / 100.0)),
-                ),
-                Span::styled(format!(" {cpu:>3.0}%"), val),
-            ],
-            5,
-        ),
-        (
-            "CONTEXT",
-            vec![
-                Span::styled(
-                    meter_bar(ctx_frac),
-                    Style::default().fg(theme::gauge_color(ctx_frac)),
-                ),
-                Span::styled(format!(" {}/{}", fmt_k(ctx_tokens), fmt_k(CTX_WINDOW)), val),
-            ],
-            MUST_KEEP,
-        ),
-        (
-            // The *session* total across every agent, unchanged. The live
-            // per-turn figure deliberately lives elsewhere — one row under the
-            // composer, in `render_composer_footer` — because the two numbers
-            // answer different questions and move at different speeds, and
-            // stacking them in one cell made this row too wide to keep the
-            // ethos chip at 160 columns.
-            "SPEND",
-            vec![Span::styled(
-                format!("${:.2}", model.total_cost()),
-                Style::default().fg(theme::SUCCESS_BRIGHT),
-            )],
-            6,
-        ),
-        ("CACHE", cache_spans, 4),
-        ("SAVED", saved_spans, 3),
-        ("WARMTH", warmth_spans, 3),
-        (
-            "ENGINE",
-            vec![Span::styled(
-                format!("{} active", model.active_count()),
-                val,
-            )],
-            4,
-        ),
-        (
-            "PIPELINE",
-            vec![Span::styled(pipeline_txt, pipeline_style)],
-            3,
-        ),
-    ];
-    // PR: only once a Pr event has been observed. Failing CI raises the drop
-    // priority the same way an unread INBOX badge does — a red ✗ must survive
-    // a narrow row.
-    if let Some(pr) = &model.pr {
-        let priority = if pr.ci == Some(CiStatus::Failing) {
-            8
-        } else {
-            5
-        };
-        cells.push(("PR", pr_cell(pr), priority));
-    }
-    cells.push((
-        "INBOX",
-        {
-            // Persist-until-read notifications: the badge is the always-on
-            // surface; `/inbox` opens the overlay that clears it.
-            let unread = ui.notifications.iter().filter(|n| !n.read).count();
-            if unread == 0 {
-                vec![Span::styled("—", dim)]
-            } else {
-                vec![Span::styled(
-                    format!("✉ {unread}"),
-                    Style::default()
-                        .fg(theme::WARNING_BRIGHT)
-                        .add_modifier(Modifier::BOLD),
-                )]
-            }
-        },
-        if ui.notifications.iter().any(|n| !n.read) {
-            8
-        } else {
-            2
-        },
-    ));
-
-    let brand = " ✦ stella ";
-    let brand_w = brand.chars().count();
-    // The ethos chip is pinned right — pure chrome, so it is dropped *first*
-    // when the row is too narrow (before any data cell).
-    let ethos = "↝ deterministic-first ";
-    let ethos_w = ethos.chars().count();
-    let cell_need: Vec<usize> = cells
-        .iter()
-        .map(|(l, v, _)| 3 + span_width(v).max(l.chars().count()))
-        .collect();
-
-    // Fit: drop the ethos chip, then the lowest-priority non-must-keep cell,
-    // until the row fits (or only must-keep cells remain — then accept a clip).
-    let mut kept = vec![true; cells.len()];
-    let mut ethos_on = true;
-    loop {
-        let cells_w: usize = (0..cells.len())
-            .filter(|&i| kept[i])
-            .map(|i| cell_need[i])
-            .sum();
-        let need = brand_w + cells_w + if ethos_on { ethos_w } else { 0 };
-        if need <= area.width as usize {
-            break;
-        }
-        if ethos_on {
-            ethos_on = false;
-            continue;
-        }
-        match (0..cells.len())
-            .filter(|&i| kept[i] && cells[i].2 < MUST_KEEP)
-            .min_by_key(|&i| cells[i].2)
-        {
-            Some(i) => kept[i] = false,
-            None => break,
-        }
-    }
-
-    let mut top: Vec<Span<'static>> = vec![Span::raw(" ".repeat(brand_w))];
-    let mut bot: Vec<Span<'static>> = vec![Span::styled(
-        brand,
-        Style::default()
-            .fg(theme::ACCENT)
-            .add_modifier(Modifier::BOLD),
-    )];
-    for (i, (label, value, _)) in cells.into_iter().enumerate() {
-        if !kept[i] {
-            continue;
-        }
-        let vw = span_width(&value);
-        let cw = vw.max(label.chars().count());
-        top.push(Span::styled(" │ ", sep));
-        bot.push(Span::styled(" │ ", sep));
-        top.push(Span::styled(format!("{label:<cw$}"), dim));
-        // Value, right-padded into the same column width so labels align.
-        let pad = cw.saturating_sub(vw);
-        bot.extend(value);
-        if pad > 0 {
-            bot.push(Span::raw(" ".repeat(pad)));
-        }
-    }
-
-    Paragraph::new(Line::from(top)).render(
-        Rect {
-            x: area.x,
-            y: top_y,
-            width: area.width,
-            height: 1,
-        },
-        buf,
-    );
-    Paragraph::new(Line::from(bot)).render(
-        Rect {
-            x: area.x,
-            y: bot_y,
-            width: area.width,
-            height: 1,
-        },
-        buf,
-    );
-    if ethos_on {
-        render_right(
-            vec![Span::styled(
-                ethos,
-                Style::default()
-                    .fg(theme::VIOLET)
-                    .add_modifier(Modifier::BOLD),
-            )],
-            Rect {
-                x: area.x,
-                y: bot_y,
-                width: area.width,
-                height: 1,
-            },
-            buf,
-        );
-    }
-
-    // Third row: the low-hit-rate diagnosis, full-sentence and byte-identical
-    // to `stella stats`'s wording — only present when `render_deck` reserved
-    // the extra row (`AgentEntry::cache_diagnosis` fired for the focused
-    // agent) AND the area actually has it (a caller that hands this function
-    // a bare 2-row area, as every pre-#267 snapshot fixture still does, gets
-    // no diagnosis row rather than a clipped one).
-    // MODELS row: the three pipeline pins, full `provider/model`, with the
-    // active one in the accent. Its own row because the cell row cannot hold
-    // it (see the note where the MODEL cell used to be). Guarded on height so
-    // a bare 2-row area — every pre-existing snapshot fixture — renders
-    // exactly as it did before.
-    if area.height >= 3 {
-        let mut spans = vec![Span::styled(" MODELS  ", dim)];
-        spans.extend(role_panel::models_cell(model, model.active_count() > 0));
-        Paragraph::new(Line::from(spans)).render(
-            Rect {
-                x: area.x,
-                y: top_y + 2,
-                width: area.width,
-                height: 1,
-            },
-            buf,
-        );
-    }
-    if area.height >= 4
-        && let Some(cause) =
-            focused.and_then(|a| a.cache_diagnosis(cache_panel::LOW_HIT_RATE_THRESHOLD))
-    {
-        Paragraph::new(Line::from(cache_panel::diagnosis_spans(cause))).render(
-            Rect {
-                x: area.x,
-                y: top_y + 3,
-                width: area.width,
-                height: 1,
-            },
-            buf,
-        );
-    }
-}
-
-/// A compact 6-cell utilization meter for a `[0, 1]` fraction.
-fn meter_bar(frac: f64) -> String {
-    const CELLS: usize = 6;
-    let filled = (frac.clamp(0.0, 1.0) * CELLS as f64).round() as usize;
-    (0..CELLS)
-        .map(|i| if i < filled { '▮' } else { '▯' })
-        .collect()
-}
-
-/// The PR statline cell's spans: `⇢ #183 open` (or the URL tail when the
-/// monitor parsed no number) colored by PR status, plus a CI glyph once a
-/// verdict has been observed — `✓` passing, `✗` failing (bold), `◌` pending /
-/// `…` running (dim).
-fn pr_cell(pr: &PrInfo) -> Vec<Span<'static>> {
-    let status_style = Style::default().fg(pr_status_color(pr.status));
-    let ident = match pr.number {
-        Some(n) => format!("⇢ #{n}"),
-        // No parsed number — the URL tail still identifies the PR.
-        None => format!(
-            "⇢ {}",
-            pr.url.rsplit('/').find(|s| !s.is_empty()).unwrap_or("pr")
-        ),
-    };
-    let mut spans = vec![
-        Span::styled(ident, status_style.add_modifier(Modifier::BOLD)),
-        Span::styled(format!(" {}", pr_status_label(pr.status)), status_style),
-    ];
-    if let Some(ci) = pr.ci {
-        let (glyph, style) = match ci {
-            CiStatus::Passing => ("✓", Style::default().fg(theme::OK)),
-            CiStatus::Failing => (
-                "✗",
-                Style::default().fg(theme::BAD).add_modifier(Modifier::BOLD),
-            ),
-            CiStatus::Pending => ("◌", Style::default().fg(theme::TEXT_TERTIARY)),
-            CiStatus::Running => ("…", Style::default().fg(theme::TEXT_TERTIARY)),
-        };
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(glyph, style));
-    }
-    spans
-}
-
-/// The transcript's PR ramp — `render`'s `pr_status_color` is private
-/// to that module, so the statline replicates it: warning-orange draft (the
-/// one semantic-warning exception), deep gold while open, full gold on merge,
-/// danger on close.
-fn pr_status_color(status: PrStatus) -> ratatui::style::Color {
-    match status {
-        PrStatus::Draft => theme::WARNING,
-        PrStatus::Open => theme::ACCENT_DEEP,
-        PrStatus::Merged => theme::ACCENT,
-        PrStatus::Closed => theme::DANGER,
-    }
-}
-
-/// Format a token count compactly: `42k`, `1.2k`, `950`.
-fn fmt_k(n: u64) -> String {
-    if n >= 10_000 {
-        format!("{}k", n / 1000)
-    } else if n >= 1_000 {
-        format!("{:.1}k", n as f64 / 1000.0)
-    } else {
-        n.to_string()
-    }
-}
-
-/// Format a token count with uppercase scale suffixes and one decimal:
-/// `105.3M`, `211.4K`, `950` — the CACHE-cell convention. `fmt_k` (the context
-/// meter) caps at `k`; cumulative cache counts reach the millions, so this
-/// carries an `M` tier, matching the requested `67% (105.3M/211.4M tokens)`.
-pub(crate) fn fmt_tokens(n: u64) -> String {
-    if n >= 1_000_000 {
-        format!("{:.1}M", n as f64 / 1_000_000.0)
-    } else if n >= 1_000 {
-        format!("{:.1}K", n as f64 / 1_000.0)
-    } else {
-        n.to_string()
-    }
 }
 
 /// One aligned `key → description` row of the help overlay. The key column is

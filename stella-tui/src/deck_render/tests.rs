@@ -33,8 +33,7 @@ fn full_deck_frame_composes_every_band_at_80_cols() {
         ui.composer.insert_char(c);
     }
 
-    // 190 so the wider statline (CACHE + PIPELINE, then SAVED + WARMTH for
-    // #267/#269) still has room for the ethos chip, which is dropped first.
+    // 190 exercises the full four-zone statline; 80 the zone-drop path.
     for (w, h) in [(80u16, 24u16), (190, 40)] {
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
         term.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
@@ -48,21 +47,21 @@ fn full_deck_frame_composes_every_band_at_80_cols() {
             "new line", // composer footer affordance (§4)
             "queue",    // footer / queue status
             "plan",     // progress stage labels (§3)
-            "execute", "verify", "stella",  // statline brand (§5)
-            "CONTEXT", // load-bearing token meter, kept at every width (§5)
+            "execute", "verify", "✦", // statline zone A brand glyph (D1)
         ] {
             assert!(
                 text.contains(needle),
                 "deck @{w}×{h} missing {needle:?}:\n{text}"
             );
         }
-        // The ethos chip is chrome — it only needs to appear once the row is
-        // wide enough (it is the first thing dropped on a narrow statline).
+        // The full zone set needs the width; at 190 every zone renders.
         if w >= 120 {
-            assert!(
-                text.contains("deterministic-first"),
-                "deck @{w}×{h} missing ethos chip:\n{text}"
-            );
+            for needle in ["ctx", "cpu", "cache", "turn $", "run $", "saved"] {
+                assert!(
+                    text.contains(needle),
+                    "deck @{w}×{h} missing zone item {needle:?}:\n{text}"
+                );
+            }
         }
         // The killed rocket/garble leave no trace.
         assert!(
@@ -86,11 +85,11 @@ fn buffer_text(buf: &Buffer) -> String {
 }
 
 #[test]
-fn full_deck_frame_grows_a_third_statline_row_for_a_diagnosed_agent() {
+fn full_deck_frame_grows_a_second_statline_row_for_a_diagnosed_agent() {
     // The acceptance case: an opt-in provider (anthropic), 4 calls (past
     // MIN_TURNS=3), 0% hit rate, 0 cache writes — the marker never
-    // engaged. `render_deck` must reserve the statline's third row and
-    // `render_status_bar` must fill it with the full-sentence hint, not a
+    // engaged. `render_deck` must reserve the statline's second row and
+    // `statline::render` must fill it with the full-sentence hint, not a
     // clipped fragment.
     let mut model = running_model_with_queue();
     for step in 1..=4usize {
@@ -463,59 +462,6 @@ fn the_footer_hides_the_steer_marker_when_nothing_is_running() {
     );
 }
 
-#[test]
-fn statline_shows_labeled_cells_and_the_ethos_chip() {
-    // A wide terminal fits every cell plus the (chrome) ethos chip. 160
-    // leaves room for the CACHE + PIPELINE cells added to the row.
-    //
-    // Three rows, not two: the pipeline pins moved off the cell row onto their
-    // own (`MODELS`), because three `provider/model` slugs measured 210
-    // columns inline with the chip kept. Freeing that width is also why the
-    // chip still survives here at 160.
-    let model = running_model_with_queue();
-    let ui = DeckUi::default();
-    let area = Rect::new(0, 0, 160, 3);
-    let mut buf = Buffer::empty(area);
-    render_status_bar(&model, &ui, area, &mut buf);
-    let text = buffer_text(&buf);
-    for needle in [
-        "stella",
-        "AGENT",
-        "lead",
-        "STAGE",
-        "execute",
-        "MODELS",
-        "CPU",
-        "CONTEXT",
-        "SPEND",
-        "CACHE",
-        "ENGINE",
-        "PIPELINE",
-        "deterministic-first",
-    ] {
-        assert!(
-            text.contains(needle),
-            "statline missing {needle:?}:\n{text}"
-        );
-    }
-}
-
-#[test]
-fn statline_keeps_the_context_meter_on_a_narrow_terminal() {
-    // At 80 columns the row must still render without panicking and keep
-    // the brand, the stage, and the load-bearing context meter — the ethos
-    // chip (pure chrome) is what gives way, not the data.
-    let model = running_model_with_queue();
-    let ui = DeckUi::default();
-    let area = Rect::new(0, 0, 80, 2);
-    let mut buf = Buffer::empty(area);
-    render_status_bar(&model, &ui, area, &mut buf);
-    let text = buffer_text(&buf);
-    assert!(text.contains("stella"), "brand kept:\n{text}");
-    assert!(text.contains("STAGE"), "stage kept:\n{text}");
-    assert!(text.contains("CONTEXT"), "context meter kept:\n{text}");
-}
-
 /// One committed model call, carrying `input`/`cached` usage — the fold
 /// that feeds the CACHE cell.
 fn step_usage(input: u64, cached: u64) -> AgentEvent {
@@ -549,43 +495,6 @@ fn model_with_cache(input: u64, cached: u64) -> WorkspaceModel {
     m
 }
 
-#[test]
-fn statline_cache_box_sits_after_spend_and_before_engine() {
-    let model = model_with_cache(1_000, 500);
-    let ui = DeckUi::default();
-    let area = Rect::new(0, 0, 200, 2);
-    let mut buf = Buffer::empty(area);
-    render_status_bar(&model, &ui, area, &mut buf);
-    let text = buffer_text(&buf);
-    let pos = |needle: &str| {
-        text.find(needle)
-            .unwrap_or_else(|| panic!("missing {needle:?}:\n{text}"))
-    };
-    assert!(pos("SPEND") < pos("CACHE"), "CACHE after SPEND:\n{text}");
-    assert!(pos("CACHE") < pos("ENGINE"), "CACHE before ENGINE:\n{text}");
-    assert!(
-        pos("ENGINE") < pos("PIPELINE"),
-        "PIPELINE after ENGINE:\n{text}"
-    );
-}
-
-#[test]
-fn statline_cache_box_is_a_dash_before_any_usage() {
-    // No StepUsage metered yet → the CACHE cell shows the no-data dash and
-    // never divides by zero (the render below must not panic).
-    let model = running_model_with_queue();
-    let ui = DeckUi::default();
-    let area = Rect::new(0, 0, 200, 2);
-    let mut buf = Buffer::empty(area);
-    render_status_bar(&model, &ui, area, &mut buf);
-    let text = buffer_text(&buf);
-    assert!(text.contains("CACHE"), "cache label still present:\n{text}");
-    assert!(
-        !text.contains("tokens"),
-        "no token counts before any usage:\n{text}"
-    );
-}
-
 /// One `Pr` event folded onto the running model.
 fn model_with_pr(number: Option<u64>, ci: Option<stella_protocol::CiStatus>) -> WorkspaceModel {
     let mut m = running_model_with_queue();
@@ -599,85 +508,6 @@ fn model_with_pr(number: Option<u64>, ci: Option<stella_protocol::CiStatus>) -> 
         },
     });
     m
-}
-
-#[test]
-fn statline_has_no_pr_cell_before_any_pr_event() {
-    let model = running_model_with_queue();
-    let ui = DeckUi::default();
-    let area = Rect::new(0, 0, 200, 2);
-    let mut buf = Buffer::empty(area);
-    render_status_bar(&model, &ui, area, &mut buf);
-    let text = buffer_text(&buf);
-    assert!(
-        !text.contains("PR") && !text.contains('⇢'),
-        "no PR cell before a Pr event:\n{text}"
-    );
-}
-
-#[test]
-fn statline_pr_cell_shows_number_status_and_a_bold_failing_cross() {
-    let model = model_with_pr(Some(183), Some(stella_protocol::CiStatus::Failing));
-    let ui = DeckUi::default();
-    let area = Rect::new(0, 0, 200, 2);
-    let mut buf = Buffer::empty(area);
-    render_status_bar(&model, &ui, area, &mut buf);
-    let text = buffer_text(&buf);
-    assert!(text.contains("PR"), "PR label present:\n{text}");
-    assert!(
-        text.contains("⇢ #183 open"),
-        "number + status in the cell:\n{text}"
-    );
-    assert!(text.contains('✗'), "failing CI shows the cross:\n{text}");
-}
-
-#[test]
-fn statline_pr_cell_falls_back_to_the_url_tail_without_a_number() {
-    let model = model_with_pr(None, Some(stella_protocol::CiStatus::Passing));
-    let ui = DeckUi::default();
-    let area = Rect::new(0, 0, 200, 2);
-    let mut buf = Buffer::empty(area);
-    render_status_bar(&model, &ui, area, &mut buf);
-    let text = buffer_text(&buf);
-    assert!(
-        text.contains("⇢ 183 open"),
-        "the URL tail identifies the PR when no number parsed:\n{text}"
-    );
-    assert!(text.contains('✓'), "passing CI shows the check:\n{text}");
-}
-
-#[test]
-fn statline_pipeline_box_reads_on_or_off_with_the_mode() {
-    let ui = DeckUi::default();
-    let area = Rect::new(0, 0, 200, 2);
-
-    let mut off = running_model_with_queue();
-    off.pipeline = false;
-    let mut buf = Buffer::empty(area);
-    render_status_bar(&off, &ui, area, &mut buf);
-    let off_text = buffer_text(&buf);
-    assert!(off_text.contains("PIPELINE"), "pipeline label:\n{off_text}");
-    assert!(
-        off_text.contains("OFF"),
-        "raw engine loop reads OFF:\n{off_text}"
-    );
-
-    let mut on = running_model_with_queue();
-    on.pipeline = true;
-    let mut buf = Buffer::empty(area);
-    render_status_bar(&on, &ui, area, &mut buf);
-    let on_text = buffer_text(&buf);
-    assert!(
-        !on_text.contains("OFF"),
-        "staged pipeline is not OFF:\n{on_text}"
-    );
-    // The CONTEXT *label* also contains "ON", so scope the positive check
-    // to the value row (the second rendered line).
-    let values = on_text.lines().nth(1).expect("value row");
-    assert!(
-        values.contains("ON"),
-        "staged pipeline reads ON:\n{on_text}"
-    );
 }
 
 #[test]
@@ -908,7 +738,7 @@ fn a_panicking_deck_view_renders_an_error_card_and_the_session_survives() {
         text.contains("injected panic in band SESSION"),
         "the error card carries the panic message:\n{text}"
     );
-    for surviving in [">>>", "stella", "CONTEXT", "AGENTS"] {
+    for surviving in [">>>", "✦", "AGENTS"] {
         assert!(
             text.contains(surviving),
             "the surviving bands still rendered ({surviving:?} missing):\n{text}"

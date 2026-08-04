@@ -125,6 +125,17 @@ pub struct ProofState {
     /// nothing could observe must not read `✓ passed` just because nothing
     /// failed it either.
     pub unverifiable: Option<String>,
+    /// The witness-tamper check's stated result, from the verdict's ladder
+    /// snapshot: `Some(true)` = every witness artifact matched its pinned
+    /// identity (the witness panel's `tamper check ✓` line). `None` = the
+    /// check never ran or the verdict predates the snapshot.
+    pub witness_intact: Option<bool>,
+    /// A would-be flip was refused because the pass demonstrably fixed a
+    /// *different* failure — the witness panel's distinct refused-flip result
+    /// state, never rendered as a generic failure.
+    pub flip_refused: bool,
+    /// A flip was observed but its confirmation re-run did not pass.
+    pub unstable_flip: bool,
     /// Whether the turn has ended. Flips `pending` rows to *not reported* —
     /// see the module docs; this is the half of the invariant that does not
     /// depend on any pipeline path cooperating.
@@ -220,13 +231,20 @@ impl ProofState {
         }
     }
 
-    /// Fold the verdict that closes the turn.
+    /// Fold the verdict that closes the turn — and the ladder facts riding
+    /// it that the witness panel renders (tamper exclusion, a refused or
+    /// unstable flip).
     pub fn apply_verdict(&mut self, passed: bool, evidence: &JudgeEvidence) {
         self.verdict = Some(VerdictStanding {
             passed,
             deterministic: evidence.deterministic,
             summary: evidence.summary.clone(),
         });
+        if let Some(ladder) = &evidence.ladder {
+            self.witness_intact = ladder.witness_intact;
+            self.flip_refused = ladder.flip_refused_different_failure;
+            self.unstable_flip = ladder.unstable_flip;
+        }
     }
 
     /// The rail's rows, in fixed order. Always five, so a surface that shows

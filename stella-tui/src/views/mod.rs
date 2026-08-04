@@ -31,6 +31,8 @@ pub(crate) fn spinner_glyph(now_ms: u64, no_anim: bool) -> &'static str {
 }
 
 pub mod agents;
+pub mod budget_card;
+pub(crate) mod cards;
 pub mod dispatch_card;
 pub mod engine;
 pub mod files;
@@ -39,10 +41,14 @@ pub mod installed;
 pub mod issues;
 pub(crate) mod linear;
 pub mod mcp;
+pub mod models_card;
 pub mod proof;
+pub mod scope_card;
 pub mod session;
 pub mod settings;
 pub mod skills;
+pub mod task_card;
 pub mod tools;
 pub mod traces;
+pub mod witness_card;
 pub mod work_rail;

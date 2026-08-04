@@ -59,12 +59,14 @@ impl CardState {
     }
 
     /// Raise `card`, lowering whichever was up. Re-raising resets the card's
-    /// own transient state (selection, expansion) so `/tasks` always opens at
-    /// the top of the board.
+    /// own transient state (selection, expansion, the budget draft) so
+    /// `/tasks` always opens at the top of the board and `/budget` opens
+    /// with a clean input.
     pub fn raise(&mut self, card: Card) {
         self.open = Some(card);
         self.tasks_sel = 0;
         self.tasks_expanded = false;
+        self.budget_input.clear();
     }
 
     /// Lower whatever is up.
