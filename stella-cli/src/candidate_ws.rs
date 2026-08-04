@@ -1184,7 +1184,8 @@ mod tests {
              type = \"object\"\n",
         )
         .unwrap();
-        let custom_tools = stella_tools::custom::discover(&root).tools;
+        let found = stella_tools::custom::discover(&root);
+        let custom_tools = crate::tool_foundry::adopt::gate_discovery(found, &root).tools;
         assert_eq!(custom_tools.len(), 1, "the writer tool must be discovered");
 
         let port = GitCandidateWorkspaces::new(

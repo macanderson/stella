@@ -225,12 +225,9 @@ fn the_report_explains_every_withheld_tool() {
     let waiting = on_disk(ws.path(), "waiting_tool", Some(provenance()));
     let handwritten = on_disk(ws.path(), "deploy", None);
 
-    let report = crate::custom::DiscoveryReport {
-        tools: vec![adopted, waiting, handwritten],
-        diagnostics: Vec::new(),
-    };
+    let found = UngatedDiscovery::from_parts(vec![adopted, waiting, handwritten], Vec::new());
     let gated = gate_report(
-        report,
+        found,
         &[record("adopted_tool", true), record("waiting_tool", false)],
         ws.path(),
     );
@@ -243,19 +240,105 @@ fn the_report_explains_every_withheld_tool() {
     assert!(reason.contains("stella tools --enable"), "{reason}");
 }
 
+/// The property that makes the type worth having: the laziest thing a caller
+/// can do is pass no ledger, and that **withholds** rather than admits.
+///
+/// A caller who does not know about adoption cannot fail open. The worst
+/// available mistake is a self-authored tool going missing with a diagnostic
+/// explaining exactly why — which is recoverable, unlike an unapproved
+/// capability quietly registering.
+#[test]
+fn a_caller_with_no_ledger_withholds_rather_than_admits() {
+    let ws = tempfile::tempdir().unwrap();
+    let selfauthored = on_disk(ws.path(), "cat_file", Some(provenance()));
+    let handwritten = on_disk(ws.path(), "deploy", None);
+    let found = UngatedDiscovery::from_parts(vec![selfauthored, handwritten], Vec::new());
+
+    let gated = gate_report(found, &[], ws.path());
+
+    assert_eq!(
+        gated
+            .tools
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["deploy"],
+        "an empty ledger admits the hand-written tool and withholds the self-authored one"
+    );
+    assert!(
+        gated.diagnostics[0].reason.contains("never adopted"),
+        "{}",
+        gated.diagnostics[0].reason
+    );
+}
+
+/// ...and the workspace that has no self-authored tools at all pays nothing:
+/// the gate answers without consulting a ledger or touching the filesystem.
+///
+/// Pinned by pointing it at a root where the tools' scripts do not exist. The
+/// tamper check would have to read them and would fail; that it does not is the
+/// evidence the fast path ran.
+#[test]
+fn a_scan_with_nothing_self_authored_is_returned_untouched() {
+    let elsewhere = tempfile::tempdir().unwrap();
+    let ws = tempfile::tempdir().unwrap();
+    let found = UngatedDiscovery::from_parts(
+        vec![
+            on_disk(ws.path(), "deploy", None),
+            on_disk(ws.path(), "release", None),
+        ],
+        Vec::new(),
+    );
+    assert!(!found.has_foundry_authored());
+
+    let gated = gate_report(found, &[], elsewhere.path());
+
+    assert_eq!(gated.tools.len(), 2, "both hand-written tools survive");
+    assert!(
+        gated.diagnostics.is_empty(),
+        "and no digest was attempted: {:?}",
+        gated.diagnostics
+    );
+}
+
+/// What an ungated scan will answer without the gate: what it found and what it
+/// skipped. Information, never capability — the names are what a duplicate-name
+/// check needs, and they include tools the gate will go on to withhold, because
+/// a withheld manifest still occupies its filename.
+#[test]
+fn an_ungated_scan_reveals_names_and_diagnostics() {
+    let ws = tempfile::tempdir().unwrap();
+    let found = UngatedDiscovery::from_parts(
+        vec![
+            on_disk(ws.path(), "cat_file", Some(provenance())),
+            on_disk(ws.path(), "deploy", None),
+        ],
+        vec![crate::custom::ToolDiagnostic {
+            path: PathBuf::from("/x/broken.toml"),
+            reason: "invalid TOML".into(),
+        }],
+    );
+
+    assert_eq!(found.names(), vec!["cat_file", "deploy"]);
+    assert_eq!(found.diagnostics().len(), 1);
+    assert!(found.has_foundry_authored());
+    assert!(!found.is_empty());
+    assert!(UngatedDiscovery::default().is_empty());
+}
+
 /// Existing diagnostics survive the gate — it adds explanations, never
 /// swallows the parser's.
 #[test]
 fn the_gate_preserves_discovery_diagnostics() {
     let ws = tempfile::tempdir().unwrap();
-    let report = crate::custom::DiscoveryReport {
-        tools: Vec::new(),
-        diagnostics: vec![crate::custom::ToolDiagnostic {
+    let found = UngatedDiscovery::from_parts(
+        Vec::new(),
+        vec![crate::custom::ToolDiagnostic {
             path: PathBuf::from("/x/broken.toml"),
             reason: "invalid TOML".into(),
         }],
-    };
-    let gated = gate_report(report, &[], ws.path());
+    );
+    let gated = gate_report(found, &[], ws.path());
     assert_eq!(gated.diagnostics.len(), 1);
     assert_eq!(gated.diagnostics[0].reason, "invalid TOML");
 }

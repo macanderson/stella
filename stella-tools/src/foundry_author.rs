@@ -520,9 +520,12 @@ mod tests {
         .unwrap();
         std::fs::write(staged.join(&authored.script_filename), &authored.script).unwrap();
 
-        let report = crate::custom::discover_in(ws.path(), None);
-        assert!(report.tools.is_empty(), "staged tools must not register");
-        assert!(report.diagnostics.is_empty(), "and must not even warn");
+        let found = crate::custom::discover_in(ws.path(), None);
+        assert!(
+            found.is_empty(),
+            "a staged tool must not even be seen by the scan, let alone warned about: {:?}",
+            found.names()
+        );
     }
 
     proptest::proptest! {

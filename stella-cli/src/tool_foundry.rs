@@ -268,8 +268,10 @@ fn run_tools_author_in(
         script_path.display()
     );
     let home = crate::paths::home();
+    // Names, not tools, and deliberately ungated: a withheld manifest still
+    // occupies its filename, so it still makes this one a duplicate.
     let live = stella_tools::custom::discover_in(root, home.as_deref());
-    if live.tools.iter().any(|t| t.name == authored.name) {
+    if live.names().contains(&authored.name.as_str()) {
         println!(
             "  {} {}",
             "!".yellow(),
@@ -461,10 +463,13 @@ mod tests {
             .expect("staged manifest parses");
         assert_eq!(parsed.name, "jq");
 
-        // The guardrail: discovery over this workspace registers nothing.
-        let report = stella_tools::custom::discover_in(ws.path(), None);
-        assert!(report.tools.is_empty(), "staged tool must not register");
-        assert!(report.diagnostics.is_empty());
+        // The guardrail: discovery over this workspace sees nothing at all.
+        let found = stella_tools::custom::discover_in(ws.path(), None);
+        assert!(
+            found.is_empty(),
+            "staged tool must not register: {:?}",
+            found.names()
+        );
     }
 
     #[test]

@@ -53,13 +53,29 @@
 //! `authority.project_custom_tools_allowed` decides whether repository-scoped
 //! manifests are read at all, and [`crate::policy::ToolPolicy`] can switch an
 //! adopted-and-enabled tool back off by name or through its `custom` group.
+//!
+//! # One seam, enforced by the type
+//!
+//! [`gate_report`] is not *a* place the gate is applied — it is the only one.
+//! Discovery hands back a [`UngatedDiscovery`], whose tools cannot be read;
+//! turning it into a [`DiscoveryReport`] a host can register from means coming
+//! through here.
+//!
+//! That is a correction, not a flourish. The gate first shipped applied at the
+//! session's discovery path while two others — the `stella tools` listing and
+//! the best-of-N candidate surface — discovered tools on their own and offered
+//! whatever they found; the listing advertised tools the session withheld.
+//! Fixing those two sites left the shape intact, and a comment saying "gate any
+//! new discovery path too" is not an invariant. Now a new path that forgets
+//! does not compile, and the laziest thing it can do instead — pass an empty
+//! ledger — withholds. Failure runs in the safe direction.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use crate::custom::{CustomTool, DiscoveryReport, ToolDiagnostic};
+use crate::custom::{CustomTool, DiscoveryReport, ToolDiagnostic, UngatedDiscovery};
 
 /// The `authored_by` value the foundry stamps, and the only value this gate
 /// recognizes as its own. A manifest carrying a `[foundry]` table with any
@@ -267,28 +283,40 @@ pub fn observe(tool: &CustomTool, root: &Path) -> Result<ArtifactDigests, String
     })
 }
 
-/// Apply the gate to a whole [`DiscoveryReport`]: withheld tools leave the
-/// tool list and arrive as diagnostics naming why.
+/// Rule on everything a scan found, turning an [`UngatedDiscovery`] into the
+/// [`DiscoveryReport`] a host may actually register from. Withheld tools leave
+/// the tool list and arrive as diagnostics naming why.
 ///
-/// Reporting rather than silently dropping is the point. A tool that vanishes
-/// with no explanation is indistinguishable from a tool that was never
+/// **This is the only way to get tools out of a discovery scan**, and that is
+/// the point — see [`UngatedDiscovery`] for the failure it exists to prevent.
+/// A host that has no ledger to offer passes an empty slice, which withholds
+/// every self-authored tool: the safe direction, and a visible choice rather
+/// than an omission.
+///
+/// Reporting rather than silently dropping matters just as much. A tool that
+/// vanishes with no explanation is indistinguishable from one that was never
 /// authored, and the difference — "your workspace has an unapproved
-/// self-authored capability sitting in it" — is exactly what an operator
-/// needs to see.
+/// self-authored capability sitting in it" — is exactly what an operator needs
+/// to see.
+///
+/// Cheap when there is nothing to rule on: a scan with no foundry-authored
+/// manifest returns without touching the filesystem, so the overwhelmingly
+/// common workspace pays a `has_foundry_authored` scan and nothing else.
 pub fn gate_report(
-    report: DiscoveryReport,
+    discovered: UngatedDiscovery,
     adopted: &[AdoptedTool],
     root: &Path,
 ) -> DiscoveryReport {
+    let anything_to_rule_on = discovered.has_foundry_authored();
+    let (tools, mut diagnostics) = discovered.into_parts();
+    if !anything_to_rule_on {
+        return DiscoveryReport { tools, diagnostics };
+    }
+
     let ledger: BTreeMap<&str, &AdoptedTool> = adopted
         .iter()
         .map(|record| (record.name.as_str(), record))
         .collect();
-
-    let DiscoveryReport {
-        tools,
-        mut diagnostics,
-    } = report;
     let mut kept = Vec::with_capacity(tools.len());
     for tool in tools {
         let observed = observe(&tool, root);

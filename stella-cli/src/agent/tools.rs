@@ -27,7 +27,7 @@ fn scrub_model_subprocess(command: &mut tokio::process::Command) {
 pub(crate) fn custom_tool_report_for_workspace(
     root: &std::path::Path,
 ) -> stella_tools::custom::DiscoveryReport {
-    custom_tool_report_for_scopes(root, true)
+    crate::tool_foundry::adopt::gate_discovery(custom_tool_report_for_scopes(root, true), root)
 }
 
 /// Discover only the custom-tool scopes permitted by the current authority.
@@ -36,9 +36,9 @@ pub(crate) fn custom_tool_report_for_workspace(
 pub(crate) fn custom_tool_report_for_scopes(
     root: &std::path::Path,
     include_workspace: bool,
-) -> stella_tools::custom::DiscoveryReport {
+) -> stella_tools::custom::UngatedDiscovery {
     if crate::settings::filesystem_settings_disabled() {
-        stella_tools::custom::DiscoveryReport::default()
+        stella_tools::custom::UngatedDiscovery::default()
     } else {
         let home = crate::paths::user_extension_home();
         stella_tools::custom::discover_in_scopes(root, home.as_deref(), include_workspace)
