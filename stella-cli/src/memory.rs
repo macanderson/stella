@@ -47,6 +47,10 @@ use stella_pipeline::{ContextRecallPort, RecalledFrame};
 #[cfg(test)]
 use stella_protocol::{CompletionMessage, MessageRole};
 
+// #1221: the A/B recall control — its durable schedule, what a control turn
+// suppresses, and the attribution that separates the arms afterwards.
+#[cfg(test)]
+mod ab_control_tests;
 // Which files a memory is about — shared by the reflection write path and by
 // `stella memory validate`, which must agree on what counts as an anchor.
 pub(crate) mod anchors;
@@ -113,6 +117,14 @@ pub use tuning::session_lifecycle_enabled;
 /// not a second copy: two spellings of one marker is a decomposition that
 /// silently stops firing the day either is edited.
 pub use stella_core::receipts::RECALL_MARKER;
+
+/// What an A/B control turn's episode summary carries so the two arms can be
+/// told apart offline (#1221). Appended by [`SessionMemory::record_episode`] —
+/// the one place every surface's episode is written — because attribution that
+/// each driver has to remember is attribution that a new driver silently drops.
+/// There is no reporting command yet: the comparison is a query over episode
+/// summaries, which is what makes the exact spelling load-bearing.
+pub(crate) const AB_CONTROL_TAG: &str = " [ab-control]";
 
 /// One reflection lesson as the model returns it and as persisted to the
 /// mining log (`.stella/private/reflections.jsonl`, one JSON object per line).
@@ -241,12 +253,16 @@ pub struct SessionMemory {
     execution_id: Option<i64>,
     /// A/B recall control (Proposal 4): when true, recall is suppressed
     /// entirely on this turn so the outcome can be compared against recalled
-    /// turns. Set by `maybe_suppress_recall()` from the turn counter below.
+    /// turns. Set by `arm_recall_control()`, which every driver calls once per
+    /// turn before it recalls anything.
     ab_suppressed: bool,
-    /// Count of turns that have consulted the A/B control, used to make
-    /// every `rate`-th turn a deterministic control turn (see
-    /// [`SessionMemory::maybe_suppress_recall`]).
-    ab_turn: u32,
+    /// The turn number this session last claimed from the control's schedule —
+    /// normally the durable, workspace-wide count held in the context store
+    /// (#1221), and a bare in-session tally only when that store could not hand
+    /// one out. Kept on the session because a fallback tally has to live
+    /// somewhere and because it is what the arm is derived from
+    /// (`recall::ab_control_turn`).
+    ab_turn: u64,
     /// Phase 3 (#714): `context.lifecycle.enabled`, read once at open. While
     /// this is off the learning loop runs exactly the lexical path that ships
     /// today and writes nothing to the lifecycle ledger.
@@ -503,6 +519,14 @@ impl SessionMemory {
     /// plane (`stella-context` L-C3 neighborhood). Domain tags come from the
     /// touched files' taxonomy prefixes. Best-effort like everything here: a
     /// failed write must never fail the turn it describes.
+    ///
+    /// **A/B attribution rides here, not at the call sites** (#1221). A turn
+    /// the control suppressed is tagged `[ab-control]` by this method, because
+    /// the tag is the entire readout of the experiment and a driver that
+    /// forgets it does not fail — it silently files a control turn as an
+    /// ordinary one, which corrupts both arms at once. `self` already knows
+    /// whether this turn was suppressed, so nothing is gained by asking four
+    /// callers to remember to say so.
     pub async fn record_episode(
         &self,
         prompt: &str,
@@ -517,9 +541,15 @@ impl SessionMemory {
         }
         // A tag (the #1042 trace pointer) lands AFTER truncation: it is a
         // join key, and a key a long prompt silently truncates away is not
-        // a key.
+        // a key. The A/B marker is the same kind of key and lands the same
+        // way — appended to the *prompt* (as it was) it was the first thing a
+        // 240-character prompt threw away, which lost exactly the control
+        // turns the experiment is made of.
         if let Some(tag) = tag {
             summary.push_str(tag);
+        }
+        if self.ab_suppressed {
+            summary.push_str(AB_CONTROL_TAG);
         }
 
         let mut domains: Vec<String> = Vec::new();

@@ -997,6 +997,68 @@ fn a_bare_slug_caps_every_route_and_a_qualified_key_outranks_it() {
     );
 }
 
+/// `--max-output-tokens` outranks BOTH settings surfaces, on every role.
+///
+/// It is the most specific statement available — this invocation, right now —
+/// and it is what an operator reaches for when a configured value is the thing
+/// going wrong. A flag a settings file could quietly beat would be useless in
+/// exactly that moment.
+#[test]
+fn the_max_output_tokens_flag_outranks_every_configured_cap() {
+    // Both settings surfaces set, and disagreeing with each other.
+    let mut cfg = cfg_with_engine(
+        "anthropic",
+        r#"{ "default_model": "anthropic/claude-sonnet-5",
+             "model_output_caps": { "anthropic/claude-sonnet-5": 64000 },
+             "agents": { "default": { "params": { "max_tokens": 48000 } },
+                         "judge":   { "params": { "max_tokens": 48000 } } } }"#,
+    );
+    cfg.model_id = "claude-sonnet-5".to_string();
+    cfg.max_output_tokens = Some(24_000);
+
+    assert_eq!(
+        crate::agent::engine_config_for(&cfg).max_output_tokens,
+        Some(24_000),
+        "the flag must beat both the per-model cap and the per-agent tuning",
+    );
+    // Every role, for the reason the turn budget is every-role: what it bounds
+    // is the process's spend. Capping the worker while the judge kept the
+    // model's whole ceiling would move the cost rather than reduce it.
+    assert_eq!(
+        crate::agent::judge_engine_config_for(&cfg).max_output_tokens,
+        Some(24_000),
+    );
+}
+
+/// The flag clamps too. It is the likeliest of the three to carry a
+/// fat-fingered digit — typed fresh each run, with no file to review it — and
+/// over-asking is a rejection on every step, not a longer answer.
+#[test]
+fn the_max_output_tokens_flag_clamps_to_the_models_ceiling() {
+    let mut cfg = cfg_for("anthropic");
+    cfg.model_id = "claude-sonnet-5".to_string();
+    cfg.max_output_tokens = Some(900_000);
+
+    assert_eq!(
+        crate::agent::engine_config_for(&cfg).max_output_tokens,
+        Some(128_000),
+    );
+}
+
+/// Absent flag changes nothing — the model's own maximum still stands. Without
+/// this the two tests above would pass just as well if the flag were applied
+/// unconditionally with some default.
+#[test]
+fn no_flag_leaves_the_models_own_ceiling_in_place() {
+    let mut cfg = cfg_for("anthropic");
+    cfg.model_id = "claude-sonnet-5".to_string();
+    assert_eq!(cfg.max_output_tokens, None, "fixture must not set the flag");
+    assert_eq!(
+        crate::agent::engine_config_for(&cfg).max_output_tokens,
+        Some(128_000),
+    );
+}
+
 /// `0` is a mistake here, not an opt-out — unlike `model_timeout_secs`, where
 /// it spells "no ceiling". The field's ABSENCE already means "the model's own
 /// maximum", so zero has no meaning left to carry, and honoring it literally

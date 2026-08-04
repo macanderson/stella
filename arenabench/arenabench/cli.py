@@ -12,12 +12,13 @@ from __future__ import annotations
 import argparse
 import logging
 import random
+import subprocess
 import sys
 from pathlib import Path
 
 from .agents import AGENTS
 from .recorder import IMAGE_TAG, build_image, docker_available, image_present
-from .registry import DEFAULT_REGISTRY, sample_tasks
+from .registry import DEFAULT_REGISTRY, export_root, sample_tasks
 from .server import default_workspace, serve
 
 __all__ = ["main"]
@@ -105,6 +106,32 @@ def _cmd_tasks(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_export(args: argparse.Namespace) -> int:
+    """Materialise a dataset for offline running.
+
+    Worth its own verb because it is the difference between a match that
+    finishes and one that dies at task three. Harbor resolves a registry ref
+    per task, at run time; an export resolves the digest once, here.
+    """
+    dataset = DEFAULT_REGISTRY.get(args.dataset)
+    if dataset is None:
+        print(f"unknown dataset: {args.dataset}", file=sys.stderr)
+        return 1
+    dest = Path(args.output).expanduser() if args.output else export_root() / dataset.key
+    print(f"exporting {dataset.harbor_id}\n       to {dest}")
+    try:
+        DEFAULT_REGISTRY.fetch(dataset.key, dest=dest)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        print(f"export failed: {exc}", file=sys.stderr)
+        return 1
+    run_path = DEFAULT_REGISTRY.local_run_path(dataset.key)
+    if run_path is None:
+        print("export finished but no runnable task tree appeared", file=sys.stderr)
+        return 1
+    print(f"ready: {run_path}")
+    return 0
+
+
 def _cmd_agents(args: argparse.Namespace) -> int:
     for spec in AGENTS.values():
         kind = "built-in" if spec.harbor_agent and not spec.import_path else "arenabench"
@@ -173,6 +200,15 @@ def main(argv: list[str] | None = None) -> int:
              "allocation divided by N",
     )
     tasks_parser.set_defaults(func=_cmd_tasks)
+
+    export_parser = subparsers.add_parser(
+        "export", help="materialise a dataset for offline running"
+    )
+    export_parser.add_argument("dataset", default="terminal-bench-2.1", nargs="?")
+    export_parser.add_argument(
+        "-o", "--output", help="where to write it (default: ~/.arenabench/datasets)"
+    )
+    export_parser.set_defaults(func=_cmd_export)
 
     agents_parser = subparsers.add_parser("agents", help="list available agents")
     agents_parser.set_defaults(func=_cmd_agents)

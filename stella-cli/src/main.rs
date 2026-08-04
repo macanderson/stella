@@ -775,6 +775,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
     // carry something straight through. `main` is where the flag and the config
     // are both in hand.
     cfg.turn_budget = cli.globals.turn_budget;
+    cfg.max_output_tokens = cli.globals.max_output_tokens;
     cfg.plan_mode = cli.globals.plan_mode;
     // `--tools` is the lowest-authority scope (#1263): folded in AFTER
     // settings so it can only narrow what they already allowed. `narrow_with`

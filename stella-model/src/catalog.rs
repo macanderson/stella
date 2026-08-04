@@ -374,18 +374,34 @@ impl Catalog {
                         cache_write_usd_per_mtok: 3.00,
                     },
                 )
-                .with_reasoning(Some(true)),
-                // Deliberately UNSEEDED, and the one row that says so out
-                // loud (#1290). models.dev has no `grok-4`, and the rest of
-                // the family disagrees by more than an order of magnitude —
-                // `grok-4.3` publishes 30000, `grok-4.5` publishes 500000. A
-                // ceiling picked from either would be a guess wearing a
-                // citation, which is the exact defect that put Sonnet 5 at
-                // half its real height. xAI speaks the OpenAI-compatible
-                // listing shape, so `parse_openai_compatible` fills this in
-                // from the provider on the first refresh if xAI publishes it;
-                // until then this row inherits the engine default, which is
-                // wrong but honestly wrong.
+                .with_reasoning(Some(true))
+                // 30000 — the highest cap reported for ANY grok-4-generation
+                // model, and deliberately not the highest number in the wider
+                // family (#1290).
+                //
+                // models.dev carries no bare `grok-4` row. Its generation
+                // siblings agree at 30000 (`grok-4.3`, and all three
+                // `grok-4.20-*` variants); `grok-4.5` reports 500000, but that
+                // is a later generation and taking its number would be reading
+                // a different model's ceiling.
+                //
+                // The two directions of being wrong here are NOT symmetric,
+                // which is what decides the value. Guessing LOW costs some
+                // unused headroom on long answers. Guessing HIGH costs a
+                // provider-side rejection on every single request — the model
+                // never runs, the developer pays for the round trip, and the
+                // work needs another call to retry. So where the family
+                // disagrees, the ceiling has to be the one no member of the
+                // generation would refuse.
+                //
+                // Left unseeded this row inherited the engine's global 16384,
+                // which truncates real work — so "no number" was never the
+                // safe option it looks like. xAI speaks the OpenAI-compatible
+                // listing shape, so `parse_openai_compatible` raises this to
+                // the provider's own figure on the first refresh that finds
+                // one; this is the offline floor, not a claim to have looked
+                // it up.
+                .with_max_output_tokens(Some(30_000)),
                 // The non-thinking chat model (`deepseek-reasoner` is the
                 // reasoning one) — the seed's one honest `Some(false)`.
                 CatalogEntry::new(

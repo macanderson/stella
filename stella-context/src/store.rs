@@ -10,6 +10,7 @@
 //! kicks embedding catch-up as a background task at mount instead of paying it
 //! lazily on the first real query.
 
+mod ab_control;
 mod compact;
 mod domain;
 mod edge;
@@ -343,6 +344,25 @@ impl ContextStore {
     pub fn set_extraction_cursor(&self, source: &str, position: &str) -> Result<(), ContextError> {
         let now = self.clock.now_rfc3339();
         ledger::set_extraction_cursor(&lock(&self.conn), source, position, &now)
+    }
+
+    /// Claim this turn's number in `experiment`'s durable schedule, returning
+    /// the 1-based count of turns that have consulted it in this workspace
+    /// (#1221; the `store::ab_control` module holds the why).
+    ///
+    /// Every caller is a *claim*: the number is consumed by the caller that
+    /// receives it, across processes as well as within one, which is what lets
+    /// one-turn-per-process surfaces take part in a schedule at all. Use
+    /// [`Self::ab_control_turns_so_far`] to read the count without moving it.
+    pub fn next_ab_control_turn(&self, experiment: &str) -> Result<u64, ContextError> {
+        let now = self.clock.now_rfc3339();
+        ab_control::next_turn(&lock(&self.conn), experiment, &now)
+    }
+
+    /// How many turns `experiment` has counted in this workspace, without
+    /// claiming one. `0` when it has never run here.
+    pub fn ab_control_turns_so_far(&self, experiment: &str) -> Result<u64, ContextError> {
+        ab_control::turns_so_far(&lock(&self.conn), experiment)
     }
 
     /// Open and immediately kick embedding catch-up as a background tokio task

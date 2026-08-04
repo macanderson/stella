@@ -96,9 +96,21 @@ use stella_core::bus::HookBus;
 /// }
 /// ```
 pub trait ServeExtension: Send + Sync + 'static {
-    /// A stable, human-readable id. Used in the extension-error events an
-    /// isolated handler failure produces, so a broken extension is
-    /// identifiable rather than anonymous.
+    /// A stable, human-readable id for this extension, for the operator
+    /// wiring it up and for whatever that binary logs about its own config.
+    ///
+    /// **Not yet an attribution key.** `extension.error` — what an isolated
+    /// handler failure produces — carries the *pattern* the failing handler
+    /// subscribed to, never this name: handlers reach the bus through
+    /// `HookBus::on` / `on_blocking`, which record no owner, so by the time a
+    /// failure is caught there is nothing left tying it back here. Closing
+    /// that gap means an owner label on the bus's `Registration` and is a
+    /// `stella-core` change, since every crate that registers a handler would
+    /// pass one.
+    ///
+    /// Stated rather than left to be discovered, because the obvious reading
+    /// of a `name()` on a trait like this is that a broken extension names
+    /// itself in the logs, and today it does not.
     fn name(&self) -> &str;
 
     /// Register this extension's handlers on one turn's bus.
