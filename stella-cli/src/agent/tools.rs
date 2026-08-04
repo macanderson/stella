@@ -40,7 +40,7 @@ pub(crate) fn custom_tool_report_for_scopes(
     if crate::settings::filesystem_settings_disabled() {
         stella_tools::custom::DiscoveryReport::default()
     } else {
-        let home = crate::settings::user_home_dir();
+        let home = crate::paths::user_extension_home();
         stella_tools::custom::discover_in_scopes(root, home.as_deref(), include_workspace)
     }
 }
@@ -412,7 +412,7 @@ pub(crate) fn workspace_ports(
     // The candidate registry mirrors the session's custom tool surface —
     // discovered from the same root, so a candidate sees exactly the custom
     // tools the session does (re-rooted at its snapshot at create time).
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let home = crate::paths::home();
     let custom_tools = stella_tools::custom::discover_in_scopes(
         &root,
         home.as_deref(),
@@ -828,7 +828,7 @@ fn host_media_operation_journal(
     workspace_root: &std::path::Path,
 ) -> Option<Arc<dyn stella_media::MediaOperationJournal>> {
     let workspace_root = workspace_root.canonicalize().ok()?;
-    let data_dir = std::path::absolute(stella_store::usage::data_dir()).ok()?;
+    let data_dir = std::path::absolute(crate::paths::data_dir()).ok()?;
     if data_dir.starts_with(&workspace_root) {
         return None;
     }

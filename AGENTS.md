@@ -120,7 +120,7 @@ running at all.
 
 The hook derives `CARGO_SCOPE` from the pushed diff via
 `scripts/impacted-crates.sh`, so a change confined to one crate compiles and
-tests that crate and its dependents rather than all 21 members (#1135). It
+tests that crate and its dependents rather than all 22 members (#1135). It
 widens to the whole workspace for a push to `main`, a tag, a diff touching a
 workspace-root manifest / `Cargo.lock` / a build script / the gate machinery,
 and for anything it cannot narrow with confidence. Two escape hatches sit
@@ -273,7 +273,7 @@ loop, and the `/pipeline` deck toggle.
 
 ## Workspace layout — where a change goes
 
-Nineteen crates. The one-sentence rule of thumb below routes you to the right
+Twenty crates. The one-sentence rule of thumb below routes you to the right
 one; **each crate's own `README.md`** (linked from the table) then covers its
 layout, invariants, gotchas, and extension recipe in depth. Read that before
 changing code inside a crate you don't already know.
@@ -286,6 +286,7 @@ changing code inside a crate you don't already know.
 | Change CLI commands, flags, or agent wiring | [`stella-cli`](stella-cli/README.md) | This is the shipping binary. |
 | Change REPL rendering / panels / keybindings | [`stella-tui`](stella-tui/README.md) | Pure-fold ratatui REPL — the Command Deck, the default interactive shell on a TTY. |
 | Touch shared types crossing a crate boundary | [`stella-protocol`](stella-protocol/README.md) | **Zero logic, zero I/O — types only.** |
+| Resolve where `~/.stella` is — home dir, stella home, the user-tier data dir | [`stella-home`](stella-home/README.md) | **A leaf with NO dependencies at all**, which is what lets `stella-store` and `stella-observatory` share it (the observatory must not link the store). Every resolver has a pure `resolve_*` half that reads no environment. |
 | Emit a diagnostic — a record explaining *why* the program did something | [`stella-diag`](stella-diag/README.md) | **A leaf: `serde` only, so anything may depend on it.** Field values cannot hold a `String`, a `Path`, or model output — that is a compile error, not a review question. Design: [`docs/design/diagnostics.md`](docs/design/diagnostics.md). |
 | Persistence: executions, events, telemetry (SQLite) | [`stella-store`](stella-store/README.md) | |
 | Retrieval: graph, embeddings, episodic memory | [`stella-context`](stella-context/README.md) | |

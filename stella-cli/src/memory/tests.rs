@@ -550,9 +550,14 @@ fn context_database_symlink_is_rejected_without_touching_target() {
     assert_eq!(std::fs::read(&target).unwrap(), before);
 }
 
+/// Also the witness for #1139's concrete symptom. This test used to arm BOTH
+/// isolation mechanisms at once — mutate the real process `HOME` *and* install
+/// the `TEST_USER_HOME` thread-local — because the skill loaders it exercises
+/// straddled the seam: some read the thread-local, the rest read ambient env.
+/// One seam means one redirect, so the process environment (and the lock and
+/// restore guard that had to protect it) is untouched here now.
 #[test]
 fn untrusted_project_skill_bodies_are_absent_while_recalled_context_still_renders() {
-    let _env = crate::test_env::lock();
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().join("home");
     let workspace = tmp.path().join("workspace");
@@ -568,10 +573,7 @@ fn untrusted_project_skill_bodies_are_absent_while_recalled_context_still_render
         "---\nname: project\ndescription: project skill\n---\nPROJECT_SKILL_BODY",
     )
     .unwrap();
-    // SAFETY: serialized behind the binary-wide environment lock.
-    let _restore = crate::test_env::EnvRestore::capture(&["HOME"]);
-    unsafe { std::env::set_var("HOME", &home) };
-    let _test_home = crate::settings::test_user_home(home.clone());
+    let _test_home = crate::paths::test_user_home(home.clone());
 
     let skills = load_workspace_skills_with_authority(&workspace, false).skills;
     let trusted = load_workspace_skills_with_authority(&workspace, true).skills;

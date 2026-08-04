@@ -706,7 +706,7 @@ most people want to know first.
 
 ## Workspace layout
 
-Nineteen `stella-*` crates make up the workspace. The Context Graph Protocol
+Twenty `stella-*` crates make up the workspace. The Context Graph Protocol
 (CGP) —
 the retrieval abstraction Stella's recall routes through — now lives in its own
 repository and is pulled in as registry crates pinned to exact versions in the
@@ -734,6 +734,7 @@ extending it.
 | [`stella-observatory`](stella-observatory/README.md) | The Observatory — `stella observe`'s loopback-only telemetry dashboard over the local SQLite stores                                                                                                                                    |
 | [`stella-serve`](stella-serve/README.md)             | A separate headless binary (not part of the `stella` CLI): drives the engine over a wire protocol so a host process runs the Rust core, remoting every model and tool call back — the engine holds no ambient authority                |
 | `stella-diag`                                        | The diagnostics plane: typed, content-free records explaining *why* the program did something — a `serde`-only leaf every crate may depend on                                                                                          |
+| [`stella-home`](stella-home/README.md)               | Where `~/.stella` is: the user home, the stella home, and the user-tier data dir. A leaf with **no dependencies at all** — the one shape `stella-store` and `stella-observatory` can both depend on, so the resolution stopped being two hand-synced copies |
 | `stella-engine`                                      | Step-scoped facade over `stella-core` for durable hosts: `run_step` + checkpoint/resume, re-exports only — consumed by `stella-serve`, never linked by the CLI                                                                          |
 | `stella-runtime`                                     | The shared engine-assembly bottom half (`RuntimeSpec` → `SessionRuntime`): provider, registry, store, budget — construction only, and it reads no ambient environment by contract                                                       |
 | `stella-parity`                                      | The CLI-vs-API capability matrix: every engine capability declares a witnessed posture on both surfaces, so a feature cannot ship on one and silently miss the other                                                                    |

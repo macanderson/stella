@@ -476,7 +476,7 @@ pub fn load_toml_scope(
 
 /// The user-scope config (`~/.stella/stella.toml`).
 pub fn user_toml_path() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".stella").join("stella.toml"))
+    crate::paths::stella_root().map(|root| root.join("stella.toml"))
 }
 
 /// The project-scope config — `<workspace>/stella.toml`, at the REPOSITORY

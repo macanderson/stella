@@ -94,7 +94,7 @@ for the server-side checks.
 
 The hook scopes the three compile tiers — clippy, rustdoc, test — to the crates
 your diff can actually reach, so a change confined to one crate no longer pays
-for all 21 members (#1135). It falls back to the whole workspace for a push to
+for all 22 members (#1135). It falls back to the whole workspace for a push to
 `main`, a tag, a diff touching a workspace-root manifest / `Cargo.lock` / a
 build script / the gate machinery, and for anything it cannot narrow with
 confidence. See what it would choose with `make impacted`. Under time pressure,
@@ -141,7 +141,7 @@ chasing the citations in the same PR.
 
 ## Where does my change go? — a workspace tour
 
-Nineteen crates sounds like a lot; the rule of thumb is one sentence each:
+Twenty crates sounds like a lot; the rule of thumb is one sentence each:
 
 | You want to… | Go to |
 |---|---|
@@ -152,6 +152,7 @@ Nineteen crates sounds like a lot; the rule of thumb is one sentence each:
 | Change the REPL rendering / panels / keybindings | `stella-tui` |
 | Touch shared types crossing a crate boundary | `stella-protocol` (zero logic, zero I/O — types only) |
 | Log why the program did something (not what the agent did) | `stella-diag` (a leaf; a field that could carry a path or model output will not compile) |
+| Resolve where `~/.stella` is (home dir, data dir) | `stella-home` (a leaf with no dependencies at all, so the store and the observatory can share it) |
 | Persistence: executions, events, telemetry (SQLite) | `stella-store` |
 | Retrieval: graph, embeddings, episodic memory | `stella-context` |
 | Tree-sitter code indexing | `stella-graph` |

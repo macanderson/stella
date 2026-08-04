@@ -381,7 +381,7 @@ fn benchmark_mode_skips_malformed_filesystem_credentials_but_keeps_engine_overri
         std::env::set_var("HOME", dir.path());
         std::env::set_var(TRUSTED_ENGINE_CONFIG_ENV, trusted);
     }
-    let _isolation = crate::settings::test_filesystem_isolation(true);
+    let _isolation = crate::paths::test_filesystem_isolation(true);
     let cfg = Config::load_with_settings(
         Some("openrouter/deepseek/deepseek-v4-pro"),
         Some("test-key-from-trusted-handoff-seam"),

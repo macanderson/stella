@@ -297,7 +297,7 @@ fn create_symlink(_target: &Path, _dest: &Path) -> std::io::Result<()> {
 /// The user-global stella config root (`~/.stella`), or `None`
 /// without a home directory.
 pub(crate) fn user_config_root() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".stella"))
+    crate::paths::stella_root()
 }
 
 /// Run the sync at both scopes and report through `emit` — the shared init
@@ -313,7 +313,7 @@ pub fn sync_extensions(workspace_root: &Path, emit: &mut dyn FnMut(String)) {
         workspace_root.join(".stella"),
         SOURCE_DIRS.iter().map(|d| workspace_root.join(d)).collect(),
     )];
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from)
+    if let Some(home) = crate::paths::home()
         && let Some(config_root) = user_config_root()
     {
         scopes.push((
@@ -1098,7 +1098,6 @@ mod tests {
 
     #[test]
     fn untrusted_project_extensions_are_excluded_while_user_extensions_remain() {
-        let _env = crate::test_env::lock();
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path().join("home");
         let workspace = tmp.path().join("workspace");
@@ -1118,9 +1117,7 @@ mod tests {
             &workspace.join(".stella/agents/project.md"),
             "---\nname: project-agent\ndescription: project agent\n---\nPROJECT_AGENT_BODY",
         );
-        // SAFETY: serialized behind the binary-wide environment lock.
-        let _restore = crate::test_env::EnvRestore::capture(&["HOME"]);
-        unsafe { std::env::set_var("HOME", &home) };
+        let _home = crate::paths::test_user_home(home.clone());
 
         let custom = CustomExtensions::load_with_authority(
             &workspace,

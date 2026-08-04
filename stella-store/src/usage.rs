@@ -45,12 +45,11 @@ use crate::Result;
 /// The user-tier stella data dir (usage rollup, session registry,
 /// notifications, enterprise spool). `STELLA_DATA_DIR` overrides; otherwise
 /// `~/.stella` on every platform (see [`crate::home::stella_home`]) — no
-/// platform-specific guessing.
+/// platform-specific guessing. Resolved in `stella-home`, which
+/// `stella-observatory` now shares instead of keeping the hand-synced copy it
+/// used to (#1139).
 pub fn data_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("STELLA_DATA_DIR") {
-        return PathBuf::from(dir);
-    }
-    crate::home::stella_home().unwrap_or_else(|| PathBuf::from("."))
+    stella_home::data_dir()
 }
 
 /// Where the user-tier aggregate lives: `data_dir()/usage.db`.

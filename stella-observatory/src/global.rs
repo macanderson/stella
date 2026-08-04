@@ -19,22 +19,17 @@ use serde_json::{Value, json};
 /// `IS NULL` (for `repo_id`, whose column is `NOT NULL DEFAULT ''`, to `''`).
 const LOCAL_SCOPE: &str = "(local)";
 
-/// The user-tier stella data dir. Mirrors `stella_store::usage::data_dir` —
-/// kept as a copy because the observatory deliberately does not link
-/// `stella-store` (whose `Store::open` runs migrations, i.e. writes).
-/// `STELLA_DATA_DIR` overrides, then `STELLA_HOME`; otherwise `~/.stella`
-/// on every platform (`USERPROFILE` stands in for `HOME` on Windows).
+/// The user-tier stella data dir: `STELLA_DATA_DIR` overrides, then
+/// `STELLA_HOME`; otherwise `~/.stella` on every platform (`USERPROFILE`
+/// stands in for `HOME` on Windows).
+///
+/// This was a hand-synced COPY of `stella_store::usage::data_dir`, because the
+/// observatory deliberately does not link `stella-store` (whose `Store::open`
+/// runs migrations, i.e. writes). Both now call the same `stella-home`, which
+/// has no dependencies and so costs that isolation nothing — the copy, and the
+/// comment asking readers to keep it equal by hand, are gone (#1139).
 pub fn data_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("STELLA_DATA_DIR") {
-        return PathBuf::from(dir);
-    }
-    if let Some(dir) = std::env::var_os("STELLA_HOME") {
-        return PathBuf::from(dir);
-    }
-    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
-        return PathBuf::from(home).join(".stella");
-    }
-    PathBuf::from(".")
+    stella_home::data_dir()
 }
 
 /// `data_dir()/usage.db` — the cross-project rollup.

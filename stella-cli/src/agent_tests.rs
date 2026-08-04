@@ -716,8 +716,8 @@ fn benchmark_gate_excludes_hostile_filesystem_steering_and_extensions() {
     };
     let store_bytes = std::fs::read(&store_db).expect("read seeded store");
 
-    let _home = crate::settings::test_user_home(home.path().to_path_buf());
-    let isolation = crate::settings::test_filesystem_isolation(true);
+    let _home = crate::paths::test_user_home(home.path().to_path_buf());
+    let isolation = crate::paths::test_filesystem_isolation(true);
 
     let mut cfg = cfg_for("zai");
     cfg.workspace_root = root.to_path_buf();

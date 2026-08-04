@@ -199,10 +199,7 @@ fn debug_log_path() -> Option<PathBuf> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-        let state_home = std::env::var_os("XDG_STATE_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
-        let dir = state_home.join("stella").join("logs");
+        let dir = crate::paths::state_home()?.join("stella").join("logs");
         match std::fs::symlink_metadata(&dir) {
             Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
             Ok(_) => return None,

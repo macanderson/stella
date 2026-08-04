@@ -7,15 +7,12 @@ use super::{AgentEngineConfig, project_settings_path, user_settings_path};
 fn user_settings_are_private_but_project_settings_modes_are_untouched() {
     use std::os::unix::fs::PermissionsExt;
 
-    let _env = crate::test_env::lock();
-    let _restore = crate::test_env::EnvRestore::capture(&["HOME"]);
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().join("home");
     let user_dir = home.join(".stella");
     std::fs::create_dir_all(&user_dir).unwrap();
     std::fs::set_permissions(&user_dir, std::fs::Permissions::from_mode(0o777)).unwrap();
-    // SAFETY: serialized behind the binary-wide environment lock.
-    unsafe { std::env::set_var("HOME", &home) };
+    let _home = crate::paths::test_user_home(home.clone());
 
     let engine = AgentEngineConfig::default();
     let user = user_settings_path().unwrap();
@@ -47,14 +44,11 @@ fn user_settings_are_private_but_project_settings_modes_are_untouched() {
 fn user_settings_save_rejects_a_symlink_without_touching_target() {
     use std::os::unix::fs::symlink;
 
-    let _env = crate::test_env::lock();
-    let _restore = crate::test_env::EnvRestore::capture(&["HOME"]);
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().join("home");
     let user_dir = home.join(".stella");
     std::fs::create_dir_all(&user_dir).unwrap();
-    // SAFETY: serialized behind the binary-wide environment lock.
-    unsafe { std::env::set_var("HOME", &home) };
+    let _home = crate::paths::test_user_home(home.clone());
     let user = user_settings_path().unwrap();
     let target = tmp.path().join("outside.json");
     std::fs::write(&target, "{}\n").unwrap();

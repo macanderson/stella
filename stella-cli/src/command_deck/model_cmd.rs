@@ -197,34 +197,20 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    /// Bundles the process-wide env lock with the `HOME` restore guard.
-    /// Field order matters: fields drop in declaration order, so `restore`
-    /// puts the real `HOME` back before `lock` is released, and no other test
-    /// can observe an unrestored `HOME`.
-    struct HomeGuard {
-        _restore: crate::test_env::EnvRestore,
-        _lock: std::sync::MutexGuard<'static, ()>,
-    }
-
-    /// A workspace with `HOME` pointed inside it, so the user scope is
+    /// A workspace with the user home pointed inside it, so the user scope is
     /// isolated from the machine's real `~/.stella`.
-    fn scratch() -> (tempfile::TempDir, HomeGuard) {
-        let lock = crate::test_env::lock();
-        let restore = crate::test_env::EnvRestore::capture(&["HOME"]);
+    ///
+    /// This used to bundle the binary-wide environment lock with a `HOME`
+    /// restore guard, in that drop order, so no other test could observe an
+    /// unrestored `HOME`. The redirect is per-thread now (#1139): nothing to
+    /// serialize, nothing to restore, and the returned guard only has to
+    /// outlive the caller's test.
+    fn scratch() -> (tempfile::TempDir, crate::paths::TestPathsGuard) {
         let td = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(td.path().join("home")).unwrap();
-        // SAFETY: the env lock above serializes every HOME-mutating test in
-        // this binary; the guard is held for the caller's whole test.
-        unsafe {
-            std::env::set_var("HOME", td.path().join("home"));
-        }
-        (
-            td,
-            HomeGuard {
-                _restore: restore,
-                _lock: lock,
-            },
-        )
+        let home = td.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let guard = crate::paths::test_user_home(home);
+        (td, guard)
     }
 
     fn test_config(workspace_root: PathBuf) -> Config {

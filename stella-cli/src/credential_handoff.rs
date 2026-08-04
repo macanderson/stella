@@ -47,9 +47,11 @@ use std::sync::OnceLock;
 
 use stella_model::credential::ApiKey;
 
+use crate::startup::StartupPhase;
+
 /// Descriptor number holding the credential bytes. The Harbor adapter uses
 /// stdin (fd 0), which Docker Compose connects to an anonymous host pipe.
-const HANDOFF_FD_ENV: &str = "STELLA_CREDENTIAL_HANDOFF_FD";
+pub(crate) const HANDOFF_FD_ENV: &str = "STELLA_CREDENTIAL_HANDOFF_FD";
 /// Provider credential variables these values stand in for, comma-separated
 /// and in the same order as the descriptor's lines. The *names* are not a
 /// secret and let normal provider routing retain its existing precedence.
@@ -91,7 +93,12 @@ static HANDOFF: OnceLock<BTreeMap<String, String>> = OnceLock::new();
 /// The descriptor is owned by this function and is closed on every read path.
 /// No raw credential is copied into the process environment. Errors contain
 /// descriptor/target metadata only, never credential bytes.
-pub(crate) fn consume_at_startup() -> Result<(), String> {
+///
+/// Takes the [`StartupPhase`] token because it scrubs the handoff metadata out
+/// of the process environment, which is only sound before the process grows a
+/// second thread (#1140).
+pub(crate) fn consume_at_startup(phase: &StartupPhase) -> Result<(), String> {
+    phase.assert_before_runtime("credential_handoff::consume_at_startup");
     let Some(fd_raw) = std::env::var_os(HANDOFF_FD_ENV) else {
         return Ok(());
     };
@@ -115,9 +122,11 @@ pub(crate) fn consume_at_startup() -> Result<(), String> {
     let credentials = pair_targets_with_values(&targets, &payload)?;
 
     // SAFETY: main calls this before env-file loading, clap, the Tokio runtime,
-    // or any thread creation. Remove the non-secret control metadata as soon
-    // as it has served its purpose so children cannot mistake it for a second
-    // usable handoff.
+    // or any thread creation — and the `StartupPhase` parameter plus the
+    // assertion at the top of this function are what hold that true rather
+    // than this comment. Remove the non-secret control metadata as soon as it
+    // has served its purpose so children cannot mistake it for a second usable
+    // handoff.
     unsafe {
         std::env::remove_var(HANDOFF_FD_ENV);
         std::env::remove_var(HANDOFF_TARGET_ENV);

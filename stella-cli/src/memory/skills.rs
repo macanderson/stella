@@ -79,7 +79,7 @@ pub(crate) fn skill_paths_on_disk(dir: &str) -> Vec<String> {
 /// `~/.stella/skills` — the user-global skills directory (empty
 /// string without a home, which the loader skips silently).
 fn user_skills_dir() -> String {
-    crate::settings::user_home_dir()
+    crate::paths::user_extension_home()
         .map(|home| home.join(".stella").join("skills").display().to_string())
         .unwrap_or_default()
 }

@@ -55,6 +55,7 @@ use std::path::{Path, PathBuf};
 use colored::Colorize;
 
 use crate::OutputFormat;
+use crate::startup::StartupPhase;
 
 /// What a load pass applied, for an optional diagnostic line. `files` are the
 /// dotenv files that actually contributed at least one variable (most-specific
@@ -94,8 +95,11 @@ impl Loaded {
 /// afterward to surface what happened.
 ///
 /// Must run during single-threaded startup (before the tokio runtime or any
-/// worker threads exist), since it mutates the process environment.
-pub fn maybe_load() -> Loaded {
+/// worker threads exist), since it mutates the process environment — which is
+/// what the [`StartupPhase`] token and its assertion enforce (#1140), rather
+/// than this sentence.
+pub fn maybe_load(phase: &StartupPhase) -> Loaded {
+    phase.assert_before_runtime("env_files::maybe_load");
     let disabled =
         std::env::var_os("STELLA_NO_ENV_FILE").is_some_and(|v| !v.is_empty() && v != "0");
     if disabled {
@@ -104,7 +108,7 @@ pub fn maybe_load() -> Loaded {
     let Ok(cwd) = std::env::current_dir() else {
         return Loaded::default();
     };
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let home = crate::paths::home();
     let (plan, refused) = plan_from(&cwd, home.as_deref(), |k| std::env::var_os(k).is_some());
 
     let mut names = Vec::new();
@@ -113,7 +117,9 @@ pub fn maybe_load() -> Loaded {
     for (key, value, path) in plan {
         // SAFETY: called only from `main` during single-threaded process
         // startup, before the tokio runtime or any worker threads exist — no
-        // concurrent `getenv`/`setenv` can race this write.
+        // concurrent `getenv`/`setenv` can race this write. The `phase`
+        // parameter is what makes that a checked precondition rather than a
+        // claim: a caller past the boundary cannot reach this line.
         unsafe { std::env::set_var(&key, &value) };
         name_files.insert(key.clone(), path.clone());
         names.push(key);

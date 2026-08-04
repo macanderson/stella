@@ -849,7 +849,7 @@ impl AgentEngineConfig {
 /// `HOME` is known — the TUI save target for user-scope edits and the
 /// first file of [`Settings::load`]'s chain.
 pub fn user_settings_path() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".stella").join("settings.json"))
+    crate::paths::stella_root().map(|root| root.join("settings.json"))
 }
 
 /// The project-scope settings path (`<workspace>/.stella/settings.json`).
@@ -1267,7 +1267,7 @@ struct ProjectTrust {
     credentials: bool,
 }
 
-fn env_flag(name: &str) -> bool {
+pub(crate) fn env_flag(name: &str) -> bool {
     std::env::var_os(name).is_some_and(|v| truthy_flag(&v))
 }
 
@@ -1291,80 +1291,7 @@ fn truthy_flag(value: &std::ffi::OsStr) -> bool {
 /// credentials; session assembly also uses it to exclude Stella-specific
 /// prompt steering, executable extensions, and persisted learning state.
 pub(crate) fn filesystem_settings_disabled() -> bool {
-    #[cfg(test)]
-    {
-        TEST_FILESYSTEM_ISOLATION.with(std::cell::Cell::get)
-    }
-    #[cfg(not(test))]
-    {
-        env_flag("STELLA_NO_SETTINGS")
-    }
-}
-
-// Unit tests exercise many prompt/rule/memory loaders concurrently. A process
-// environment toggle would make unrelated tests observe claim mode (and POSIX
-// setenv/getenv races are undefined), so tests use a thread-scoped equivalent
-// of the production launcher signal.
-#[cfg(test)]
-std::thread_local! {
-    static TEST_FILESYSTEM_ISOLATION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-#[cfg(test)]
-pub(crate) struct TestFilesystemIsolationGuard {
-    previous: bool,
-}
-
-#[cfg(test)]
-pub(crate) fn test_filesystem_isolation(enabled: bool) -> TestFilesystemIsolationGuard {
-    let previous = TEST_FILESYSTEM_ISOLATION.replace(enabled);
-    TestFilesystemIsolationGuard { previous }
-}
-
-#[cfg(test)]
-impl Drop for TestFilesystemIsolationGuard {
-    fn drop(&mut self) {
-        TEST_FILESYSTEM_ISOLATION.set(self.previous);
-    }
-}
-
-/// Home directory used by Stella-specific user-scope extension loaders.
-/// Centralizing it keeps claim isolation and test injection consistent across
-/// rules, skills, and custom tools.
-pub(crate) fn user_home_dir() -> Option<PathBuf> {
-    #[cfg(test)]
-    {
-        TEST_USER_HOME.with(|home| home.borrow().clone())
-    }
-    #[cfg(not(test))]
-    {
-        std::env::var_os("HOME").map(PathBuf::from)
-    }
-}
-
-#[cfg(test)]
-std::thread_local! {
-    static TEST_USER_HOME: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
-}
-
-#[cfg(test)]
-pub(crate) struct TestUserHomeGuard {
-    previous: Option<PathBuf>,
-}
-
-#[cfg(test)]
-pub(crate) fn test_user_home(path: PathBuf) -> TestUserHomeGuard {
-    let previous = TEST_USER_HOME.with(|home| home.replace(Some(path)));
-    TestUserHomeGuard { previous }
-}
-
-#[cfg(test)]
-impl Drop for TestUserHomeGuard {
-    fn drop(&mut self) {
-        TEST_USER_HOME.with(|home| {
-            home.replace(self.previous.take());
-        });
-    }
+    crate::paths::filesystem_settings_disabled()
 }
 
 fn project_trust() -> ProjectTrust {

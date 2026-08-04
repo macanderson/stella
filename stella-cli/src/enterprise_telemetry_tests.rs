@@ -18,6 +18,7 @@ use crate::enterprise_telemetry::{
     reset_process_free_authority_for_test, validate_response_status, verify_managed_enrollment,
 };
 use crate::settings::Settings;
+use crate::startup::StartupPhase;
 use crate::test_env::EnvRestore;
 use crate::{Cli, Command, TelemetryCmd};
 use clap::Parser;
@@ -459,7 +460,8 @@ fn pre_dotenv_snapshot_restores_every_privileged_control_and_credential_ref() {
     for name in names {
         unsafe { std::env::set_var(name, format!("project-{name}")) };
     }
-    let rejected = snapshot.restore_after_project_env(&names.map(str::to_string));
+    let rejected =
+        snapshot.restore_after_project_env(&StartupPhase::for_test(), &names.map(str::to_string));
     assert_eq!(rejected.len(), names.len());
     for name in names {
         assert!(
@@ -766,8 +768,10 @@ fn project_dotenv_cannot_supply_either_managed_credential() {
         std::env::set_var(verify_ref, "fedcba9876543210fedcba9876543210");
         std::env::set_var(token_ref, "project-controlled-token");
     }
-    let rejected =
-        snapshot.restore_after_project_env(&[verify_ref.to_string(), token_ref.to_string()]);
+    let rejected = snapshot.restore_after_project_env(
+        &StartupPhase::for_test(),
+        &[verify_ref.to_string(), token_ref.to_string()],
+    );
     assert_eq!(rejected.len(), 2);
     let Err(error) = verify_managed_enrollment(&managed, 1_700_000_001) else {
         panic!("project dotenv credentials were accepted");
