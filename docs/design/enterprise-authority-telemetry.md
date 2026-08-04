@@ -1,3 +1,9 @@
+---
+id: enterprise-authority-telemetry
+title: "Enterprise Authority and Telemetry"
+status: living
+---
+
 # Enterprise Authority and Telemetry
 
 Status: approved for implementation

@@ -1,3 +1,9 @@
+---
+id: semantic-resolution-bridge
+title: "Semantic-resolution bridge — evaluation"
+status: implemented
+---
+
 # Semantic-resolution bridge — evaluation
 
 **Status:** B2 shipped (#443 — `stella-graph/src/rust_resolve.rs`, plus the

@@ -53,7 +53,7 @@ fn a_document_that_supersedes_others_is_not_itself_superseded() {
                      earlier Context-PR drafts.\n";
     assert_eq!(supersession_marker(canonical), None);
 
-    let retired = "# Context PRs — draft\n\n> Superseded by docs/context-pr.md\n";
+    let retired = "# Context PRs — draft\n\n> Superseded by docs/design/adaptive-context/context-pr.md\n";
     assert!(supersession_marker(retired).is_some());
 }
 

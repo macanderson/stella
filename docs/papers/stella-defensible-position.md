@@ -1,3 +1,9 @@
+---
+id: stella-defensible-position
+title: "Stella: A Defensible Technology Position"
+status: living
+---
+
 # Stella: A Defensible Technology Position
 
 > **Research note.** This paper analyzes the structural and architectural

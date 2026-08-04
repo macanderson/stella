@@ -1,3 +1,9 @@
+---
+id: brand
+title: "stella\* — brand kit v1.0"
+status: living
+---
+
 # stella\* — brand kit v1.0
 
 The comet: a four-point star moving fast enough to leave a trail.

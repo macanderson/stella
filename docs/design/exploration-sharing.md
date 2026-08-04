@@ -1,3 +1,9 @@
+---
+id: exploration-sharing
+title: "Design: Session-Shared Exploration Maps"
+status: implemented
+---
+
 # Design: Session-Shared Exploration Maps
 
 **Status:** Largely implemented — this is now a reference for shipped behaviour,
@@ -44,8 +50,8 @@ systems failure with five concrete causes, all verifiable in code:
 This is the same *passive-vs-active* failure the schema-graph spec identified
 for schema drift (`docs/design/schema-graph.md`, "Retrieval is passive — the
 agent must think to look"), and the same two-surfaces problem the telemetry
-spec diagnosed for the code graph (`docs/design/telemetry-data-plane-spec.md`
-§0.1). The fix follows the same playbook: make the knowledge **live** (staleness
+spec diagnosed for the code graph (the telemetry data-plane spec, removed
+when the site superseded it -- recover it from git history). The fix follows the same playbook: make the knowledge **live** (staleness
 tracked per file, continuously), make consultation **active** (injected and
 hinted, not merely available), and make production **expected** (nudged at the
 moment the ledger shows unmapped exploration happened).
@@ -221,7 +227,7 @@ computes it:
   response should say so).
 
 The ledger already records every `read_file`/`grep`-adjacent touch with
-reasons (`docs/design/file-touch-telemetry.md`), so the manifest is exactly
+reasons (`website/content/docs/telemetry/files-touched.mdx`), so the manifest is exactly
 "the evidence this map was built from" — with zero extra model tokens.
 
 ---
@@ -393,7 +399,7 @@ design explicitly invites).
 
 The graph is where agents (are supposed to) start: `neighbors` is the
 documented orientation op with no grep equivalent
-(`docs/design/graph-tool-analysis.md`). Surface coverage there:
+(`website/content/docs/commands/graph.mdx`). Surface coverage there:
 
 - `graph_query {op: neighbors, target: <file>}` appends, when the file
   appears in any exploration manifest:

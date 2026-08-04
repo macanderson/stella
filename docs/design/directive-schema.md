@@ -1,3 +1,9 @@
+---
+id: directive-schema
+title: "Directive schema"
+status: living
+---
+
 # Directive schema
 
 *Normative home: the [Context Graph Protocol](https://github.com/macanderson/context-graph-protocol/tree/c5fb2fe)
@@ -12,8 +18,8 @@ wire semantics.*
 > are not directive kinds** (`memory` is its own record kind, `fact` is a
 > `knowledge` kind). Portable directive semantics are owned by the **Context Graph
 > Protocol** exchange-provider profile (CGP #28), not by this document. Kept for
-> history; see, **in the CGP repository**, `docs/adaptive-context-reconciliation.md`
-> and `docs/adr/0007-protocol-product-boundary.md` — both are published at the
+> history; see, **in the CGP repository**, [`adaptive-context-reconciliation.md`](https://github.com/macanderson/context-graph-protocol/blob/c5fb2fe/docs/adaptive-context-reconciliation.md)
+> and [`adr/0007-protocol-product-boundary.md`](https://github.com/macanderson/context-graph-protocol/blob/c5fb2fe/docs/adr/0007-protocol-product-boundary.md) — both are published at the
 > revision pinned above, now that
 > [context-graph-protocol#27](https://github.com/macanderson/context-graph-protocol/issues/27)
 > has landed, and neither is this workspace's

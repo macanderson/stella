@@ -469,12 +469,17 @@ fi
 # ── The part that is easy to get wrong ───────────────────────────────────────
 hdr "make gate vs CI"
 cat <<'EOF'
-  make gate  runs: no-scratch, action-pins, invariants, file-size,
+  make gate  runs: no-scratch, action-pins, invariants, doc-links, file-size,
              doc-warnings (RUSTDOCFLAGS=-D warnings), fmt --check, clippy, test.
              It stops at the FIRST failure; CI reports all of them in one run.
 
   make check is the fast subset — it skips tests AND rustdoc.
              Passing `make check` does not mean CI will pass.
+
+  doc-links  cite documents by frontmatter id (`doc:context-reuse §4`), not by
+             path, so a move cannot break a citation. If one does break,
+             `make doc-links-fix` repoints it. `make doc-report` lists what
+             has gone stale.
 
   Green locally, red in CI, two ways:
     - release smoke   CI also runs `cargo build --workspace --release`

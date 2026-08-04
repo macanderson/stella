@@ -1,3 +1,9 @@
+---
+id: serve-surface
+title: "Stella serve surface — the headless engine for Oxagen"
+status: implemented
+---
+
 # Stella serve surface — the headless engine for Oxagen
 
 **Status:** Partly implemented as the `stella-serve` crate (`Session`,

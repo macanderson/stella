@@ -1,3 +1,9 @@
+---
+id: 0001-semantic-taxonomy
+title: "ADR 0001: Semantic Taxonomy"
+status: living
+---
+
 # ADR 0001: Semantic Taxonomy
 
 - Status: Accepted (Phase 0)

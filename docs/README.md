@@ -1,3 +1,9 @@
+---
+id: docs-readme
+title: "docs/"
+status: living
+---
+
 # docs/
 
 **The product documentation does not live here.** It lives in the
@@ -25,28 +31,63 @@ round trip to the site.
 
 ### How to cite a document
 
-**Cite the public docs by path; cite everything else by URL.** A citation in
-Rust source or in prose should name a page on the docs site
-(<https://stella.oxagen.sh>) or a `website/content/docs/` path, because that is
-the address a reader can actually follow and the one that survives a refactor of
-this directory. An internal design spec, an ADR, or an upstream contract is
-still fair to cite — link it by URL rather than by repo-relative path, so the
-citation resolves for someone reading the rendered docs rather than a checkout.
+**A document is addressed by its `id`, not by where it sits.** Every document
+here that anything cites opens with frontmatter:
 
-Three documents — [`design/adaptive-context/context-frame-spec.md`](design/adaptive-context/context-frame-spec.md),
-[`design/directive-schema.md`](design/directive-schema.md), and the vendored
+```yaml
+---
+id: context-reuse
+title: Context reuse — identity, accounting, consent, verification
+status: vendored
+---
+```
+
+Cite it as `doc:context-reuse`, optionally with a section: `doc:context-reuse §4`.
+Move the file, rename the directory, reorganise the whole tree — the citation
+still resolves, because it never named a location in the first place.
+
+**Frontmatter is the admission ticket.** A document with no `id` cannot be
+cited, and `make doc-links` fails on any citation to one. That is deliberate
+rather than strict: a spec nobody has bothered to give an identity to is a spec
+nobody is maintaining, and this is a cheaper way to find that out than reading
+it. To adopt a document, `make doc-adopt DOC=docs/design/thing.md`. <!-- doc-links:ignore -->
+
+| Field | Required | Notes |
+|---|---|---|
+| `id` | yes | lowercase kebab, optionally `ns/name`. Chosen once; **never** change it — that is the one thing that would break citations. |
+| `title` | yes | usually the H1. |
+| `status` | yes | `living`, `proposed`, `implemented`, `superseded`, `vendored`, `archived`. |
+| `superseded_by` | when `status: superseded` | the successor's `id`. Citing a superseded document fails the check and names the successor. |
+
+**Path citations still work, and repair themselves.** 223 citations were written
+as `docs/design/thing.md` before ids existed, and rewriting them all by hand <!-- doc-links:ignore -->
+would be its own source of error. [`manifest.json`](manifest.json) — generated,
+committed, diffable — records where each `id` lived at the last commit, so when
+a document moves, `make doc-links-fix` diffs that against the tree, sees which
+`id` went where, and repoints every stale path itself.
+
+That healing is only ever applied to a move it can *prove*: the id says where
+the document went. A broken path whose filename happens to match one document is
+a guess, and gets reported rather than applied — a citation silently repointed at
+the wrong document is worse than one that visibly dangles. `make
+doc-links-fix-by-name` applies those after you have read the list.
+
+If a `docs/…md` string in your prose is not a citation — a file you intend to
+*generate*, say — end the line with `<!-- doc-links:ignore -->`.
+
+**Cite anything outside this repository by URL.** An upstream contract or
+another repo's ADR has no `id` here and never will.
+[`design/adaptive-context/context-frame-spec.md`](design/adaptive-context/context-frame-spec.md),
+[`design/directive-schema.md`](design/directive-schema.md) and the vendored
 [`design/adaptive-context/context-reuse.md`](design/adaptive-context/context-reuse.md)
-— defer to the Context Graph Protocol for their wire semantics instead of
-restating them, and each opens with a URL pointing at the CGP revision it
-defers to. Update that link when the `contextgraph-*` dependency moves.
+defer to the Context Graph Protocol for their wire semantics instead of
+restating them, and each opens with a URL pointing at the CGP revision it defers
+to. Update that link when the `contextgraph-*` dependency moves.
 
-None of this is gated. There used to be two CI checks here —
-`check-normative-home.sh`, which compared a `NORMATIVE-HOME:` header against the
-`contextgraph-*` git rev, and `check-doc-citations.sh`, which required every
-`docs/**.md` path named in a Rust comment to resolve. Both assumed code cites
-internal specs by repo-relative path, which under the rule above it no longer
-does — and a repo-local checker cannot follow a URL. So the guards were retired
-rather than reworked. Getting a citation right is a review responsibility now.
+**What is stale?** `make doc-report` lists every document nothing cites, with
+its status and how long it has sat untouched. That is a report, never a
+failure — retiring a document is a judgement call, and a red gate is the wrong
+way to ask for one.
 
 A spec is **not** deleted just because its feature shipped. Several of the
 documents under `design/` are cited by `file §section` from Rust doc comments
@@ -68,6 +109,5 @@ citation at unrelated prose, and because both the old and the new target render
 as ordinary text, nothing surfaces the drift. The citation still *looks*
 authoritative, which is what makes it worse than no citation at all. For a
 document with numbered headings use `§N`; for one without, name the heading
-(`docs/adr/0001-semantic-taxonomy.md § Open questions`). This is a convention,
-not a gate: the check that enforced it was retired along with the rest of the
-citation guards, so it holds only as far as review does.
+(`doc:0001-semantic-taxonomy § Open questions`). `make doc-links` fails on a
+`path.md:N` citation in any tracked markdown file.

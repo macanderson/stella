@@ -32,7 +32,7 @@ silently promoted to the top level.
 Two things follow, and both are load-bearing for this decision:
 
 1. **The canonical specification's own example does not parse as written.**
-   `docs/context-pr.md` §6.1 shows a nested `scope:` block. Against the shipped
+   `docs/design/adaptive-context/context-pr.md` §6.1 shows a nested `scope:` block. Against the shipped
    reader, `scope` resolves to an empty string and `repository_id` becomes a
    sibling of `record_id`. Nothing errors.
 2. **Adding a field means extending a bespoke parser**, not adopting a format —
@@ -97,7 +97,7 @@ paper.
   without complaint is the same failure shape as a check that reports OK for
   inputs it skipped. **Done** (issue #891): nested keys are recorded on
   `Frontmatter::nested_keys` and `rule_from_file_checked` refuses the file with an
-  error naming the keys. `docs/context-pr.md` §6.1's example was corrected to a
+  error naming the keys. `docs/design/adaptive-context/context-pr.md` §6.1's example was corrected to a
   shape the reader accepts, since it would now fail to load rather than load wrong.
 - ADR 0008's open question — owner-routing policy, deferred to Phase 8 — is
   untouched by this decision.

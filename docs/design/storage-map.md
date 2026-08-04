@@ -1,3 +1,9 @@
+---
+id: storage-map
+title: "Design: The Storage Map — Vendor-Agnostic Storage Layer Indexing for Zero Drift"
+status: implemented
+---
+
 # Design: The Storage Map — Vendor-Agnostic Storage Layer Indexing for Zero Drift
 
 **Status:** Phases A–C implemented, D partial, E adapters implemented ·

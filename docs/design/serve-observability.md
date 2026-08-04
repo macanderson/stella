@@ -1,3 +1,9 @@
+---
+id: serve-observability
+title: "Observability for `stella-serve` — a typed event at every boundary"
+status: implemented
+---
+
 # Observability for `stella-serve` — a typed event at every boundary
 
 **Status:** **Built** — `stella-serve/src/observe/`, all four slices of §11 in

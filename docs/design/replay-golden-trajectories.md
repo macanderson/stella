@@ -1,3 +1,9 @@
+---
+id: replay-golden-trajectories
+title: "Golden replay trajectories"
+status: living
+---
+
 # Golden replay trajectories
 
 How the golden-trajectory fixtures are recorded and refreshed, and what a
