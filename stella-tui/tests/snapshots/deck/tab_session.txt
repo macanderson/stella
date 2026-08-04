@@ -17,8 +17,9 @@
      returns: watch CI + open PR → lead inbox
 ┌ stella ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │stage execute   model —   turn $0.0390 / $2.50  ·  observed                                                                                                   │
+│ctx ▱▱▱▱▱▱▱▱ 8k/200k   spend ▱▱▱▱▱▱▱▱ $0.04/$2.50   cache ▰▰▰▰▰▱▱▱ 63%   cpu ▰▰▰▰▱▱▱▱ 50%                                                                     │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ scope review ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+┌ plan review ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Refactor the automations store into a shared workspace package                                                                                                │
 │3 steps  ·  ~11 files  ·  est. cost ~$0.42                                                                                                                    │
 │type approve  trim  xabort  ·  or what to change  —  then ⏎                                                                                                   │
@@ -26,17 +27,16 @@
 │                                                                                                                                                              │
 │                                                                                                                                                              │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- ☑ 5/7 ▸ Workflows canvas    ⚖ flip ✓ red→green
-┌ transcript · 21 lines · following ───────────────────────────────────────────────────────────────────────────────────────────┐┌ TASKS 5/7 ───────────────────┐
-│                                                                                                                              ││ ✓ #1 Scaffold the automation…│
-│● read_file    apps/app/automations/page.tsx                                                                                  ││ ✓ #2 List view with live fil…│
-│  ⎿ 312 lines                                                                                                             42ms││ ✓ #3 Editor panel plumbing (…│
-│                                                                                                                              ││ ✓ #4 Persist automation draf…│
-│☰  tasks  5/7  ·  Workflows canvas                                                                                            ││ ✓ #5 Wire the triggers API (…│
-│                                                                                                                              ││ ▸ #6 Workflows canvas (lead) │
-│⏸ scope  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files                               ││ ☐ #7 Verify: witness suite g…│
-│                                                                                                                              ││                              │
-└──────────────────────────────────────────────── ↑ select · ⇞⇟ scroll · ⌃F find · ⌃N failure · ⌃Z fold · ⌃O expand · ⌃S state ┘└──────────────────────────────┘
+┌ transcript · 21 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
+│                                                                                                                      ││○ 1 extract types                     │
+│● read_file    apps/app/automations/page.tsx                                                                          │└────────────────────── /plan reads it ┘
+│  ⎿ 312 lines                                                                                                     42ms│┌ DONE VERIFICATION ───────────────────┐
+│                                                                                                                      ││○ warrant  pending                    │
+│☰  plan  5/7  ·  Workflows canvas                                                                                     ││● witness  authored  apps/app/automat…│
+│                                                                                                                      ││● oracle   ✗ fails on base → ✓ passes…│
+│⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files                        ││○ tamper   pinned  sha256:9f3c1d2e4…  │
+│                                                                                                                      ││○ verdict  pending                    │
+└─────────────────────────────────────────── ↑ select · ⇞⇟ scroll · ⌃F find · ⌃N failure · ⌃Z fold · ⌃O expand · /plan ┘└──────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▸ stage  Refactor the automations store into a shared workspace package
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify

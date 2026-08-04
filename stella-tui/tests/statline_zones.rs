@@ -118,9 +118,7 @@ fn zones_drop_whole_in_the_documented_order_as_the_row_narrows() {
 fn every_card_collapses_the_row_to_its_context_items() {
     let model = running_model();
     for (card, expect) in [
-        (Card::Tasks, vec!["agent", "stage", "turn"]),
-        (Card::Scope, vec!["agent", "stage", "ctx", "run"]),
-        (Card::Witness, vec!["agent", "stage", "witness", "run"]),
+        (Card::Plan, vec!["agent", "stage", "turn", "plan"]),
         (Card::Models, vec!["agent", "stage", "ctx", "run"]),
         (Card::Budget, vec!["agent", "stage", "ctx", "run"]),
     ] {

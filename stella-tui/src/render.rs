@@ -59,14 +59,43 @@ pub(crate) fn inner_width(area: Rect) -> usize {
 
 // Panels
 
-/// The session HUD strip: stage, model, and the live cost of the turn.
+/// Rows the stat box claims when it carries its vitals gauges: border, the
+/// stage line, the gauge row, border.
+pub(crate) const HUD_H_WITH_VITALS: u16 = 4;
+
+/// Rows it claims without them.
+pub(crate) const HUD_H: u16 = 3;
+
+/// The stat box's height for a frame: it grows a row for the gauges when the
+/// frame can spare one. On a short terminal the stage line alone is what the
+/// box is for, and the statline still carries the same four figures as text.
+pub(crate) fn hud_height(frame_h: u16) -> u16 {
+    if frame_h >= 20 {
+        HUD_H_WITH_VITALS
+    } else {
+        HUD_H
+    }
+}
+
+/// The stat box: stage, model and the live cost of the turn, and — when the
+/// frame can spare the row — the vitals gauges under them.
 ///
 /// Cost here reads *per turn*, matching the composer's cell and the `✓ cost`
 /// line — it used to print `hud.spent_usd` raw, which on the deck is the
 /// session-cumulative gauge, so the "spend" in this box, the SPEND cell in the
 /// statline, and the `◇ spend` rows in the transcript were three different
 /// renderings of two different quantities under one word.
-pub(crate) fn render_hud(hud: &Hud, area: Rect, buf: &mut Buffer) {
+///
+/// The gauges are deliberately redundant with the statline's `ctx`/`cpu`/
+/// `cache` figures. Text is precise and answers *what*; a bar answers *is
+/// anything about to run out* without being read, which is the question a
+/// running agent actually gets glanced at with. See [`crate::vitals`].
+pub(crate) fn render_hud(
+    hud: &Hud,
+    vitals: Option<&crate::vitals::Vitals>,
+    area: Rect,
+    buf: &mut Buffer,
+) {
     let label = Style::new().fg(theme::TEXT_TERTIARY);
     let mut spans: Vec<Span<'static>> = vec![
         Span::styled("stage ", label),
@@ -106,9 +135,19 @@ pub(crate) fn render_hud(hud: &Hud, area: Rect, buf: &mut Buffer) {
         .borders(Borders::ALL)
         .border_style(theme::rule())
         .title(" stella ");
-    Paragraph::new(Line::from(spans))
-        .block(block)
-        .render(area, buf);
+    let mut rows = vec![Line::from(spans)];
+    // The gauge row, when the box was given the height for it and the vitals
+    // have something to report. Dropped whole rather than squeezed: a box that
+    // renders a border around a blank row has spent a row saying nothing.
+    if area.height >= HUD_H_WITH_VITALS
+        && let Some(vitals) = vitals
+    {
+        let gauges = vitals.row(inner_width(area));
+        if !gauges.is_empty() {
+            rows.push(Line::from(gauges));
+        }
+    }
+    Paragraph::new(rows).block(block).render(area, buf);
 }
 
 /// [`render_transcript`] for a caller that already materialized just the
@@ -215,15 +254,18 @@ pub(crate) fn render_scope_review(
             ),
         ])
     });
-    // Warning, not the accent. A scope gate is the deck waiting on *you*, and
+    // Warning, not the accent. This gate is the deck waiting on *you*, and
     // "needs input" is a warning everywhere else in this UI — including the
-    // `⏸ scope` row this card mirrors in the transcript. Bordering it in the
+    // `⏸ plan` row this card mirrors in the transcript. Bordering it in the
     // brand hue made the one card that halts the session read as decoration,
     // and it was the single largest block of accent on the frame.
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::new().fg(theme::WARNING_BRIGHT))
-        .title(" scope review ");
+        // The thing being approved is the plan, so that is what the card is
+        // called. `scope` was this surface's word for the same object, and the
+        // rail beside it has already stopped using it.
+        .title(" plan review ");
     Paragraph::new(Text::from(lines))
         .block(block)
         .wrap(Wrap { trim: true })

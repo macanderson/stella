@@ -76,6 +76,7 @@ pub mod graph;
 pub mod markdown;
 pub mod notice;
 pub mod palette;
+pub mod plan;
 pub mod progress;
 pub mod proof;
 pub mod resource;
@@ -86,6 +87,7 @@ pub mod syntax;
 pub mod theme;
 pub mod transcript_nav;
 pub mod views;
+pub mod vitals;
 
 pub use accessible::{FlushBlock, NOTICE_MARKER, Scrollback};
 pub use ansi::strip_ansi;

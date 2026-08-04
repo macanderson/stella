@@ -3630,9 +3630,10 @@ const DECK_BUILTINS: &[(&str, &str)] = &[
         "/context",
         "this session's active skills + MCP servers (also: → on an empty prompt)",
     ),
-    ("/tasks", "task board — done · active · queued"),
-    ("/scope", "view or edit run scope + caps"),
-    ("/witness", "the proof: author · execute · result"),
+    (
+        "/plan",
+        "the plan — every step, with where it may write and spend",
+    ),
     ("/budget", "set or clear the session spend cap"),
     (
         "/inspect",
@@ -4303,6 +4304,7 @@ async fn run_lead_turn(
         cfg.provider.id.to_string(),
         in_tx.clone(),
         LEAD.to_string(),
+        Some(registry.task_board()),
     );
     // First event of the turn: what recall put in front of the model.
     if let Some(event) = recall_event {
@@ -4470,6 +4472,7 @@ async fn run_lead_pipeline_turn(
         cfg.provider.id.to_string(),
         in_tx.clone(),
         LEAD.to_string(),
+        Some(registry.task_board()),
     );
 
     // Claim-on-first-write over the shared tree — same wiring as

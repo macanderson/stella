@@ -83,6 +83,15 @@ pub struct SessionModel {
     /// ([`crate::proof`]). Per-turn: cleared when the next turn starts, not
     /// when this one ends, so a finished proof stays readable.
     pub proof: crate::proof::ProofState,
+    /// **The plan** — the one surface for what stella said it would do and how
+    /// far through it is ([`crate::plan`]).
+    ///
+    /// Folded from both streams that used to render as separate panels: the
+    /// gate's proposal supplies the steps, `TaskUpdate` supplies their states.
+    /// The two fields below remain because the *gate* and the scope's
+    /// non-step detail (globs, budget, routing) still need them; nothing
+    /// renders a step list from them any more.
+    pub plan: crate::plan::Plan,
     /// A scope-review gate awaiting the user's decision (L-E5). Set by a
     /// `ScopeReview` event and cleared by the engine's follow-on event
     /// (a non-scope-review `Stage`, `Complete`, or `Error`) — so the pending
@@ -440,6 +449,7 @@ impl SessionModel {
                     // the deck asserting consent that was never given for this
                     // work.
                     self.approved_scope = None;
+                    self.plan = crate::plan::Plan::default();
                 }
                 self.hud.complete = false;
                 self.hud.final_cost_usd = None;
@@ -456,6 +466,10 @@ impl SessionModel {
                     && let Some(approved) = self.pending_scope_review.take()
                 {
                     self.approved_scope = Some(approved);
+                    // The same transition is the plan's approval: the rail
+                    // stops saying "pending approval" the moment work starts,
+                    // and does so from the event, so replay reconstructs it.
+                    self.plan.approve();
                 }
                 self.transcript.push(TranscriptEntry::Stage(*name));
             }
@@ -698,6 +712,10 @@ impl SessionModel {
                     estimated_files: proposal.estimated_files,
                 });
                 self.pending_scope_review = Some(proposal.clone());
+                // The gate's proposal IS the plan — the rail shows its steps
+                // from this moment, marked pending approval, so what the user
+                // is being asked to consent to is legible before they answer.
+                self.plan.propose(proposal);
             }
             AgentEvent::HunkReview { proposal } => {
                 let mut files: Vec<&str> =
@@ -750,6 +768,7 @@ impl SessionModel {
                 // checklist card); the transcript gets a one-line digest so
                 // scrollback shows *when* the board moved.
                 self.tasks = tasks.clone();
+                self.plan.apply_board(tasks);
                 self.transcript.push(TranscriptEntry::TaskUpdate {
                     done: tasks
                         .iter()
@@ -835,6 +854,9 @@ impl SessionModel {
                 // A retryable error is a warning mid-flight; the turn goes on.
                 if !*retryable {
                     self.proof.finish();
+                    // …and the plan, for the same reason: a step left
+                    // `working` on a turn that died reads as in-flight forever.
+                    self.plan.finish();
                 }
                 self.pending_scope_review = None;
                 self.pending_ask_user = None;
@@ -861,6 +883,7 @@ impl SessionModel {
                 // over. See `crate::proof` — this is the half of the invariant
                 // that does not depend on the pipeline cooperating.
                 self.proof.finish();
+                self.plan.finish();
                 self.pending_scope_review = None;
                 self.pending_ask_user = None;
                 self.pending_hunk_review = None;

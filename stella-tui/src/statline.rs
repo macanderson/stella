@@ -12,7 +12,7 @@
 //! right-aligned, plus `✦/◆` lane counts when subagents exist). WARMTH,
 //! ENGINE and PIPELINE left this row for the context overlay / SETTINGS —
 //! diagnostics, not glanceables — and the MODELS row is gone outright
-//! (routing lives on the scope card and `/models`).
+//! (routing lives on the plan card and `/models`).
 //!
 //! ## Degradation: zones drop whole, they never squish
 //!
@@ -25,10 +25,9 @@
 //! ## Collapse: a card on top gets a quiet floor
 //!
 //! When any overlay/card is open the row collapses to at most four items
-//! chosen for that context (the task card keeps `turn $` + tok/s, the scope
-//! card keeps `ctx` + `run of cap`, the witness panel keeps its phase).
-//! [`statline_items`] is the single decision function, unit-testable
-//! without a buffer.
+//! chosen for that context (the plan card keeps `turn $` + where the plan
+//! stands; everything else keeps `ctx` + `run of cap`). [`statline_items`] is
+//! the single decision function, unit-testable without a buffer.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -151,35 +150,22 @@ pub fn statline_items(model: &WorkspaceModel, ui: &DeckUi) -> Vec<StatItem> {
     if let Some(context) = open_surface(ui) {
         let mut items = vec![agent, stage];
         match context {
-            Card::Tasks => {
+            Some(Card::Plan) => {
                 items.push(turn);
-                let (rate, contributors) = model.combined_tok_per_s();
-                if let Some(rate) = rate {
-                    let text = if contributors > 1 {
-                        format!("{rate} tok/s combined")
-                    } else {
-                        format!("{rate} tok/s")
-                    };
-                    items.push(StatItem::new(
-                        "toks",
-                        StatZone::Attention,
-                        vec![Span::styled(text, dim)],
-                    ));
-                }
-            }
-            Card::Witness => {
-                let phase = focused
-                    .map(|a| crate::views::witness_card::phase_label(&a.model.proof))
-                    .unwrap_or_else(|| "witness".to_string());
+                let progress = focused
+                    .map(|a| {
+                        let (done, total) = a.model.plan.progress();
+                        format!("{} {done}/{total}", a.model.plan.state.label())
+                    })
+                    .unwrap_or_else(|| "no plan".to_string());
                 items.push(StatItem::new(
-                    "witness",
+                    "plan",
                     StatZone::Attention,
-                    vec![Span::styled(phase, theme::accent())],
+                    vec![Span::styled(progress, theme::accent())],
                 ));
-                items.push(run);
             }
-            // The scope card — and every other overlay — keeps the resource
-            // meter and the run figure: the quiet floor.
+            // Every other card — and every non-card overlay — keeps the
+            // resource meter and the run figure: the quiet floor.
             _ => {
                 items.push(ctx_item(model, ui, dim, primary));
                 items.push(run);
@@ -300,12 +286,16 @@ fn ctx_item(model: &WorkspaceModel, ui: &DeckUi, dim: Style, primary: Style) -> 
     )
 }
 
-/// Which card/overlay is on top, for the collapse rule — the card enum for
-/// the three named contexts, `Card::Scope` standing in for "some other
-/// overlay" too (they share the quiet floor).
-fn open_surface(ui: &DeckUi) -> Option<Card> {
+/// Which card/overlay is on top, for the collapse rule.
+///
+/// `Some(Some(card))` names the card; `Some(None)` is a non-card overlay,
+/// which shares the quiet floor. Nested rather than folded onto a stand-in
+/// variant, because "a card the collapse rule has no special case for" and
+/// "not a card at all" are different facts and one of them used to borrow the
+/// other's name.
+fn open_surface(ui: &DeckUi) -> Option<Option<Card>> {
     if let Some(card) = ui.cards.open {
-        return Some(card);
+        return Some(Some(card));
     }
     let other_overlay = ui.help_open
         || ui.queue_open
@@ -313,9 +303,8 @@ fn open_surface(ui: &DeckUi) -> Option<Card> {
         || ui.sessions_open
         || ui.inbox_open
         || ui.context_open
-        || ui.inspect_open
-        || ui.state_open;
-    other_overlay.then_some(Card::Scope)
+        || ui.inspect_open;
+    other_overlay.then_some(None)
 }
 
 /// Render the statline band: the zoned row, plus the low-hit-rate diagnosis
@@ -543,13 +532,7 @@ mod tests {
     fn each_card_collapses_the_row_to_at_most_four_items() {
         use crate::deck_ui::cards::Card;
         let model = running_model();
-        for card in [
-            Card::Tasks,
-            Card::Scope,
-            Card::Witness,
-            Card::Models,
-            Card::Budget,
-        ] {
+        for card in [Card::Plan, Card::Models, Card::Budget] {
             let mut ui = DeckUi::default();
             ui.cards.raise(card);
             let items = statline_items(&model, &ui);
@@ -562,25 +545,17 @@ mod tests {
         }
     }
 
+    /// The plan card's collapse keeps the turn cost and names where the plan
+    /// stands — the two facts a reader loses when the full row folds away.
     #[test]
-    fn the_task_card_collapse_keeps_turn_cost() {
+    fn the_plan_card_collapse_keeps_turn_cost_and_names_the_plan() {
         use crate::deck_ui::cards::Card;
         let model = running_model();
         let mut ui = DeckUi::default();
-        ui.cards.raise(Card::Tasks);
+        ui.cards.raise(Card::Plan);
         let items = statline_items(&model, &ui);
         assert!(keys(&items).contains(&"turn"), "{:?}", keys(&items));
-    }
-
-    #[test]
-    fn the_witness_collapse_names_the_phase() {
-        use crate::deck_ui::cards::Card;
-        let model = running_model();
-        let mut ui = DeckUi::default();
-        ui.cards.raise(Card::Witness);
-        let items = statline_items(&model, &ui);
-        assert!(keys(&items).contains(&"witness"), "{:?}", keys(&items));
-        assert!(keys(&items).contains(&"run"), "{:?}", keys(&items));
+        assert!(keys(&items).contains(&"plan"), "{:?}", keys(&items));
     }
 
     #[test]

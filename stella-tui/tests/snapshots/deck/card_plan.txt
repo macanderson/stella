@@ -1,5 +1,5 @@
-# deck golden · card_budget
-# the /budget editor
+# deck golden · card_plan
+# the /plan card over SESSION — every step, then the envelope
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
@@ -21,25 +21,25 @@
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ plan review ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Refactor the automations store into a shared workspace package                                                                                                │
-│3 steps  ·  ~11 files  ·  est. cost ~$0.42                                                                                                                    │
-│type approve  trim  xabort  ·  or what to change  —  then ⏎                                                                                                   │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ transcript · 21 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
-│                                                                                                                      ││○ 1 extract types                     │
-│● read_file    apps/app/automations/page.tsx                                                                          │└────────────────────── /plan reads it ┘
-│  ⎿ 312 lines                                                                                                     42ms│┌ DONE VERIFICATION ───────────────────┐
-│                                                                                                                      ││○ warrant  pending                    │
-│☰  plan  5/7  ·  Workflows canvas                  ┌ budget  session spend cap ⏎ set · ⌫ edit · esc close ┐           ││● witness  authored  apps/app/automat…│
-│                                                   │run     $0.05 of $7.50 ▰▱▱▱▱▱▱▱▱                      │           ││● oracle   ✗ fails on base → ✓ passes…│
-│⏸ plan  Refactor the automations store into a share│new cap $                                             │           ││○ tamper   pinned  sha256:9f3c1d2e4…  │
-│                                                   │the cap applies when the driver's budget stream folds │           ││○ verdict  pending                    │
+│3 steps  ·  ~11 files  ·  est. cost ~$0.42         ┌ plan  pending approval · 3 steps  x skip · esc close ┐                                                   │
+│type approve  trim  xabort  ·  or what to change  —│Refactor the automations store into a shared worksp…  │                                                   │
+│                                                   │                                                      │                                                   │
+│                                                   │▸ ○ 1  extract types                                  │                                                   │
+│                                                   │  ○ 2  move hooks                                     │                                                   │
+└───────────────────────────────────────────────────│  ○ 3  update 9 imports                               │───────────────────────────────────────────────────┘
+┌ transcript · 21 lines · following ────────────────│                                                      │───────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
+│                                                   │repo      macanderson/web-app ⎇ feat/automations-store│           ││○ 1 extract types                     │
+│● read_file    apps/app/automations/page.tsx       │write     packages/automations/** · apps/app/automatio│           │└────────────────────── /plan reads it ┘
+│  ⎿ 312 lines                                      │read      apps/** · packages/**  (2 globs)            │       42ms│┌ DONE VERIFICATION ───────────────────┐
+│                                                   │budget    $0.04 of $2.50 ▰▱▱▱▱▱▱                      │           ││○ warrant  pending                    │
+│☰  plan  5/7  ·  Workflows canvas                  │models    think — · work glm-5.2-air · verify —       │           ││● witness  authored  apps/app/automat…│
+│                                                   │shell     allowlisted                                 │           ││● oracle   ✗ fails on base → ✓ passes…│
+│⏸ plan  Refactor the automations store into a share│done when oracle flips red → green                    │           ││○ tamper   pinned  sha256:9f3c1d2e4…  │
+│                                                   │          (confirmed from evidence, not self-report)  │           ││○ verdict  pending                    │
 └─────────────────────────────────────────── ↑ selec└──────────────────────────────────────────────────────┘nd · /plan ┘└──────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▸ stage  Refactor the automations store into a shared workspace package
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
 >>>
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
- ✦ lead · ● execute │ ctx 8.2k/200k │ run $0.05 of $7.50
+ ✦ lead · ● execute │ turn $0.04                                                                                                           pending approval 0/3

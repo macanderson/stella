@@ -38,7 +38,8 @@ macro_rules! tool_steering {
 
 - Read a definition by name with read_symbol; guessing read_file offsets after a graph_query is the round-trip it exists to remove.
 - A change touching several files is ONE apply_edits call, not a chain of edit_file calls.
-- A tool you cannot see is not available in this session rather than nonexistent. The shell ships registered and a workspace withholds it with "tools": {"bash": "off"}; issue tracking, web, and media tools register only once their backend is configured (`stella connect github|linear`, an API key, or `gh auth`; ci_status needs the gh CLI). Reach for tool_search before concluding a capability is missing."#
+- A tool you cannot see is not available in this session rather than nonexistent. The shell ships registered and a workspace withholds it with "tools": {"bash": "off"}; issue tracking, web, and media tools register only once their backend is configured (`stella connect github|linear`, an API key, or `gh auth`; ci_status needs the gh CLI). Reach for tool_search before concluding a capability is missing.
+- The user watches your plan on screen the whole time you work, so keeping it current is not bookkeeping — it is the only report they get while a long turn runs. When a plan was approved, its steps are ALREADY on the board with the same numbers the user approved: call task_list first to read them, then mark exactly one step started before you work on it and completed the moment it is done. Never re-create a step that is already there. On work that reached no approval gate, create the steps yourself before starting, one per concrete deliverable. A step you abandon is cancelled, not left open — a step still showing started at the end of a turn is a false report."#
     };
 }
 

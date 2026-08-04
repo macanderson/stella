@@ -1,9 +1,12 @@
-//! Session tab — the focused agent's REPL surface (identity header + HUD +
-//! any pending gate card + the task-board checklist + transcript). It **reuses** the shared
-//! renderers (`render_hud`, `render_transcript`, `render_scope_review`,
-//! `render_ask_user`, `entry_lines`) so the classic view is pixel-identical,
-//! just scoped to whichever agent `ui.focused` points at. No transcript
-//! rendering is duplicated — there is one implementation of "draw a session".
+//! Session tab — the focused agent's REPL surface: identity header, the stat
+//! box with its vitals gauges, any pending gate card, the transcript, and the
+//! right-hand rail carrying PLAN over DONE VERIFICATION
+//! ([`crate::views::plan_rail`]).
+//!
+//! It **reuses** the shared renderers (`render_hud`, `render_transcript`,
+//! `render_scope_review`, `render_ask_user`, `entry_lines`), just scoped to
+//! whichever agent `ui.focused` points at. No transcript rendering is
+//! duplicated — there is one implementation of "draw a session".
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
@@ -332,7 +335,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     // Each pending gate claims its own band (0 = collapsed). Both can be
     // pending at once — nothing clears one when the other arrives — so they
     // render independently, band by band; an
-    // ask-user question is never hidden behind a scope review.
+    // ask-user question is never hidden behind a plan review.
     let scope_h: u16 = if sm.pending_scope_review.is_some() {
         8
     } else {
@@ -346,19 +349,6 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         Some(p) => crate::render::hunk_review_height(p.hunks.len()),
         None => 0,
     };
-    // The state strip: one row carrying scope · tasks · proof, replacing the
-    // bordered TASKS card that used to claim up to ten rows here and the
-    // always-on PROOF rail below. 0 when there is nothing at all to summarize.
-    // See [`crate::views::work_rail`] for why one row beats two cards.
-    let strip = crate::views::work_rail::strip_line(sm, area.width);
-    let strip_h: u16 = if strip.is_some() { 1 } else { 0 };
-
-    // The PROOF rail sits UNDER the transcript, not above it: it is a claim
-    // about the work, so it reads after the work. Raised only when the proof
-    // carries news (0 otherwise) — on a quiet turn the strip's `⚖` cell says
-    // everything this band would have.
-    let proof_h = crate::views::proof::band_height(&sm.proof);
-
     // The routing card: raised when a prompt arrives mid-turn and the deck
     // will not guess where it goes. Above the transcript with the other
     // gates, because it is the same kind of thing — work parked on an answer.
@@ -370,35 +360,44 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     // shares a rendered row with the transcript.
     let subs_h = crate::views::subagents::band_height(model, ui);
 
+    let hud_h = crate::render::hud_height(area.height);
+    let vitals = crate::vitals::Vitals::read(model, agent);
+
+    // PLAN and DONE VERIFICATION live in the right-hand rail
+    // ([`crate::views::plan_rail`]) and are up for the whole session. Too
+    // narrow for a column — or accessible mode, where a side-by-side column
+    // reads as interleaved lines (#1258) — stacks them above the transcript
+    // instead, sized against the rows the gates left. Nothing is dropped.
+    let split_rail = crate::views::plan_rail::rail_visible(ui.accessible, area.width);
+    let claimed = 1 + subs_h + hud_h + scope_h + ask_h + hunk_h + dispatch_h;
+    let (stacked_plan_h, stacked_verify_h) = if split_rail {
+        (0, 0)
+    } else {
+        crate::views::plan_rail::stacked_heights(area.height.saturating_sub(claimed))
+    };
+
     let bands = Layout::vertical([
-        Constraint::Length(1),          // identity header
-        Constraint::Length(subs_h),     // nested subagent rows (0 = none)
-        Constraint::Length(3),          // HUD
-        Constraint::Length(scope_h),    // pending scope review (0 = collapsed)
-        Constraint::Length(ask_h),      // pending ask-user (0 = collapsed)
-        Constraint::Length(hunk_h),     // pending hunk review (0 = collapsed)
-        Constraint::Length(dispatch_h), // mid-turn routing (0 = collapsed)
-        Constraint::Length(strip_h),    // scope · tasks · proof strip (0 = none)
-        Constraint::Min(1),             // transcript (+ right rail on a wide frame)
-        Constraint::Length(proof_h),    // proof rail (0 = nothing notable)
+        Constraint::Length(1),                // identity header
+        Constraint::Length(subs_h),           // nested subagent rows (0 = none)
+        Constraint::Length(hud_h),            // stat box (+1 row for the vitals gauges)
+        Constraint::Length(scope_h),          // pending plan review (0 = collapsed)
+        Constraint::Length(ask_h),            // pending ask-user (0 = collapsed)
+        Constraint::Length(hunk_h),           // pending hunk review (0 = collapsed)
+        Constraint::Length(dispatch_h),       // mid-turn routing (0 = collapsed)
+        Constraint::Length(stacked_plan_h),   // PLAN, when stacked (0 = in the rail)
+        Constraint::Min(1),                   // transcript (+ right rail on a wide frame)
+        Constraint::Length(stacked_verify_h), // DONE VERIFICATION, when stacked
     ])
     .split(area);
 
-    // Option B: on a wide frame the scope and the board move sideways into a
-    // fixed column, so they cost the transcript some right-margin clipping
-    // instead of costing it whole rows. Below `RAIL_MIN_COLS` the split never
-    // happens and the strip carries everything.
-    // Accessible mode takes the narrow-frame branch unconditionally: the rail
-    // is a column beside the transcript, so every row it occupies carries two
-    // logical panes at once, and read aloud that is one interleaved line
-    // (#1258). Nothing is lost — this is the same path a sub-`RAIL_MIN_COLS`
-    // terminal already takes, where the one-row strip carries scope · tasks ·
-    // proof and `⌃S` opens the whole thing.
-    let split_rail = !ui.accessible && crate::views::work_rail::rail_visible(sm, area.width);
+    // On a frame that can afford it, the two panels move sideways into a
+    // quarter-width column: vertical rows are the scarce resource on a
+    // terminal and columns usually are not, so the rail costs the transcript
+    // some right-margin clipping instead of costing it whole rows.
     let (transcript_area, rail_area) = if split_rail {
         let cols = Layout::horizontal([
             Constraint::Min(1),
-            Constraint::Length(crate::views::work_rail::RAIL_W),
+            Constraint::Length(crate::views::plan_rail::rail_width(area.width)),
         ])
         .split(bands[8]);
         (cols[0], Some(cols[1]))
@@ -410,7 +409,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     if subs_h > 0 {
         crate::views::subagents::render(model, ui, bands[1], buf);
     }
-    render_hud(&sm.hud, bands[2], buf);
+    render_hud(&sm.hud, Some(&vitals), bands[2], buf);
     // `answered` flips the card to its "sent — awaiting engine…" form: the
     // pending gate clears only on the engine's follow-on event, and until
     // then the card must not keep advertising decision keys that would
@@ -436,11 +435,13 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     if let Some(pending) = &ui.pending_dispatch {
         crate::views::dispatch_card::render(pending, bands[6], buf);
     }
-    if let Some(strip) = strip {
-        Paragraph::new(strip).render(bands[7], buf);
-    }
-    if let Some(rail) = rail_area {
-        crate::views::work_rail::render_rail(sm, rail, buf);
+    match rail_area {
+        Some(rail) => crate::views::plan_rail::render(sm, rail, buf),
+        None => {
+            // Stacked: same two panels, same order, full width.
+            crate::views::plan_rail::render_plan(&sm.plan, bands[7], buf);
+            crate::views::plan_rail::render_verification(&sm.proof, bands[9], buf);
+        }
     }
 
     // Transcript: fold through the incremental cache (settled entries fold
@@ -554,10 +555,10 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         // verbs are the page keys (see `handle_session_key`, which claims
         // ↑/↓ for the highlight whenever the transcript has any entries).
         //
-        // `⌃S` is advertised here rather than only in help because the strip
-        // it expands is a *summary*: a reader who wants the detail behind a
-        // cell has to be told, once, that there is a way to get it.
-        "↑ select · ⇞⇟ scroll · ⌃F find · ⌃N failure · ⌃Z fold · ⌃O expand · ⌃S state".to_string()
+        // `/plan` is advertised here rather than only in help because the rail
+        // is a *summary*: a reader who wants a step's full text has to be
+        // told, once, that there is a way to get it.
+        "↑ select · ⇞⇟ scroll · ⌃F find · ⌃N failure · ⌃Z fold · ⌃O expand · /plan".to_string()
     };
     render_transcript_window(
         visible,
@@ -568,9 +569,6 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         transcript_area,
         buf,
     );
-    if proof_h > 0 {
-        crate::views::proof::render(&sm.proof, bands[9], buf);
-    }
 }
 
 /// Light every occurrence of `query` inside the rows on screen.
@@ -731,12 +729,12 @@ mod tests {
 
         let text = buffer_text(&buf);
         assert!(
-            text.contains("scope review"),
+            text.contains("plan review"),
             "scope-review card visible:\n{text}"
         );
         assert!(
             text.contains("Which database should the cache use?"),
-            "ask-user card visible alongside the scope review:\n{text}"
+            "ask-user card visible alongside the plan review:\n{text}"
         );
     }
 
@@ -1185,22 +1183,23 @@ mod tests {
         }
     }
 
-    /// The board reaches the frame as the strip's one row — the current task
-    /// by name, and the counts — and vanishes with the board.
+    /// The board reaches the frame as the rail's plan steps — every one, by
+    /// name. The old strip showed `☑ 0/2 ▸ Fix the auth redirect` and
+    /// suppressed the rest: a reader saw how many steps there were, never
+    /// what they said.
     #[test]
-    fn the_board_reaches_the_frame_as_one_strip_row() {
+    fn the_board_reaches_the_frame_as_named_plan_steps() {
         let mut model = WorkspaceModel::new();
         model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
-        let area = Rect::new(0, 0, 80, 24);
+        let area = Rect::new(0, 0, 120, 24);
 
-        // Empty board: nothing.
+        // No plan: the panel is still up, and says so rather than vanishing.
         let mut ui = DeckUi::default();
         let mut buf = Buffer::empty(area);
         render(&model, &mut ui, area, &mut buf);
-        assert!(
-            !buffer_text(&buf).contains("☑"),
-            "no strip cell on an empty board"
-        );
+        let text = buffer_text(&buf);
+        assert!(text.contains("PLAN"), "the panel is unconditional:\n{text}");
+        assert!(text.contains("no plan yet"), "…and honest:\n{text}");
 
         model.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
@@ -1220,19 +1219,16 @@ mod tests {
         render(&model, &mut ui, area, &mut buf);
         let text = buffer_text(&buf);
         assert!(
-            text.contains("☑ 0/2"),
-            "the counts reach the strip:\n{text}"
+            text.contains("working 0/2"),
+            "the plan states itself:\n{text}"
         );
+        assert!(text.contains("Fix the auth redirect"), "{text}");
         assert!(
-            text.contains("▸ Fix the auth redirect"),
-            "the current task is named:\n{text}"
-        );
-        assert!(
-            !text.contains("Ship the fix"),
-            "the strip is a summary, not a checklist:\n{text}"
+            text.contains("Ship the fix"),
+            "every step is listed, not just the active one:\n{text}"
         );
 
-        // An empty snapshot clears the board — the cell disappears again.
+        // An empty snapshot clears the board.
         model.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
             event: stella_protocol::AgentEvent::TaskUpdate { tasks: vec![] },
@@ -1240,16 +1236,12 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render(&model, &mut ui, area, &mut buf);
         let text = buffer_text(&buf);
-        // Assert on the strip's own shape, not the bare subject: the board
-        // update is also a transcript row, and that row legitimately survives
-        // a cleared board — the scrollback is a record, the strip is a state.
+        // Assert on the panel, not the bare subject: the board update is also
+        // a transcript row, and that row legitimately survives a cleared
+        // board — the scrollback is a record, the rail is a state.
         assert!(
-            !text.contains("▸ Fix the auth redirect"),
-            "a cleared board clears the strip:\n{text}"
-        );
-        assert!(
-            !text.contains("☑"),
-            "…and takes the counts with it:\n{text}"
+            text.contains("no plan yet"),
+            "a cleared board empties the rail:\n{text}"
         );
     }
 
@@ -1276,25 +1268,28 @@ mod tests {
         render(&model, &mut ui, area, &mut buf);
         let text = buffer_text(&buf);
         assert!(
-            !text.contains("PROOF"),
-            "the rail claimed a band with no news:\n{text}"
+            text.contains("DONE VERIFICATION"),
+            "the panel is unconditional — a waived turn is a report, not an \
+             absence:\n{text}"
         );
         assert!(
-            text.contains("waived · nothing to prove"),
-            "…but the strip still reports it:\n{text}"
+            text.contains("waived"),
+            "…and it says what triage decided:\n{text}"
         );
-        // header(1) + HUD(3) + strip(1) = 5 of the 24 rows; the transcript owns
-        // the rest. Before this change the same turn spent 7 more on the rail.
+        // header(1) + stat box(4, gauges included) = 5 of the 24 rows, and
+        // PLAN / DONE VERIFICATION cost COLUMNS rather than rows. Before this
+        // change the same turn spent 7 more rows on a band with nothing to
+        // report, and had no gauges to show for it.
         assert_eq!(
             ui.metrics.session_height, 17,
-            "the transcript must own everything the panels do not"
+            "the transcript must own every row the panels do not"
         );
     }
 
-    /// The rail is Option B: columns, not rows, and only where there are
-    /// columns to spare.
+    /// The rail is columns, not rows — and it is up whenever there are columns
+    /// to spare, not only when something has gone wrong.
     #[test]
-    fn the_right_rail_appears_only_on_a_wide_frame() {
+    fn the_rail_is_up_wherever_the_frame_can_afford_a_column() {
         let mut model = WorkspaceModel::new();
         model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
         model.apply_inbound(&Inbound::Event {
@@ -1309,25 +1304,30 @@ mod tests {
             },
         });
 
-        let narrow = Rect::new(0, 0, 100, 24);
-        let mut ui = DeckUi::default();
-        let mut buf = Buffer::empty(narrow);
-        render(&model, &mut ui, narrow, &mut buf);
-        assert!(
-            !buffer_text(&buf).contains("TASKS 0/1"),
-            "a 100-column frame is too narrow for the rail"
-        );
-
+        // Wide: side by side.
         let wide = Rect::new(0, 0, 120, 24);
         let mut ui = DeckUi::default();
         let mut buf = Buffer::empty(wide);
         render(&model, &mut ui, wide, &mut buf);
         let text = buffer_text(&buf);
-        assert!(text.contains("TASKS 0/1"), "the rail is up at 120:\n{text}");
+        assert!(text.contains("PLAN"), "{text}");
+        assert!(text.contains("DONE VERIFICATION"), "{text}");
         assert!(
-            text.contains("#1 Fix the auth redirect"),
-            "with the full row, not just a count:\n{text}"
+            text.contains("Fix the auth redirect"),
+            "with the step named, not just a count:\n{text}"
         );
+
+        // Too narrow for a column: the SAME two panels, stacked. The old rail
+        // simply disappeared here, which taught readers that its absence meant
+        // nothing was happening.
+        let narrow = Rect::new(0, 0, 70, 30);
+        let mut ui = DeckUi::default();
+        let mut buf = Buffer::empty(narrow);
+        render(&model, &mut ui, narrow, &mut buf);
+        let text = buffer_text(&buf);
+        assert!(text.contains("PLAN"), "stacked, never dropped:\n{text}");
+        assert!(text.contains("DONE VERIFICATION"), "{text}");
+        assert!(text.contains("Fix the auth redirect"), "{text}");
     }
 
     /// A settled turn of `tools` calls against `path`, `failures` of them
