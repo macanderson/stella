@@ -38,6 +38,8 @@ skip the roll) were re-inserted the same way.
 
 ## [Unreleased]
 
+## [0.6.88] — 2026-08-04
+
 ### Changed
 
 - The A/B recall control now runs on **every** surface, not only the
