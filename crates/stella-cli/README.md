@@ -89,7 +89,7 @@ file is a candidate to extract into one.
 |---|---|
 | [`src/agent.rs`](src/agent.rs) | 2270 |
 | [`src/agent/tests.rs`](src/agent/tests.rs) | 1747 |
-| [`src/candidate_ws.rs`](src/candidate_ws.rs) | 1585 |
+| [`src/candidate_ws.rs`](src/candidate_ws.rs) | 1596 |
 | [`src/command_deck.rs`](src/command_deck.rs) | 4754 |
 | [`src/fleet_cmd.rs`](src/fleet_cmd.rs) | 1506 |
 
