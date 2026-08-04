@@ -21,6 +21,7 @@ use crate::cache_panel;
 use crate::composer::{ComposerLayout, layout as composer_layout, split_row_at};
 use crate::deck::{DeckTab, WorkspaceModel};
 use crate::deck_ui::{DeckUi, InstalledMode, IssuesMode};
+use crate::highlight;
 use crate::panel_guard::{guarded_band, guarded_overlay};
 use crate::render::{render_slash_popup, scroll_window_start, slash_popup_area};
 use crate::textline;
@@ -1165,6 +1166,11 @@ const DECK_COMPOSER_MAX_ROWS: usize = 4;
 /// Beyond [`DECK_COMPOSER_MAX_ROWS`] the box stops growing and scrolls, showing
 /// a slim thumb in the right gutter while keeping the caret in view.
 ///
+/// Prompt keywords are lit live as they are typed — the gold `/` and violet
+/// slug of a slash command, any future reserved word — via
+/// [`crate::highlight`] over the layout's display text, so the treatment
+/// follows the words across soft wraps and scrolling.
+///
 /// The caret is **steady**, not blinking: a blink carries no information the
 /// reversed cell doesn't already carry, and a terminal has no
 /// `prefers-reduced-motion` for a reader who needs it off.
@@ -1173,6 +1179,7 @@ fn render_composer(layout: &ComposerLayout, area: Rect, buf: &mut Buffer) {
     let total = layout.rows.len();
     let first = composer_scroll_first(layout.cursor_row, visible);
 
+    let keywords = highlight::prompt_keywords(&layout.display, highlight::RESERVED_WORDS);
     let cursor_style = theme::accent().add_modifier(Modifier::REVERSED);
     let mut lines: Vec<Line<'static>> = Vec::new();
     for (i, row) in layout.rows.iter().enumerate().skip(first).take(visible) {
@@ -1182,14 +1189,18 @@ fn render_composer(layout: &ComposerLayout, area: Rect, buf: &mut Buffer) {
             PROMPT_PREFIX,
             Style::default().fg(theme::ACCENT),
         )];
+        let row_start = layout.row_starts[i];
         if i == layout.cursor_row {
             let (before, under, after) = split_row_at(row, layout.cursor_col);
             let under_ch = under.map(String::from).unwrap_or_else(|| " ".into());
-            spans.push(Span::styled(before, theme::body()));
+            // The caret cell keeps its fixed reversed-accent look even over
+            // a keyword — the caret must read as the caret everywhere.
+            let after_at = row_start + before.len() + under.map_or(0, char::len_utf8);
+            push_keyword_spans(&mut spans, &before, row_start, &keywords);
             spans.push(Span::styled(under_ch, cursor_style));
-            spans.push(Span::styled(after, theme::body()));
+            push_keyword_spans(&mut spans, &after, after_at, &keywords);
         } else {
-            spans.push(Span::styled(row.clone(), theme::body()));
+            push_keyword_spans(&mut spans, row, row_start, &keywords);
         }
         lines.push(Line::from(spans));
     }
@@ -1204,6 +1215,22 @@ fn render_composer(layout: &ComposerLayout, area: Rect, buf: &mut Buffer) {
 
     if total > visible {
         render_scroll_gutter(first, visible, total, area, buf);
+    }
+}
+
+/// Push `text` — the fragment of the layout's display starting at byte
+/// `start` — as spans, plain prose in [`theme::body`] and each prompt
+/// keyword in its [`highlight::style`]. One call covers a whole row; the
+/// cursor row calls it once per side of the caret with the offsets shifted.
+fn push_keyword_spans(
+    spans: &mut Vec<Span<'static>>,
+    text: &str,
+    start: usize,
+    keywords: &[highlight::KeywordSpan],
+) {
+    for (kind, run) in highlight::segments(text, start, keywords) {
+        let style = kind.map_or_else(theme::body, highlight::style);
+        spans.push(Span::styled(run.to_string(), style));
     }
 }
 

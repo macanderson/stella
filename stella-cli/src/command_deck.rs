@@ -4005,9 +4005,11 @@ fn record_agent_invocation(
 /// printing to stdout (which the alternate screen owns) is never an option.
 ///
 /// Vocabulary: `/help`, `/clear`, `/models`, `/init`, `/agents`,
-/// `/pipeline`. `/files`, `/diff`, `/graph` are deck-local (tab switches) and
-/// consumed TUI-side; an unknown bare `/command` gets a hint rather than a
-/// wasted model call. Every productized command is no-argument, so the
+/// `/pipeline`. View-only commands (`/files`, `/diff`, `/graph`, the
+/// overlays and cards) are deck-local and consumed TUI-side at submission —
+/// see `stella_tui`'s `view_command`; an unknown bare `/command` gets a hint
+/// rather than a wasted model call. Every productized command is no-argument,
+/// so the
 /// *whole* trimmed input is matched — `/init do the thing` is a model prompt,
 /// not a silent reindex that discards the rest. Custom commands/skills (⚡)
 /// DO take arguments: `/fix-bug issue-42` expands the `fix-bug` template
@@ -4162,12 +4164,15 @@ async fn run_deck_command(
                  Thank you! 🙏"
                 .to_string());
         }
-        // Deck-local commands (tab switches, `/agents` opening the Agents
-        // tab, the transcript-page overlays) are normally consumed TUI-side,
-        // but a queued one reaches here — accept it as handled (a no-op)
-        // rather than calling it "unknown".
+        // Deck-local view commands (tab switches, `/agents` opening the
+        // Agents tab, the transcript-page overlays, the floating cards) are
+        // consumed TUI-side at submission — on every submission path, so a
+        // fresh one can no longer be enqueued at all. One can still reach
+        // here from a durable queue persisted by an older build — accept it
+        // as handled (a no-op) rather than calling it "unknown".
         "/files" | "/diff" | "/graph" | "/agents" | "/skills" | "/mcp" | "/mcp-search"
-        | "/settings" | "/sessions" | "/context" | "/inspect" | "/inbox" => {}
+        | "/settings" | "/sessions" | "/context" | "/inspect" | "/inbox" | "/tasks" | "/scope"
+        | "/witness" | "/budget" => {}
         _ => {
             // `/model <provider/slug>` — set the persistent default model.
             // Validation + the settings write live in `model_cmd` (parity
