@@ -1654,40 +1654,11 @@ fn xai_reasoning_effort_support_denies_only_the_original_grok4() {
     assert!(xai_supports_reasoning_effort("grok-3-mini"));
 }
 
-/// The byte-stability contract for `reasoning_effort`: the field is xai-only,
-/// so the default Z.ai identity must NEVER send it — not even when the caller
-/// pins an effort. (GLM speaks its own `thinking` on/off switch, covered by
-/// [`zai_identity_maps_reasoning_to_glm_thinking_object`]; effort has no dial
-/// there.) Guards the same "the omission stays deliberate" invariant the
-/// parity matrix exists to enforce.
-#[tokio::test]
-async fn zai_identity_never_sends_reasoning_effort_even_when_pinned() {
-    let server = MockServer::start().await;
-    mock_ok(&server).await;
-
-    let provider =
-        ZaiProvider::new(ApiKey::new("sk-test-zai"), "glm-5.2").with_base_url(server.uri());
-    provider
-        .complete(CompletionRequest {
-            messages: vec![CompletionMessage::user("hi")],
-            max_output_tokens: None,
-            temperature: None,
-            effort: Some(ReasoningEffort::Max),
-            tools: vec![],
-            reasoning: Some(true),
-            params: None,
-        })
-        .await
-        .expect("should succeed");
-
-    let body = first_request_body(&server).await;
-    assert!(!body.contains("reasoning_effort"), "{body}");
-}
-
 mod error_classify_tests;
 mod openrouter_effort_tests;
 mod openrouter_stream_tests;
 mod stream_frame_tests;
+mod zai_effort_tests;
 
 #[test]
 fn rejects_disabled_reasoning_matches_the_upstream_wording_only() {
