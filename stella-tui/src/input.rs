@@ -261,7 +261,10 @@ mod tests {
         assert_eq!(hunk_selection_from_typed("1 3", 4), Some(vec![0, 2]));
         assert_eq!(hunk_selection_from_typed("1,3", 4), Some(vec![0, 2]));
         assert_eq!(hunk_selection_from_typed("2-4", 4), Some(vec![1, 2, 3]));
-        assert_eq!(hunk_selection_from_typed("1, 2-3, 3", 4), Some(vec![0, 1, 2]));
+        assert_eq!(
+            hunk_selection_from_typed("1, 2-3, 3", 4),
+            Some(vec![0, 1, 2])
+        );
     }
 
     /// Out of range is dropped (the same forgiveness `Trim` indices get), but a
