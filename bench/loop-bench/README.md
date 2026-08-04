@@ -35,6 +35,19 @@ Defaults: 4 tasks from `DEFAULT_POOL`, `openrouter/z-ai/glm-4.7-flash`,
 the report for CI instead of the table, and `--json-out <path>` writes that same
 report to a file while the table still goes to stdout.
 
+A single run's JSON is an object — `{"trials": [...], "tally": {...},
+"reconciliation": {...}}` — where it used to be the bare `trials` array
+(#1299). The rows alone are not interpretable: `6 solved` means one thing over
+eight requested trials and another over six, and an artifact carrying the rows
+without the reconciliation is exactly the artifact that publishes the flattering
+number. `--compare` still emits `ComparisonReport` verbatim (see below).
+
+`stella tune effort` reads these files, and reads **both** shapes — A/Bing this
+month's arm against an artifact from last month is the ordinary use of that
+command, not an edge case. It also prints a note when the report's tally
+reports crashes, because those trials count as failures in the A/B and a
+promotion decided by them is a decision about the machine.
+
 ## Key concepts
 
 For each trial dir `<jobs-dir>/<job-name>/<task>__<id>/`, `distill_events` reads
@@ -44,32 +57,100 @@ calls (`write_file` / `edit_file` / `apply_edits` are writes — never
 `graph_query` are context queries), and a terminal event is `complete` or an
 `error` with `retryable: false`. The reward comes from `verifier/reward.txt`.
 
-`TrialReport::loop_verdict` collapses that into one word, in this order:
+Four more files in the same directory are read, each closing a hole where
+harbor knew something the harness did not (#1299) — see
+[`src/artifacts.rs`](src/artifacts.rs):
 
-| Verdict | Meaning |
+| File | What it settles |
 |---|---|
-| `solved` | reward `1.0` — a solved task did the work by definition, so reward beats every other signal |
-| `SILENT-DEATH` | zero tool calls *and* no terminal event — it vanished with no explanation, the worst mode |
-| `ZERO-WORK` | zero tool calls, but it said why |
-| `ran (unsolved)` | real work happened, the verifier said no — not a loop failure |
+| `result.json` | `exception_info` — harbor's own record that the trial *raised*, which is the crash signal. Also `task_name` (the untruncated one) and, for a multi-step trial, the aggregated reward |
+| `exception.txt` | the same message, for a trial that died before writing a structured record |
+| `agent/stella-exit-cause.json` | the adapter's SIGKILL post-mortem (#1178): `oom-kill` vs `external-teardown`. Both exit `137`, and which one it was decides whether the fix is a memory limit or a timeout |
+| `steps/<name>/agent/…` | a multi-step trial's per-step streams, folded into one row |
 
-**The gate is loop health, not pass rate.** `loop_broken()` is
-`zero_work && reward != Some(1.0)`; the process exits `1` if any trial matches,
-even when others passed.
+`TrialReport::loop_verdict` collapses all of that into one word, in this order:
+
+| Verdict | Meaning | Gates red |
+|---|---|---|
+| `solved` | reward `1.0` — a solved task did the work by definition, so reward beats every other signal | no |
+| `NOT-RUN` | requested, but harbor produced no trial dir for it | **yes** |
+| `UNREADABLE` | the stream had lines, none of them an event — plumbing, not loop evidence | no |
+| `STUCK-LOOP` | the engine's own `loop_detected` fired on a non-pass | **yes** |
+| `BUDGET-CAP` | `STELLA_BUDGET` denied the turn — a cost decision, not a loop defect | no |
+| `SILENT-DEATH` | zero tool calls *and* no terminal event — it vanished with no explanation, the worst mode | **yes** |
+| `ZERO-WORK` | zero tool calls, but it said why | **yes** |
+| `CRASHED` | real work happened, then harbor recorded the trial as having raised | no |
+| `ran (unsolved)` | real work happened, the verifier said no — not a loop failure | no |
+
+**The gate is loop health, not pass rate.** The process exits `1` if any trial's
+`loop_broken()` matches, even when others passed.
+
+`CRASHED` is the lowest-precedence verdict above `ran (unsolved)`, and that is
+the whole design. It never displaces a red verdict: a trial that did nothing and
+then died is still `SILENT-DEATH` and still red, with the crash printed on its
+row as the explanation it previously lacked. So `CRASHED` only ever replaces
+`ran (unsolved)` — which did not gate either, meaning the verdict costs the gate
+nothing and buys the table a true statement. Naming a failure better must not
+make the gate weaker.
+
+It is also read off harbor's `exception_info`, never inferred from the stream's
+shape: a turn that did its work and ended without a clean `complete` may simply
+have exited on a step cap, and treating that as a death would invent crashes.
 
 | Exit | Meaning |
 |---|---|
 | `0` | every trial that reported did real work (or passed) |
 | `1` | the loop misbehaved on at least one trial |
 | `2` | bad invocation: the task list resolved to nothing, or `--json-out` names an unwritable path (checked before anything is spent) |
-| `3` | no trial artifacts at all — infrastructure, not a loop regression |
+| `3` | no trial artifacts at all — infrastructure, not a loop regression. Also fires when *every* row is `NOT-RUN`: harbor launching nothing is that same infrastructure failure, and it used to report as `1` |
 | `4` | the loop was healthy but fewer than `--min-pass` trials passed |
 | `5` | the run finished and the `--json-out` report could not be written (the JSON is dumped on stdout instead) |
 | `6` | `--compare --require-winner` and no arm cleared both bars |
+| `7` | the job dir holds trials this run did not ask for, so every figure covers a task set that is not the requested one |
 
 `1` outranks `4`: when both fire, the loop failure is the actionable one, and a
-broken loop explains the missing passes anyway. `1` outranks `6` likewise — a
-broken loop makes an arm's numbers untrustworthy as a comparison.
+broken loop explains the missing passes anyway. `1` outranks `6` and `7`
+likewise — a broken loop makes an arm's numbers untrustworthy as a comparison.
+
+A crash is deliberately **not** an exit code. The gate is loop health, and a
+trial the machine killed is not evidence about the loop — the same reason
+`UNREADABLE` and `BUDGET-CAP` do not gate. What it must never again be is
+silent, or dressed as `ran (unsolved)`.
+
+## Requested vs reported (#1299)
+
+Harbor globs `-i` names and errors only when *nothing* matched, so a run that
+asked for eight tasks and matched six used to produce six healthy rows and exit
+`0`. Six of eight solved reads as 75% when it is 60%, and nothing on the page
+said which number you were looking at.
+
+Every run now reconciles what it asked harbor for against what came back, and
+prints the disagreement under the table
+([`src/reconcile.rs`](src/reconcile.rs)):
+
+- **Missing trials** become `NOT-RUN` rows, at *trial* granularity — three dirs
+  for a `--trials 5` task yields two `NOT-RUN` rows. The denominator is the
+  sample that was asked for, and the gate goes red (`1`).
+- **Surplus trials** — a second run's results sitting in the same job directory,
+  since harbor writes to `<jobs-dir>/<job-name>/` verbatim — exit `7`. They
+  render as ordinary healthy rows, so the reconciliation block is the only place
+  a reader would ever learn the figures cover two runs.
+- **Trial dirs no requested task claims** are still skipped, so a stale
+  directory cannot contaminate this run's gate — but the skip is now *counted
+  and named*, because a mistyped `--tasks` otherwise looks exactly like a run
+  harbor launched nothing for.
+- **A task name longer than 32 characters** reconciles. Harbor names a trial dir
+  `<task_name[:32] rstripped of _->__<shortuuid>`, so comparing the untruncated
+  name produced two wrong answers at once: every trial skipped as another run's,
+  and the task that really ran reported `NOT-RUN`. Harbor's own `task_name` off
+  `result.json` is preferred where it landed; the truncated prefix is the
+  fallback.
+
+Nothing here *adjusts* a count to make it consistent. It says what was asked
+for, what came back, and where the two disagree.
+
+`--analyze-only` reconciles nothing: it asked for nothing in particular, and
+reads whatever a finished jobs dir holds.
 
 ## `--compare`: A/B two configs over one task set (#876)
 
@@ -157,14 +238,23 @@ way.
   containers run. Unset, it warns, and the adapter then resolves `stella` on
   `PATH` before `target/release/stella` — on a dev machine the `PATH` hit is a
   host build the container cannot execute.
-- Requested tasks are **not reconciled** against reported rows. Harbor globs
-  `-i` names and only errors when *nothing* matched, so a run that asked for
-  eight tasks and matched six shows six healthy rows and exits `0`. Check the
-  row count against `--n`. Multi-step datasets are likewise unsupported: their
-  logs move to `steps/<name>/agent/` and every trial reads as "no event stream".
-- A crash *mid*-work is not a verdict of its own: `SILENT-DEATH` requires zero
-  tool calls, so a turn that did work and then vanished reports as
-  `ran (unsolved)`.
+- A multi-step trial's rows are **folded**, not listed. Harbor relocates each
+  step's logs into `steps/<name>/agent/` and removes the trial-root `agent/`,
+  and the harness sums the counters into one row per trial. Two fields do not
+  sum, and both choices are about not letting an early step vouch for a late
+  one: `terminal_event` is the *last* step's (a trial that completed step one
+  and vanished in step two ended by vanishing), and `zero_work` is recomputed
+  from the summed tool calls (a step that only reads is normal). Step order
+  comes from harbor's own `step_results`, not from sorting directory names.
+- A multi-step trial's reward is harbor's **aggregate** off `result.json`, since
+  there is no trial-root `verifier/` at all. Harbor folds the per-step rewards
+  by the task's `multi_step_reward_strategy` (`last` or `mean`); taking its
+  answer rather than inventing one here is what keeps the harness and the
+  dataset agreeing on what the task scored.
+- A crash is read from harbor's record, so a trial that died in a way harbor
+  never noticed still reports as whatever its stream showed. The harness reports
+  observations: "harbor recorded that this raised" is one, "the stream looks
+  short so it probably died" is not.
 
 ## Testing
 
@@ -180,6 +270,17 @@ shifted a whole row, a retryable warning read as terminal, a *solved* run with
 no `complete` event called silent, a stream of non-JSON stella output passing
 for an unexplained silent death. A new signal means a `TrialReport` field, an
 arm in `distill_events`, a `print_table` column (`TABLE_WIDTH`), and a test.
+
+The #1299 tests build real trial directories under a `tempfile::tempdir` and run
+`analyze` over them, because the defects they pin are about *files harbor wrote
+that nothing read* — a fixture that hands `distill_events` a string could not
+have caught any of them. They pin: a crash after real work reported as
+`ran (unsolved)`; a crash before any work quietly downgrading a red
+`SILENT-DEATH` to a green verdict (the regression the precedence order exists to
+prevent); a task measured over the trials that survived rather than the ones
+requested; a second run's trials folded into the first's figures; a 32-character
+task name reconciling as both `NOT-RUN` and somebody else's directory; and a
+multi-step trial read as empty.
 
 [`src/compare/tests.rs`](src/compare/tests.rs) covers the A/B fold at the same
 level: known outcomes producing the expected winner, a spend-bought win blocked
