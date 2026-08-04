@@ -477,7 +477,21 @@ fn arm_job_name(job_name: &str, index: usize, model: &str) -> String {
 
 fn resolve_tasks(args: &Args) -> Vec<String> {
     if !args.tasks.is_empty() {
-        return args.tasks.clone();
+        // Harbor's `-i` is a filter, so a name given twice still runs once —
+        // and the reconciliation counts it once too. Consistent, but an
+        // operator who typed it twice expected two, so say which it is rather
+        // than letting a `2/1 trials` line later read as a stale job dir
+        // (#1299). `--compare` rejects a repeated arm outright; a repeated task
+        // is harmless, so this only warns.
+        let mut deduped: Vec<String> = Vec::with_capacity(args.tasks.len());
+        for task in &args.tasks {
+            if deduped.contains(task) {
+                eprintln!("warning: --tasks names `{task}` twice; it is run and counted once");
+            } else {
+                deduped.push(task.clone());
+            }
+        }
+        return deduped;
     }
     // `--n 0` would measure nothing, so it floors at one task. Asking for more
     // than the pool holds silently under-measures the run — say so, because a
