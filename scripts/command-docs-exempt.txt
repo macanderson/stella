@@ -1,0 +1,12 @@
+# Subcommands that intentionally ship without a reference page. See #993 and
+# scripts/check-command-docs.sh. Format: one command slug per line, with the
+# reason as a comment.
+#
+# Empty on purpose. Every `stella` subcommand is documented today, and the
+# guard exists to keep it that way. Adding a line here is allowed but is never
+# silent — it lands as a visible diff, to be justified in review like any other
+# change. Prefer writing the page.
+#
+# A slug listed here that is not a real subcommand fails the guard, so this
+# list cannot rot into a blanket exemption for a name some future command
+# reuses.

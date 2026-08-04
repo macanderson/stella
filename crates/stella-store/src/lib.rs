@@ -140,6 +140,8 @@ mod receipts;
 mod reconstruct;
 mod telemetry;
 #[cfg(test)]
+mod test_env;
+#[cfg(test)]
 mod tests;
 mod tool_calls;
 #[cfg(test)]
