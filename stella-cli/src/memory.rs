@@ -634,4 +634,6 @@ pub(crate) fn unix_now_secs() -> i64 {
 }
 
 #[cfg(test)]
+mod path_token_tests;
+#[cfg(test)]
 mod tests;

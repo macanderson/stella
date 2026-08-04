@@ -32,7 +32,7 @@
 //! Per dimension:
 //!
 //! - **paths** match the path-shaped tokens the turn's prompt names, with the
-//!   same [`match_glob`] dialect guards and hooks use — `*` is the only
+//!   same `match_glob` dialect guards and hooks use — `*` is the only
 //!   wildcard and it crosses `/`. A pattern with no literal part (`*`, `**`)
 //!   constrains nothing and matches unconditionally, echoing the guard lint
 //!   that flags such globs as matching every value.
