@@ -11,6 +11,10 @@ publish.workspace = true
 [dependencies]
 stella-protocol = { path = "../stella-protocol" }
 stella-tools = { path = "../stella-tools" }
+# Only for `TerminalHold` — while this crate owns the screen, the diagnostic
+# plane's stderr sink must not write to it (see `term::TerminalGuard`).
+# stella-diag is a leaf crate by construction, so this adds no cycle.
+stella-diag = { path = "../stella-diag" }
 arboard.workspace = true
 png.workspace = true
 serde_json.workspace = true

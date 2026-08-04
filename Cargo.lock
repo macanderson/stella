@@ -3409,6 +3409,7 @@ dependencies = [
  "proptest",
  "ratatui",
  "serde_json",
+ "stella-diag",
  "stella-protocol",
  "stella-tools",
  "sysinfo",

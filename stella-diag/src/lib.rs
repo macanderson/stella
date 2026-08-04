@@ -106,7 +106,10 @@ pub use ring::{
     CRASH_KEEP, CRASH_PREFIX, MAX_BYTES, MAX_RECORDS, Ring, RingStats, latest_crash_file,
     prune_crash_files,
 };
-pub use sink::{Bound, Capture, FailingSink, JsonlSink, NullSink, Sink, SinkError, TextSink};
+pub use sink::{
+    Bound, Capture, FailingSink, JsonlSink, NullSink, Sink, SinkError, TerminalGated, TerminalHold,
+    TextSink,
+};
 
 mod redact;
 pub use redact::{Note, Redacted};
