@@ -33,13 +33,13 @@
 │                                             │  >text         steer the running turn — lands at the next step bo│                                             │
 │                                             │  esc           soft-stop at the next step boundary — completed wo│                                             │
 │                                             │  esc esc       cancel NOW & hold — nothing runs until your next p│                                             │
-│                                             │  ctrl-c        quit stella                                       │                                             │
-│                                             │                                                                  │                                             │
-└─────────────────────────────────────────────│  letter & arrow hotkeys apply while the prompt box is empty      │─────────────────────────────────────────────┘
- space on/off · ctrl+o preview · ctrl+x×2 dele└──────────────────────────────────────────────────────────────────┘
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- ▸ stage  Refactor the automations store into a shared workspace package
+└─────────────────────────────────────────────│  ctrl-c        quit stella                                       │─────────────────────────────────────────────┘
+ space on/off · ctrl+o preview · ctrl+x×2 dele│                                                                  │
+──────────────────────────────────────────────│  letter & arrow hotkeys apply while the prompt box is empty      │──────────────────────────────────────────────
+ ▸ stage  Refactor the automations store into └──────────────────────────────────────────────────────────────────┘
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
 >>>
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
- ✦ lead · ● execute │ ctx 8.2k/200k │ run $0.05 of $7.50
+           │ AGENT │ STAGE     │ CONTEXT          │ SPEND
+ ✦ stella  │ lead  │ ● execute │ ▯▯▯▯▯▯ 8.2k/200k │ $0.05 of $7.50                                                                        ↝ deterministic-first
+ MODELS  T·—  W·zai/glm-5.2-air  J·—

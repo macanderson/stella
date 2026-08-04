@@ -28,18 +28,18 @@
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  ☑ 5/7 ▸ Workflows canvas    ⚖ flip ✓ red→green
 ┌ transcript · 21 lines · following ───────────────────────────────────────────────────────────────────────────────────────────┐┌ TASKS 5/7 ───────────────────┐
-│                                                   ┌ tasks  5 of 7 done ▰▰▰▰▰▱▱ ──── ↑↓ select · ⏎ expand ┐                   ││ ✓ #1 Scaffold the automation…│
-│● read_file    apps/app/automations/page.tsx       │▸ ✓ Scaffold the automations routes                   │                   ││ ✓ #2 List view with live fil…│
-│  ⎿ 312 lines                                      │  ✓ List view with live filters                       │               42ms││ ✓ #3 Editor panel plumbing (…│
-│                                                   │  ✓ Editor panel plumbing                             │                   ││ ✓ #4 Persist automation draf…│
-│☰  tasks  5/7  ·  Workflows canvas                 │  ✓ Persist automation drafts                         │                   ││ ✓ #5 Wire the triggers API (…│
-│                                                   │  ✓ Wire the triggers API                             │                   ││ ▸ #6 Workflows canvas (lead) │
-│⏸ scope  Refactor the automations store into a shar│  ▸ Workflows canvas                      0:00 · $0.00│                   ││ ☐ #7 Verify: witness suite g…│
-│                                                   │  ○ Verify: witness suite green                       │                   ││                              │
-└──────────────────────────────────────────────── ↑ └──────────────────────────────────────────────────────┘ expand · ⌃S state ┘└──────────────────────────────┘
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- ▸ stage  Refactor the automations store into a shared workspace package
+│  ⎿ 312 lines                                      ┌ tasks  5 of 7 done ▰▰▰▰▰▱▱ ──── ↑↓ select · ⏎ expand ┐               42ms││ ▸ #6 Workflows canvas (lead) │
+│                                                   │▸ ✓ Scaffold the automations routes                   │                   ││ ☐ #7 Verify: witness suite g…│
+│☰  tasks  5/7  ·  Workflows canvas                 │  ✓ List view with live filters                       │                   ││… +5 done                     │
+│                                                   │  ✓ Editor panel plumbing                             │                   ││                              │
+│⏸ scope  Refactor the automations store into a shar│  ✓ Persist automation drafts                         │                   ││                              │
+│                                                   │  ✓ Wire the triggers API                             │                   ││                              │
+└──────────────────────────────────────────────── ↑ │  ▸ Workflows canvas                      0:00 · $0.00│ expand · ⌃S state ┘└──────────────────────────────┘
+────────────────────────────────────────────────────│  ○ Verify: witness suite green                       │────────────────────────────────────────────────────
+ ▸ stage  Refactor the automations store into a shar└──────────────────────────────────────────────────────┘
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
 >>>
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
- ✦ lead · ● execute │ turn $0.04
+           │ AGENT │ STAGE     │ TURN
+ ✦ stella  │ lead  │ ● execute │ $0.04                                                                                                    ↝ deterministic-first
+ MODELS  T·—  W·zai/glm-5.2-air  J·—

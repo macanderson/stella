@@ -28,18 +28,18 @@
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  ☑ 5/7 ▸ Workflows canvas    ⚖ flip ✓ red→green
 ┌ transcript · 21 lines · following ───────────────────────────────────────────────────────────────────────────────────────────┐┌ TASKS 5/7 ───────────────────┐
-│                                                                                                                              ││ ✓ #1 Scaffold the automation…│
-│● read_file    apps/app/automations/page.tsx                                                                                  ││ ✓ #2 List view with live fil…│
-│  ⎿ 312 lines                                                                                                             42ms││ ✓ #3 Editor panel plumbing (…│
-│                                                                                                                              ││ ✓ #4 Persist automation draf…│
-│☰  tasks  5/7  ·  Workflows canvas                 ┌ budget  session spend cap ⏎ set · ⌫ edit · esc close ┐                   ││ ✓ #5 Wire the triggers API (…│
-│                                                   │run     $0.05 of $7.50 ▰▱▱▱▱▱▱▱▱                      │                   ││ ▸ #6 Workflows canvas (lead) │
-│⏸ scope  Refactor the automations store into a shar│new cap $                                             │                   ││ ☐ #7 Verify: witness suite g…│
-│                                                   │the cap applies when the driver's budget stream folds │                   ││                              │
-└──────────────────────────────────────────────── ↑ └──────────────────────────────────────────────────────┘ expand · ⌃S state ┘└──────────────────────────────┘
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- ▸ stage  Refactor the automations store into a shared workspace package
+│  ⎿ 312 lines                                                                                                             42ms││ ▸ #6 Workflows canvas (lead) │
+│                                                                                                                              ││ ☐ #7 Verify: witness suite g…│
+│☰  tasks  5/7  ·  Workflows canvas                                                                                            ││… +5 done                     │
+│                                                                                                                              ││                              │
+│⏸ scope  Refactor the automations store into a shar┌ budget  session spend cap ⏎ set · ⌫ edit · esc close ┐                   ││                              │
+│                                                   │run     $0.05 of $7.50 ▰▱▱▱▱▱▱▱▱                      │                   ││                              │
+└──────────────────────────────────────────────── ↑ │new cap $                                             │ expand · ⌃S state ┘└──────────────────────────────┘
+────────────────────────────────────────────────────│the cap applies when the driver's budget stream folds │────────────────────────────────────────────────────
+ ▸ stage  Refactor the automations store into a shar└──────────────────────────────────────────────────────┘
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
 >>>
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
- ✦ lead · ● execute │ ctx 8.2k/200k │ run $0.05 of $7.50
+           │ AGENT │ STAGE     │ CONTEXT          │ SPEND
+ ✦ stella  │ lead  │ ● execute │ ▯▯▯▯▯▯ 8.2k/200k │ $0.05 of $7.50                                                                        ↝ deterministic-first
+ MODELS  T·—  W·zai/glm-5.2-air  J·—

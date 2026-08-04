@@ -33,7 +33,7 @@ fn full_deck_frame_composes_every_band_at_80_cols() {
         ui.composer.insert_char(c);
     }
 
-    // 190 exercises the full four-zone statline; 80 the zone-drop path.
+    // 190 exercises the full labeled statline; 80 the cell-drop path.
     for (w, h) in [(80u16, 24u16), (190, 40)] {
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
         term.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
@@ -47,19 +47,21 @@ fn full_deck_frame_composes_every_band_at_80_cols() {
             "new line", // composer footer affordance (§4)
             "queue",    // footer / queue status
             "plan",     // progress stage labels (§3)
-            "execute", "verify", "✦", // statline zone A brand glyph (D1)
+            "execute", "verify", "✦",      // statline brand glyph, pinned left
+            "MODELS", // the always-on pins row
         ] {
             assert!(
                 text.contains(needle),
                 "deck @{w}×{h} missing {needle:?}:\n{text}"
             );
         }
-        // The full zone set needs the width; at 190 every zone renders.
+        // The full cell set needs the width; at 190 every cell renders, each
+        // as an uppercase micro-label over its value.
         if w >= 120 {
-            for needle in ["ctx", "cpu", "cache", "turn $", "run $", "saved"] {
+            for needle in ["CONTEXT", "CPU", "CACHE", "SPEND", "SAVED", "WARMTH"] {
                 assert!(
                     text.contains(needle),
-                    "deck @{w}×{h} missing zone item {needle:?}:\n{text}"
+                    "deck @{w}×{h} missing statline cell {needle:?}:\n{text}"
                 );
             }
         }
