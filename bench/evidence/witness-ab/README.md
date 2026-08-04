@@ -110,14 +110,14 @@ the worker's provider, so a cross-provider author authenticates against
 nothing.
 
 One soft constraint, which is where the money is. `openrouter` is deliberately
-an *unseeded* provider (`stella-cli/src/config/providers.rs`): it fronts
+an *unseeded* provider (`crates/stella-cli/src/config/providers.rs`): it fronts
 hundreds of `vendor/model` slugs that change weekly, so slug validation there
 is permissive by design and a typo is not caught before the call. What the
 seed catalog does carry for the `openrouter` route is the row that supplies a
 model's context window, output ceiling and prices —
 `moonshotai/kimi-k3`, `anthropic/claude-sonnet-5`, `anthropic/claude-fable-5`,
 `anthropic/claude-haiku-4.5` at the time of writing
-(`stella-model/src/catalog.rs`). An author without such a row runs against the
+(`crates/stella-model/src/catalog.rs`). An author without such a row runs against the
 engine's global defaults and reports spend only from the gateway's own usage
 accounting, which is a worse position to measure a cost question from. Prefer
 an author the seed carries; if the experiment needs one it does not, seed the

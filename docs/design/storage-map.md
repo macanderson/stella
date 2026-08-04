@@ -9,13 +9,13 @@ status: implemented
 **Status:** Phases A–C implemented, D partial, E adapters implemented ·
 **Date:** 2026-07-19  
 **Implemented:** the canonical model, addresses, and deep SQL extraction
-(`stella-graph/src/storage/` — types, constraints, defaults, PK/FK,
+(`crates/stella-graph/src/storage/` — types, constraints, defaults, PK/FK,
 `ALTER TABLE … ADD COLUMN`, `COMMENT ON` harvesting); the
 `stella.storage.toml` manifest with layers/boundaries/redirects/stubs and
-textual append (`stella-graph/src/manifest.rs`); `code_graph_storage_objects`
+textual append (`crates/stella-graph/src/manifest.rs`); `code_graph_storage_objects`
 persistence and snapshot assembly (`store.rs`, `load_storage_snapshot`);
 gate v2 rings 1–3 with the `storage_intent` declared-justification path
-(`stella-tools/src/schema_gate.rs`, wired in `registry.rs`); embed cards
+(`crates/stella-tools/src/schema_gate.rs`, wired in `registry.rs`); embed cards
 (§7a); the `stella storage tree|show|grep|drift` CLI; and the **schema-as-
 code adapters** (§4a): Prisma (`storage/prisma.rs`, dedicated deterministic
 parser for the line-oriented DSL, `///` doc harvesting, Mongo-provider
@@ -43,7 +43,7 @@ table, or column, in **any** storage technology, not just SQL.
 **Prior art:** `docs/design/schema-graph.md`. What actually shipped from it:
 the live SQL DDL index in `stella-graph` (tree-sitter-sequel; `SymbolKind::
 {Table, Column, SchemaEnum, View}`), the Diesel `table!` detector, and the
-pre-write gate in `stella-tools/src/schema_gate.rs` (regex scan, `.sql` files
+pre-write gate in `crates/stella-tools/src/schema_gate.rs` (regex scan, `.sql` files
 only, exact-name conflicts on tables/types/views). Its Phase 3 canonical model
 (`schema.rs`, `code_graph_schema_links`) and Phase 4 semantic edges are
 **unbuilt** — this spec absorbs and supersedes them.
@@ -86,7 +86,7 @@ Four gaps, each mapped to a section of this spec:
 
 - **No daemons.** Everything is a synchronous fold: index on mount + watcher
   events + post-write triggers, meaning-generation at the `ContextWrite`
-  finalize stage. Same pattern as `stella-graph/src/watch.rs`.
+  finalize stage. Same pattern as `crates/stella-graph/src/watch.rs`.
 - **Nothing durable lives only in a rebuildable store.** `codegraph.db` is
   disposable by design. Intent and boundary sentences are expensive to produce
   and must never be lost to a cache rebuild — they live in a committed
@@ -160,7 +160,7 @@ Every level carries three groups: **structural facts** (parsed, rebuildable),
 and lines defined it, which adapter parsed it).
 
 ```rust
-// stella-graph/src/storage_model.rs (new)
+// crates/stella-graph/src/storage_model.rs (new)
 
 pub struct StorageLayer {
     pub key: String,              // "primary-pg" — manifest key, stable
@@ -410,7 +410,7 @@ Three stores, three roles — matching the existing split exactly:
 | `codegraph.db` (rebuildable) | structural index | parsed entities, provenance, code links; manifest mirrored in for one-query joins |
 | `context.db` (durable local) | retrieval | one node per entity + embedding vectors (§7) |
 
-New tables in `stella-graph/src/store.rs` (same `IF NOT EXISTS` migration
+New tables in `crates/stella-graph/src/store.rs` (same `IF NOT EXISTS` migration
 style; `kind` columns TEXT, so future kinds cost no schema change):
 
 ```sql
@@ -641,13 +641,13 @@ on a no-schema-change turn: a few hash lookups.
 ## 11. Phased implementation
 
 **Phase A — canonical model + SQL depth** (foundation)
-`stella-graph/src/storage_model.rs` (new), `storage_store.rs` (new tables §6),
+`crates/stella-graph/src/storage_model.rs` (new), `storage_store.rs` (new tables §6),
 deepen the SQL query pass to capture types/nullability/defaults/constraints/
 PK/FK, addresses + normalization. Retire nothing yet.
 *Delivers:* full-fidelity SQL schema in the index, addressable and queryable.
 
 **Phase B — manifest + mirror** 
-`stella-graph/src/manifest.rs` (parse/serialize `stella.storage.toml`),
+`crates/stella-graph/src/manifest.rs` (parse/serialize `stella.storage.toml`),
 layer discovery in `stella storage init`, mirror-on-mount, `stella storage
 show|tree|grep`.
 *Delivers:* layers, boundaries, durable meaning; the vendor-agnostic frame.

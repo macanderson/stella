@@ -39,7 +39,7 @@ So: no framework, no file, no level, no filter, no flag. The claim is confirmed.
 
 ### 1.1 The part the claim gets wrong, which is the useful part
 
-One crate has an excellent one. `stella-serve/src/observe/` is 2,495 lines
+One crate has an excellent one. `crates/stella-serve/src/observe/` is 2,495 lines
 across six modules: 18 serde-first event variants, an `Observer` port, a JSONL
 stderr sink, a metrics fanout that cannot disagree with the log, a bounded
 per-turn tally, a sentinel redaction sweep, and an exactly-one property test —
@@ -78,8 +78,8 @@ kind of statement — so it gets split between the plane that is easiest to reac
 
 | Plane | Question it answers | Where it lives | State |
 |---|---|---|---|
-| **Domain** | *What did the agent do?* | `AgentEvent`, 37 variants, `stella-protocol/src/event.rs` | built, excellent. Replayable, wire-stable, consumed by the TUI, observatory and journal |
-| **Ledger** | *What did it cost, and can I prove it?* | receipts, `telemetry`, `stella-cli/src/trace.rs` (#1042) | built. A fold over settled state, not a live capture |
+| **Domain** | *What did the agent do?* | `AgentEvent`, 37 variants, `crates/stella-protocol/src/event.rs` | built, excellent. Replayable, wire-stable, consumed by the TUI, observatory and journal |
+| **Ledger** | *What did it cost, and can I prove it?* | receipts, `telemetry`, `crates/stella-cli/src/trace.rs` (#1042) | built. A fold over settled state, not a live capture |
 | **Presentation** | *What should the human see?* | 682 `println!` in `stella-cli`, the TUI | built |
 | **Diagnostic** | *Why did the program behave this way?* | — | **missing** |
 
@@ -503,7 +503,7 @@ are the ones that change a user's life.
 |---|---|---|
 | **1** | `stella-diag`: envelope, `Level`, `Filter`, `Loggable`, `log_enum!`, `Diag` port, `JsonlSink`, `Capture`, `NullSink`, ring. Properties 3, 4, 8 and the `trybuild` case | the leaf crate everything else needs |
 | **2** | CLI wiring: `-v`/`--log-level`/`--log-file`, `STELLA_LOG`, panic hook, crash ring on disk, `stella doctor --last-failure`. Property 5 | the moment the project can say "attach the log" |
-| **3** | `stella-serve/observe` re-based on `stella-diag`; `ServeEvent` becomes a facet; `STELLA_SERVE_LOG` kept as an alias | proves generality against the one real existing consumer, and retires the duplicate |
+| **3** | `crates/stella-serve/observe` re-based on `stella-diag`; `ServeEvent` becomes a facet; `STELLA_SERVE_LOG` kept as an alias | proves generality against the one real existing consumer, and retires the duplicate |
 | **4** | `or_diag`, `check-silent-discards.sh`, ceilings, and the first crate cleaned (`stella-store`) | starts the ratchet falling |
 | **5** | `log_error!`, `PathClass`, `Redacted` ceiling script | the field vocabulary the remaining crates need |
 | **6** | `DomainBridge`; property 6; `stella-model`, `stella-tools`, `stella-cli` facets | the merged timeline |

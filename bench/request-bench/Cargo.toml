@@ -17,4 +17,4 @@ path = "src/main.rs"
 
 [dependencies]
 serde_json.workspace = true
-stella-protocol = { path = "../../stella-protocol" }
+stella-protocol = { path = "../../crates/stella-protocol" }

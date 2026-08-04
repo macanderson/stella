@@ -103,7 +103,7 @@ test-protocol: ## Test stella-protocol only (shared types)
 .PHONY: record-golden
 record-golden: ## Re-record the golden replay trajectories (review the fixture diff!)
 	STELLA_REFRESH_GOLDEN=1 cargo test -p stella-pipeline --lib golden
-	@git --no-pager diff --stat -- stella-pipeline/tests/fixtures/golden || true
+	@git --no-pager diff --stat -- crates/stella-pipeline/tests/fixtures/golden || true
 	@echo "Golden trajectories re-recorded. A non-empty diff above is a change to"
 	@echo "the observable event contract — review it as such before committing."
 

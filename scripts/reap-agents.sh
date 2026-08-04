@@ -26,7 +26,7 @@
 #       bash tool, a custom tool, the hook runner, contextgraph-host's stdio
 #       provider connections. Each calls setsid() before exec and carries
 #       its own Drop-based "kill_group" backstop (contextgraph-host/src/stdio.rs,
-#       stella-tools/src/bash.rs) — but that backstop is Rust destructor
+#       crates/stella-tools/src/bash.rs) — but that backstop is Rust destructor
 #       logic, which a SIGKILL'd parent never runs.
 #
 #       Post-hoc, exact attribution for (B) isn't fully recoverable: a
@@ -34,7 +34,7 @@
 #       exec-optimization and *becomes* `sleep` in place, so matching on
 #       comm/argv is unreliable. What survives is the process's cwd, which
 #       stella always sets to the workspace/worktree root
-#       (stella-tools/src/bash.rs, stella-fleet/src/git.rs). So (B) is
+#       (crates/stella-tools/src/bash.rs, crates/stella-fleet/src/git.rs). So (B) is
 #       identified as: a process-group leader (pid == pgid — true of every
 #       stella-spawned child, though also true of plenty of ordinary
 #       backgrounded daemons, so this narrows but doesn't uniquely
@@ -42,7 +42,7 @@
 #       workspace — a directory with its own `.stella/`, or one climbing to
 #       such a directory before hitting a `.git` boundary or $HOME,
 #       or a `.stella/worktrees/<slug>/` isolated fleet task dir
-#       (stella-fleet/src/git.rs). This is circumstantial, not proof — the
+#       (crates/stella-fleet/src/git.rs). This is circumstantial, not proof — the
 #       report always prints the full command and cwd, and killing always
 #       goes through the confirmation prompt below, so an unrelated
 #       process that happens to share a cwd gets a chance to be vetoed.

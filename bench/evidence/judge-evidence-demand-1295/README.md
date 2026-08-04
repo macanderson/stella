@@ -21,7 +21,7 @@ starts — should have made the condition rare. It does not, and the reason is
 visible in the predicate rather than in any run:
 
 ```rust
-// stella-pipeline/src/verify.rs
+// crates/stella-pipeline/src/verify.rs
 pub fn judge_pass_stands_alone(&self) -> bool {
     !self.flip_achieved && self.touched_tests_passed != Some(true)
 }
@@ -45,7 +45,7 @@ nowhere.
 
 Hence the gate: raise the ask only when `Pipeline::effective_test_command`
 resolved. Pinned by `no_tracked_command_means_no_ask_at_all` in
-`stella-pipeline/src/pipeline/tests/judge_evidence_demand.rs`.
+`crates/stella-pipeline/src/pipeline/tests/judge_evidence_demand.rs`.
 
 ## 2. What was measured
 

@@ -15,7 +15,7 @@
 #   purpose".
 #
 # This is the "loud" half. Leaking is still available — some of it is
-# load-bearing, notably the provider-config interner in stella-cli/src/config.rs
+# load-bearing, notably the provider-config interner in crates/stella-cli/src/config.rs
 # — but every site must now carry an `#[allow]` naming its reason, so the act
 # shows up in the diff that introduces it and a reviewer is asked the question.
 #

@@ -2,7 +2,7 @@
 #
 # Guard: the committed wire contract still describes the types. See #971.
 #
-# `AgentEvent` (stella-protocol/src/event.rs) is the wire format for three
+# `AgentEvent` (crates/stella-protocol/src/event.rs) is the wire format for three
 # surfaces at once — the TUI folds it, `--output-format stream-json` prints it,
 # and stella-serve streams it over SSE — and until docs/wire/ existed nothing
 # proved that a change to it was additive. Three consumers, one enum, zero

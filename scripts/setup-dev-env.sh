@@ -15,16 +15,16 @@
 # Working in several worktrees of this repo at once breaks in three ways that
 # all look like flaky tests, and none of which are:
 #
-#   1. `~/.stella` is machine-global. stella_home() (stella-store/src/home.rs)
+#   1. `~/.stella` is machine-global. stella_home() (crates/stella-store/src/home.rs)
 #      resolves STELLA_HOME, else $HOME/.stella — and usage.db, catalog.db,
 #      media-operations.db, sessions/ and notifications/ all live under it. Two
 #      worktrees running `cargo test --workspace` contend on one set of SQLite
 #      files, keyed by nothing but $HOME. The media-operation journal
-#      (stella-cli/src/agent/tools.rs) is the one that bites most often.
+#      (crates/stella-cli/src/agent/tools.rs) is the one that bites most often.
 #
 #      Setting STELLA_HOME per worktree fixes it, and — checked, not assumed —
 #      does NOT cost you provider auth: credentials.toml resolves through
-#      $HOME/.stella directly (stella-model/src/credential.rs), not through
+#      $HOME/.stella directly (crates/stella-model/src/credential.rs), not through
 #      stella_home(), so keys keep working while the mutable state separates.
 #
 #   2. One CARGO_TARGET_DIR shared by N worktrees means cargo's build lock

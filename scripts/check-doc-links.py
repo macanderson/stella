@@ -66,7 +66,7 @@ claims: `website/content/docs/commands/ingest.mdx` shows
 
 In a `.rs` file a line starting with `#` counts as a comment, which is true of
 attributes and also of string literals whose content is a comment in some other
-language -- `stella-graph/src/manifest.rs` embeds a generated `#`-commented
+language -- `crates/stella-graph/src/manifest.rs` embeds a generated `#`-commented
 manifest that legitimately references the storage map, and gets healed with
 everything else. Worth knowing before adding a Rust fixture whose text begins
 with `#` and mentions a docs path.
@@ -286,7 +286,7 @@ def citation_sources():
     """Files that may cite a document: Rust comments and tracked markdown.
 
     Rust is scanned comment-only. A `docs/…md` string inside code is test data
-    or a constant -- `stella-tools/src/tasks.rs` builds a fixture task whose
+    or a constant -- `crates/stella-tools/src/tasks.rs` builds a fixture task whose
     description is "see docs/parser.md" -- not a claim about the repository.
     """
     return tracked("*.rs"), tracked("*.md")
@@ -402,7 +402,7 @@ def heal(moves, rust_files, md_files, extra_remap=None):
     Scoped to exactly the lines `scan_citations` would read, and for a reason
     paid for once already: an earlier version substituted across whole files,
     so it rewrote a `docs/…md` inside a Rust *string literal* in
-    `stella-core/src/ingest/tests.rs` -- a fixture, not a citation, which the
+    `crates/stella-core/src/ingest/tests.rs` -- a fixture, not a citation, which the
     checker deliberately ignores. The longer path pushed the line past
     rustfmt's width and turned the fmt gate red for a "fix" nothing had asked
     for. A fixer must never touch more than its checker can see.

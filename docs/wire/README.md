@@ -28,7 +28,7 @@ keep in step rather than two.
 derive on `ServerFrame` describes it — which makes
 `StellaWireFrame = ServerFrame & { seq: number }` the single hand-written type
 in these artifacts. It is pinned by `envelope_pin` in
-`stella-serve/src/history.rs`, which serializes a real frame through the real
+`crates/stella-serve/src/history.rs`, which serializes a real frame through the real
 encoder and asserts the wire object is exactly the frame's own keys plus
 `seq`. If that ever stops being true, the test fails rather than the artifact
 quietly lying.
@@ -81,7 +81,7 @@ making an optional field required breaks every consumer at once.
 A `"type"` this schema does not list is **not** an error. It is an event from a
 newer stella, and a forward-compatible consumer keeps the line intact and moves
 on — which is what `AgentEvent::Unknown` does on the Rust side, and what
-`stella-pipeline/tests/fixtures/from_a_newer_stella.jsonl` pins executably.
+`crates/stella-pipeline/tests/fixtures/from_a_newer_stella.jsonl` pins executably.
 
 `AgentEvent::Unknown` itself therefore has no schema member: it carries no wire
 tag of its own, and re-serializes as the foreign object it wrapped. Validating
@@ -92,6 +92,6 @@ Structural invariants that span *several* events — legal stage ordering,
 `tool_start`/`tool_result` pairing, a single terminal `complete`, monotonic
 budget — cannot be expressed in JSON Schema at all. They live in
 `stella_pipeline::replay::validate_stream`, and
-`stella-pipeline/tests/stream_conformance.rs` runs them over recorded fixtures.
+`crates/stella-pipeline/tests/stream_conformance.rs` runs them over recorded fixtures.
 A stream that validates against this schema line by line can still be an
 illegal stream.

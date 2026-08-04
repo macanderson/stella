@@ -7,11 +7,11 @@ status: implemented
 # Project scripts index
 
 **Status:** Implemented — this document is the reference for shipped behaviour,
-not a proposal, and the code cites it as such: `stella-tools/src/scripts.rs`
-(the detection core), `stella-tools/src/catalog.rs` (the `list_scripts` /
-`run_script` declarations), `stella-tools/src/project.rs` (`build_project` /
-`run_tests` as verb shortcuts over the same index), `stella-cli/src/main.rs`
-(the `stella scripts` subcommand), and `stella-cli/src/agent/prompt.rs` (the
+not a proposal, and the code cites it as such: `crates/stella-tools/src/scripts.rs`
+(the detection core), `crates/stella-tools/src/catalog.rs` (the `list_scripts` /
+`run_script` declarations), `crates/stella-tools/src/project.rs` (`build_project` /
+`run_tests` as verb shortcuts over the same index), `crates/stella-cli/src/main.rs`
+(the `stella scripts` subcommand), and `crates/stella-cli/src/agent/prompt.rs` (the
 `## Project scripts` prompt section). The future tense below is the original
 drafting voice; read it as a description of what exists.
 
@@ -29,19 +29,19 @@ shares `stella_tools::graph::run_query` between the `graph_query` tool and
 the `stella graph` subcommand:
 
 1. **Prompt section** — a compact `## Project scripts` block appended by
-   `assemble_system_prompt` (`stella-cli/src/agent.rs:141`), computed once at
+   `assemble_system_prompt` (`crates/stella-cli/src/agent.rs:141`), computed once at
    session start, byte-stable within the session.
 2. **Tools** — `list_scripts` (read-only) and `run_script` in
    `stella-tools`, registered in `ToolRegistry::with_backends` and declared in
-   the canonical `stella-tools/src/catalog.rs` (which `custom::RESERVED_NAMES`
+   the canonical `crates/stella-tools/src/catalog.rs` (which `custom::RESERVED_NAMES`
    now aliases).
 3. **CLI** — `stella scripts list` / `stella scripts run <id> [-- args]`,
-   mirroring the `Graph` subcommand (`stella-cli/src/main.rs:484`), offline
+   mirroring the `Graph` subcommand (`crates/stella-cli/src/main.rs:484`), offline
    (short-circuits before provider resolution).
 
-The detection core lives in a new `stella-tools/src/scripts.rs` and
+The detection core lives in a new `crates/stella-tools/src/scripts.rs` and
 **replaces** the private `detect()`/`Toolchain` in
-`stella-tools/src/project.rs:33` — `build_project` and `run_tests` become
+`crates/stella-tools/src/project.rs:33` — `build_project` and `run_tests` become
 thin verb shortcuts over the same index, so there is exactly one detection
 code path in the workspace.
 
@@ -70,10 +70,10 @@ code path in the workspace.
   `bash` tool / the `command` override on `build_project`/`run_tests`.
 - **Same trust and gating as `bash`.** Indexed scripts are workspace-authored
   code, "the same trust level as a `package.json` script or a Makefile
-  target" (`stella-tools/src/custom.rs`). `run_script` emits the blocking
+  target" (`crates/stella-tools/src/custom.rs`). `run_script` emits the blocking
   `command.started` hook chain with the fully resolved command, exactly like
   `bash` (`ToolRegistry::gate_side_effects`,
-  `stella-tools/src/registry.rs:479`), so settings-driven policy can deny or
+  `crates/stella-tools/src/registry.rs:479`), so settings-driven policy can deny or
   require approval per command.
 - **No new telemetry tables.** `run_script` invocations ride the existing
   `events` → `tool_calls` projection in `.stella/private/store.db`. No `store.db`
@@ -137,7 +137,7 @@ Names are **never** verb-bound when they contain `watch`, or equal
 a canonical verb can never implicitly trigger an outward-facing or
 destructive action. `run_tests`'s existing kind mapping (`test:unit`,
 `test:e2e`, `e2e`, and its refusal to pass unit tests off as e2e,
-`stella-tools/src/project.rs:183`) is preserved unchanged on top of the
+`crates/stella-tools/src/project.rs:183`) is preserved unchanged on top of the
 index.
 
 ## Tool surface
@@ -163,7 +163,7 @@ below.
 ```
 
 Execution reuses `exec::run` with the `run_and_report` framing
-(`stella-tools/src/project.rs:75`): `` `<command>` PASSED (exit 0) `` /
+(`crates/stella-tools/src/project.rs:75`): `` `<command>` PASSED (exit 0) `` /
 `` FAILED (exit <code>) `` plus truncated output — the model reads success
 without a follow-up question. Default timeout 600 s, same as
 `build_project`.
@@ -265,7 +265,7 @@ package-manager guessing, no bash composition.
 ## Configuration
 
 An optional `scripts` section in `settings.json`
-(`stella-cli/src/settings.rs`, following the `McpSettings` pattern; 3-scope
+(`crates/stella-cli/src/settings.rs`, following the `McpSettings` pattern; 3-scope
 merge applies):
 
 | Key | Default | Meaning |
@@ -279,7 +279,7 @@ merge applies):
 
 ## Delivery
 
-1. `stella-tools/src/scripts.rs`: `ScriptIndex::detect(root)` + rendering +
+1. `crates/stella-tools/src/scripts.rs`: `ScriptIndex::detect(root)` + rendering +
    resolution, superseding `script.rs`'s original three-source vocabulary
    (Makefile / package.json / cargo aliases) with the full ecosystem table
    while keeping its contracts: argv exec and the
@@ -287,7 +287,7 @@ merge applies):
    (`build_project`/`run_tests`) rewired onto it so one detection code
    path remains. ✅ shipped
 2. Register `list_scripts` beside `run_script`; extend `RESERVED_NAMES`
-   (the collision test in `stella-tools/src/registry.rs` enforces it);
+   (the collision test in `crates/stella-tools/src/registry.rs` enforces it);
    gate `run_script` on the `command.started` chain with its resolved
    command line. ✅ shipped
 3. `stella scripts` subcommand + offline short-circuit; prompt section in

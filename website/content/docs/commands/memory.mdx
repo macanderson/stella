@@ -64,7 +64,7 @@ Eligibility is strict: a memory must have been cited successfully **more than 10
 
 ### `stella memory validate`
 
-Re-validate old memories against the current codebase. It scans each memory for file-path anchors (e.g. `stella-cli/src/agent.rs`), checks whether those paths still exist, and flags stale ones — a memory whose referenced path no longer exists is a strong signal it is about refactored-away code and may mislead.
+Re-validate old memories against the current codebase. It scans each memory for file-path anchors (e.g. `crates/stella-cli/src/agent.rs`), checks whether those paths still exist, and flags stale ones — a memory whose referenced path no longer exists is a strong signal it is about refactored-away code and may mislead.
 
 ```bash
 stella memory validate

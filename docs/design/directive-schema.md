@@ -14,7 +14,7 @@ wire semantics.*
 > (`memory, fact, rule, preference, constraint, procedure`) predate the
 > adaptive-context reconciliation ([context-graph-protocol#27](https://github.com/macanderson/context-graph-protocol/issues/27)).
 > The **live model is four directive kinds** — `preference, rule, constraint,
-> procedure` — in `stella-core/src/context_record/kind.rs`; **`memory` and `fact`
+> procedure` — in `crates/stella-core/src/context_record/kind.rs`; **`memory` and `fact`
 > are not directive kinds** (`memory` is its own record kind, `fact` is a
 > `knowledge` kind). Portable directive semantics are owned by the **Context Graph
 > Protocol** exchange-provider profile (CGP #28), not by this document. Kept for

@@ -30,8 +30,8 @@ Every one of these is genuinely valued — pick the one that fits your energy:
 |---|---|---|
 | 🐛 **A bug report with a repro** | [Bug report form](https://github.com/macanderson/stella/issues/new?template=bug_report.yml) | 10 minutes |
 | 🧭 **Docs & examples** — fix a lie in the docs before it fools someone else | `website/content/docs/**.mdx` for anything a *user* reads, `docs/**` for contributor-facing specs, plus `README.md`, `--help` text, doc comments | Small |
-| 🔌 **A new provider adapter** — Stella is BYOK; every model provider we speak makes it more useful | `stella-model/src/` — copy the shape of an existing adapter | Medium |
-| 🛠 **A new built-in tool** | `stella-tools/src/` — implement the tool trait, register it in `ToolRegistry`, then declare one line in [`catalog.rs`](stella-tools/src/catalog.rs) | Medium |
+| 🔌 **A new provider adapter** — Stella is BYOK; every model provider we speak makes it more useful | `crates/stella-model/src/` — copy the shape of an existing adapter | Medium |
+| 🛠 **A new built-in tool** | `crates/stella-tools/src/` — implement the tool trait, register it in `ToolRegistry`, then declare one line in [`catalog.rs`](crates/stella-tools/src/catalog.rs) | Medium |
 | 🌐 **A Context Graph Protocol (CGP) provider** — implement it in your language and prove it green | [macanderson/context-graph-protocol](https://github.com/macanderson/context-graph-protocol) — its own repo, no Stella code required | Medium |
 | 🏗 **Core engine work** | `good first issue` / `help wanted` labels | Varies |
 
@@ -145,7 +145,8 @@ chasing the citations in the same PR.
 
 ## Where does my change go? — a workspace tour
 
-Twenty crates sounds like a lot; the rule of thumb is one sentence each:
+Twenty crates — all under the `crates/` directory — sounds like a lot; the
+rule of thumb is one sentence each:
 
 | You want to… | Go to |
 |---|---|
@@ -189,7 +190,7 @@ break them will be asked to restructure, no matter how good the feature is.
 
 That list is the single source, and its numbering is part of the contract:
 Rust doc comments and crate READMEs cite invariants by number (`content_free.rs`
-cites "AGENTS.md invariant #3", `stella-model/README.md` cites #8), so the
+cites "AGENTS.md invariant #3", `crates/stella-model/README.md` cites #8), so the
 numbers are addresses, not decoration. This file used to carry a second, silently
 abridged copy — seven of the eight, with #8 missing entirely and #3 shorn of the
 half that says how it is enforced. Two copies of a normative rule is not

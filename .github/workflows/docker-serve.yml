@@ -32,7 +32,7 @@ on:
       # without this job. What is unique here is the *packaging* — the base
       # image, the unprivileged uid, the port, the healthcheck — and those
       # move with the files below.
-      - "stella-serve/**"
+      - "crates/stella-serve/**"
       - "Cargo.toml"
       - "Cargo.lock"
       # The builder base tag has to track this pin; the first step asserts it.
@@ -44,7 +44,7 @@ on:
     paths:
       - "packaging/docker/**"
       - ".dockerignore"
-      - "stella-serve/**"
+      - "crates/stella-serve/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"

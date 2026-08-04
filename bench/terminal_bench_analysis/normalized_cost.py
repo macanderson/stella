@@ -133,8 +133,8 @@ PRICE_TABLE: dict[str, tuple[DatedPrice, ...]] = {
     # Anthropic-native Sonnet 5. Two entries, not one edited entry: the
     # introductory rate is in force through 2026-08-31 and the standard rate
     # from 2026-09-01, so a run's own date decides which applies. Cache reads
-    # bill at 0.1x input, matching `stella-model/src/catalog.rs`, which carries
-    # the standard $0.30 for this same model.
+    # bill at 0.1x input, matching `crates/stella-model/src/catalog.rs`, which
+    # carries the standard $0.30 for this same model.
     "claude-sonnet-5": (
         DatedPrice(
             price=TokenPrice(
@@ -163,7 +163,7 @@ PRICE_TABLE: dict[str, tuple[DatedPrice, ...]] = {
 # Every routing prefix Stella can put in front of a model slug, derived rather
 # than guessed. Two sources, unioned:
 #
-#   - `stella-cli/src/config/providers.rs::PROVIDERS` — the ids a `--model
+#   - `crates/stella-cli/src/config/providers.rs::PROVIDERS` — the ids a `--model
 #     provider/slug` spec resolves against (`config.rs` splits on the first
 #     `/`), plus `LOCAL_PROVIDER.id`. That is the full set `Dialect` can be
 #     reached through: `Dialect` names the wire shape, and several providers

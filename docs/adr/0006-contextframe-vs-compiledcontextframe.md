@@ -21,7 +21,7 @@
 ## Context
 
 Stella already consumes provider-emitted `ContextFrame`s: `contextgraph-types`
-defines `ContextFrame`, and `stella-cli/src/contextgraph.rs` hosts in-tree
+defines `ContextFrame`, and `crates/stella-cli/src/contextgraph.rs` hosts in-tree
 providers. Today `recall` returns frames with honest token budgeting and
 drop-reports, but there is no immutable *compiled* aggregate, no manifest, and
 no byte-stable hash — so an invocation's context is not reproducible or
@@ -53,7 +53,7 @@ the compiled frame gets built no longer describes the system. It is reached by
 
 When this ADR was written there was "no manifest". There is now. Each step
 already records an ordered, content-addressed, cache-zoned, cost-attributed
-list of blocks — `ManifestEntry` (`stella-protocol/src/event.rs:1118`) carries
+list of blocks — `ManifestEntry` (`crates/stella-protocol/src/event.rs:1118`) carries
 `block_id`, `cache_zone`, `token_cost`, `resident_since_step`, `message_index`,
 and `call_id` — and reconstruction from it is byte-exact. Provenance is stamped
 at a block's birth by `BlockOrigin` (`:1095`), whose `memory_id` is the join
@@ -106,7 +106,7 @@ Two constraints follow, and they bind Phase 2:
 
 What survives unchanged is more than the distinction. The **event** this ADR
 promised is already built: `CompiledContextFrameBuilt`
-(`stella-protocol/src/context_event.rs:273-280`) carries `compiled_frame_id`
+(`crates/stella-protocol/src/context_event.rs:273-280`) carries `compiled_frame_id`
 and a `sha256:`-prefixed `frame_hash`, with a pinned golden JCS vector, and is
 deliberately unwired — the wire shape was fixed before its first emitter. So
 the amendment retires the *aggregate*, not the announcement: what that event
