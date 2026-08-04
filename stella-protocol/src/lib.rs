@@ -75,8 +75,7 @@ pub use event::{
     ContextFrameRef, ContextProviderUsage, ContextUsage, FileChangeKind, HunkProposal,
     JudgeEvidence, KNOWN_TYPE_TAGS, ManifestEntry, MediaArtifactRef, MediaJobState, MediaKind,
     ModelCallRole, PolicyKind, PrStatus, ProofStep, ProposedHunk, ProviderShare, ScopeProposal,
-    StageKind, TaskItem, TaskStatus,
-    UsageIncompleteReason,
+    StageKind, TaskItem, TaskStatus, UsageIncompleteReason,
 };
 // The ladder vocabulary moved out of `event` when the rung joined it (#1043);
 // re-exported here so `stella_protocol::LadderSnapshot` never moved.
