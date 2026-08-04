@@ -3195,7 +3195,7 @@ dependencies = [
 
 [[package]]
 name = "stella-home"
-version = "0.6.85"
+version = "0.6.88"
 
 [[package]]
 name = "stella-mcp"

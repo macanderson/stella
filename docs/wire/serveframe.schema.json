@@ -3215,6 +3215,27 @@
       "type": "object"
     },
     {
+      "description": "A pipeline-driven turn (`pipeline` on `POST /v1/turns`, #1288) reached\nits scope-review gate and is parked on the host's decision, keyed by\n`request_id` exactly like [`ServerFrame::ToolRequest`] /\n[`ServerFrame::ProviderRequest`]. The host answers with\n[`ScopeReviewResultIn`] on `POST /v1/turns/{id}/approve`.\n\nThis is the pipeline's `ApprovalGate::review` (L-E5), remoted rather\nthan answered in-process — the API's counterpart to the CLI's\ninteractive scope-review card. Nothing else about a served turn\nchanges: the same `AgentEvent::ScopeReview` the pipeline already\nemits still carries the human-readable proposal on the ordinary event\nstream, so this frame is only the request half of the round trip.",
+      "properties": {
+        "proposal": {
+          "$ref": "#/$defs/ScopeProposal"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "scope_review_request",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "request_id",
+        "proposal"
+      ],
+      "type": "object"
+    },
+    {
       "description": "The hold announced by [`ServerFrame::TurnHeld`] is over and the turn is\nproceeding (#932). Emitted once, paired with the `TurnHeld` before it.\n\nCarries nothing, deliberately: the gate is released by\n`POST /resume`, by a cancel, and by the turn's entry being torn down,\nand from inside the gate those are indistinguishable. A host learns\nwhich it was from what follows — more frames, or `turn_complete`.",
       "properties": {
         "type": {

@@ -1640,6 +1640,10 @@ export type ServerFrame = {
   reason?: string | null;
   type: "turn_held";
 } | {
+  proposal: ScopeProposal;
+  request_id: string;
+  type: "scope_review_request";
+} | {
   type: "turn_released";
 } | {
   outcome: TurnOutcomeWire;
@@ -1655,6 +1659,7 @@ export type KnownTypeTag =
   | "tool_request"
   | "provider_request"
   | "turn_held"
+  | "scope_review_request"
   | "turn_released"
   | "turn_complete";
 

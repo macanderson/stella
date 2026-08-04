@@ -573,7 +573,11 @@ pub(crate) struct RemoteApprovalGate {
 }
 
 impl RemoteApprovalGate {
-    pub(crate) fn new(frames: crate::backlog::FrameSink, pending: Pending, timeout: Duration) -> Self {
+    pub(crate) fn new(
+        frames: crate::backlog::FrameSink,
+        pending: Pending,
+        timeout: Duration,
+    ) -> Self {
         Self {
             frames,
             pending,
@@ -613,7 +617,12 @@ impl ApprovalGate for RemoteApprovalGate {
         let started = dispatched(&self.pending, &request_id, ReverseKind::ScopeReview);
         match tokio::time::timeout(self.timeout, rx).await {
             Ok(Ok(decision)) => {
-                answered(&self.pending, &request_id, ReverseKind::ScopeReview, started);
+                answered(
+                    &self.pending,
+                    &request_id,
+                    ReverseKind::ScopeReview,
+                    started,
+                );
                 decision
             }
             // The sender was dropped: cancellation or teardown already
@@ -623,7 +632,12 @@ impl ApprovalGate for RemoteApprovalGate {
             Ok(Err(_)) => ScopeDecision::Abort,
             Err(_) => {
                 self.pending.abandon(&request_id);
-                timed_out(&self.pending, &request_id, ReverseKind::ScopeReview, started);
+                timed_out(
+                    &self.pending,
+                    &request_id,
+                    ReverseKind::ScopeReview,
+                    started,
+                );
                 ScopeDecision::Abort
             }
         }
@@ -781,7 +795,11 @@ pub(crate) struct RemoteVerificationRunner {
 }
 
 impl RemoteVerificationRunner {
-    pub(crate) fn new(frames: crate::backlog::FrameSink, pending: Pending, timeout: Duration) -> Self {
+    pub(crate) fn new(
+        frames: crate::backlog::FrameSink,
+        pending: Pending,
+        timeout: Duration,
+    ) -> Self {
         Self {
             frames,
             pending,
@@ -1077,11 +1095,10 @@ mod tests {
         let (sink, mut rx, pending) = live_channel();
         let runner = RemoteVerificationRunner::new(sink, pending.clone(), Duration::from_secs(5));
 
-        let call = tokio::spawn(async move {
-            runner
-                .run_diagnostic(&DiagnosticInvocation::GitDiff)
-                .await
-        });
+        let call =
+            tokio::spawn(
+                async move { runner.run_diagnostic(&DiagnosticInvocation::GitDiff).await },
+            );
 
         let ServerFrame::ToolRequest {
             request_id, name, ..
