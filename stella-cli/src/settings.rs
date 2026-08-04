@@ -414,6 +414,19 @@ pub struct AgentEngineConfig {
     /// stay behind.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_candidates: Option<u32>,
+    /// Whether a model judge's pass with nothing deterministic behind it buys
+    /// one revision demanding corroboration
+    /// (`stella_pipeline::PipelineConfig::judge_evidence_demand`, #1295).
+    /// Absent keeps the pipeline's own default.
+    ///
+    /// Reachable as a setting because the question it answers is empirical and
+    /// per-workload: the ask is only ever raised where a tracked command could
+    /// answer it, so on a workload that has one it converts near-misses, and
+    /// on one that does not it costs literally nothing. A benchmark arm that
+    /// wants to measure the difference sets it here rather than rebuilding,
+    /// which is what makes the two arms one binary and one posture key apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_judge_evidence_demand: Option<Toggle>,
     /// Seconds of provider silence that end a single generation
     /// (`stella_core::EngineConfig::model_timeout`). Absent keeps the engine's
     /// own default, which is what every run used before this key existed.

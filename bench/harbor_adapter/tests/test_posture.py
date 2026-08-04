@@ -36,6 +36,7 @@ from stella_harbor import (  # noqa: E402 - after importorskip by design
     _benchmark_engine_posture,
     _stream_to_envelope,
     resolve_candidates,
+    resolve_judge_evidence_demand,
     resolve_max_revisions,
     resolve_model_timeout,
 )
@@ -389,6 +390,7 @@ class TestAttemptCountArms:
             triage_model="openrouter/anthropic/claude-haiku-4.5",
             max_revisions=4,
             candidates=2,
+            judge_evidence_demand=True,
             model_timeout_secs=1572,
         )
         allowed_roots = {
@@ -403,6 +405,7 @@ class TestAttemptCountArms:
             "headless_scope_bypass",
             "pipeline_max_revisions",
             "pipeline_candidates",
+            "pipeline_judge_evidence_demand",
             "model_timeout_secs",
             "agents",
         }
@@ -440,6 +443,38 @@ class TestAttemptCountArms:
             resolve_max_revisions("40")
         with pytest.raises(ValueError, match="candidates must be between"):
             resolve_candidates("20")
+
+    def test_the_corroboration_ask_is_a_selectable_arm(self) -> None:
+        """#1295, the same omit-when-unset rule the attempt counts follow.
+
+        The vocabulary is the setting's own (`on`/`off`), plus `1`/`0` for a
+        shell with an integer to hand. A bare `true` is refused rather than
+        guessed at: the CLI parses this key as a `Toggle`, so a JSON bool would
+        be a run that dies at launch wearing a posture that claims it ran.
+        """
+        assert resolve_judge_evidence_demand(None) is None
+        assert resolve_judge_evidence_demand("on") is True
+        assert resolve_judge_evidence_demand(" OFF ") is False
+        assert resolve_judge_evidence_demand("1") is True
+        assert resolve_judge_evidence_demand("0") is False
+        for lost in ("", "   ", "true", "yes"):
+            with pytest.raises(ValueError, match="must be one of on/off"):
+                resolve_judge_evidence_demand(lost)
+
+        unset, _unset_json, unset_digest = _benchmark_engine_posture(self._MODEL)
+        assert "pipeline_judge_evidence_demand" not in unset
+        on, _on_json, on_digest = _benchmark_engine_posture(
+            self._MODEL, judge_evidence_demand=True
+        )
+        off, _off_json, off_digest = _benchmark_engine_posture(
+            self._MODEL, judge_evidence_demand=False
+        )
+        assert on["pipeline_judge_evidence_demand"] == "on"
+        assert off["pipeline_judge_evidence_demand"] == "off"
+        # Three distinct digests: the two arms cannot be confused with each
+        # other, and neither can be confused with the historical posture that
+        # never mentioned the key.
+        assert len({unset_digest, on_digest, off_digest}) == 3
 
 
 class TestModelTimeoutArm:

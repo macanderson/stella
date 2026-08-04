@@ -304,6 +304,13 @@ pub(crate) fn apply_pipeline_tuning(cfg: &Config, mut config: PipelineConfig) ->
         // produce a result at all.
         config.candidates = Some(candidates);
     }
+    // Tri-state on purpose (#1295): absent keeps the pipeline's default, and
+    // both `on` and `off` are explicit selections. Collapsing absent into
+    // `false` here would silently pin every run that never mentioned the key
+    // to whichever side this file happened to prefer.
+    if let Some(demand) = engine.pipeline_judge_evidence_demand {
+        config.judge_evidence_demand = demand.is_on();
+    }
     config
 }
 
