@@ -1014,6 +1014,23 @@
           "type": "object"
         },
         {
+          "description": "Interactive gate before a mutating tool call writes (#1265): the host\npauses on this event and waits for the reviewer to choose which of the\nproposed hunks to apply.\n\nA sibling of `ScopeReview` at a different granularity — that one gates a\n*plan* before it runs, this one gates a *write* before it lands, so a\ncall carrying one wanted and one unwanted change stops being\nall-or-nothing. The answer returns through the host's own decision\nchannel and the card is cleared by a `ToolResult` carrying this\nproposal's `id`, exactly as `AskUser` is; there is no separate answer\nevent. Runs with no reviewer never emit this at all — the gate is not\ninstalled rather than installed and auto-approving, because a mutation\ngate that answers itself is worse than no gate.",
+          "properties": {
+            "proposal": {
+              "$ref": "#/$defs/HunkProposal"
+            },
+            "type": {
+              "const": "hunk_review",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "proposal"
+          ],
+          "type": "object"
+        },
+        {
           "description": "The agent asked the user a multiple-choice question (the `ask_user`\ntool). BINDING renderer contract: present the structured `options`\nAND always exactly one additional free-text option — the user can\nalways answer in their own words, on every question, without the\nmodel having to list that affordance itself. The answer returns as\nthe tool call's ordinary `ToolResult`; there is no separate answer\nevent. Headless runs fail this tool with a named error instead of\nhanging on input that will never arrive.",
           "properties": {
             "id": {
@@ -1865,6 +1882,32 @@
       },
       "type": "object"
     },
+    "HunkProposal": {
+      "description": "What a `HunkReview` gate presents for per-hunk approval before a mutating\ntool call writes anything (#1265).\n\nThe hunks are a **flat, ordered list across every file the call touches**,\nnot a per-file tree: the reviewer's answer is a set of indices into this\nlist, and one flat coordinate space is what keeps that answer unambiguous\nwhen two files change in the same call.",
+      "properties": {
+        "hunks": {
+          "description": "Every proposed hunk, in file-then-position order.",
+          "items": {
+            "$ref": "#/$defs/ProposedHunk"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "Correlates the decision — and the synthetic `ToolResult` that clears the\ncard — back to this review. Distinct from the model's tool-call id: one\ncall raises one review, but the review is the host's object, not the\nmodel's.",
+          "type": "string"
+        },
+        "tool": {
+          "description": "The tool whose write is being reviewed (`apply_edits`, `edit_file`,\n`write_file`) — the card names it so a reviewer knows what declining\ncosts.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "tool",
+        "hunks"
+      ],
+      "type": "object"
+    },
     "JudgeEvidence": {
       "description": "Evidence backing a `JudgeVerdict`. `deterministic` distinguishes the\nflip-oracle/tests ladder from a model judge's opinion — the two are\nnever conflated (L-E11).",
       "properties": {
@@ -2492,6 +2535,38 @@
           "type": "string"
         }
       ]
+    },
+    "ProposedHunk": {
+      "description": "One reviewable hunk: which file, what it does, and how it renders.",
+      "properties": {
+        "diff": {
+          "description": "The hunk as unified-diff text, `@@` header included — ready for\n`stella_tui::diff::body_lines` with no further parsing.",
+          "type": "string"
+        },
+        "lines_added": {
+          "description": "Lines this hunk adds. Authoritative: taken from the decomposition, never\nre-counted from `diff` (which is capped and carries context lines).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lines_removed": {
+          "description": "Lines this hunk removes, on the same terms.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "path": {
+          "description": "Workspace-relative path of the file this hunk changes.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "diff",
+        "lines_added",
+        "lines_removed"
+      ],
+      "type": "object"
     },
     "ProviderShare": {
       "description": "One provider's share of a recall's frame mix.",

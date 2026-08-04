@@ -1114,9 +1114,9 @@ fn status_from_event(ev: &AgentEvent) -> Option<AgentStatus> {
         }),
         // Both user-response gates block the agent until answered — a scope
         // review is just as much "needs input" as an ask-user question.
-        AgentEvent::AskUser { .. } | AgentEvent::ScopeReview { .. } => {
-            Some(AgentStatus::WaitingInput)
-        }
+        AgentEvent::AskUser { .. }
+        | AgentEvent::ScopeReview { .. }
+        | AgentEvent::HunkReview { .. } => Some(AgentStatus::WaitingInput),
         AgentEvent::Stage { .. }
         | AgentEvent::Text { .. }
         | AgentEvent::TextDelta { .. }
@@ -1338,6 +1338,15 @@ fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
             (TraceKind::Other, format!("usage incomplete: {reason:?}"))
         }
         AgentEvent::ScopeReview { proposal } => (TraceKind::Stage, snip(&proposal.summary)),
+        AgentEvent::HunkReview { proposal } => (
+            TraceKind::Stage,
+            format!(
+                "review {} hunk{} from {}",
+                proposal.hunks.len(),
+                if proposal.hunks.len() == 1 { "" } else { "s" },
+                proposal.tool
+            ),
+        ),
         AgentEvent::AskUser { question, .. } => (TraceKind::Other, snip(question)),
         AgentEvent::Error { message, .. } => (TraceKind::Error, snip(message)),
         AgentEvent::Complete { model, cost_usd } => {

@@ -113,6 +113,7 @@ mod forwarder;
 mod lead_control;
 mod model_cmd;
 mod profile_cmd;
+mod hunk_gate;
 mod scope_gate;
 mod theme_cmd;
 use crate::memory::{SessionMemory, inject_recall_block};
@@ -444,6 +445,9 @@ pub async fn run_deck_session(
     let (ask_tx, ask_rx) = mpsc::unbounded_channel::<String>();
     // Scope review's answer path — same shape as `ask_tx`/`ask_rx` above.
     let (scope_tx, scope_rx) = mpsc::unbounded_channel::<DeckScopeDecision>();
+    // Per-hunk approval's answer path (#1265) — the same shape again, carrying
+    // the indices of the hunks the reviewer chose to apply.
+    let (hunk_tx, hunk_rx) = mpsc::unbounded_channel::<Vec<usize>>();
     // The supervisor channel: `task_assign` spawn requests (tap → driver)
     // and sub-session endings (worker → driver). See `crate::subsession`.
     let (sup_tx, mut sup_rx) = mpsc::unbounded_channel::<SupervisorMsg>();
@@ -657,6 +661,19 @@ pub async fn run_deck_session(
         scope_rx,
         Arc::new(ask_io.clone()),
     );
+    // `None` unless the setting is on, and that is the whole install decision:
+    // an absent io makes `HunkGate` inert rather than present-and-approving.
+    let hunk_io: Option<Arc<dyn stella_tools::hunk_review::HunkReviewIo>> = cfg
+        .engine_settings
+        .as_ref()
+        .is_some_and(|engine| engine.hunk_review_on())
+        .then(|| {
+            Arc::new(hunk_gate::DeckHunkReviewIo {
+                agent: LEAD.to_string(),
+                inbound: in_tx.clone(),
+                decisions: Arc::new(tokio::sync::Mutex::new(hunk_rx)),
+            }) as Arc<dyn stella_tools::hunk_review::HunkReviewIo>
+        });
 
     // The deck drives turns through the staged pipeline by default (triage →
     // recall → plan → scope → witness → execute → verify → judge); `/pipeline`
@@ -1492,6 +1509,7 @@ pub async fn run_deck_session(
                         files_before,
                         &in_tx,
                         &ask_io,
+                        hunk_io.clone(),
                         &scope_gate,
                         &sup_tx,
                         &lead_holder,
@@ -1515,6 +1533,7 @@ pub async fn run_deck_session(
                         files_before,
                         &in_tx,
                         &ask_io,
+                        hunk_io.clone(),
                         &sup_tx,
                         &lead_holder,
                         &discovery_activation,
@@ -1615,6 +1634,11 @@ pub async fn run_deck_session(
                             input: UserInput::AskUserAnswer { answer, .. }, ..
                         }) => {
                             let _ = ask_tx.send(answer);
+                        }
+                        Some(WorkspaceInput::ToAgent {
+                            input: UserInput::HunkDecision { accepted, .. }, ..
+                        }) => {
+                            let _ = hunk_tx.send(accepted);
                         }
                         // Stop routes by lane: aimed at the lead it cancels
                         // this turn; aimed at a worker it stops THAT worker
@@ -4109,6 +4133,9 @@ async fn run_lead_turn(
     files_before: usize,
     in_tx: &UnboundedSender<Inbound>,
     ask_io: &DeckAskUserIo,
+    // The per-hunk approval reviewer, or `None` when the gate is off — see
+    // `HunkGate::new`, where `None` means inert rather than auto-approving.
+    hunk_io: Option<Arc<dyn stella_tools::hunk_review::HunkReviewIo>>,
     sup_tx: &UnboundedSender<SupervisorMsg>,
     claim_holder: &str,
     activated: &crate::discovery::ActivatedTools,
@@ -4162,10 +4189,19 @@ async fn run_lead_turn(
         let interactive = InteractiveToolSet::new(&customs, stub_tx, Box::new(ask_io.clone()))
             .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
         let permitted = agent::PolicyToolSet::new(&interactive, agent::session_tool_policy(cfg));
+        // Per-hunk approval sits ABOVE the policy filter (#1265) so a call the
+        // policy is going to refuse never raises a card — asking a human to
+        // approve a write that is then denied anyway is how a gate teaches
+        // people to stop reading it.
+        let gated = stella_tools::hunk_review::HunkGate::new(
+            &permitted,
+            hunk_io,
+            cfg.workspace_root.clone(),
+        );
         // Discovery layer above the policy filter (it must see the full
         // *permitted* catalog), below the taps (searches are read-only; taps
         // watch writes).
-        let tools = crate::discovery::DiscoveryToolSet::new(&permitted, cfg.workspace_root.clone())
+        let tools = crate::discovery::DiscoveryToolSet::new(&gated, cfg.workspace_root.clone())
             .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
             .with_activation(activated.clone());
         let tapped = TaskTap {
@@ -4268,6 +4304,7 @@ async fn run_lead_pipeline_turn(
     files_before: usize,
     in_tx: &UnboundedSender<Inbound>,
     ask_io: &DeckAskUserIo,
+    hunk_io: Option<Arc<dyn stella_tools::hunk_review::HunkReviewIo>>,
     scope_gate: &DeckApprovalGate,
     sup_tx: &UnboundedSender<SupervisorMsg>,
     claim_holder: &str,
@@ -4309,7 +4346,14 @@ async fn run_lead_pipeline_turn(
         let interactive = InteractiveToolSet::new(&customs, stub_tx, Box::new(ask_io.clone()))
             .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
         let permitted = agent::PolicyToolSet::new(&interactive, agent::session_tool_policy(cfg));
-        let tools = crate::discovery::DiscoveryToolSet::new(&permitted, cfg.workspace_root.clone())
+        // As in `run_lead_turn`: above the policy filter, so a refused call
+        // never raises a card.
+        let gated = stella_tools::hunk_review::HunkGate::new(
+            &permitted,
+            hunk_io,
+            cfg.workspace_root.clone(),
+        );
+        let tools = crate::discovery::DiscoveryToolSet::new(&gated, cfg.workspace_root.clone())
             .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
             .with_activation(activated.clone());
         let tapped = TaskTap {

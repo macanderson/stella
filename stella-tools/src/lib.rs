@@ -30,6 +30,8 @@ pub mod glob;
 pub mod graph;
 pub mod grep;
 pub mod hook_runner;
+pub mod hunk;
+pub mod hunk_review;
 pub(crate) mod impact;
 pub mod input;
 pub mod issue_ops;

@@ -1,5 +1,5 @@
-//! The focused agent's blocking gates: the scope-review card and the
-//! `ask_user` question.
+//! The focused agent's blocking gates: the scope-review card, the per-hunk
+//! approval card (#1265), and the `ask_user` question.
 //!
 //! Both follow one rule — a pending, unanswered gate owns the user's next
 //! submission. That rule is what makes a card answerable at all: the deck's
@@ -9,6 +9,55 @@
 //! Split out of `deck_ui.rs` beside `nav`/`create` (#458).
 
 use super::*;
+
+/// A reviewer's in-progress marks on one hunk-review card.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HunkMarks {
+    /// Which hunk the navigation keys act on.
+    pub cursor: usize,
+    /// Per-hunk accept flag, indexed exactly like `HunkProposal::hunks`.
+    pub accepted: Vec<bool>,
+}
+
+impl HunkMarks {
+    /// Marks for a fresh card: every hunk accepted, cursor on the first.
+    #[must_use]
+    pub fn all_accepted(hunks: usize) -> Self {
+        Self {
+            cursor: 0,
+            accepted: vec![true; hunks],
+        }
+    }
+
+    /// Move the cursor by `delta`, saturating at both ends rather than
+    /// wrapping — a reviewer holding ↓ must not silently land back at hunk 1
+    /// and start toggling the wrong one.
+    pub fn move_cursor(&mut self, delta: isize) {
+        let last = self.accepted.len().saturating_sub(1);
+        self.cursor = self
+            .cursor
+            .saturating_add_signed(delta)
+            .min(last);
+    }
+
+    /// Flip the hunk under the cursor.
+    pub fn toggle(&mut self) {
+        if let Some(flag) = self.accepted.get_mut(self.cursor) {
+            *flag = !*flag;
+        }
+    }
+
+    /// The indices this card would send — what the footer counts.
+    #[must_use]
+    pub fn selection(&self) -> Vec<usize> {
+        self.accepted
+            .iter()
+            .enumerate()
+            .filter(|(_, keep)| **keep)
+            .map(|(i, _)| i)
+            .collect()
+    }
+}
 
 /// Scope-review / ask-user gates for the focused agent. Returns `Some` to
 /// short-circuit; `None` to fall through to normal editing.
@@ -89,6 +138,80 @@ pub(super) fn handle_focused_gates(
             return Some(DeckAction::Send(WorkspaceInput::ToAgent {
                 agent: agent.clone(),
                 input: UserInput::ScopeDecision(decision),
+            }));
+        }
+    }
+
+    // Per-hunk approval (#1265). Same latch discipline as the two gates around
+    // it: the pending card clears only on the host's follow-on `ToolResult`, so
+    // without `hunk_answered` a second ⏎ re-sends the decision.
+    //
+    // The keys are chosen to obey the rule the scope card learned the hard way:
+    // **no unmodified letter acts on its own**, because the composer is an
+    // always-live band and a letter belongs to whatever the reviewer is typing.
+    // So navigation and marking ride non-letter keys — `↑`/`↓` move, `Space`
+    // toggles, `⏎` applies, `Esc` declines everything — and every one of them is
+    // claimed only while the composer is EMPTY, except `⏎` and `Esc`, which are
+    // the two that must work with a note in hand: `⏎` reads a typed selection
+    // (`1 3`, `2-4`, `all`, `none`) and `Esc` means "get out of this card".
+    if let Some(proposal) = &entry.model.pending_hunk_review
+        && !ui.hunk_answered.contains(agent)
+    {
+        let total = proposal.hunks.len();
+        let accepted = match key.code {
+            // Esc is the one immediate action, with or without a composer
+            // note — declining everything is the direction that STOPS a write.
+            KeyCode::Esc => Some(Vec::new()),
+            KeyCode::Up | KeyCode::Down if composer_empty => {
+                let delta = if key.code == KeyCode::Up { -1 } else { 1 };
+                if let Some(marks) = ui.hunk_marks.get_mut(agent) {
+                    marks.move_cursor(delta);
+                }
+                return Some(DeckAction::Ignored);
+            }
+            KeyCode::Char(' ') if composer_empty => {
+                if let Some(marks) = ui.hunk_marks.get_mut(agent) {
+                    marks.toggle();
+                }
+                return Some(DeckAction::Ignored);
+            }
+            // A `!` line is a shell command even while a gate is pending — the
+            // same carve-out the two gates around this one make.
+            KeyCode::Enter
+                if classify_enter(&key) == EnterAction::Submit
+                    && !ui.composer.buffer().trim_start().starts_with('!') =>
+            {
+                match ui.composer.take_submission() {
+                    // A typed line is read as a selection. An unparseable one
+                    // is NOT an answer: there is no revise channel here to
+                    // absorb prose, and guessing at this gate edits files.
+                    Some(submission) => {
+                        match crate::input::hunk_selection_from_typed(&submission.text, total) {
+                            Some(accepted) => Some(accepted),
+                            None => return Some(DeckAction::Ignored),
+                        }
+                    }
+                    // An empty ⏎ commits the marks, which is the ordinary
+                    // path — the card's footer has been naming the surviving
+                    // count the whole time.
+                    None => Some(
+                        ui.hunk_marks
+                            .get(agent)
+                            .map(HunkMarks::selection)
+                            .unwrap_or_else(|| (0..total).collect()),
+                    ),
+                }
+            }
+            _ => None,
+        };
+        if let Some(accepted) = accepted {
+            ui.hunk_answered.insert(agent.clone());
+            return Some(DeckAction::Send(WorkspaceInput::ToAgent {
+                agent: agent.clone(),
+                input: UserInput::HunkDecision {
+                    id: proposal.id.clone(),
+                    accepted,
+                },
             }));
         }
     }

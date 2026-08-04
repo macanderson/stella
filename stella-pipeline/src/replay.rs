@@ -499,6 +499,11 @@ pub fn event_signature(event: &AgentEvent) -> String {
             )
         }
         AgentEvent::ScopeReview { .. } => "scope_review".to_string(),
+        // The diff text and the review id are volatile; how many hunks were put
+        // up for approval is the structural part.
+        AgentEvent::HunkReview { proposal } => {
+            format!("hunk_review:hunks={}", proposal.hunks.len())
+        }
         // The question text is volatile; the number of structured options is
         // the structural part (the free-text option is always implied).
         AgentEvent::AskUser { options, .. } => format!("ask_user:options={}", options.len()),

@@ -577,6 +577,11 @@ impl DomainBridge {
             AgentEvent::ScopeReview { .. } => {
                 self.emit(Level::Info, "agent.scope.review", self.at_seq());
             }
+            // Occurrence only. The proposal carries file paths and diff text,
+            // both content-bearing, so nothing from it reaches the record.
+            AgentEvent::HunkReview { .. } => {
+                self.emit(Level::Info, "agent.hunk.review", self.at_seq());
+            }
             AgentEvent::AskUser { .. } => {
                 self.emit(Level::Info, "agent.ask_user", self.at_seq());
             }

@@ -156,6 +156,21 @@ async fn main() -> std::io::Result<()> {
                             },
                         });
                     }
+                    // A hunk decision clears its card the same way: the host
+                    // echoes a ToolResult carrying the proposal's id.
+                    UserInput::HunkDecision { id, accepted } => {
+                        let _ = react_tx.send(Inbound::Event {
+                            agent,
+                            event: AgentEvent::ToolResult {
+                                call_id: id,
+                                output: ToolOutput::Ok {
+                                    content: format!("applied {} hunk(s)", accepted.len()),
+                                },
+                                duration_ms: 0,
+                                speculated: false,
+                            },
+                        });
+                    }
                     UserInput::Prompt { .. } | UserInput::Cancel => {}
                 },
                 // Queue edits are already reflected in the deck's local queue

@@ -482,6 +482,9 @@ export type AgentEvent = {
   proposal: ScopeProposal;
   type: "scope_review";
 } | {
+  proposal: HunkProposal;
+  type: "hunk_review";
+} | {
   /**
    * Correlates the eventual answer (the ToolResult's `call_id`)
    * back to this question.
@@ -916,6 +919,35 @@ export interface GenerationParams {
 }
 
 /**
+ * What a `HunkReview` gate presents for per-hunk approval before a mutating
+ * tool call writes anything (#1265).
+ *
+ * The hunks are a **flat, ordered list across every file the call touches**,
+ * not a per-file tree: the reviewer's answer is a set of indices into this
+ * list, and one flat coordinate space is what keeps that answer unambiguous
+ * when two files change in the same call.
+ */
+export interface HunkProposal {
+  /**
+   * Every proposed hunk, in file-then-position order.
+   */
+  hunks: ProposedHunk[];
+  /**
+   * Correlates the decision — and the synthetic `ToolResult` that clears the
+   * card — back to this review. Distinct from the model's tool-call id: one
+   * call raises one review, but the review is the host's object, not the
+   * model's.
+   */
+  id: string;
+  /**
+   * The tool whose write is being reviewed (`apply_edits`, `edit_file`,
+   * `write_file`) — the card names it so a reviewer knows what declining
+   * costs.
+   */
+  tool: string;
+}
+
+/**
  * Evidence backing a `JudgeVerdict`. `deterministic` distinguishes the
  * flip-oracle/tests ladder from a model judge's opinion — the two are
  * never conflated (L-E11).
@@ -1239,6 +1271,30 @@ export type ProofStep = {
  * against one tree is a tree observed twice.
  */
 export type ProofTree = "baseline" | "candidate";
+
+/**
+ * One reviewable hunk: which file, what it does, and how it renders.
+ */
+export interface ProposedHunk {
+  /**
+   * The hunk as unified-diff text, `@@` header included — ready for
+   * `stella_tui::diff::body_lines` with no further parsing.
+   */
+  diff: string;
+  /**
+   * Lines this hunk adds. Authoritative: taken from the decomposition, never
+   * re-counted from `diff` (which is capped and carries context lines).
+   */
+  lines_added: number;
+  /**
+   * Lines this hunk removes, on the same terms.
+   */
+  lines_removed: number;
+  /**
+   * Workspace-relative path of the file this hunk changes.
+   */
+  path: string;
+}
 
 /**
  * One provider's share of a recall's frame mix.

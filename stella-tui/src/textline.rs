@@ -387,6 +387,31 @@ pub fn scope_review(
     }
 }
 
+/// How many distinct files a hunk list touches.
+pub fn distinct_paths(hunks: &[stella_protocol::ProposedHunk]) -> usize {
+    let mut paths: Vec<&str> = hunks.iter().map(|h| h.path.as_str()).collect();
+    paths.sort_unstable();
+    paths.dedup();
+    paths.len()
+}
+
+/// The per-hunk approval gate's headline. The hunks themselves render through
+/// each surface's own diff machinery — this is the one line that says a write
+/// is parked waiting on a person.
+pub fn hunk_review(tool: &str, hunks: usize, files: usize) -> EventLine {
+    EventLine {
+        glyph: "⌾",
+        tone: Tone::Warn,
+        strong: true,
+        body: format!(
+            "hunk review: {hunks} hunk{} across {files} file{} from {tool}",
+            if hunks == 1 { "" } else { "s" },
+            if files == 1 { "" } else { "s" },
+        ),
+        detail: None,
+    }
+}
+
 /// The question line only. The structured options — and the binding
 /// free-text affordance — are presented by each surface's own interaction
 /// machinery (numbered stdin list vs the deck's answer card).
@@ -608,6 +633,11 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
             proposal.steps.len(),
             proposal.estimated_files,
             proposal.estimated_cost_usd,
+        )),
+        AgentEvent::HunkReview { proposal } => Some(hunk_review(
+            &proposal.tool,
+            proposal.hunks.len(),
+            distinct_paths(&proposal.hunks),
         )),
         AgentEvent::AskUser { question, .. } => Some(ask_user(question)),
         AgentEvent::Commit { sha, message } => Some(commit(sha, message)),

@@ -706,6 +706,16 @@ pub struct DeckUi {
     /// The same latch for a pending `ask_user` question (cleared on a fresh
     /// `AskUser`).
     pub ask_answered: std::collections::HashSet<String>,
+    /// The same latch for a pending hunk-review card (cleared on a fresh
+    /// `HunkReview`).
+    pub hunk_answered: std::collections::HashSet<String>,
+    /// Per-agent marks on the pending hunk-review card.
+    ///
+    /// View state, deliberately not session state: a half-made decision is not
+    /// something the session *did*, and folding it into the event-derived model
+    /// would make replay reconstruct an unfinished opinion as fact. Rebuilt
+    /// from scratch by [`ingest_inbound`] on each fresh `HunkReview`.
+    pub hunk_marks: std::collections::HashMap<String, HunkMarks>,
     /// The Session tab's incremental transcript fold cache.
     pub session_fold: crate::views::session::SessionFold,
     /// The Session tab's memoized fold plan: the whole-transcript turn walk
@@ -837,6 +847,8 @@ impl Default for DeckUi {
             dispatch_held: false,
             scope_answered: std::collections::HashSet::new(),
             ask_answered: std::collections::HashSet::new(),
+            hunk_answered: std::collections::HashSet::new(),
+            hunk_marks: std::collections::HashMap::new(),
             session_fold: crate::views::session::SessionFold::default(),
             session_plan: None,
             color_mode: crate::theme::ColorMode::default(),
@@ -1345,6 +1357,17 @@ pub fn ingest_inbound(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut De
             stella_protocol::AgentEvent::AskUser { .. } => {
                 ui.ask_answered.remove(agent);
             }
+            stella_protocol::AgentEvent::HunkReview { proposal } => {
+                ui.hunk_answered.remove(agent);
+                // Pre-marked accepted, so ⏎ applies what the model proposed and
+                // the card's job is to let a reviewer take pieces *out*. The
+                // footer always names the surviving count, so the reviewer never
+                // presses ⏎ without being told what it will write — which is
+                // what keeps a friendly default from becoming a self-answering
+                // gate.
+                ui.hunk_marks
+                    .insert(agent.clone(), HunkMarks::all_accepted(proposal.hunks.len()));
+            }
             _ => {}
         }
         dispatch::release_if_settled(ui, agent, event);
@@ -1451,6 +1474,7 @@ fn push_single_line(buf: &mut String, text: &str) {
 mod create;
 pub mod dispatch;
 mod gates;
+pub use gates::HunkMarks;
 mod nav;
 pub use dispatch::{AskBeforeSpawn, DispatchRoute, PendingDispatch};
 pub use nav::TranscriptSearch;

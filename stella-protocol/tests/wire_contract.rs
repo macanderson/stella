@@ -689,6 +689,36 @@ fn sample_events() -> Vec<AgentEvent> {
                 estimated_cost_usd: None,
             },
         },
+        AgentEvent::HunkReview {
+            proposal: stella_protocol::HunkProposal {
+                id: "hunk-review-1".into(),
+                tool: "apply_edits".into(),
+                hunks: vec![
+                    stella_protocol::ProposedHunk {
+                        path: "src/router.rs".into(),
+                        diff: "@@ -1,2 +1,2 @@\n-old\n+new\n".into(),
+                        lines_added: 1,
+                        lines_removed: 1,
+                    },
+                    stella_protocol::ProposedHunk {
+                        path: "src/lib.rs".into(),
+                        diff: "@@ -9,0 +10,1 @@\n+added\n".into(),
+                        lines_added: 1,
+                        lines_removed: 0,
+                    },
+                ],
+            },
+        },
+        // A review with no hunks is unreachable in practice (the gate skips an
+        // unchanged call) but must still round-trip: an empty vector is where a
+        // hand-rolled `skip_serializing_if` would silently drop the field.
+        AgentEvent::HunkReview {
+            proposal: stella_protocol::HunkProposal {
+                id: "hunk-review-2".into(),
+                tool: "write_file".into(),
+                hunks: vec![],
+            },
+        },
         AgentEvent::AskUser {
             id: "call_3".into(),
             question: "which branch?".into(),

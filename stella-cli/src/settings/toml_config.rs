@@ -156,6 +156,8 @@ pub struct AgentsSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headless_scope_bypass: Option<Toggle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hunk_review: Option<Toggle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_max_revisions: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_candidates: Option<u32>,
@@ -547,6 +549,7 @@ pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection) {
         effort_auto: cfg.effort_auto,
         reasoning_auto: cfg.reasoning_auto,
         headless_scope_bypass: cfg.headless_scope_bypass,
+        hunk_review: cfg.hunk_review,
         pipeline_max_revisions: cfg.pipeline_max_revisions,
         pipeline_candidates: cfg.pipeline_candidates,
         model_timeout_secs: cfg.model_timeout_secs,
@@ -612,6 +615,7 @@ fn lower_agents(agents: AgentsSection, models: ModelsSection) -> Option<AgentEng
         effort_auto: agents.effort_auto,
         reasoning_auto: agents.reasoning_auto,
         headless_scope_bypass: agents.headless_scope_bypass,
+        hunk_review: agents.hunk_review,
         pipeline_max_revisions: agents.pipeline_max_revisions,
         pipeline_candidates: agents.pipeline_candidates,
         model_timeout_secs: agents.model_timeout_secs,

@@ -71,10 +71,11 @@ pub use context_event::{CompiledContextFrameBuilt, LifecycleEvent, LifecycleEven
 pub use error::ProviderError;
 pub use event::{
     AgentEvent, BlockKind, BlockOrigin, BudgetMode, BudgetScope, CacheZone, CiStatus,
-    ContextFrameRef, ContextProviderUsage, ContextUsage, FileChangeKind, JudgeEvidence,
-    KNOWN_TYPE_TAGS, LadderSnapshot, ManifestEntry, MediaArtifactRef, MediaJobState, MediaKind,
-    ModelCallRole, OracleObservation, PolicyKind, PrStatus, ProofStep, ProofTree, ProviderShare,
-    ScopeProposal, StageKind, TaskItem, TaskStatus, UsageIncompleteReason,
+    ContextFrameRef, ContextProviderUsage, ContextUsage, FileChangeKind, HunkProposal,
+    JudgeEvidence, KNOWN_TYPE_TAGS, LadderSnapshot, ManifestEntry, MediaArtifactRef, MediaJobState,
+    MediaKind, ModelCallRole, OracleObservation, PolicyKind, PrStatus, ProofStep, ProofTree,
+    ProposedHunk, ProviderShare, ScopeProposal, StageKind, TaskItem, TaskStatus,
+    UsageIncompleteReason,
 };
 pub use provider::{Provider, ToolCallObserver};
 pub use role::{ModelRef, Role};

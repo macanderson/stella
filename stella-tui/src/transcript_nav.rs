@@ -115,6 +115,9 @@ pub fn entry_fields(entry: &TranscriptEntry) -> Vec<&str> {
             ..
         } => vec![agent_id, instruction_preview],
         E::AskUser { question, .. } => vec![question],
+        // The tool name is the only free text on the row; the two counts are
+        // numbers a search over the transcript has no way to ask for.
+        E::HunkReview { tool, .. } => vec![tool],
         E::Commit { sha, message } => vec![sha, message],
         E::Pr { url, .. } => vec![url],
         E::TaskUpdate { active, .. } => active.as_deref().into_iter().collect(),
