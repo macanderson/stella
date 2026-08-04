@@ -400,10 +400,10 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
             Constraint::Min(1),
             Constraint::Length(crate::views::work_rail::RAIL_W),
         ])
-        .split(bands[7]);
+        .split(bands[8]);
         (cols[0], Some(cols[1]))
     } else {
-        (bands[7], None)
+        (bands[8], None)
     };
 
     render_header(agent, model.now_ms, bands[0], buf);
@@ -429,15 +429,15 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
             proposal,
             ui.hunk_marks.get(&agent.meta.id),
             answered,
-            bands[4],
+            bands[5],
             buf,
         );
     }
     if let Some(pending) = &ui.pending_dispatch {
-        crate::views::dispatch_card::render(pending, bands[5], buf);
+        crate::views::dispatch_card::render(pending, bands[6], buf);
     }
     if let Some(strip) = strip {
-        Paragraph::new(strip).render(bands[6], buf);
+        Paragraph::new(strip).render(bands[7], buf);
     }
     if let Some(rail) = rail_area {
         crate::views::work_rail::render_rail(sm, rail, buf);
@@ -569,7 +569,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         buf,
     );
     if proof_h > 0 {
-        crate::views::proof::render(&sm.proof, bands[8], buf);
+        crate::views::proof::render(&sm.proof, bands[9], buf);
     }
 }
 
