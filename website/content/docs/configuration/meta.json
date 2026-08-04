@@ -1,4 +1,4 @@
 {
   "title": "Configuration & Settings",
-  "pages": ["settings", "agent-engine-config", "credentials"]
+  "pages": ["settings", "stella-toml", "agent-engine-config", "credentials"]
 }
