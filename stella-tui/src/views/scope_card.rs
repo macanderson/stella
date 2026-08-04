@@ -26,8 +26,11 @@ use crate::deck_ui::DeckUi;
 use crate::theme;
 use crate::views::cards;
 
-/// The literal done-when contract — product copy, verbatim (D5).
-const DONE_WHEN: &str = "oracle flips red → green (witness confirms from evidence)";
+/// The literal done-when contract — product copy, verbatim (D5), split at
+/// its natural break because the whole line is wider than the card.
+const DONE_WHEN_FLIP: &str = "oracle flips red → green";
+/// The contract's second half, on the continuation row.
+const DONE_WHEN_PROOF: &str = "(witness confirms from evidence)";
 
 /// Width of the dimmed left label column.
 const LABEL_W: usize = 10;
@@ -85,7 +88,7 @@ pub fn grid_rows(
 
     let mut repo = proposal.repo.clone().unwrap_or_else(|| dash.clone());
     if let Some(branch) = &proposal.branch {
-        repo.push_str(&format!("  ⎇ {branch}"));
+        repo.push_str(&format!(" ⎇ {branch}"));
     }
     rows.push(grid_row("repo", val(repo), accessible));
     let globs = |globs: &[String]| -> String {
@@ -129,11 +132,22 @@ pub fn grid_rows(
         val(proposal.shell_policy.clone().unwrap_or(dash)),
         accessible,
     ));
+    // The done-when contract is 58 columns of product copy — wider than the
+    // card's interior — so it wraps at its natural break onto a labeled row
+    // plus an indented continuation, never a mid-token elision.
     rows.push(grid_row(
         "done when",
-        vec![Span::styled(DONE_WHEN, dim)],
+        vec![Span::styled(DONE_WHEN_FLIP, dim)],
         accessible,
     ));
+    rows.push(if accessible {
+        Line::from(Span::styled(format!("· {DONE_WHEN_PROOF}"), dim))
+    } else {
+        Line::from(vec![
+            Span::raw(" ".repeat(LABEL_W)),
+            Span::styled(DONE_WHEN_PROOF, dim),
+        ])
+    });
     rows
 }
 
@@ -145,7 +159,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
     let pending = agent.model.pending_scope_review.as_ref();
     let Some(proposal) = pending.or(agent.model.approved_scope.as_ref()) else {
         // No scope yet: an honest one-row card beats an empty grid.
-        let area = cards::card_area(frame, 1);
+        let area = cards::card_area(frame, 1, cards::CARD_MAX_W, ui.accessible);
         let inner = cards::card_frame(area, "scope", Vec::new(), "esc close", buf);
         cards::render_body(
             vec![Line::from(Span::styled(
@@ -168,7 +182,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
             Style::new().fg(theme::TEXT_PRIMARY),
         )),
     );
-    let area = cards::card_area(frame, rows.len() as u16);
+    let area = cards::card_area(frame, rows.len() as u16, cards::CARD_MAX_W, ui.accessible);
     let context = if locked {
         vec![Span::styled(
             "locked at plan · e to edit",

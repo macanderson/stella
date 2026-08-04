@@ -150,7 +150,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, frame: Rect, buf: &mut Bu
         }
     }
 
-    let area = cards::card_area(frame, rows.len() as u16);
+    let area = cards::card_area(frame, rows.len() as u16, cards::CARD_MAX_W, ui.accessible);
     let mut context = vec![Span::styled(
         format!("{done} of {} done", tasks.len()),
         Style::new().fg(theme::TEXT_TERTIARY),

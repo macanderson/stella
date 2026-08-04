@@ -47,6 +47,7 @@ pub mod scope_card;
 pub mod session;
 pub mod settings;
 pub mod skills;
+pub(crate) mod subagents;
 pub mod task_card;
 pub mod tools;
 pub mod traces;

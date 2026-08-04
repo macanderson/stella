@@ -26,8 +26,18 @@ const CHROME_BELOW: u16 = 6;
 /// the composer chrome, tall enough for `body_rows` + the two border rows,
 /// clamped to the frame on small terminals. Never a zero-size rect on a
 /// nonzero frame — the guard's scratch discipline handles the rest.
-pub(crate) fn card_area(frame: Rect, body_rows: u16) -> Rect {
-    let w = frame.width.min(CARD_MAX_W);
+///
+/// In accessible mode (`full_width`) the card spans the frame instead: the
+/// float is a visual affordance, and a labeled record clipped at a float's
+/// right border is a record a reader never hears the end of. `max_w` is the
+/// card's own width cap — [`CARD_MAX_W`] for most; the witness panel runs
+/// wider because its records are fixed product copy that may not elide.
+pub(crate) fn card_area(frame: Rect, body_rows: u16, max_w: u16, full_width: bool) -> Rect {
+    let w = if full_width {
+        frame.width
+    } else {
+        frame.width.min(max_w)
+    };
     let h = (body_rows + 2).min(frame.height);
     let bottom_gap = CHROME_BELOW.min(frame.height.saturating_sub(h));
     Rect {
@@ -190,7 +200,7 @@ mod tests {
     fn card_area_fits_inside_any_frame() {
         for (w, h) in [(1u16, 1u16), (3, 2), (56, 5), (80, 24), (200, 60)] {
             let frame = Rect::new(0, 0, w, h);
-            let card = card_area(frame, 9);
+            let card = card_area(frame, 9, CARD_MAX_W, false);
             assert!(card.right() <= frame.right(), "{w}x{h}");
             assert!(card.bottom() <= frame.bottom(), "{w}x{h}");
             assert!(card.width <= CARD_MAX_W);

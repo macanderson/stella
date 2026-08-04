@@ -43,10 +43,11 @@ fn tiny_terminals_never_panic() {
 
 #[test]
 fn tiny_terminals_with_overlays_never_panic() {
+    use stella_tui::deck_ui::cards::Card;
     let model = folded_model();
     for w in [1u16, 2, 4, 9, 17, 40, 120] {
         for h in [1u16, 2, 3, 5, 9, 24] {
-            for which in 0..9 {
+            for which in 0..14 {
                 let mut ui = DeckUi::default();
                 ui.splash.skip();
                 ui.graph = Some(demo_graph());
@@ -59,6 +60,15 @@ fn tiny_terminals_with_overlays_never_panic() {
                     5 => ui.context_open = true,
                     6 => ui.inspect_open = true,
                     7 => ui.state_open = true,
+                    // The floating cards (D3–D6).
+                    8 => ui.cards.raise(Card::Tasks),
+                    9 => ui.cards.raise(Card::Scope),
+                    10 => ui.cards.raise(Card::Witness),
+                    11 => ui.cards.raise(Card::Models),
+                    12 => {
+                        ui.cards.raise(Card::Budget);
+                        ui.cards.budget_input = "12.5".into();
+                    }
                     _ => {
                         ui.search.open = true;
                         ui.search.query = "a".into();
@@ -104,6 +114,104 @@ fn nasty_texts() -> Vec<String> {
         "\u{200b}zero width\u{200b}space".into(),
         "мир مرحبا שלום".into(),
     ]
+}
+
+/// The new text surfaces (D4–D6): task subjects, subagent names/titles, and
+/// oracle commands are agent-authored text, so every card and the nested
+/// subagent rows must survive the same byte zoo the transcript does —
+/// grapheme-safe truncation only, no byte slicing.
+#[test]
+fn nasty_unicode_cards_never_panic_at_any_width() {
+    use stella_protocol::{ProofStep, ProofTree, TaskItem, TaskStatus};
+    use stella_tui::deck_ui::cards::Card;
+    for text in nasty_texts() {
+        let mut model = WorkspaceModel::new();
+        model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "t", 0)));
+        // A subagent whose id, title and model are all the nasty text.
+        let mut sub = AgentMeta::new(format!("sub:{text}"), text.clone(), 0);
+        sub.role = "subagent".into();
+        sub.model = Some(text.clone());
+        model.apply_inbound(&Inbound::Register(sub));
+        for ev in [
+            AgentEvent::TaskUpdate {
+                tasks: vec![
+                    TaskItem {
+                        id: "1".into(),
+                        subject: text.clone(),
+                        description: Some(text.clone()),
+                        status: TaskStatus::InProgress,
+                        owner: None,
+                    },
+                    TaskItem {
+                        id: "2".into(),
+                        subject: text.clone(),
+                        description: None,
+                        status: TaskStatus::Pending,
+                        owner: None,
+                    },
+                ],
+            },
+            AgentEvent::Proof {
+                step: ProofStep::WitnessAuthored {
+                    path: text.clone(),
+                    command: text.clone(),
+                    fingerprint: text.clone(),
+                },
+            },
+            AgentEvent::Proof {
+                step: ProofStep::Oracle {
+                    command: text.clone(),
+                    passed: false,
+                    tree: ProofTree::Baseline,
+                    run: None,
+                    runs_required: Some(3),
+                    seed: Some(7741),
+                },
+            },
+            AgentEvent::ScopeReview {
+                proposal: stella_protocol::ScopeProposal {
+                    summary: text.clone(),
+                    steps: vec![text.clone()],
+                    estimated_files: 1,
+                    estimated_cost_usd: None,
+                    repo: Some(text.clone()),
+                    branch: Some(text.clone()),
+                    write_globs: vec![text.clone()],
+                    read_globs: vec![text.clone()],
+                    shell_policy: Some(text.clone()),
+                },
+            },
+        ] {
+            model.apply_inbound(&Inbound::Event {
+                agent: "lead".into(),
+                event: ev,
+            });
+        }
+        for card in [
+            None,
+            Some(Card::Tasks),
+            Some(Card::Scope),
+            Some(Card::Witness),
+            Some(Card::Models),
+            Some(Card::Budget),
+        ] {
+            for w in [1u16, 2, 4, 10, 20, 41, 80] {
+                for h in [3u16, 9, 24] {
+                    let mut ui = DeckUi::default();
+                    ui.splash.skip();
+                    if let Some(card) = card {
+                        ui.cards.raise(card);
+                        ui.cards.tasks_expanded = true;
+                    }
+                    let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+                    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        terminal.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+                    }));
+                    assert!(r.is_ok(), "panic {w}x{h} card {card:?} for {text:?}");
+                }
+            }
+        }
+    }
 }
 
 #[test]

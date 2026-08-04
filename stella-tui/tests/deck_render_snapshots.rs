@@ -636,6 +636,34 @@ fn deck_render_snapshots_pin_the_skills_scope_picker() {
     );
 }
 
+/// The five floating cards (D3–D6) over the scripted session.
+///
+/// Cards are glyph-heavy by design — the `▸` selection marker, the task
+/// glyph vocabulary, the witness records' `red ──▸ green` — precisely so a
+/// style-blind golden can pin them. One golden per card; the statline's
+/// collapsed form is captured in the same frame.
+#[test]
+fn deck_render_snapshots_pin_the_floating_cards() {
+    use stella_tui::deck_ui::cards::Card;
+    let model = fixture_model();
+    for (card, name, description) in [
+        (Card::Tasks, "card_tasks", "the /tasks board card over SESSION"),
+        (Card::Scope, "card_scope", "the /scope grid card over SESSION"),
+        (
+            Card::Witness,
+            "card_witness",
+            "the /witness panel mid-execute (run 2 of 3)",
+        ),
+        (Card::Models, "card_models", "the /models routing card"),
+        (Card::Budget, "card_budget", "the /budget editor"),
+    ] {
+        let mut ui = ui_for(DeckTab::Session);
+        ui.cards.raise(card);
+        let frame = render_frame(&model, &mut ui, W, H);
+        assert_golden(name, description, W, H, &frame);
+    }
+}
+
 // ─────────────────────────── the harness itself ───────────────────────────
 
 /// The suite's own guard: rendering the same fixture twice must produce the

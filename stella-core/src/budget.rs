@@ -194,6 +194,15 @@ impl BudgetGuard {
         self.session_spent_usd = spent_usd;
     }
 
+    /// Retarget the session-axis cap mid-session (the deck's `/budget`
+    /// editor). Accounting is untouched — only the gate the next
+    /// [`evaluate`](Self::evaluate) checks moves; `None` clears the cap so
+    /// that axis never triggers again. Applied by the driver only at a safe
+    /// boundary (never mid-tool), per invariant #6.
+    pub fn set_session_limit_usd(&mut self, limit_usd: Option<f64>) {
+        self.session_limit_usd = limit_usd;
+    }
+
     /// Current spend for the active turn, in USD.
     pub fn spent_usd(&self) -> f64 {
         self.turn_spent_usd
@@ -531,6 +540,30 @@ mod tests {
         // from the pre-reseed total.
         guard.record_spend(0.5);
         assert!((guard.session_spent_usd() - 1.75).abs() < 1e-9);
+    }
+
+    #[test]
+    fn set_session_limit_retargets_the_gate_without_touching_accounting() {
+        // The deck's `/budget` seam: a mid-session cap change moves only the
+        // session gate — spend totals and the turn axis are untouched, and
+        // `None` clears the cap outright.
+        let mut guard = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.0));
+        guard.record_spend(0.9);
+        assert_eq!(guard.evaluate(), BudgetOutcome::Continue);
+
+        guard.set_session_limit_usd(Some(0.5));
+        assert_eq!(guard.session_limit_usd(), Some(0.5));
+        assert!(
+            matches!(guard.evaluate(), BudgetOutcome::AbortTurn { .. }),
+            "a lowered cap gates immediately at the next safe boundary"
+        );
+        assert!(
+            (guard.session_spent_usd() - 0.9).abs() < 1e-9,
+            "accounting never moves with the gate"
+        );
+
+        guard.set_session_limit_usd(None);
+        assert_eq!(guard.evaluate(), BudgetOutcome::Continue, "cleared cap");
     }
 
     #[test]

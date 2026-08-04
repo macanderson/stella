@@ -369,7 +369,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
             Style::new().fg(theme::TEXT_TERTIARY),
         )));
     }
-    let area = cards::card_area(frame, rows.len() as u16);
+    let area = cards::card_area(frame, rows.len() as u16, WITNESS_CARD_W, ui.accessible);
     // Right title: the verify slot's model id (the role that replays the
     // oracle) + where it runs. The internal role identifier never renders —
     // this panel's label for it is `verify`.
@@ -391,10 +391,15 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
     cards::render_body(rows, None, inner, buf);
 }
 
-/// The inner width the body rows are laid out against — the max card width
+/// This panel's own width cap — wider than the shared ~56-cell chrome
+/// because its records are fixed product copy (`replaying oracle against
+/// patched worktree`, the evidence clause) that may not elide mid-token.
+const WITNESS_CARD_W: u16 = 84;
+
+/// The inner width the body rows are laid out against — the panel width
 /// minus its two border columns. Rows are re-clipped by the real rect at
 /// paint time, so a narrower terminal only loses the right edge.
-const CARD_INNER_W: usize = (cards::CARD_MAX_W - 2) as usize;
+const CARD_INNER_W: usize = (WITNESS_CARD_W - 2) as usize;
 
 #[cfg(test)]
 mod tests {

@@ -829,6 +829,10 @@ pub async fn run_deck_session(
     // provider (borrowed by the running turn), so it parks here and runs
     // right after the turn settles.
     let mut pending_create: Option<(String, AgentScope)> = None;
+    // A `/budget` cap change that arrived mid-turn: the running turn holds
+    // the guard, so the retarget waits for the settle boundary (invariant
+    // #6 — budget changes act between steps/turns, never mid-flight).
+    let mut pending_budget: Option<Option<f64>> = None;
     // Sub-session bookkeeping: live-worker slots, and `task_assign` requests
     // waiting for one (drained oldest-first as workers end).
     let mut subs = SubSessions::with_registry_options(registry_options.clone());
@@ -1219,6 +1223,36 @@ pub async fn run_deck_session(
                                 ));
                             }
                         }
+                        continue 'session;
+                    }
+                    // The task card's skip and the scope card's `e` become
+                    // the lead's next prompt: with no turn running, only the
+                    // model can move its own board / re-propose its scope.
+                    Some(WorkspaceInput::TaskSkip { id, .. }) => {
+                        dispatch.release();
+                        format!(
+                            "The user skipped task {id} on the task board: cancel it \
+                             (task_cancel) and do not work on it."
+                        )
+                    }
+                    Some(WorkspaceInput::ScopeChangeRequest { .. }) => {
+                        dispatch.release();
+                        "The user wants to change the approved scope: propose an updated \
+                         scope (raise a scope review with the revised plan)."
+                            .to_string()
+                    }
+                    // The cap retargets immediately at an idle boundary; the
+                    // deck renders it when the next metered call's BudgetTick
+                    // folds the new `session_limit_usd` back.
+                    Some(WorkspaceInput::SetBudget { limit_usd }) => {
+                        budget.set_session_limit_usd(limit_usd);
+                        let _ = deck_tx.send(chrome_note(match limit_usd {
+                            Some(cap) => format!(
+                                "session budget cap set to ${cap:.2} (enforced between \
+                                 steps)."
+                            ),
+                            None => "session budget cap cleared.".to_string(),
+                        }));
                         continue 'session;
                     }
                     // Fallthrough for everything else, serviced between turns
@@ -1692,6 +1726,41 @@ pub async fn run_deck_session(
                         Some(WorkspaceInput::StopAndHold { .. }) => {
                             break TurnEnd::Cancelled { hold: true }
                         }
+                        // The task card's skip rides the steering tap: the
+                        // model owns its board (`task_cancel`), so the
+                        // request lands at the next step boundary as
+                        // guidance rather than as a driver-side mutation —
+                        // the row flips only when the next `TaskUpdate`
+                        // snapshot folds back.
+                        Some(WorkspaceInput::TaskSkip { id, .. }) => {
+                            steering.push(format!(
+                                "The user skipped task {id} on the task board: cancel it \
+                                 (task_cancel) and do not work on it."
+                            ));
+                        }
+                        // A scope change is next-turn work — the running
+                        // turn's scope is locked; the request queues as the
+                        // lead's next prompt.
+                        Some(WorkspaceInput::ScopeChangeRequest { .. }) => {
+                            queue.push_back(
+                                "The user wants to change the approved scope: propose an \
+                                 updated scope (raise a scope review with the revised plan)."
+                                    .to_string(),
+                            );
+                        }
+                        // The budget guard is borrowed by the running turn;
+                        // the cap retargets at the settle boundary below.
+                        Some(WorkspaceInput::SetBudget { limit_usd }) => {
+                            pending_budget = Some(limit_usd);
+                            let _ = deck_tx.send(chrome_note(match limit_usd {
+                                Some(cap) => format!(
+                                    "session budget cap ${cap:.2} — applies when this turn \
+                                     settles."
+                                ),
+                                None => "session budget cap cleared when this turn settles."
+                                    .to_string(),
+                            }));
+                        }
                         // The Graph tab's file picker can re-root mid-turn (a
                         // user browsing the graph while an agent works). The
                         // requery opens SQLite + loads grammars, so run it on
@@ -1897,6 +1966,13 @@ pub async fn run_deck_session(
 
         // Repay the dashboard if this turn was ever painted paused (#1219).
         lead_pause.settle(&in_tx);
+
+        // A `/budget` change parked during the turn applies here — the safe
+        // boundary. The deck shows the new cap when the next metered call's
+        // BudgetTick folds `session_limit_usd` back.
+        if let Some(cap) = pending_budget.take() {
+            budget.set_session_limit_usd(cap);
+        }
 
         match end {
             TurnEnd::Finished(outcome) => {
@@ -3448,7 +3524,10 @@ const DECK_BUILTINS: &[(&str, &str)] = &[
         "/model",
         "set the default model (persists; no arg shows current + list)",
     ),
-    ("/models", "list providers & models (`refresh` re-syncs)"),
+    (
+        "/models",
+        "model routing — the think · work · verify slots (`refresh` re-syncs)",
+    ),
     (
         "/profile",
         "retune every role: fast · balanced · pro · ultra · auto",
@@ -3483,6 +3562,10 @@ const DECK_BUILTINS: &[(&str, &str)] = &[
         "/context",
         "this session's active skills + MCP servers (also: → on an empty prompt)",
     ),
+    ("/tasks", "task board — done · active · queued"),
+    ("/scope", "view or edit run scope + caps"),
+    ("/witness", "the proof: author · execute · result"),
+    ("/budget", "set or clear the session spend cap"),
     (
         "/inspect",
         "the context sent to the model on any recorded call (also: ⌃g)",

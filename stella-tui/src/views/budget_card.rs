@@ -62,7 +62,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
             dim,
         )));
     }
-    let area = cards::card_area(frame, rows.len() as u16);
+    let area = cards::card_area(frame, rows.len() as u16, cards::CARD_MAX_W, ui.accessible);
     let inner = cards::card_frame(
         area,
         "budget",

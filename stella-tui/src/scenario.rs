@@ -589,8 +589,8 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
 /// The demo task board: `tasks_done` rows completed, the next in progress,
 /// the rest pending — first snapshot 4 of 7 done (the exact fraction the
 /// task card's title advertises), second 5 of 7 after the triggers task
-/// lands.
-fn demo_tasks(tasks_done: usize) -> Vec<stella_protocol::TaskItem> {
+/// lands. Public so `deck_demo` can fold a skip back over the same board.
+pub fn demo_tasks(tasks_done: usize) -> Vec<stella_protocol::TaskItem> {
     use stella_protocol::{TaskItem, TaskStatus};
     let rows = [
         ("1", "Scaffold the automations routes"),
