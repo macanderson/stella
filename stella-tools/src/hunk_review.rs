@@ -644,6 +644,33 @@ mod tests {
         assert!(io.proposal().is_none(), "no card for a call that cannot run");
     }
 
+    /// A run with no reviewer must be indistinguishable from one before this
+    /// layer existed: no card, no rewrite, the tool's own report verbatim. This
+    /// is the other half of "fail closed" — closed applies to a reviewer that
+    /// was supposed to be there, not to a run that never had one.
+    #[tokio::test]
+    async fn a_gate_with_no_reviewer_is_inert() {
+        let (dir, reg, _) = fixture();
+        let gate = HunkGate::new(&reg, None, dir.path().to_path_buf());
+
+        let out = gate
+            .execute(
+                "apply_edits",
+                &serde_json::json!({ "edits": [
+                    edit("a.rs", "line 2\n", "TWO\n"),
+                    edit("a.rs", "line 25\n", "TWENTY-FIVE\n"),
+                ]}),
+            )
+            .await;
+        let ToolOutput::Ok { content } = out else {
+            panic!("{out:?}");
+        };
+        assert!(content.contains("applied 2 edits across 1 file(s)"), "{content}");
+        assert!(!content.contains("hunk review"), "{content}");
+        let landed = std::fs::read_to_string(dir.path().join("a.rs")).unwrap();
+        assert!(landed.contains("TWO\n") && landed.contains("TWENTY-FIVE\n"));
+    }
+
     /// Read-only and opaque tools pass straight through.
     #[tokio::test]
     async fn ungated_tools_are_untouched() {

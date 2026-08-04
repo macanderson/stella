@@ -66,6 +66,10 @@ pin just the judge model while your user scope keeps everything else.
     // aborting at the gate that has nobody to ask.
     "headless_scope_bypass": "off",
 
+    // "on" = every write pauses on a per-hunk approval card, and only the
+    // hunks you keep are applied. Interactive surfaces only.
+    "hunk_review": "off",
+
     // How many times a task may be attempted. Revisions are spent only on a
     // verification that already failed; candidates are paid on every task.
     "pipeline_max_revisions": 2,
@@ -222,6 +226,21 @@ Set any of the three autos to `"on"` and stop thinking about it:
     instead of stopping at the gate that has nobody to ask. Off deliberately:
     turn it on only where the working tree is disposable and the budget cap is
     the real guard — a benchmark container, CI on a scratch checkout.
+  </OptionCard>
+  <OptionCard name="hunk_review" defaultValue="off">
+    Every `apply_edits` / `edit_file` / `write_file` call pauses on a per-hunk
+    approval card before it writes, and only the hunks you keep are applied —
+    so a turn that produces one wanted and one unwanted change stops being
+    all-or-nothing. Declined hunks are reported back to the model, so it knows
+    why the file does not look the way it wrote it.
+
+    Read only by surfaces that **have** a reviewer. A headless run ignores it
+    entirely rather than blocking on a card nobody will see — a gate with
+    nobody to ask must be absent, not auto-approving.
+
+    Off by default: this is the one gate that fires on ordinary work rather
+    than above a threshold, so it trades throughput for control. Worth it while
+    pointing the agent at code you are not ready to let it change freely.
   </OptionCard>
   <OptionCard name="pipeline_max_revisions" defaultValue="2">
     Revision turns per candidate after a **failed** verification. A run that
