@@ -339,6 +339,7 @@ class MetricsReader:
             metrics.age_s = age
             metrics.status = "done" if events["complete"] else "running"
 
+        configured = ""
         result = _load_json(trial_dir / RESULT_NAME)
         if result is not None:
             metrics.status = "done"
@@ -381,8 +382,11 @@ class MetricsReader:
                 metrics.models = (*metrics.models, configured)
 
         # One table, both seats. See pricing.py for why self-reported cost is
-        # recorded but never compared.
-        for name in (*metrics.models, ""):
+        # recorded but never compared. The configured seat model is tried first:
+        # a single process can log several roles' `step_usage` (judge, triage)
+        # into one stream, so the stream's first-seen model may name a role
+        # rather than the seat — pricing on that would mis-cost the whole trial.
+        for name in (configured, *metrics.models, ""):
             price = price_for(name)
             if price is not None:
                 metrics.priced_cost = trial_cost(
