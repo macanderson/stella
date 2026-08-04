@@ -170,9 +170,30 @@ async fn per_step_hashing_grows_with_the_turn_not_with_its_square() {
             script: TokioMutex::new(script),
             calls: Arc::new(AtomicU32::new(0)),
         };
-        let tools = CountingTools {
-            calls: Arc::new(AtomicU32::new(0)),
-        };
+        // Answers each command differently. `CountingTools` replies "ok" to
+        // everything, which — with the distinct inputs above — is the
+        // stagnation signature `loop_detect` aborts on: the arguments moved
+        // and the answer never did. This test is about hashing, so the
+        // fixture has to make progress the way real work does.
+        struct EchoingTools;
+        #[async_trait]
+        impl ToolExecutor for EchoingTools {
+            fn schemas(&self) -> Vec<ToolSchema> {
+                vec![ToolSchema {
+                    name: "bash".into(),
+                    description: "run a command".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    read_only: false,
+                    speculation_safe: false,
+                }]
+            }
+            async fn execute(&self, _name: &str, input: &Value) -> ToolOutput {
+                ToolOutput::Ok {
+                    content: format!("ran {input}"),
+                }
+            }
+        }
+        let tools = EchoingTools;
         let sleeper = NoopSleeper;
         let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
         let mut messages = vec![
