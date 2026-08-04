@@ -25,10 +25,15 @@
 //!   `ToolRegistry::record_touch` stays the single emitter and reads the file
 //!   back from disk after the write, so it reports the accepted content with no
 //!   knowledge that a gate exists.
-//! - **A rewritten edit is a compare-and-swap.** The synthesized `old_string`
+//! - **A rewritten call is a compare-and-swap.** The synthesized `old_string`
 //!   is the file's *entire* pre-image, so if anything changed the file between
 //!   the review and the apply, `apply_edits` fails it with the existing
 //!   read→edit drift attribution instead of clobbering the newer bytes.
+//!   `write_file` has nowhere to put that precondition — it writes `content`
+//!   unconditionally — so the one gated tool that cannot compare-and-swap for
+//!   itself is given the property by `HunkGate::stale`, immediately before
+//!   the dispatch it guards. This has to hold for every gated tool or it is not
+//!   a guarantee, only a property that two of the three happen to have.
 //! - **The model is told.** Declined hunks are named in the tool result, so the
 //!   model knows why the file does not look the way it wrote it — the silent
 //!   partial-apply would manufacture exactly the drift the oracle exists to
@@ -120,6 +125,13 @@ impl<'a> HunkGate<'a> {
     /// validation anyway**. Letting that last one through unreviewed is what
     /// keeps the tools' own error messages exactly what they were: the gate
     /// never gets between the model and "your `old_string` was not found".
+    ///
+    /// Passing an unreadable file through *unreviewed* is safe only because
+    /// `apply_edits` validates the whole batch before it applies any of it, so
+    /// the call that skipped the gate is a call that writes nothing. That
+    /// coupling is load-bearing rather than incidental: were validation ever to
+    /// become per-edit, one unreadable path in a batch would turn this early
+    /// return into a way to write the other paths past the reviewer.
     fn proposed_changes(&self, name: &str, input: &Value) -> Option<Vec<FileChange>> {
         self.io.as_ref()?;
         if !GATED_TOOLS.contains(&name) {
@@ -200,10 +212,11 @@ impl<'a> HunkGate<'a> {
             }
             let mut rewritten = input.clone();
             match name {
-                // A `write_file` that reached here had a pre-image — a create
-                // decomposes to exactly one hunk, so it is all-or-nothing and
-                // never partial — and its rewrite is the accepted content in
-                // the same field.
+                // The rewrite is the accepted content in the same field, so a
+                // partial `write_file` stays one whole-file write rather than
+                // becoming a batch. Nothing rides along to say which bytes it
+                // expected to find — [`Self::stale`] supplies the precondition
+                // this field cannot express.
                 "write_file" => {
                     rewritten["content"] = Value::String(composed);
                     return Some(rewritten);
@@ -242,6 +255,37 @@ impl<'a> HunkGate<'a> {
             }
         }
         Some(rewritten)
+    }
+
+    /// The first file whose bytes on disk are no longer the pre-image
+    /// [`Self::rewrite`] composed against, if any.
+    ///
+    /// Only `write_file` needs asking. `apply_edits` and `edit_file` carry the
+    /// pre-image in `old_string` and refuse a moved file themselves; a
+    /// `write_file` has no such field, so for it the window between the read
+    /// that built the proposal and the write that answers it is exactly as long
+    /// as the human took to decide — which is the one window on this path long
+    /// enough for somebody to save the file in their editor.
+    ///
+    /// The comparison is on **raw bytes**, not on the decoded string, because
+    /// that catches a second way the composition can be wrong for the same
+    /// price: `before` came from a *lossy* read, so on a file that is not valid
+    /// UTF-8 the unchanged regions of `composed` hold U+FFFD where the file
+    /// holds bytes, and writing it would re-encode the parts nobody reviewed.
+    /// Both failures have the same remedy — do not write — so they share a
+    /// check. An absent file reads as empty, which is what a create's pre-image
+    /// already is, so creating a file is not mistaken for drifting.
+    fn stale(&self, name: &str, changes: &[FileChange]) -> Option<String> {
+        if name != "write_file" {
+            return None;
+        }
+        changes
+            .iter()
+            .find(|change| {
+                crate::rootfd::read_confined_bytes(&self.root, &change.path).unwrap_or_default()
+                    != change.before.as_bytes()
+            })
+            .map(|change| change.path.clone())
     }
 }
 
@@ -381,6 +425,19 @@ impl ToolExecutor for HunkGate<'_> {
                 ),
             };
         };
+        // Fail closed on drift, for the same reason an unreachable reviewer
+        // fails closed: the accepted hunks describe bytes that are no longer
+        // there, and applying them anyway would overwrite a write nobody
+        // reviewed with content nobody proposed.
+        if let Some(path) = self.stale(name, &changes) {
+            return ToolOutput::Error {
+                message: format!(
+                    "`{name}` was not applied: `{path}` no longer holds the bytes that were \
+                     reviewed, so the accepted hunk(s) no longer describe it — NOTHING was \
+                     written. Re-read it before proposing again.{report}"
+                ),
+            };
+        }
         match self.inner.execute(name, &rewritten).await {
             ToolOutput::Ok { content } => ToolOutput::Ok {
                 content: format!("{content}{report}"),
@@ -444,6 +501,19 @@ mod tests {
                 return Err("the deck closed".into());
             }
             Ok(self.accept.clone())
+        }
+    }
+
+    /// Rewrites the file from inside `review`, i.e. in the window after the
+    /// gate has read the pre-image and before the rewritten call applies —
+    /// the human-length window a real reviewer holds open.
+    struct DriftingIo(PathBuf);
+
+    #[async_trait]
+    impl HunkReviewIo for DriftingIo {
+        async fn review(&self, _proposal: &HunkProposal) -> Result<Vec<usize>, String> {
+            std::fs::write(&self.0, "somebody else got here first\n").unwrap();
+            Ok(vec![0])
         }
     }
 
@@ -945,19 +1015,6 @@ mod tests {
     async fn a_file_that_drifts_after_review_fails_instead_of_clobbering() {
         let (dir, reg, _) = fixture();
         let path = dir.path().join("a.rs");
-
-        /// Rewrites the file from inside `review`, i.e. after the gate has read
-        /// its pre-image and before the rewritten batch applies.
-        struct DriftingIo(PathBuf);
-
-        #[async_trait]
-        impl HunkReviewIo for DriftingIo {
-            async fn review(&self, _proposal: &HunkProposal) -> Result<Vec<usize>, String> {
-                std::fs::write(&self.0, "somebody else got here first\n").unwrap();
-                Ok(vec![0])
-            }
-        }
-
         let gate = HunkGate::new(
             &reg,
             Some(Arc::new(DriftingIo(path.clone()))),
@@ -977,6 +1034,83 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             "somebody else got here first\n",
             "the foreign write must survive"
+        );
+    }
+
+    /// The same property on the one gated tool that cannot express a
+    /// precondition of its own. `write_file` writes `content` unconditionally,
+    /// so without the gate's own check a partial apply would compose against a
+    /// pre-image that is no longer there and overwrite whatever arrived while
+    /// the reviewer was deciding.
+    #[tokio::test]
+    async fn a_write_file_that_drifts_after_review_fails_instead_of_clobbering() {
+        let (dir, reg, original) = fixture();
+        let path = dir.path().join("a.rs");
+        let gate = HunkGate::new(
+            &reg,
+            Some(Arc::new(DriftingIo(path.clone()))),
+            dir.path().to_path_buf(),
+        );
+
+        // Two hunks with one accepted, so this is the *partial* path — a full
+        // accept passes the original input through and never composes at all.
+        let replacement = original
+            .replace("line 2\n", "TWO\n")
+            .replace("line 25\n", "TWENTY-FIVE\n");
+        let out = gate
+            .execute(
+                "write_file",
+                &serde_json::json!({ "path": "a.rs", "content": replacement }),
+            )
+            .await;
+        assert!(out.is_error(), "{out:?}");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "somebody else got here first\n",
+            "the foreign write must survive"
+        );
+    }
+
+    /// The pre-image is read *lossily*, so on a file that is not valid UTF-8
+    /// the unchanged regions of the composed content are U+FFFD where the file
+    /// has bytes. Writing that would re-encode the parts nobody reviewed, so
+    /// the same check refuses it.
+    #[tokio::test]
+    async fn a_partial_write_file_will_not_re_encode_a_non_utf8_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = ToolRegistry::with_issue_backend(dir.path().to_path_buf(), None);
+        let path = dir.path().join("a.bin");
+        // Valid lines around one invalid byte, so the decomposition still finds
+        // two hunks to offer and the invalid line is in neither of them.
+        let mut raw: Vec<u8> = Vec::new();
+        for i in 1..=30u32 {
+            if i == 15 {
+                raw.extend_from_slice(b"bad \xff byte\n");
+            } else {
+                raw.extend_from_slice(format!("line {i}\n").as_bytes());
+            }
+        }
+        std::fs::write(&path, &raw).unwrap();
+
+        let gate = HunkGate::new(
+            &reg,
+            Some(ScriptedIo::accepting(vec![0])),
+            dir.path().to_path_buf(),
+        );
+        let replacement = String::from_utf8_lossy(&raw)
+            .replace("line 2\n", "TWO\n")
+            .replace("line 25\n", "TWENTY-FIVE\n");
+        let out = gate
+            .execute(
+                "write_file",
+                &serde_json::json!({ "path": "a.bin", "content": replacement }),
+            )
+            .await;
+        assert!(out.is_error(), "{out:?}");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            raw,
+            "the byte the reviewer never saw must survive"
         );
     }
 }
