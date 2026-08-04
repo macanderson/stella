@@ -7,7 +7,7 @@
 //! Part of Stella's verification is a model reading the work and saying
 //! whether it looks correct, and that judgement has been measured badly
 //! lenient — 46% agreement with a benchmark's own grader. Every threshold
-//! built on top of it (`require_evidence_for_lone_judge_pass`, the escalation
+//! built on top of it (`judge_evidence_demand`, the escalation
 //! rungs, the best-of-N ordering) is currently a guess, and it *stays* a guess
 //! until something independent says which verdicts were wrong. Tuning without
 //! that is not tuning; it is changing numbers.

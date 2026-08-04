@@ -236,8 +236,8 @@ pub(crate) fn run_calibration(format: InspectFormat) -> Result<(), String> {
             "deterministic_false_positives": total.deterministic_false_positives,
             "deterministic_false_positive_rate": total.deterministic_false_positive_rate(),
             // #1295: the judge-alone cohort, so the decision about
-            // `require_evidence_for_lone_judge_pass` can be taken from a
-            // measured number rather than from the last run someone remembers.
+            // `judge_evidence_demand` can be taken from a measured number
+            // rather than from the last run someone remembers.
             "snapshotted_verdicts": total.snapshotted_verdicts,
             "uncorroborated_verdicts": total.uncorroborated_verdicts,
             "uncorroborated_rate": total.uncorroborated_rate(),

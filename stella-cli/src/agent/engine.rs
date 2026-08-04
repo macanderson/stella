@@ -325,11 +325,6 @@ pub(crate) fn apply_pipeline_tuning(cfg: &Config, mut config: PipelineConfig) ->
     if let Some(max_revisions) = engine.pipeline_max_revisions {
         config.max_revisions = max_revisions;
     }
-    // #1295: off unless the operator has measured this workspace's own
-    // judge-alone rate (`stella calibration`) and decided the send-back is
-    // worth a turn. Assigned unconditionally — an explicit `off` in a
-    // higher-precedence scope must be able to turn off a lower one's `on`.
-    config.require_evidence_for_lone_judge_pass = engine.pipeline_evidence_for_lone_judge_pass_on();
     // #1291: the strict reading of an UNMEASURABLE overlap. A measured
     // non-overlap withholds the deterministic credit whatever this says.
     config.require_diff_coverage = engine.pipeline_require_diff_coverage_on();

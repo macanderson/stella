@@ -42,6 +42,10 @@ macro_rules! run_scenario {
                 tests: &runner,
                 lint: None,
                 mutation: None,
+                // No coverage tooling (#1291): these scenarios turn on whether
+                // a tracked command can answer the ask at all, and an
+                // unmeasurable overlap is a separate axis with its own tests.
+                coverage: None,
                 approvals: &approvals,
                 sleeper: &sleeper,
                 hooks: None,

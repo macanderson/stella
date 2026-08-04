@@ -74,6 +74,11 @@ fn base_spec(prompt: &str) -> SessionSpec {
         checkpoint: None,
         goal: None,
         sub_agents: None,
+        // No operator hooks and no calibration map: these scenarios are about
+        // the goal loop and delegation, and an empty extension list is the
+        // shipping binary's own posture — see `hooks.rs` for the plane itself.
+        extensions: Default::default(),
+        calibration: None,
     }
 }
 
