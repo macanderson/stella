@@ -80,7 +80,7 @@ fn deck_renders_every_tab_with_real_content() {
     // subagent rows under the lead's header.
     let session = render_tab(&model, DeckTab::Session, 190, 44);
     for needle in [
-        "✦",         // statline brand glyph, pinned left
+        "MODEL",     // the statline's leading cell
         "CONTEXT",   // a micro-label on the statline's upper row…
         "/200k",     // …over its value on the lower row
         "SPEND",     // the session money cell

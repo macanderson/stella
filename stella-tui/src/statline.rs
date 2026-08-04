@@ -1,12 +1,11 @@
-//! The statline: the deck's bottom band, **two rows** tall — a dim
-//! micro-label row sitting directly over its bright value row, cells split by
-//! a `│` hairline, with the brand pinned left and the ethos chip pinned
-//! right, over an always-on MODELS row:
+//! The statline: the deck's bottom band, **two rows** tall — a micro-label
+//! row sitting directly over its bright value row, cells split by a `│`
+//! hairline, with the ethos chip pinned right, over an always-on MODELS row:
 //!
 //! ```text
-//!            │ AGENT │ STAGE     │ CPU         │ CONTEXT         │ SPEND │ CACHE                │ SAVED  │ WARMTH │ ENGINE   │ PIPELINE │ INBOX
-//!  ✦ stella  │ lead  │ ● execute │ ▮▮▮▮▮▮ 100% │ ▮▮▮▯▯▯ 91k/200k │ $3.77 │ 94% (7.0M rd · 0 wr) │ $18.80 │ cold   │ 0 active │ ON       │ ✉ 29
-//!  MODELS  T·openrouter/z-ai/glm-5.2  W·openrouter/moonshotai/kimi-k3  J·openrouter/anthropic/claude-opus-5
+//!  MODEL                          │ EXECUTE     │ CPU         │ CONTEXT         │ SPEND │ CACHE                │ SAVED  │ WARMTH │ ENGINE   │ PIPELINE │ INBOX
+//!  worker: anthropic/claude-fable-5 │ Step 4 of 5 │ ▮▮▮▮▮▮ 100% │ ▮▮▮▯▯▯ 91k/200k │ $3.77 │ 94% (7.0M rd · 0 wr) │ $18.80 │ cold   │ 0 active │ ON       │ ✉ 29
+//!  MODELS  T·z-ai/glm-5.2  W·moonshotai/kimi-k3  J·anthropic/claude-opus-5
 //! ```
 //!
 //! ## Why two rows and not one
@@ -20,6 +19,21 @@
 //! CACHE read/write volumes and the MODELS pins occupy — none of which fit
 //! beside their own inline labels at ordinary deck widths.
 //!
+//! ## What leads the band
+//!
+//! MODEL and the stage box, not an identity. The brand glyph, the agent id
+//! and a `● execute` dot led the row for a long time and none of them earned
+//! it: on a single-agent session two of the three never changed, and the
+//! third said in a whole cell what the stage stepper one row up already
+//! says. In their place the band opens with the two things that *do* move —
+//! which pin is answering (`worker: anthropic/claude-fable-5`, the model's
+//! own vendor, not the gateway that proxied it) and how far through the task
+//! board this stage has gotten.
+//!
+//! The stage box is the one cell whose *label* is live state: the stage name
+//! heads it, in the stage's own color, over `Step 4 of 5` read off the task
+//! board. A stage with no board reads `—` rather than inventing a step.
+//!
 //! ## The meters
 //!
 //! CPU and CONTEXT lead with a 6-cell `▮▯` bar colored by
@@ -32,9 +46,9 @@
 //!
 //! Every cell carries a drop priority. On a narrow row the ethos chip goes
 //! first (pure chrome, before any data cell), then the lowest-priority cell
-//! still standing, until the row fits. STAGE and CONTEXT are [`MUST_KEEP`]
-//! and never leave — the stage word and the token meter are the two
-//! load-bearing cells. Cells leave whole; nothing is ever clipped mid-token.
+//! still standing, until the row fits. MODEL, the stage box and CONTEXT are
+//! [`MUST_KEEP`] and never leave — what is answering, where it is, and how
+//! much window is left. Cells leave whole; nothing is clipped mid-token.
 //!
 //! ## Collapse: a card on top gets a quiet floor
 //!
@@ -46,7 +60,7 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 use unicode_width::UnicodeWidthStr;
@@ -55,20 +69,15 @@ use crate::cache_panel;
 use crate::deck::{PipelineRole, WorkspaceModel};
 use crate::deck_ui::DeckUi;
 use crate::deck_ui::cards::Card;
-use crate::textline::stage_label;
 use crate::theme;
 
 /// The context window the CONTEXT meter divides by.
 pub const CTX_WINDOW: u64 = 200_000;
 
-/// Cells at this priority are never dropped for width: STAGE (what the agent
-/// is doing) and CONTEXT (how much window is left). Everything else is
-/// negotiable.
+/// Cells at this priority are never dropped for width: MODEL (what is
+/// answering), the stage box (where the run is) and CONTEXT (how much window
+/// is left). Everything else is negotiable.
 pub const MUST_KEEP: u8 = 9;
-
-/// The brand, pinned to the left of the value row. The label row reserves the
-/// same width in blanks so the first cell's label lands over the first cell.
-const BRAND: &str = " ✦ stella ";
 
 /// The ethos chip, pinned right. Pure chrome, so it is the *first* thing
 /// dropped when the row is tight — before any cell carrying data.
@@ -82,6 +91,10 @@ pub struct StatItem {
     pub label: &'static str,
     pub priority: u8,
     pub spans: Vec<Span<'static>>,
+    /// Overrides the label row's dim for this one cell. `None` for every
+    /// constant label; the stage box sets it so the live stage word carries
+    /// the stage's own color instead of reading as chrome.
+    pub label_color: Option<Color>,
 }
 
 impl StatItem {
@@ -96,7 +109,14 @@ impl StatItem {
             label,
             priority,
             spans,
+            label_color: None,
         }
+    }
+
+    /// Draw this cell's label in `color` rather than the label row's dim.
+    fn with_label_color(mut self, color: Color) -> Self {
+        self.label_color = Some(color);
+        self
     }
 
     /// Display width of the value spans.
@@ -120,40 +140,32 @@ pub fn statline_items(model: &WorkspaceModel, ui: &DeckUi) -> Vec<StatItem> {
     let ok = Style::new().fg(theme::SUCCESS_BRIGHT);
     let focused = model.agents.get(ui.focused);
 
-    let agent = StatItem::new(
-        "agent",
-        "AGENT",
-        5,
-        vec![Span::styled(
-            focused
-                .map(|a| a.meta.id.clone())
-                .unwrap_or_else(|| "—".into()),
-            val,
-        )],
-    );
+    // MODEL: which pin is serving right now, as `role: vendor/model`. This
+    // is the band's identity anchor — it replaced the brand glyph, the agent
+    // id and the stage dot, none of which changed often enough to earn the
+    // columns. Which model is answering *does* change mid-turn, and it is the
+    // thing a scored run is read against.
+    let model_cell = StatItem::new("model", "MODEL", MUST_KEEP, model_spans(model, dim, val));
 
-    // STAGE with a steady dot in the stage's own theme color. It used to
-    // pulse via an interpolated `lighten`, which carried no information the
-    // stage word did not already carry AND had no `theme::FALLBACKS` entry —
-    // so the one animated cell was also the one `degrade_buffer` could not
-    // recolor for a 256/16-color terminal.
+    // The stage box: the stage NAME is the label (top row), so the row above
+    // stops repeating a constant word and starts carrying live state; the
+    // value below is how far through the task board this stage has gotten.
     let stage_kind = focused.and_then(|a| a.model.hud.stage);
     let stage = StatItem::new(
         "stage",
-        "STAGE",
+        stage_label_upper(stage_kind),
         MUST_KEEP,
-        vec![
-            Span::styled(
-                "● ",
-                Style::new().fg(stage_kind
-                    .map(theme::stage_color)
-                    .unwrap_or(theme::TEXT_TERTIARY)),
-            ),
-            Span::styled(
-                stage_kind.map(stage_label).unwrap_or("idle").to_string(),
-                val,
-            ),
-        ],
+        vec![match focused.map(|a| step_of(&a.model.tasks)) {
+            Some(Some(text)) => Span::styled(text, val),
+            // No board built, or an empty one: the stage name above is the
+            // whole story, and an invented "Step 1 of 1" would not be.
+            _ => Span::styled("—", dim),
+        }],
+    )
+    .with_label_color(
+        stage_kind
+            .map(theme::stage_color)
+            .unwrap_or(theme::TEXT_TERTIARY),
     );
 
     // SPEND: the *session* total across every agent. The live per-turn figure
@@ -167,7 +179,7 @@ pub fn statline_items(model: &WorkspaceModel, ui: &DeckUi) -> Vec<StatItem> {
 
     // ── the collapse rule: a card on top gets at most four cells ────────────
     if let Some(context) = open_surface(ui) {
-        let mut items = vec![agent, stage];
+        let mut items = vec![model_cell, stage];
         match context {
             Card::Tasks => {
                 let turn_cost = focused.map_or(0.0, |a| a.model.hud.turn_spent_usd());
@@ -217,7 +229,7 @@ pub fn statline_items(model: &WorkspaceModel, ui: &DeckUi) -> Vec<StatItem> {
     // ── the full band ───────────────────────────────────────────────────────
     let cpu = f64::from(model.global_cpu_pct);
     let mut items = vec![
-        agent,
+        model_cell,
         stage,
         StatItem::new(
             "cpu",
@@ -337,6 +349,116 @@ pub fn statline_items(model: &WorkspaceModel, ui: &DeckUi) -> Vec<StatItem> {
         }],
     ));
     items
+}
+
+/// The MODEL cell's spans: `worker: anthropic/claude-fable-5` — the role
+/// word dimmed, the slug bright.
+///
+/// The role shown is whichever one most recently *served* a call
+/// ([`WorkspaceModel::active_role`]), falling back to the worker pin and then
+/// to any pin at all, so the cell names something real from the first call
+/// onward. With no pin observed yet it reads `—`, never a configured default
+/// dressed up as evidence.
+fn model_spans(model: &WorkspaceModel, dim: Style, val: Style) -> Vec<Span<'static>> {
+    let role = model
+        .active_role
+        .filter(|r| model.role_pins.contains_key(r))
+        .or_else(|| {
+            PipelineRole::ORDER
+                .iter()
+                .copied()
+                .find(|r| *r == PipelineRole::Worker && model.role_pins.contains_key(r))
+        })
+        .or_else(|| {
+            PipelineRole::ORDER
+                .iter()
+                .copied()
+                .find(|r| model.role_pins.contains_key(r))
+        });
+    let Some(role) = role else {
+        return vec![Span::styled("—", dim)];
+    };
+    let slug = model
+        .role_pins
+        .get(&role)
+        .map(vendor_slug)
+        .unwrap_or_else(|| "—".into());
+    vec![
+        Span::styled(format!("{}: ", role_word(role)), dim),
+        Span::styled(slug, val),
+    ]
+}
+
+/// The pipeline role as the deck says it out loud: triage / worker / verify.
+///
+/// `Judge` reads "verify" because that is the stage word the stepper and the
+/// witness panel already use for the same step; "judge" is the internal role
+/// name, and two words for one thing is one too many on a glanceable row.
+fn role_word(role: PipelineRole) -> &'static str {
+    match role {
+        PipelineRole::Triage => "triage",
+        PipelineRole::Worker => "worker",
+        PipelineRole::Judge => "verify",
+    }
+}
+
+/// A pin's slug with the API gateway stripped: the *model's own* vendor, not
+/// whoever proxied the call.
+///
+/// `RolePin::slug` answers "where did this call go", which is the right
+/// question for routing and the wrong one for a glanceable cell — every row
+/// of a session reads `openrouter/…`, spending columns on a constant. When
+/// the model string already carries its vendor (`z-ai/glm-5.2`) that prefix
+/// IS the identity, so the provider is dropped; when it does not
+/// (`claude-fable-5`) the provider is the vendor (`anthropic`) and stays.
+fn vendor_slug(pin: &crate::deck::RolePin) -> String {
+    if pin.model.contains('/') || pin.provider.is_empty() {
+        pin.model.clone()
+    } else {
+        format!("{}/{}", pin.provider, pin.model)
+    }
+}
+
+/// The stage name, uppercased for the label row it now heads. `None` — no
+/// stage observed yet — reads `IDLE`.
+fn stage_label_upper(stage: Option<stella_protocol::StageKind>) -> &'static str {
+    use stella_protocol::StageKind as S;
+    match stage {
+        None => "IDLE",
+        Some(S::Triage) => "TRIAGE",
+        Some(S::ContextRecall) => "CONTEXT RECALL",
+        Some(S::Plan) => "PLAN",
+        Some(S::ScopeReview) => "SCOPE REVIEW",
+        Some(S::Witness) => "WITNESS",
+        Some(S::Execute) => "EXECUTE",
+        Some(S::Verify) => "VERIFY",
+        Some(S::Judge) => "JUDGE",
+        Some(S::Reflect) => "REFLECT",
+        Some(S::ContextWrite) => "CONTEXT WRITE",
+        Some(S::Complete) => "COMPLETE",
+    }
+}
+
+/// How far through the task board the session has gotten: `Step 4 of 5`.
+///
+/// The step is the position of the task actually being worked, not the count
+/// finished — those differ the moment a task is cancelled or the board is
+/// worked out of order, and the question the cell answers is "where am I",
+/// not "how many are done". With nothing in progress the last finished
+/// position stands in, so a board between steps does not blink back to zero.
+/// `None` for an empty board: there is no step to be on.
+fn step_of(tasks: &[stella_protocol::TaskItem]) -> Option<String> {
+    use stella_protocol::TaskStatus;
+    if tasks.is_empty() {
+        return None;
+    }
+    let total = tasks.len();
+    let step = tasks
+        .iter()
+        .position(|t| t.status == TaskStatus::InProgress)
+        .map(|i| i + 1)
+        .unwrap_or_else(|| tasks.iter().filter(|t| !t.status.is_open()).count());
+    Some(format!("Step {step} of {total}"))
 }
 
 /// The CONTEXT cell: the 6-cell meter, then `used/window` in compact tokens.
@@ -463,7 +585,9 @@ fn models_spans(model: &WorkspaceModel, highlight: bool) -> Vec<Span<'static>> {
                     // must not look like one that has.
                     label
                 };
-                spans.push(Span::styled(pin.slug(), style));
+                // Same gateway-stripped form the MODEL cell uses, so the two
+                // surfaces name a pin identically.
+                spans.push(Span::styled(vendor_slug(pin), style));
             }
             None => spans.push(Span::styled("—", label)),
         }
@@ -506,17 +630,19 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
     // Fit: drop the ethos chip, then the lowest-priority non-must-keep cell,
     // until the band fits (or only must-keep cells remain — then accept a
     // clip rather than dropping a load-bearing cell).
-    let brand_w = BRAND.width();
     let ethos_w = ETHOS.width();
     let mut kept = vec![true; items.len()];
     let mut ethos_on = true;
     loop {
+        // One leading space opens the row; every later cell is opened by the
+        // 3-column " │ " hairline that separates it from the one before.
+        let shown = (0..items.len()).filter(|&i| kept[i]).count();
         let cells_w: usize = (0..items.len())
             .filter(|&i| kept[i])
-            // 3 columns of " │ " lead every cell.
-            .map(|i| 3 + items[i].column_width())
-            .sum();
-        let need = brand_w + cells_w + if ethos_on { ethos_w } else { 0 };
+            .map(|i| items[i].column_width())
+            .sum::<usize>()
+            + if shown > 0 { 1 + (shown - 1) * 3 } else { 0 };
+        let need = cells_w + if ethos_on { ethos_w } else { 0 };
         if need <= area.width as usize {
             break;
         }
@@ -533,21 +659,20 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
         }
     }
 
-    // The label row opens with blanks the brand's width, so the first cell's
-    // label lands directly over the first cell's value.
-    let mut labels: Vec<Span<'static>> = vec![Span::raw(" ".repeat(brand_w))];
-    let mut values: Vec<Span<'static>> = vec![Span::styled(
-        BRAND,
-        theme::accent().add_modifier(Modifier::BOLD),
-    )];
+    // Both rows are built cell-by-cell with the same leader, so a label can
+    // only ever land in the same column as its own value.
+    let mut labels: Vec<Span<'static>> = Vec::new();
+    let mut values: Vec<Span<'static>> = Vec::new();
     for (i, item) in items.iter().enumerate() {
         if !kept[i] {
             continue;
         }
         let cw = item.column_width();
-        labels.push(Span::styled(" │ ", sep));
-        values.push(Span::styled(" │ ", sep));
-        labels.push(Span::styled(format!("{:<cw$}", item.label), dim));
+        let lead = if labels.is_empty() { " " } else { " │ " };
+        labels.push(Span::styled(lead, sep));
+        values.push(Span::styled(lead, sep));
+        let label_style = item.label_color.map_or(dim, |c| Style::new().fg(c));
+        labels.push(Span::styled(format!("{:<cw$}", item.label), label_style));
         // Value, right-padded into the same column width so the labels above
         // stay aligned with the values below.
         let pad = cw.saturating_sub(item.value_width());
@@ -706,7 +831,7 @@ mod tests {
         let ui = DeckUi::default();
         let items = statline_items(&model, &ui);
         for key in [
-            "agent", "stage", "cpu", "ctx", "spend", "cache", "saved", "warmth", "engine",
+            "model", "stage", "cpu", "ctx", "spend", "cache", "saved", "warmth", "engine",
             "pipeline", "inbox",
         ] {
             assert!(
@@ -730,6 +855,94 @@ mod tests {
                 item.key
             );
         }
+    }
+
+    #[test]
+    fn the_stage_box_heads_itself_with_the_live_stage_name() {
+        let model = running_model();
+        let items = statline_items(&model, &DeckUi::default());
+        let stage = items.iter().find(|i| i.key == "stage").expect("stage");
+        assert_eq!(stage.label, "EXECUTE", "the stage name IS the label");
+        assert!(
+            stage.label_color.is_some(),
+            "the live label carries the stage's own color, not the row's dim"
+        );
+        // No board on this fixture, so no step is invented.
+        assert_eq!(stage.spans[0].content.as_ref(), "—");
+    }
+
+    #[test]
+    fn the_step_counter_reads_the_board_position_not_the_done_count() {
+        use stella_protocol::{TaskItem, TaskStatus};
+        let task = |id: &str, status| TaskItem {
+            id: id.into(),
+            subject: format!("task {id}"),
+            description: None,
+            status,
+            owner: None,
+        };
+        // Working the 4th of 5 — even though only two before it are done.
+        let board = vec![
+            task("1", TaskStatus::Completed),
+            task("2", TaskStatus::Cancelled),
+            task("3", TaskStatus::Completed),
+            task("4", TaskStatus::InProgress),
+            task("5", TaskStatus::Pending),
+        ];
+        assert_eq!(step_of(&board).as_deref(), Some("Step 4 of 5"));
+
+        // Between steps: the last finished position stands in rather than
+        // blinking back to zero.
+        let idle = vec![
+            task("1", TaskStatus::Completed),
+            task("2", TaskStatus::Completed),
+            task("3", TaskStatus::Pending),
+        ];
+        assert_eq!(step_of(&idle).as_deref(), Some("Step 2 of 3"));
+
+        // No board is no step.
+        assert_eq!(step_of(&[]), None);
+    }
+
+    #[test]
+    fn the_model_cell_names_the_vendor_not_the_gateway() {
+        use crate::deck::RolePin;
+        // A gateway-proxied pin: the model string already carries its vendor,
+        // so `openrouter/` is dropped.
+        assert_eq!(
+            vendor_slug(&RolePin {
+                provider: "openrouter".into(),
+                model: "z-ai/glm-5.2".into(),
+                served: true,
+            }),
+            "z-ai/glm-5.2"
+        );
+        // A direct pin: the provider IS the vendor and stays.
+        assert_eq!(
+            vendor_slug(&RolePin {
+                provider: "anthropic".into(),
+                model: "claude-fable-5".into(),
+                served: true,
+            }),
+            "anthropic/claude-fable-5"
+        );
+        // Legacy events carry no provider.
+        assert_eq!(
+            vendor_slug(&RolePin {
+                provider: String::new(),
+                model: "glm-5.2".into(),
+                served: true,
+            }),
+            "glm-5.2"
+        );
+    }
+
+    #[test]
+    fn the_role_word_is_the_one_the_deck_says_out_loud() {
+        assert_eq!(role_word(PipelineRole::Triage), "triage");
+        assert_eq!(role_word(PipelineRole::Worker), "worker");
+        // `Judge` reads "verify" — the stage word the stepper already uses.
+        assert_eq!(role_word(PipelineRole::Judge), "verify");
     }
 
     #[test]
@@ -773,7 +986,7 @@ mod tests {
     }
 
     #[test]
-    fn only_stage_and_context_are_undroppable() {
+    fn only_the_load_bearing_cells_are_undroppable() {
         let model = running_model();
         let items = statline_items(&model, &DeckUi::default());
         let pinned: Vec<&str> = items
@@ -781,7 +994,7 @@ mod tests {
             .filter(|i| i.priority >= MUST_KEEP)
             .map(|i| i.key)
             .collect();
-        assert_eq!(pinned, vec!["stage", "ctx"]);
+        assert_eq!(pinned, vec!["model", "stage", "ctx"]);
     }
 
     #[test]
@@ -803,7 +1016,7 @@ mod tests {
                 "{card:?} must collapse to ≤4 cells, got {:?}",
                 keys(&items)
             );
-            assert_eq!(items[0].key, "agent", "the brand identity survives");
+            assert_eq!(items[0].key, "model", "the model anchor survives");
         }
     }
 

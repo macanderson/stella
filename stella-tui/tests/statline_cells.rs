@@ -10,6 +10,13 @@
 //! label and value columns stay aligned, CPU and CONTEXT lead with the `▮▯`
 //! meter, MODELS is never the row that got dropped, and `statline_items`
 //! remains the single decision function.
+//!
+//! The band opens with MODEL and the stage box. The brand glyph, the agent
+//! id and the `● execute` dot that used to lead it are gone: two of the three
+//! never changed on a single-agent session, and the third repeated the stage
+//! stepper one row up. What replaced them both move — which pin is answering
+//! (named by the model's own vendor, not the gateway that proxied it) and
+//! how far through the task board the stage has gotten.
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -64,28 +71,32 @@ fn the_band_is_a_label_row_over_a_value_row() {
     let model = running_model();
     let (labels, values, _) = statline_band(&model, 200);
 
-    // Every cell names itself on the row above.
+    // Every cell names itself on the row above. `EXECUTE` is the stage box's
+    // label — the one label that is live state rather than a constant.
     for label in [
-        "AGENT", "STAGE", "CPU", "CONTEXT", "SPEND", "CACHE", "SAVED", "WARMTH", "ENGINE",
+        "MODEL", "EXECUTE", "CPU", "CONTEXT", "SPEND", "CACHE", "SAVED", "WARMTH", "ENGINE",
         "PIPELINE",
     ] {
         assert!(labels.contains(label), "label {label:?} renders:\n{labels}");
     }
     // The values sit below, not beside, their labels. (One registered agent
     // is running, so ENGINE reads `1 active`.)
-    for value in ["lead", "● execute", "1 active"] {
+    for value in ["1 active", "0/200k"] {
         assert!(values.contains(value), "value {value:?} renders:\n{values}");
         assert!(
             !labels.contains(value),
             "value {value:?} belongs on the value row only:\n{labels}"
         );
     }
-    // The brand is pinned left on the value row, with blanks held above it.
-    assert!(values.trim_start().starts_with("✦ stella"), "{values}");
-    assert!(
-        labels.starts_with(&" ".repeat("✦ stella".chars().count())),
-        "the label row reserves the brand's width:\n{labels}"
-    );
+    // MODEL leads the band — the brand glyph, the agent id and the stage dot
+    // that used to sit here are gone.
+    assert!(labels.trim_start().starts_with("MODEL"), "{labels}");
+    for gone in ["✦ stella", "● execute", "AGENT"] {
+        assert!(
+            !labels.contains(gone) && !values.contains(gone),
+            "{gone:?} left the band:\n{labels}\n{values}"
+        );
+    }
 }
 
 #[test]
@@ -115,6 +126,99 @@ fn each_label_sits_in_the_same_column_as_its_value() {
             "a label starts right after the divider at {col}:\n{labels}"
         );
     }
+}
+
+/// A session that has served one worker call through a gateway and built a
+/// 5-task board with the 4th in progress.
+fn model_serving_a_board() -> WorkspaceModel {
+    use stella_protocol::{TaskItem, TaskStatus};
+    let mut m = running_model();
+    m.apply_inbound(&Inbound::Event {
+        agent: "lead".into(),
+        event: AgentEvent::StepUsage {
+            output_text: None,
+            step: 1,
+            role: stella_protocol::event::ModelCallRole::Worker,
+            provider: "openrouter".into(),
+            model: "z-ai/glm-5.2".into(),
+            input_tokens: 10_000,
+            output_tokens: 500,
+            cached_input_tokens: 0,
+            cache_write_tokens: 0,
+            estimated_input_tokens: 0,
+            cost_usd: 0.05,
+            duration_ms: 100,
+            retries: 0,
+            tool_calls: 0,
+            complete: true,
+            finish_reason: None,
+        },
+    });
+    let task = |id: &str, status| TaskItem {
+        id: id.into(),
+        subject: format!("task {id}"),
+        description: None,
+        status,
+        owner: None,
+    };
+    m.apply_inbound(&Inbound::Event {
+        agent: "lead".into(),
+        event: AgentEvent::TaskUpdate {
+            tasks: vec![
+                task("1", TaskStatus::Completed),
+                task("2", TaskStatus::Completed),
+                task("3", TaskStatus::Completed),
+                task("4", TaskStatus::InProgress),
+                task("5", TaskStatus::Pending),
+            ],
+        },
+    });
+    m
+}
+
+#[test]
+fn the_model_cell_names_the_serving_role_and_its_vendor() {
+    let model = model_serving_a_board();
+    let (labels, values, models) = statline_band(&model, 200);
+    assert!(labels.contains("MODEL"), "{labels}");
+    assert!(
+        values.contains("worker: z-ai/glm-5.2"),
+        "the role word and the vendor slug render:\n{values}"
+    );
+    // The gateway that proxied the call is not the model's identity, on
+    // either surface.
+    assert!(
+        !values.contains("openrouter") && !models.contains("openrouter"),
+        "the API gateway is stripped:\n{values}\n{models}"
+    );
+}
+
+#[test]
+fn the_stage_box_stacks_the_stage_name_over_the_board_position() {
+    let model = model_serving_a_board();
+    let (labels, values, _) = statline_band(&model, 200);
+    assert!(
+        labels.contains("EXECUTE"),
+        "the stage name heads its own cell:\n{labels}"
+    );
+    assert!(
+        values.contains("Step 4 of 5"),
+        "the board position sits under it:\n{values}"
+    );
+    // The step is the position being worked, not the three that are done.
+    assert!(!values.contains("Step 3 of 5"), "{values}");
+}
+
+#[test]
+fn a_session_with_no_task_board_invents_no_step() {
+    let model = running_model(); // no TaskUpdate ever folded
+    let (labels, _, _) = statline_band(&model, 200);
+    assert!(labels.contains("EXECUTE"), "the stage still names itself");
+    // `statline_items` is the honest surface: no board, no step.
+    let items = statline_items(&model, &DeckUi::default());
+    let stage = items.iter().find(|i| i.key == "stage").expect("stage");
+    let text: String = stage.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert_eq!(text, "—", "no board means no invented step");
 }
 
 #[test]
@@ -170,7 +274,7 @@ fn cells_drop_whole_by_priority_as_the_row_narrows() {
 
     // Wide: every cell renders.
     let (labels, _, _) = statline_band(&model, 200);
-    for label in ["AGENT", "CPU", "CACHE", "SAVED", "WARMTH", "PIPELINE"] {
+    for label in ["MODEL", "CPU", "CACHE", "SAVED", "WARMTH", "PIPELINE"] {
         assert!(
             labels.contains(label),
             "at 200 cols {label} renders:\n{labels}"
@@ -178,18 +282,18 @@ fn cells_drop_whole_by_priority_as_the_row_narrows() {
     }
 
     // As the row narrows, the lowest-priority cell leaves first and leaves
-    // whole. The brand survives every width.
+    // whole. MODEL is must-keep, so it survives every width.
     let mut gone_at = std::collections::HashMap::new();
     for w in (24..=200u16).rev() {
-        let (labels, values, _) = statline_band(&model, w);
+        let (labels, _, _) = statline_band(&model, w);
         for label in ["PIPELINE", "CACHE", "CPU", "SPEND"] {
             if !labels.contains(label) {
                 gone_at.entry(label).or_insert(w);
             }
         }
         assert!(
-            values.contains('✦'),
-            "the brand survives {w} cols:\n{values}"
+            labels.contains("MODEL"),
+            "the model anchor survives {w} cols:\n{labels}"
         );
     }
     let at = |label: &str| {
@@ -228,8 +332,8 @@ fn only_the_load_bearing_cells_are_must_keep() {
         .collect();
     assert_eq!(
         pinned,
-        vec!["stage", "ctx"],
-        "the stage word and the token meter are the two undroppable cells"
+        vec!["model", "stage", "ctx"],
+        "what is answering, where the run is, and how much window is left"
     );
 }
 
@@ -237,11 +341,11 @@ fn only_the_load_bearing_cells_are_must_keep() {
 fn every_card_collapses_the_band_to_its_context_cells() {
     let model = running_model();
     for (card, expect) in [
-        (Card::Tasks, vec!["agent", "stage", "turn"]),
-        (Card::Scope, vec!["agent", "stage", "ctx", "spend"]),
-        (Card::Witness, vec!["agent", "stage", "witness", "spend"]),
-        (Card::Models, vec!["agent", "stage", "ctx", "spend"]),
-        (Card::Budget, vec!["agent", "stage", "ctx", "spend"]),
+        (Card::Tasks, vec!["model", "stage", "turn"]),
+        (Card::Scope, vec!["model", "stage", "ctx", "spend"]),
+        (Card::Witness, vec!["model", "stage", "witness", "spend"]),
+        (Card::Models, vec!["model", "stage", "ctx", "spend"]),
+        (Card::Budget, vec!["model", "stage", "ctx", "spend"]),
     ] {
         let mut ui = DeckUi::default();
         ui.cards.raise(card);

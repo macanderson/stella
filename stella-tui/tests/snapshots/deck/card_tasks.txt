@@ -40,6 +40,6 @@
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
 >>>
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
-           │ AGENT │ STAGE     │ TURN
- ✦ stella  │ lead  │ ● execute │ $0.04                                                                                                    ↝ deterministic-first
+ MODEL                   │ EXECUTE     │ TURN
+ worker: zai/glm-5.2-air │ Step 6 of 7 │ $0.04                                                                                            ↝ deterministic-first
  MODELS  T·—  W·zai/glm-5.2-air  J·—
