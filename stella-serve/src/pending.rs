@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use stella_pipeline::ports::ScopeDecision;
 use stella_protocol::{CompletionResult, ProviderError, ToolOutput};
 use tokio::sync::{mpsc, oneshot};
 
@@ -45,6 +46,12 @@ enum PendingReply {
         /// is how the step learns the fragment stream is over.
         deltas: ProviderDeltaFeed,
     },
+    /// A pipeline-driven turn's scope-review gate, parked on the host's
+    /// decision (#1288). Same shape as `Tool`, kept as its own variant rather
+    /// than reusing it: a scope review answers with a typed `ScopeDecision`,
+    /// not a `ToolOutput`, and the kind-mismatch check below is what keeps a
+    /// host from resolving one as the other.
+    ScopeReview(oneshot::Sender<ScopeDecision>),
 }
 
 /// A cloneable handle to the shared registry. Cloning shares the same map.
@@ -106,6 +113,23 @@ impl Pending {
         true
     }
 
+    /// Register a scope-review reply channel under `id`. Same contract as
+    /// [`Pending::register_tool`], for the one pipeline decision a served
+    /// turn asks a human rather than a model or a tool (#1288).
+    #[must_use]
+    pub(crate) fn register_scope_review(
+        &self,
+        id: String,
+        reply: oneshot::Sender<ScopeDecision>,
+    ) -> bool {
+        let mut map = self.lock();
+        if self.is_cancelled() {
+            return false;
+        }
+        map.insert(id, PendingReply::ScopeReview(reply));
+        true
+    }
+
     /// Register a provider reply channel under `id`, together with the feed
     /// any streamed fragments for that request are delivered on. Same
     /// contract — and the same locked cancellation check — as
@@ -131,6 +155,15 @@ impl Pending {
         // A receive-side drop (the engine step was cancelled) is not an error to
         // the host: the request is simply gone.
         let _ = self.report_misroute(id, self.take_tool(id))?.send(output);
+        Ok(())
+    }
+
+    /// Resolve a pipeline turn's scope-review gate with the host's decision.
+    /// Errors if `id` is unknown or names a tool/provider request (#1288).
+    pub fn resolve_scope_review(&self, id: &str, decision: ScopeDecision) -> Result<(), ServeError> {
+        let _ = self
+            .report_misroute(id, self.take_scope_review(id))?
+            .send(decision);
         Ok(())
     }
 
@@ -171,7 +204,7 @@ impl Pending {
                     }
                     Ok(())
                 }
-                Some(PendingReply::Tool(_)) => {
+                Some(PendingReply::Tool(_) | PendingReply::ScopeReview(_)) => {
                     Err(ServeError::RequestKindMismatch(id.to_string(), "provider"))
                 }
                 None => Err(ServeError::UnknownRequest(id.to_string())),
@@ -289,6 +322,20 @@ impl Pending {
             Some(other) => {
                 map.insert(id.to_string(), other);
                 Err(ServeError::RequestKindMismatch(id.to_string(), "tool"))
+            }
+            None => Err(ServeError::UnknownRequest(id.to_string())),
+        }
+    }
+
+    /// Take the scope-review reply channel registered under `id`. Same
+    /// single-lock discipline as [`Pending::take_tool`].
+    fn take_scope_review(&self, id: &str) -> Result<oneshot::Sender<ScopeDecision>, ServeError> {
+        let mut map = self.lock();
+        match map.remove(id) {
+            Some(PendingReply::ScopeReview(tx)) => Ok(tx),
+            Some(other) => {
+                map.insert(id.to_string(), other);
+                Err(ServeError::RequestKindMismatch(id.to_string(), "scope_review"))
             }
             None => Err(ServeError::UnknownRequest(id.to_string())),
         }
@@ -584,6 +631,39 @@ mod tests {
                 MisrouteFault::KindMismatch,
                 MisrouteFault::UnknownRequest,
             ],
+        );
+    }
+
+    /// A pipeline turn's scope review registers and resolves exactly like a
+    /// tool request — same round trip, different reply type (#1288) — and a
+    /// host that answers it with the wrong kind gets the same `KindMismatch`
+    /// a tool/provider mix-up gets.
+    #[test]
+    fn a_scope_review_registers_and_resolves_like_any_other_reverse_request() {
+        let pending = test_pending();
+        let (tx, rx) = oneshot::channel();
+        assert!(pending.register_scope_review("scope-0".to_string(), tx));
+
+        pending
+            .resolve_scope_review("scope-0", ScopeDecision::Approve)
+            .expect("a registered scope review resolves");
+        assert_eq!(rx.blocking_recv(), Ok(ScopeDecision::Approve));
+
+        // Resolving again finds nothing — the entry was taken, not merely read.
+        assert!(
+            pending
+                .resolve_scope_review("scope-0", ScopeDecision::Abort)
+                .is_err()
+        );
+
+        // Answering a tool request as a scope review (or vice versa) is a
+        // kind mismatch, not a silent success.
+        let (tool_tx, _tool_rx) = oneshot::channel();
+        assert!(pending.register_tool("tool-0".to_string(), tool_tx));
+        assert!(
+            pending
+                .resolve_scope_review("tool-0", ScopeDecision::Abort)
+                .is_err()
         );
     }
 }

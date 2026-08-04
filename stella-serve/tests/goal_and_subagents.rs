@@ -73,6 +73,7 @@ fn base_spec(prompt: &str) -> SessionSpec {
         on_settled: None,
         checkpoint: None,
         goal: None,
+        pipeline: None,
         sub_agents: None,
         // No operator hooks and no calibration map: these scenarios are about
         // the goal loop and delegation, and an empty extension list is the
@@ -165,6 +166,10 @@ async fn a_goal_run_is_requestable_over_the_wire_and_streams_its_rounds() {
             }
             ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
             ServerFrame::TurnHeld { .. } | ServerFrame::TurnReleased => {}
+            // These scenarios drive goal/sub-agent turns, not the pipeline.
+            ServerFrame::ScopeReviewRequest { .. } => {
+                panic!("a goal/sub-agent turn must not raise a scope review")
+            }
         }
     }
 

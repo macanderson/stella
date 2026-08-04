@@ -31,6 +31,10 @@ stella-core = { path = "../stella-core" }
 # rather than `Engine::run_turn` so a turn can be cancelled at a step
 # boundary and checkpointed between steps (#1129).
 stella-engine = { path = "../stella-engine" }
+# The verification pipeline (#1288): `pipeline` on `POST /v1/turns` drives a
+# turn through `stella_pipeline::Pipeline::run` instead of a bare engine step
+# loop, over the same remoted ports every other turn uses.
+stella-pipeline = { path = "../stella-pipeline" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
