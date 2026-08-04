@@ -46,6 +46,12 @@
 //! tree-state channel still reports them; this channel declines to call them
 //! authorship.
 //!
+//! They are also **budgeted** separately, for the same reason and against the
+//! same failure: every ceiling here — lines, retained paths, rendered markers
+//! — reserves headroom that no volume of observation can spend. A bound shared
+//! with the probe is a bound the probe wins, and the turn that floods it is
+//! exactly the turn whose three-line fix most needs describing.
+//!
 //! # Cumulative, like the tool it replaces
 //!
 //! Entries fold by path and hold the **first** pre-image against the **latest**
@@ -76,6 +82,27 @@ const MARKER_PREFIX: &str = "+ untracked change: ";
 /// declares writes to more than 512 distinct paths in one session is not doing
 /// the thing this channel exists to describe.
 const MAX_TRACKED_PATHS: usize = 512;
+
+/// Of [`MAX_TRACKED_PATHS`], the most that may be held for
+/// [`Provenance::Observed`] paths. The remainder is reserved for authorship,
+/// which is the only thing this channel exists to report.
+///
+/// Without the split the path budget is first-come, and opaque calls come
+/// first. [`crate::shell_touch`] walks up to 20,000 entries and descends into
+/// `target/` on purpose, so one `cargo build` spends every slot on `.rmeta`
+/// files nobody authored; the ~1,200-file extraction in the module docs above
+/// does the same thing twice over. The agent's actual three-line fix then
+/// arrives at slot 513 and becomes a `dropped` counter — the ledger reports
+/// *that* it stopped tracking, but the diff it exists to hand the judge is
+/// gone, on precisely the turns it was built to survive.
+///
+/// So the rule [`AuthoredDiff::lines`] already states for the line budget — a
+/// tarball must not be able to spend it — governs the budget that decides
+/// whether a change is retained at all. Set well above
+/// [`MAX_OBSERVED_MARKERS`] so the bound never starves the marker set it
+/// feeds, and low enough that declared writes keep a floor of
+/// `MAX_TRACKED_PATHS - MAX_TRACKED_OBSERVED` paths no observation can touch.
+const MAX_TRACKED_OBSERVED: usize = 128;
 
 /// Largest pre/post image held for one path. Matches
 /// [`crate::shell_touch`]'s per-file content ceiling so the two channels agree
@@ -184,6 +211,15 @@ impl AuthoredDiff {
 #[derive(Debug, Clone, Default)]
 pub struct AuthoredDiffLedger {
     entries: BTreeMap<String, Entry>,
+    /// Retained entries whose provenance is still [`Provenance::Observed`].
+    /// Carried as a counter rather than recounted per call: `record` runs on
+    /// every write in the session and needs this on every insert.
+    observed: usize,
+    /// Observed paths refused for [`MAX_TRACKED_OBSERVED`]. Counted even
+    /// though they are not held — declining to retain a path is not the same
+    /// as failing to notice it, and [`AuthoredDiff::observed_files`] promises
+    /// the count regardless of whether a marker was rendered.
+    observed_dropped: usize,
     /// Paths dropped for exceeding [`MAX_TRACKED_PATHS`]. Reported, never
     /// hidden — a bound that goes unmentioned reads as a complete answer.
     dropped: usize,
@@ -220,14 +256,28 @@ impl AuthoredDiffLedger {
             // later observes it again: the probe re-reports every declared
             // write it can see, and letting that downgrade the provenance
             // would erase authorship from exactly the files that have it.
-            if provenance == Provenance::Declared {
+            if provenance == Provenance::Declared && entry.provenance == Provenance::Observed {
                 entry.provenance = Provenance::Declared;
+                // It has moved off the observed budget onto the declared one.
+                // Reachable at most once per path — the guard above is false
+                // ever after — so the counter cannot drift or underflow.
+                self.observed -= 1;
             }
+            return;
+        }
+        // Observations are bounded first and separately, so a burst of them
+        // cannot spend the slots authorship needs. This ceiling is reached on
+        // any turn that builds, which is why it cannot be the shared one.
+        if provenance == Provenance::Observed && self.observed >= MAX_TRACKED_OBSERVED {
+            self.observed_dropped += 1;
             return;
         }
         if self.entries.len() >= MAX_TRACKED_PATHS {
             self.dropped += 1;
             return;
+        }
+        if provenance == Provenance::Observed {
+            self.observed += 1;
         }
         self.entries.insert(
             path.to_string(),
@@ -258,7 +308,11 @@ impl AuthoredDiffLedger {
         let mut lines_added = 0u64;
         let mut lines_removed = 0u64;
         let mut observed_rendered = 0usize;
-        let mut observed_elided = 0usize;
+        // Paths refused by [`MAX_TRACKED_OBSERVED`] were never held, so the
+        // loop below cannot see them. They are unlisted for the same reason as
+        // the ones it elides, and are reported in the same sentence: a reader
+        // counting "listed plus unlisted" must arrive at every path observed.
+        let mut observed_elided = self.observed_dropped;
         let mut truncated = 0usize;
 
         for (path, entry) in &self.entries {
@@ -311,6 +365,10 @@ impl AuthoredDiffLedger {
             };
             text.push_str(&format!("--- {left}\n+++ {right}\n{hunk}"));
         }
+
+        // Retention is bounded; noticing is not. A path refused for the
+        // observed ceiling still changed, and still counts as one.
+        out.observed_files += self.observed_dropped;
 
         // Every bound this render hit, stated. A truncated diff that does not
         // say it was truncated is read as a complete one, and a judge acting on
@@ -585,6 +643,133 @@ mod tests {
         assert!(
             out.text.contains("further path(s) not tracked"),
             "the bound is stated: {}",
+            out.text
+        );
+    }
+
+    /// The failure the path budget used to have: opaque calls fill the ledger,
+    /// and the write the agent actually declared arrives after them.
+    ///
+    /// This is not a contrived ordering. The probe descends into `target/`, so
+    /// a turn that builds before it edits produces exactly this — thousands of
+    /// observed artifacts, then the fix. The fix is the whole product of this
+    /// channel and must survive any volume of things nobody authored.
+    #[test]
+    fn an_observed_flood_cannot_crowd_out_a_later_declared_write() {
+        let mut led = ledger();
+        for i in 0..(MAX_TRACKED_PATHS * 4) {
+            led.record(
+                &format!("target/debug/deps/dep{i:05}.rmeta"),
+                FileOp::Create,
+                Provenance::Observed,
+                "",
+                "binary\n",
+            );
+        }
+        led.record(
+            "src/fix.rs",
+            FileOp::Create,
+            Provenance::Declared,
+            "",
+            "let fixed = true;\n",
+        );
+        let out = led.render();
+        assert_eq!(
+            out.declared_files, 1,
+            "the fix survived the flood: {}",
+            out.text
+        );
+        assert!(
+            out.text.contains("+let fixed = true;"),
+            "with its content, not as a counter: {}",
+            out.text
+        );
+        assert_eq!(out.lines, 1, "and only the fix spent the line budget");
+    }
+
+    /// Retaining fewer observed paths must not mean knowing about fewer. Every
+    /// one is still counted and still accounted for in the render.
+    #[test]
+    fn observed_paths_past_their_ceiling_are_still_counted() {
+        let mut led = ledger();
+        let total = MAX_TRACKED_OBSERVED + 200;
+        for i in 0..total {
+            led.record(
+                &format!("vendor/f{i:05}.c"),
+                FileOp::Create,
+                Provenance::Observed,
+                "",
+                "x\n",
+            );
+        }
+        let out = led.render();
+        assert_eq!(
+            out.observed_files, total,
+            "every one is counted: {}",
+            out.text
+        );
+        let markers = out
+            .text
+            .lines()
+            .filter(|l| l.starts_with(MARKER_PREFIX))
+            .count();
+        assert_eq!(markers, MAX_OBSERVED_MARKERS);
+        assert!(
+            out.text.contains(&format!(
+                "{} further path(s) changed by opaque calls",
+                total - MAX_OBSERVED_MARKERS
+            )),
+            "listed plus unlisted accounts for all of them: {}",
+            out.text
+        );
+    }
+
+    /// A path the probe observed and a CRUD tool then declares moves off the
+    /// observed budget onto the declared one. Without the hand-back, a session
+    /// that edits what it built leaks observed slots it no longer occupies.
+    #[test]
+    fn a_declared_upgrade_hands_back_its_observed_slot() {
+        let mut led = ledger();
+        for i in 0..MAX_TRACKED_OBSERVED {
+            led.record(
+                &format!("built/f{i:05}.o"),
+                FileOp::Create,
+                Provenance::Observed,
+                "",
+                "x\n",
+            );
+        }
+        // Full: the next observed path is counted but not held.
+        led.record(
+            "built/extra.o",
+            FileOp::Create,
+            Provenance::Observed,
+            "",
+            "x\n",
+        );
+        assert!(
+            !led.render().text.contains("built/extra.o"),
+            "refused while the observed budget is full"
+        );
+        // Declaring one of the held paths returns its slot to the budget.
+        led.record(
+            "built/f00000.o",
+            FileOp::Update,
+            Provenance::Declared,
+            "x\n",
+            "y\n",
+        );
+        led.record(
+            "built/extra.o",
+            FileOp::Create,
+            Provenance::Observed,
+            "",
+            "x\n",
+        );
+        let out = led.render();
+        assert!(
+            out.text.contains("+ untracked change: built/extra.o"),
+            "the freed slot took the next observed path: {}",
             out.text
         );
     }
