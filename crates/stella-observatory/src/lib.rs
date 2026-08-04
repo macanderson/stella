@@ -557,3 +557,6 @@ async fn respond_to_head(
 #[cfg(test)]
 #[path = "lib_tests.rs"]
 mod lib_tests;
+
+#[cfg(test)]
+mod test_env;

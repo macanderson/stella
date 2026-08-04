@@ -703,15 +703,13 @@ fn memories_rules_and_reflections_come_from_disk_and_db() {
     assert_eq!(ratings[0]["what_to_improve"], "read the failing test first");
 }
 
-/// Serializes the tests that mutate `STELLA_DATA_DIR` — it is process-wide,
-/// so one test's `set_var` racing another's `respond` (which reads it via
-/// `usage_db_path`) would flake. Poison-tolerant: a panicking holder must
-/// not cascade into unrelated failures.
-static DATA_DIR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 #[test]
 fn project_param_drills_into_another_registered_workspace() {
-    let _env = DATA_DIR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // `crate::test_env::lock` rather than a mutex private to this file: the
+    // hazard is the shared process environment, and fsview.rs mutates it too
+    // (#1137). A second private lock would serialize nothing against that one.
+    let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&["STELLA_DATA_DIR"]);
     // Two workspaces: `home` is empty, `other` is seeded. A usage.db in a
     // private STELLA_DATA_DIR registers `other`; ?project= must re-point
     // the request at it, and unknown ids must fall back to `home`.
@@ -741,13 +739,13 @@ fn project_param_drills_into_another_registered_workspace() {
             other.path().display()
         ))
         .unwrap();
-    // SAFETY: env mutation in tests — this is the only test that sets
-    // STELLA_DATA_DIR, and every assertion runs before it's removed.
+    // SAFETY: the env lock is held for the whole test, and `_restore` undoes
+    // this on drop — including if one of the `respond` calls below panics,
+    // which would otherwise leak a path into a TempDir about to be deleted.
     unsafe { std::env::set_var("STELLA_DATA_DIR", data.path()) };
     let drilled = respond(home.path(), "/api/overview?project=feedbeef00000001");
     let unknown = respond(home.path(), "/api/overview?project=doesnotexist");
     let listed = respond(home.path(), "/api/projects");
-    unsafe { std::env::remove_var("STELLA_DATA_DIR") };
     let v: serde_json::Value = serde_json::from_slice(&drilled.body).unwrap();
     assert_eq!(v["runs"], 2, "?project= reads the other workspace");
     let v: serde_json::Value = serde_json::from_slice(&unknown.body).unwrap();
@@ -760,11 +758,14 @@ fn project_param_drills_into_another_registered_workspace() {
 
 #[test]
 fn hub_telemetry_aggregates_scope_and_drills_to_project() {
-    let _env = DATA_DIR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&["STELLA_DATA_DIR"]);
     let home = TempDir::new().unwrap();
 
     // A hub dir with no usage.db is an empty state, never an error.
     let empty = TempDir::new().unwrap();
+    // SAFETY: the env lock is held for the whole test, and `_restore` undoes
+    // this on drop — including if the fixture `unwrap`s below panic first.
     unsafe { std::env::set_var("STELLA_DATA_DIR", empty.path()) };
     let none = respond(home.path(), "/api/hub-telemetry");
 
@@ -819,7 +820,6 @@ fn hub_telemetry_aggregates_scope_and_drills_to_project() {
         home.path(),
         "/api/hub-telemetry?org=acme&workspace=ws1&repo=r1",
     );
-    unsafe { std::env::remove_var("STELLA_DATA_DIR") };
 
     // Empty hub: available:false, zeroed, 200 OK.
     assert_eq!(none.status, "200 OK");
