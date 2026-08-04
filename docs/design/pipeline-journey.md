@@ -289,6 +289,20 @@ a judge "done" **standing alone** — no flip, no green test behind it — is
 scored *unverified* rather than passed (`judge_pass_stands_alone`). The judge
 never overrides a deterministic failure.
 
+Before recording that unverified pass, the pipeline asks for the missing
+evidence once (`judge_evidence_demand`, #1295): one revision turn telling the
+worker to make the tracked command observe its change. The ask is raised **only
+where a tracked command exists**, and that precondition is what makes it
+affordable — the two facts that would clear `judge_pass_stands_alone` are both
+observations of that command, so with none resolved no worker could satisfy the
+ask on any turn. That is exactly what the feature's first measurement ran into:
+on Terminal-Bench, with no `--test-command` and the authored-witness rung unable
+to fire under a single-model posture, the condition held on nearly every turn
+and the extra turn bought nothing on all of them. Capped at one ask per
+candidate and drawn from the same `max_revisions` budget a real failure spends.
+The measurement that switched it back on is in
+`bench/evidence/judge-evidence-demand-1295/`.
+
 ## 11. Revise: bounded retries with escalating candor
 
 A `Revise` decision (or a judge `FAIL`) sends the evidence back into a fresh
@@ -367,7 +381,8 @@ instead of a degradation, for callers whose published posture claims one.
 ceilings, scope thresholds, headless behavior, `test_command`,
 `witness_writer`, `keep_witness`, `distress_guidance`, `diff_budget_lines`
 (400), `diagnostics_veto_warnings`, `max_revisions` (2),
-`require_independent_witness`, `candidates`, and `create_worktrees`. The
+`judge_evidence_demand`, `require_independent_witness`, `candidates`, and
+`create_worktrees`. The
 verification half's design history and remaining work are tracked in
 [`ROADMAP.md`](../ROADMAP.md); every decision and its spend is pinned by the
 per-PR degradation gate (`stella-pipeline/src/pipeline/tests/degradation_gate.rs`,

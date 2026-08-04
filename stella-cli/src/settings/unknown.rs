@@ -89,12 +89,14 @@ pub(crate) const ENGINE_ROOT_FIELDS: &[&str] = &[
     "pipeline_worker_model",
     "pipeline_triage_model",
     "allowed_models",
+    "model_output_caps",
     "auto_mode",
     "effort_auto",
     "reasoning_auto",
     "headless_scope_bypass",
     "pipeline_max_revisions",
     "pipeline_candidates",
+    "pipeline_judge_evidence_demand",
     "model_timeout_secs",
     "compaction_budget_tokens",
     "tool_result_horizon_steps",
@@ -172,7 +174,7 @@ const TOML_ROOT_FIELDS: &[&str] = &[
 
 const META_FIELDS: &[&str] = &["schema_version", "scope"];
 const RUN_FIELDS: &[&str] = &["recap", "trace_capture", "create_worktrees"];
-const MODELS_FIELDS: &[&str] = &["allowed"];
+const MODELS_FIELDS: &[&str] = &["allowed", "output_caps"];
 const TOML_MCP_FIELDS: &[&str] = &["registry_url", "servers"];
 
 /// `[agents]` — the flat engine fields plus the four agent tables, which live
@@ -189,6 +191,7 @@ const TOML_AGENTS_FIELDS: &[&str] = &[
     "headless_scope_bypass",
     "pipeline_max_revisions",
     "pipeline_candidates",
+    "pipeline_judge_evidence_demand",
     "default",
     "worker",
     "judge",

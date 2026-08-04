@@ -36,8 +36,16 @@ from stella_harbor import (  # noqa: E402 - after importorskip by design
     _benchmark_engine_posture,
     _stream_to_envelope,
     resolve_candidates,
+    resolve_judge_evidence_demand,
     resolve_max_revisions,
     resolve_model_timeout,
+)
+
+# Imported from the module rather than the package: these two are internals of
+# the posture's ceiling policy, not part of what the adapter re-exports.
+from stella_harbor.posture import (  # noqa: E402 - after importorskip by design
+    _BENCHMARKED_SLUGS,
+    _SUB_CEILING_RATIONALE,
 )
 
 
@@ -389,6 +397,7 @@ class TestAttemptCountArms:
             triage_model="openrouter/anthropic/claude-haiku-4.5",
             max_revisions=4,
             candidates=2,
+            judge_evidence_demand=True,
             model_timeout_secs=1572,
         )
         allowed_roots = {
@@ -403,6 +412,7 @@ class TestAttemptCountArms:
             "headless_scope_bypass",
             "pipeline_max_revisions",
             "pipeline_candidates",
+            "pipeline_judge_evidence_demand",
             "model_timeout_secs",
             "agents",
         }
@@ -440,6 +450,38 @@ class TestAttemptCountArms:
             resolve_max_revisions("40")
         with pytest.raises(ValueError, match="candidates must be between"):
             resolve_candidates("20")
+
+    def test_the_corroboration_ask_is_a_selectable_arm(self) -> None:
+        """#1295, the same omit-when-unset rule the attempt counts follow.
+
+        The vocabulary is the setting's own (`on`/`off`), plus `1`/`0` for a
+        shell with an integer to hand. A bare `true` is refused rather than
+        guessed at: the CLI parses this key as a `Toggle`, so a JSON bool would
+        be a run that dies at launch wearing a posture that claims it ran.
+        """
+        assert resolve_judge_evidence_demand(None) is None
+        assert resolve_judge_evidence_demand("on") is True
+        assert resolve_judge_evidence_demand(" OFF ") is False
+        assert resolve_judge_evidence_demand("1") is True
+        assert resolve_judge_evidence_demand("0") is False
+        for lost in ("", "   ", "true", "yes"):
+            with pytest.raises(ValueError, match="must be one of on/off"):
+                resolve_judge_evidence_demand(lost)
+
+        unset, _unset_json, unset_digest = _benchmark_engine_posture(self._MODEL)
+        assert "pipeline_judge_evidence_demand" not in unset
+        on, _on_json, on_digest = _benchmark_engine_posture(
+            self._MODEL, judge_evidence_demand=True
+        )
+        off, _off_json, off_digest = _benchmark_engine_posture(
+            self._MODEL, judge_evidence_demand=False
+        )
+        assert on["pipeline_judge_evidence_demand"] == "on"
+        assert off["pipeline_judge_evidence_demand"] == "off"
+        # Three distinct digests: the two arms cannot be confused with each
+        # other, and neither can be confused with the historical posture that
+        # never mentioned the key.
+        assert len({unset_digest, on_digest, off_digest}) == 3
 
 
 class TestModelTimeoutArm:
@@ -1157,8 +1199,47 @@ class TestOutputCeilingParity:
         assert _CATALOG_RS.is_file(), f"{_CATALOG_RS} is missing"
         assert _seeded_output_ceilings(), "no seeded ceiling was parsed"
 
-    def test_posture_caps_every_seeded_model_at_its_own_ceiling(self) -> None:
+    def test_every_bookable_model_has_a_seeded_ceiling(self) -> None:
+        """An arm can only book a model the catalog has a ceiling for.
+
+        Without this, the check below passes vacuously for any model whose
+        seed row lost its ceiling: `_parse_output_ceilings` omits rows with no
+        `with_max_output_tokens`, so the model silently drops out of the
+        parity loop and inherits the engine's global 16384 — the exact
+        failure the loop exists to catch, hidden by the loop's own filter.
+        """
+        seeded = _seeded_output_ceilings()
+        by_slug = {model.rsplit("/", 1)[-1] for model in seeded}
+        missing = sorted(_BENCHMARKED_SLUGS - by_slug)
+        assert not missing, (
+            f"these models can be booked by an arm but carry no seeded "
+            f"ceiling: {missing}. They would run at the engine default "
+            f"(16384) instead of their own budget."
+        )
+
+    def test_posture_caps_every_bookable_model_at_its_own_ceiling(self) -> None:
+        """The cap matches the model's ceiling, or the gap is declared.
+
+        Two distinct failures live here and only one of them is a bug:
+
+        - Capping ABOVE the ceiling is always wrong. It is not a longer
+          answer, it is a request the provider rejects.
+        - Capping BELOW the ceiling is sometimes right — matching a
+          comparator that stops lower is the point of a head-to-head — but it
+          must be a decision someone recorded, not a literal that drifted out
+          of step with the catalog and still looks deliberate.
+
+        So a gap is legal exactly when `_SUB_CEILING_RATIONALE` explains it.
+        That is what turns "both numbers look intentional" from the hazard
+        this class was written about into a property the suite can check.
+        """
+        checked = 0
         for model, ceiling in _seeded_output_ceilings().items():
+            slug = model.rsplit("/", 1)[-1]
+            if slug not in _BENCHMARKED_SLUGS:
+                # Not bookable, so it has no posture to be wrong about; see
+                # `_BENCHMARKED_SLUGS` for why the scope is deliberate.
+                continue
             posture, _, _ = _benchmark_engine_posture(model)
             for role, agent in posture["agents"].items():
                 params = agent.get("params")
@@ -1167,10 +1248,22 @@ class TestOutputCeilingParity:
                     # a three-line classification, so the cap never binds.
                     assert role == "triage", f"{role} unexpectedly has no cap"
                     continue
-                assert params["max_tokens"] == ceiling, (
-                    f"{model} role {role}: the posture caps at "
-                    f"{params['max_tokens']} but the catalog seeds the model's "
-                    f"ceiling at {ceiling}. Whichever moved, the benchmark is "
-                    "now capping itself away from the comparator — raise the "
-                    "posture, or correct the catalog."
+                cap = params["max_tokens"]
+                checked += 1
+                assert cap <= ceiling, (
+                    f"{model} role {role}: the posture asks for {cap} but the "
+                    f"model's ceiling is {ceiling}. Over-asking is refused by "
+                    "the provider on every step, not answered at length."
                 )
+                if cap == ceiling:
+                    continue
+                assert _SUB_CEILING_RATIONALE.get(slug, "").strip(), (
+                    f"{model} role {role}: the posture caps at {cap} while the "
+                    f"catalog seeds the model's ceiling at {ceiling}, and "
+                    "nothing says why. If the benchmark should stop lower "
+                    "than the model can write, record the reason in "
+                    "`_SUB_CEILING_RATIONALE`; if it should not, raise the "
+                    "posture. An undeclared gap is the benchmark capping "
+                    "itself away from the comparator by accident."
+                )
+        assert checked, "no bookable model was checked — the loop is inert"
