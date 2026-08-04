@@ -474,6 +474,56 @@ fn xai_reasoning_effort(
     }
 }
 
+/// Map the engine's `ReasoningEffort` to Z.ai's chat-completions
+/// `reasoning_effort`. GLM accepts `minimal`/`low`/`medium`/`high`.
+///
+/// **`minimal` is deliberately unreachable from an effort tier.** Measured live
+/// against `glm-5.2` on the coding-plan endpoint (2026-08-04) it returns
+/// `reasoning_tokens: 0` — it is an OFF switch wearing a tier's name, not a
+/// cheap-but-still-thinking rung. Mapping `Low` there would silently stop a
+/// caller who asked for shallow thinking from thinking at all; turning
+/// reasoning off is the `thinking` object's job, and only when the caller says
+/// so. Same collapse posture as [`map_xai_effort`]: `xhigh`/`max` fold into the
+/// ceiling GLM models rather than inventing a rung it does not have.
+fn map_zai_effort(effort: ReasoningEffort) -> &'static str {
+    match effort {
+        ReasoningEffort::Low => "low",
+        ReasoningEffort::Medium => "medium",
+        ReasoningEffort::High | ReasoningEffort::Xhigh | ReasoningEffort::Max => "high",
+    }
+}
+
+/// Build Z.ai's `reasoning_effort` from the request's reasoning/effort pair.
+///
+/// Z.ai is the one identity here that already has a *separate* on/off switch —
+/// the `thinking` object — so this field carries depth only, and the two cases
+/// where the caller expressed no depth preference must stay off the wire:
+///
+/// * an explicit off (`reasoning == Some(false)`) suppresses it, because
+///   `thinking: {"type": "disabled"}` has already said so and a second,
+///   differently-spelled off is a contradiction waiting to be resolved by
+///   whichever field the server reads last;
+/// * a bare `Some(true)` with no effort stays absent — unlike xAI, `thinking`
+///   already turned reasoning on, so inventing `medium` here would *change*
+///   what every existing z.ai caller sends, silently re-pinning models that
+///   were deliberately left at their own default depth.
+///
+/// Only a pinned effort puts the field on the wire. That is precisely the case
+/// that was being dropped: before this, `effort` was accepted, hashed into the
+/// published posture, and then never transmitted on the direct z.ai route — so
+/// a benchmark arm pinned to `medium` ran at GLM's own (deeper) default and
+/// spent ~2x the tokens of an OpenRouter arm nominally configured the same way.
+fn zai_reasoning_effort(
+    reasoning: Option<bool>,
+    effort: Option<ReasoningEffort>,
+) -> Option<&'static str> {
+    match (reasoning, effort) {
+        (Some(false), _) => None,
+        (_, Some(effort)) => Some(map_zai_effort(effort)),
+        (Some(true) | None, None) => None,
+    }
+}
+
 #[derive(Serialize)]
 struct ZaiUsageInclude {
     include: bool,
@@ -1105,16 +1155,30 @@ impl ZaiProvider {
             reasoning: (self.id == "openrouter" && !force_default_reasoning)
                 .then(|| openrouter_reasoning(req.reasoning, req.effort))
                 .flatten(),
-            // xAI's Grok reasoning models speak a top-level `reasoning_effort`
-            // (OpenAI-compatible), which the shared adapter used to drop
-            // silently for the xai identity. Gated exactly like `reasoning` is
-            // to openrouter: only the xai identity sends it, so no other
-            // OpenAI-compatible server sees a key it might reject — and, within
-            // xai, only for models that accept the param (the original grok-4
-            // 400s on it; see [`xai_supports_reasoning_effort`]).
-            reasoning_effort: (self.id == "xai" && xai_supports_reasoning_effort(&self.model))
-                .then(|| xai_reasoning_effort(req.reasoning, req.effort))
-                .flatten(),
+            // Two identities speak the top-level `reasoning_effort`, for
+            // different reasons, so they map through different tables:
+            //
+            // * xAI's Grok reasoning models take it as their ONLY reasoning
+            //   control, and only some of them accept it (the original grok-4
+            //   400s; see [`xai_supports_reasoning_effort`]).
+            // * Z.ai takes it as a *depth* control alongside the `thinking`
+            //   on/off object above. Verified live against `glm-5.2`
+            //   (2026-08-04): the field is honoured, not ignored — `minimal`
+            //   drives `reasoning_tokens` to 0. Without it the effort tier was
+            //   accepted, hashed into the published posture, and then dropped
+            //   on the floor, so a run pinned to `medium` silently reasoned at
+            //   GLM's own default depth. See [`zai_reasoning_effort`].
+            //
+            // Every other identity behind this shared adapter still sends
+            // nothing, so no server the user never opted into experimenting
+            // with sees a key it might reject.
+            reasoning_effort: match self.id.as_str() {
+                "xai" if xai_supports_reasoning_effort(&self.model) => {
+                    xai_reasoning_effort(req.reasoning, req.effort)
+                }
+                "zai" => zai_reasoning_effort(req.reasoning, req.effort),
+                _ => None,
+            },
             tools: to_zai_tools(req.tools),
             usage: self
                 .usage_accounting

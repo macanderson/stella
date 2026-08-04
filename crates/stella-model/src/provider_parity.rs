@@ -250,10 +250,13 @@ pub static REASONING_POSTURE: &[(&str, ReasoningPosture)] = &[
     (
         "zai",
         ReasoningPosture::Controllable {
-            mechanism: "GLM thinking object ({type: enabled|disabled}) — an on/off switch, so \
-                        `reasoning` is honored but `effort` has no dial (effort_levels returns \
-                        empty for zai)",
-            witness: "zai_identity_maps_reasoning_to_glm_thinking_object",
+            mechanism: "GLM thinking object ({type: enabled|disabled}) for on/off, PLUS the \
+                        top-level reasoning_effort (low/medium/high) for depth — verified \
+                        accepted and honored by glm-5.2 on 2026-08-04. `minimal` is reachable \
+                        only via the off switch, never from an effort tier: it returns zero \
+                        reasoning tokens. A caller who pins no effort still sends no field, so \
+                        the model keeps its own default depth",
+            witness: "zai_identity_maps_pinned_effort_to_reasoning_effort",
         },
     ),
     (
