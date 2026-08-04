@@ -22,7 +22,7 @@
 1515 stella-cli/src/fleet_cmd.rs
 1526 stella-cli/src/memory/tests.rs
 2129 stella-core/src/bus.rs
-2767 stella-core/src/driver.rs
+2764 stella-core/src/driver.rs
 3661 stella-core/src/driver/tests.rs
 1677 stella-model/src/anthropic/tests.rs
 2072 stella-model/src/openai.rs
