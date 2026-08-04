@@ -19,8 +19,9 @@
 
 use crate::ansi::strip_ansi;
 use stella_protocol::{
-    AgentEvent, BudgetMode, CiStatus, FileChangeKind, MediaJobState, MediaKind, PrStatus,
-    ScopeProposal, StageKind, SubAgentPhase, SubAgentStatus, TaskItem, TaskStatus, ToolOutput,
+    AgentEvent, BudgetMode, CiStatus, FileChangeKind, HunkProposal, MediaJobState, MediaKind,
+    PrStatus, ScopeProposal, StageKind, SubAgentPhase, SubAgentStatus, TaskItem, TaskStatus,
+    ToolOutput,
 };
 
 use std::collections::VecDeque;
@@ -110,6 +111,17 @@ pub struct SessionModel {
     /// ordinary `ToolResult` (matched by `id`), so a `ToolResult` with the
     /// question's `call_id` clears it (also cleared on `Complete`/`Error`).
     pub pending_ask_user: Option<AskUserPrompt>,
+    /// A per-hunk approval gate awaiting the user's decision (#1265). Set by a
+    /// `HunkReview` event; cleared purely by events — the host echoes a
+    /// `ToolResult` carrying the proposal's `id` once the decision is in, the
+    /// same event-pure clear `pending_ask_user` uses (also cleared on
+    /// `Complete`/`Error`).
+    ///
+    /// Only the *proposal* lives here. Which hunks the reviewer has marked is
+    /// view state, not session state, and belongs to `DeckUi` beside the
+    /// composer — a mark is not something the session did, and folding it in
+    /// here would make replay reconstruct a half-finished opinion as fact.
+    pub pending_hunk_review: Option<HunkProposal>,
     /// The latest task-board snapshot (the `task_*` tools). Each
     /// `TaskUpdate` event replaces the whole board — snapshot semantics keep
     /// the fold pure and make a dead session's board reconstruct on replay.
@@ -306,6 +318,16 @@ pub enum TranscriptEntry {
     /// An `ask_user` question was presented (the actionable card is driven off
     /// [`SessionModel::pending_ask_user`]; this line is the scrollback record).
     AskUser { question: String, options: usize },
+    /// A per-hunk approval gate was presented (the actionable card is driven
+    /// off [`SessionModel::pending_hunk_review`]; this line is the scrollback
+    /// record). `files` is the distinct file count, which is the part a reader
+    /// scanning back needs — "3 hunks" alone does not say whether one file or
+    /// three were about to change.
+    HunkReview {
+        tool: String,
+        hunks: usize,
+        files: usize,
+    },
     /// A commit landed.
     Commit { sha: String, message: String },
     /// A pull request opened or changed status.
@@ -535,6 +557,16 @@ impl SessionModel {
                 {
                     self.pending_ask_user = None;
                 }
+                // A hunk-review card clears the same event-pure way: the host
+                // echoes a result carrying the proposal's id once the decision
+                // has been taken.
+                if self
+                    .pending_hunk_review
+                    .as_ref()
+                    .is_some_and(|p| p.id == *call_id)
+                {
+                    self.pending_hunk_review = None;
+                }
             }
             AgentEvent::Retry { attempt, reason } => {
                 self.transcript.push(TranscriptEntry::Retry {
@@ -667,6 +699,18 @@ impl SessionModel {
                 });
                 self.pending_scope_review = Some(proposal.clone());
             }
+            AgentEvent::HunkReview { proposal } => {
+                let mut files: Vec<&str> =
+                    proposal.hunks.iter().map(|h| h.path.as_str()).collect();
+                files.sort_unstable();
+                files.dedup();
+                self.transcript.push(TranscriptEntry::HunkReview {
+                    tool: proposal.tool.clone(),
+                    hunks: proposal.hunks.len(),
+                    files: files.len(),
+                });
+                self.pending_hunk_review = Some(proposal.clone());
+            }
             AgentEvent::AskUser {
                 id,
                 question,
@@ -794,6 +838,7 @@ impl SessionModel {
                 }
                 self.pending_scope_review = None;
                 self.pending_ask_user = None;
+                self.pending_hunk_review = None;
                 // An aborted model call never commits its text — without
                 // this the un-committed preview would linger indefinitely.
                 self.streaming_text.clear();
@@ -818,6 +863,7 @@ impl SessionModel {
                 self.proof.finish();
                 self.pending_scope_review = None;
                 self.pending_ask_user = None;
+                self.pending_hunk_review = None;
                 self.streaming_text.clear();
                 self.transcript.push(TranscriptEntry::Complete {
                     model: model.clone(),

@@ -25,9 +25,60 @@ pub enum UserInput {
     /// own free-text reply — the always-available affordance the `AskUser`
     /// renderer contract mandates.
     AskUserAnswer { id: String, answer: String },
+    /// The user's answer to a pending per-hunk approval gate (#1265). `id`
+    /// correlates it back to the `HunkReview` proposal; `accepted` holds the
+    /// indices of the hunks to APPLY, so an empty vector is a full refusal
+    /// rather than a missing answer.
+    HunkDecision { id: String, accepted: Vec<usize> },
     /// A clean cancellation request (`q` / Ctrl-C). The engine should abort
     /// the current turn cleanly — never a mid-tool kill.
     Cancel,
+}
+
+/// Read a line typed at a hunk-review card as a set of hunks to keep.
+///
+/// `total` is how many hunks the card offers; indices the reviewer types are
+/// **1-based** (what the card shows) and come back 0-based. Accepted forms:
+///
+/// - a bare yes-word — keep everything;
+/// - a bare no-word — keep nothing, which is a real answer, not a non-answer;
+/// - a list of numbers and ranges (`1 3`, `1,3`, `2-4`, `1, 3-5`).
+///
+/// `None` means "that was not an answer" and the caller keeps the card up.
+/// Unlike the scope card there is no revise channel to absorb prose here, and
+/// this is the gate whose wrong answer edits somebody's files — so an
+/// unrecognized line must do nothing at all rather than be interpreted
+/// generously. An out-of-range number is dropped rather than failing the whole
+/// line, matching how `ScopeDecision::Trim` indices are read.
+#[must_use]
+pub fn hunk_selection_from_typed(text: &str, total: usize) -> Option<Vec<usize>> {
+    let text = text.trim().trim_end_matches(['.', '!', ',']).trim();
+    match text.to_ascii_lowercase().as_str() {
+        "" => return None,
+        "a" | "all" | "y" | "yes" | "ok" | "okay" | "approve" | "apply" | "lgtm" => {
+            return Some((0..total).collect());
+        }
+        "n" | "no" | "none" | "x" | "abort" | "cancel" | "skip" | "reject" | "stop" => {
+            return Some(Vec::new());
+        }
+        _ => {}
+    }
+    let mut out = Vec::new();
+    for token in text.split([',', ' ', '\t', '\n']).filter(|t| !t.is_empty()) {
+        let bounds: Vec<&str> = token.splitn(2, '-').collect();
+        let (from, to) = match bounds.as_slice() {
+            [one] => (one.parse::<usize>().ok()?, one.parse::<usize>().ok()?),
+            [from, to] => (from.parse::<usize>().ok()?, to.parse::<usize>().ok()?),
+            _ => return None,
+        };
+        if from == 0 || from > to {
+            return None;
+        }
+        out.extend((from..=to).filter(|i| *i <= total).map(|i| i - 1));
+    }
+    out.sort_unstable();
+    out.dedup();
+    Some(out)
 }
 
 /// The answers a scope-review card offers. Three are keystrokes (`a`/`t`/`x`);
@@ -189,5 +240,42 @@ mod tests {
                 note: String::new()
             }
         );
+    }
+
+    #[test]
+    fn hunk_words_select_everything_or_nothing() {
+        for word in ["a", "all", "yes", "OK", "apply", "lgtm"] {
+            assert_eq!(
+                hunk_selection_from_typed(word, 3),
+                Some(vec![0, 1, 2]),
+                "{word:?}"
+            );
+        }
+        for word in ["n", "none", "no", "x", "reject", "skip"] {
+            assert_eq!(hunk_selection_from_typed(word, 3), Some(vec![]), "{word:?}");
+        }
+    }
+
+    #[test]
+    fn hunk_numbers_and_ranges_are_one_based_and_deduped() {
+        assert_eq!(hunk_selection_from_typed("1 3", 4), Some(vec![0, 2]));
+        assert_eq!(hunk_selection_from_typed("1,3", 4), Some(vec![0, 2]));
+        assert_eq!(hunk_selection_from_typed("2-4", 4), Some(vec![1, 2, 3]));
+        assert_eq!(
+            hunk_selection_from_typed("1, 2-3, 3", 4),
+            Some(vec![0, 1, 2])
+        );
+    }
+
+    /// Out of range is dropped (the same forgiveness `Trim` indices get), but a
+    /// line that is not a selection at all is NOT an answer — this is the gate
+    /// whose wrong reading edits somebody's files.
+    #[test]
+    fn hunk_selection_drops_out_of_range_and_refuses_prose() {
+        assert_eq!(hunk_selection_from_typed("1 99", 2), Some(vec![0]));
+        assert_eq!(hunk_selection_from_typed("99", 2), Some(vec![]));
+        for prose in ["", "  ", "keep the first one", "1 or 2", "-1", "3-1", "0"] {
+            assert_eq!(hunk_selection_from_typed(prose, 4), None, "{prose:?}");
+        }
     }
 }

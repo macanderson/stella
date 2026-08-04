@@ -155,6 +155,7 @@ auto_mode             = "off"
 effort_auto           = "on"
 reasoning_auto        = "on"
 headless_scope_bypass = "off"
+hunk_review           = "off"
 # `allowed_models` MOVED to [models].allowed. §6.1 migrates it and warns on
 # the old location for one release.
 
