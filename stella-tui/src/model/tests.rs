@@ -664,6 +664,107 @@ fn ask_user_sets_pending_and_the_matching_tool_result_clears_it() {
     );
 }
 
+#[test]
+fn hunk_review_sets_pending_and_the_matching_tool_result_clears_it() {
+    let mut model = SessionModel::new();
+    let proposal = stella_protocol::HunkProposal {
+        id: "hunk-review-1".into(),
+        tool: "apply_edits".into(),
+        hunks: vec![
+            stella_protocol::ProposedHunk {
+                path: "a.rs".into(),
+                diff: "@@ -1,1 +1,1 @@\n-a\n+A\n".into(),
+                lines_added: 1,
+                lines_removed: 1,
+            },
+            stella_protocol::ProposedHunk {
+                path: "b.rs".into(),
+                diff: "@@ -1,1 +1,1 @@\n-b\n+B\n".into(),
+                lines_added: 1,
+                lines_removed: 1,
+            },
+        ],
+    };
+    model.apply(&AgentEvent::HunkReview {
+        proposal: proposal.clone(),
+    });
+    assert_eq!(
+        model
+            .pending_hunk_review
+            .as_ref()
+            .expect("review pending")
+            .hunks
+            .len(),
+        2
+    );
+    // The scrollback row counts DISTINCT files, not hunks — "2 hunks" alone
+    // does not say whether one file or two were about to change.
+    match model.transcript.last() {
+        Some(TranscriptEntry::HunkReview { tool, hunks, files }) => {
+            assert_eq!(tool, "apply_edits");
+            assert_eq!((*hunks, *files), (2, 2));
+        }
+        other => panic!("expected HunkReview, got {other:?}"),
+    }
+    // An unrelated tool result must NOT clear it.
+    model.apply(&AgentEvent::ToolResult {
+        call_id: "call_other".into(),
+        output: ToolOutput::Ok {
+            content: "x".into(),
+        },
+        duration_ms: 1,
+        speculated: false,
+    });
+    assert!(model.pending_hunk_review.is_some());
+    // The host echoes a result carrying the proposal's id — the event-pure
+    // clear. Without it the card eats keys for the rest of the turn.
+    model.apply(&AgentEvent::ToolResult {
+        call_id: "hunk-review-1".into(),
+        output: ToolOutput::Ok {
+            content: "applying 1 of 2 hunk(s)".into(),
+        },
+        duration_ms: 1,
+        speculated: false,
+    });
+    assert!(model.pending_hunk_review.is_none());
+}
+
+/// A gate must never outlive its turn: a turn that dies with a card up would
+/// otherwise leave the deck parked on a decision nothing is waiting for.
+#[test]
+fn a_terminal_event_clears_a_pending_hunk_review() {
+    for terminal in [
+        AgentEvent::Complete {
+            model: "m".into(),
+            cost_usd: 0.0,
+        },
+        AgentEvent::Error {
+            message: "boom".into(),
+            retryable: false,
+        },
+    ] {
+        let mut model = SessionModel::new();
+        model.apply(&AgentEvent::HunkReview {
+            proposal: stella_protocol::HunkProposal {
+                id: "hunk-review-1".into(),
+                tool: "edit_file".into(),
+                hunks: vec![stella_protocol::ProposedHunk {
+                    path: "a.rs".into(),
+                    diff: "@@ -1,1 +1,1 @@\n-a\n+A\n".into(),
+                    lines_added: 1,
+                    lines_removed: 1,
+                }],
+            },
+        });
+        assert!(model.pending_hunk_review.is_some());
+        model.apply(&terminal);
+        assert!(
+            model.pending_hunk_review.is_none(),
+            "{terminal:?} must close the gate"
+        );
+    }
+}
+
 /// A non-coalescing one-entry event, for growing the transcript by
 /// exactly one entry per apply.
 fn retry(attempt: u32) -> AgentEvent {

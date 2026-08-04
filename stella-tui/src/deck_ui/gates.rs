@@ -154,6 +154,13 @@ pub(super) fn handle_focused_gates(
     // claimed only while the composer is EMPTY, except `⏎` and `Esc`, which are
     // the two that must work with a note in hand: `⏎` reads a typed selection
     // (`1 3`, `2-4`, `all`, `none`) and `Esc` means "get out of this card".
+    //
+    // `↑`/`↓` are the only navigation keys that reach here at all: `Tab` is
+    // consumed by tab-cycling and `←`/`→` by the sessions/context overlays,
+    // both upstream of this handler. Borrowing them costs the transcript's
+    // message highlight while a card is up, which is affordable precisely
+    // because `PgUp`/`PgDn` are pure scroll and are NOT claimed here — a
+    // reviewer can still read back for context before deciding.
     if let Some(proposal) = &entry.model.pending_hunk_review
         && !ui.hunk_answered.contains(agent)
     {
