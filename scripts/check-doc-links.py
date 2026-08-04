@@ -8,7 +8,7 @@ The guard this replaces (`check-doc-citations.sh`) validated that a
 brittle in the exact way its subject matter was: a path encodes where a
 document sits *today*. Move the document and every citation to it breaks at
 once, silently, because a dangling path renders as ordinary prose. The old
-guard could only tell you 126 citations had broken; it could not fix one, and
+guard could only tell you a citation had broken; it could not fix one, and
 it never looked at markdown-to-markdown links at all -- which is how
 `docs/README.md` came to carry three dead links to files that had moved one
 directory down while the gate stayed green.
@@ -32,7 +32,7 @@ that visible than quietly keep enforcing links to it.
 
 HEALING THE LEGACY PATH CITATIONS
 ---------------------------------
-126 citations already exist in path form and are not worth rewriting by hand.
+237 citations already exist in path form and are not worth rewriting by hand.
 `docs/manifest.json` -- generated, committed, diffable, the same pattern
 `docs/wire/` uses -- records where each `id` lived at the last commit. When a
 document moves, its frontmatter `id` moves with it, so this tool can diff
@@ -397,12 +397,28 @@ def heal_by_basename(docs, rust_files, md_files):
 
 
 def heal(moves, rust_files, md_files, extra_remap=None):
-    """Rewrite stale paths in place. Returns [(file, count)]."""
+    """Rewrite stale paths in place. Returns [(file, count)].
+
+    Scoped to exactly the lines `scan_citations` would read, and for a reason
+    paid for once already: an earlier version substituted across whole files,
+    so it rewrote a `docs/…md` inside a Rust *string literal* in
+    `stella-core/src/ingest/tests.rs` -- a fixture, not a citation, which the
+    checker deliberately ignores. The longer path pushed the line past
+    rustfmt's width and turned the fmt gate red for a "fix" nothing had asked
+    for. A fixer must never touch more than its checker can see.
+    """
     remap = {old: new for old, new in moves.values()}
     if extra_remap:
         remap.update(extra_remap)
     if not remap:
         return []
+    # Guard the trailing char so `foo.md` never matches inside `foo.mdx`,
+    # exactly as the citation regex does.
+    patterns = [
+        (re.compile(re.escape(old) + r"(?![A-Za-z0-9])"), new)
+        for old, new in remap.items()
+    ]
+
     changed = []
     for path in list(rust_files) + list(md_files):
         if path == MANIFEST_PATH:
@@ -410,20 +426,19 @@ def heal(moves, rust_files, md_files, extra_remap=None):
         text = read(path)
         if not text:
             continue
-        updated = text
-        for old, new in remap.items():
-            # Guard the trailing char so `foo.md` does not match inside
-            # `foo.mdx`, exactly as the citation regex does.
-            updated = re.sub(
-                re.escape(old) + r"(?![A-Za-z0-9])", new, updated
-            )
-        if updated != text:
-            count = sum(
-                len(re.findall(re.escape(old) + r"(?![A-Za-z0-9])", text))
-                for old in remap
-            )
+        is_rust = path.endswith(".rs")
+        out, count = [], 0
+        for line in text.splitlines(keepends=True):
+            if IGNORE_RE.search(line) or (is_rust and not COMMENT_RE.match(line)):
+                out.append(line)
+                continue
+            for pat, new in patterns:
+                line, n = pat.subn(new, line)
+                count += n
+            out.append(line)
+        if count:
             with open(path, "w", encoding="utf-8") as fh:
-                fh.write(updated)
+                fh.write("".join(out))
             changed.append((path, count))
     return changed
 
@@ -843,12 +858,30 @@ def cmd_selftest(args):
         text = re.sub(re.escape(old) + r"(?![A-Za-z0-9])", new, text)
     check("heal leaves mdx alone", text, "cite docs/b/a.md and docs/a.mdx\n")
 
+    # Regression: heal must skip Rust lines the checker skips. A blanket
+    # substitution once rewrote a docs path inside a test's string literal,
+    # lengthening the line past rustfmt's width and turning the fmt gate red.
+    rust_lines = [
+        '/// see docs/a.md\n',  # comment: heal it
+        '    let s = "docs/a.md";\n',  # code: leave it
+        '// docs/a.md doc-links:ignore\n',  # opted out: leave it
+    ]
+    healed = []
+    for line in rust_lines:
+        if IGNORE_RE.search(line) or not COMMENT_RE.match(line):
+            healed.append(line)
+            continue
+        healed.append(re.sub(r"docs/a\.md(?![A-Za-z0-9])", "docs/b/a.md", line))
+    check("heal rewrites rust comments", "docs/b/a.md" in healed[0], True)
+    check("heal skips rust code", healed[1], '    let s = "docs/a.md";\n')
+    check("heal honours ignore marker", healed[2], '// docs/a.md doc-links:ignore\n')
+
     if failures:
         print("check-doc-links selftest: FAILED", file=sys.stderr)
         for f in failures:
             print(f"  {f}", file=sys.stderr)
         return 1
-    print("check-doc-links selftest: OK -- 20 assertions.")
+    print("check-doc-links selftest: OK -- 23 assertions.")
     return 0
 
 
