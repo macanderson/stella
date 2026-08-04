@@ -262,8 +262,14 @@ pub(crate) async fn drive_pipeline(
     gate: &dyn stella_core::ports::TurnGate,
 ) -> DrivenTurn {
     let worker_id = provider_id;
-    let triage_id = run.triage_provider_id.clone().unwrap_or_else(|| worker_id.clone());
-    let judge_id = run.judge_provider_id.clone().unwrap_or_else(|| worker_id.clone());
+    let triage_id = run
+        .triage_provider_id
+        .clone()
+        .unwrap_or_else(|| worker_id.clone());
+    let judge_id = run
+        .judge_provider_id
+        .clone()
+        .unwrap_or_else(|| worker_id.clone());
 
     let resolver = ServedProviderResolver {
         worker: RemoteProvider::new(
@@ -299,7 +305,8 @@ pub(crate) async fn drive_pipeline(
         CircuitBreaker::new(Box::new(WallClock)),
     );
 
-    let verify = RemoteVerificationRunner::new(frame_tx.clone(), pending.clone(), reverse_request_timeout);
+    let verify =
+        RemoteVerificationRunner::new(frame_tx.clone(), pending.clone(), reverse_request_timeout);
     let auto_approve_gate = AutoApproveGate;
     let remote_approval_gate = RemoteApprovalGate::new(frame_tx, pending, reverse_request_timeout);
     let sleeper = TokioSleeper;
@@ -415,6 +422,9 @@ mod tests {
     #[test]
     fn an_unset_max_revisions_keeps_the_pipelines_own_default() {
         let config = pipeline_config(&base_run(), EngineConfig::default());
-        assert_eq!(config.max_revisions, PipelineConfig::default().max_revisions);
+        assert_eq!(
+            config.max_revisions,
+            PipelineConfig::default().max_revisions
+        );
     }
 }

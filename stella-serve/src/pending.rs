@@ -160,7 +160,11 @@ impl Pending {
 
     /// Resolve a pipeline turn's scope-review gate with the host's decision.
     /// Errors if `id` is unknown or names a tool/provider request (#1288).
-    pub fn resolve_scope_review(&self, id: &str, decision: ScopeDecision) -> Result<(), ServeError> {
+    pub fn resolve_scope_review(
+        &self,
+        id: &str,
+        decision: ScopeDecision,
+    ) -> Result<(), ServeError> {
         let _ = self
             .report_misroute(id, self.take_scope_review(id))?
             .send(decision);
@@ -335,7 +339,10 @@ impl Pending {
             Some(PendingReply::ScopeReview(tx)) => Ok(tx),
             Some(other) => {
                 map.insert(id.to_string(), other);
-                Err(ServeError::RequestKindMismatch(id.to_string(), "scope_review"))
+                Err(ServeError::RequestKindMismatch(
+                    id.to_string(),
+                    "scope_review",
+                ))
             }
             None => Err(ServeError::UnknownRequest(id.to_string())),
         }
