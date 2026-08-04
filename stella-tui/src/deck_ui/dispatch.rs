@@ -64,12 +64,8 @@ impl DispatchRoute {
 /// Whether `text` states its own routing and must not be second-guessed.
 fn carries_its_own_intent(text: &str) -> bool {
     let head = text.trim_start();
-    // `!` never reaches here (shell dispatch precedes it), and neither do
-    // view-only slash commands (`deck_ui::view_command` executes those at
-    // submission) — what `/` matches here is the prompt-shaped remainder:
-    // driver commands and custom ⚡ commands, which enqueue for the lead
-    // rather than raising the card. Listing all three markers keeps the
-    // rule readable.
+    // `!` never reaches here (shell dispatch precedes it), but listing it
+    // keeps the rule readable as "the three markers".
     head.starts_with('>') || head.starts_with('/') || head.starts_with('!')
 }
 
