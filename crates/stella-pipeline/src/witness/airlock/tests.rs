@@ -247,6 +247,56 @@ fn grain_is_monotone_in_what_it_discloses() {
     assert!(full.reproduction.is_some());
 }
 
+/// The dormant half of the grain gate, driven directly. See #1303.
+///
+/// `redact` cannot reach this: a reproduction candidate is the bare command in
+/// backticks, so it scrubs strictly harder, and a reproduction that survived
+/// implies a command that survived — the grain never falls below
+/// `Reproduction` while a reproduction is still in hand. That is an argument
+/// about today's candidate construction, not a property of the type, so the
+/// guard stays and this test is what keeps it honest: if the gate were ever
+/// weakened to admit content above the grain it reports, this fails, whereas
+/// `redact`-level tests would stay green and say nothing.
+#[test]
+fn a_field_above_the_reached_grain_is_never_admitted() {
+    // The reachable half, for contrast: at or above the requirement, admitted.
+    assert_eq!(
+        admit(
+            DisclosureGrain::Reproduction,
+            DisclosureGrain::Reproduction,
+            Some("`cargo test -p stella-pipeline`"),
+        ),
+        Some("`cargo test -p stella-pipeline`"),
+    );
+
+    // The dormant half: a brief whose grain fell to `Symptom` must not carry a
+    // reproduction, however that combination arose.
+    assert_eq!(
+        admit(
+            DisclosureGrain::Symptom,
+            DisclosureGrain::Reproduction,
+            Some("`cargo test -p stella-pipeline`"),
+        ),
+        None,
+        "a reproduction outlived the grain that authorizes it",
+    );
+
+    // Every step down the ladder, so the gate is checked as an ordering rather
+    // than at one point on it.
+    for reached in [
+        DisclosureGrain::Outcome,
+        DisclosureGrain::Command,
+        DisclosureGrain::Symptom,
+    ] {
+        assert_eq!(
+            admit(reached, DisclosureGrain::Reproduction, Some("`pnpm test`")),
+            None,
+            "{} admitted a reproduction",
+            reached.label(),
+        );
+    }
+}
+
 #[test]
 fn the_same_failure_fingerprints_identically_across_runs() {
     let first = "\
