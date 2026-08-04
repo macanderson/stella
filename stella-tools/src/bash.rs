@@ -106,10 +106,11 @@ fn shell_words(command: &str) -> Vec<String> {
 }
 
 /// If the command `cd`s somewhere outside the workspace `root`, return that
-/// target — the graph indexes only `root`, so a search or edit under a
-/// drifted tree is silently ungraphed (the cross-tree gap the telemetry
-/// showed). Targets we can't resolve (`$VAR`, `~`, `-`, a flag) are skipped:
-/// better a missed note than a wrong one.
+/// target — every other tool is confined to `root`, so an edit under a drifted
+/// tree is invisible to the file tools, the turn's diff, and verification (and
+/// ungraphed besides, the cross-tree gap the telemetry showed). Targets we
+/// can't resolve (`$VAR`, `~`, `-`, a flag) are skipped: better a missed note
+/// than a wrong one.
 fn cd_escape_target(command: &str, root: &Path) -> Option<String> {
     let words = shell_words(command);
     for pair in words.windows(2) {
@@ -160,25 +161,40 @@ fn bash_grep_is_symbol_shaped(command: &str) -> bool {
     false
 }
 
-/// The advisory footer for a bash result, when the code graph exists (so its
-/// advice is actionable): a cross-root `cd` warning takes precedence — under a
-/// drifted tree graph_query can't help — otherwise a symbol-shaped grep gets
-/// the same `graph_query` pointer the native search tools carry.
+/// The advisory footer for a bash result: a cross-root `cd` warning takes
+/// precedence, otherwise a symbol-shaped grep gets the same `graph_query`
+/// pointer the native search tools carry.
+///
+/// Only the grep tip is conditioned on the code graph existing — it is advice
+/// about a tool that isn't there otherwise. The drift warning is NOT, and used
+/// to be: gating it on the index meant the one case that most needs it, a
+/// freshly-created tree with nothing indexed, was the one case that stayed
+/// silent. A best-of-N candidate is exactly that tree. Its shell starts in a
+/// snapshot under `/tmp` while the task text names the original checkout, so
+/// `cd`-ing back to the original is the natural misreading — and it used to
+/// draw no response at all, leaving the turn's work split across two trees with
+/// the half outside this root silently uncollected.
 fn graph_advisory(command: &str, root: &Path) -> Option<String> {
-    if !matches!(crate::graph::graph_available(root), Ok(true)) {
-        return None;
-    }
+    let graphed = matches!(crate::graph::graph_available(root), Ok(true));
     if let Some(target) = cd_escape_target(command, root) {
+        // Named only when the graph is real: pointing at graph_query as a
+        // reason to stay is noise on a tree that has no index to miss.
+        let graph_note = if graphed {
+            " graph_query and the grep/glob code-map footers index only this root, so \
+             it isn't covered by the code graph either."
+        } else {
+            ""
+        };
         return Some(format!(
-            "\n\nnote: this cd'd to `{target}`, outside the session root `{}` — \
-             graph_query and the grep/glob code-map footers index only this root, so \
-             work under `{target}` isn't covered by the code graph. To use the \
-             structural tools there, re-root the session on that tree (run stella from \
-             it).",
+            "\n\nnote: this cd'd to `{target}`, outside the session root `{}`. Only \
+             work under the session root is collected when the turn finishes — every \
+             other tool is confined to it, so edits under `{target}` are invisible to \
+             the file tools, to this turn's diff, and to verification.{graph_note} To \
+             work on that tree, re-root the session on it (run stella from it).",
             root.display()
         ));
     }
-    if bash_grep_is_symbol_shaped(command) {
+    if graphed && bash_grep_is_symbol_shaped(command) {
         return Some(format!("\n\n{}", crate::code_map::GRAPH_QUERY_TIP));
     }
     None
@@ -669,8 +685,11 @@ mod tests {
         assert!(!text.contains("outside the session root"), "{text}");
     }
 
+    /// An un-indexed tree still warns on drift — that is the case the warning
+    /// exists for. A best-of-N candidate's snapshot has no index, so gating the
+    /// warning on one let a candidate `cd` out of its own workspace in silence.
     #[tokio::test]
-    async fn no_index_means_no_advisory() {
+    async fn no_index_still_warns_on_a_cross_root_cd() {
         let dir = tempfile::tempdir().unwrap();
         let text = text_of(
             Bash.execute(
@@ -678,6 +697,42 @@ mod tests {
                 dir.path(),
             )
             .await,
+        );
+        assert!(
+            text.contains("outside the session root"),
+            "drift warns without an index: {text}"
+        );
+        // The grep tip stays index-gated: it points at a tool this tree hasn't
+        // got. The drift note must not smuggle it in by naming the graph.
+        assert!(
+            !text.contains("graph_query"),
+            "no index, so nothing may cite the graph: {text}"
+        );
+    }
+
+    /// The warning's load-bearing claim, on the tree with no index: work under
+    /// the drifted target is not collected. A candidate that read only "the
+    /// graph doesn't cover it" would reasonably `cd` anyway.
+    #[tokio::test]
+    async fn the_drift_warning_says_the_work_is_not_collected() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = text_of(
+            Bash.execute(&serde_json::json!({"command": "cd / && pwd"}), dir.path())
+                .await,
+        );
+        assert!(
+            text.contains("is collected when the turn finishes"),
+            "{text}"
+        );
+        assert!(text.contains("verification"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn a_plain_command_gets_no_advisory_without_an_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = text_of(
+            Bash.execute(&serde_json::json!({"command": "echo hi"}), dir.path())
+                .await,
         );
         assert!(!text.contains("graph_query"), "{text}");
         assert!(!text.contains("outside the session root"), "{text}");

@@ -9,6 +9,12 @@
 //! Both functions return `None` for `n <= 1`. `run_best_of_n` also serves a
 //! single candidate when a witness is being authored, and "candidate 1/1" there
 //! is noise rather than signal.
+//!
+//! [`messages_rooted_at`] narrates the same fan-out to its *other* audience.
+//! The user is told a candidate is isolated; until it was added, the candidate
+//! itself never was.
+
+use stella_protocol::CompletionMessage;
 
 /// Announce a fan-out whose candidates run *together* (#1215), before any of
 /// them starts.
@@ -67,6 +73,40 @@ pub(crate) fn candidate_winner_notice(best_idx: usize, n: u32, ran: u32) -> Opti
     ))
 }
 
+/// A candidate's own starting messages: the shared prefix, plus — when this
+/// candidate runs in a tree of its own — one line naming that tree.
+///
+/// The model is otherwise never told. Its tools are re-rooted silently, so
+/// `pwd` answers with a path the task statement never mentions, and a task that
+/// spells absolute paths (a benchmark's `/app`, a monorepo checkout) reads as a
+/// flat contradiction. Leaving it unsaid is not merely confusing: a candidate
+/// that resolves the contradiction the wrong way `cd`s to the original tree and
+/// works there, where its edits are outside the snapshot adoption diffs — so
+/// they are dropped — while the edits it did make inside can leave the snapshot
+/// no longer byte-identical to its seal, which fails adoption for the whole
+/// candidate. Both halves of a split turn lose.
+///
+/// Appended AFTER the shared prefix, never inside it: the candidates of a
+/// fan-out share one cached prefix, so the single message that differs between
+/// them has to be last (the prompt-cache stability invariant).
+pub(crate) fn messages_rooted_at(
+    base: &[CompletionMessage],
+    root: Option<&str>,
+) -> Vec<CompletionMessage> {
+    let mut messages = base.to_vec();
+    if let Some(root) = root {
+        messages.push(CompletionMessage::user(format!(
+            "Workspace: your tools and shell are rooted at `{root}`, an isolated \
+             snapshot of the project. Only work inside this root is collected when \
+             the turn finishes. Absolute paths in the task above name the original \
+             tree; resolve them against this root instead (`/x/y` -> `{root}/x/y`). \
+             Another copy of the project may be readable elsewhere on this machine — \
+             editing it does not count, so do not `cd` out of this root."
+        )));
+    }
+    messages
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -84,6 +124,49 @@ mod tests {
             shared.contains("shared working tree"),
             "a shared-tree fan-out must say so — a loser's edits stay on disk: {shared}"
         );
+    }
+
+    /// The fact the candidate could not otherwise get: which tree is real.
+    /// It must also say that the *other* copy is not collected — a candidate
+    /// that knows only its own path still has no reason to distrust the
+    /// absolute paths the task statement gave it.
+    #[test]
+    fn an_isolated_candidate_is_told_its_root_and_that_only_it_counts() {
+        let base = vec![
+            CompletionMessage::system("prefix"),
+            CompletionMessage::user("write vm.js to /app"),
+        ];
+        let rooted = messages_rooted_at(&base, Some("/tmp/stella_candidate_64_0"));
+
+        assert_eq!(
+            rooted.len(),
+            base.len() + 1,
+            "exactly one message is added: {rooted:?}"
+        );
+        // Byte-identical prefix, appended last: N candidates differ only in the
+        // tail, so the cached prefix is still shared across the fan-out.
+        assert_eq!(&rooted[..base.len()], &base[..], "prefix must not move");
+
+        let notice = &rooted[base.len()].content;
+        assert!(notice.contains("/tmp/stella_candidate_64_0"), "{notice}");
+        assert!(
+            notice.contains("do not `cd` out of this root"),
+            "the escape hatch that splits a turn across two trees: {notice}"
+        );
+        assert!(
+            notice.contains("Only work inside this root is collected"),
+            "naming the root is not enough — say the other copy does not count: {notice}"
+        );
+    }
+
+    /// A shared-tree candidate has no second tree to confuse, and the session
+    /// root is already the one the task text names. Saying anything here would
+    /// be a per-candidate message with nothing to report, paid for on a turn
+    /// that has no ambiguity to resolve.
+    #[test]
+    fn a_shared_tree_candidate_is_told_nothing() {
+        let base = vec![CompletionMessage::user("goal")];
+        assert_eq!(messages_rooted_at(&base, None), base);
     }
 
     #[test]
