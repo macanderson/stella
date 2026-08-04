@@ -228,7 +228,12 @@ impl Catalog {
                         cache_write_usd_per_mtok: 0.60,
                     },
                 )
-                .with_reasoning(Some(true)),
+                .with_reasoning(Some(true))
+                // models.dev `limit.output` for `zai/glm-5.2`, read 2026-08-03
+                // (#1290) — the same authority `stella models refresh` merges
+                // from, so a later refresh confirms this rather than fighting
+                // it. Seeded so the offline floor is not the engine's 16384.
+                .with_max_output_tokens(Some(131_072)),
                 // Anthropic's mainstream model, and the one a head-to-head is
                 // most likely to be run on. Its absence was not a gap in
                 // coverage so much as a hard stop: the seed is the OFFLINE
@@ -263,7 +268,25 @@ impl Catalog {
                 // silently falls back to its global 16384. Measured off the
                 // wire before this line existed: a trial-shaped run sent
                 // `max_tokens: 16384` for a model whose ceiling is 64000.
-                .with_max_output_tokens(Some(64_000)),
+                //
+                // 128000, from the provider, on 2026-08-03 (#1290). This row
+                // read 64000 until then, and 64000 was never the model's
+                // ceiling — it was where Claude Code's steps were *measured*
+                // stopping, which is a fact about the comparator's posture,
+                // not about Sonnet 5. Two independent sources say 128000:
+                // Anthropic's own `GET /v1/models` reports
+                // `"max_tokens": 128000` for `claude-sonnet-5`, and
+                // OpenRouter reports `top_provider.max_completion_tokens =
+                // 128000` for the same model on the gateway route.
+                //
+                // This is the user-facing half of #1290 and it was not a
+                // benchmark detail: the catalog ceiling is the cap EVERY
+                // stella user gets on this model, so while it read 64000 every
+                // long answer was cut at half the height the model can write,
+                // for no reason anyone had chosen. The benchmark's own 64000
+                // survives on purpose and is now declared in `posture.py`
+                // rather than inherited from here.
+                .with_max_output_tokens(Some(128_000)),
                 // The previous-generation mainstream Sonnet. Seeded for the
                 // same hard-stop reason as its successor above: a frozen
                 // container cannot refresh, so an unlisted slug is
@@ -285,8 +308,13 @@ impl Catalog {
                     },
                 )
                 .with_reasoning(Some(true))
-                // Same seeded ceiling as its siblings, for the same reason.
-                .with_max_output_tokens(Some(64_000)),
+                // Seeded for the same reason as its successor above, and
+                // corrected in the same sweep: this row also read 64000,
+                // copied from the same place. Anthropic's `GET /v1/models`
+                // reports `"max_tokens": 128000` for `claude-sonnet-4-6`
+                // (checked 2026-08-03, #1290). Not benchmarked, but it is a
+                // model a user can select, and the ceiling is what they get.
+                .with_max_output_tokens(Some(128_000)),
                 CatalogEntry::new(
                     "claude-fable-5",
                     "anthropic",
@@ -329,7 +357,10 @@ impl Catalog {
                         cache_write_usd_per_mtok: 1.25,
                     },
                 )
-                .with_reasoning(Some(true)),
+                .with_reasoning(Some(true))
+                // models.dev `limit.output` for `openai/gpt-5.5`, read
+                // 2026-08-03 (#1290).
+                .with_max_output_tokens(Some(128_000)),
                 CatalogEntry::new(
                     "grok-4",
                     "xai",
@@ -344,6 +375,17 @@ impl Catalog {
                     },
                 )
                 .with_reasoning(Some(true)),
+                // Deliberately UNSEEDED, and the one row that says so out
+                // loud (#1290). models.dev has no `grok-4`, and the rest of
+                // the family disagrees by more than an order of magnitude —
+                // `grok-4.3` publishes 30000, `grok-4.5` publishes 500000. A
+                // ceiling picked from either would be a guess wearing a
+                // citation, which is the exact defect that put Sonnet 5 at
+                // half its real height. xAI speaks the OpenAI-compatible
+                // listing shape, so `parse_openai_compatible` fills this in
+                // from the provider on the first refresh if xAI publishes it;
+                // until then this row inherits the engine default, which is
+                // wrong but honestly wrong.
                 // The non-thinking chat model (`deepseek-reasoner` is the
                 // reasoning one) — the seed's one honest `Some(false)`.
                 CatalogEntry::new(
@@ -359,7 +401,11 @@ impl Catalog {
                         cache_write_usd_per_mtok: 0.27,
                     },
                 )
-                .with_reasoning(Some(false)),
+                .with_reasoning(Some(false))
+                // models.dev `limit.output` for `deepseek/deepseek-chat`, read
+                // 2026-08-03 (#1290). Larger than the Anthropic family's, which
+                // is the point of reading it per model instead of sharing one.
+                .with_max_output_tokens(Some(384_000)),
                 CatalogEntry::new(
                     "gemini-3-pro",
                     "gemini",
@@ -373,7 +419,14 @@ impl Catalog {
                         cache_write_usd_per_mtok: 1.25,
                     },
                 )
-                .with_reasoning(Some(true)),
+                .with_reasoning(Some(true))
+                // models.dev `limit.output` for `google/gemini-3-pro-preview`,
+                // read 2026-08-03 (#1290) — the pre-GA name for this same
+                // model, which is the closest citable source; models.dev has
+                // no bare `gemini-3-pro` row. Gemini's own listing publishes
+                // `outputTokenLimit`, which `parse_gemini_page` already reads,
+                // so a refresh replaces this with the provider's own number.
+                .with_max_output_tokens(Some(65_536)),
                 // The same Google model surfaced through Vertex AI — one
                 // model genuinely existing on two providers is why
                 // uniqueness (and `resolve_for`) is keyed on
@@ -392,7 +445,12 @@ impl Catalog {
                         cache_write_usd_per_mtok: 1.25,
                     },
                 )
-                .with_reasoning(Some(true)),
+                .with_reasoning(Some(true))
+                // Same model, same ceiling, different surface — Vertex serves
+                // Google's model, not a different one. Moves with the row
+                // above for the same reason the Anthropic direct/gateway pair
+                // does: route is not a model property (#1290).
+                .with_max_output_tokens(Some(65_536)),
                 // A cross-region inference profile, not a bare model id —
                 // Bedrock rejects on-demand invocation of newer Anthropic
                 // models without one. Priced as Claude Sonnet 4.5 (Bedrock
@@ -410,7 +468,16 @@ impl Catalog {
                         cache_write_usd_per_mtok: 3.75,
                     },
                 )
-                .with_reasoning(Some(true)),
+                .with_reasoning(Some(true))
+                // The ceiling belongs to the MODEL, so it is the same 64000
+                // Anthropic reports for `claude-sonnet-4-5-20250929` on its own
+                // `/v1/models` (checked 2026-08-03, #1290) — Bedrock serves
+                // that model behind an inference profile, it does not serve a
+                // different one with a different ceiling. Seeded because
+                // Bedrock's own listing is not one of the shapes
+                // `provider_listing` can read, so this row cannot self-correct
+                // from a refresh the way the others now can.
+                .with_max_output_tokens(Some(64_000)),
                 // OpenRouter's fully-qualified slug for its own meta-router.
                 // The gateway's model ids are ALL `vendor/model` — a bare
                 // `auto` is not a model there, so this row must carry the
@@ -469,7 +536,14 @@ impl Catalog {
                         cache_write_usd_per_mtok: 3.0,
                     },
                 )
-                .with_reasoning(Some(true)),
+                .with_reasoning(Some(true))
+                // models.dev `limit.output` for `moonshotai/kimi-k3`, read
+                // 2026-08-03 (#1290). OpenRouter's own listing leaves
+                // `top_provider.max_completion_tokens` null for this model, so
+                // the gateway cannot answer and the master list is the source.
+                // That asymmetry is why discovery reads BOTH and neither one
+                // is treated as the only authority.
+                .with_max_output_tokens(Some(131_072)),
                 // The three Anthropic models as OpenRouter serves them. They
                 // duplicate slugs already seeded under `anthropic`, and that
                 // duplication is the point: `resolve_for` matches on
@@ -505,7 +579,12 @@ impl Catalog {
                     },
                 )
                 .with_reasoning(Some(true))
-                .with_max_output_tokens(Some(64_000)),
+                // Moves with the first-party row above (#1290), and confirmed
+                // independently on this route: OpenRouter's `/models` reports
+                // `top_provider.max_completion_tokens = 128000` for
+                // `anthropic/claude-sonnet-5` (checked 2026-08-03). Route is
+                // not a model property — see the parity test below.
+                .with_max_output_tokens(Some(128_000)),
                 CatalogEntry::new(
                     "anthropic/claude-fable-5",
                     "openrouter",
@@ -544,7 +623,20 @@ impl Catalog {
                         cache_write_usd_per_mtok: 1.25,
                     },
                 )
-                .with_reasoning(Some(false)),
+                .with_reasoning(Some(false))
+                // Haiku's own ceiling, and it is genuinely lower than the
+                // Sonnet/Fable family's — 64000, not 128000. Both sources
+                // agree (checked 2026-08-03, #1290): Anthropic reports
+                // `"max_tokens": 64000` for `claude-haiku-4-5-20251001`, and
+                // OpenRouter reports `max_completion_tokens = 64000` here.
+                //
+                // Carried even though triage never fills it: an unseeded row
+                // is not "no opinion", it is the engine's global 16384, and a
+                // row that silently caps 4x below the model is the same defect
+                // as one that caps 2x below it. The number being lower than
+                // its siblings' is exactly why it has to be looked up per
+                // model rather than shared.
+                .with_max_output_tokens(Some(64_000)),
             ],
         }
     }
@@ -792,7 +884,19 @@ mod tests {
         // exactly the drift this test is here to catch. Two claims live here
         // and they decouple the moment two models differ: every benchmarked
         // model carries SOME ceiling in the seed, and it is THE MODEL'S.
-        for (slug, ceiling) in [("claude-sonnet-5", 64_000), ("claude-fable-5", 128_000)] {
+        //
+        // Correcting Fable's raised the obvious question about the row it had
+        // been copied FROM, and the answer was the same defect: Sonnet 5's
+        // 64000 was the comparator's measured stopping point, not the model's
+        // ceiling. The provider says 128000 for both (#1290), so the two agree
+        // again — but they now agree because each was looked up, which is a
+        // different thing from the coincidence they started as. Haiku is the
+        // row that proves the difference: it is 64000 on purpose.
+        for (slug, ceiling) in [
+            ("claude-sonnet-5", 128_000),
+            ("claude-sonnet-4-6", 128_000),
+            ("claude-fable-5", 128_000),
+        ] {
             assert_eq!(
                 Catalog::seed()
                     .resolve_for("anthropic", slug)
@@ -809,8 +913,11 @@ mod tests {
         // the engine's global 16384 and truncates before it emits a tool call.
         // Choosing a route is not supposed to change the model's ceiling.
         for (slug, ceiling) in [
-            ("anthropic/claude-sonnet-5", 64_000),
+            ("anthropic/claude-sonnet-5", 128_000),
             ("anthropic/claude-fable-5", 128_000),
+            // Lower than its siblings, on purpose and from the provider —
+            // the row that keeps this loop from passing on a shared constant.
+            ("anthropic/claude-haiku-4.5", 64_000),
         ] {
             assert_eq!(
                 Catalog::seed()

@@ -151,6 +151,60 @@ _MODEL_TIMEOUT_CEILING = 21_600
 _DEFAULT_OUTPUT_CAP = 64_000
 _OUTPUT_CAP_BY_SLUG = {"claude-fable-5": 128_000}
 
+# The models an arm can actually book, by bare slug: worker, the two judges,
+# and triage. `TestOutputCeilingParity` checks the caps above against
+# `catalog.rs` for THESE and no others.
+#
+# Scoped rather than "every seeded model" because the two tables answer
+# different questions. The catalog says what a model can write — every model,
+# whether or not a benchmark ever touches it. This file says what an arm asks
+# for, which only means anything for a model an arm books. Checking the rest
+# would force a mirrored cap for models nobody measured, and each one would
+# need a `_MODEL_TIMEOUT_BY_SLUG` entry derived from an observed token rate
+# that does not exist — manufacturing precisely the cap-without-timeout
+# mismatch the table below exists to prevent.
+_BENCHMARKED_SLUGS = frozenset(
+    {
+        "claude-sonnet-5",
+        "claude-fable-5",
+        "kimi-k3",
+        "claude-haiku-4.5",
+    }
+)
+
+# Caps deliberately set BELOW the model's own ceiling, and why.
+#
+# The default rule is that an arm asks for the model's whole budget — "never be
+# the side that stops first". Every exception is a real decision someone made,
+# so it is written here with its reason rather than living as a literal that
+# merely looks intentional. A slug absent from this map must match its catalog
+# ceiling exactly; that is what `TestOutputCeilingParity` enforces.
+_SUB_CEILING_RATIONALE: dict[str, str] = {
+    "claude-sonnet-5": (
+        "64,000 on purpose, not inherited (#1290). Sonnet 5's own ceiling is "
+        "128,000 — the catalog said 64,000 for months and that was wrong, but "
+        "it was wrong as a statement about the MODEL, not as a statement about "
+        "this comparison. 64,000 is where Claude Code's steps were measured "
+        "stopping, twice landing on it exactly and still finishing the task. "
+        "Matching what the other side actually does is the whole point of a "
+        "head-to-head, so this number stays while the catalog's moves. "
+        "Correcting the catalog is what made this an explicit choice rather "
+        "than a coincidence the two numbers used to share."
+    ),
+    "kimi-k3": (
+        "64,000 against a 131,072 ceiling. This row carried no ceiling at all "
+        "until #1290 seeded it from models.dev, so the posture never diverged "
+        "from anything — the divergence appeared the moment the catalog "
+        "learned a number, which is exactly when it should become a decision "
+        "rather than stay a silence. Kept at the default because kimi-k3 is "
+        "booked as arm B's JUDGE: it emits a verdict, not a solution, so the "
+        "cap has never bound and 'never be the side that stops first' is a "
+        "claim about the worker's budget. Raising it would also owe a "
+        "`_MODEL_TIMEOUT_BY_SLUG` entry derived from an observed token rate "
+        "this model has never been measured at."
+    ),
+}
+
 # The timeout is DERIVED from the cap, not chosen independently, which is why
 # it lives in the same table. It bounds silence between stream fragments, so it
 # has to exceed the time the model needs to produce a full-cap answer at its
