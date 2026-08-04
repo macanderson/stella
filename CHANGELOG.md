@@ -35,6 +35,27 @@ skip the roll) were re-inserted the same way.
 
 ## [Unreleased]
 
+### Changed
+
+- The A/B recall control now runs on **every** surface, not only the
+  interactive REPL's plain prompts (#1221). `stella run`, `/goal`, and the
+  Command Deck each arm it at turn start, and its schedule is counted durably
+  per workspace in `context.db` instead of per session — which is what makes a
+  one-turn-per-process surface capable of producing a control turn at all. A
+  control turn is now frameless end to end: the pipeline's recall port returns
+  nothing on it, so the planner and witness author no longer run on recalled
+  context while the turn is recorded as suppressed.
+- The control's rate is configurable as `context.retrieval.ab_recall_rate`
+  (default 10, as the compile-time constant it replaces; `0` disables the
+  experiment).
+
+### Fixed
+
+- A control turn's `[ab-control]` episode tag no longer disappears when the
+  prompt is longer than 240 characters. The tag was composed into the prompt
+  before truncation, so exactly the turns the measurement is made of were filed
+  as ordinary ones; it is now appended by the episode writer, after truncation,
+  on every surface that records an episode.
 ## [0.6.87] — 2026-08-04
 
 ## [0.6.86] — 2026-08-04

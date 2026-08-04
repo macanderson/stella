@@ -48,6 +48,12 @@ impl RecalledBlock {
 /// rather than silently lost — that gap is `MissingContextKind::NotRendered`.
 pub(super) const RECORD_CHANNEL_BUDGET: usize = 2_000;
 
+/// The name the A/B recall control's durable turn counter is filed under in
+/// the context store (#1221). A name rather than an implicit singleton row so
+/// a second experiment can be scheduled later without renumbering this one —
+/// and so a reader of `ab_control_counter` can tell what the row counts.
+pub(super) const AB_RECALL_EXPERIMENT: &str = "recall_suppression";
+
 impl SessionMemory {
     /// Hand this session the resolved record registry behind the volatile
     /// channel.
@@ -90,8 +96,9 @@ impl SessionMemory {
     /// rendering. These are memories cited untruthful ≥ 2 times — surfacing
     /// them is active harm.
     ///
-    /// **A/B control (Proposal 4):** when `ab_suppressed` is true (set by a
-    /// deterministic coin flip), recall returns `None` so the turn runs
+    /// **A/B control (Proposal 4):** when `ab_suppressed` is true (this turn's
+    /// number came up on the control's durable schedule — see
+    /// [`Self::arm_recall_control`]), recall returns `None` so the turn runs
     /// without context — the outcome is then comparable to recalled turns.
     ///
     /// Test-only since Phase 2 (#713): every production caller now takes
@@ -215,37 +222,87 @@ impl SessionMemory {
         (!sections.is_empty()).then(|| format!("{RECALL_MARKER}\n\n{}", sections.join("\n\n")))
     }
 
+    /// Arm this turn's A/B recall control at the workspace's configured rate
+    /// (`context.retrieval.ab_recall_rate`), returning whether this turn is a
+    /// control turn.
+    ///
+    /// **Every driver calls this once per turn, before it recalls anything.**
+    /// The flag is turn-scoped but only *reset* here, so a driver that skips it
+    /// inherits the previous turn's arm — and, more to the point, a driver that
+    /// skips it produces no control turns at all, which is what made the
+    /// measurement structurally impossible everywhere except the interactive
+    /// REPL's plain prompts (#1221). It takes no rate argument for the same
+    /// reason [`SessionMemory::open_for_session`] takes no "and also attach the
+    /// records" flag: a per-driver copy of the rate is a per-driver way to get
+    /// the schedule wrong.
+    ///
+    /// A "turn" here is one user-supplied prompt — not one internal round. The
+    /// goal loop's rounds and the pipeline's stages all belong to the turn that
+    /// armed them, which is also the unit the episode is recorded in, so the
+    /// arm and its attribution describe the same thing.
+    pub fn arm_recall_control(&mut self) -> bool {
+        self.maybe_suppress_recall(self.retrieval.ab_recall_rate)
+    }
+
     /// A/B recall control (Proposal 4): suppress recall for this turn on a
     /// deterministic `1/rate` schedule, returning whether recall was
     /// suppressed. A rate of 0 (or 1) never suppresses.
     ///
-    /// The flag is turn-scoped but only *reset* by this call, so every driver
-    /// that recalls must call it once per turn or inherit the previous turn's
-    /// arm. Today only the interactive REPL's plain prompts do
-    /// (`agent::run_interactive`); the outcome is attributed by tagging the
-    /// episode summary `[ab-control]` (see `agent::record_turn_episode`), which
-    /// is the whole readout — there is no reporting command yet, so the
-    /// comparison is an offline query over the episode store.
+    /// The schedule is driven by a **turn counter**, not a wall clock. A
+    /// previous implementation seeded off `SystemTime` nanoseconds and tested
+    /// `ns % rate == 0`; on any host whose realtime clock is coarser than
+    /// nanoseconds (macOS keeps it in microseconds, so `ns` is always a
+    /// multiple of 1000) that predicate is true on *every* turn for any `rate`
+    /// dividing 1000 — silently disabling recall entirely. A plain counter
+    /// makes exactly every `rate`-th turn a control turn, on every OS.
     ///
-    /// Suppression is driven by a per-session **turn counter**, not a wall
-    /// clock. A previous implementation seeded off `SystemTime` nanoseconds
-    /// and tested `ns % rate == 0`; on any host whose realtime clock is
-    /// coarser than nanoseconds (macOS keeps it in microseconds, so `ns` is
-    /// always a multiple of 1000) that predicate is true on *every* turn for
-    /// any `rate` dividing 1000 — silently disabling recall entirely. A plain
-    /// counter makes exactly every `rate`-th turn a control turn, on every OS.
-    pub fn maybe_suppress_recall(&mut self, rate: u32) -> bool {
+    /// That counter is **durable** (#1221): it is claimed from the workspace's
+    /// context store, so it survives the process that claimed it. A per-session
+    /// counter cannot schedule anything on the surfaces that matter most —
+    /// `stella run`, a fleet task and a `/goal` are one turn per process, so
+    /// the session counter is 1 on every one of them and no control turn ever
+    /// happens. Two processes against one workspace each claim a distinct
+    /// number, so the arms interleave across surfaces instead of each surface
+    /// running its own private schedule.
+    ///
+    /// A store that cannot hand out a number degrades to the in-session
+    /// counter, which on a one-turn process means "not a control turn". That
+    /// direction is deliberate: a lost control turn costs the experiment one
+    /// sample, while suppressing recall on a turn the schedule did not choose
+    /// costs the user their memory for no measurement at all.
+    fn maybe_suppress_recall(&mut self, rate: u32) -> bool {
         if rate == 0 || rate == 1 {
             self.ab_suppressed = false;
             return false;
         }
-        self.ab_turn = self.ab_turn.wrapping_add(1);
+        self.ab_turn = match self.store.next_ab_control_turn(AB_RECALL_EXPERIMENT) {
+            Ok(turn) => turn,
+            Err(_) => self.ab_turn.wrapping_add(1),
+        };
         self.ab_suppressed = ab_control_turn(self.ab_turn, rate);
         self.ab_suppressed
     }
 
-    /// Whether recall was suppressed this turn (for outcome attribution).
-    pub fn recall_was_suppressed(&self) -> bool {
+    /// Arm the control at an explicit rate, for tests that must not depend on
+    /// a workspace's settings file. Production arms through
+    /// [`Self::arm_recall_control`], which is the only door that reads the
+    /// configured rate.
+    #[cfg(test)]
+    pub(crate) fn arm_recall_control_at(&mut self, rate: u32) -> bool {
+        self.maybe_suppress_recall(rate)
+    }
+
+    /// Whether recall was suppressed this turn.
+    ///
+    /// Test-gated: outcome attribution used to read this from `agent.rs` and
+    /// compose the `[ab-control]` tag itself, which is exactly the arrangement
+    /// that left three of the four episode-writing surfaces untagged.
+    /// [`SessionMemory::record_episode`] now reads the flag directly, so a
+    /// production caller of this is a caller re-deriving attribution beside the
+    /// one place that owns it. Drop the gate if a surface ever needs to *show*
+    /// a control turn rather than record one.
+    #[cfg(test)]
+    pub(crate) fn recall_was_suppressed(&self) -> bool {
         self.ab_suppressed
     }
 
@@ -261,6 +318,13 @@ impl SessionMemory {
         goal: &str,
         mut report: impl FnMut(String),
     ) -> Recall {
+        // The control turn's suppression lives HERE, at the frame query both
+        // the rendered block and the pipeline's `ContextRecallPort` go through
+        // — not at the block render alone. A control turn whose port still
+        // answered would feed frames to the goal message, the planner, and the
+        // witness author while the block above showed none, which is not a
+        // control arm at all: the turn would be measured as frameless while
+        // running on recalled context (#1221).
         if self.ab_suppressed {
             return Recall::default();
         }
@@ -355,8 +419,8 @@ impl SessionMemory {
 /// Every `rate`-th turn is a control turn; `rate` of 0 or 1 never controls.
 /// Pure so the schedule is property-testable independent of the (heavy)
 /// [`SessionMemory`] it lives on.
-pub(super) fn ab_control_turn(turn: u32, rate: u32) -> bool {
-    rate > 1 && turn.is_multiple_of(rate)
+pub(super) fn ab_control_turn(turn: u64, rate: u32) -> bool {
+    rate > 1 && turn.is_multiple_of(u64::from(rate))
 }
 
 /// Path-shaped tokens the prompt names (`deny.toml`, `src/api/mod.rs`), for
@@ -440,7 +504,11 @@ pub(super) fn goal_path_anchors(goal: &str, root: &std::path::Path) -> Vec<Strin
 /// split-context planner (L-E6) receives the same durable lessons the
 /// worker's injected recall block carries, as structured frames instead of a
 /// rendered string. Frames without a citation label are dropped (L-C4), and
-/// failed recall, including quarantine verification, degrades to no frames (L-C6).
+/// failed recall, including quarantine verification, degrades to no frames
+/// (L-C6). An A/B control turn returns no frames either, for the reason the
+/// frame query itself gives: the port is how a pipeline-driven turn gets its
+/// context, so a control arm that stopped at the rendered block would be
+/// suppressed in name only.
 #[async_trait::async_trait]
 impl ContextRecallPort for SessionMemory {
     async fn recall(&self, goal: &str) -> Recall {

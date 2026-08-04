@@ -427,6 +427,14 @@ ann_enabled            = false
 # and slower; the probe widens past this on its own when the ranking's depth
 # requirements demand it, so this is a FLOOR, not a cap.
 ann_probes             = 12
+# A/B recall control: every Nth turn in this workspace runs with recall
+# suppressed — no memories, no skills, no records, and no frames through the
+# pipeline's recall port either — so recall's value is readable from the two
+# arms' outcomes. The episode is tagged `[ab-control]`. Counted DURABLY in
+# context.db, not per session: `stella run`, a `/goal`, and a fleet task are one
+# turn per process, and a per-session count on those never reaches N. 0 (or 1)
+# disables the control.
+ab_recall_rate         = 10
 
 
 # -----------------------------------------------------------------------------

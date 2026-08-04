@@ -43,7 +43,8 @@
       "lexical_limit": 8,
       "mmr_candidate_multiple": 4,
       "ann_enabled": false,
-      "ann_probes": 12
+      "ann_probes": 12,
+      "ab_recall_rate": 10
     }
   }
 }

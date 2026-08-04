@@ -250,9 +250,19 @@ capped per session and never clobbering an existing skill.
 ### Honest measurement: A/B control turns
 
 Does recall actually help? Stella measures instead of assuming: at a fixed
-rate (about every 10th turn), recall is deterministically suppressed and the
-turn recorded as a **control turn**. Comparing outcomes with and against
-controls keeps the memory system accountable for real, measured lift.
+rate (every 10th turn by default), recall is deterministically suppressed and
+the turn recorded as a **control turn** — its episode summary carries an
+`[ab-control]` marker. Comparing outcomes with and against controls keeps the
+memory system accountable for real, measured lift.
+
+A control turn is frameless *everywhere*: the worker's recall block, the
+planner's context, and the witness author all see nothing, so the two arms
+differ by recall and nothing else. The schedule is counted per workspace in
+`context.db` rather than per session, which is what lets one-turn-per-process
+surfaces — `stella run`, a `/goal` run, a fleet task — take part in the same
+interleaved sequence as a long chat session. Set
+`context.retrieval.ab_recall_rate` to change the rate, or to `0` to switch the
+experiment off.
 
 ## The code graph
 
