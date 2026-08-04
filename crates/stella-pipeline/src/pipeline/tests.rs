@@ -204,7 +204,7 @@ impl RepoStatusPort for SeqRepoStatus {
     }
 }
 
-/// A scripted provider serving triage, plan, worker, and judge calls from
+/// A scripted provider serving triage, plan, worker, and verifier calls from
 /// one ordered queue (the resolver hands the same provider to every role).
 struct ScriptedProvider {
     script: TokioMutex<VecDeque<CompletionResult>>,
@@ -765,7 +765,7 @@ fn router() -> Router {
             "scripted",
             ModelRef::new("scripted", "worker"),
             ModelRef::new("scripted", "triage"),
-            ModelRef::new("scripted", "judge"),
+            ModelRef::new("scripted", "verifier"),
         )],
         CircuitBreaker::new(Box::new(ZeroClock)),
     )
@@ -808,9 +808,9 @@ fn stages(events: &[AgentEvent]) -> Vec<StageKind> {
 // tests
 
 /// A single-task goal whose test command flips fail→pass submits fast:
-/// deterministic verdict, model judge SKIPPED.
+/// deterministic verdict, model verifier SKIPPED.
 #[tokio::test]
-async fn single_task_with_a_flip_submits_fast_and_skips_the_judge() {
+async fn single_task_with_a_flip_submits_fast_and_skips_the_verifier() {
     // triage → "single"; worker turn → final text (no tool calls).
     let provider = ScriptedProvider::new(vec![text_result("single"), text_result("done")]);
     let resolver = OneProvider(&provider);
@@ -868,15 +868,15 @@ async fn single_task_with_a_flip_submits_fast_and_skips_the_judge() {
     assert!(verdict.deterministic, "flip → deterministic verdict");
 
     let events = drain(&mut rx);
-    // Judge stage must NOT appear (submit-fast skips it).
+    // Verifier stage must NOT appear (submit-fast skips it).
     assert!(
-        !stages(&events).contains(&StageKind::Judge),
-        "the judge must be skipped on a deterministic pass"
+        !stages(&events).contains(&StageKind::Verifier),
+        "the verifier must be skipped on a deterministic pass"
     );
-    // A deterministic JudgeVerdict event must be present.
+    // A deterministic Verdict event must be present.
     assert!(events.iter().any(|e| matches!(
         e,
-        AgentEvent::JudgeVerdict {
+        AgentEvent::Verdict {
             passed: true,
             evidence
         } if evidence.deterministic
@@ -1120,11 +1120,11 @@ async fn a_queued_steer_is_injected_into_the_execute_turn() {
 }
 
 /// The zero-diff guard: triage misclassifies a file-touching task as a
-/// lookup, but the non-empty diff revokes the judge-skip and the task is
-/// verified via the model judge — it still completes ("correct downgrade").
+/// lookup, but the non-empty diff revokes the verifier-skip and the task is
+/// verified via the model verifier — it still completes ("correct downgrade").
 #[tokio::test]
 async fn misclassified_lookup_that_touches_files_still_gets_verified() {
-    // triage → "lookup"; worker → "done"; judge → "PASS".
+    // triage → "lookup"; worker → "done"; verifier → "PASS".
     let provider = ScriptedProvider::new(vec![
         text_result("lookup"),
         text_result("done"),
@@ -1185,19 +1185,19 @@ async fn misclassified_lookup_that_touches_files_still_gets_verified() {
         .verdict
         .expect("zero-diff guard forced verification");
     assert!(verdict.passed);
-    assert!(!verdict.deterministic, "verified via the model judge");
+    assert!(!verdict.deterministic, "verified via the model verifier");
 
     let events = drain(&mut rx);
     assert!(
-        stages(&events).contains(&StageKind::Judge),
-        "the zero-diff guard must run the judge on an unexpected mutation"
+        stages(&events).contains(&StageKind::Verifier),
+        "the zero-diff guard must run the verifier on an unexpected mutation"
     );
 }
 
 /// A clean lookup that touches nothing skips planning, verification, and
-/// the judge entirely.
+/// the verifier entirely.
 #[tokio::test]
-async fn clean_lookup_skips_plan_verify_and_judge() {
+async fn clean_lookup_skips_plan_verify_and_verifier() {
     let provider = ScriptedProvider::new(vec![text_result("lookup"), text_result("the answer")]);
     let resolver = OneProvider(&provider);
     // Empty diff → nothing touched.
@@ -1254,11 +1254,11 @@ async fn clean_lookup_skips_plan_verify_and_judge() {
     let s = stages(&drain(&mut rx));
     assert!(!s.contains(&StageKind::Plan));
     assert!(!s.contains(&StageKind::Verify));
-    assert!(!s.contains(&StageKind::Judge));
+    assert!(!s.contains(&StageKind::Verifier));
 }
 
 /// A greeting takes the conversational fast path: **one** plain completion, no
-/// triage call, no plan / witness / execute / verify / judge. This is the fix
+/// triage call, no plan / witness / execute / verify / verifier. This is the fix
 /// for "typing `hi` authored a witness test", and now also for "typing `hi`
 /// paid for a classification that could not change the answer".
 ///
@@ -1338,7 +1338,7 @@ async fn a_greeting_takes_the_conversational_path_and_skips_all_work() {
         StageKind::Witness,
         StageKind::Execute,
         StageKind::Verify,
-        StageKind::Judge,
+        StageKind::Verifier,
     ] {
         assert!(
             !s.contains(&forbidden),
@@ -1638,7 +1638,7 @@ fn assemble_user_message_states_the_configured_verification_contract() {
 
 /// With no `--test-command`, the witness author arms the flip oracle: its
 /// authored command is observed failing, the worker's change flips it, and
-/// the run submits fast on deterministic evidence — judge skipped.
+/// the run submits fast on deterministic evidence — verifier skipped.
 #[tokio::test]
 async fn witness_authored_command_arms_the_flip_oracle_and_submits_fast() {
     // triage → "single"; worker → done; THEN the witness author, because the
@@ -1687,19 +1687,19 @@ async fn witness_authored_command_arms_the_flip_oracle_and_submits_fast() {
 
     let s = stages(&events);
     assert!(s.contains(&StageKind::Witness), "witness stage emitted");
-    assert!(!s.contains(&StageKind::Judge), "judge skipped on the flip");
+    assert!(!s.contains(&StageKind::Verifier), "verifier skipped on the flip");
 }
 
 /// The point of the assessment: triage can route work onto a cheaper path
 /// than the keyword floor would. This goal trips `deterministic_floor`'s
 /// "across the codebase" marker — under the old `max(model, floor)` rule it
-/// bought a plan, an authored witness, and a judge no matter what triage said.
-/// An independent judge model IS available here, so a skipped witness proves
+/// bought a plan, an authored witness, and a verifier no matter what triage said.
+/// An independent verifier model IS available here, so a skipped witness proves
 /// triage's call was honored rather than independence being unavailable.
 ///
-/// The judge is the one ceremony triage does NOT get to decline outright: its
-/// `JUDGE: no` was a prompt-time guess, this fixture's diff is behavioral, and
-/// nothing proved it — so the waiver does not stand (`judge_waiver_stands`)
+/// The verifier is the one ceremony triage does NOT get to decline outright: its
+/// `VERIFIER: no` was a prompt-time guess, this fixture's diff is behavioral, and
+/// nothing proved it — so the waiver does not stand (`verifier_waiver_stands`)
 /// and the reviewer runs. Cheaper-than-the-floor still holds: no plan turn,
 /// no witness author, no baseline runs.
 #[tokio::test]
@@ -1731,10 +1731,10 @@ async fn triage_can_route_work_onto_a_cheaper_path_than_the_keyword_floor() {
         "triage said no witness: {s:?}"
     );
     assert!(
-        s.contains(&StageKind::Judge),
+        s.contains(&StageKind::Verifier),
         "a behavioral diff keeps its reviewer, whatever triage guessed: {s:?}"
     );
-    // Three paid calls: triage, the worker, and the judge the evidence
+    // Three paid calls: triage, the worker, and the verifier the evidence
     // demanded. The plan and witness-author ceremony triage declined is
     // never bought.
     let calls = events
@@ -1757,8 +1757,8 @@ async fn a_chat_classification_on_a_files_request_still_reaches_execute() {
     let provider = ScriptedProvider::new(vec![
         text_result("CLASS: chat\nWITNESS: no\nJUDGE: no"),
         text_result("done"),
-        // The zero-diff guard revokes the lookup's judge-skip and the diff is
-        // behavioral, so the `JUDGE: no` waiver does not stand.
+        // The zero-diff guard revokes the lookup's verifier-skip and the diff is
+        // behavioral, so the `VERIFIER: no` waiver does not stand.
         text_result("PASS looks right"),
     ]);
     let (outcome, events, _) = run_unisolated_with_router(
@@ -1791,7 +1791,7 @@ async fn headless_runs_ignore_a_model_chat_call_and_reach_execute() {
     let provider = ScriptedProvider::new(vec![
         text_result("CLASS: chat\nWITNESS: no\nJUDGE: no"),
         text_result("done"),
-        // Behavioral diff → the `JUDGE: no` waiver does not stand.
+        // Behavioral diff → the `VERIFIER: no` waiver does not stand.
         text_result("PASS looks right"),
     ]);
     let (outcome, events, _) = run_unisolated_with_router(
@@ -1824,7 +1824,7 @@ async fn headless_runs_ignore_a_model_chat_call_and_reach_execute() {
 /// It must instead warn once and fall through to the unauthored verify ladder.
 #[tokio::test]
 async fn single_model_config_degrades_to_unauthored_witness_instead_of_aborting() {
-    // triage → "single"; worker → done; judge → verdict. No witness-author
+    // triage → "single"; worker → done; verifier → verdict. No witness-author
     // turn is scripted because no independent author can be resolved.
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
@@ -1933,7 +1933,7 @@ async fn a_witness_that_never_fails_finishes_the_run_without_re_executing_it() {
         "the degradation announces itself: {events:?}"
     );
     // The verdict is not deterministic: with no witness there was no flip, so
-    // the ladder had to buy the judge. Nothing is scored as proven.
+    // the ladder had to buy the verifier. Nothing is scored as proven.
     let verdict = outcome.verdict.expect("verified");
     assert!(
         !verdict.deterministic,
@@ -1955,10 +1955,10 @@ async fn a_witness_that_never_fails_finishes_the_run_without_re_executing_it() {
 }
 
 /// Distress guidance: the FIRST deterministic failure revises on raw
-/// evidence alone; the SECOND spends one judge call whose course-correction
+/// evidence alone; the SECOND spends one verifier call whose course-correction
 /// rides with the next revision prompt.
 #[tokio::test]
-async fn second_consecutive_red_verification_gets_judge_guidance() {
+async fn second_consecutive_red_verification_gets_verifier_guidance() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
         text_result("done"),      // worker
@@ -2029,8 +2029,8 @@ async fn second_consecutive_red_verification_gets_judge_guidance() {
     });
     assert!(carried, "guidance rides with the second revision prompt");
     assert!(
-        stages(&drain(&mut rx)).contains(&StageKind::Judge),
-        "the guidance call is an honest Judge stage in the stream"
+        stages(&drain(&mut rx)).contains(&StageKind::Verifier),
+        "the guidance call is an honest Verifier stage in the stream"
     );
 }
 
@@ -2062,10 +2062,10 @@ async fn run_isolated(
 /// execution on the working tree — not end the turn having done nothing.
 #[tokio::test]
 async fn a_setup_failure_degrades_to_a_bare_execution_instead_of_aborting() {
-    // triage → single; worker → done; judge → verdict. No witness-author
+    // triage → single; worker → done; verifier → verdict. No witness-author
     // turn: the failure is pure isolation setup, and the bare fallback runs
-    // the worker once. The judge runs despite `JUDGE: no` — the diff is
-    // behavioral, so the waiver does not stand (`judge_waiver_stands`).
+    // the worker once. The verifier runs despite `VERIFIER: no` — the diff is
+    // behavioral, so the waiver does not stand (`verifier_waiver_stands`).
     let provider = ScriptedProvider::new(vec![
         text_result("CLASS: single\nWITNESS: no\nJUDGE: no"),
         text_result("done"),
@@ -2289,7 +2289,7 @@ mod verification_honesty {
 
     /// The archetypal lie: the turn emitted file-change events, but the diff
     /// came back empty (committed work, a baseline miss, an uncaptured file).
-    /// A bare empty string reads to a judge as "no changes were made" — the
+    /// A bare empty string reads to a verifier as "no changes were made" — the
     /// signal that once drove an agent to reinitialize git. The guard must
     /// turn it into an honest "couldn't capture", never "verified nothing".
     #[test]
@@ -2334,11 +2334,11 @@ mod degradation_gate;
 /// Golden-trajectory recordings of this pipeline's real event stream — a
 /// child module so it reaches the scripted ports above via `super::*`.
 mod golden;
-/// Asking for corroboration when only a model judge approved the work
+/// Asking for corroboration when only a model verifier approved the work
 /// (#1295), and — the part that decides whether the ask is affordable —
 /// declining to ask where no tracked command could ever answer. A child
 /// module, so it reaches the scripted ports above via `super::*`.
-mod judge_evidence_demand;
+mod verifier_evidence_demand;
 /// The orchestrator MCP pre-fetch hook (issue #248) — split out for
 /// the same file-size reason `tests.rs` itself was split from
 /// `pipeline.rs`; a child module, so it reaches the fakes above via

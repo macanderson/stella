@@ -147,7 +147,7 @@ fn sample_entries() -> Vec<TranscriptEntry> {
             path: "out.png".into(),
             kind: MediaKind::Image,
         },
-        TranscriptEntry::JudgeVerdict {
+        TranscriptEntry::Verdict {
             passed: true,
             summary: "ok".into(),
             deterministic: true,

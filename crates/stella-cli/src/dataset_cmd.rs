@@ -2,7 +2,7 @@
 //! local receipt store (#872, the first slice of #836's weight-space track).
 //!
 //! One JSONL record per **accepted** turn — the prompt, the tool calls with
-//! their arguments and outputs, the change that landed, and the judge's
+//! their arguments and outputs, the change that landed, and the verifier's
 //! verdict — beside a `manifest.json` that states exactly which filter
 //! produced it. That manifest is the point: a dataset nobody can re-derive
 //! the extraction rule for is not auditable, and #836 requires human sign-off
@@ -24,7 +24,7 @@
 //! The store has no accepted flag. The settled signals are
 //! `executions.outcome` — whose observed vocabulary is `completed`,
 //! `goal_met`, `goal_unmet`, `verification_failed`, `aborted`, `cancelled`,
-//! `failed`, `error`, `interrupted` — and `AgentEvent::JudgeVerdict`. So the
+//! `failed`, `error`, `interrupted` — and `AgentEvent::Verdict`. So the
 //! predicate is named ([`is_accepted`]), documented, and echoed **verbatim**
 //! into the manifest, rather than left implicit in a `WHERE` clause. No
 //! numeric reward is invented: nothing in the tree maps a ladder decision to
@@ -94,8 +94,8 @@ const SCAN_BATCH: u32 = 500;
 ///    outcome but not a trajectory anything can be distilled from: #872 asks
 ///    for "prompt → tool calls → the accepted diff", and there is no diff.
 ///
-/// With `require_verdict`, a third: a `JudgeVerdict` whose `passed` is true.
-/// That is off by default because most executions never reach a judge at all
+/// With `require_verdict`, a third: a `Verdict` whose `passed` is true.
+/// That is off by default because most executions never reach a verifier at all
 /// (the deterministic ladder can fast-submit), so requiring it would silently
 /// shrink the dataset to the subset that escalated.
 fn is_accepted(outcome: &str, fold: &JournalFold, require_verdict: bool) -> bool {
@@ -113,7 +113,7 @@ fn acceptance_predicate(require_verdict: bool) -> String {
         ACCEPTED_OUTCOMES.join(", ")
     );
     if require_verdict {
-        format!("{base} AND a judge_verdict event with passed=true")
+        format!("{base} AND a verdict event with passed=true")
     } else {
         base
     }
@@ -157,8 +157,8 @@ pub enum DatasetCmd {
         /// comparison as `--since`; the window is half-open).
         #[arg(long, value_name = "TIMESTAMP")]
         until: Option<String>,
-        /// Additionally require a judge verdict of `passed`. Off by default:
-        /// a turn the deterministic ladder cleared never reaches a judge.
+        /// Additionally require a verifier verdict of `passed`. Off by default:
+        /// a turn the deterministic ladder cleared never reaches a verifier.
         #[arg(long)]
         require_verdict: bool,
     },
@@ -203,7 +203,7 @@ pub struct DatasetRecord {
     pub tool_calls: Vec<DatasetToolCall>,
     /// Every mutating file change, in journal order.
     pub changes: Vec<DatasetChange>,
-    /// The last judge verdict, when the turn reached one.
+    /// The last verifier verdict, when the turn reached one.
     pub verdict: Option<DatasetVerdict>,
     /// Whether redaction actually replaced something anywhere in this record.
     /// Recorded so "this was redacted" is a visible fact rather than an
@@ -251,13 +251,13 @@ pub struct DatasetChange {
     pub diff_truncated: bool,
 }
 
-/// A judge verdict, carried raw. No reward scalar is derived from it: nothing
+/// A verifier verdict, carried raw. No reward scalar is derived from it: nothing
 /// in the tree maps a ladder decision onto one yet (#1043).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatasetVerdict {
     pub passed: bool,
     /// `true` when the verdict came from the deterministic ladder rather than
-    /// a model judge — never conflate the two.
+    /// a model verifier — never conflate the two.
     pub deterministic: bool,
     pub summary: String,
 }
@@ -553,7 +553,7 @@ fn fold_journal(events: &[stella_store::SessionEventRecord]) -> JournalFold {
                     diff_truncated: hunk_is_truncated(diff.as_deref(), *added, *removed),
                 });
             }
-            AgentEvent::JudgeVerdict { passed, evidence } => {
+            AgentEvent::Verdict { passed, evidence } => {
                 fold.verdict = Some(DatasetVerdict {
                     passed: *passed,
                     deterministic: evidence.deterministic,

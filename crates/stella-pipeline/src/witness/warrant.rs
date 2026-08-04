@@ -74,7 +74,7 @@ impl NoWitnessReason {
     /// The split is about what a reviewer can *catch* that a test cannot. A
     /// removal's proof is its diff — but deleting the *wrong* thing is a real
     /// mistake a reader spots and no test would have covered, which is why
-    /// [`crate::triage::resolve_witness`] has always kept the judge for
+    /// [`crate::triage::resolve_witness`] has always kept the verifier for
     /// deletions. Test-only changes are the same shape: nothing to prove, but
     /// plenty to get wrong. Prose, comments, and manifests carry no behavior
     /// for a reviewer to reason about, so a review call there is spend without

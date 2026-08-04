@@ -1,39 +1,39 @@
 //! The goal loop (`/goal`, `stella goal`): keep running working turns
-//! until an independent judge model assesses the goal as met.
+//! until an independent verifier model assesses the goal as met.
 //!
 //! Structure per round: one full [`Engine::run_turn`] (the worker doing
-//! real work), then one judge call assessing the transcript against the
-//! goal. `met == true` ends the loop; `met == false` feeds the judge's
+//! real work), then one verifier call assessing the transcript against the
+//! goal. `met == true` ends the loop; `met == false` feeds the verifier's
 //! feedback back to the worker as the next user message, so every round
 //! starts with concrete course-correction rather than a bare "try again".
 //!
 //! # Bounded by construction
 //!
-//! "Don't stop until the judge says the goal is met" still terminates on
+//! "Don't stop until the verifier says the goal is met" still terminates on
 //! three backstops, each with a named reason in [`GoalOutcome::Unmet`]:
-//! the round cap ([`GoalConfig::max_rounds`]), the budget (worker and judge
+//! the round cap ([`GoalConfig::max_rounds`]), the budget (worker and verifier
 //! spend both accumulate on the guard's session axis, which
 //! [`BudgetGuard::begin_turn`] never resets — so a configured cap bounds
-//! the whole loop's total, not each round in isolation, and the judge
+//! the whole loop's total, not each round in isolation, and the verifier
 //! cannot be out-spent by hiding cost in assessments), and a turn abort
 //! (loop detection, retry exhaustion, step cap — anything that ends a turn
 //! uncleanly ends the goal loop too, never silently retried).
 //!
 //! # Graceful degradation
 //!
-//! A judge that fails its call after retries ends the loop as `Unmet`
+//! A verifier that fails its call after retries ends the loop as `Unmet`
 //! with the provider error in the reason — the loop never spins unjudged
-//! work while the judge is down, and never fabricates a verdict. A judge
+//! work while the verifier is down, and never fabricates a verdict. A verifier
 //! that answers but with unparseable output is treated as "not met" with
-//! generic feedback (one bad judge response wastes a round, not the run;
+//! generic feedback (one bad verifier response wastes a round, not the run;
 //! the round cap bounds the damage).
 //!
 //! # Telemetry
 //!
-//! Every judge call emits `Stage(Judge)`, then the judge turn's own metering
+//! Every verifier call emits `Stage(Verifier)`, then the verifier turn's own metering
 //! (its `StepUsage` + `BudgetTick`, forwarded like any sub-agent's), then
-//! `GoalVerdict` carrying the judge call's own `cost_usd` — so a metering
-//! consumer sees judge spend with the same fidelity as worker spend, and the
+//! `GoalVerdict` carrying the verifier call's own `cost_usd` — so a metering
+//! consumer sees verifier spend with the same fidelity as worker spend, and the
 //! verdict stream reconstructs the goal loop's arc without any out-of-band
 //! state.
 
@@ -49,25 +49,25 @@ use crate::subagent::{SubAgentHost, SubAgentOutcome, SubAgentSpec, truncate_char
 
 /// Tuning for [`Engine::run_goal`]. `Default` is sized for interactive
 /// use: enough rounds to converge on a real goal, small enough that a
-/// judge stuck on "not met" can't run away with the session.
+/// verifier stuck on "not met" can't run away with the session.
 #[derive(Debug, Clone)]
 pub struct GoalConfig {
-    /// Hard cap on working rounds (worker turn + judge assessment pairs).
+    /// Hard cap on working rounds (worker turn + verifier assessment pairs).
     pub max_rounds: usize,
-    /// Output-token cap for judge calls — a verdict is small by design.
-    pub judge_max_output_tokens: Option<u32>,
-    /// Cap on transcript characters shown to the judge, tail-biased (the
+    /// Output-token cap for verifier calls — a verdict is small by design.
+    pub verifier_max_output_tokens: Option<u32>,
+    /// Cap on transcript characters shown to the verifier, tail-biased (the
     /// most recent work is what decides "met"), and always on a char
     /// boundary.
-    pub judge_transcript_chars: usize,
+    pub verifier_transcript_chars: usize,
 }
 
 impl Default for GoalConfig {
     fn default() -> Self {
         Self {
             max_rounds: 8,
-            judge_max_output_tokens: Some(1024),
-            judge_transcript_chars: 24_000,
+            verifier_max_output_tokens: Some(1024),
+            verifier_transcript_chars: 24_000,
         }
     }
 }
@@ -75,16 +75,16 @@ impl Default for GoalConfig {
 /// How a goal loop ended.
 #[derive(Debug, Clone, PartialEq)]
 pub enum GoalOutcome {
-    /// The judge assessed the goal as met.
+    /// The verifier assessed the goal as met.
     Met {
         rounds: usize,
-        /// The judge's reasoning for the final, passing verdict.
+        /// The verifier's reasoning for the final, passing verdict.
         verdict: String,
-        /// Total spend across all rounds — worker turns and judge calls.
+        /// Total spend across all rounds — worker turns and verifier calls.
         cost_usd: f64,
     },
     /// The loop ended without a passing verdict: round cap, budget, a turn
-    /// abort, or an unreachable judge. Never silent — `reason` names which.
+    /// abort, or an unreachable verifier. Never silent — `reason` names which.
     Unmet {
         rounds: usize,
         reason: String,
@@ -92,11 +92,11 @@ pub enum GoalOutcome {
     },
 }
 
-/// What the judge model must return, as strict JSON. `reasoning` explains
+/// What the verifier model must return, as strict JSON. `reasoning` explains
 /// the verdict; `feedback` (only meaningful when `met == false`) is
 /// actionable course-correction handed to the worker verbatim.
 #[derive(Debug, Deserialize, Clone)]
-pub struct GoalJudgeVerdict {
+pub struct GoalVerifierVerdict {
     pub met: bool,
     #[serde(default)]
     pub reasoning: String,
@@ -115,34 +115,34 @@ pub struct GoalJudgeVerdict {
 #[must_use]
 pub fn goal_kickoff_text(goal: &str) -> String {
     format!(
-        "GOAL: {goal}\n\nWork toward this goal. An independent judge will assess the \
+        "GOAL: {goal}\n\nWork toward this goal. An independent verifier will assess the \
          result after each working round from the transcript evidence; keep your work \
          verifiable (run tests, show outputs)."
     )
 }
 
-/// The message that carries a judge's "not yet" back to the worker — the
+/// The message that carries a verifier's "not yet" back to the worker — the
 /// other half of the [`goal_kickoff_text`] contract, shared by the same
 /// three goal loops.
 ///
 /// An empty `feedback` field falls back to the verdict's `reasoning` (the
-/// judge explained *why* even when it offered no next action); the fallback
+/// verifier explained *why* even when it offered no next action); the fallback
 /// lives here so no surface re-implements it differently.
 #[must_use]
-pub fn judge_feedback_text(goal: &str, verdict: &GoalJudgeVerdict) -> String {
+pub fn verifier_feedback_text(goal: &str, verdict: &GoalVerifierVerdict) -> String {
     let feedback = if verdict.feedback.trim().is_empty() {
         &verdict.reasoning
     } else {
         &verdict.feedback
     };
     format!(
-        "The judge assessed the goal as NOT yet met.\nJudge feedback: {feedback}\n\n\
+        "The verifier assessed the goal as NOT yet met.\nVerifier feedback: {feedback}\n\n\
          Continue working toward the goal: {goal}"
     )
 }
 
 /// The receipt turn-slot offset of `round`'s worker calls: worker rounds
-/// take even slots (0, 2, 4, …) and each round's judge takes the odd slot
+/// take even slots (0, 2, 4, …) and each round's verifier takes the odd slot
 /// beside them ([`Engine::assess`] adds the `+ 1`), so no two model calls in
 /// a goal arc share a `(turn_instance, step, call_seq)` receipt key within
 /// one execution.
@@ -155,8 +155,8 @@ pub fn goal_round_turn_offset(round: usize) -> u32 {
     u32::try_from(round.saturating_sub(1).saturating_mul(2)).unwrap_or(u32::MAX)
 }
 
-const JUDGE_SYSTEM_PROMPT: &str = "You are an impartial judge assessing whether a coding agent \
-     has fully met a stated goal. Judge from EVIDENCE, never from claims: use your read-only \
+const VERIFIER_SYSTEM_PROMPT: &str = "You are an impartial verifier assessing whether a coding agent \
+     has fully met a stated goal. Verifier from EVIDENCE, never from claims: use your read-only \
      tools (read_file, grep, glob, explorations, ci_status, search_issues) to verify the work \
      directly whenever the transcript alone is not conclusive — read the changed files, check \
      the tests exist, inspect CI. Claimed success without supporting evidence is NOT met. The \
@@ -171,14 +171,14 @@ const JUDGE_SYSTEM_PROMPT: &str = "You are an impartial judge assessing whether 
      \"feedback\": \"if not met: the single most useful next action or evidence request\"}";
 
 impl Engine<'_> {
-    /// Drive working turns until `judge` assesses `goal` as met, or a
+    /// Drive working turns until `verifier` assesses `goal` as met, or a
     /// backstop ends the loop (see module docs). Appends to `messages`
     /// like [`Engine::run_turn`] does, so the caller's conversation
-    /// history contains the full goal arc — including judge feedback
+    /// history contains the full goal arc — including verifier feedback
     /// messages — afterward.
     pub async fn run_goal(
         &self,
-        judge: &dyn Provider,
+        verifier: &dyn Provider,
         goal: &str,
         messages: &mut Vec<CompletionMessage>,
         budget: &mut BudgetGuard,
@@ -207,27 +207,27 @@ impl Engine<'_> {
             }
 
             let _ = events.send(AgentEvent::Stage {
-                name: StageKind::Judge,
+                name: StageKind::Verifier,
             });
-            let (verdict, judge_cost) = match round_engine
-                .assess(judge, goal, messages, budget, events, goal_config)
+            let (verdict, verifier_cost) = match round_engine
+                .assess(verifier, goal, messages, budget, events, goal_config)
                 .await
             {
                 Ok(pair) => pair,
                 Err(reason) => {
-                    // Judge unreachable (or its turn hit the budget) after
+                    // Verifier unreachable (or its turn hit the budget) after
                     // retries: stop rather than loop unjudged (module docs,
                     // graceful degradation). Spend was already recorded by
-                    // the judge turn itself.
+                    // the verifier turn itself.
                     return GoalOutcome::Unmet {
                         rounds: round,
-                        reason: format!("judge unavailable: {reason}"),
+                        reason: format!("verifier unavailable: {reason}"),
                         cost_usd: budget.session_spent_usd() - starting_cost_usd,
                     };
                 }
             };
 
-            // Judge spend was metered inside its own engine turn
+            // Verifier spend was metered inside its own engine turn
             // (StepUsage + BudgetTick already emitted; recorded against the
             // shared budget guard). The verdict event carries this call's
             // own cost.
@@ -235,7 +235,7 @@ impl Engine<'_> {
                 round,
                 met: verdict.met,
                 reasoning: verdict.reasoning.clone(),
-                cost_usd: judge_cost,
+                cost_usd: verifier_cost,
             });
 
             if verdict.met {
@@ -246,7 +246,7 @@ impl Engine<'_> {
                 };
             }
 
-            messages.push(CompletionMessage::user(judge_feedback_text(goal, &verdict)));
+            messages.push(CompletionMessage::user(verifier_feedback_text(goal, &verdict)));
         }
 
         GoalOutcome::Unmet {
@@ -259,8 +259,8 @@ impl Engine<'_> {
         }
     }
 
-    /// One judge assessment, run as a **sub-agent** (`crate::subagent`): the
-    /// judge sees the goal + transcript tail in its own private transcript
+    /// One verifier assessment, run as a **sub-agent** (`crate::subagent`): the
+    /// verifier sees the goal + transcript tail in its own private transcript
     /// and may gather its own evidence through a read-only view of the SAME
     /// tool registry the worker used (read files, grep, check CI) —
     /// structurally unable to mutate the workspace it is judging. Spend is
@@ -273,36 +273,36 @@ impl Engine<'_> {
     /// It used to build its own [`Engine`] with [`Engine::with_sleeper`],
     /// which cannot carry the pause gate, steering, or lifecycle hooks —
     /// those are builder-set private fields. So a paused session kept
-    /// spending inside the judge, a soft stop could not end a judge turn,
+    /// spending inside the verifier, a soft stop could not end a verifier turn,
     /// and `PreToolUse`/`PostToolUse` hooks never fired for the evidence
-    /// the judge gathered. Routing through the sub-agent primitive carries
+    /// the verifier gathered. Routing through the sub-agent primitive carries
     /// all three, and the next nested turn someone adds inherits the fix
     /// rather than repeating the bug.
     ///
-    /// # The judge's evidence never enters the goal transcript
+    /// # The verifier's evidence never enters the goal transcript
     ///
-    /// Whatever the judge reads to reach its verdict lives and dies in the
+    /// Whatever the verifier reads to reach its verdict lives and dies in the
     /// child's transcript. Only the verdict crosses back — which is why a
-    /// judge can afford to be thorough without every later worker round
+    /// verifier can afford to be thorough without every later worker round
     /// paying to re-send its evidence.
     pub async fn assess(
         &self,
-        judge: &dyn Provider,
+        verifier: &dyn Provider,
         goal: &str,
         messages: &[CompletionMessage],
         budget: &mut BudgetGuard,
         events: &UnboundedSender<AgentEvent>,
         goal_config: &GoalConfig,
-    ) -> Result<(GoalJudgeVerdict, f64), String> {
-        let transcript = render_transcript_tail(messages, goal_config.judge_transcript_chars);
-        // The odd slot beside this engine's turn: the judge's own step loop
+    ) -> Result<(GoalVerifierVerdict, f64), String> {
+        let transcript = render_transcript_tail(messages, goal_config.verifier_transcript_chars);
+        // The odd slot beside this engine's turn: the verifier's own step loop
         // restarts at step 0 with call_seq 0, so without a turn of its own
         // its manifests would overwrite the worker receipts they are meant
         // to sit beside.
         let turn_instance = self.config.turn_instance.saturating_add(1);
         let spec = SubAgentSpec {
-            agent_id: format!("judge-{turn_instance}"),
-            system_prompt: Some(JUDGE_SYSTEM_PROMPT.to_string()),
+            agent_id: format!("verifier-{turn_instance}"),
+            system_prompt: Some(VERIFIER_SYSTEM_PROMPT.to_string()),
             instruction: format!(
                 "GOAL:\n{goal}\n\nAGENT TRANSCRIPT (most recent last):\n{transcript}\n\n\
                  Has the goal been fully met? Verify with your tools where the transcript \
@@ -311,36 +311,36 @@ impl Engine<'_> {
             // A verdict needs a handful of evidence lookups, not a work
             // session.
             max_steps: 8,
-            max_output_tokens: goal_config.judge_max_output_tokens,
+            max_output_tokens: goal_config.verifier_max_output_tokens,
             temperature: Some(0.0),
             // Sized so a verdict is never clipped: a clipped JSON object
             // fails [`parse_verdict`] and silently costs a round. The
-            // judge's answer is already token-capped above, so this only
+            // verifier's answer is already token-capped above, so this only
             // has to stay clear of that bound.
             max_report_chars: goal_config
-                .judge_max_output_tokens
+                .verifier_max_output_tokens
                 .map_or(VERDICT_REPORT_CHARS, |tokens| {
                     (tokens as usize).saturating_mul(CHARS_PER_TOKEN_CEILING)
                 }),
             budget_usd: None,
             write_access: false,
-            role: stella_protocol::ModelCallRole::Judge,
+            role: stella_protocol::ModelCallRole::Verdict,
             turn_instance,
             depth: 1,
             compaction_budget_tokens: None,
         };
 
         match self
-            .run_sub_agent(SubAgentHost::new(judge), &spec, budget, events)
+            .run_sub_agent(SubAgentHost::new(verifier), &spec, budget, events)
             .await
         {
             SubAgentOutcome::Completed(report) => {
-                let verdict = parse_verdict(&report.summary).unwrap_or_else(|| GoalJudgeVerdict {
+                let verdict = parse_verdict(&report.summary).unwrap_or_else(|| GoalVerifierVerdict {
                     met: false,
-                    reasoning: "judge response was not parseable JSON — treated as not met".into(),
+                    reasoning: "verifier response was not parseable JSON — treated as not met".into(),
                     feedback: format!(
                         "Continue working toward the goal; the previous assessment was \
-                         unreadable (judge said: {})",
+                         unreadable (verifier said: {})",
                         truncate_chars(&report.summary, 500)
                     ),
                 });
@@ -357,7 +357,7 @@ impl Engine<'_> {
     }
 }
 
-/// Report cap for a judge whose output tokens are unbounded — generous,
+/// Report cap for a verifier whose output tokens are unbounded — generous,
 /// since the only thing it protects against is a runaway verdict.
 const VERDICT_REPORT_CHARS: usize = 32_000;
 
@@ -366,19 +366,19 @@ const VERDICT_REPORT_CHARS: usize = 32_000;
 /// derived cap can never be the thing that clips a verdict.
 const CHARS_PER_TOKEN_CEILING: usize = 8;
 
-/// Extract the verdict from judge output that may wrap its JSON in prose or
+/// Extract the verdict from verifier output that may wrap its JSON in prose or
 /// a code fence.
 ///
-/// Parsed from the END, matching `JUDGE_SYSTEM_PROMPT`'s own contract that
+/// Parsed from the END, matching `VERIFIER_SYSTEM_PROMPT`'s own contract that
 /// the JSON object terminates the reply: candidate `{` offsets are tried
 /// LAST-first against the final `}`, and the first span that parses wins.
 /// The old outermost-span rule (`first '{' ..= last '}'`) rejected any reply
 /// whose earlier prose contained a brace — quoted Rust (`if x { … }`), a
-/// cited JSON tool result — silently converting a judge's `met: true` into
+/// cited JSON tool result — silently converting a verifier's `met: true` into
 /// "not parseable → not met" and, at temperature 0, deterministically
 /// re-converting it every round until the round cap scored a solved goal as
 /// `Unmet`.
-fn parse_verdict(text: &str) -> Option<GoalJudgeVerdict> {
+fn parse_verdict(text: &str) -> Option<GoalVerifierVerdict> {
     let end = text.rfind('}')?;
     text.match_indices('{')
         .rev()
@@ -386,8 +386,8 @@ fn parse_verdict(text: &str) -> Option<GoalJudgeVerdict> {
         .find_map(|(start, _)| serde_json::from_str(&text[start..=end]).ok())
 }
 
-/// Render the conversation for the judge: role-labeled, tool activity
-/// summarized, tail-biased to `max_chars` on message boundaries (the judge
+/// Render the conversation for the verifier: role-labeled, tool activity
+/// summarized, tail-biased to `max_chars` on message boundaries (the verifier
 /// needs the most recent evidence, and a truncated JSON blob mid-message
 /// would read as agent malfunction).
 fn render_transcript_tail(messages: &[CompletionMessage], max_chars: usize) -> String {
@@ -431,10 +431,10 @@ fn render_transcript_tail(messages: &[CompletionMessage], max_chars: usize) -> S
     }
 
     // Take whole blocks from the end until the budget is spent. The newest
-    // block is always kept — the judge needs *some* evidence — but it is
+    // block is always kept — the verifier needs *some* evidence — but it is
     // truncated when it alone exceeds the budget, so a single oversized
-    // assistant message can no longer push the judge prompt arbitrarily
-    // past `max_chars` and force the judge's own turn to compact it.
+    // assistant message can no longer push the verifier prompt arbitrarily
+    // past `max_chars` and force the verifier's own turn to compact it.
     let mut kept: Vec<Cow<'_, str>> = Vec::new();
     let mut used = 0usize;
     for block in rendered.iter().rev() {
@@ -553,16 +553,16 @@ mod tests {
 
     /// Receipts key on `(execution_id, turn_instance, step, call_seq)` and
     /// every turn restarts `step` at 0 — so inside one goal execution, each
-    /// worker round and each judge assessment must claim its own
-    /// `turn_instance` (worker even, judge odd) or later manifests silently
+    /// worker round and each verifier assessment must claim its own
+    /// `turn_instance` (worker even, verifier odd) or later manifests silently
     /// overwrite earlier ones in the store. This pins the slot assignment.
     #[tokio::test]
-    async fn goal_rounds_and_judges_never_share_a_receipt_key() {
+    async fn goal_rounds_and_verifiers_never_share_a_receipt_key() {
         let worker = ScriptedProvider::new(vec![
             Ok(text_result("attempt one", 0.01)),
             Ok(text_result("attempt two", 0.01)),
         ]);
-        let judge = ScriptedProvider::new(vec![
+        let verifier = ScriptedProvider::new(vec![
             Ok(text_result(
                 r#"{"met": false, "reasoning": "not yet", "feedback": "keep going"}"#,
                 0.001,
@@ -581,7 +581,7 @@ mod tests {
 
         let outcome = engine
             .run_goal(
-                &judge,
+                &verifier,
                 "make the tests pass",
                 &mut messages,
                 &mut budget,
@@ -604,8 +604,8 @@ mod tests {
                 _ => None,
             })
             .collect();
-        // Two worker rounds + two judge turns, one committed step each:
-        // worker r1 = 0, judge r1 = 1, worker r2 = 2, judge r2 = 3.
+        // Two worker rounds + two verifier turns, one committed step each:
+        // worker r1 = 0, verifier r1 = 1, worker r2 = 2, verifier r2 = 3.
         let turns: Vec<u32> = manifests.iter().map(|(turn, ..)| *turn).collect();
         assert_eq!(turns, vec![0, 1, 2, 3], "manifests: {manifests:?}");
         // And therefore no two manifests share a receipt key.
@@ -616,14 +616,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn goal_loop_iterates_until_the_judge_passes_it() {
-        // Worker completes a turn each round; judge fails round 1 with
+    async fn goal_loop_iterates_until_the_verifier_passes_it() {
+        // Worker completes a turn each round; verifier fails round 1 with
         // feedback, passes round 2.
         let worker = ScriptedProvider::new(vec![
             Ok(text_result("attempt one", 0.01)),
             Ok(text_result("attempt two", 0.01)),
         ]);
-        let judge = ScriptedProvider::new(vec![
+        let verifier = ScriptedProvider::new(vec![
             Ok(text_result(
                 r#"{"met": false, "reasoning": "tests not run", "feedback": "run the test suite"}"#,
                 0.001,
@@ -642,7 +642,7 @@ mod tests {
 
         let outcome = engine
             .run_goal(
-                &judge,
+                &verifier,
                 "make the tests pass",
                 &mut messages,
                 &mut budget,
@@ -660,20 +660,20 @@ mod tests {
             } => {
                 assert_eq!(rounds, 2);
                 assert_eq!(verdict, "all evidence present");
-                // 2 worker turns + 2 judge calls.
+                // 2 worker turns + 2 verifier calls.
                 assert!((cost_usd - 0.022).abs() < 1e-9, "cost was {cost_usd}");
             }
             other => panic!("expected Met, got {other:?}"),
         }
 
-        // The judge's feedback reached the worker as a user message.
+        // The verifier's feedback reached the worker as a user message.
         let feedback_message = messages
             .iter()
             .find(|m| m.role == MessageRole::User && m.content.contains("run the test suite"))
-            .expect("judge feedback must be fed back into the conversation");
+            .expect("verifier feedback must be fed back into the conversation");
         assert!(feedback_message.content.contains("NOT yet met"));
 
-        // Verdict events tell the whole arc, and judge spend is metered.
+        // Verdict events tell the whole arc, and verifier spend is metered.
         let events = drain();
         let verdicts: Vec<(usize, bool)> = events
             .iter()
@@ -694,11 +694,11 @@ mod tests {
             roles,
             vec![
                 ModelCallRole::Worker,
-                ModelCallRole::Judge,
+                ModelCallRole::Verdict,
                 ModelCallRole::Worker,
-                ModelCallRole::Judge,
+                ModelCallRole::Verdict,
             ],
-            "worker and judge calls need distinct durable roles"
+            "worker and verifier calls need distinct durable roles"
         );
         assert!((budget.session_spent_usd() - 0.022).abs() < 1e-9);
     }
@@ -709,7 +709,7 @@ mod tests {
             Ok(text_result("try", 0.0)),
             Ok(text_result("try", 0.0)),
         ]);
-        let judge = ScriptedProvider::new(vec![
+        let verifier = ScriptedProvider::new(vec![
             Ok(text_result(
                 r#"{"met": false, "reasoning": "no", "feedback": "more"}"#,
                 0.0,
@@ -731,7 +731,7 @@ mod tests {
         };
         let outcome = engine
             .run_goal(
-                &judge,
+                &verifier,
                 "impossible",
                 &mut messages,
                 &mut budget,
@@ -752,7 +752,7 @@ mod tests {
     #[tokio::test]
     async fn session_budget_caps_total_spend_across_rounds() {
         // Issue #360: `--budget` must bound the whole loop, not each round.
-        // A judge that never passes would otherwise run every round, and
+        // A verifier that never passes would otherwise run every round, and
         // each round's spend is individually under the cap — only the sum
         // across rounds crosses it. The session axis (what
         // `build_budget_guard` configures) enforces that sum; `begin_turn`,
@@ -764,7 +764,7 @@ mod tests {
             Ok(text_result("round work", 0.02)),
             Ok(text_result("round work", 0.02)),
         ]);
-        let judge = ScriptedProvider::new(vec![
+        let verifier = ScriptedProvider::new(vec![
             Ok(text_result(
                 r#"{"met": false, "reasoning": "keep going", "feedback": "more"}"#,
                 0.0,
@@ -793,7 +793,7 @@ mod tests {
 
         let outcome = engine
             .run_goal(
-                &judge,
+                &verifier,
                 "unreachable goal",
                 &mut messages,
                 &mut budget,
@@ -841,12 +841,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unparseable_judge_output_wastes_a_round_not_the_run() {
+    async fn unparseable_verifier_output_wastes_a_round_not_the_run() {
         let worker = ScriptedProvider::new(vec![
             Ok(text_result("try", 0.0)),
             Ok(text_result("try again", 0.0)),
         ]);
-        let judge = ScriptedProvider::new(vec![
+        let verifier = ScriptedProvider::new(vec![
             Ok(text_result("I think it looks pretty good!", 0.0)),
             Ok(text_result(
                 r#"{"met": true, "reasoning": "done", "feedback": ""}"#,
@@ -861,7 +861,7 @@ mod tests {
 
         let outcome = engine
             .run_goal(
-                &judge,
+                &verifier,
                 "goal",
                 &mut messages,
                 &mut budget,
@@ -877,15 +877,15 @@ mod tests {
     }
 
     /// Regression for the bug #922 names in `assess`: it used to build its
-    /// judge with [`Engine::with_sleeper`], which cannot carry the pause
+    /// verifier with [`Engine::with_sleeper`], which cannot carry the pause
     /// gate, steering, or hooks — so a paused session kept spending inside
-    /// the judge and a soft stop could not end a judge turn.
+    /// the verifier and a soft stop could not end a verifier turn.
     ///
     /// Routing through the sub-agent primitive carries all three. The gate
-    /// is the observable one: a judge that polls it is a judge a pause can
+    /// is the observable one: a verifier that polls it is a verifier a pause can
     /// hold.
     #[tokio::test]
-    async fn the_judge_now_inherits_the_pause_gate_it_used_to_drop() {
+    async fn the_verifier_now_inherits_the_pause_gate_it_used_to_drop() {
         struct CountingGate(AtomicU32);
         #[async_trait]
         impl crate::ports::TurnGate for CountingGate {
@@ -895,7 +895,7 @@ mod tests {
         }
 
         let worker = ScriptedProvider::new(vec![Ok(text_result("did the work", 0.0))]);
-        let judge = ScriptedProvider::new(vec![Ok(text_result(
+        let verifier = ScriptedProvider::new(vec![Ok(text_result(
             r#"{"met": true, "reasoning": "done", "feedback": ""}"#,
             0.0,
         ))]);
@@ -909,7 +909,7 @@ mod tests {
 
         let outcome = engine
             .run_goal(
-                &judge,
+                &verifier,
                 "goal",
                 &mut messages,
                 &mut budget,
@@ -922,15 +922,15 @@ mod tests {
         assert_eq!(
             gate.0.load(Ordering::SeqCst),
             2,
-            "one poll for the worker's step and one for the judge's — before \
-             #922 the judge contributed none, so a paused session kept \
+            "one poll for the worker's step and one for the verifier's — before \
+             #922 the verifier contributed none, so a paused session kept \
              spending inside it"
         );
     }
 
-    /// The judge's evidence-gathering never enters the goal transcript.
+    /// The verifier's evidence-gathering never enters the goal transcript.
     ///
-    /// This is the context-economy half of the same change: a judge that
+    /// This is the context-economy half of the same change: a verifier that
     /// reads three files to reach a verdict used to be irrelevant to the
     /// worker's history only by luck (it built a separate `Vec`); now it is
     /// structural, and the loop's message growth is exactly the messages the
@@ -941,7 +941,7 @@ mod tests {
             Ok(text_result("attempt one", 0.0)),
             Ok(text_result("attempt two", 0.0)),
         ]);
-        let judge = ScriptedProvider::new(vec![
+        let verifier = ScriptedProvider::new(vec![
             Ok(text_result(
                 r#"{"met": false, "reasoning": "not yet", "feedback": "keep going"}"#,
                 0.0,
@@ -959,7 +959,7 @@ mod tests {
 
         engine
             .run_goal(
-                &judge,
+                &verifier,
                 "goal",
                 &mut messages,
                 &mut budget,
@@ -968,8 +968,8 @@ mod tests {
             )
             .await;
 
-        // system + GOAL + (worker answer, judge feedback) + worker answer.
-        // Nothing the two judges saw or said is in here.
+        // system + GOAL + (worker answer, verifier feedback) + worker answer.
+        // Nothing the two verifiers saw or said is in here.
         assert_eq!(
             messages.len(),
             5,
@@ -980,16 +980,16 @@ mod tests {
         assert!(
             !messages
                 .iter()
-                .any(|message| message.content.contains(JUDGE_SYSTEM_PROMPT)),
-            "the judge's own prompt must never leak into the worker's history"
+                .any(|message| message.content.contains(VERIFIER_SYSTEM_PROMPT)),
+            "the verifier's own prompt must never leak into the worker's history"
         );
     }
 
     #[tokio::test]
-    async fn judge_failure_ends_the_loop_with_a_named_reason() {
+    async fn verifier_failure_ends_the_loop_with_a_named_reason() {
         let worker = ScriptedProvider::new(vec![Ok(text_result("try", 0.0))]);
-        // Auth errors are non-retryable, so the judge fails immediately.
-        let judge = ScriptedProvider::new(vec![Err(ProviderError::Auth("bad key".into()))]);
+        // Auth errors are non-retryable, so the verifier fails immediately.
+        let verifier = ScriptedProvider::new(vec![Err(ProviderError::Auth("bad key".into()))]);
         let tools = NoTools;
         let engine = Engine::with_sleeper(&worker, &tools, EngineConfig::default(), &NoSleep);
         let mut messages = vec![CompletionMessage::system("sys")];
@@ -998,7 +998,7 @@ mod tests {
 
         let outcome = engine
             .run_goal(
-                &judge,
+                &verifier,
                 "goal",
                 &mut messages,
                 &mut budget,
@@ -1010,7 +1010,7 @@ mod tests {
         match outcome {
             GoalOutcome::Unmet { rounds, reason, .. } => {
                 assert_eq!(rounds, 1);
-                assert!(reason.contains("judge unavailable"), "{reason}");
+                assert!(reason.contains("verifier unavailable"), "{reason}");
             }
             other => panic!("expected Unmet, got {other:?}"),
         }
@@ -1020,7 +1020,7 @@ mod tests {
     async fn aborted_working_turn_ends_the_goal_loop() {
         // Worker's provider errors non-retryably → run_turn aborts.
         let worker = ScriptedProvider::new(vec![Err(ProviderError::Auth("expired".into()))]);
-        let judge = ScriptedProvider::new(vec![]);
+        let verifier = ScriptedProvider::new(vec![]);
         let tools = NoTools;
         let engine = Engine::with_sleeper(&worker, &tools, EngineConfig::default(), &NoSleep);
         let mut messages = vec![CompletionMessage::system("sys")];
@@ -1029,7 +1029,7 @@ mod tests {
 
         let outcome = engine
             .run_goal(
-                &judge,
+                &verifier,
                 "goal",
                 &mut messages,
                 &mut budget,
@@ -1041,8 +1041,8 @@ mod tests {
         match outcome {
             GoalOutcome::Unmet { reason, .. } => {
                 assert!(reason.contains("working turn aborted"), "{reason}");
-                // The judge was never consulted about an aborted turn.
-                assert_eq!(judge.calls.load(Ordering::SeqCst), 0);
+                // The verifier was never consulted about an aborted turn.
+                assert_eq!(verifier.calls.load(Ordering::SeqCst), 0);
             }
             other => panic!("expected Unmet, got {other:?}"),
         }
@@ -1074,7 +1074,7 @@ mod tests {
             Ok(tool_step),
             Err(ProviderError::Auth("expired".into())),
         ]);
-        let judge = ScriptedProvider::new(vec![]);
+        let verifier = ScriptedProvider::new(vec![]);
         let tools = NoTools;
         let engine = Engine::with_sleeper(&worker, &tools, EngineConfig::default(), &NoSleep);
         let mut messages = vec![CompletionMessage::system("sys")];
@@ -1083,7 +1083,7 @@ mod tests {
 
         let outcome = engine
             .run_goal(
-                &judge,
+                &verifier,
                 "goal",
                 &mut messages,
                 &mut budget,
@@ -1105,7 +1105,7 @@ mod tests {
     #[tokio::test]
     async fn goal_outcome_cost_is_delta_from_the_guard_entry() {
         let worker = ScriptedProvider::new(vec![Ok(text_result("done", 0.01))]);
-        let judge = ScriptedProvider::new(vec![Ok(text_result(
+        let verifier = ScriptedProvider::new(vec![Ok(text_result(
             r#"{"met": true, "reasoning": "verified", "feedback": ""}"#,
             0.001,
         ))]);
@@ -1118,7 +1118,7 @@ mod tests {
 
         let outcome = engine
             .run_goal(
-                &judge,
+                &verifier,
                 "goal",
                 &mut messages,
                 &mut budget,
@@ -1147,8 +1147,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_verdict_survives_braces_in_the_judges_prose() {
-        // The judge is a code reviewer told to cite evidence, so its prose
+    fn parse_verdict_survives_braces_in_the_verifiers_prose() {
+        // The verifier is a code reviewer told to cite evidence, so its prose
         // realistically quotes Rust or JSON before the verdict. The old
         // first-'{'..last-'}' span swallowed those braces, failed to parse,
         // and silently converted `met: true` into "not met" — at temperature
@@ -1157,7 +1157,7 @@ mod tests {
                            {\"status\": \"passed\"} — verified.\n\
                            {\"met\": true, \"reasoning\": \"witness confirmed\"}";
         let verdict = parse_verdict(brace_prose).expect("prose braces must not break the verdict");
-        assert!(verdict.met, "the judge said met:true and must be believed");
+        assert!(verdict.met, "the verifier said met:true and must be believed");
         assert_eq!(verdict.reasoning, "witness confirmed");
     }
 
@@ -1215,28 +1215,28 @@ mod tests {
     fn shared_goal_loop_helpers_pin_wording_and_slot_math() {
         assert_eq!(
             goal_kickoff_text("ship it"),
-            "GOAL: ship it\n\nWork toward this goal. An independent judge will assess the \
+            "GOAL: ship it\n\nWork toward this goal. An independent verifier will assess the \
              result after each working round from the transcript evidence; keep your work \
              verifiable (run tests, show outputs)."
         );
-        let verdict = GoalJudgeVerdict {
+        let verdict = GoalVerifierVerdict {
             met: false,
             reasoning: "tests missing".into(),
             feedback: "add a test".into(),
         };
         assert_eq!(
-            judge_feedback_text("ship it", &verdict),
-            "The judge assessed the goal as NOT yet met.\nJudge feedback: add a test\n\n\
+            verifier_feedback_text("ship it", &verdict),
+            "The verifier assessed the goal as NOT yet met.\nVerifier feedback: add a test\n\n\
              Continue working toward the goal: ship it"
         );
         // Whitespace-only feedback falls back to the reasoning.
-        let bare = GoalJudgeVerdict {
+        let bare = GoalVerifierVerdict {
             met: false,
             reasoning: "tests missing".into(),
             feedback: "  ".into(),
         };
-        assert!(judge_feedback_text("ship it", &bare).contains("Judge feedback: tests missing"));
-        // Worker rounds take even slots; `Engine::assess` adds the judge's +1.
+        assert!(verifier_feedback_text("ship it", &bare).contains("Verifier feedback: tests missing"));
+        // Worker rounds take even slots; `Engine::assess` adds the verifier's +1.
         assert_eq!(goal_round_turn_offset(1), 0);
         assert_eq!(goal_round_turn_offset(2), 2);
         assert_eq!(goal_round_turn_offset(3), 4);

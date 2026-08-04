@@ -26,7 +26,7 @@
 //! Storage-definition files ride the registry's schema gate like any other
 //! write (#442): the gate simulates the batch's composed edits per touched
 //! schema file — via `simulate_batch`, the same in-order composition the
-//! validate phase performs — and judges each result before anything lands.
+//! validate phase performs — and verifiers each result before anything lands.
 //! The transactional path is not a way around the storage map.
 
 use std::collections::HashMap;
@@ -181,7 +181,7 @@ async fn roll_back_prior_writes(
 /// The batch's composed post-edit content for one `path` — the SAME
 /// in-order composition (and the same zero-match / ambiguous-match refusals)
 /// the validate phase applies, shared with the registry's storage gate
-/// (#442) so the gate judges exactly the bytes apply would write. `None`
+/// (#442) so the gate verifiers exactly the bytes apply would write. `None`
 /// when the input doesn't parse, no edit targets `path`, or any edit to it
 /// fails to resolve — the tool itself then reports the failure, unwritten,
 /// and an ungated failing batch writes nothing.

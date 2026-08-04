@@ -46,7 +46,7 @@
 //! unrecognized OOM is the status quo — a test failure the worker revises,
 //! which is at worst a wasted revision. A *fabricated* OOM would be worse: a
 //! genuine, reproducible failure re-run until the retry budget is gone and
-//! then handed to the judge as inconclusive, hiding a real defect behind
+//! then handed to the verifier as inconclusive, hiding a real defect behind
 //! "nothing was learned". So the markers are distinctive runtime phrases, a
 //! passing run is never OOM whatever it printed, and no heuristic here fires
 //! on a bare non-zero exit.

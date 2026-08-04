@@ -1,6 +1,6 @@
 //! Judged multi-round runs over the wire (#1297).
 //!
-//! "Keep working until an independent judge agrees it is done" is the
+//! "Keep working until an independent verifier agrees it is done" is the
 //! capability an agent-app host is most likely to be paying for, and until now
 //! it existed only on the command line (`stella goal`) — not restricted, not
 //! disabled, simply unrequestable. This is the API half.
@@ -20,7 +20,7 @@
 //!
 //! Rounds take minutes, and the issue behind this asked the question directly.
 //! The answer is the SSE stream that already exists: a goal run emits the same
-//! events a turn does, plus one `GoalVerdict` per round carrying the judge's
+//! events a turn does, plus one `GoalVerdict` per round carrying the verifier's
 //! reasoning and that round's cost. Nothing new to poll, nothing to reconcile
 //! between two channels, and a client that drops reconnects with `?after=` and
 //! replays the rounds it missed.
@@ -44,25 +44,25 @@ use crate::session::DrivenTurn;
 
 /// A judged multi-round run, as the host asked for it.
 pub struct GoalRun {
-    /// What the judge assesses each round against.
+    /// What the verifier assesses each round against.
     pub goal: String,
-    /// Round cap, judge output cap, judge transcript window — the engine's own
+    /// Round cap, verifier output cap, verifier transcript window — the engine's own
     /// tuning, already clamped by the route that built this.
     pub config: GoalConfig,
-    /// The provider id the judge's calls announce, when the caller named a
+    /// The provider id the verifier's calls announce, when the caller named a
     /// different one than the turn's worker.
     ///
-    /// `None` runs the judge on the turn's own provider id, which is the
+    /// `None` runs the verifier on the turn's own provider id, which is the
     /// single-model deployment and stays the default. Naming a second one is
-    /// how a caller buys the property the goal loop is built on: a judge that
+    /// how a caller buys the property the goal loop is built on: a verifier that
     /// is not the model that did the work. The engine cannot enforce that —
     /// the host runs the calls — so this is a request the host honors, stamped
-    /// on every judge frame as `provider_id` + `role: judge`.
-    pub judge_provider_id: Option<String>,
+    /// on every verifier frame as `provider_id` + `role: verifier`.
+    pub verifier_provider_id: Option<String>,
 }
 
 // The seed and feedback wording is `stella_core::goal`'s
-// (`goal_kickoff_text` / `judge_feedback_text`): a served goal round and a
+// (`goal_kickoff_text` / `verifier_feedback_text`): a served goal round and a
 // CLI goal round must put the same words in front of the model or they are
 // two features wearing one name — this file used to carry its own copies
 // with a comment promising byte-identity that nothing enforced.
@@ -78,18 +78,18 @@ pub struct GoalRun {
 ///
 /// The rest is `run_goal`'s contract, kept deliberately identical:
 ///
-/// - each round takes its own receipt turn slot (worker even, judge odd), so
+/// - each round takes its own receipt turn slot (worker even, verifier odd), so
 ///   two rounds' manifests cannot collide;
 /// - a round that aborts ends the run — an unclean turn is never silently
 ///   retried;
-/// - a judge that cannot answer ends it too, rather than looping unjudged
+/// - a verifier that cannot answer ends it too, rather than looping unjudged
 ///   work or fabricating a verdict;
 /// - the round cap is the backstop, and reaching it is `Unmet` with a named
 ///   reason, never a silent success.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn drive_goal(
     engine: &Engine<'_>,
-    judge: &dyn Provider,
+    verifier: &dyn Provider,
     run: &GoalRun,
     // The turn slot this run starts from — the caller's own
     // `EngineConfig::turn_instance`, passed in rather than read back off the
@@ -140,11 +140,11 @@ pub(crate) async fn drive_goal(
         }
 
         let _ = sender.send(AgentEvent::Stage {
-            name: StageKind::Judge,
+            name: StageKind::Verifier,
         });
-        let (verdict, judge_cost) = match round_engine
+        let (verdict, verifier_cost) = match round_engine
             .assess(
-                judge,
+                verifier,
                 &run.goal,
                 &messages,
                 &mut budget,
@@ -157,7 +157,7 @@ pub(crate) async fn drive_goal(
             Err(reason) => {
                 return DrivenTurn {
                     outcome: TurnOutcome::Aborted {
-                        reason: format!("goal not met — judge unavailable: {reason}"),
+                        reason: format!("goal not met — verifier unavailable: {reason}"),
                         cost_usd: budget.session_spent_usd(),
                     },
                     messages,
@@ -169,12 +169,12 @@ pub(crate) async fn drive_goal(
             round,
             met: verdict.met,
             reasoning: verdict.reasoning.clone(),
-            cost_usd: judge_cost,
+            cost_usd: verifier_cost,
         });
         if verdict.met {
             return DrivenTurn {
                 outcome: TurnOutcome::Completed {
-                    // The judge's reasoning IS the answer to "is it done?", so
+                    // The verifier's reasoning IS the answer to "is it done?", so
                     // it is what the terminal frame carries. A host that wants
                     // the worker's own last words has them in the transcript
                     // the settlement hook writes back.
@@ -186,7 +186,7 @@ pub(crate) async fn drive_goal(
             };
         }
         messages.push(CompletionMessage::user(
-            stella_core::goal::judge_feedback_text(&run.goal, &verdict),
+            stella_core::goal::verifier_feedback_text(&run.goal, &verdict),
         ));
     }
 

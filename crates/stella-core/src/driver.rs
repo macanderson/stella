@@ -634,7 +634,7 @@ impl<'a> Engine<'a> {
     /// `turn_instance`. Context receipts are persisted under
     /// `(execution_id, turn_instance, step, call_seq)` and every `run_turn`
     /// restarts `step` at 0 — so a caller that drives several turns inside
-    /// one execution (the goal loop's judged rounds, each round's judge
+    /// one execution (the goal loop's judged rounds, each round's verifier
     /// assessment) must give each of them its own turn instance or the
     /// later manifests silently overwrite the earlier ones in the store.
     /// Everything else about the engine (provider, tools, hooks, gates,

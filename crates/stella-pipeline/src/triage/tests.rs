@@ -108,9 +108,9 @@ fn parses_the_structured_assurance_answer() {
         .expect("a well-formed answer parses");
     assert_eq!(a.class, TaskClass::SingleTask);
     assert_eq!(a.require_witness, Some(false));
-    assert_eq!(a.require_judge, Some(true));
+    assert_eq!(a.require_verifier, Some(true));
     assert!(!a.wants_witness(), "an explicit no wins over the class");
-    assert!(a.wants_judge());
+    assert!(a.wants_verifier());
 }
 
 #[test]
@@ -120,7 +120,7 @@ fn a_bare_token_answer_still_classifies_and_claims_no_assurance_opinion() {
     let a = parse_triage_response("multi").expect("a bare token parses");
     assert_eq!(a.class, TaskClass::MultiStep);
     assert_eq!(a.require_witness, None);
-    assert_eq!(a.require_judge, None);
+    assert_eq!(a.require_verifier, None);
     assert!(a.wants_witness(), "class-derived default stands");
 }
 
@@ -132,10 +132,10 @@ fn an_answer_with_no_class_keyword_is_not_a_guess() {
 
 #[test]
 fn assurance_flags_tolerate_bullets_punctuation_and_case() {
-    let a = parse_triage_response("- CLASS: Multi\n- Witness: NO\n* judge : none").expect("parses");
+    let a = parse_triage_response("- CLASS: Multi\n- Witness: NO\n* verifier : none").expect("parses");
     assert_eq!(a.class, TaskClass::MultiStep);
     assert_eq!(a.require_witness, Some(false));
-    assert_eq!(a.require_judge, Some(false));
+    assert_eq!(a.require_verifier, Some(false));
 }
 
 #[test]
@@ -343,8 +343,8 @@ fn the_triage_prompt_does_not_frame_every_real_class_as_code() {
 }
 
 #[test]
-fn a_judge_opinion_is_required_to_skip_the_judge() {
-    // `wants_judge` is only consulted after the ladder came back
+fn a_verifier_opinion_is_required_to_skip_the_verifier() {
+    // `wants_verifier` is only consulted after the ladder came back
     // inconclusive, so silence must never mean "skip".
     for class in [
         TaskClass::SimpleLookup,
@@ -352,8 +352,8 @@ fn a_judge_opinion_is_required_to_skip_the_judge() {
         TaskClass::MultiStep,
     ] {
         assert!(
-            TaskAssessment::from_class(class).wants_judge(),
-            "{class:?} with no triage opinion must still reach the judge"
+            TaskAssessment::from_class(class).wants_verifier(),
+            "{class:?} with no triage opinion must still reach the verifier"
         );
     }
 }
@@ -363,7 +363,7 @@ fn triage_may_lower_the_floor_by_one_level_and_raise_it_without_bound() {
     // Floor says multi (markers present), triage says lookup → lands on
     // single: DAG planning is skipped, verification is kept. Triage read
     // the goal, but it is the weakest tier, so it does not get to strip
-    // planning, witness, and judge in one move.
+    // planning, witness, and verifier in one move.
     assert_eq!(
         resolve_task_class(
             Some(TaskClass::SimpleLookup),
@@ -530,7 +530,7 @@ fn the_labeled_class_line_outranks_justification_prose() {
 
 #[test]
 fn flag_scan_survives_near_miss_lines() {
-    // `judgement…` is not the judge line (word boundary), and an
+    // `judgement…` is not the verifier line (word boundary), and an
     // unrecognized value on an early line must not end the scan before
     // the real answer further down is read.
     let a = parse_triage_response(
@@ -539,7 +539,7 @@ fn flag_scan_survives_near_miss_lines() {
     .expect("parses");
     assert_eq!(a.class, TaskClass::SingleTask);
     assert_eq!(a.require_witness, Some(false));
-    assert_eq!(a.require_judge, Some(false));
+    assert_eq!(a.require_verifier, Some(false));
 }
 
 #[test]
@@ -596,10 +596,10 @@ fn requirement_bullets_do_not_floor_to_multi_step() {
 }
 
 #[test]
-fn the_judge_nudge_prefers_review_when_unsure() {
+fn the_verifier_nudge_prefers_review_when_unsure() {
     let p = triage_prompt("anything");
-    // The witness keeps its skip-nudge; the judge must not share it —
-    // the judge is only ever consulted when no test settled the outcome,
+    // The witness keeps its skip-nudge; the verifier must not share it —
+    // the verifier is only ever consulted when no test settled the outcome,
     // which is exactly when review has value.
     assert!(p.contains("when unsure, say yes"));
     assert!(!p.contains("Prefer `no` for both"));

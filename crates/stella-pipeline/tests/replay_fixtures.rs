@@ -1,7 +1,7 @@
 //! Golden-trajectory replay harness, driven against synthetic fixtures.
 //! These fixtures are **synthetic** streams that exercise the harness's
 //! invariants and its structural differ — hand-authored to hit specific edges
-//! (a torn tail, a judge escalation) that a recording may not happen to
+//! (a torn tail, a verifier escalation) that a recording may not happen to
 //! contain.
 //!
 //! Real recordings live elsewhere and are kept distinct on purpose:
@@ -49,15 +49,15 @@ fn two_runs_of_the_same_flow_are_structurally_equivalent() {
 }
 
 #[test]
-fn a_judge_escalation_diverges_from_a_deterministic_pass() {
-    // The deterministic-flip path skips the judge; the escalation path has a
-    // `judge` stage and a non-deterministic verdict — they must diverge.
+fn a_verifier_escalation_diverges_from_a_deterministic_pass() {
+    // The deterministic-flip path skips the verifier; the escalation path has a
+    // `verifier` stage and a non-deterministic verdict — they must diverge.
     let deterministic = parse_jsonl(&fixture("single_task_flip.jsonl")).unwrap();
-    let escalation = parse_jsonl(&fixture("judge_escalation.jsonl")).unwrap();
+    let escalation = parse_jsonl(&fixture("verifier_escalation.jsonl")).unwrap();
     let diff = structural_diff(&deterministic, &escalation);
     assert!(
         !diff.is_empty(),
-        "a submit-fast run and a judge-escalation run must be structurally distinct"
+        "a submit-fast run and a verifier-escalation run must be structurally distinct"
     );
     // And the escalation stream is itself well-formed.
     assert!(validate_stream(&escalation).is_empty());

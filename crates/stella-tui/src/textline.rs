@@ -218,7 +218,7 @@ pub fn goal_verdict(round: usize, met: bool, reasoning: &str) -> EventLine {
             glyph: "✓",
             tone: Tone::Success,
             strong: true,
-            body: format!("judge verdict (round {round}): goal met — {reasoning}"),
+            body: format!("verifier verdict (round {round}): goal met — {reasoning}"),
             detail: None,
         }
     } else {
@@ -226,7 +226,7 @@ pub fn goal_verdict(round: usize, met: bool, reasoning: &str) -> EventLine {
             glyph: "○",
             tone: Tone::Warn,
             strong: false,
-            body: format!("judge verdict (round {round}): not yet met — {reasoning}"),
+            body: format!("verifier verdict (round {round}): not yet met — {reasoning}"),
             detail: None,
         }
     }
@@ -354,11 +354,11 @@ pub fn media_complete(label: &str, path: &str, kind: MediaKind) -> EventLine {
     }
 }
 
-pub fn judge_verdict(passed: bool, deterministic: bool, summary: &str) -> EventLine {
+pub fn verdict(passed: bool, deterministic: bool, summary: &str) -> EventLine {
     let source = if deterministic {
         "deterministic"
     } else {
-        "model judge"
+        "model verifier"
     };
     EventLine {
         glyph: if passed { "✓" } else { "✗" },
@@ -623,7 +623,7 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
             &artifact.path,
             artifact.kind,
         )),
-        AgentEvent::JudgeVerdict { passed, evidence } => Some(judge_verdict(
+        AgentEvent::Verdict { passed, evidence } => Some(verdict(
             *passed,
             evidence.deterministic,
             &evidence.summary,
@@ -664,7 +664,7 @@ pub fn stage_label(stage: StageKind) -> &'static str {
         StageKind::Witness => "witness",
         StageKind::Execute => "execute",
         StageKind::Verify => "verify",
-        StageKind::Judge => "judge",
+        StageKind::Verifier => "verifier",
         StageKind::Reflect => "reflect",
         StageKind::ContextWrite => "context write",
         StageKind::Complete => "complete",
@@ -775,7 +775,7 @@ pub fn provider_mix_label(mix: &[ProviderShare]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stella_protocol::{ContextFrameRef, JudgeEvidence, MediaArtifactRef, ScopeProposal};
+    use stella_protocol::{ContextFrameRef, VerdictEvidence, MediaArtifactRef, ScopeProposal};
 
     // ── Byte-exact fixtures ──────────────────────────────────────────────
     //
@@ -809,11 +809,11 @@ mod tests {
         );
         assert_eq!(
             goal_verdict(2, true, "tests pass").text(),
-            "✓ judge verdict (round 2): goal met — tests pass"
+            "✓ verifier verdict (round 2): goal met — tests pass"
         );
         assert_eq!(
             goal_verdict(1, false, "still failing").text(),
-            "○ judge verdict (round 1): not yet met — still failing"
+            "○ verifier verdict (round 1): not yet met — still failing"
         );
         assert_eq!(
             file_change("src/lib.rs", FileChangeKind::Modified).text(),
@@ -847,12 +847,12 @@ mod tests {
             "▣ diagram ready: .stella/artifacts/a2.png (image)"
         );
         assert_eq!(
-            judge_verdict(true, true, "flip oracle passed").text(),
+            verdict(true, true, "flip oracle passed").text(),
             "✓ verify (deterministic): flip oracle passed"
         );
         assert_eq!(
-            judge_verdict(false, false, "inconclusive").text(),
-            "✗ verify (model judge): inconclusive"
+            verdict(false, false, "inconclusive").text(),
+            "✗ verify (model verifier): inconclusive"
         );
         assert_eq!(
             scope_review("refactor auth", 2, 12, Some(1.25)).text(),
@@ -1036,9 +1036,9 @@ mod tests {
                     label: "l".into(),
                 },
             },
-            AgentEvent::JudgeVerdict {
+            AgentEvent::Verdict {
                 passed: true,
-                evidence: JudgeEvidence {
+                evidence: VerdictEvidence {
                     summary: "s".into(),
                     deterministic: true,
                     evidence_refs: vec![],

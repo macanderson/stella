@@ -73,7 +73,7 @@ pub use error::ProviderError;
 pub use event::{
     AgentEvent, BlockKind, BlockOrigin, BudgetMode, BudgetScope, CacheZone, CiStatus,
     ContextFrameRef, ContextProviderUsage, ContextUsage, FileChangeKind, HunkProposal,
-    JudgeEvidence, KNOWN_TYPE_TAGS, ManifestEntry, MediaArtifactRef, MediaJobState, MediaKind,
+    VerdictEvidence, KNOWN_TYPE_TAGS, ManifestEntry, MediaArtifactRef, MediaJobState, MediaKind,
     ModelCallRole, PolicyKind, PrStatus, ProofStep, ProposedHunk, ProviderShare, ScopeProposal,
     StageKind, TaskItem, TaskStatus, UsageIncompleteReason,
 };

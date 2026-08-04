@@ -152,8 +152,8 @@ impl ModelsSection {
 /// `[agents]` — the flattened engine config.
 ///
 /// The JSON nests per-agent config one level below the flat model fields
-/// (`agent_engine_config.agents.judge`); rendered literally that is
-/// `[agents.agents.judge]`. Flattening is safe because the agent set is CLOSED
+/// (`agent_engine_config.agents.verifier`); rendered literally that is
+/// `[agents.agents.verifier]`. Flattening is safe because the agent set is CLOSED
 /// — the four names are struct fields, not map keys, so a per-agent table can
 /// never collide with a root field. Opening that set (a later phase) means
 /// either restoring the nesting or reserving these names explicitly.
@@ -162,7 +162,7 @@ pub struct AgentsSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_judge_model: Option<String>,
+    pub pipeline_verifier_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_worker_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -182,7 +182,7 @@ pub struct AgentsSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_candidates: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_judge_evidence_demand: Option<Toggle>,
+    pub pipeline_verifier_evidence_demand: Option<Toggle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_require_diff_coverage: Option<Toggle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -200,7 +200,7 @@ pub struct AgentsSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worker: Option<AgentEngineAgent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub judge: Option<AgentEngineAgent>,
+    pub verifier: Option<AgentEngineAgent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub triage: Option<AgentEngineAgent>,
 }
@@ -576,7 +576,7 @@ pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection) {
     let per_agent = cfg.agents.clone().unwrap_or_default();
     let agents = AgentsSection {
         default_model: cfg.default_model.clone(),
-        pipeline_judge_model: cfg.pipeline_judge_model.clone(),
+        pipeline_verifier_model: cfg.pipeline_verifier_model.clone(),
         pipeline_worker_model: cfg.pipeline_worker_model.clone(),
         pipeline_triage_model: cfg.pipeline_triage_model.clone(),
         auto_mode: cfg.auto_mode,
@@ -586,14 +586,14 @@ pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection) {
         hunk_review: cfg.hunk_review,
         pipeline_max_revisions: cfg.pipeline_max_revisions,
         pipeline_candidates: cfg.pipeline_candidates,
-        pipeline_judge_evidence_demand: cfg.pipeline_judge_evidence_demand,
+        pipeline_verifier_evidence_demand: cfg.pipeline_verifier_evidence_demand,
         pipeline_require_diff_coverage: cfg.pipeline_require_diff_coverage,
         model_timeout_secs: cfg.model_timeout_secs,
         compaction_budget_tokens: cfg.compaction_budget_tokens,
         tool_result_horizon_steps: cfg.tool_result_horizon_steps,
         default: per_agent.default,
         worker: per_agent.worker,
-        judge: per_agent.judge,
+        verifier: per_agent.verifier,
         triage: per_agent.triage,
     };
     let models = ModelsSection {
@@ -639,14 +639,14 @@ fn lower_agents(agents: AgentsSection, models: ModelsSection) -> Option<AgentEng
     let per_agent = AgentEngineAgents {
         default: agents.default,
         worker: agents.worker,
-        judge: agents.judge,
+        verifier: agents.verifier,
         triage: agents.triage,
     };
     let agents_field = (per_agent != AgentEngineAgents::default()).then_some(per_agent);
 
     Some(AgentEngineConfig {
         default_model: agents.default_model,
-        pipeline_judge_model: agents.pipeline_judge_model,
+        pipeline_verifier_model: agents.pipeline_verifier_model,
         pipeline_worker_model: agents.pipeline_worker_model,
         pipeline_triage_model: agents.pipeline_triage_model,
         allowed_models: models.allowed,
@@ -658,7 +658,7 @@ fn lower_agents(agents: AgentsSection, models: ModelsSection) -> Option<AgentEng
         hunk_review: agents.hunk_review,
         pipeline_max_revisions: agents.pipeline_max_revisions,
         pipeline_candidates: agents.pipeline_candidates,
-        pipeline_judge_evidence_demand: agents.pipeline_judge_evidence_demand,
+        pipeline_verifier_evidence_demand: agents.pipeline_verifier_evidence_demand,
         pipeline_require_diff_coverage: agents.pipeline_require_diff_coverage,
         model_timeout_secs: agents.model_timeout_secs,
         compaction_budget_tokens: agents.compaction_budget_tokens,

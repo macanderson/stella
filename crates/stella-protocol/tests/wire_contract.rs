@@ -62,7 +62,7 @@ use stella_protocol::receipt::{
     ManifestEntry, ProviderShare,
 };
 use stella_protocol::{
-    AgentEvent, CompiledContextFrameBuilt, JudgeEvidence, KNOWN_TYPE_TAGS, MediaArtifactRef,
+    AgentEvent, CompiledContextFrameBuilt, VerdictEvidence, KNOWN_TYPE_TAGS, MediaArtifactRef,
     SubAgentPhase, SubAgentStatus, ToolCall, ToolOutput,
 };
 
@@ -290,7 +290,7 @@ fn all_stage_kinds() -> Vec<StageKind> {
         Witness,
         Execute,
         Verify,
-        Judge,
+        Verifier,
         Reflect,
         ContextWrite,
         Complete,
@@ -321,7 +321,7 @@ fn all_model_call_roles() -> Vec<ModelCallRole> {
         WitnessRepair,
         Worker,
         DistressGuidance,
-        Judge,
+        Verdict,
         AgentAuthor,
         SkillAuthor,
         DomainInference,
@@ -356,7 +356,7 @@ fn all_ladder_rungs() -> Vec<LadderRung> {
         Revise,
         NothingAttempted,
         Unverifiable,
-        ModelJudge,
+        ModelVerdict,
         HeuristicFallback,
         Waived,
     ]
@@ -411,7 +411,7 @@ fn all_proof_steps() -> Vec<ProofStep> {
     vec![
         ProofStep::Assurance {
             witness: true,
-            judge: false,
+            verifier: false,
         },
         ProofStep::Warrant {
             required: false,
@@ -673,18 +673,18 @@ fn sample_events() -> Vec<AgentEvent> {
             estimated_input_tokens: 0,
             compiled_frame: None,
         },
-        AgentEvent::JudgeVerdict {
+        AgentEvent::Verdict {
             passed: true,
-            evidence: JudgeEvidence {
+            evidence: VerdictEvidence {
                 summary: "the tracked command flipped".into(),
                 deterministic: true,
                 evidence_refs: vec!["trace:t1#verify".into()],
                 ladder: None,
             },
         },
-        AgentEvent::JudgeVerdict {
+        AgentEvent::Verdict {
             passed: false,
-            evidence: JudgeEvidence {
+            evidence: VerdictEvidence {
                 summary: "no evidence".into(),
                 deterministic: false,
                 evidence_refs: vec![],
@@ -1106,14 +1106,14 @@ fn sample_events() -> Vec<AgentEvent> {
     // Every ladder rung (#1043). Each has to reach the wire on its own,
     // because the rung is the *only* thing separating verdicts that the
     // surrounding `passed`/`deterministic` flags spell identically — a
-    // deterministic pass from a waived review, a judge that answered from one
+    // deterministic pass from a waived review, a verifier that answered from one
     // that was unavailable.
     events.extend(
         all_ladder_rungs()
             .into_iter()
-            .map(|rung| AgentEvent::JudgeVerdict {
+            .map(|rung| AgentEvent::Verdict {
                 passed: rung.is_deterministic(),
-                evidence: JudgeEvidence {
+                evidence: VerdictEvidence {
                     summary: "sampled for the rung".into(),
                     deterministic: rung.is_deterministic(),
                     evidence_refs: vec![],

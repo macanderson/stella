@@ -19,9 +19,18 @@ pub enum Role {
     Triage,
     /// Planner (defaults to worker-class, separately overridable).
     Plan,
-    /// Evidence-based verification, best-of-N selection. Never the same
-    /// instance as `Worker`.
-    Judge,
+    /// The independent capable model that completes verification. Fills every
+    /// half of the job: authors the witness test that arms the flip oracle,
+    /// repairs a witness that did not fail, renders the verdict on
+    /// inconclusive evidence, and steers a distressed worker. Selects among
+    /// best-of-N candidates. Never the same instance as `Worker` — that
+    /// independence is the whole point, and
+    /// `Pipeline::can_author_independent_witness` enforces it.
+    ///
+    /// This is the *only* slot for a non-worker capable model. Call sites name
+    /// the job (`ModelCallRole::WitnessAuthor`, `::Verdict`), never a second
+    /// model identity: there is no separate "witness model" or "verifier model".
+    Verifier,
     /// Context-plane embeddings.
     Embed,
     /// Image-input understanding.
@@ -78,10 +87,10 @@ mod tests {
 
     #[test]
     fn role_roundtrips_and_uses_snake_case() {
-        let json = serde_json::to_string(&Role::Judge).unwrap();
-        assert_eq!(json, "\"judge\"");
+        let json = serde_json::to_string(&Role::Verifier).unwrap();
+        assert_eq!(json, "\"verifier\"");
         let back: Role = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, Role::Judge);
+        assert_eq!(back, Role::Verifier);
     }
 
     #[test]

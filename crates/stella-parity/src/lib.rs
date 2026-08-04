@@ -341,12 +341,12 @@ pub static CAPABILITIES: &[Capability] = &[
     },
     Capability {
         id: "goal.loop",
-        engine_home: "stella-core goal: judged rounds until an independent judge assesses the goal met",
+        engine_home: "stella-core goal: judged rounds until an independent verifier assesses the goal met",
         engine_entries: &["run_goal", "assess"],
         cli: SurfacePosture::Shipped {
-            mechanism: "`stella goal` / `stella monitor`, with a cross-family judge resolved by \
+            mechanism: "`stella goal` / `stella monitor`, with a cross-family verifier resolved by \
                         default",
-            witness: "distinct_families_route_a_cross_family_judge",
+            witness: "distinct_families_route_a_cross_family_verifier",
         },
         // Shipped in #1297 as the mode flag this row named as its second
         // acceptable shape, deliberately not as a `/v1/goals` resource:
@@ -452,7 +452,7 @@ pub static CAPABILITIES: &[Capability] = &[
     },
     Capability {
         id: "pipeline.verified_run",
-        engine_home: "stella-pipeline: the plan/witness/verify/judge ladder behind `verified done, not claimed done`",
+        engine_home: "stella-pipeline: the plan/witness/verify/verifier ladder behind `verified done, not claimed done`",
         engine_entries: &[],
         cli: SurfacePosture::Shipped {
             mechanism: "`stella run` (default pipeline path) with the scope-review approval gate",
@@ -483,7 +483,7 @@ pub static CAPABILITIES: &[Capability] = &[
         // when absent, so a served run still verifies — it just cannot
         // isolate best-of-N candidates or measure diff coverage yet); the
         // witness-author role rides the worker's provider rather than
-        // getting its own id the way judge does; and `pipeline` is refused
+        // getting its own id the way verifier does; and `pipeline` is refused
         // alongside `goal`/`sub_agents` on the same turn rather than
         // composed with them.
         api: SurfacePosture::Shipped {

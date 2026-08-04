@@ -92,7 +92,7 @@ pub trait ToolCallObserver: Send + Sync {
 ///
 /// [`Provider::complete`] and [`Provider::complete_observed`] are provided
 /// shims for the many callers that genuinely *own* their request — a one-shot
-/// reflection, ingest, or judge call that built its messages and will never
+/// reflection, ingest, or verifier call that built its messages and will never
 /// reuse them. They are not override points; overriding one would leave the
 /// borrowed path pointing at a different implementation.
 #[async_trait]

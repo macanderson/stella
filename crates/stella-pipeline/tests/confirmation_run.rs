@@ -41,8 +41,8 @@ fn a_flaky_flip_is_caught_by_the_confirmation_run() {
     };
     assert_eq!(
         ladder_decision(&inputs),
-        LadderDecision::ModelJudge,
-        "an unconfirmed flip must escalate to the judge, not SubmitFast"
+        LadderDecision::ModelVerdict,
+        "an unconfirmed flip must escalate to the verifier, not SubmitFast"
     );
 }
 

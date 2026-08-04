@@ -1,5 +1,5 @@
 //! Proportionate verification: a change with nothing to prove completes with a
-//! stated reason instead of buying a judge call to confirm the absence of a
+//! stated reason instead of buying a verifier call to confirm the absence of a
 //! test that was never warranted.
 //!
 //! Design: [`docs/design/witness-protocol.md`](../../../../../docs/design/witness-protocol.md) §7.
@@ -15,14 +15,14 @@ const DOCS_DIFF: &str = "\
 ";
 
 /// The witness: a docs-only change reaches the ladder with no flip and no test
-/// command — the shape that used to mean `ModelJudge` — and completes anyway.
+/// command — the shape that used to mean `ModelVerdict` — and completes anyway.
 ///
-/// The scripted provider serves exactly TWO calls (triage, worker). A judge
+/// The scripted provider serves exactly TWO calls (triage, worker). A verifier
 /// call would exhaust it and error the run, so the fixture size is the
 /// assertion. Before the warrant, this run paid for a third call to be told
 /// that prose has no runtime behavior.
 #[tokio::test]
-async fn a_docs_only_change_completes_without_buying_a_judge_call() {
+async fn a_docs_only_change_completes_without_buying_a_verifier_call() {
     let provider = ScriptedProvider::new(vec![text_result("single"), text_result("done")]);
     let resolver = OneProvider(&provider);
     let runner = ScriptedRunner::new(vec![], DOCS_DIFF);
@@ -76,11 +76,11 @@ async fn a_docs_only_change_completes_without_buying_a_judge_call() {
     assert_eq!(outcome.status, PipelineStatus::Completed);
     assert!(
         provider.script.lock().await.is_empty(),
-        "the run spent exactly triage + worker; a judge call would be a third"
+        "the run spent exactly triage + worker; a verifier call would be a third"
     );
     assert!(
-        !stages(&drain(&mut rx)).contains(&StageKind::Judge),
-        "no judge stage for a change with nothing to prove"
+        !stages(&drain(&mut rx)).contains(&StageKind::Verifier),
+        "no verifier stage for a change with nothing to prove"
     );
 
     let verdict = outcome.verdict.expect("a reasoned verdict, not silence");
@@ -100,13 +100,13 @@ const SOURCE_DIFF: &str = "\
 +fn b() { run(); }
 ";
 
-/// Triage's `JUDGE: no` is a prompt-time guess, and this arm is only reached
+/// Triage's `VERIFIER: no` is a prompt-time guess, and this arm is only reached
 /// when the ladder came back inconclusive — the state that falsifies the
 /// waiver's own premise ("success is self-evident or a test already proves
 /// it"). On a behavioral diff nothing proved, the waiver must not stand: the
-/// third scripted call IS the judge, and the run must spend it.
+/// third scripted call IS the verifier, and the run must spend it.
 #[tokio::test]
-async fn a_judge_waiver_on_a_behavioral_diff_still_buys_the_judge() {
+async fn a_verifier_waiver_on_a_behavioral_diff_still_buys_the_verifier() {
     let provider = ScriptedProvider::new(vec![
         text_result("CLASS: single\nWITNESS: no\nJUDGE: no"),
         text_result("done"),
@@ -160,26 +160,26 @@ async fn a_judge_waiver_on_a_behavioral_diff_still_buys_the_judge() {
 
     assert!(
         provider.script.lock().await.is_empty(),
-        "the judge call must be spent: a waived judge here would leave the third result unserved"
+        "the verifier call must be spent: a waived verifier here would leave the third result unserved"
     );
     assert!(
-        stages(&drain(&mut rx)).contains(&StageKind::Judge),
+        stages(&drain(&mut rx)).contains(&StageKind::Verifier),
         "a behavioral diff keeps its reviewer, whatever triage guessed"
     );
     let verdict = outcome.verdict.expect("a judged verdict");
     assert!(
         !verdict.summary.contains("waived"),
-        "the verdict must be the judge's, not the waiver's: {}",
+        "the verdict must be the verifier's, not the waiver's: {}",
         verdict.summary
     );
 }
 
 /// The half that keeps the waiver useful: where the warrant AGREES nothing
-/// needs a reviewer (a docs-only change), triage's `JUDGE: no` is honored
-/// exactly as before — two provider calls, no judge stage, and a verdict that
+/// needs a reviewer (a docs-only change), triage's `VERIFIER: no` is honored
+/// exactly as before — two provider calls, no verifier stage, and a verdict that
 /// says the review was deliberately waived rather than broken.
 #[tokio::test]
-async fn a_judge_waiver_stands_where_the_warrant_agrees() {
+async fn a_verifier_waiver_stands_where_the_warrant_agrees() {
     let provider = ScriptedProvider::new(vec![
         text_result("CLASS: single\nWITNESS: no\nJUDGE: no"),
         text_result("done"),
@@ -236,7 +236,7 @@ async fn a_judge_waiver_stands_where_the_warrant_agrees() {
         "exactly triage + worker were spent"
     );
     assert!(
-        !stages(&drain(&mut rx)).contains(&StageKind::Judge),
+        !stages(&drain(&mut rx)).contains(&StageKind::Verifier),
         "the waiver stands where the warrant agrees there is nothing to review"
     );
     let verdict = outcome.verdict.expect("a reasoned verdict");
@@ -262,11 +262,11 @@ async fn a_judge_waiver_stands_where_the_warrant_agrees() {
 ///
 /// The answer is now stronger than the escalation this originally asserted.
 /// With no test command, no flip and no recorded touch, a blind probe leaves
-/// the ladder with nothing at all to reason over, and a judge handed an empty
+/// the ladder with nothing at all to reason over, and a verifier handed an empty
 /// record does not produce a better answer — it produced `FAIL … the file
 /// likely does not exist` about a file that was in the container (#973). So the
 /// ladder abstains, and the fixture size is again the assertion: exactly three
-/// provider calls, because a fourth would mean a judge was bought to guess.
+/// provider calls, because a fourth would mean a verifier was bought to guess.
 ///
 /// The worker must *dispatch a mutating tool call* for this to be the abstain
 /// case at all. A turn that calls nothing has the same four dark channels but
@@ -345,12 +345,12 @@ async fn a_blind_diff_probe_never_completes_as_nothing_changed() {
 
     let events = drain(&mut rx);
     assert!(
-        !stages(&events).contains(&StageKind::Judge),
-        "with every channel blind there is nothing for a judge to read — asking \
+        !stages(&events).contains(&StageKind::Verifier),
+        "with every channel blind there is nothing for a verifier to read — asking \
          one anyway is what produced a confident false negative"
     );
     // The rail has to say it too. Without a proof step of its own the
-    // abstention arrives as `JudgeVerdict { passed: true }` and renders as
+    // abstention arrives as `Verdict { passed: true }` and renders as
     // `✓ passed`, which is the same silence in the opposite direction.
     assert!(
         events.iter().any(|event| matches!(
@@ -364,20 +364,20 @@ async fn a_blind_diff_probe_never_completes_as_nothing_changed() {
 }
 
 /// The end of the wire the bug broke: what the recorder counted has to be what
-/// the judge is told.
+/// the verifier is told.
 ///
 /// This is the Terminal-Bench trial with one channel restored. The task
 /// directory is still not a git repository, so the diff probe is still blind
 /// and there is still no test command — but the registry recorded six mutating
 /// touches, and six is what must appear in the evidence summary. It read
-/// `file_change_events=0`, and the judge answered that the file "likely does
+/// `file_change_events=0`, and the verifier answered that the file "likely does
 /// not exist" while it sat in the container (#973).
 ///
 /// Note what the six also buy: the ladder escalates rather than abstaining,
 /// because a recorded touch is real evidence that the tree changed. Blindness
 /// is the *absence* of every channel, not the absence of a readable diff.
 #[tokio::test]
-async fn the_judge_is_told_what_the_recorder_counted_not_zero() {
+async fn the_verifier_is_told_what_the_recorder_counted_not_zero() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
         text_result("done"),
@@ -432,17 +432,17 @@ async fn the_judge_is_told_what_the_recorder_counted_not_zero() {
         .await
         .expect("run succeeds");
 
-    let judge_prompt = provider
+    let verifier_prompt = provider
         .prompts()
         .into_iter()
         .find(|p| p.contains("file_change_events="))
-        .expect("the judge was asked, and its prompt carries the evidence summary");
+        .expect("the verifier was asked, and its prompt carries the evidence summary");
     assert!(
-        judge_prompt.contains("file_change_events=6"),
-        "the judge must be told what the recorder counted: {judge_prompt}"
+        verifier_prompt.contains("file_change_events=6"),
+        "the verifier must be told what the recorder counted: {verifier_prompt}"
     );
     assert!(
-        stages(&drain(&mut rx)).contains(&StageKind::Judge),
+        stages(&drain(&mut rx)).contains(&StageKind::Verifier),
         "six observed mutations are evidence, so this escalates rather than abstaining"
     );
 }
@@ -535,7 +535,7 @@ async fn a_non_repository_says_so_rather_than_reporting_a_generic_failure() {
 #[tokio::test]
 async fn a_turn_that_called_no_tool_does_not_report_success() {
     // triage → single; worker → a confident claim it never acted on. The
-    // scripted provider serves exactly two calls: a judge call would exhaust
+    // scripted provider serves exactly two calls: a verifier call would exhaust
     // it and error the run, so the fixture size asserts none is bought.
     let provider = ScriptedProvider::new(vec![
         text_result("CLASS: single\nWITNESS: no\nJUDGE: yes"),
@@ -617,7 +617,7 @@ async fn a_turn_that_called_no_tool_does_not_report_success() {
     assert!(
         events.iter().any(|e| matches!(
             e,
-            AgentEvent::JudgeVerdict {
+            AgentEvent::Verdict {
                 passed: false,
                 evidence
             } if evidence.summary.contains("NO WORK ATTEMPTED")
@@ -625,8 +625,8 @@ async fn a_turn_that_called_no_tool_does_not_report_success() {
         "the emitted verdict — the field every downstream reader keys on — must be false"
     );
     assert!(
-        !stages(&events).contains(&StageKind::Judge),
-        "nothing was attempted, so there is nothing for a judge to weigh"
+        !stages(&events).contains(&StageKind::Verifier),
+        "nothing was attempted, so there is nothing for a verifier to weigh"
     );
 }
 

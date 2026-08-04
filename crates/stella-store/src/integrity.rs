@@ -260,7 +260,7 @@ pub fn check_workspace_store(workspace_root: &Path) -> Result<Option<(PathBuf, I
 /// rewrites a file the user may still want to salvage. Immutable reads cannot
 /// see a `-wal`'s uncheckpointed pages, so a BAD verdict (or a probe that could
 /// not run) escalates to the read-write open a session would perform, which
-/// recovers the WAL and judges the pair. A GOOD verdict never escalates: a
+/// recovers the WAL and verifiers the pair. A GOOD verdict never escalates: a
 /// structurally sound main file plus a WAL that a session will replay is not a
 /// corrupt store, and re-opening it read-write to say so would be exactly the
 /// mutation this avoids.

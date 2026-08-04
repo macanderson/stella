@@ -13,7 +13,7 @@
 //! so the check sees precisely what the provider will see.
 //!
 //! Warnings never block launch — a run can proceed on a partially-valid
-//! config (a bad judge pin falls back to the worker, etc.); the point is to
+//! config (a bad verifier pin falls back to the worker, etc.); the point is to
 //! surface the problem where it's cheap to fix, not to gate. `stella doctor`
 //! runs the same pass through [`inspect_model_config`] and *does* gate: a
 //! script that wants a hard answer before spending money asks for one.
@@ -55,7 +55,7 @@ use stella_model::catalog::Catalog;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsIssue {
     /// The settings location, in the user's own vocabulary (`default_model`,
-    /// `agents.judge.model`, `allowed_models[2]`, or `--model`).
+    /// `agents.verifier.model`, `allowed_models[2]`, or `--model`).
     pub location: String,
     /// The configured value that failed.
     pub value: String,
@@ -165,7 +165,7 @@ fn kind_label(kind: EngineAgentKind) -> &'static str {
     match kind {
         EngineAgentKind::Default => "default",
         EngineAgentKind::Worker => "worker",
-        EngineAgentKind::Judge => "judge",
+        EngineAgentKind::Verifier => "verifier",
         EngineAgentKind::Triage => "triage",
     }
 }
@@ -303,12 +303,12 @@ fn flat_source_label(engine: &AgentEngineConfig, kind: EngineAgentKind) -> &'sta
     let flat_specific = match kind {
         EngineAgentKind::Default => None,
         EngineAgentKind::Worker => engine.pipeline_worker_model.as_deref(),
-        EngineAgentKind::Judge => engine.pipeline_judge_model.as_deref(),
+        EngineAgentKind::Verifier => engine.pipeline_verifier_model.as_deref(),
         EngineAgentKind::Triage => engine.pipeline_triage_model.as_deref(),
     };
     match (kind, flat_specific.is_some()) {
         (EngineAgentKind::Worker, true) => "pipeline_worker_model",
-        (EngineAgentKind::Judge, true) => "pipeline_judge_model",
+        (EngineAgentKind::Verifier, true) => "pipeline_verifier_model",
         (EngineAgentKind::Triage, true) => "pipeline_triage_model",
         _ => "default_model",
     }
@@ -334,7 +334,7 @@ pub fn check_engine_settings(
     for kind in [
         EngineAgentKind::Default,
         EngineAgentKind::Worker,
-        EngineAgentKind::Judge,
+        EngineAgentKind::Verifier,
         EngineAgentKind::Triage,
     ] {
         let Some(agent) = engine.agent(kind) else {
@@ -379,7 +379,7 @@ pub fn check_engine_settings(
         // identical `value`, not location).
         if matches!(
             kind,
-            EngineAgentKind::Worker | EngineAgentKind::Judge | EngineAgentKind::Triage
+            EngineAgentKind::Worker | EngineAgentKind::Verifier | EngineAgentKind::Triage
         ) && agent
             .provider
             .as_deref()
@@ -675,7 +675,7 @@ mod tests {
 
     #[test]
     fn an_unknown_provider_qualification_is_unrecognized() {
-        let issue = check_spec("agents.judge.model", "notaprovider/x", &is_seed_provider)
+        let issue = check_spec("agents.verifier.model", "notaprovider/x", &is_seed_provider)
             .expect("unknown provider prefix must be flagged");
         assert!(issue.message.contains("unrecognized"), "{}", issue.message);
     }
@@ -687,13 +687,13 @@ mod tests {
 
     #[test]
     fn per_agent_provider_pin_is_sent_verbatim_not_split() {
-        // A judge pinned to OpenRouter with a slug that itself contains `/`:
+        // A verifier pinned to OpenRouter with a slug that itself contains `/`:
         // the engine sends `openai/gpt-6` VERBATIM to OpenRouter (unseeded →
         // its endpoint is the authority), so the check must NOT re-split the
         // slug and validate the phantom `openai/gpt-6` against the OpenAI
         // catalog (where `gpt-6` does not exist) — that was a false positive.
         let engine: AgentEngineConfig = serde_json::from_str(
-            r#"{ "agents": { "judge": { "provider": "openrouter", "model": "openai/gpt-6" } } }"#,
+            r#"{ "agents": { "verifier": { "provider": "openrouter", "model": "openai/gpt-6" } } }"#,
         )
         .unwrap();
         assert!(
@@ -708,25 +708,25 @@ mod tests {
         // catalog and is correctly flagged (the string carries its own
         // routing).
         let engine: AgentEngineConfig =
-            serde_json::from_str(r#"{ "agents": { "judge": { "model": "openai/nope" } } }"#)
+            serde_json::from_str(r#"{ "agents": { "verifier": { "model": "openai/nope" } } }"#)
                 .unwrap();
         let issues = check_engine_settings(&engine, &is_seed_provider);
         assert_eq!(issues.len(), 1, "{issues:?}");
-        assert_eq!(issues[0].location, "agents.judge.model");
+        assert_eq!(issues[0].location, "agents.verifier.model");
         assert_eq!(issues[0].value, "openai/nope");
     }
 
     #[test]
     fn provider_pin_over_a_flat_key_is_validated_issue_273() {
-        // The remaining validator gap (#273): the judge sets ONLY `provider`
-        // (no `agents.judge.model`), so its effective model rides
-        // `pipeline_judge_model` — a bare, de-namespaced OpenRouter slug that
+        // The remaining validator gap (#273): the verifier sets ONLY `provider`
+        // (no `agents.verifier.model`), so its effective model rides
+        // `pipeline_verifier_model` — a bare, de-namespaced OpenRouter slug that
         // reaches the wire as `auto`, which OpenRouter does not serve. Before
         // the fix this was invisible: the per-kind loop only looked at the
         // agent's OWN `model` field.
         let engine: AgentEngineConfig = serde_json::from_str(
-            r#"{ "pipeline_judge_model": "auto",
-                 "agents": { "judge": { "provider": "openrouter" } } }"#,
+            r#"{ "pipeline_verifier_model": "auto",
+                 "agents": { "verifier": { "provider": "openrouter" } } }"#,
         )
         .unwrap();
         let issues = check_engine_settings(&engine, &is_seed_provider);
@@ -737,7 +737,7 @@ mod tests {
         );
         assert_eq!(
             issues[0].location,
-            "agents.judge (provider pin over pipeline_judge_model)"
+            "agents.verifier (provider pin over pipeline_verifier_model)"
         );
         assert_eq!(issues[0].value, "auto");
         assert!(
@@ -749,22 +749,22 @@ mod tests {
 
     #[test]
     fn provider_pin_over_default_model_is_labeled_by_its_real_source() {
-        // Same gap, but the judge's flat fallback is `default_model` (no
-        // `pipeline_judge_model` set) — the location must name the key that
-        // actually fed the resolution, not always `pipeline_judge_model`.
+        // Same gap, but the verifier's flat fallback is `default_model` (no
+        // `pipeline_verifier_model` set) — the location must name the key that
+        // actually fed the resolution, not always `pipeline_verifier_model`.
         // `default_model` is a valid seeded bare slug on its own (clean at
         // the top-level check), so the ONLY issue is the new provider-pin
         // combination — proving it, not an unrelated `default_model` typo.
         let engine: AgentEngineConfig = serde_json::from_str(
             r#"{ "default_model": "glm-5.2",
-                 "agents": { "judge": { "provider": "openrouter" } } }"#,
+                 "agents": { "verifier": { "provider": "openrouter" } } }"#,
         )
         .unwrap();
         let issues = check_engine_settings(&engine, &is_seed_provider);
         assert_eq!(issues.len(), 1, "{issues:?}");
         assert_eq!(
             issues[0].location,
-            "agents.judge (provider pin over default_model)"
+            "agents.verifier (provider pin over default_model)"
         );
     }
 
@@ -775,7 +775,7 @@ mod tests {
         // branch — it is handled entirely by the pre-existing own-model path
         // and produces no false positive.
         let engine: AgentEngineConfig = serde_json::from_str(
-            r#"{ "agents": { "judge": { "provider": "openrouter", "model": "openai/gpt-6" } } }"#,
+            r#"{ "agents": { "verifier": { "provider": "openrouter", "model": "openai/gpt-6" } } }"#,
         )
         .unwrap();
         assert!(

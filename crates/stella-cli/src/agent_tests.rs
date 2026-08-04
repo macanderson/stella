@@ -1237,7 +1237,7 @@ fn vertex_and_bedrock_route_to_their_native_adapters_not_a_fallthrough() {
 }
 
 /// A `ConfiguredProvider` for `provider_id` at its default model with a
-/// dummy key — the offline analogue of `cfg_for` for judge routing. The
+/// dummy key — the offline analogue of `cfg_for` for verifier routing. The
 /// key is never sent anywhere: routing only constructs adapters and
 /// reads `.id()`.
 fn configured_provider(provider_id: &str) -> ConfiguredProvider {
@@ -1254,52 +1254,52 @@ fn configured_provider(provider_id: &str) -> ConfiguredProvider {
 }
 
 #[test]
-fn single_configured_provider_reuses_the_worker_as_judge() {
+fn single_configured_provider_reuses_the_worker_as_verifier() {
     // (a) Only the worker's own provider is configured: no distinct
     // family exists, so the router degrades to the worker and we build no
-    // second provider — the judge IS the worker (identical to the
+    // second provider — the verifier IS the worker (identical to the
     // pre-routing behavior, no extra cost).
     let configured = vec![configured_provider("zai")];
     assert!(
-        resolve_cross_family_judge("zai", "glm-5.2", &configured).is_none(),
-        "a single configured family must leave the judge as the worker provider"
+        resolve_cross_family_verifier("zai", "glm-5.2", &configured).is_none(),
+        "a single configured family must leave the verifier as the worker provider"
     );
 }
 
 #[test]
-fn same_family_providers_reuse_the_worker_as_judge() {
+fn same_family_providers_reuse_the_worker_as_verifier() {
     // Two providers but ONE family (Gemini and Gemini-via-Vertex both
-    // group under `google`): still no bias-resistant judge available, so
+    // group under `google`): still no bias-resistant verifier available, so
     // it stays the worker — proves `provider_family` grouping gates the
-    // cross-family judge, not the raw provider count.
+    // cross-family verifier, not the raw provider count.
     let configured = vec![configured_provider("gemini"), configured_provider("vertex")];
     assert!(
-        resolve_cross_family_judge("gemini", "gemini-3-pro", &configured).is_none(),
-        "same-vendor providers share a family and must not route a cross-family judge"
+        resolve_cross_family_verifier("gemini", "gemini-3-pro", &configured).is_none(),
+        "same-vendor providers share a family and must not route a cross-family verifier"
     );
 }
 
 #[test]
-fn distinct_families_route_a_cross_family_judge() {
+fn distinct_families_route_a_cross_family_verifier() {
     // (b) Worker on Z.ai with Anthropic also configured: the router picks
     // the distinct family and we build that concrete adapter. No network
     // — only construction and `.id()`.
     let configured = vec![configured_provider("zai"), configured_provider("anthropic")];
-    let (judge, judge_id) = resolve_cross_family_judge("zai", "glm-5.2", &configured)
-        .expect("a distinct family must route a cross-family judge");
-    assert_eq!(judge_id, "anthropic", "judge must be the distinct family");
-    assert_eq!(judge.id(), "anthropic", "judge adapter must be Anthropic's");
+    let (verifier, verifier_id) = resolve_cross_family_verifier("zai", "glm-5.2", &configured)
+        .expect("a distinct family must route a cross-family verifier");
+    assert_eq!(verifier_id, "anthropic", "verifier must be the distinct family");
+    assert_eq!(verifier.id(), "anthropic", "verifier adapter must be Anthropic's");
     assert_ne!(
-        judge.id(),
+        verifier.id(),
         "zai",
-        "judge must differ from the worker's family"
+        "verifier must differ from the worker's family"
     );
 }
 
 #[test]
-fn judge_build_failure_falls_back_to_the_worker() {
-    // (c) The router selects a distinct family, but building that judge
-    // adapter fails (an unknown model slug the catalog rejects). Judge
+fn verifier_build_failure_falls_back_to_the_worker() {
+    // (c) The router selects a distinct family, but building that verifier
+    // adapter fails (an unknown model slug the catalog rejects). Verifier
     // routing must never break the loop: it falls back to the worker
     // provider (`None`). Fully offline and race-free — no shared env, no
     // network — unlike an env-gated Vertex/Bedrock build failure.
@@ -1322,8 +1322,8 @@ fn judge_build_failure_falls_back_to_the_worker() {
     };
     let configured = vec![configured_provider("zai"), faux];
     assert!(
-        resolve_cross_family_judge("zai", "glm-5.2", &configured).is_none(),
-        "a judge adapter that fails to build must fall back to the worker provider"
+        resolve_cross_family_verifier("zai", "glm-5.2", &configured).is_none(),
+        "a verifier adapter that fails to build must fall back to the worker provider"
     );
 }
 

@@ -4,7 +4,7 @@
 //! `stella-pipeline` — the orchestration plane that sits *above*
 //! `stella-core::Engine`. It drives one prompt
 //! through the staged turn flow — **evaluate → enhance → route → execute →
-//! witness → verify → judge → revise** (the witness is authored on demand,
+//! witness → verify → verifier → revise** (the witness is authored on demand,
 //! after execution, once the warrant has read the diff) — over injected
 //! ports, emitting an `AgentEvent` at every stage boundary.
 //!
@@ -15,11 +15,11 @@
 //! (triage), recalls context, plans multi-step work, gates large plans behind
 //! interactive scope review, executes each step through the engine, and
 //! verifies the result with a deterministic-first ladder before ever spending
-//! a model-judge call.
+//! a model-verifier call.
 //!
 //! # The design lessons this crate encodes
 //!
-//! - **L-E2** — triage fast paths: simple lookups skip planner + judge (with a
+//! - **L-E2** — triage fast paths: simple lookups skip planner + verifier (with a
 //!   self-revoking zero-diff guard); single-task goals skip DAG planning.
 //!   [`triage`], and the fast-path wiring in [`pipeline`].
 //! - **L-E5** — the scope-review gate. [`scope`].
@@ -29,18 +29,18 @@
 //! - **L-E8** — recall rides as a volatile message after the stable system
 //!   prefix (cache discipline). [`pipeline`].
 //! - **L-E11** — the deterministic verification ladder: the flip-oracle state
-//!   machine, the evidence ladder that skips the judge on strong evidence, and
-//!   a model judge (judge ≠ worker) only on inconclusive evidence with a
+//!   machine, the evidence ladder that skips the verifier on strong evidence, and
+//!   a model verifier (verifier ≠ worker) only on inconclusive evidence with a
 //!   heuristic fallback. [`verify`]. Its front half is **witness authoring**:
 //!   when the user armed no `--test-command`, an independent model (the
-//!   judge's resolution) writes the failing witness test that the flip oracle
+//!   verifier's resolution) writes the failing witness test that the flip oracle
 //!   tracks — visible to the worker, integrity-checked by tamper exclusion,
 //!   never hidden. [`witness`].
 //! - **The feedback airlock** — the one channel from verification back to the
 //!   worker. A deterministic failure no longer replays the raw test-runner
 //!   output into the revision prompt: it is disclosed at a grain (`L0`–`L3`)
 //!   that tightens when the same failure repeats, and every model-authored
-//!   text crossing inbound (distress guidance, judge reasoning) is scrubbed
+//!   text crossing inbound (distress guidance, verifier reasoning) is scrubbed
 //!   against the sealed material first. The operator still sees the real
 //!   output; only the worker's prompt is redacted.
 //!   [`witness::airlock`]. Design: `docs/design/witness-protocol.md` §4.
@@ -56,7 +56,7 @@
 //! - **L-M4** — triage runs with `max_retries = 0` under a latency ceiling.
 //!   [`pipeline::Pipeline::run`].
 //! - **Distress guidance** — on the second consecutive deterministic
-//!   verification failure, one judge call steers the next revision
+//!   verification failure, one verifier call steers the next revision
 //!   (event-triggered course-correction, never a fixed mid-run checkpoint).
 //!   [`verify::guidance_prompt`], wired in [`pipeline`].
 //!

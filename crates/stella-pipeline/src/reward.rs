@@ -3,7 +3,7 @@
 //! label it at all.
 //!
 //! The verify stage already computes a tiered, evidence-based verdict for
-//! every outcome: deterministic first, a model judge only on genuinely
+//! every outcome: deterministic first, a model verifier only on genuinely
 //! inconclusive evidence, an abstention when nothing could see. That verdict
 //! *is* the reward signal this project has been generating all along. This
 //! module is the (pure, I/O-free) mapping from it to a label, and the rules it
@@ -15,16 +15,16 @@
 //! |---|---|---|
 //! | [`LadderRung::SubmitFast`] | **+1.0** | A fail→pass flip of the tracked command. A hard label: a test observed it. |
 //! | [`LadderRung::Revise`] | **−1.0** | Touched tests red. Equally hard, in the other direction. |
-//! | [`LadderRung::ModelJudge`] (pass) | **+0.5** | A model's opinion. Real signal, half the weight, because the judge agreed with Terminal-Bench's own grader 46% of the time. |
-//! | [`LadderRung::ModelJudge`] (fail) | **−0.5** | Same discount, same reason. |
+//! | [`LadderRung::ModelVerdict`] (pass) | **+0.5** | A model's opinion. Real signal, half the weight, because the verifier agreed with Terminal-Bench's own grader 46% of the time. |
+//! | [`LadderRung::ModelVerdict`] (fail) | **−0.5** | Same discount, same reason. |
 //! | everything else | **discarded** | See below. |
 //!
 //! # Why the magnitudes are configurable, and why only downward
 //!
-//! The 0.5 is an estimate of one judge's accuracy, and the judge in question is
-//! whichever model a workspace pointed at it. A workspace whose judge is worse
+//! The 0.5 is an estimate of one verifier's accuracy, and the verifier in question is
+//! whichever model a workspace pointed at it. A workspace whose verifier is worse
 //! than the one that produced the 46% figure — a cheaper model, an unfamiliar
-//! domain, a house style the judge keeps mistaking for a defect — is entitled to
+//! domain, a house style the verifier keeps mistaking for a defect — is entitled to
 //! trust it less, so [`OutcomeWeights`] carries both magnitudes and a workspace
 //! can lower the judged one.
 //!
@@ -46,7 +46,7 @@
 //! the key, before any work starts.
 //!
 //! A judged weight of exactly `0.0` is legal and means something specific: *do
-//! not train on this judge at all*. It maps to [`DiscardReason::JudgeDistrusted`]
+//! not train on this verifier at all*. It maps to [`DiscardReason::VerifierDistrusted`]
 //! rather than to a `0.0` scalar, because a zero reward is a claim — "we watched
 //! and it came out neutral" — and this setting is the opposite of a claim. That
 //! is the same distinction the abstain rungs exist to preserve, applied to a
@@ -75,7 +75,7 @@
 //! wrong.
 //!
 //! [`LadderRung::HeuristicFallback`] is discarded for a different reason: it is
-//! not a verdict about the work at all, it is a verdict about the judge being
+//! not a verdict about the work at all, it is a verdict about the verifier being
 //! unavailable. [`LadderRung::Waived`] likewise — no reviewer was bought, so
 //! nothing was determined either way.
 //!
@@ -87,31 +87,31 @@
 //!
 //! # The airlock: labels carry no prose
 //!
-//! Judge reasoning and distress-guidance text are **steering**, never training
+//! Verifier reasoning and distress-guidance text are **steering**, never training
 //! targets — the same discipline as the witness airlock
 //! ([`crate::witness::airlock`]). Here that is enforced structurally rather
 //! than by review: [`RewardLabel`] and everything it contains hold no
 //! free-form `String` field, only enums and numbers, so there is no field a
 //! model-authored sentence could be assigned to. [`Settlement::from_evidence`]
 //! is deliberately the seam that proves it — it is handed the whole
-//! [`JudgeEvidence`], summary included, and returns a value with no strings in
-//! it. `tests::judge_prose_never_reaches_a_label` is the property test.
+//! [`VerdictEvidence`], summary included, and returns a value with no strings in
+//! it. `tests::verifier_prose_never_reaches_a_label` is the property test.
 
 use serde::{Deserialize, Serialize};
-use stella_protocol::{JudgeEvidence, LadderRung};
+use stella_protocol::{VerdictEvidence, LadderRung};
 
 /// Default magnitude of a label backed by a deterministic test observation.
 const DETERMINISTIC_WEIGHT: f64 = 1.0;
 
-/// Default magnitude of a label backed only by a model judge's opinion. Half,
+/// Default magnitude of a label backed only by a model verifier's opinion. Half,
 /// and the halving is measured rather than aesthetic: across an 89-task
-/// Terminal-Bench run the judge agreed with the benchmark's grader 46% of the
+/// Terminal-Bench run the verifier agreed with the benchmark's grader 46% of the
 /// time.
 const JUDGED_WEIGHT: f64 = 0.5;
 
 /// What each tier of evidence is worth, before shaping.
 ///
-/// Two numbers, one ordering rule: a judge's opinion may be worth less than a
+/// Two numbers, one ordering rule: a verifier's opinion may be worth less than a
 /// test's observation, never more. See the module docs for why the ceiling is
 /// not negotiable and why `judged = 0.0` is a discard rather than a zero.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -119,7 +119,7 @@ pub struct OutcomeWeights {
     /// Magnitude of a deterministic pass or fail. The unit the judged weight
     /// is measured against.
     pub deterministic: f64,
-    /// Magnitude of a model judge's pass or fail. `0.0` discards judged turns
+    /// Magnitude of a model verifier's pass or fail. `0.0` discards judged turns
     /// instead of scoring them.
     pub judged: f64,
 }
@@ -147,7 +147,7 @@ pub enum WeightError {
     /// zero has no directions in it, and a negative one silently inverts every
     /// label's sign.
     DeterministicNotPositive,
-    /// A negative judged weight. It would label a judge's *pass* as a penalty,
+    /// A negative judged weight. It would label a verifier's *pass* as a penalty,
     /// which no configuration can have meant.
     JudgedNegative,
     /// The judged weight exceeds the deterministic one — an opinion outranking
@@ -169,11 +169,11 @@ impl WeightError {
                  every other weight is measured against"
             }
             WeightError::JudgedNegative => {
-                "judge_weight must not be negative — a negative weight scores a \
-                 judge's pass as a penalty"
+                "verifier_weight must not be negative — a negative weight scores a \
+                 verifier's pass as a penalty"
             }
             WeightError::JudgedAboveDeterministic => {
-                "judge_weight must not exceed deterministic_weight — above it a \
+                "verifier_weight must not exceed deterministic_weight — above it a \
                  model's opinion outranks a test's observation, which inverts \
                  the verification ladder. Lower it (0.0 discards judged turns \
                  entirely) rather than raising the ceiling"
@@ -255,12 +255,12 @@ pub enum Settlement {
 }
 
 impl Settlement {
-    /// Read the settlement off a `JudgeVerdict` event's parts.
+    /// Read the settlement off a `Verdict` event's parts.
     ///
-    /// The whole [`JudgeEvidence`] is taken, summary and all, and none of it
+    /// The whole [`VerdictEvidence`] is taken, summary and all, and none of it
     /// survives into the return value. That is the airlock stated as a
     /// signature: the only bytes that cross are `passed` and the rung.
-    pub fn from_evidence(passed: bool, evidence: &JudgeEvidence) -> Self {
+    pub fn from_evidence(passed: bool, evidence: &VerdictEvidence) -> Self {
         match evidence.ladder.as_deref().and_then(|ladder| ladder.rung) {
             Some(rung) => Settlement::Settled { rung, passed },
             None => Settlement::RungUnknown,
@@ -284,10 +284,10 @@ pub enum DiscardReason {
     /// finding, and a valuable one — but not one the reward scale is
     /// calibrated for, so it is selected by rung rather than scored.
     NothingAttempted,
-    /// The judge call failed or returned something unparseable, and the
+    /// The verifier call failed or returned something unparseable, and the
     /// conservative heuristic stood in. A fact about the pipeline's
     /// availability, not about the work.
-    JudgeUnavailable,
+    VerifierUnavailable,
     /// No independent review was bought at all, so nothing was determined
     /// either way.
     ReviewWaived,
@@ -299,10 +299,10 @@ pub enum DiscardReason {
     /// The shaping terms could not be computed — a non-finite cost. A reward
     /// that is `NaN` is not a smaller reward, it is a corrupt one.
     CostNotFinite,
-    /// The workspace set its judged weight to `0.0`: this judge is not trusted
+    /// The workspace set its judged weight to `0.0`: this verifier is not trusted
     /// to label anything. Distinct from a `0.0` reward, which would assert that
     /// a neutral outcome was observed — see the module docs.
-    JudgeDistrusted,
+    VerifierDistrusted,
     /// The [`RewardPolicy`] itself is invalid, so no scalar computed under it
     /// would mean anything. The rung is still published, because the rung is
     /// still true; only the arithmetic is refused.
@@ -362,7 +362,7 @@ impl RewardShaping {
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct TrajectoryCost {
     /// Model calls in the trajectory — every role, not just the worker's,
-    /// because a turn that bought three judge calls did cost three judge
+    /// because a turn that bought three verifier calls did cost three verifier
     /// calls.
     pub steps: u32,
     /// Settled USD for the whole trajectory.
@@ -384,7 +384,7 @@ pub struct TrajectoryCost {
 ///
 /// **No field here is a free-form string, and none may become one.** Every
 /// text-shaped value is an enum with a closed wire vocabulary, so there is
-/// nowhere for judge prose to land. `tests::a_label_has_no_free_text_leaves`
+/// nowhere for verifier prose to land. `tests::a_label_has_no_free_text_leaves`
 /// fails if that ever stops being true.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct RewardLabel {
@@ -409,8 +409,8 @@ pub struct RewardLabel {
     /// The policy this label was computed under, stamped so the number above is
     /// interpretable outside the workspace that produced it. Always present,
     /// including on a discard — a reader pooling records has to be able to tell
-    /// a `JudgeDistrusted` discard from a `judged = 0.5` workspace that simply
-    /// never reached the judge.
+    /// a `VerifierDistrusted` discard from a `judged = 0.5` workspace that simply
+    /// never reached the verifier.
     pub policy: RewardPolicy,
 }
 
@@ -490,7 +490,7 @@ pub fn label(settlement: Settlement, cost: TrajectoryCost, policy: &RewardPolicy
 /// happened instead of by what the rung usually means.
 ///
 /// A judged rung under a zero judged weight is a **discard**, not a `0.0`. The
-/// difference is the whole reason [`DiscardReason::JudgeDistrusted`] exists —
+/// difference is the whole reason [`DiscardReason::VerifierDistrusted`] exists —
 /// see the module docs.
 pub fn outcome_term(
     rung: LadderRung,
@@ -499,13 +499,13 @@ pub fn outcome_term(
 ) -> Result<f64, DiscardReason> {
     let magnitude = match rung {
         LadderRung::SubmitFast | LadderRung::Revise => weights.deterministic,
-        LadderRung::ModelJudge if weights.judged == 0.0 => {
-            return Err(DiscardReason::JudgeDistrusted);
+        LadderRung::ModelVerdict if weights.judged == 0.0 => {
+            return Err(DiscardReason::VerifierDistrusted);
         }
-        LadderRung::ModelJudge => weights.judged,
+        LadderRung::ModelVerdict => weights.judged,
         LadderRung::Unverifiable => return Err(DiscardReason::Abstained),
         LadderRung::NothingAttempted => return Err(DiscardReason::NothingAttempted),
-        LadderRung::HeuristicFallback => return Err(DiscardReason::JudgeUnavailable),
+        LadderRung::HeuristicFallback => return Err(DiscardReason::VerifierUnavailable),
         LadderRung::Waived => return Err(DiscardReason::ReviewWaived),
     };
     Ok(if passed { magnitude } else { -magnitude })

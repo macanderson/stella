@@ -54,9 +54,9 @@ pub enum ServerFrame {
     /// `provider_id` and `role` say **which agent** is asking (#1297). One
     /// turn used to mean one model, so neither was needed; a judged goal run
     /// and a turn that spawns sub-agents both put several agents behind one
-    /// turn id, and a host that cannot tell them apart cannot route the judge
+    /// turn id, and a host that cannot tell them apart cannot route the verifier
     /// to a different family — which is the entire point of an independent
-    /// judge. Both are additive: a host that ignores them behaves exactly as
+    /// verifier. Both are additive: a host that ignores them behaves exactly as
     /// before, answering every request with the turn's one model.
     ProviderRequest {
         request_id: String,

@@ -46,7 +46,7 @@
 //! renderer to style. No ratatui types, so the fold is unit-testable without a
 //! terminal (L-T1, and the buffer-not-ANSI discipline in `deck_ui::tests`).
 
-use stella_protocol::{JudgeEvidence, ProofStep, ProofTree};
+use stella_protocol::{VerdictEvidence, ProofStep, ProofTree};
 
 use crate::textline::Tone;
 
@@ -95,7 +95,7 @@ pub enum WitnessStanding {
 pub struct VerdictStanding {
     pub passed: bool,
     /// `true` when the deterministic ladder decided it, `false` for a model
-    /// judge. Never conflated — the rail says which one spoke (L-E11).
+    /// verifier. Never conflated — the rail says which one spoke (L-E11).
     pub deterministic: bool,
     pub summary: String,
 }
@@ -104,7 +104,7 @@ pub struct VerdictStanding {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Assurance {
     pub witness: bool,
-    pub judge: bool,
+    pub verifier: bool,
 }
 
 /// The whole rail state for one turn.
@@ -169,10 +169,10 @@ impl ProofState {
     /// Fold one proof step.
     pub fn apply(&mut self, step: &ProofStep) {
         match step {
-            ProofStep::Assurance { witness, judge } => {
+            ProofStep::Assurance { witness, verifier } => {
                 self.assurance = Some(Assurance {
                     witness: *witness,
-                    judge: *judge,
+                    verifier: *verifier,
                 });
             }
             ProofStep::Warrant {
@@ -234,7 +234,7 @@ impl ProofState {
     /// Fold the verdict that closes the turn — and the ladder facts riding
     /// it that the witness panel renders (tamper exclusion, a refused or
     /// unstable flip).
-    pub fn apply_verdict(&mut self, passed: bool, evidence: &JudgeEvidence) {
+    pub fn apply_verdict(&mut self, passed: bool, evidence: &VerdictEvidence) {
         self.verdict = Some(VerdictStanding {
             passed,
             deterministic: evidence.deterministic,
@@ -288,7 +288,7 @@ impl ProofState {
             .any(|r| matches!(r.tone, Tone::Warn | Tone::Error))
     }
 
-    /// Triage declared this turn buys neither a witness nor a judge, *and*
+    /// Triage declared this turn buys neither a witness nor a verifier, *and*
     /// nothing arrived regardless.
     ///
     /// Both halves are load-bearing. The first alone would let a turn that
@@ -296,7 +296,7 @@ impl ProofState {
     /// requiring that every channel is also empty means anything that actually
     /// happened is still judged on its own tones.
     fn bought_nothing(&self) -> bool {
-        self.assurance.is_some_and(|a| !a.witness && !a.judge)
+        self.assurance.is_some_and(|a| !a.witness && !a.verifier)
             && self.witness.is_none()
             && self.verdict.is_none()
             && self.unverifiable.is_none()
@@ -356,7 +356,7 @@ impl ProofState {
                 if v.deterministic {
                     "✓ passed · deterministic"
                 } else {
-                    "✓ passed · model judge"
+                    "✓ passed · model verifier"
                 },
                 if v.deterministic {
                     Tone::Success
@@ -510,7 +510,7 @@ impl ProofState {
 
     fn verdict_row(&self) -> ProofRow {
         // Checked before the verdict, because the pipeline emits BOTH: an
-        // abstention still closes the turn with a `JudgeVerdict` (the event
+        // abstention still closes the turn with a `Verdict` (the event
         // that carries the evidence), and that verdict is `passed: true` —
         // a run is not failed by the absence of a way to check it. Read off
         // `verdict` alone the rail would say `✓ passed`, which is the exact
@@ -537,7 +537,7 @@ impl ProofState {
                     if v.deterministic {
                         "deterministic"
                     } else {
-                        "model judge"
+                        "model verifier"
                     }
                 ),
                 match (v.passed, v.deterministic) {
@@ -709,11 +709,11 @@ mod tests {
     }
 
     #[test]
-    fn a_model_judge_pass_is_not_coloured_like_a_proven_one() {
+    fn a_model_verdict_pass_is_not_coloured_like_a_proven_one() {
         let mut state = ProofState::default();
         state.apply_verdict(
             true,
-            &JudgeEvidence {
+            &VerdictEvidence {
                 summary: "looks right".into(),
                 deterministic: false,
                 evidence_refs: vec![],
@@ -722,7 +722,7 @@ mod tests {
         );
         let row = state.rows()[4].clone();
         assert_eq!(row.tone, Tone::Info);
-        assert!(row.value.contains("model judge"));
+        assert!(row.value.contains("model verifier"));
     }
 
     // ---- the invariant ----
@@ -733,7 +733,7 @@ mod tests {
     fn any_step() -> impl Strategy<Value = ProofStep> {
         prop_oneof![
             (any::<bool>(), any::<bool>())
-                .prop_map(|(witness, judge)| ProofStep::Assurance { witness, judge }),
+                .prop_map(|(witness, verifier)| ProofStep::Assurance { witness, verifier }),
             (any::<bool>(), any::<Option<String>>(), any::<u32>()).prop_map(
                 |(required, reason, diff_lines)| ProofStep::Warrant {
                     required,
@@ -819,7 +819,7 @@ mod tests {
         let mut state = ProofState::default();
         state.apply(&ProofStep::Assurance {
             witness: false,
-            judge: false,
+            verifier: false,
         });
         assert!(!state.is_empty(), "the rail is up from triage onward");
         let rows = state.rows();
@@ -839,7 +839,7 @@ mod tests {
         let mut state = ProofState::default();
         state.apply(&ProofStep::Assurance {
             witness: true,
-            judge: true,
+            verifier: true,
         });
         state.finish();
         let rows = state.rows();

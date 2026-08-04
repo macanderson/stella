@@ -367,7 +367,7 @@ pub(crate) struct WorkspacePorts {
 /// reason. The bug this closes was two numbers describing one event from two
 /// wires: `record_touch` announced six changes down the session channel while
 /// the pipeline, counting on a sender it had handed the *engine*, told its
-/// judge `file_change_events=0` — and the judge reported the file as probably
+/// verifier `file_change_events=0` — and the verifier reported the file as probably
 /// absent while it sat in the container (#973).
 ///
 /// Not part of [`WorkspacePorts`]: that bundle is rooted at a path, and this is
@@ -1405,7 +1405,7 @@ mod diff_baseline_tests {
     /// `repo_commit`, which this registry ships — left a clean tree and was
     /// told "no changes were made to the repository" while its files sat on
     /// disk. Measured on Terminal-Bench `kv-store-grpc`: the task verifier
-    /// passed 5 of 7 sub-tests while the judge insisted the diff was empty.
+    /// passed 5 of 7 sub-tests while the verifier insisted the diff was empty.
     #[tokio::test]
     async fn committed_work_is_still_visible_to_the_diff() {
         let dir = tempfile::tempdir().unwrap();

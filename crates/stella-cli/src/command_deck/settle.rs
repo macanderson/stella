@@ -158,7 +158,7 @@ where
 ///
 /// ```text
 /// Want me to dig into which of these to fix? The highest-leverage one is
-/// #1 (judge diff baseline) — it's a clear correctness bug. I can trace
+/// #1 (verifier diff baseline) — it's a clear correctness bug. I can trace
 /// exactly where the diff is built and why it ignored the file-change events.
 /// ```
 ///
@@ -266,7 +266,7 @@ mod tests {
         let turn = [assistant(
             "The irony: the underlying task succeeded, but stella scored 0.0.\n\n\
              Want me to dig into which of these to fix? The highest-leverage one \
-             is #1 (judge diff baseline) — it's a clear correctness bug in \
+             is #1 (verifier diff baseline) — it's a clear correctness bug in \
              pipeline.rs's evidence assembly. I can trace exactly where the diff \
              is built and why it ignored the file-change events.",
         )];
@@ -287,7 +287,7 @@ mod tests {
     #[test]
     fn a_question_the_agent_answered_itself_does_not_count() {
         let turn = [assistant(
-            "So why did the judge see an empty diff? Because it shells out to \
+            "So why did the verifier see an empty diff? Because it shells out to \
              git in a sandbox that has no git.\n\n\
              I fell back to the file_change stream and the ladder now agrees \
              with its own counters.",
@@ -351,7 +351,7 @@ mod tests {
     /// agent's ask would leave every session painted `needs input`.
     #[test]
     fn the_users_own_question_is_not_the_agents() {
-        let turn = [user("why is the judge diff empty?"), assistant("Fixed it.")];
+        let turn = [user("why is the verifier diff empty?"), assistant("Fixed it.")];
         assert!(!ends_with_a_question(&turn));
     }
 
@@ -379,7 +379,7 @@ mod tests {
         })
         .unwrap();
         tx.send(WorkspaceInput::Enqueue {
-            text: "> and start with the judge".to_string(),
+            text: "> and start with the verifier".to_string(),
         })
         .unwrap();
         tx.send(WorkspaceInput::Control {
@@ -414,7 +414,7 @@ mod tests {
                 "yes, build the fix".to_string(),
                 // The `>` is stripped and continued, never dropped: a settling
                 // turn has no step boundary left to steer.
-                "and start with the judge".to_string(),
+                "and start with the verifier".to_string(),
             ]
         );
         let _ = std::fs::remove_dir_all(&dir);

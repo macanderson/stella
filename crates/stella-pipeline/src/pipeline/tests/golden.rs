@@ -75,7 +75,7 @@ fn check_golden(task_id: &str, description: &str, events: Vec<AgentEvent>) {
 }
 
 /// The deterministic-flip path: a single-task goal whose test command flips
-/// fail→pass submits fast, so the model judge is never consulted (L-E11).
+/// fail→pass submits fast, so the model verifier is never consulted (L-E11).
 #[tokio::test]
 async fn golden_single_task_deterministic_flip() {
     let provider = ScriptedProvider::new(vec![text_result("single"), text_result("done")]);
@@ -130,16 +130,16 @@ async fn golden_single_task_deterministic_flip() {
     check_golden(
         "single_task_deterministic_flip",
         "A single-task goal whose test command flips fail->pass: deterministic \
-         verdict, model judge skipped.",
+         verdict, model verifier skipped.",
         drain(&mut rx),
     );
 }
 
-/// The judge-escalation path: no test command, so the deterministic ladder
-/// cannot conclude and a model judge is consulted — a materially different
+/// The verifier-escalation path: no test command, so the deterministic ladder
+/// cannot conclude and a model verifier is consulted — a materially different
 /// stage sequence from the flip path above.
 #[tokio::test]
-async fn golden_judge_escalation_without_a_test_command() {
+async fn golden_verifier_escalation_without_a_test_command() {
     let provider = ScriptedProvider::new(vec![
         text_result("lookup"),
         text_result("done"),
@@ -147,7 +147,7 @@ async fn golden_judge_escalation_without_a_test_command() {
     ]);
     let resolver = OneProvider(&provider);
     // A non-empty diff means files were touched, so the zero-diff guard revokes
-    // the lookup fast path's judge-skip.
+    // the lookup fast path's verifier-skip.
     let runner = ScriptedRunner::new(vec![], "@@ -1 +1 @@\n-a\n+b");
     let tools = EmptyTools;
     let recall = NoContextRecall;
@@ -196,9 +196,9 @@ async fn golden_judge_escalation_without_a_test_command() {
         .expect("run succeeds");
 
     check_golden(
-        "judge_escalation_without_a_test_command",
+        "verifier_escalation_without_a_test_command",
         "A file-touching goal with no test command: the deterministic ladder \
-         cannot conclude, so the model judge is consulted.",
+         cannot conclude, so the model verifier is consulted.",
         drain(&mut rx),
     );
 }
@@ -211,11 +211,11 @@ fn the_recorded_flows_are_structurally_distinct() {
     let dir = golden_dir();
     let flip = GoldenTrajectory::load(&dir, "single_task_deterministic_flip")
         .expect("the flip golden is committed");
-    let escalation = GoldenTrajectory::load(&dir, "judge_escalation_without_a_test_command")
+    let escalation = GoldenTrajectory::load(&dir, "verifier_escalation_without_a_test_command")
         .expect("the escalation golden is committed");
     assert!(
         !flip.diff(escalation.events()).is_empty(),
-        "a deterministic-flip run and a judge-escalation run must differ; \
+        "a deterministic-flip run and a verifier-escalation run must differ; \
          identical goldens would assert nothing"
     );
 }
@@ -228,7 +228,7 @@ fn the_committed_goldens_are_labelled_as_baselines_not_references() {
     let dir = golden_dir();
     for task_id in [
         "single_task_deterministic_flip",
-        "judge_escalation_without_a_test_command",
+        "verifier_escalation_without_a_test_command",
     ] {
         let golden = GoldenTrajectory::load(&dir, task_id).expect("golden is committed");
         assert!(

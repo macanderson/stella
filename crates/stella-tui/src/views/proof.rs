@@ -175,7 +175,7 @@ mod tests {
         let mut state = ProofState::default();
         state.apply(&ProofStep::Assurance {
             witness: false,
-            judge: false,
+            verifier: false,
         });
         assert!(!state.is_empty(), "the rail has folded a step");
         assert_eq!(

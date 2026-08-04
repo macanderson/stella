@@ -7,7 +7,7 @@
 
 use super::*;
 use stella_protocol::{
-    ContextFrameRef, JudgeEvidence, MediaArtifactRef, MediaJobState, ProviderShare, ToolCall,
+    ContextFrameRef, VerdictEvidence, MediaArtifactRef, MediaJobState, ProviderShare, ToolCall,
 };
 
 fn text(delta: &str) -> AgentEvent {
@@ -550,7 +550,7 @@ fn cap_middle_respects_char_boundaries_on_multibyte_text() {
 }
 
 #[test]
-fn media_and_judge_and_pr_events_land_on_the_transcript() {
+fn media_and_verifier_and_pr_events_land_on_the_transcript() {
     let mut model = SessionModel::new();
     model.apply(&AgentEvent::MediaProgress {
         artifact_id: "a1".into(),
@@ -567,9 +567,9 @@ fn media_and_judge_and_pr_events_land_on_the_transcript() {
             label: "diagram".into(),
         },
     });
-    model.apply(&AgentEvent::JudgeVerdict {
+    model.apply(&AgentEvent::Verdict {
         passed: true,
-        evidence: JudgeEvidence {
+        evidence: VerdictEvidence {
             summary: "flip oracle passed".into(),
             deterministic: true,
             evidence_refs: vec![],
@@ -598,7 +598,7 @@ fn media_and_judge_and_pr_events_land_on_the_transcript() {
 
 /// Witness for #463: a `GoalVerdict` event lands as its own transcript row
 /// (it used to fold as a no-op, leaving the transcript empty) — symmetric
-/// to `JudgeVerdict`. Its `cost_usd` is *not* double-counted into HUD spend.
+/// to `Verdict`. Its `cost_usd` is *not* double-counted into HUD spend.
 #[test]
 fn goal_verdict_lands_on_the_transcript_without_touching_spend() {
     let mut model = SessionModel::new();

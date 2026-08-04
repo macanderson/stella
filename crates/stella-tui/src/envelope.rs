@@ -178,18 +178,18 @@ pub enum Inbound {
     /// custom commands/skills so the menu reflects them without a restart.
     SlashCommands(Vec<crate::composer::SlashCommand>),
     /// The driver toggled staged-pipeline routing (`/pipeline`): subsequent
-    /// turns run triage → witness → execute → verify → judge instead of the
+    /// turns run triage → witness → execute → verify → verifier instead of the
     /// raw engine loop. Folded into [`crate::deck::WorkspaceModel::pipeline`]
     /// so the `PIPELINE` stat box flips live.
     Pipeline(bool),
-    /// The session's resolved triage / worker / judge pins, sent once at
+    /// The session's resolved triage / worker / verifier pins, sent once at
     /// startup by the driver — which is the only side that can call
     /// `resolve_provider` — so the `MODELS` row can name all three before any
     /// turn has run.
     ///
     /// Without this the row stays empty until each role's first
     /// `AgentEvent::StepUsage`, because that is the only event carrying a
-    /// role/provider/model triple. A judge that has not been reached yet
+    /// role/provider/model triple. A verifier that has not been reached yet
     /// would then read as unconfigured rather than unused.
     ///
     /// Folded as *configured* (`RolePin::served == false`) and drawn dim; a
@@ -909,7 +909,7 @@ pub enum WorkspaceInput {
 pub enum EngineRole {
     Default,
     Worker,
-    Judge,
+    Verifier,
     Triage,
 }
 
@@ -918,7 +918,7 @@ impl EngineRole {
     pub const ALL: [EngineRole; 4] = [
         EngineRole::Default,
         EngineRole::Worker,
-        EngineRole::Judge,
+        EngineRole::Verifier,
         EngineRole::Triage,
     ];
 
@@ -928,7 +928,7 @@ impl EngineRole {
         match self {
             EngineRole::Default => "default",
             EngineRole::Worker => "worker",
-            EngineRole::Judge => "judge",
+            EngineRole::Verifier => "verifier",
             EngineRole::Triage => "triage",
         }
     }
@@ -974,12 +974,12 @@ pub struct EngineAgentState {
 /// and edits ([`Inbound::EngineConfig`] / [`WorkspaceInput::EngineConfigSave`]).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct EngineConfigState {
-    /// Auto judge-model selection: pick the best allowed model for the
-    /// judge (preferring a different family than the worker's).
+    /// Auto verifier-model selection: pick the best allowed model for the
+    /// verifier (preferring a different family than the worker's).
     pub auto_mode: bool,
-    /// Auto per-agent effort (judge high, worker medium, triage low).
+    /// Auto per-agent effort (verifier high, worker medium, triage low).
     pub effort_auto: bool,
-    /// Auto per-agent reasoning (on for judge/worker, off for triage).
+    /// Auto per-agent reasoning (on for verifier/worker, off for triage).
     pub reasoning_auto: bool,
     /// The model slugs the model pickers offer (`allowed_models`). Empty
     /// means "no restriction" — pickers fall back to `catalog_models`.

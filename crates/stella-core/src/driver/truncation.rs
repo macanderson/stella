@@ -240,7 +240,7 @@ pub(super) enum ContinuationPlan {
     /// Distinct from [`Self::AllowanceSpent`] because nothing here is the
     /// model's fault and nothing is exhausted — the turn is choosing to stop
     /// early while stopping is still cheap. It ends as an ordinary result
-    /// carrying whatever it has, and the verification ladder judges that
+    /// carrying whatever it has, and the verification ladder verifiers that
     /// record like any other.
     OutOfTime,
 }

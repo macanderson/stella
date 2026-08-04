@@ -253,7 +253,7 @@ fn cache_zones_never_move_backwards_in_wire_order() {
 /// `AgentEvent::StepManifest` documents `blocks` as "in wire order; index 0 is
 /// the system prefix" — an invariant that was stated and never enforced. A
 /// manifest with *no* stable prefix is legal and common: the pipeline's triage
-/// and judge roles send a single message, and one message has nothing in front
+/// and verifier roles send a single message, and one message has nothing in front
 /// of a breakpoint to cache. What is not legal is a stable prefix that is not
 /// first (the bytes before it are uncacheable, so it is not a prefix) or a
 /// second one (two disjoint spans cannot both be the prompt's head).

@@ -169,9 +169,9 @@ fn a_refused_flip_is_a_distinct_result_state_not_a_generic_failure() {
     let mut m = mid_execute_model();
     m.apply_inbound(&Inbound::Event {
         agent: "lead".into(),
-        event: AgentEvent::JudgeVerdict {
+        event: AgentEvent::Verdict {
             passed: false,
-            evidence: stella_protocol::JudgeEvidence {
+            evidence: stella_protocol::VerdictEvidence {
                 summary: "flip refused".into(),
                 deterministic: true,
                 evidence_refs: vec![],

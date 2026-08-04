@@ -120,7 +120,7 @@ fn skill_registry_for_run(workspace_root: std::path::PathBuf) -> Option<SkillReg
 /// default) vs the raw step-loop (`--no-pipeline`). `test_command`, when
 /// given, arms the pipeline's deterministic verification ladder (the
 /// fail→pass flip oracle); without it, verification falls back to the model
-/// judge on every iteration. `keep_witness` promotes an authored witness into
+/// verifier on every iteration. `keep_witness` promotes an authored witness into
 /// the working tree instead of letting it die with the candidate workspace.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_one_shot(
@@ -301,7 +301,7 @@ async fn run_pipeline_one_shot(
     );
 
     // Role wiring from `agent_engine_config`: per-role model pins (worker/
-    // triage/judge), their adapters, and per-role request overrides. Notices
+    // triage/verifier), their adapters, and per-role request overrides. Notices
     // are stderr diagnostics — stdout may be machine-readable JSON.
     let configured = crate::config::discover_configured_providers();
     let wiring = resolve_engine_wiring(cfg, &model_ref, &configured);
@@ -401,7 +401,7 @@ async fn run_pipeline_one_shot(
         );
         // `--test-command` arms the deterministic verify ladder: the
         // fail→pass flip oracle and SubmitFast/Revise decisions all key off
-        // it. Left unset, every verification escalates to the model judge.
+        // it. Left unset, every verification escalates to the model verifier.
         let mut pipeline_config = pipeline_config_for_approval_capability(
             cfg,
             approval_capability,
@@ -2236,7 +2236,7 @@ fn print_help() {
         "/clear".bright_magenta()
     );
     println!(
-        "  {}  Work in judged rounds until a judge confirms the goal is met",
+        "  {}  Work in judged rounds until a verifier confirms the goal is met",
         "/goal <text>".bright_magenta()
     );
     println!(

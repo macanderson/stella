@@ -70,9 +70,9 @@ struct TurnRequest {
     #[serde(default)]
     sub_agents: Option<SubAgentsSpec>,
     /// Drive this turn through the verification pipeline (#1288) — plan,
-    /// scope review, execute, witness, verify, judge — instead of a bare
+    /// scope review, execute, witness, verify, verifier — instead of a bare
     /// engine step loop. Mutually exclusive with `goal` and `sub_agents`:
-    /// the pipeline already loops internally and drives its own judge, so a
+    /// the pipeline already loops internally and drives its own verifier, so a
     /// request naming more than one of the three is refused with a 400
     /// rather than silently picking one.
     #[serde(default)]
@@ -111,10 +111,10 @@ struct PipelineSpec {
     /// turn's own provider id.
     #[serde(default)]
     triage_provider_id: Option<String>,
-    /// The provider id the judge call announces — the pipeline's own
-    /// counterpart to `goal.judge_provider_id`.
+    /// The provider id the verifier call announces — the pipeline's own
+    /// counterpart to `goal.verifier_provider_id`.
     #[serde(default)]
-    judge_provider_id: Option<String>,
+    verifier_provider_id: Option<String>,
 }
 
 /// Lower a caller's `pipeline` block into [`crate::PipelineRun`]. `None`
@@ -132,34 +132,34 @@ fn pipeline_run(spec: PipelineSpec) -> Option<crate::PipelineRun> {
         max_revisions: spec.max_revisions,
         candidates: spec.candidates,
         triage_provider_id: spec.triage_provider_id,
-        judge_provider_id: spec.judge_provider_id,
+        verifier_provider_id: spec.verifier_provider_id,
     })
 }
 
 /// `goal` on `POST /v1/turns` — a judged multi-round run (#1297).
 ///
 /// The engine's own `GoalConfig` knobs, plus the one thing only the wire can
-/// express: which provider serves the judge. Every value is clamped by the
+/// express: which provider serves the verifier. Every value is clamped by the
 /// server; see [`MAX_SERVED_GOAL_ROUNDS`].
 #[derive(Debug, Deserialize)]
 struct GoalSpec {
-    /// What the judge assesses each round against.
+    /// What the verifier assesses each round against.
     goal: String,
     /// Working rounds before the run gives up, clamped to
     /// [`MAX_SERVED_GOAL_ROUNDS`].
     #[serde(default)]
     max_rounds: Option<usize>,
-    /// Output-token cap on a judge call — a verdict is small by design.
+    /// Output-token cap on a verifier call — a verdict is small by design.
     #[serde(default)]
-    judge_max_output_tokens: Option<u32>,
-    /// Transcript characters the judge is shown, tail-biased.
+    verifier_max_output_tokens: Option<u32>,
+    /// Transcript characters the verifier is shown, tail-biased.
     #[serde(default)]
-    judge_transcript_chars: Option<usize>,
-    /// The provider id the judge's calls announce, so a host can route it to
-    /// a different family than the worker. Omitted runs the judge on the
+    verifier_transcript_chars: Option<usize>,
+    /// The provider id the verifier's calls announce, so a host can route it to
+    /// a different family than the worker. Omitted runs the verifier on the
     /// turn's own provider id.
     #[serde(default)]
-    judge_provider_id: Option<String>,
+    verifier_provider_id: Option<String>,
 }
 
 /// `sub_agents` on `POST /v1/turns` — what the caller asks for, before the
@@ -188,7 +188,7 @@ fn default_true() -> bool {
 
 /// Ceiling on [`GoalSpec::max_rounds`].
 ///
-/// A goal round is a whole agent turn plus a judge call, so the round cap is
+/// A goal round is a whole agent turn plus a verifier call, so the round cap is
 /// the dominant term in what a goal run can cost and how long it can hold a
 /// thread. The engine's own default is 8; 32 is four times that — past any
 /// run that is still converging — while keeping the worst case bounded, which
@@ -206,16 +206,16 @@ fn goal_run(spec: GoalSpec) -> Option<crate::GoalRun> {
     if let Some(rounds) = spec.max_rounds {
         config.max_rounds = rounds.clamp(1, MAX_SERVED_GOAL_ROUNDS);
     }
-    if let Some(tokens) = spec.judge_max_output_tokens {
-        config.judge_max_output_tokens = Some(tokens);
+    if let Some(tokens) = spec.verifier_max_output_tokens {
+        config.verifier_max_output_tokens = Some(tokens);
     }
-    if let Some(chars) = spec.judge_transcript_chars {
-        config.judge_transcript_chars = chars;
+    if let Some(chars) = spec.verifier_transcript_chars {
+        config.verifier_transcript_chars = chars;
     }
     Some(crate::GoalRun {
         goal: spec.goal,
         config,
-        judge_provider_id: spec.judge_provider_id,
+        verifier_provider_id: spec.verifier_provider_id,
     })
 }
 
@@ -408,7 +408,7 @@ pub(crate) async fn handle_create(
                 "400 Bad Request",
                 &error_body(
                     "`pipeline` cannot be combined with `goal` or `sub_agents` — the pipeline \
-                     drives its own internal judge and does not support delegation yet",
+                     drives its own internal verifier and does not support delegation yet",
                 ),
             )
             .await;

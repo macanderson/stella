@@ -31,7 +31,7 @@ fn the_turn_budget_flag_reaches_every_role_that_can_continue() {
     // it is what proves the flag is not decorative.
     //
     // Every role, not just the worker: the deadline being guarded belongs to
-    // the process, so a worker that declines a continuation while a judge
+    // the process, so a worker that declines a continuation while a verifier
     // spends the remaining time past it would defeat the point.
     let mut cfg = cfg_for("zai");
     cfg.turn_budget = Some(std::time::Duration::from_secs(840));
@@ -41,7 +41,7 @@ fn the_turn_budget_flag_reaches_every_role_that_can_continue() {
         Some(std::time::Duration::from_secs(840)),
     );
     assert_eq!(
-        crate::agent::judge_engine_config_for(&cfg).turn_budget,
+        crate::agent::verifier_engine_config_for(&cfg).turn_budget,
         Some(std::time::Duration::from_secs(840)),
     );
 
@@ -89,7 +89,7 @@ fn a_bound_session_checkpoints_from_every_role() {
     let worker = ModelRef::new("zai", "glm-5.2".to_string());
     for (role, engine) in [
         ("default", crate::agent::engine_config_for(&cfg)),
-        ("judge", crate::agent::judge_engine_config_for(&cfg)),
+        ("verifier", crate::agent::verifier_engine_config_for(&cfg)),
         (
             "worker",
             crate::agent::pipeline_engine_config_for(&cfg, &worker),
@@ -231,18 +231,18 @@ fn an_explicit_model_flag_outranks_pipeline_worker_model() {
 /// The benchmark's two arms, at the layer that decides whether the authored
 /// witness can run at all (#1007).
 ///
-/// `Pipeline::can_author_independent_witness` compares the resolved judge's
+/// `Pipeline::can_author_independent_witness` compares the resolved verifier's
 /// `model_ref` with the worker's and refuses to let the worker author the test
 /// that verifies it. The benchmark posture expresses routing only through
 /// `default_model`, so both roles land on one model and the witness tier is
 /// structurally off — every Terminal-Bench number before #1007 was measured
-/// that way. Adding `pipeline_judge_model` is what splits them.
+/// that way. Adding `pipeline_verifier_model` is what splits them.
 ///
 /// Both arms asserted together because the pair is the point: the control arm
 /// must keep collapsing (it is the published baseline) and the treatment arm
 /// must actually separate.
 #[test]
-fn the_benchmark_posture_splits_worker_and_judge_only_on_the_witness_arm() {
+fn the_benchmark_posture_splits_worker_and_verifier_only_on_the_witness_arm() {
     let worker_ref = ModelRef::new("openrouter", "z-ai/glm-5.1");
     let configured = vec![configured_provider("openrouter")];
 
@@ -253,44 +253,44 @@ fn the_benchmark_posture_splits_worker_and_judge_only_on_the_witness_arm() {
     );
     let control = resolve_engine_wiring(&control, &worker_ref, &configured);
     assert_eq!(
-        control.pins.get(Role::Judge),
+        control.pins.get(Role::Verifier),
         control.pins.get(Role::Worker),
-        "the control arm must keep the judge on the worker's model — that is \
+        "the control arm must keep the verifier on the worker's model — that is \
          precisely what leaves the authored witness with no independent author"
     );
 
     let treatment = cfg_with_engine(
         "openrouter",
         r#"{ "default_model": "openrouter/z-ai/glm-5.1",
-             "pipeline_judge_model": "openrouter/deepseek/deepseek-v4-pro",
+             "pipeline_verifier_model": "openrouter/deepseek/deepseek-v4-pro",
              "allowed_models": ["openrouter/z-ai/glm-5.1",
                                 "openrouter/deepseek/deepseek-v4-pro"] }"#,
     );
     let treatment = resolve_engine_wiring(&treatment, &worker_ref, &configured);
     let author = ModelRef::new("openrouter", "deepseek/deepseek-v4-pro");
     assert_eq!(
-        treatment.pins.get(Role::Judge),
+        treatment.pins.get(Role::Verifier),
         Some(&author),
-        "the witness arm must pin the judge to the second model"
+        "the witness arm must pin the verifier to the second model"
     );
     assert_ne!(
-        treatment.pins.get(Role::Judge),
+        treatment.pins.get(Role::Verifier),
         treatment.pins.get(Role::Worker),
-        "worker and judge must resolve to different models, or the witness \
+        "worker and verifier must resolve to different models, or the witness \
          tier stays off with a posture hash claiming it is on"
     );
 }
 
 #[test]
-fn an_explicit_model_flag_leaves_triage_and_judge_pins_alone() {
-    // `--model` says nothing about the triage/judge roles, so their own
+fn an_explicit_model_flag_leaves_triage_and_verifier_pins_alone() {
+    // `--model` says nothing about the triage/verifier roles, so their own
     // settings must keep applying — suppressing them too would make the flag
     // a blunt instrument that silently un-configures the rest of the pipeline.
     let mut cfg = cfg_with_engine(
         "zai",
         r#"{ "pipeline_worker_model": "anthropic/claude-fable-5",
              "pipeline_triage_model": "deepseek/deepseek-chat",
-             "pipeline_judge_model": "openai/gpt-5.5" }"#,
+             "pipeline_verifier_model": "openai/gpt-5.5" }"#,
     );
     cfg.model_pinned_by_flag = true;
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
@@ -310,9 +310,9 @@ fn an_explicit_model_flag_leaves_triage_and_judge_pins_alone() {
         "the configured triage model must survive an explicit --model"
     );
     assert_eq!(
-        wiring.pins.get(Role::Judge),
+        wiring.pins.get(Role::Verifier),
         Some(&ModelRef::new("openai", "gpt-5.5")),
-        "the configured judge model must survive an explicit --model"
+        "the configured verifier model must survive an explicit --model"
     );
 }
 
@@ -349,7 +349,7 @@ fn worker_model_unset_falls_back_to_the_session_default() {
     // default, no pin, no extra adapter.
     let cfg = cfg_with_engine(
         "zai",
-        r#"{ "pipeline_judge_model": "anthropic/claude-fable-5" }"#,
+        r#"{ "pipeline_verifier_model": "anthropic/claude-fable-5" }"#,
     );
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
     let configured = vec![configured_provider("zai"), configured_provider("anthropic")];
@@ -374,7 +374,7 @@ fn worker_model_unset_falls_back_to_the_session_default() {
 fn worker_model_with_no_resolvable_credential_falls_back_and_notices() {
     // The configured worker provider has no credential available: the
     // override must degrade to the session default (soft failure), with a
-    // human-readable notice — never a hard error, matching triage/judge's
+    // human-readable notice — never a hard error, matching triage/verifier's
     // existing posture. An explicit `agents.worker.provider` pin (rather
     // than a flat-key `provider/slug` string) is what exercises this path:
     // an unconfigured provider named only inside a flat-key string is not
@@ -408,7 +408,7 @@ fn worker_model_with_no_resolvable_credential_falls_back_and_notices() {
 fn worker_override_equal_to_the_session_default_still_pins_without_a_duplicate_adapter() {
     // Configuring the worker to the SAME model the session already defaults
     // to must not build a redundant second adapter (mirrors the existing
-    // triage/judge "same instance" optimization) — but the pin is still
+    // triage/verifier "same instance" optimization) — but the pin is still
     // recorded, matching that established behavior.
     let cfg = cfg_with_engine("zai", r#"{ "pipeline_worker_model": "zai/glm-5.2" }"#);
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
@@ -425,12 +425,12 @@ fn worker_override_equal_to_the_session_default_still_pins_without_a_duplicate_a
 }
 
 #[test]
-fn worker_override_shifts_the_judges_cross_family_comparison() {
+fn worker_override_shifts_the_verifiers_cross_family_comparison() {
     // Issue #276's router-correctness corollary: once the worker is
-    // overridden, auto-mode judge selection (and the router's own unpinned-
-    // judge cross-family fallback) must compare against the model the
+    // overridden, auto-mode verifier selection (and the router's own unpinned-
+    // verifier cross-family fallback) must compare against the model the
     // worker ACTUALLY resolves to, not the stale session default — else a
-    // judge could silently collapse to the same family as the real worker.
+    // verifier could silently collapse to the same family as the real worker.
     let cfg = cfg_with_engine(
         "zai",
         r#"{ "pipeline_worker_model": "anthropic/claude-fable-5",
@@ -443,46 +443,46 @@ fn worker_override_shifts_the_judges_cross_family_comparison() {
     let wiring = resolve_engine_wiring(&cfg, &model_ref, &configured);
 
     // The worker now runs on Anthropic; auto-mode must pick the cross-family
-    // candidate (zai) as judge, not Anthropic again (which the STALE
+    // candidate (zai) as verifier, not Anthropic again (which the STALE
     // "worker family = zai" comparison would have wrongly treated as
     // cross-family).
     assert_eq!(
-        wiring.pins.get(Role::Judge),
+        wiring.pins.get(Role::Verifier),
         Some(&ModelRef::new("zai", "glm-5.2")),
-        "auto-mode judge selection must be cross-family from the OVERRIDDEN worker, not the \
+        "auto-mode verifier selection must be cross-family from the OVERRIDDEN worker, not the \
          session default"
     );
 }
 
 /// #1147's acceptance criterion, at the layer that decides it: a posture
-/// carrying ONLY the flat `pipeline_judge_model` — no `agents.judge.model`,
-/// no `agents.judge.provider` — must make `Role::Judge` resolve to that model
+/// carrying ONLY the flat `pipeline_verifier_model` — no `agents.verifier.model`,
+/// no `agents.verifier.provider` — must make `Role::Verifier` resolve to that model
 /// through the real router, so `Pipeline::can_author_independent_witness`
-/// sees a judge distinct from the worker.
+/// sees a verifier distinct from the worker.
 ///
 /// The benchmark's witness arm is exactly this shape, and the bug report
 /// suspected the flat key never reached role resolution. It does: what the
 /// live run actually lost was the *pin*, dropped by `pin_role` when the
 /// author's adapter could not be built (see
-/// `a_trusted_posture_whose_judge_pin_cannot_be_built_refuses_the_run`). This
+/// `a_trusted_posture_whose_verifier_pin_cannot_be_built_refuses_the_run`). This
 /// test pins the half that works so a future refactor cannot quietly break
 /// the half that was never broken.
 #[test]
-fn the_flat_pipeline_judge_model_alone_resolves_role_judge_to_the_witness_author() {
+fn the_flat_pipeline_verifier_model_alone_resolves_role_verifier_to_the_witness_author() {
     // The benchmark posture verbatim in shape: one `--model`-pinned worker,
     // per-agent tuning WITHOUT a model, and the author expressed only as the
     // flat root key.
     let mut cfg = cfg_with_engine(
         "anthropic",
         r#"{ "default_model": "anthropic/claude-sonnet-5",
-             "pipeline_judge_model": "anthropic/claude-fable-5",
+             "pipeline_verifier_model": "anthropic/claude-fable-5",
              "allowed_models": ["anthropic/claude-sonnet-5",
                                 "anthropic/claude-fable-5"],
              "auto_mode": "off", "effort_auto": "off", "reasoning_auto": "off",
-             "agents": { "judge": { "effort": "xhigh", "reasoning": "on" } } }"#,
+             "agents": { "verifier": { "effort": "xhigh", "reasoning": "on" } } }"#,
     );
     // `--model anthropic/claude-sonnet-5`, as the adapter passes it. The flag
-    // suppresses the WORKER spec only; the judge key must survive it.
+    // suppresses the WORKER spec only; the verifier key must survive it.
     cfg.model_id = "claude-sonnet-5".to_string();
     cfg.model_pinned_by_flag = true;
     let worker_ref = ModelRef::new("anthropic", "claude-sonnet-5");
@@ -492,25 +492,25 @@ fn the_flat_pipeline_judge_model_alone_resolves_role_judge_to_the_witness_author
 
     let author = ModelRef::new("anthropic", "claude-fable-5");
     assert_eq!(
-        wiring.pins.get(Role::Judge),
+        wiring.pins.get(Role::Verifier),
         Some(&author),
-        "the flat key alone must pin the judge; notices: {:?}",
+        "the flat key alone must pin the verifier; notices: {:?}",
         wiring.notices
     );
 
     // The round trip through the real router is the claim that matters —
-    // `Pipeline::resolve_provider(Role::Judge)` calls exactly this.
+    // `Pipeline::resolve_provider(Role::Verifier)` calls exactly this.
     let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
     let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
     assert_eq!(
-        router.resolve(Role::Judge).unwrap().model_ref,
+        router.resolve(Role::Verifier).unwrap().model_ref,
         author,
-        "Role::Judge must route to the flat-key author"
+        "Role::Verifier must route to the flat-key author"
     );
     assert_ne!(
-        router.resolve(Role::Judge).unwrap().model_ref,
+        router.resolve(Role::Verifier).unwrap().model_ref,
         router.resolve(Role::Worker).unwrap().model_ref,
-        "worker and judge must differ, or the authored witness has no author"
+        "worker and verifier must differ, or the authored witness has no author"
     );
     assert!(
         wiring
@@ -529,15 +529,15 @@ fn the_flat_pipeline_judge_model_alone_resolves_role_judge_to_the_witness_author
 /// the run used. A benchmark container runs with the catalog frozen
 /// (`STELLA_CATALOG_AUTO_REFRESH=0`), so an author outside the offline seed
 /// fails `validate_model_slug`, the pin is dropped with a stderr notice, and
-/// the judge silently rides the worker: the witness arm becomes the control
+/// the verifier silently rides the worker: the witness arm becomes the control
 /// arm at witness-arm cost, under a digest that says otherwise.
 ///
 /// The pin stays soft (nothing here should abort on a credential problem).
 /// What changes is that the wired `PipelineConfig` now REFUSES such a run.
 #[test]
-fn a_trusted_posture_whose_judge_pin_cannot_be_built_refuses_the_run() {
+fn a_trusted_posture_whose_verifier_pin_cannot_be_built_refuses_the_run() {
     let posture = r#"{ "default_model": "anthropic/claude-sonnet-5",
-             "pipeline_judge_model": "anthropic/model-the-offline-catalog-has-never-heard-of",
+             "pipeline_verifier_model": "anthropic/model-the-offline-catalog-has-never-heard-of",
              "auto_mode": "off" }"#;
     let mut cfg = cfg_with_engine("anthropic", posture);
     cfg.model_id = "claude-sonnet-5".to_string();
@@ -551,12 +551,12 @@ fn a_trusted_posture_whose_judge_pin_cannot_be_built_refuses_the_run() {
     // The soft degradation itself is unchanged — and this is the exact state
     // that produced the misdescribed benchmark numbers.
     assert_eq!(
-        wiring.pins.get(Role::Judge),
+        wiring.pins.get(Role::Verifier),
         None,
         "an unbuildable author must still degrade softly at the wiring layer"
     );
     assert!(
-        wiring.notices.iter().any(|notice| notice.contains("judge")),
+        wiring.notices.iter().any(|notice| notice.contains("verifier")),
         "the dropped pin must say so: {:?}",
         wiring.notices
     );
@@ -576,15 +576,15 @@ fn a_trusted_posture_whose_judge_pin_cannot_be_built_refuses_the_run() {
 }
 
 /// The same posture through the ordinary settings chain must keep degrading.
-/// Nothing is published about a user's session wiring, so a judge that cannot
+/// Nothing is published about a user's session wiring, so a verifier that cannot
 /// be reached costs them the authored witness — never the task. Arming the
 /// refusal here would turn a stray settings key into a broken CLI.
 #[test]
-fn an_untrusted_judge_setting_never_arms_the_witness_refusal() {
+fn an_untrusted_verifier_setting_never_arms_the_witness_refusal() {
     let mut cfg = cfg_with_engine(
         "anthropic",
         r#"{ "default_model": "anthropic/claude-sonnet-5",
-             "pipeline_judge_model": "anthropic/claude-fable-5" }"#,
+             "pipeline_verifier_model": "anthropic/claude-fable-5" }"#,
     );
     cfg.model_id = "claude-sonnet-5".to_string();
     assert!(!cfg.engine_settings_trusted, "settings chain, not the seam");
@@ -602,8 +602,8 @@ fn an_untrusted_judge_setting_never_arms_the_witness_refusal() {
     );
 }
 
-/// The control arm must not trip the guard. Its posture names no judge at all
-/// — every role reaches `Role::Judge` through `model_for`'s fallback to
+/// The control arm must not trip the guard. Its posture names no verifier at all
+/// — every role reaches `Role::Verifier` through `model_for`'s fallback to
 /// `default_model` — and it is the published baseline, so arming the refusal
 /// on it would refuse every trial of the arm that is *supposed* to run one
 /// model for every role.
@@ -614,7 +614,7 @@ fn the_trusted_control_arm_posture_does_not_arm_the_witness_refusal() {
         r#"{ "default_model": "anthropic/claude-sonnet-5",
              "allowed_models": ["anthropic/claude-sonnet-5"],
              "auto_mode": "off",
-             "agents": { "judge": { "effort": "xhigh", "reasoning": "on" } } }"#,
+             "agents": { "verifier": { "effort": "xhigh", "reasoning": "on" } } }"#,
     );
     cfg.model_id = "claude-sonnet-5".to_string();
     cfg.engine_settings_trusted = true;
@@ -691,7 +691,7 @@ fn absent_attempt_count_settings_leave_the_pipeline_defaults_alone() {
 /// a line in a posture.
 ///
 /// Every role, not just the worker: what it bounds belongs to the process, so
-/// a judge left at the default while the worker's cap tripled would stop first
+/// a verifier left at the default while the worker's cap tripled would stop first
 /// on exactly the runs the raise was for.
 #[test]
 fn the_model_timeout_setting_reaches_every_roles_engine() {
@@ -706,7 +706,7 @@ fn the_model_timeout_setting_reaches_every_roles_engine() {
     let expected = Some(std::time::Duration::from_secs(1572));
     for (role, engine) in [
         ("default", crate::agent::engine_config_for(&cfg)),
-        ("judge", crate::agent::judge_engine_config_for(&cfg)),
+        ("verifier", crate::agent::verifier_engine_config_for(&cfg)),
         (
             "worker",
             crate::agent::pipeline_engine_config_for(&cfg, &worker),
@@ -1011,7 +1011,7 @@ fn the_max_output_tokens_flag_outranks_every_configured_cap() {
         r#"{ "default_model": "anthropic/claude-sonnet-5",
              "model_output_caps": { "anthropic/claude-sonnet-5": 64000 },
              "agents": { "default": { "params": { "max_tokens": 48000 } },
-                         "judge":   { "params": { "max_tokens": 48000 } } } }"#,
+                         "verifier":   { "params": { "max_tokens": 48000 } } } }"#,
     );
     cfg.model_id = "claude-sonnet-5".to_string();
     cfg.max_output_tokens = Some(24_000);
@@ -1022,10 +1022,10 @@ fn the_max_output_tokens_flag_outranks_every_configured_cap() {
         "the flag must beat both the per-model cap and the per-agent tuning",
     );
     // Every role, for the reason the turn budget is every-role: what it bounds
-    // is the process's spend. Capping the worker while the judge kept the
+    // is the process's spend. Capping the worker while the verifier kept the
     // model's whole ceiling would move the cost rather than reduce it.
     assert_eq!(
-        crate::agent::judge_engine_config_for(&cfg).max_output_tokens,
+        crate::agent::verifier_engine_config_for(&cfg).max_output_tokens,
         Some(24_000),
     );
 }

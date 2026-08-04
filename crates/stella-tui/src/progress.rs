@@ -123,7 +123,7 @@ fn stage_phase(stage: StageKind) -> usize {
         | StageKind::ScopeReview
         | StageKind::Witness => 0,
         StageKind::Execute => 1,
-        StageKind::Verify | StageKind::Judge | StageKind::Reflect | StageKind::ContextWrite => 2,
+        StageKind::Verify | StageKind::Verifier | StageKind::Reflect | StageKind::ContextWrite => 2,
         // Complete is handled via `Hud.complete`; treat as end-of-verify.
         StageKind::Complete => 2,
     }

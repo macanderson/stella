@@ -480,10 +480,10 @@ impl DomainBridge {
                         .with("cost_usd", *cost_usd),
                 );
             }
-            AgentEvent::JudgeVerdict { passed, .. } => {
+            AgentEvent::Verdict { passed, .. } => {
                 self.emit(
                     Level::Info,
-                    "agent.judge.verdict",
+                    "agent.verifier.verdict",
                     self.at_seq().with("passed", *passed),
                 );
             }
@@ -652,7 +652,7 @@ fn stage_name(stage: StageKind) -> &'static str {
         StageKind::Witness => "witness",
         StageKind::Execute => "execute",
         StageKind::Verify => "verify",
-        StageKind::Judge => "judge",
+        StageKind::Verifier => "verifier",
         StageKind::Reflect => "reflect",
         StageKind::ContextWrite => "context_write",
         StageKind::Complete => "complete",
@@ -669,7 +669,7 @@ fn role_name(role: ModelCallRole) -> &'static str {
         ModelCallRole::WitnessRepair => "witness_repair",
         ModelCallRole::Worker => "worker",
         ModelCallRole::DistressGuidance => "distress_guidance",
-        ModelCallRole::Judge => "judge",
+        ModelCallRole::Verdict => "verifier",
         ModelCallRole::AgentAuthor => "agent_author",
         ModelCallRole::SkillAuthor => "skill_author",
         ModelCallRole::DomainInference => "domain_inference",

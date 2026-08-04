@@ -122,7 +122,7 @@ pub struct SessionSpec {
     /// [`SessionSpec::goal`] and [`SessionSpec::sub_agents`] — the route
     /// layer refuses a request naming more than one, since the pipeline
     /// already loops internally (revisions, best-of-N) and drives its own
-    /// judge. `None` — the default — is the pre-#1288 behavior exactly.
+    /// verifier. `None` — the default — is the pre-#1288 behavior exactly.
     pub pipeline: Option<crate::pipeline_run::PipelineRun>,
     /// What this turn's sub-agents may do (#1297), after the operator's
     /// [`crate::SubAgentPolicy`] has clamped the caller's request. `None`
@@ -773,7 +773,7 @@ fn run_session(
         // ambiguity.
         let outcome = if let Some(run) = &spec.pipeline {
             // The pipeline drives its own internal engine turns and its own
-            // judge; it does not ride the `engine`/`tool_view` built above
+            // verifier; it does not ride the `engine`/`tool_view` built above
             // through the goal loop's step machinery. It DOES reuse
             // `tool_view` itself (the turn's hook-gated tool executor,
             // sub-agent-delegating or not) so its execute-stage tool calls
@@ -796,24 +796,24 @@ fn run_session(
             .await
         } else {
             match &spec.goal {
-                // A judged multi-round run (#1297). Its judge announces its
-                // own provider id and `role: judge` on every frame, so a host
+                // A judged multi-round run (#1297). Its verifier announces its
+                // own provider id and `role: verifier` on every frame, so a host
                 // can route it to a different family than the worker — the
                 // property the goal loop exists for, and the one the engine
                 // cannot enforce because the host owns the model calls.
                 Some(run) => {
-                    let judge_provider = crate::remote::RemoteProvider::new(
-                        run.judge_provider_id
+                    let verifier_provider = crate::remote::RemoteProvider::new(
+                        run.verifier_provider_id
                             .clone()
                             .unwrap_or_else(|| provider.id_string()),
                         frame_tx.clone(),
                         pending.clone(),
                         spec.reverse_request_timeout,
                     )
-                    .with_role(stella_protocol::ModelCallRole::Judge);
+                    .with_role(stella_protocol::ModelCallRole::Verdict);
                     crate::goal::drive_goal(
                         &engine,
-                        &judge_provider,
+                        &verifier_provider,
                         run,
                         spec.config.turn_instance,
                         spec.messages,

@@ -185,7 +185,7 @@ async fn run_probed(
 }
 
 /// One workspace per candidate, every one of them flipping fail→pass so the
-/// deterministic ladder submits without buying a judge call — which keeps the
+/// deterministic ladder submits without buying a verifier call — which keeps the
 /// provider script to exactly one entry per candidate.
 fn flipping_workspaces(n: usize, log: &Arc<std::sync::Mutex<Vec<String>>>) -> FakeWorkspacePort {
     FakeWorkspacePort::new(

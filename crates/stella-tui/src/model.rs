@@ -279,15 +279,15 @@ pub enum TranscriptEntry {
         kind: MediaKind,
     },
     /// A verification verdict — `deterministic` distinguishes the flip-oracle
-    /// ladder from a model judge (L-E11).
-    JudgeVerdict {
+    /// ladder from a model verifier (L-E11).
+    Verdict {
         passed: bool,
         summary: String,
         deterministic: bool,
     },
-    /// A goal-check verdict from the judge loop (`AgentEvent::GoalVerdict`) —
-    /// the symmetric scrollback row to [`Self::JudgeVerdict`]. `met` is the
-    /// pass/fail; `round` is the judge iteration it settled on.
+    /// A goal-check verdict from the verifier loop (`AgentEvent::GoalVerdict`) —
+    /// the symmetric scrollback row to [`Self::Verdict`]. `met` is the
+    /// pass/fail; `round` is the verifier iteration it settled on.
     GoalVerdict {
         met: bool,
         round: usize,
@@ -683,9 +683,9 @@ impl SessionModel {
             // live view and scrolls away with nothing, the transcript is the
             // record. Same event, two jobs.
             AgentEvent::Proof { step } => self.proof.apply(step),
-            AgentEvent::JudgeVerdict { passed, evidence } => {
+            AgentEvent::Verdict { passed, evidence } => {
                 self.proof.apply_verdict(*passed, evidence);
-                self.transcript.push(TranscriptEntry::JudgeVerdict {
+                self.transcript.push(TranscriptEntry::Verdict {
                     passed: *passed,
                     summary: evidence.summary.clone(),
                     deterministic: evidence.deterministic,
@@ -765,7 +765,7 @@ impl SessionModel {
             AgentEvent::GoalVerdict {
                 met, round, reasoning, ..
             } => {
-                // Symmetric to `JudgeVerdict` above — a scrollback row. The
+                // Symmetric to `Verdict` above — a scrollback row. The
                 // event's own `cost_usd` is already accounted against the
                 // budget when it fires, so it is dropped here (folding it would
                 // double-count the HUD spend, which `BudgetTick` drives).

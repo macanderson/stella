@@ -39,7 +39,7 @@
 //! one of three baselines:
 //!
 //! - `prev` (the default) — whatever ran immediately before, **in the same
-//!   role**. Same-role matters: a step that ran the worker and a judge holds
+//!   role**. Same-role matters: a step that ran the worker and a verifier holds
 //!   two unrelated prompts, and diffing across them produces noise, not a
 //!   delta.
 //! - `first` — the first call of that role in the session: the first ever turn.
@@ -186,7 +186,7 @@ pub(crate) fn run_inspect(args: &InspectArgs) -> Result<(), String> {
 
 /// `stella calibration` (#871, #1293): fold every recorded session's pass
 /// verdicts against the evidence that later contradicted or confirmed them,
-/// and report the judge's measured false-positive rate beside the
+/// and report the verifier's measured false-positive rate beside the
 /// deterministic cohort's.
 ///
 /// Three passes over what already exists — no new write path, no daemon:
@@ -227,27 +227,27 @@ pub(crate) fn run_calibration(format: InspectFormat) -> Result<(), String> {
     if matches!(format, InspectFormat::Json) {
         return print_json(&serde_json::json!({
             "sessions": sessions.len(),
-            "judge_passes": total.judge_passes,
-            "judge_reconciled": total.judge_reconciled,
-            "judge_false_positives": total.judge_false_positives,
-            "judge_false_positive_rate": total.judge_false_positive_rate(),
+            "verifier_passes": total.verifier_passes,
+            "verifier_reconciled": total.verifier_reconciled,
+            "verifier_false_positives": total.verifier_false_positives,
+            "verifier_false_positive_rate": total.verifier_false_positive_rate(),
             "deterministic_passes": total.deterministic_passes,
             "deterministic_reconciled": total.deterministic_reconciled,
             "deterministic_false_positives": total.deterministic_false_positives,
             "deterministic_false_positive_rate": total.deterministic_false_positive_rate(),
-            // #1295: the judge-alone cohort, so the decision about
-            // `judge_evidence_demand` can be taken from a measured number
+            // #1295: the verifier-alone cohort, so the decision about
+            // `verifier_evidence_demand` can be taken from a measured number
             // rather than from the last run someone remembers.
             "snapshotted_verdicts": total.snapshotted_verdicts,
             "uncorroborated_verdicts": total.uncorroborated_verdicts,
             "uncorroborated_rate": total.uncorroborated_rate(),
-            "judge_passes_standing_alone": total.judge_passes_standing_alone,
+            "verifier_passes_standing_alone": total.verifier_passes_standing_alone,
             // #1293: the answer key's own reach — how many earlier verdicts
             // evidence arriving after their session settled, and how many of
             // the reconciled ones a human revert (not CI) contradicted.
             "settled_by_late_evidence": settled_late,
             "unreconciled_passes": pending.len() as u32 - settled_late,
-            "judge_reverted": total.judge_reverted,
+            "verifier_reverted": total.verifier_reverted,
             "deterministic_reverted": total.deterministic_reverted,
         }));
     }
@@ -570,7 +570,7 @@ impl CallRef {
 ///
 /// The search runs over the whole *session*, oldest execution first, keeping
 /// only calls of the same role. Same-role matters because a step that ran the
-/// worker and a judge holds two unrelated prompts; whole-session matters
+/// worker and a verifier holds two unrelated prompts; whole-session matters
 /// because a system prompt is byte-stable inside one execution by design, so
 /// the only place it can drift is across turns — and stopping at the execution
 /// boundary would report "no change" for the exact comparison the user came to

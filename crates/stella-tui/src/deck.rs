@@ -336,7 +336,7 @@ pub struct WorkspaceModel {
     /// events). Drives the status-bar gauge and dispatch backpressure.
     pub global_cpu_pct: f32,
     /// Whether the session drives turns through the staged pipeline (triage →
-    /// witness → execute → verify → judge) rather than the raw engine loop.
+    /// witness → execute → verify → verifier) rather than the raw engine loop.
     /// Surfaced as the `PIPELINE` stat box. Seeded from
     /// `DeckOptions::pipeline` and toggled live by [`Inbound::Pipeline`]
     /// (the driver's `/pipeline` command).
@@ -352,9 +352,9 @@ pub struct WorkspaceModel {
     /// asked for.
     ///
     /// A role is absent until it has served once. That is honest rather than
-    /// convenient: a judge that never ran is not a judge pinned to nothing,
+    /// convenient: a verifier that never ran is not a verifier pinned to nothing,
     /// and showing a configured-but-unused pin as if it were live is how the
-    /// triage/worker/judge split gets misread in a head-to-head run.
+    /// triage/worker/verifier split gets misread in a head-to-head run.
     pub role_pins: BTreeMap<PipelineRole, RolePin>,
     /// The role that most recently served a call. Highlighted in the `MODELS`
     /// cell while any agent is active, which includes a lead that is only
@@ -379,7 +379,7 @@ pub struct WorkspaceModel {
 pub enum PipelineRole {
     Triage,
     Worker,
-    Judge,
+    Verifier,
 }
 
 impl PipelineRole {
@@ -399,7 +399,7 @@ impl PipelineRole {
             | R::WitnessRepair
             | R::Worker
             | R::DistressGuidance => Some(Self::Worker),
-            R::Judge => Some(Self::Judge),
+            R::Verdict => Some(Self::Verifier),
             R::Unknown
             | R::AgentAuthor
             | R::SkillAuthor
@@ -415,12 +415,12 @@ impl PipelineRole {
         match self {
             Self::Triage => 'T',
             Self::Worker => 'W',
-            Self::Judge => 'J',
+            Self::Verifier => 'J',
         }
     }
 
     /// Display order: the order the pipeline actually runs them.
-    pub const ORDER: [Self; 3] = [Self::Triage, Self::Worker, Self::Judge];
+    pub const ORDER: [Self; 3] = [Self::Triage, Self::Worker, Self::Verifier];
 }
 
 /// One role's pin.
@@ -436,7 +436,7 @@ pub struct RolePin {
     ///
     /// The deck draws the two differently on purpose. A configured pin is a
     /// claim about intent and a served pin is evidence, and a scored run is
-    /// read against the second. Collapsing them would let a judge that never
+    /// read against the second. Collapsing them would let a verifier that never
     /// ran look identical to one that did — the same "unverified reads as
     /// verified" failure the ladder exists to prevent, moved into the UI.
     pub served: bool,
@@ -852,7 +852,7 @@ impl WorkspaceModel {
                     _ => {}
                 },
                 // A verdict closes the witness run whichever way it went.
-                AgentEvent::JudgeVerdict { .. } if entry.witness_phase_ms.execute_ms.is_some() => {
+                AgentEvent::Verdict { .. } if entry.witness_phase_ms.execute_ms.is_some() => {
                     entry.witness_phase_ms.result_ms.get_or_insert(now);
                 }
                 _ => {}
@@ -1295,10 +1295,10 @@ fn status_from_event(ev: &AgentEvent) -> Option<AgentStatus> {
 fn proof_trace(step: &stella_protocol::ProofStep) -> String {
     use stella_protocol::{ProofStep, ProofTree};
     match step {
-        ProofStep::Assurance { witness, judge } => format!(
-            "assurance: witness {}, judge {}",
+        ProofStep::Assurance { witness, verifier } => format!(
+            "assurance: witness {}, verifier {}",
             if *witness { "on" } else { "waived" },
-            if *judge { "on" } else { "waived" }
+            if *verifier { "on" } else { "waived" }
         ),
         ProofStep::Warrant {
             required: true,
@@ -1431,7 +1431,7 @@ fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
         // established": the steps and the verdict are one story, and the trace
         // log is where a reader reconstructs how the rail got where it is.
         AgentEvent::Proof { step } => (TraceKind::Verdict, proof_trace(step)),
-        AgentEvent::JudgeVerdict { passed, .. } => (
+        AgentEvent::Verdict { passed, .. } => (
             TraceKind::Verdict,
             if *passed {
                 "passed".into()

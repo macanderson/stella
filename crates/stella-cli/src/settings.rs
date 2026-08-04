@@ -139,7 +139,7 @@ pub struct Settings {
     pub mcp: Option<McpSettings>,
     /// Agent-engine configuration: per-role models, prompts, effort, and
     /// sampling parameters for the four engine agents (default / worker /
-    /// judge / triage), plus the allowed-model vocabulary and the auto
+    /// verifier / triage), plus the allowed-model vocabulary and the auto
     /// modes. Scopes overlay per field like `providers`. Deliberately kept
     /// mostly OUTSIDE the project trust boundary: model and sampling fields
     /// carry no credential routing (an agent's `provider` names an id whose
@@ -176,7 +176,7 @@ pub struct Settings {
     /// What a turn's verdict is worth as a training label (#1043). Whole-block
     /// last-wins across scopes; carries no credential or egress authority, so
     /// no trust restoration — a project setting a weight is expressing an
-    /// opinion about its own judge, not borrowing permission.
+    /// opinion about its own verifier, not borrowing permission.
     #[serde(default)]
     pub reward: Option<RewardSettings>,
     /// Adaptive-context lifecycle configuration (the `context` block).
@@ -288,13 +288,13 @@ impl Toggle {
 
 /// The four configurable engine agents. `Default` is the interactive /
 /// step-loop agent; the other three are the staged pipeline's roles
-/// (`stella_protocol::Role::{Worker, Judge, Triage}` — `Plan` rides the
+/// (`stella_protocol::Role::{Worker, Verifier, Triage}` — `Plan` rides the
 /// worker's settings, matching the router's tiering).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineAgentKind {
     Default,
     Worker,
-    Judge,
+    Verifier,
     Triage,
 }
 
@@ -302,7 +302,7 @@ impl EngineAgentKind {
     pub const ALL: [EngineAgentKind; 4] = [
         EngineAgentKind::Default,
         EngineAgentKind::Worker,
-        EngineAgentKind::Judge,
+        EngineAgentKind::Verifier,
         EngineAgentKind::Triage,
     ];
 }
@@ -314,17 +314,17 @@ impl EngineAgentKind {
 ///   "agent_engine_config": {
 ///     "default_model": "anthropic/claude-fable-5",
 ///     "pipeline_worker_model": "zai/glm-5.2",
-///     "pipeline_judge_model": "openrouter/openai/gpt-5.5",
+///     "pipeline_verifier_model": "openrouter/openai/gpt-5.5",
 ///     "pipeline_triage_model": "deepseek/deepseek-chat",
 ///     "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2"],
 ///     "auto_mode": "off",
 ///     "effort_auto": "on",
 ///     "reasoning_auto": "on",
 ///     "agents": {
-///       "judge": {
+///       "verifier": {
 ///         "provider": "openrouter",
 ///         "model": "openai/gpt-5.5",
-///         "prompt": "You are a strict code-review judge…",
+///         "prompt": "You are a strict code-review verifier…",
 ///         "effort": "high",
 ///         "reasoning": "on",
 ///         "params": {"temperature": 0.2, "top_p": 0.9}
@@ -348,7 +348,7 @@ pub struct AgentEngineConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_judge_model: Option<String>,
+    pub pipeline_verifier_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_worker_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -379,18 +379,18 @@ pub struct AgentEngineConfig {
     /// gets a correct default the moment the entry is removed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_output_caps: Option<std::collections::BTreeMap<String, u32>>,
-    /// `on` = pick the judge model automatically from `allowed_models`,
+    /// `on` = pick the verifier model automatically from `allowed_models`,
     /// preferring a different model family than the worker's and ranking
     /// by catalog list price (the closest objective proxy for capability
     /// tier the seed catalog carries). You never worry about it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_mode: Option<Toggle>,
-    /// `on` = per-agent reasoning effort is chosen automatically (judge
+    /// `on` = per-agent reasoning effort is chosen automatically (verifier
     /// high, worker medium, triage low, default medium), overriding any
     /// per-agent `effort`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort_auto: Option<Toggle>,
-    /// `on` = thinking mode is chosen automatically (on for judge/worker/
+    /// `on` = thinking mode is chosen automatically (on for verifier/worker/
     /// default, off for triage), overriding any per-agent `reasoning`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_auto: Option<Toggle>,
@@ -450,7 +450,7 @@ pub struct AgentEngineConfig {
     /// stay behind.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_candidates: Option<u32>,
-    /// Escalate to the judge when the diff-coverage overlap could not be
+    /// Escalate to the verifier when the diff-coverage overlap could not be
     /// measured (`stella_pipeline::PipelineConfig::require_diff_coverage`,
     /// #1291). Absent is off.
     ///
@@ -458,15 +458,15 @@ pub struct AgentEngineConfig {
     /// tooling exists), nor whether an unmeasured overlap is honest about
     /// itself — that is unconditional: such a run is scored UNVERIFIED rather
     /// than as a deterministic pass, whatever this says. What this decides is
-    /// whether it also costs a judge call. Turn it on in a workspace that has
+    /// whether it also costs a verifier call. Turn it on in a workspace that has
     /// coverage tooling wired and wants the overlap enforced; leaving it off
     /// avoids paying a reviewer per run to be told what the evidence already
     /// said.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_require_diff_coverage: Option<Toggle>,
-    /// Whether a model judge's pass with nothing deterministic behind it buys
+    /// Whether a model verifier's pass with nothing deterministic behind it buys
     /// one revision demanding corroboration
-    /// (`stella_pipeline::PipelineConfig::judge_evidence_demand`, #1295).
+    /// (`stella_pipeline::PipelineConfig::verifier_evidence_demand`, #1295).
     /// Absent keeps the pipeline's own default.
     ///
     /// Reachable as a setting because the question it answers is empirical and
@@ -476,7 +476,7 @@ pub struct AgentEngineConfig {
     /// wants to measure the difference sets it here rather than rebuilding,
     /// which is what makes the two arms one binary and one posture key apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_judge_evidence_demand: Option<Toggle>,
+    pub pipeline_verifier_evidence_demand: Option<Toggle>,
     /// Seconds of provider silence that end a single generation
     /// (`stella_core::EngineConfig::model_timeout`). Absent keeps the engine's
     /// own default, which is what every run used before this key existed.
@@ -539,7 +539,7 @@ pub struct AgentEngineAgents {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worker: Option<AgentEngineAgent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub judge: Option<AgentEngineAgent>,
+    pub verifier: Option<AgentEngineAgent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub triage: Option<AgentEngineAgent>,
 }
@@ -549,7 +549,7 @@ impl AgentEngineAgents {
         match kind {
             EngineAgentKind::Default => self.default.as_ref(),
             EngineAgentKind::Worker => self.worker.as_ref(),
-            EngineAgentKind::Judge => self.judge.as_ref(),
+            EngineAgentKind::Verifier => self.verifier.as_ref(),
             EngineAgentKind::Triage => self.triage.as_ref(),
         }
     }
@@ -558,7 +558,7 @@ impl AgentEngineAgents {
         match kind {
             EngineAgentKind::Default => &mut self.default,
             EngineAgentKind::Worker => &mut self.worker,
-            EngineAgentKind::Judge => &mut self.judge,
+            EngineAgentKind::Verifier => &mut self.verifier,
             EngineAgentKind::Triage => &mut self.triage,
         }
     }
@@ -686,7 +686,7 @@ impl AgentEngineConfig {
             };
         }
         take!(default_model);
-        take!(pipeline_judge_model);
+        take!(pipeline_verifier_model);
         take!(pipeline_worker_model);
         take!(pipeline_triage_model);
         take!(allowed_models);
@@ -716,7 +716,7 @@ impl AgentEngineConfig {
         take!(hunk_review);
         take!(pipeline_max_revisions);
         take!(pipeline_candidates);
-        take!(pipeline_judge_evidence_demand);
+        take!(pipeline_verifier_evidence_demand);
         take!(pipeline_require_diff_coverage);
         take!(model_timeout_secs);
         take!(compaction_budget_tokens);
@@ -766,7 +766,7 @@ impl AgentEngineConfig {
         let flat = match kind {
             EngineAgentKind::Default => None,
             EngineAgentKind::Worker => self.pipeline_worker_model.as_deref(),
-            EngineAgentKind::Judge => self.pipeline_judge_model.as_deref(),
+            EngineAgentKind::Verifier => self.pipeline_verifier_model.as_deref(),
             EngineAgentKind::Triage => self.pipeline_triage_model.as_deref(),
         };
         flat.or(self.default_model.as_deref())
@@ -1094,12 +1094,12 @@ impl ToolsSettings {
 /// it becomes a training label (#1043).
 ///
 /// Every field optional, and an absent field means the stated default rather
-/// than zero: a workspace that only wants to distrust its judge writes
-/// `judge_weight` alone and inherits the rest.
+/// than zero: a workspace that only wants to distrust its verifier writes
+/// `verifier_weight` alone and inherits the rest.
 ///
-/// The reason this is configurable at all is that `judge_weight`'s default of
-/// `0.5` describes *one* judge's measured accuracy, and a workspace pointing a
-/// weaker model at the judge role — or working in a domain where the judge keeps
+/// The reason this is configurable at all is that `verifier_weight`'s default of
+/// `0.5` describes *one* verifier's measured accuracy, and a workspace pointing a
+/// weaker model at the verifier role — or working in a domain where the verifier keeps
 /// mistaking house style for a defect — is entitled to trust it less. Lower is
 /// supported; higher than `deterministic_weight` is refused, because there a
 /// model's opinion would outrank a test's observation. See
@@ -1110,11 +1110,11 @@ pub struct RewardSettings {
     /// every other weight is measured against.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deterministic_weight: Option<f64>,
-    /// Magnitude of a model judge's pass or fail. Default `0.5`. `0.0` discards
+    /// Magnitude of a model verifier's pass or fail. Default `0.5`. `0.0` discards
     /// judged turns instead of scoring them — which is a different record from
     /// a `0.0` score, deliberately.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub judge_weight: Option<f64>,
+    pub verifier_weight: Option<f64>,
     /// Reward subtracted per model call. Default `0.02`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub per_step: Option<f64>,
@@ -1139,7 +1139,7 @@ impl RewardSettings {
                 deterministic: self
                     .deterministic_weight
                     .unwrap_or(defaults.outcome.deterministic),
-                judged: self.judge_weight.unwrap_or(defaults.outcome.judged),
+                judged: self.verifier_weight.unwrap_or(defaults.outcome.judged),
             },
             shaping: RewardShaping {
                 per_step: self.per_step.unwrap_or(defaults.shaping.per_step),

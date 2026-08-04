@@ -3,7 +3,7 @@
 //!
 //! `stella config` used to report only the session's provider, model and
 //! credential. That is one of four models a pipeline turn uses, and the other
-//! three are exactly the ones that go wrong quietly: a judge pinned through a
+//! three are exactly the ones that go wrong quietly: a verifier pinned through a
 //! key that a per-agent `provider` outranks, a triage model whose slug is
 //! spelled for the wrong gateway, an `effort` the auto-mode is silently
 //! replacing. None of it was visible without reading the resolver.
@@ -77,7 +77,7 @@ pub fn role_key(kind: EngineAgentKind) -> &'static str {
     match kind {
         EngineAgentKind::Default => "default",
         EngineAgentKind::Worker => "worker",
-        EngineAgentKind::Judge => "judge",
+        EngineAgentKind::Verifier => "verifier",
         EngineAgentKind::Triage => "triage",
     }
 }
@@ -98,7 +98,7 @@ fn model_source(engine: &AgentEngineConfig, kind: EngineAgentKind) -> ModelSourc
     let flat = match kind {
         EngineAgentKind::Default => None,
         EngineAgentKind::Worker => engine.pipeline_worker_model.as_deref(),
-        EngineAgentKind::Judge => engine.pipeline_judge_model.as_deref(),
+        EngineAgentKind::Verifier => engine.pipeline_verifier_model.as_deref(),
         EngineAgentKind::Triage => engine.pipeline_triage_model.as_deref(),
     };
     if flat.is_some() {
@@ -119,7 +119,7 @@ fn model_source(engine: &AgentEngineConfig, kind: EngineAgentKind) -> ModelSourc
 /// `model_pinned_by_flag` reproduces the one asymmetry in
 /// `resolve_engine_wiring`: an explicit `--model` is a per-invocation pin of
 /// the WORKER, so it suppresses the worker's settings spec while leaving
-/// judge and triage pins alone. Reporting the settings value there would name
+/// verifier and triage pins alone. Reporting the settings value there would name
 /// a model that is not going to run.
 pub fn resolve(
     engine: Option<&AgentEngineConfig>,
@@ -142,7 +142,7 @@ pub fn resolve(
                 };
             };
             // `--model` owns the worker and the default agent it is resolved
-            // from; the judge and triage keep their own pins.
+            // from; the verifier and triage keep their own pins.
             let flag_owns = model_pinned_by_flag
                 && matches!(role, EngineAgentKind::Worker | EngineAgentKind::Default);
             let spec = if flag_owns {
@@ -297,13 +297,13 @@ mod tests {
     }
 
     /// The posture this feature was written to make checkable: worker rides
-    /// `default_model`, judge and triage have their own flat keys, and each
+    /// `default_model`, verifier and triage have their own flat keys, and each
     /// row names the key that decided it.
     #[test]
     fn each_role_names_the_setting_that_decided_its_model() {
         let engine = AgentEngineConfig {
             default_model: Some("openrouter/moonshotai/kimi-k3".into()),
-            pipeline_judge_model: Some("openrouter/anthropic/claude-opus-5".into()),
+            pipeline_verifier_model: Some("openrouter/anthropic/claude-opus-5".into()),
             pipeline_triage_model: Some("openrouter/z-ai/glm-5.2".into()),
             ..AgentEngineConfig::default()
         };
@@ -314,14 +314,14 @@ mod tests {
         assert_eq!(worker.model.model, "moonshotai/kimi-k3");
         assert_eq!(worker.source, ModelSource::DefaultModel);
 
-        let judge = find(&wiring, EngineAgentKind::Judge);
-        assert_eq!(judge.model.model, "anthropic/claude-opus-5");
+        let verifier = find(&wiring, EngineAgentKind::Verifier);
+        assert_eq!(verifier.model.model, "anthropic/claude-opus-5");
         assert_eq!(
-            judge.source,
-            ModelSource::Flat(EngineAgentKind::Judge),
-            "the judge's flat key is what a user would edit"
+            verifier.source,
+            ModelSource::Flat(EngineAgentKind::Verifier),
+            "the verifier's flat key is what a user would edit"
         );
-        assert_eq!(judge.source.label(), "pipeline_judge_model");
+        assert_eq!(verifier.source.label(), "pipeline_verifier_model");
 
         let triage = find(&wiring, EngineAgentKind::Triage);
         assert_eq!(triage.model.model, "z-ai/glm-5.2");
@@ -335,9 +335,9 @@ mod tests {
     fn a_per_agent_model_outranks_the_flat_key_in_the_report() {
         let engine = AgentEngineConfig {
             default_model: Some("openrouter/moonshotai/kimi-k3".into()),
-            pipeline_judge_model: Some("openrouter/anthropic/claude-opus-5".into()),
+            pipeline_verifier_model: Some("openrouter/anthropic/claude-opus-5".into()),
             agents: Some(AgentEngineAgents {
-                judge: Some(AgentEngineAgent {
+                verifier: Some(AgentEngineAgent {
                     model: Some("openrouter/anthropic/claude-fable-5".into()),
                     ..AgentEngineAgent::default()
                 }),
@@ -347,9 +347,9 @@ mod tests {
         };
         let session = spec("openrouter", "moonshotai/kimi-k3");
         let wiring = resolve(Some(&engine), &session, false, &known);
-        let judge = find(&wiring, EngineAgentKind::Judge);
-        assert_eq!(judge.model.model, "anthropic/claude-fable-5");
-        assert_eq!(judge.source.label(), "agents.judge.model");
+        let verifier = find(&wiring, EngineAgentKind::Verifier);
+        assert_eq!(verifier.model.model, "anthropic/claude-fable-5");
+        assert_eq!(verifier.source.label(), "agents.verifier.model");
     }
 
     /// The bug this exists to catch. `effort_auto: on` silently replaces a
@@ -394,8 +394,8 @@ mod tests {
             default_model: Some("openrouter/moonshotai/kimi-k3".into()),
             effort_auto: Some(Toggle::On),
             agents: Some(AgentEngineAgents {
-                judge: Some(AgentEngineAgent {
-                    // effort_auto's judge rung is High — the same value.
+                verifier: Some(AgentEngineAgent {
+                    // effort_auto's verifier rung is High — the same value.
                     effort: Some(ReasoningEffort::High),
                     ..AgentEngineAgent::default()
                 }),
@@ -405,19 +405,19 @@ mod tests {
         };
         let session = spec("openrouter", "moonshotai/kimi-k3");
         let wiring = resolve(Some(&engine), &session, false, &known);
-        let cell = effort_cell(find(&wiring, EngineAgentKind::Judge));
+        let cell = effort_cell(find(&wiring, EngineAgentKind::Verifier));
         assert_eq!(cell, "high", "no noise when nothing was replaced: {cell}");
     }
 
     /// `--model` pins the worker for one invocation and suppresses the
-    /// worker's settings spec — but not the judge's. Reporting the settings
+    /// worker's settings spec — but not the verifier's. Reporting the settings
     /// value for the worker there would name a model that will not run.
     #[test]
-    fn an_explicit_model_flag_owns_the_worker_but_not_the_judge() {
+    fn an_explicit_model_flag_owns_the_worker_but_not_the_verifier() {
         let engine = AgentEngineConfig {
             default_model: Some("openrouter/moonshotai/kimi-k3".into()),
             pipeline_worker_model: Some("openrouter/z-ai/glm-5.2".into()),
-            pipeline_judge_model: Some("openrouter/anthropic/claude-opus-5".into()),
+            pipeline_verifier_model: Some("openrouter/anthropic/claude-opus-5".into()),
             ..AgentEngineConfig::default()
         };
         let session = spec("anthropic", "claude-sonnet-5");
@@ -427,10 +427,10 @@ mod tests {
         assert_eq!(worker.model, session, "the flag's model is what runs");
         assert_eq!(worker.source, ModelSource::Flag);
 
-        let judge = find(&wiring, EngineAgentKind::Judge);
+        let verifier = find(&wiring, EngineAgentKind::Verifier);
         assert_eq!(
-            judge.model.model, "anthropic/claude-opus-5",
-            "--model says nothing about the judge"
+            verifier.model.model, "anthropic/claude-opus-5",
+            "--model says nothing about the verifier"
         );
     }
 
@@ -439,7 +439,7 @@ mod tests {
     fn the_rendered_block_aligns_and_keeps_the_source_on_every_row() {
         let engine = AgentEngineConfig {
             default_model: Some("openrouter/moonshotai/kimi-k3".into()),
-            pipeline_judge_model: Some("openrouter/anthropic/claude-opus-5".into()),
+            pipeline_verifier_model: Some("openrouter/anthropic/claude-opus-5".into()),
             ..AgentEngineConfig::default()
         };
         let session = spec("openrouter", "moonshotai/kimi-k3");
@@ -447,7 +447,7 @@ mod tests {
         assert_eq!(lines.len(), 4);
         for line in &lines {
             assert!(
-                line.contains("default_model") || line.contains("pipeline_judge_model"),
+                line.contains("default_model") || line.contains("pipeline_verifier_model"),
                 "every row names its source: {line}"
             );
         }

@@ -65,7 +65,7 @@ const UI_FIELDS: &[&str] = &["theme"];
 /// until they pool the traces.
 const REWARD_FIELDS: &[&str] = &[
     "deterministic_weight",
-    "judge_weight",
+    "verifier_weight",
     "per_step",
     "per_usd",
     "per_revision",
@@ -85,7 +85,7 @@ const HOOK_EVENTS: &[&str] = &["SessionStart", "PreToolUse", "PostToolUse"];
 /// know — so a drifted copy there is a refused benchmark run.
 pub(crate) const ENGINE_ROOT_FIELDS: &[&str] = &[
     "default_model",
-    "pipeline_judge_model",
+    "pipeline_verifier_model",
     "pipeline_worker_model",
     "pipeline_triage_model",
     "allowed_models",
@@ -97,7 +97,7 @@ pub(crate) const ENGINE_ROOT_FIELDS: &[&str] = &[
     "hunk_review",
     "pipeline_max_revisions",
     "pipeline_candidates",
-    "pipeline_judge_evidence_demand",
+    "pipeline_verifier_evidence_demand",
     "pipeline_require_diff_coverage",
     "model_timeout_secs",
     "compaction_budget_tokens",
@@ -106,7 +106,7 @@ pub(crate) const ENGINE_ROOT_FIELDS: &[&str] = &[
 ];
 
 /// `agent_engine_config.agents` — [`super::AgentEngineAgents`].
-pub(crate) const ENGINE_AGENT_NAMES: &[&str] = &["default", "worker", "judge", "triage"];
+pub(crate) const ENGINE_AGENT_NAMES: &[&str] = &["default", "worker", "verifier", "triage"];
 
 /// `agent_engine_config.agents.<kind>` — [`super::AgentEngineAgent`].
 pub(crate) const ENGINE_AGENT_FIELDS: &[&str] = &[
@@ -184,7 +184,7 @@ const TOML_MCP_FIELDS: &[&str] = &["registry_url", "servers"];
 /// `agent_engine_config.agents.<name>` up one level.
 const TOML_AGENTS_FIELDS: &[&str] = &[
     "default_model",
-    "pipeline_judge_model",
+    "pipeline_verifier_model",
     "pipeline_worker_model",
     "pipeline_triage_model",
     "auto_mode",
@@ -194,11 +194,11 @@ const TOML_AGENTS_FIELDS: &[&str] = &[
     "hunk_review",
     "pipeline_max_revisions",
     "pipeline_candidates",
-    "pipeline_judge_evidence_demand",
+    "pipeline_verifier_evidence_demand",
     "pipeline_require_diff_coverage",
     "default",
     "worker",
-    "judge",
+    "verifier",
     "triage",
 ];
 
@@ -407,7 +407,7 @@ mod tests {
                  "enable_recap": "on",
                  "agent_engine_config": {
                    "default_model": "zai/glm-5.2",
-                   "agents": { "judge": { "provider": "openrouter",
+                   "agents": { "verifier": { "provider": "openrouter",
                                           "params": { "temperature": 0.2 } } }
                  }
                }"#,
@@ -440,14 +440,14 @@ mod tests {
     fn nested_engine_typos_carry_their_full_path() {
         let found = scan(
             r#"{ "agent_engine_config": {
-                   "agents": { "judge": { "modell": "x", "params": { "temperatur": 1 } },
+                   "agents": { "verifier": { "modell": "x", "params": { "temperatur": 1 } },
                                "juge": { "model": "y" } } } }"#,
         );
         assert_eq!(
             found,
             vec![
-                "agent_engine_config.agents.judge.modell".to_string(),
-                "agent_engine_config.agents.judge.params.temperatur".to_string(),
+                "agent_engine_config.agents.verifier.modell".to_string(),
+                "agent_engine_config.agents.verifier.params.temperatur".to_string(),
                 "agent_engine_config.agents.juge".to_string(),
             ]
         );

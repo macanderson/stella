@@ -275,7 +275,7 @@ pub(crate) enum Command {
         prompt: Option<String>,
 
         /// Use the raw step-loop instead of the staged pipeline (triage, plan,
-        /// execute, verify, judge). The pipeline is the default; this flag
+        /// execute, verify, verifier). The pipeline is the default; this flag
         /// falls back to the direct Engine::run_turn path.
         #[arg(long)]
         no_pipeline: bool,
@@ -283,8 +283,8 @@ pub(crate) enum Command {
         /// Test command the pipeline's verify stage runs deterministically
         /// (e.g. "cargo test -p my-crate"). Arms the fail→pass flip oracle:
         /// a change that flips a failing test to passing can submit without
-        /// a model-judge call. Omitted, verification always escalates to the
-        /// judge.
+        /// a model-verifier call. Omitted, verification always escalates to the
+        /// verifier.
         #[arg(long, value_name = "CMD")]
         test_command: Option<String>,
 
@@ -300,7 +300,7 @@ pub(crate) enum Command {
     /// arena-bench adapter, invoked by the benchmark runner
     ///
     /// arena-bench adapter: run the task in --task-dir (prompt in TASK.md)
-    /// while recording a contextgraph-trace journal the arena runner judges
+    /// while recording a contextgraph-trace journal the arena runner verifiers
     /// with the protocol's replay oracles. Speaks the adapter contract
     /// (--task-dir/--journal/--state-dir/--resume); see
     /// <https://github.com/macanderson/arena-bench>.
@@ -331,14 +331,14 @@ pub(crate) enum Command {
         test_command: Option<String>,
     },
 
-    /// Work in judged rounds until a judge says the goal is met
+    /// Work in judged rounds until a verifier says the goal is met
     ///
-    /// Work in judged rounds until a judge model confirms the goal is met.
+    /// Work in judged rounds until a verifier model confirms the goal is met.
     /// Each working round runs through the staged pipeline (triage, plan,
     /// witness, execute, verify) by default; --no-pipeline falls back to the
     /// raw step-loop.
     Goal {
-        /// What must be true when done — assessed by the judge each round.
+        /// What must be true when done — assessed by the verifier each round.
         /// Omit it to read the goal from stdin when it is piped, or pass `-`
         /// to read stdin explicitly.
         goal: Option<String>,
@@ -583,7 +583,7 @@ pub(crate) enum Command {
     ///
     /// Curate a redacted training dataset from this workspace's receipts
     /// (#872): one JSONL record per accepted turn — prompt, tool calls with
-    /// arguments and outputs, the change that landed, the judge's verdict —
+    /// arguments and outputs, the change that landed, the verifier's verdict —
     /// with a manifest stating the exact filter that selected them. Every
     /// string passes through the secret redactor, and the output is written
     /// owner-only. Offline: reads .stella/private/store.db only, needs no API
@@ -645,10 +645,10 @@ pub(crate) enum Command {
         only: inspect::RoleFilter,
     },
 
-    /// Judge calibration: false-positive rate vs CI ground truth
+    /// Verifier calibration: false-positive rate vs CI ground truth
     ///
     /// Fold every recorded session's pass verdicts against the CI verdicts
-    /// observed after them (#871): how often did a model-judge PASS — and,
+    /// observed after them (#871): how often did a model-verifier PASS — and,
     /// as the comparison cohort, a deterministic ladder pass — later fail
     /// CI? Rates are reported as unmeasured until CI ground truth exists.
     /// Reads .stella/private/store.db only; needs no API key and never
@@ -734,7 +734,7 @@ pub(crate) enum Command {
     ///
     /// What the work cost, and whether anyone said it was good: calls, characters
     /// typed, follow-ups, and the verdict a merged or closed pull request implies.
-    /// Reads local state only; needs no API key, and no model judges anything.
+    /// Reads local state only; needs no API key, and no model verifiers anything.
     Scoreboard,
 
     /// Inspect and promote the project's memories

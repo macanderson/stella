@@ -7,7 +7,7 @@
 //! reach a step boundary takes the steer and every later candidate runs as if
 //! the user had never typed. Candidates run sequentially, so in practice
 //! candidate 1 answered the steer and candidates 2..N did not — and when the
-//! judge picked one of those, the steer was silently absent from the winning
+//! verifier picked one of those, the steer was silently absent from the winning
 //! transcript.
 //!
 //! A steer is an instruction about the *turn*, not about whichever candidate
