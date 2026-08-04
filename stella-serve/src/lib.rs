@@ -82,6 +82,7 @@ mod http;
 mod lifecycle;
 pub mod observe;
 mod pending;
+mod pipeline_run;
 mod remote;
 mod router;
 mod routes;
@@ -101,12 +102,13 @@ pub use error::ServeError;
 pub use extensions::{Extensions, ServeExtension};
 pub use frame::{
     ProviderDelta, ProviderDeltaIn, ProviderErrorWire, ProviderOutcomeIn, ProviderResultIn,
-    ServerFrame, ToolResultIn, TurnOutcomeWire,
+    ScopeDecisionWire, ScopeReviewResultIn, ServerFrame, ToolResultIn, TurnOutcomeWire,
 };
 pub use goal::GoalRun;
 pub use hostguard::HostMode;
 pub use observe::{Metrics, Observer, ServeEvent, SharedObserver};
 pub use pending::Pending;
+pub use pipeline_run::PipelineRun;
 pub use server::{
     DEFAULT_RESUME_GRACE, DEFAULT_SESSION_IDLE_TTL, DEFAULT_SHUTDOWN_GRACE, MAX_RESUME_GRACE,
     MAX_SHUTDOWN_GRACE, ServeConfig, serve, serve_until,

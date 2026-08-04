@@ -16,13 +16,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stella_core::bus::{self, HookBus, HookDecision, HookEventDraft, names as hook_names};
 use stella_core::ports::ToolExecutor;
 use stella_core::retry::Sleeper;
+use stella_pipeline::ports::{
+    ApprovalGate, CmdKind, CmdOutcome, DiagnosticInvocation, DiagnosticRunner, ScopeDecision,
+    TestInvocation, TestRunner,
+};
 use stella_protocol::{
-    CompletionRequestRef, CompletionResult, Provider, ProviderError, ToolCallObserver, ToolOutput,
-    ToolSchema,
+    CompletionRequestRef, CompletionResult, Provider, ProviderError, ScopeProposal,
+    ToolCallObserver, ToolOutput, ToolSchema,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -550,15 +555,297 @@ impl RemoteToolExecutor {
     }
 }
 
+/// The `ApprovalGate` port as a reverse-RPC to the host (#1288): a
+/// pipeline-driven turn's scope-review gate, remoted exactly like a tool or
+/// provider call. `review` emits a [`ServerFrame::ScopeReviewRequest`] and
+/// blocks the pipeline stage on the host's [`ScopeDecision`].
+///
+/// [`ApprovalGate::confirm`] is left at its default (`false`, i.e. "never
+/// isolate in a worktree") — a served run has no
+/// `CandidateWorkspacePort` wired yet ([`crate::pipeline_run`]'s module docs
+/// name this as a declared follow-up), so the question this method answers
+/// never has a workspace to say yes to.
+pub(crate) struct RemoteApprovalGate {
+    frames: crate::backlog::FrameSink,
+    pending: Pending,
+    counter: AtomicU64,
+    timeout: Duration,
+}
+
+impl RemoteApprovalGate {
+    pub(crate) fn new(frames: crate::backlog::FrameSink, pending: Pending, timeout: Duration) -> Self {
+        Self {
+            frames,
+            pending,
+            counter: AtomicU64::new(0),
+            timeout,
+        }
+    }
+}
+
+#[async_trait]
+impl ApprovalGate for RemoteApprovalGate {
+    /// Fail-closed on every exit that is not an explicit host decision —
+    /// cancellation, a disconnected host, a wedged one — matching
+    /// [`stella_pipeline::ports::AlwaysAbortGate`] and the fail-closed EOF
+    /// handling in [`stella_pipeline::ports::StdioApprovalGate`]: an
+    /// unanswered scope review must never relocate into "run it anyway".
+    async fn review(&self, proposal: &ScopeProposal) -> ScopeDecision {
+        if self.pending.is_cancelled() {
+            return ScopeDecision::Abort;
+        }
+        let request_id = format!("scope-{}", self.counter.fetch_add(1, Ordering::Relaxed));
+        let (tx, rx) = oneshot::channel();
+        if !self.pending.register_scope_review(request_id.clone(), tx) {
+            return ScopeDecision::Abort;
+        }
+        if self
+            .frames
+            .send(ServerFrame::ScopeReviewRequest {
+                request_id: request_id.clone(),
+                proposal: proposal.clone(),
+            })
+            .is_err()
+        {
+            self.pending.abandon(&request_id);
+            return ScopeDecision::Abort;
+        }
+        let started = dispatched(&self.pending, &request_id, ReverseKind::ScopeReview);
+        match tokio::time::timeout(self.timeout, rx).await {
+            Ok(Ok(decision)) => {
+                answered(&self.pending, &request_id, ReverseKind::ScopeReview, started);
+                decision
+            }
+            // The sender was dropped: cancellation or teardown already
+            // reported itself through `Pending::clear`/`cancel`, so nothing
+            // further is recorded here — same reasoning as
+            // `RemoteProvider::complete_remoted`'s cancelled-sender arm.
+            Ok(Err(_)) => ScopeDecision::Abort,
+            Err(_) => {
+                self.pending.abandon(&request_id);
+                timed_out(&self.pending, &request_id, ReverseKind::ScopeReview, started);
+                ScopeDecision::Abort
+            }
+        }
+    }
+}
+
+/// The typed process-outcome ports (`TestRunner`, `DiagnosticRunner`) as a
+/// reverse-RPC to the host (#1288), reusing the exact `ToolRequest` /
+/// `ToolResultIn` wire vocabulary every other tool call already goes
+/// through — the verification ladder's process launches are not a new
+/// containment decision, they are the existing bring-your-own-tools
+/// boundary ([`ToolExecutor`]'s doc, and `stella-parity`'s
+/// `tools.local_execution` row) applied to two more typed callers. See
+/// [`crate::pipeline_run`] for why this is the answer rather than a new
+/// wire primitive.
+///
+/// Reserved names, in a `stella.verify.*` namespace no real tool schema may
+/// occupy: the host recognizes them and answers with a JSON-encoded
+/// [`CmdOutcomeWire`] as the tool's `content`; a host that has not
+/// implemented them answers as it would any unknown tool (an error), which
+/// this type reads as [`CmdKind::Infra`] — "no toolchain for this", already
+/// a first-class, gracefully-handled outcome on the typed ladder.
+pub(crate) const PIPELINE_TEST_TOOL: &str = "stella.verify.run_test";
+pub(crate) const PIPELINE_DIAGNOSTIC_TOOL: &str = "stella.verify.run_diagnostic";
+
+/// Wire projection of [`CmdOutcome`]. Carried as a JSON string inside a
+/// [`ToolOutput::Ok`]'s `content` — the same "structured payload inside a
+/// tool's string content" shape several production tools already use — so
+/// answering a verification call costs the host no new response envelope,
+/// only a documented `content` shape for these two reserved names.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum CmdOutcomeWire {
+    Completed {
+        exit_code: i32,
+        #[serde(default)]
+        stdout_tail: String,
+        #[serde(default)]
+        stderr_tail: String,
+    },
+    TimedOut,
+    OutOfMemory,
+    Infra,
+}
+
+impl From<CmdOutcomeWire> for CmdOutcome {
+    fn from(wire: CmdOutcomeWire) -> Self {
+        match wire {
+            CmdOutcomeWire::Completed {
+                exit_code,
+                stdout_tail,
+                stderr_tail,
+            } => CmdOutcome {
+                exit_code,
+                stdout_tail,
+                stderr_tail,
+                kind: CmdKind::Completed,
+            },
+            CmdOutcomeWire::TimedOut => infra_outcome(CmdKind::TimedOut),
+            CmdOutcomeWire::OutOfMemory => infra_outcome(CmdKind::OutOfMemory),
+            CmdOutcomeWire::Infra => infra_outcome(CmdKind::Infra),
+        }
+    }
+}
+
+fn infra_outcome(kind: CmdKind) -> CmdOutcome {
+    CmdOutcome {
+        exit_code: -1,
+        stdout_tail: String::new(),
+        stderr_tail: String::new(),
+        kind,
+    }
+}
+
+/// A `CmdOutcome` reporting that the host never answered, or answered with
+/// something this crate cannot read as a [`CmdOutcomeWire`] — never a
+/// fabricated pass or a fabricated assertion failure, per
+/// [`CmdOutcome::assertion_result`]'s contract: infrastructure noise must
+/// read as unobserved, not as failing.
+fn unreachable_outcome() -> CmdOutcome {
+    infra_outcome(CmdKind::Infra)
+}
+
+/// Ask the host to run one reserved verification call and wait for its
+/// answer, exactly like [`RemoteToolExecutor::dispatch`] — a free function
+/// rather than a shared base, because the two callers ([`RemoteVerificationRunner`]'s
+/// two trait methods) differ only in the tool name and the input they send.
+async fn dispatch_verification_call(
+    frames: &crate::backlog::FrameSink,
+    pending: &Pending,
+    timeout: Duration,
+    name: &str,
+    input: Value,
+) -> CmdOutcome {
+    if pending.is_cancelled() {
+        return unreachable_outcome();
+    }
+    let request_id = format!("verify-{}", next_verify_call_id());
+    let (tx, rx) = oneshot::channel();
+    if !pending.register_tool(request_id.clone(), tx) {
+        return unreachable_outcome();
+    }
+    if frames
+        .send(ServerFrame::ToolRequest {
+            request_id: request_id.clone(),
+            name: name.to_string(),
+            input,
+        })
+        .is_err()
+    {
+        pending.abandon(&request_id);
+        return unreachable_outcome();
+    }
+    let started = dispatched(pending, &request_id, ReverseKind::Tool);
+    let output = match tokio::time::timeout(timeout, rx).await {
+        Ok(Ok(output)) => {
+            answered(pending, &request_id, ReverseKind::Tool, started);
+            output
+        }
+        Ok(Err(_)) => return unreachable_outcome(),
+        Err(_) => {
+            pending.abandon(&request_id);
+            timed_out(pending, &request_id, ReverseKind::Tool, started);
+            return unreachable_outcome();
+        }
+    };
+    match output {
+        ToolOutput::Ok { content } => serde_json::from_str::<CmdOutcomeWire>(&content)
+            .map(CmdOutcome::from)
+            .unwrap_or_else(|_| unreachable_outcome()),
+        ToolOutput::Error { .. } => unreachable_outcome(),
+    }
+}
+
+/// A per-request-id counter for [`dispatch_verification_call`]. Process-wide
+/// rather than per-runner: [`RemoteVerificationRunner`] answers both
+/// `TestRunner` and `DiagnosticRunner` from one shared `&self`, so a
+/// per-instance counter would need its own synchronization anyway, and a
+/// pipeline run mints a fresh runner per turn — the same tradeoff
+/// [`PROVIDER_INSTANCES`] makes for [`RemoteProvider`].
+static VERIFY_CALL_INSTANCES: AtomicU64 = AtomicU64::new(0);
+
+fn next_verify_call_id() -> u64 {
+    VERIFY_CALL_INSTANCES.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Both typed process-launching ports the verification ladder needs
+/// (#1288), sharing one reverse-RPC dispatch. See [`PIPELINE_TEST_TOOL`] /
+/// [`PIPELINE_DIAGNOSTIC_TOOL`] for the wire contract.
+pub(crate) struct RemoteVerificationRunner {
+    frames: crate::backlog::FrameSink,
+    pending: Pending,
+    timeout: Duration,
+}
+
+impl RemoteVerificationRunner {
+    pub(crate) fn new(frames: crate::backlog::FrameSink, pending: Pending, timeout: Duration) -> Self {
+        Self {
+            frames,
+            pending,
+            timeout,
+        }
+    }
+}
+
+#[async_trait]
+impl TestRunner for RemoteVerificationRunner {
+    async fn run_test(&self, invocation: &TestInvocation) -> CmdOutcome {
+        dispatch_verification_call(
+            &self.frames,
+            &self.pending,
+            self.timeout,
+            PIPELINE_TEST_TOOL,
+            serde_json::json!({
+                "program": invocation.program,
+                "args": invocation.args,
+            }),
+        )
+        .await
+    }
+}
+
+#[async_trait]
+impl DiagnosticRunner for RemoteVerificationRunner {
+    async fn run_diagnostic(&self, invocation: &DiagnosticInvocation) -> CmdOutcome {
+        let input = match invocation {
+            DiagnosticInvocation::GitDiff => serde_json::json!({ "invocation": "git_diff" }),
+            DiagnosticInvocation::UntrackedNumstat { path } => serde_json::json!({
+                "invocation": "untracked_numstat",
+                "path": path,
+            }),
+        };
+        dispatch_verification_call(
+            &self.frames,
+            &self.pending,
+            self.timeout,
+            PIPELINE_DIAGNOSTIC_TOOL,
+            input,
+        )
+        .await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
     use stella_core::bus::{HookBus, HookEvent, names as hook_names};
     use stella_core::ports::ToolExecutor;
-    use stella_protocol::ToolOutput;
+    use stella_pipeline::ports::{
+        ApprovalGate, CmdKind, DiagnosticInvocation, DiagnosticRunner, ScopeDecision,
+        TestInvocation, TestRunner,
+    };
+    use stella_protocol::{ScopeProposal, ToolOutput};
 
-    use super::RemoteToolExecutor;
+    use super::{
+        CmdOutcomeWire, PIPELINE_DIAGNOSTIC_TOOL, PIPELINE_TEST_TOOL, RemoteApprovalGate,
+        RemoteToolExecutor, RemoteVerificationRunner,
+    };
+    use crate::frame::ServerFrame;
     use crate::observe::event::TurnRef;
     use crate::pending::Pending;
 
@@ -666,6 +953,160 @@ mod tests {
                 hook_names::TOOL_CALL_FAILED.to_string(),
             ],
             "a wedged host is exactly when an observer must not be left waiting"
+        );
+    }
+
+    /// A fresh, connected reverse-RPC channel triple: the pending registry, a
+    /// frame receiver a test can drain, and the sink both new ports
+    /// (#1288) are constructed over.
+    fn live_channel() -> (
+        crate::backlog::FrameSink,
+        tokio::sync::mpsc::UnboundedReceiver<ServerFrame>,
+        Pending,
+    ) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = crate::backlog::FrameSink::new(
+            tx,
+            crate::backlog::FrameBacklog::new(crate::backlog::DEFAULT_MAX_QUEUED_FRAMES),
+        );
+        let pending = Pending::new(
+            crate::observe::null_observer(),
+            TurnRef::new("turn-remotetest"),
+        );
+        (sink, rx, pending)
+    }
+
+    /// A scope review the host approves round-trips into
+    /// [`ScopeDecision::Approve`] — the pipeline's `ApprovalGate::review`,
+    /// remoted (#1288).
+    #[tokio::test]
+    async fn a_host_answered_scope_review_reaches_the_pipeline_as_the_hosts_decision() {
+        let (sink, mut rx, pending) = live_channel();
+        let gate = RemoteApprovalGate::new(sink, pending.clone(), Duration::from_secs(5));
+        let proposal = ScopeProposal {
+            summary: "do the thing".to_string(),
+            steps: vec!["step one".to_string()],
+            estimated_files: 1,
+            estimated_cost_usd: None,
+        };
+
+        let review = tokio::spawn(async move { gate.review(&proposal).await });
+
+        let ServerFrame::ScopeReviewRequest { request_id, .. } = rx.recv().await.unwrap() else {
+            panic!("expected a scope review request frame");
+        };
+        assert!(
+            pending
+                .resolve_scope_review(&request_id, ScopeDecision::Approve)
+                .is_ok()
+        );
+        assert_eq!(review.await.unwrap(), ScopeDecision::Approve);
+    }
+
+    /// A scope review the host never answers fails closed
+    /// ([`ScopeDecision::Abort`]) rather than defaulting to running the plan
+    /// unattended — the same fail-closed contract
+    /// [`stella_pipeline::ports::StdioApprovalGate`] gives a read error.
+    #[tokio::test]
+    async fn an_unanswered_scope_review_fails_closed() {
+        let (sink, _rx, pending) = live_channel();
+        let gate = RemoteApprovalGate::new(sink, pending, Duration::from_millis(20));
+        let proposal = ScopeProposal {
+            summary: "do the thing".to_string(),
+            steps: vec!["step one".to_string()],
+            estimated_files: 1,
+            estimated_cost_usd: None,
+        };
+        assert_eq!(gate.review(&proposal).await, ScopeDecision::Abort);
+    }
+
+    /// A well-formed [`CmdOutcomeWire`] the host answers with round-trips into
+    /// the matching [`CmdOutcome`], for both the test-runner and the
+    /// diagnostic-runner traits [`RemoteVerificationRunner`] answers (#1288).
+    #[tokio::test]
+    async fn a_hosts_cmd_outcome_reaches_the_ladder_as_the_matching_typed_result() {
+        let (sink, mut rx, pending) = live_channel();
+        let runner = RemoteVerificationRunner::new(sink, pending.clone(), Duration::from_secs(5));
+
+        let call = tokio::spawn(async move {
+            runner
+                .run_test(&TestInvocation {
+                    program: "cargo".to_string(),
+                    args: vec!["test".to_string()],
+                })
+                .await
+        });
+
+        let ServerFrame::ToolRequest {
+            request_id,
+            name,
+            input,
+        } = rx.recv().await.unwrap()
+        else {
+            panic!("expected a tool request frame");
+        };
+        assert_eq!(name, PIPELINE_TEST_TOOL);
+        assert_eq!(input["program"], "cargo");
+
+        let content = serde_json::to_string(&CmdOutcomeWire::Completed {
+            exit_code: 1,
+            stdout_tail: "FAILED".to_string(),
+            stderr_tail: String::new(),
+        })
+        .unwrap();
+        assert!(
+            pending
+                .resolve_tool(&request_id, ToolOutput::Ok { content })
+                .is_ok()
+        );
+
+        let outcome = call.await.unwrap();
+        assert_eq!(outcome.kind, CmdKind::Completed);
+        assert_eq!(outcome.exit_code, 1);
+        assert_eq!(outcome.stdout_tail, "FAILED");
+        assert_eq!(outcome.assertion_result(), Some(false));
+    }
+
+    /// A host that has not implemented the reserved verification tool names
+    /// answers as it would any unknown tool — an error — and the ladder must
+    /// read that as "no toolchain" ([`CmdKind::Infra`]), never as a failing
+    /// assertion: an infra outcome and a genuine test failure must not be
+    /// confused, per [`CmdOutcome::assertion_result`]'s own contract.
+    #[tokio::test]
+    async fn a_host_that_does_not_implement_verification_degrades_to_infra_not_a_failure() {
+        let (sink, mut rx, pending) = live_channel();
+        let runner = RemoteVerificationRunner::new(sink, pending.clone(), Duration::from_secs(5));
+
+        let call = tokio::spawn(async move {
+            runner
+                .run_diagnostic(&DiagnosticInvocation::GitDiff)
+                .await
+        });
+
+        let ServerFrame::ToolRequest {
+            request_id, name, ..
+        } = rx.recv().await.unwrap()
+        else {
+            panic!("expected a tool request frame");
+        };
+        assert_eq!(name, PIPELINE_DIAGNOSTIC_TOOL);
+        assert!(
+            pending
+                .resolve_tool(
+                    &request_id,
+                    ToolOutput::Error {
+                        message: "unknown tool".to_string(),
+                    },
+                )
+                .is_ok()
+        );
+
+        let outcome = call.await.unwrap();
+        assert_eq!(outcome.kind, CmdKind::Infra);
+        assert_eq!(
+            outcome.assertion_result(),
+            None,
+            "an unimplemented verification call observed no assertion either way"
         );
     }
 }
