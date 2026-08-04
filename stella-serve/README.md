@@ -58,7 +58,9 @@ host  ──POST /v1/turns──►  stella-serve  ──►  Session (dedicated
 | [`src/goal.rs`](src/goal.rs) | Judged multi-round runs (#1297): `GoalRun`, and the round loop driven over the same step driver a single turn uses. |
 | [`src/subagents.rs`](src/subagents.rs) | Sub-agents (#1297): the operator's `SubAgentPolicy`, the dispatcher that runs a child on the same remoted ports, and the `task` tool layered over the host's stack. |
 | [`src/server.rs`](src/server.rs) | `serve` — accept loop, bearer auth, the connection fold (one record per connection), route classification, the turn registry, and a rustdoc list of the operational limits the deployment must supply. |
-| [`src/routes.rs`](src/routes.rs) | The endpoint handlers and the wire types they parse — the five `/v1/turns` routes (including `cancel`), `/healthz`, `/v1/metrics`, and the host-supplied ceilings (`max_steps`, `reverse_request_timeout_ms`). |
+| [`src/routes.rs`](src/routes.rs) | The endpoint handlers and the wire types they parse — the five `/v1/turns` routes (including `cancel`), `/healthz`, `/v1/metrics`, `/v1/calibration`, and the host-supplied ceilings (`max_steps`, `reverse_request_timeout_ms`). |
+| [`src/extensions.rs`](src/extensions.rs) | `ServeExtension` — the operator's per-turn hook plane (#1298), and the argument for why registration is operator-only and no route reaches it. |
+| [`src/calibration.rs`](src/calibration.rs) | The per-provider token-drift state and the `GET /v1/calibration` body: what the engine estimated against what the provider billed. |
 | [`src/observe/`](src/observe/) | Observability: `ServeEvent` (18 typed boundary events), the `Observer` port and its sinks, the request fold, the counters behind `/v1/metrics`, and the per-turn tally folded from the engine's own `AgentEvent` stream. Start at [`mod.rs`](src/observe/mod.rs); the design is [`docs/design/serve-observability.md`](../docs/design/serve-observability.md). |
 | [`src/accept.rs`](src/accept.rs) | The written `accept()` classification policy — transient vs fatal, the backoff, and the give-up streak. Byte-identical to [`stella-observatory/src/accept.rs`](../stella-observatory/src/accept.rs) (the observatory takes no `stella-*` dependency, so there is no shared crate to hold it); a drift-guard test in both crates fails if the two copies differ. Change one, change the other. |
 | [`src/http.rs`](src/http.rs) | A hand-rolled HTTP/1.1 + SSE layer following [`stella-observatory`](../stella-observatory)'s no-framework idiom, extended with request bodies, bearer auth, and long-lived responses. |
@@ -147,6 +149,29 @@ host's account. Shapes and a worked example:
 rebuilds a real `ProviderError` from it so retry behaves exactly as with a local
 provider. Sending `terminal` where the host meant `rate_limited` silently disables
 the engine's backoff.
+
+**Hooks are the operator's, not the host's (#1298).** A `ServeExtension`
+installed on `ServeConfig::extensions` gets a per-turn `stella_core::bus::HookBus`
+and sees `agent.turn.*`, `agent.step.*`, `model.request.*` and `tool.call.*`; a
+policy handler registered with `on_blocking` can `Deny` or `Modify` a
+`tool.call.requested` **before** the `tool_request` frame leaves, so a refused
+tool is one the host is never asked to run. There is no route that registers an
+extension, deliberately: the bearer token authenticates a host, and a host that
+could install a handler could read every tool call's raw input and steer the
+engine with a `Deny`. The settings-declared *shell* hook engine
+(`stella_core::hooks`) stays unreachable here for the same reason the tool
+executor is remoted — the sidecar must not be makeable to spawn a shell.
+Installing nothing mints no bus, so a turn pays nothing for hooks nobody
+registered. [`src/extensions.rs`](src/extensions.rs) holds the argument.
+
+**Token drift is measured and readable (#1298).** Every committed step feeds the
+engine's pre-call estimate and the provider's reported usage into a
+`CalibrationMap` kept per `provider_id` for the process's life; `GET
+/v1/calibration` reports the gap per `(provider_id, model)`. It is process
+memory — this crate has no store — so a redeployed sidecar re-converges, which
+is why each row carries `samples`. `drift_ratio` is the raw measured gap;
+`applied_factor` is the bounded correction actually multiplied into estimates,
+and the two are deliberately different numbers.
 
 ## Gotchas
 
@@ -258,6 +283,15 @@ access are needed; the suites either bind `127.0.0.1:0` or use no socket at all.
 - [`tests/http.rs`](tests/http.rs) runs the same protocol end-to-end over a real
   socket: `POST /v1/turns`, SSE, the two result POSTs, and `cancel`, plus the
   auth, `max_steps` and deadline rejections.
+- [`tests/hooks.rs`](tests/hooks.rs) drives a `Session` with operator extensions
+  installed: that every boundary reaches an observer and pairs, that a policy
+  `Deny` lands before the host is asked, that a `Modify` rewrites what the host
+  receives, and — as a sweep over the route table — that no route lets a remote
+  caller register a hook.
+- [`tests/calibration.rs`](tests/calibration.rs) runs a turn whose provider
+  result reports real input usage and reads the gap back from
+  `GET /v1/calibration`, including that two providers sharing a model name keep
+  separate rows.
 - Unit tests live beside the code in [`src/frame.rs`](src/frame.rs) (wire
   round-trips, including that a legacy `aborted` payload without `cost_usd` still
   deserializes), [`src/server.rs`](src/server.rs) (the step-cap and deadline

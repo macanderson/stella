@@ -127,6 +127,9 @@ pub async fn start_drainable_server_with_checkpoints(
             allowed_hosts: Vec::new(),
             shutdown_grace,
             checkpoints,
+            // No operator hooks: the transport suite is about the transport,
+            // and `tests/hooks.rs` is where the hook plane is proved.
+            extensions: stella_serve::Extensions::new(),
         };
         let _ = serve_until(
             config,

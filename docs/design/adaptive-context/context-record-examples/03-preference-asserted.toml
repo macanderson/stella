@@ -19,9 +19,11 @@ sharing_scope = "repository"
 status        = "active"
 origin        = "user"
 
+# Provenance has no author field — `source_kind = "authored"` says how the
+# record came to exist, and `truth.verified_by` (below) names who stands
+# behind the claim, which for an asserted preference is the same person.
 [defaults.provenance]
 source_kind = "authored"
-authored_by = "@dana"
 
 
 [[record]]
@@ -30,10 +32,14 @@ kind       = "preference"
 statement  = "A PR description's first paragraph states why the change exists and what breaks without it."
 tags       = ["review", "writing"]
 
+  # `review` is the nearest ratified task (ADR 0012 decision 5 closed the
+  # vocabulary; `open-pr` is not in it and would load with an UnknownTask
+  # warning). The keywords carry the finer intent — they are free-form by
+  # design.
   [record.steering]
   force         = "should"
   precedence    = 40
-  applies_to    = { tasks = ["open-pr", "write-pr-description"] }
+  applies_to    = { tasks = ["review"], keywords = ["pr", "pull request", "description"] }
 
   [record.enforcement]
   mode     = "soft"
@@ -43,17 +49,17 @@ tags       = ["review", "writing"]
   on_violation = "Rewrite the opening paragraph to lead with intent."
 
   [record.truth]
-  basis      = "asserted"
-  confidence = 80
-  owner      = "@dana"
-  valid_from = 2026-03-11T00:00:00Z
+  basis       = "asserted"
+  confidence  = 80
+  verified_by = "@dana"
+  valid_from  = "2026-03-11T00:00:00Z"
 
-    # The only honest probe for a normative claim. `unfalsifiable` is a verdict,
-    # not a failure — it tells a reviewer this record's accuracy was never
-    # machine-checked and never will be.
+    # The only honest probe for a normative claim. A `manual` probe IS the
+    # unfalsifiable verdict — the sweep renders the record at its declared
+    # force while telling a reviewer its accuracy was never machine-checked
+    # and never will be.
     [record.truth.probe]
     kind    = "manual"
-    verdict = "unfalsifiable"
     note    = "Normative preference. Measure compliance over merged PRs; do not attempt refutation."
 
 
@@ -70,7 +76,7 @@ statement     = "When reviewing a PR, read the test changes before the implement
   [record.steering]
   force      = "may"
   precedence = 10
-  applies_to = { tasks = ["review-pr"] }
+  applies_to = { tasks = ["review"] }
 
   [record.enforcement]
   mode = "none"
@@ -80,5 +86,4 @@ statement     = "When reviewing a PR, read the test changes before the implement
   confidence = 70
 
     [record.truth.probe]
-    kind    = "manual"
-    verdict = "unfalsifiable"
+    kind = "manual"

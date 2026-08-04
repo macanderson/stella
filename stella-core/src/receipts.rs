@@ -387,13 +387,18 @@ fn split_recall(content: &str) -> Vec<RecallSegment<'_>> {
         .collect()
 }
 
-/// The `nod_…` id and human label a rendered recall line declares.
+/// The `nod_…` id (or record `^handle`) and human label a rendered recall
+/// line declares.
 ///
-/// The CLI renders a memory as `- [nod_…] <label> — <body>` and every other
-/// frame kind as `- <label> — <body>`. Both are parsed; anything else yields
-/// `(None, None)` rather than a guess, because a wrong `memory_id` is worse
-/// than an absent one — it is the join key the write→citation loop reads, so a
-/// mis-parse would attribute a turn's use to the wrong record.
+/// The CLI renders a memory as `- [nod_…] <label> — <body>`, a context record
+/// as `- <statement> ^<handle>[ [enforced]]` (`records::render::bullet`), and
+/// every other frame kind as `- <label> — <body>`. All three are parsed;
+/// anything else yields `(None, None)` rather than a guess, because a wrong
+/// `memory_id` is worse than an absent one — it is the join key the
+/// write→citation loop reads, so a mis-parse would attribute a turn's use to
+/// the wrong record. A record line's id is the `^handle` **with its sigil**,
+/// which is also the exact string `cite_memory` accepts for records — the join
+/// works verbatim, and the sigil keeps the id disjoint from every `nod_…`.
 fn parse_recall_item(segment: &str) -> (Option<String>, Option<String>) {
     let Some(first) = segment.lines().next() else {
         return (None, None);
@@ -405,7 +410,7 @@ fn parse_recall_item(segment: &str) -> (Option<String>, Option<String>) {
         Some((id, after)) if id.starts_with("nod_") => {
             (Some(id.to_string()), after.trim_start().to_string())
         }
-        _ => (None, rest.to_string()),
+        _ => (record_handle_of(rest), rest.to_string()),
     };
     // The em-dash separator the renderer writes between label and body. A line
     // without one is all label — the shape a frame with empty content takes.
@@ -414,6 +419,31 @@ fn parse_recall_item(segment: &str) -> (Option<String>, Option<String>) {
         .map_or(rest.as_str(), |(l, _)| l)
         .trim();
     (memory_id, (!label.is_empty()).then(|| label.to_string()))
+}
+
+/// The trailing `^handle` of a rendered record bullet, sigil included.
+///
+/// `records::render::bullet` writes `<statement> ^<handle>` with an optional
+/// ` [enforced]` marker after it, so the handle is the line's last token
+/// (after peeling that marker) and must look exactly like what
+/// `records::handle::slug` can emit — lowercase, digits, `-`. Anchoring to
+/// the tail and validating the charset is what keeps a prose line that merely
+/// *contains* a caret from minting a false join key.
+fn record_handle_of(line: &str) -> Option<String> {
+    let line = line.trim_end();
+    let line = line.strip_suffix(" [enforced]").unwrap_or(line);
+    let tail = line.rsplit(' ').next()?;
+    let handle = tail.strip_prefix('^')?;
+    // At least one letter, over and above the slug charset: `^2` at the end
+    // of a prose line is arithmetic, and a handle with no letter would need
+    // an all-digit lineage segment — refusing it loses nothing real while a
+    // false join key would attribute a turn to a record that was never there.
+    let valid = handle.chars().any(|c| c.is_ascii_lowercase())
+        && handle.len() <= 128
+        && handle
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    valid.then(|| tail.to_string())
 }
 
 /// One decomposed context block, before it becomes a manifest entry.

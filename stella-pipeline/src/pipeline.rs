@@ -90,9 +90,9 @@ use crate::flip_halt::{FlipHalt, command_of};
 use crate::verify::coverage::DiffCoverage;
 use crate::verify::{
     FlipOracle, JudgeVerdict as ModelJudgeVerdict, LadderDecision, LadderInputs,
-    deterministic_fail_evidence, deterministic_pass_evidence, guidance_prompt, heuristic_fallback,
-    judge_prompt, ladder_decision, model_verdict_evidence, nothing_attempted_evidence,
-    parse_judge_response, unverifiable_evidence,
+    deterministic_fail_evidence, deterministic_pass_evidence, evidence_demand_is_worth_a_turn,
+    guidance_prompt, heuristic_fallback, judge_prompt, ladder_decision, model_verdict_evidence,
+    nothing_attempted_evidence, parse_judge_response, unverifiable_evidence,
 };
 use crate::witness::airlock::{
     DisclosureGrain, FailureFingerprint, SealedFailure, grain_for_repeats, redact, scrub,
@@ -446,6 +446,26 @@ pub struct PipelineConfig {
     /// this is off, because a run is not broken by the absence of a way to
     /// check it.
     pub require_evidence_for_lone_judge_pass: bool,
+    /// Ask for corroboration when a model judge passes and nothing
+    /// deterministic stands behind it (#1295): spend one revision demanding
+    /// the evidence instead of recording the pass as UNVERIFIED on the spot.
+    ///
+    /// Bounded to **one** demand per candidate, drawn from the same
+    /// `max_revisions` budget a real failure spends, and — the part that
+    /// decides whether this is worth having at all — only raised when
+    /// `Pipeline::effective_test_command` resolved to something. Without a
+    /// tracked command the ladder has no channel that can *ever* answer the
+    /// ask: `touched_tests_passed` stays `None` by construction and the flip
+    /// oracle never observes a candidate run, so
+    /// [`crate::verify::LadderInputs::judge_pass_stands_alone`] is true no
+    /// matter what the worker does with the turn. That is the whole of why
+    /// this was measured as a loss the first time (#1211 §1) — on
+    /// Terminal-Bench, with no `--test-command` and the authored-witness rung
+    /// unable to fire under a single-model posture, the condition held on
+    /// nearly every turn and the extra turn bought nothing on all of them.
+    /// Gating on the command is what turns "fires everywhere, answerable
+    /// nowhere" into "fires only where an answer exists".
+    pub judge_evidence_demand: bool,
     /// Refuse the run when no witness author independent of the worker can
     /// be resolved, instead of degrading to the unauthored verify ladder.
     ///
@@ -523,6 +543,12 @@ impl Default for PipelineConfig {
             test_oom_retries: 1,
             require_diff_coverage: false,
             require_evidence_for_lone_judge_pass: false,
+            // On (#1295). Off is the historical setting, and the reason it was
+            // off — the ask fired on turns that could never answer it — is now
+            // a precondition of raising it at all rather than a property of
+            // the workload. See the field's docs and `bench/evidence/judge-
+            // evidence-demand-1295/README.md` for the measurement.
+            judge_evidence_demand: true,
             require_independent_witness: false,
             candidates: None,
             candidate_concurrency: None,
@@ -828,6 +854,12 @@ struct CandidateState {
     /// claim, which is none.
     diff_coverage: DiffCoverage,
     revisions: u32,
+    /// How many of those revisions were spent asking for corroboration of a
+    /// standalone judge pass rather than fixing a failure (#1295). Capped at
+    /// one per candidate: the second ask would be to a worker that already
+    /// answered "there is no test surface here", and paying for that answer
+    /// twice is the cost this feature was switched off for the first time.
+    evidence_demands: u32,
     /// Paths of the witness artifact grafted into this candidate, if the
     /// warrant bought one after execution. Empty until then, and empty forever
     /// when the change had nothing to prove.
@@ -2115,6 +2147,7 @@ impl<'a> Pipeline<'a> {
             witness_mutation: None,
             diff_coverage: DiffCoverage::Unmeasured,
             revisions: 0,
+            evidence_demands: 0,
             witness_paths: Vec::new(),
             failures: Vec::new(),
         };
@@ -2841,6 +2874,21 @@ impl<'a> Pipeline<'a> {
                                         LONE_JUDGE_PASS_EVIDENCE_REQUEST,
                                         total,
                                         &mut state,
+                            // Ask for the missing evidence once, if asking can
+                            // be answered at all (#1295 — the predicate states
+                            // why `effective_cmd` decides that).
+                            if evidence_demand_is_worth_a_turn(
+                                &self.config,
+                                state.evidence_demands,
+                                state.revisions,
+                                effective_cmd.map(|cmd| cmd.command),
+                            ) && let Some(cmd) = effective_cmd
+                            {
+                                state.evidence_demands += 1;
+                                let ask = crate::verify::evidence_demand_prompt(cmd.command);
+                                if let Err(reason) = self
+                                    .revise_candidate(
+                                        engine, surface, budget, &ask, total, &mut state,
                                     )
                                     .await
                                 {
@@ -2866,6 +2914,16 @@ impl<'a> Pipeline<'a> {
                             // with shell writes now reaching the ledger,
                             // `file_change_events` carries real evidence on
                             // turns that used to arrive here blind.
+                                // Re-observe from the top: the revised tree
+                                // gets a fresh test run and the ladder
+                                // re-decides over it. A turn that produced the
+                                // evidence now takes a deterministic rung; one
+                                // that did not lands back here with the ask
+                                // spent, and is relabelled below.
+                                continue;
+                            }
+                            // No answerable ask left — record the pass as
+                            // unverified, per the comment above.
                             let mut abstained = evidence.clone();
                             abstained.summary = format!(
                                 "UNVERIFIED: judge passed with no deterministic \

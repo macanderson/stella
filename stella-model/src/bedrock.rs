@@ -25,12 +25,24 @@
 //! - **Explicit credentials, not the full AWS chain.** The adapter takes
 //!   access key / secret / optional session token directly;
 //!   [`crate::credential::BedrockCredentials`] resolves the secret, session
-//!   token, and region from the standard `AWS_SECRET_ACCESS_KEY` /
-//!   `AWS_SESSION_TOKEN` / `AWS_REGION` env vars, alongside
-//!   [`crate::credential::ApiKey`] for `AWS_ACCESS_KEY_ID`. Profile files,
-//!   SSO, and IMDS are the "provider-native config" step the credential
-//!   chain doc (`credential.rs`) already records as deferred alongside this
-//!   adapter.
+//!   token, and region under the standard `AWS_SECRET_ACCESS_KEY` /
+//!   `AWS_SESSION_TOKEN` / `AWS_REGION` names, alongside
+//!   [`crate::credential::ApiKey`] for `AWS_ACCESS_KEY_ID`.
+//!
+//!   Those names are resolved by whatever chain the *host* owns, handed down
+//!   as a [`crate::credential::AuxCredentials`] set
+//!   ([`crate::credential::BedrockCredentials::resolve_with`]), with the
+//!   process environment as the fallback for a caller that has no chain of
+//!   its own. That is what lets `stella auth set bedrock` persist the whole
+//!   set, and what lets a sealed process — a benchmark trial whose design
+//!   keeps provider secrets out of the environment entirely — reach Bedrock
+//!   at all (#1301).
+//!
+//!   Profile files, SSO caches, IMDS, and the container-role endpoints stay
+//!   out on purpose rather than as a gap: each resolves an identity
+//!   *ambiently*, so a process would authenticate as whatever the host
+//!   happens to be carrying. `stella-cli`'s `config::aux` module states the
+//!   supported and excluded sources in full.
 //!
 //! Requests are signed with SigV4 implemented in `sigv4` below — pure
 //! functions over explicit inputs, pinned by golden vectors generated from

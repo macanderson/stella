@@ -97,6 +97,23 @@ _CANDIDATES_ENV = "STELLA_CANDIDATES"
 # still describes the posture that produced it.
 _MODEL_TIMEOUT_ENV = "STELLA_MODEL_TIMEOUT"
 
+# Host-side selector for the corroboration ask (#1295): when a model judge
+# passes and nothing deterministic stands behind it, does the pipeline spend
+# one revision demanding the evidence, or record the pass as unverified on the
+# spot?
+#
+# A selector rather than a rebuild because the question is empirical and the
+# answer is a measurement, not a preference. It was measured once and reverted:
+# the ask fired on nearly every Terminal-Bench turn, because those turns had no
+# tracked command and therefore no way to satisfy it, so it bought a turn
+# everywhere and evidence nowhere. The pipeline now refuses to raise the ask
+# without a command that could answer it, which is the change this selector
+# exists to put on the record — two arms, one binary, one posture key apart.
+#
+# Unset omits the key, so every digest recorded before this selector existed
+# still describes the posture that produced it.
+_JUDGE_EVIDENCE_DEMAND_ENV = "STELLA_JUDGE_EVIDENCE_DEMAND"
+
 # Refusal ceilings, not clamps. Unlike the effort tier there is no enum to
 # validate an integer against, so a bound is the only check available beyond
 # "parses as a number" — and the failure it catches is a fat-fingered extra
@@ -133,6 +150,60 @@ _MODEL_TIMEOUT_CEILING = 21_600
 # drift apart silently, both still looking deliberate.
 _DEFAULT_OUTPUT_CAP = 64_000
 _OUTPUT_CAP_BY_SLUG = {"claude-fable-5": 128_000}
+
+# The models an arm can actually book, by bare slug: worker, the two judges,
+# and triage. `TestOutputCeilingParity` checks the caps above against
+# `catalog.rs` for THESE and no others.
+#
+# Scoped rather than "every seeded model" because the two tables answer
+# different questions. The catalog says what a model can write — every model,
+# whether or not a benchmark ever touches it. This file says what an arm asks
+# for, which only means anything for a model an arm books. Checking the rest
+# would force a mirrored cap for models nobody measured, and each one would
+# need a `_MODEL_TIMEOUT_BY_SLUG` entry derived from an observed token rate
+# that does not exist — manufacturing precisely the cap-without-timeout
+# mismatch the table below exists to prevent.
+_BENCHMARKED_SLUGS = frozenset(
+    {
+        "claude-sonnet-5",
+        "claude-fable-5",
+        "kimi-k3",
+        "claude-haiku-4.5",
+    }
+)
+
+# Caps deliberately set BELOW the model's own ceiling, and why.
+#
+# The default rule is that an arm asks for the model's whole budget — "never be
+# the side that stops first". Every exception is a real decision someone made,
+# so it is written here with its reason rather than living as a literal that
+# merely looks intentional. A slug absent from this map must match its catalog
+# ceiling exactly; that is what `TestOutputCeilingParity` enforces.
+_SUB_CEILING_RATIONALE: dict[str, str] = {
+    "claude-sonnet-5": (
+        "64,000 on purpose, not inherited (#1290). Sonnet 5's own ceiling is "
+        "128,000 — the catalog said 64,000 for months and that was wrong, but "
+        "it was wrong as a statement about the MODEL, not as a statement about "
+        "this comparison. 64,000 is where Claude Code's steps were measured "
+        "stopping, twice landing on it exactly and still finishing the task. "
+        "Matching what the other side actually does is the whole point of a "
+        "head-to-head, so this number stays while the catalog's moves. "
+        "Correcting the catalog is what made this an explicit choice rather "
+        "than a coincidence the two numbers used to share."
+    ),
+    "kimi-k3": (
+        "64,000 against a 131,072 ceiling. This row carried no ceiling at all "
+        "until #1290 seeded it from models.dev, so the posture never diverged "
+        "from anything — the divergence appeared the moment the catalog "
+        "learned a number, which is exactly when it should become a decision "
+        "rather than stay a silence. Kept at the default because kimi-k3 is "
+        "booked as arm B's JUDGE: it emits a verdict, not a solution, so the "
+        "cap has never bound and 'never be the side that stops first' is a "
+        "claim about the worker's budget. Raising it would also owe a "
+        "`_MODEL_TIMEOUT_BY_SLUG` entry derived from an observed token rate "
+        "this model has never been measured at."
+    ),
+}
 
 # The timeout is DERIVED from the cap, not chosen independently, which is why
 # it lives in the same table. It bounds silence between stream fragments, so it
@@ -229,6 +300,29 @@ def resolve_candidates(value: str | None) -> int | None:
         return None
     return _validated_attempt_count(
         value, label="candidates", floor=1, ceiling=_CANDIDATES_CEILING
+    )
+
+
+def resolve_judge_evidence_demand(value: str | None) -> bool | None:
+    """Resolve the corroboration-ask arm, or ``None`` to inherit the default.
+
+    Fails closed on anything that is not one of the four accepted spellings,
+    for the reason every selector here does: a run scored under a configuration
+    nobody chose is worse than a run that refused to start. In particular a
+    bare ``"false"`` is *not* silently read as off — the accepted vocabulary is
+    the one the setting itself uses (``on``/``off``), plus ``1``/``0`` for the
+    shell that has an integer to hand.
+    """
+    if value is None:
+        return None
+    text = value.strip().lower()
+    if text in ("on", "1"):
+        return True
+    if text in ("off", "0"):
+        return False
+    raise ValueError(
+        "benchmark judge evidence demand must be one of on/off/1/0; "
+        f"got `{value}`"
     )
 
 
@@ -363,6 +457,7 @@ def _benchmark_engine_posture(
     triage_model: str | None = None,
     max_revisions: int | None = None,
     candidates: int | None = None,
+    judge_evidence_demand: bool | None = None,
     model_timeout_secs: int | None = None,
 ) -> tuple[dict[str, Any], str, str]:
     """Return a canonical Terminal-Bench engine posture and its hash.
@@ -563,6 +658,14 @@ def _benchmark_engine_posture(
         posture["pipeline_max_revisions"] = max_revisions
     if candidates is not None:
         posture["pipeline_candidates"] = candidates
+    # Same omit-when-unset rule, spelled in the setting's own `on`/`off`
+    # vocabulary rather than as a JSON bool: the CLI parses this key as a
+    # `Toggle`, and a `true` here would be a refused run rather than a
+    # selected arm.
+    if judge_evidence_demand is not None:
+        posture["pipeline_judge_evidence_demand"] = (
+            "on" if judge_evidence_demand else "off"
+        )
     # Same omit-when-unset rule, and here it carries an extra weight: this key
     # is what makes a timeout change a *posture* change rather than a rebuild.
     # A run that selects it says so in its digest; a run that does not is
@@ -659,7 +762,8 @@ def fold_witness_observations(events: list[dict[str, Any]]) -> dict[str, Any]:
     warrant decided no test was warranted at all.
 
     Reads `{"type":"proof","step":{"kind":…}}` events, Stella's own account of
-    its verification ladder (`stella_protocol::ProofStep`). Before #1007 this
+    its verification ladder (`stella_protocol::ProofStep`), plus the
+    `{"type":"judge_verdict"}` event that closes the ladder. Before #1007 this
     lived only in the human-readable warning beside it, so "was the witness
     authored" was a question you answered by grepping trajectories.
 
@@ -667,13 +771,47 @@ def fold_witness_observations(events: list[dict[str, Any]]) -> dict[str, Any]:
     it could not author one; `None` means the stream never reached the question
     (an interrupted trial, or triage waiving assurance). Collapsing those into
     one boolean is how "not measured" starts reading as "measured and absent".
+
+    The verdict fields are the other half of the A/B question (#1284). A trial
+    carries two independent opinions about the same work — Stella's own
+    (`judge_verdict`) and the benchmark's external grader (`reward`, from the
+    verifier, which the agent never sees) — and the interesting number is how
+    often they disagree, in which direction. That comparison was only ever
+    computable from the multi-gigabyte job tree, which is never committed, so
+    it evaporated when the tree was deleted. Folding the verdict here puts it in
+    trial metadata, and `score_dev_baseline.py` carries it into the committed
+    `trials.jsonl` beside the reward it must be compared against.
+
+    `self_verdict_deterministic` is what keeps that comparison honest: a verdict
+    the flip oracle decided and a verdict a model opined are not the same claim,
+    and the model-judge-only rate is the one #1284 quotes.
     """
     proof_kinds: dict[str, int] = {}
     unavailable_reasons: list[str] = []
     warranted = 0
     assurance_planned: bool | None = None
+    verdict_count = 0
+    verdict_passed: bool | None = None
+    verdict_deterministic: bool | None = None
 
     for event in events:
+        if event.get("type") == "judge_verdict":
+            passed = event.get("passed")
+            if not isinstance(passed, bool):
+                continue  # a verdict that states no outcome is not one
+            verdict_count += 1
+            # Last verdict wins: a turn can revise a candidate and judge it
+            # again, and the claim the trial *ends* on is the one the external
+            # reward is a comment on.
+            verdict_passed = passed
+            evidence = event.get("evidence")
+            deterministic = (
+                evidence.get("deterministic") if isinstance(evidence, dict) else None
+            )
+            verdict_deterministic = (
+                deterministic if isinstance(deterministic, bool) else None
+            )
+            continue
         if event.get("type") != "proof":
             continue
         step = event.get("step")
@@ -720,4 +858,18 @@ def fold_witness_observations(events: list[dict[str, Any]]) -> dict[str, Any]:
         "witness_unavailable_reasons": unavailable_reasons,
         "witness_warranted_count": warranted,
         "assurance_witness_planned": assurance_planned,
+        # Same tri-state discipline as `witness_authored`: a trial that was
+        # killed before the ladder closed made no claim, and "made no claim"
+        # must not be scored as "claimed failure" in an agreement rate.
+        "self_verdict_passed": verdict_passed,
+        "self_verdict_state": (
+            "not_reported"
+            if verdict_passed is None
+            else ("passed" if verdict_passed else "failed")
+        ),
+        "self_verdict_deterministic": verdict_deterministic,
+        "self_verdict_count": verdict_count,
+        "verification_unavailable_count": proof_kinds.get(
+            "verification_unavailable", 0
+        ),
     }

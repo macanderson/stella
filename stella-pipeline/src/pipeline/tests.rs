@@ -2334,6 +2334,11 @@ mod degradation_gate;
 /// Golden-trajectory recordings of this pipeline's real event stream — a
 /// child module so it reaches the scripted ports above via `super::*`.
 mod golden;
+/// Asking for corroboration when only a model judge approved the work
+/// (#1295), and — the part that decides whether the ask is affordable —
+/// declining to ask where no tracked command could ever answer. A child
+/// module, so it reaches the scripted ports above via `super::*`.
+mod judge_evidence_demand;
 /// The orchestrator MCP pre-fetch hook (issue #248) — split out for
 /// the same file-size reason `tests.rs` itself was split from
 /// `pipeline.rs`; a child module, so it reaches the fakes above via

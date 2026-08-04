@@ -26,14 +26,14 @@ source_uri    = "CLAUDE.md"
 source_digest = "sha256:6b1f9d0e4a7c8823b5e1f00d92aa41c7cc55e1930b2d7f4a6e88c1029dd3c021"
 repo          = "git@github.com:acme/web.git"
 commit        = "9f2c1ab"
-extracted_at  = 2026-07-27T09:00:00Z
+extracted_at  = "2026-07-27T09:00:00Z"
 extractor     = "claude-opus-5"
 
 
 [[record]]
 lineage_id  = "ctx.acme.web.pkg-manager"
-record_id   = "rec_pkg_manager_a41f9c2b71d4"
-record_hash = "sha256:a41f9c2b71d4e6038f5b1c9270ae4d8813f6c05be2917a4d0cc38e5b74a29f16"
+record_id   = "rec_acme_web_pkg_manager_c786ce68f07b"
+record_hash = "sha256:4378264bfeec789d96b84773abad17714664bb709681fc73b273b2a5c5d26032"
 kind        = "constraint"
 statement   = "This repository uses pnpm exclusively; npm and yarn must not be used."
 tags        = ["build", "tooling"]
@@ -62,8 +62,8 @@ tags        = ["build", "tooling"]
   basis       = "decree"
   confidence  = 100
   verified_by = "@dana"
-  verified_at = 2026-07-20T00:00:00Z
-  valid_from  = 2026-01-04T00:00:00Z
+  verified_at = "2026-07-20T00:00:00Z"
+  valid_from  = "2026-01-04T00:00:00Z"
 
     # A decree is unrefutable by construction — it is true because an owner said
     # so, not because the world agrees. The honest probe is a human recheck.
@@ -74,8 +74,8 @@ tags        = ["build", "tooling"]
 
 [[record]]
 lineage_id  = "ctx.acme.web.foreign-lockfile-breaks-ci"
-record_id   = "rec_foreign_lockfile_3c80ba17ff29"
-record_hash = "sha256:3c80ba17ff2941d6a0e7c5b83e2149f70dd6a8c41b95e0327fa6d418cc07b2e5"
+record_id   = "rec_acme_web_foreign_lockfile_breaks_ci_a8597c478b57"
+record_hash = "sha256:69a6ffbd6aed3745fb8f46e095cf4aa1e1c5cac6515c4d8bb4a4a3c1e4a2b4b8"
 kind        = "fact"
 statement   = "The CI `install` job fails when package-lock.json or yarn.lock is present, before any test job runs."
 tags        = ["build", "ci"]
@@ -94,7 +94,7 @@ tags        = ["build", "ci"]
   [record.truth]
   basis       = "measured"
   confidence  = 95
-  verified_at = 2026-07-20T00:00:00Z
+  verified_at = "2026-07-20T00:00:00Z"
   review_every = "P30D"
 
     # Ungated: reads a tracked file, executes nothing.

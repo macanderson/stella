@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde_json::Value;
+use stella_core::bus::{self, HookBus, HookDecision, HookEventDraft, names as hook_names};
 use stella_core::ports::ToolExecutor;
 use stella_core::retry::Sleeper;
 use stella_protocol::{
@@ -337,6 +338,15 @@ pub(crate) struct RemoteToolExecutor {
     pending: Pending,
     counter: AtomicU64,
     timeout: Duration,
+    /// This turn's operator hook plane (#1298), `None` when the deployment
+    /// installed no extensions.
+    ///
+    /// The port owns it rather than the engine because the interception point
+    /// has to be *before the request frame leaves*: a `Deny` that arrived
+    /// after the host had already been asked to run the tool would be a veto
+    /// of the answer, not of the act. Same placement, and same reason, as
+    /// `ToolRegistry`'s gate on the CLI side.
+    bus: Option<HookBus>,
 }
 
 impl RemoteToolExecutor {
@@ -345,6 +355,7 @@ impl RemoteToolExecutor {
         frames: crate::backlog::FrameSink,
         pending: Pending,
         timeout: Duration,
+        bus: Option<HookBus>,
     ) -> Self {
         Self {
             schemas,
@@ -352,7 +363,80 @@ impl RemoteToolExecutor {
             pending,
             counter: AtomicU64::new(0),
             timeout,
+            bus,
         }
+    }
+
+    /// Run the `tool.call.requested` blocking chain before the request frame
+    /// is built.
+    ///
+    /// `Ok(None)`: allowed unchanged. `Ok(Some(input))`: allowed with a
+    /// policy-rewritten input, which is what the host is then asked to run.
+    /// `Err(output)`: refused — the model sees this error instead of a result,
+    /// and the host is never asked at all.
+    ///
+    /// The chain receives the RAW input: the blocking path is the explicitly
+    /// privileged interception point (`stella_core::bus`), and a policy that
+    /// cannot see the shell command it is judging cannot judge it. Observable
+    /// events below carry `sanitize_tool_input`'d copies instead.
+    ///
+    /// Deliberately the same decision handling as the CLI's `ToolRegistry`,
+    /// down to the dropped-`input` case: two surfaces answering one `Deny`
+    /// differently is exactly the drift `stella-parity` exists to catch.
+    fn gate_tool_call(
+        bus: &HookBus,
+        name: &str,
+        input: &Value,
+    ) -> Result<Option<Value>, ToolOutput> {
+        let outcome = bus.emit_blocking(HookEventDraft::new(
+            hook_names::TOOL_CALL_REQUESTED,
+            serde_json::json!({ "tool": name, "input": input }),
+        ));
+        match outcome.decision {
+            HookDecision::Deny { reason } => Err(ToolOutput::Error {
+                message: format!("`{name}` was denied by an extension policy: {reason}"),
+            }),
+            HookDecision::RequireApproval { reason } => Err(ToolOutput::Error {
+                message: format!("`{name}` requires approval before it can run: {reason}"),
+            }),
+            _ => {
+                if !outcome.modified {
+                    return Ok(None);
+                }
+                match outcome.event.payload.get("input") {
+                    Some(new_input) => Ok(Some(new_input.clone())),
+                    None => {
+                        // A `modify` that dropped `input` is a broken policy
+                        // handler. Surface it and keep the original rather
+                        // than asking the host to run garbage.
+                        bus.emit_named(
+                            hook_names::EXTENSION_ERROR,
+                            serde_json::json!({
+                                "failed_event": hook_names::TOOL_CALL_REQUESTED,
+                                "error": "modify decision dropped the `input` field; original input kept",
+                            }),
+                        );
+                        Ok(None)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Announce how the host answered, on the observable channel.
+    fn report_tool_outcome(bus: &HookBus, name: &str, output: &ToolOutput, duration_ms: u64) {
+        match output {
+            ToolOutput::Error { message } => bus.emit_named(
+                hook_names::TOOL_CALL_FAILED,
+                serde_json::json!({
+                    "tool": name, "error": message, "duration_ms": duration_ms,
+                }),
+            ),
+            ToolOutput::Ok { .. } => bus.emit_named(
+                hook_names::TOOL_CALL_COMPLETED,
+                serde_json::json!({ "tool": name, "duration_ms": duration_ms }),
+            ),
+        };
     }
 }
 
@@ -372,6 +456,48 @@ impl ToolExecutor for RemoteToolExecutor {
                 message: "turn cancelled before the tool call could be dispatched".to_string(),
             };
         }
+        let Some(bus) = &self.bus else {
+            return self.dispatch(name, input).await;
+        };
+        // Operator policy, before anything is dispatched (#1298). A refusal
+        // returns here, so a denied tool costs the host nothing: no frame is
+        // sent, no reverse request is registered, and no deadline is armed —
+        // and no `started` is announced for a call that never began.
+        let gated = match Self::gate_tool_call(bus, name, input) {
+            Ok(replacement) => replacement,
+            Err(refused) => return refused,
+        };
+        let input = gated.as_ref().unwrap_or(input);
+        bus.emit_named(
+            hook_names::TOOL_CALL_STARTED,
+            serde_json::json!({
+                "tool": name,
+                "input": bus::sanitize_tool_input(input),
+            }),
+        );
+        // `started` and its outcome bracket ONE call with exactly one return
+        // between them, which is the whole reason `dispatch` is a separate
+        // function: it has six exits (cancelled registration, a dead frame
+        // sink, four ways the host's answer can land or fail to), and a
+        // report distributed across all of them is one added early return
+        // away from leaving an observer holding a call that never closes.
+        // Same argument, and the same shape, as the engine emitting
+        // `agent.step.completed` in a wrapper around `run_step_inner` rather
+        // than at each of its own exits.
+        let started_at = Instant::now();
+        let output = self.dispatch(name, input).await;
+        Self::report_tool_outcome(bus, name, &output, millis(started_at.elapsed()));
+        output
+    }
+}
+
+impl RemoteToolExecutor {
+    /// Ask the host to run one tool call and wait for its answer.
+    ///
+    /// Every exit is a `ToolOutput` — see [`ToolExecutor::execute`] for why —
+    /// and the caller is what brackets this with the hook plane's
+    /// `started`/outcome pair.
+    async fn dispatch(&self, name: &str, input: &Value) -> ToolOutput {
         let request_id = format!("tool-{}", self.counter.fetch_add(1, Ordering::Relaxed));
         let (tx, rx) = oneshot::channel();
         // Same refused-registration handling as the provider port: a cancel
@@ -421,5 +547,125 @@ impl ToolExecutor for RemoteToolExecutor {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use stella_core::bus::{HookBus, HookEvent, names as hook_names};
+    use stella_core::ports::ToolExecutor;
+    use stella_protocol::ToolOutput;
+
+    use super::RemoteToolExecutor;
+    use crate::observe::event::TurnRef;
+    use crate::pending::Pending;
+
+    /// A tool port whose frame sink is already dead — the host-disconnected
+    /// path — plus a bus recording every event it sees.
+    fn disconnected_port() -> (RemoteToolExecutor, Arc<Mutex<Vec<String>>>) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        // Dropping the receiver is what makes `send` fail, which is exactly
+        // what a subscriber's connection going away does in production.
+        drop(rx);
+        let sink = crate::backlog::FrameSink::new(
+            tx,
+            crate::backlog::FrameBacklog::new(crate::backlog::DEFAULT_MAX_QUEUED_FRAMES),
+        );
+        let pending = Pending::new(
+            crate::observe::null_observer(),
+            TurnRef::new("turn-remotetest"),
+        );
+        let bus = HookBus::new("turn-remotetest");
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let recorder = Arc::clone(&seen);
+        bus.on("tool.call.*", move |event: &HookEvent| {
+            recorder
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(event.name.clone());
+            Ok(())
+        })
+        .detach();
+        let port = RemoteToolExecutor::new(
+            Vec::new(),
+            sink,
+            pending,
+            std::time::Duration::from_millis(50),
+            Some(bus),
+        );
+        (port, seen)
+    }
+
+    /// A `tool.call.started` with no outcome after it leaves an observer
+    /// holding a call that never closes — and it would do so on precisely the
+    /// paths worth watching, the ones where the host went away. The bracket is
+    /// structural (`execute` wraps `dispatch`), and this is what keeps it so.
+    #[tokio::test]
+    async fn a_tool_call_the_host_never_receives_still_reports_an_outcome() {
+        let (port, seen) = disconnected_port();
+        let output = port
+            .execute("echo", &serde_json::json!({ "text": "hi" }))
+            .await;
+        assert!(
+            matches!(&output, ToolOutput::Error { message } if message.contains("disconnected")),
+            "expected the host-disconnected error, got {output:?}"
+        );
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            [
+                hook_names::TOOL_CALL_STARTED.to_string(),
+                hook_names::TOOL_CALL_FAILED.to_string(),
+            ],
+            "every `started` must be closed by an outcome, however the call ended"
+        );
+    }
+
+    /// The same bracket, on the path the host *does* answer badly: a deadline
+    /// nobody meets. Distinct from the case above because it exits from the
+    /// other end of `dispatch`.
+    #[tokio::test]
+    async fn a_tool_call_the_host_never_answers_still_reports_an_outcome() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = crate::backlog::FrameSink::new(
+            tx,
+            crate::backlog::FrameBacklog::new(crate::backlog::DEFAULT_MAX_QUEUED_FRAMES),
+        );
+        let pending = Pending::new(
+            crate::observe::null_observer(),
+            TurnRef::new("turn-remotetest"),
+        );
+        let bus = HookBus::new("turn-remotetest");
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let recorder = Arc::clone(&seen);
+        bus.on("tool.call.*", move |event: &HookEvent| {
+            recorder
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(event.name.clone());
+            Ok(())
+        })
+        .detach();
+        let port = RemoteToolExecutor::new(
+            Vec::new(),
+            sink,
+            pending,
+            std::time::Duration::from_millis(20),
+            Some(bus),
+        );
+        let output = port.execute("echo", &serde_json::json!({})).await;
+        assert!(
+            matches!(&output, ToolOutput::Error { message } if message.contains("deadline")),
+            "expected the reverse-request deadline error, got {output:?}"
+        );
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            [
+                hook_names::TOOL_CALL_STARTED.to_string(),
+                hook_names::TOOL_CALL_FAILED.to_string(),
+            ],
+            "a wedged host is exactly when an observer must not be left waiting"
+        );
     }
 }

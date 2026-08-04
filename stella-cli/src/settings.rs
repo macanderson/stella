@@ -358,6 +358,27 @@ pub struct AgentEngineConfig {
     /// restriction (pickers fall back to the seed catalog).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_models: Option<Vec<String>>,
+    /// Per-model output ceilings, overriding what the catalog knows the model
+    /// can write. `[models.output_caps]` in TOML; keys are `provider/slug` or
+    /// a bare slug, values are token counts.
+    ///
+    /// The default is, and stays, the model's OWN maximum — the catalog
+    /// learns it from the provider and the engine asks for all of it, because
+    /// a cap below the model's ceiling decides where work stops rather than
+    /// the model doing so. This map exists for the one direction that is a
+    /// real request: deliberately spending LESS than the model allows, to
+    /// bound cost or latency, or to match a comparator that caps itself
+    /// lower. Raising a model above its own ceiling is not a thing this can
+    /// do — the provider rejects it — so an entry above the catalog's number
+    /// is refused rather than sent (#1290).
+    ///
+    /// An override, never a definition. Absence means "the catalog wins",
+    /// which is what keeps this from becoming the hand-written model table
+    /// `[models]` exists to avoid: a model that ships tomorrow needs no entry
+    /// here, and one listed here that later changes its real ceiling still
+    /// gets a correct default the moment the entry is removed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_output_caps: Option<std::collections::BTreeMap<String, u32>>,
     /// `on` = pick the judge model automatically from `allowed_models`,
     /// preferring a different model family than the worker's and ranking
     /// by catalog list price (the closest objective proxy for capability
@@ -445,6 +466,19 @@ pub struct AgentEngineConfig {
     /// said.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_require_diff_coverage: Option<Toggle>,
+    /// Whether a model judge's pass with nothing deterministic behind it buys
+    /// one revision demanding corroboration
+    /// (`stella_pipeline::PipelineConfig::judge_evidence_demand`, #1295).
+    /// Absent keeps the pipeline's own default.
+    ///
+    /// Reachable as a setting because the question it answers is empirical and
+    /// per-workload: the ask is only ever raised where a tracked command could
+    /// answer it, so on a workload that has one it converts near-misses, and
+    /// on one that does not it costs literally nothing. A benchmark arm that
+    /// wants to measure the difference sets it here rather than rebuilding,
+    /// which is what makes the two arms one binary and one posture key apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_judge_evidence_demand: Option<Toggle>,
     /// Seconds of provider silence that end a single generation
     /// (`stella_core::EngineConfig::model_timeout`). Absent keeps the engine's
     /// own default, which is what every run used before this key existed.
@@ -658,6 +692,20 @@ impl AgentEngineConfig {
         take!(pipeline_worker_model);
         take!(pipeline_triage_model);
         take!(allowed_models);
+        // Per KEY, not wholesale — the deliberate opposite of
+        // `allowed_models` two lines up, and the contrast is the reason
+        // either rule is right. `allowed_models` is one vocabulary, so a
+        // project narrowing it must be able to replace the user's list
+        // entirely. These are independent per-model knobs: a project pinning
+        // one model's ceiling has said nothing about any other model, and
+        // replacing the map wholesale would silently drop the user's pins on
+        // models the project never mentioned.
+        if let Some(caps) = &other.model_output_caps {
+            let target = self.model_output_caps.get_or_insert_with(Default::default);
+            for (model, cap) in caps {
+                target.insert(model.clone(), *cap);
+            }
+        }
         take!(auto_mode);
         take!(effort_auto);
         take!(reasoning_auto);
@@ -728,6 +776,30 @@ impl AgentEngineConfig {
     /// The allowed-model vocabulary, empty when unrestricted.
     pub fn allowed_models(&self) -> &[String] {
         self.allowed_models.as_deref().unwrap_or(&[])
+    }
+
+    /// The operator's deliberate output ceiling for one model, if they set
+    /// one. `None` means what it should mean everywhere in this feature: use
+    /// the model's own maximum.
+    ///
+    /// Both spellings resolve, qualified first: `anthropic/claude-sonnet-5`
+    /// pins that model on that provider, while a bare `claude-sonnet-5` pins
+    /// it wherever it is reached from. Both are useful and they are not the
+    /// same request — capping a model only on the gateway you pay per-token
+    /// for is a real thing to want — so the qualified form wins when both are
+    /// present rather than one silently shadowing the other.
+    ///
+    /// `0` is not admissible and is treated as unset. Elsewhere in this
+    /// engine `0` spells "no ceiling" (`model_timeout_secs`), but here that
+    /// reading is unavailable: the field's absence already means "the model's
+    /// own maximum", so a literal zero can only be a mistake — and honoring
+    /// it would ask the provider for an empty completion on every step.
+    pub fn model_output_cap(&self, provider: &str, slug: &str) -> Option<u32> {
+        let caps = self.model_output_caps.as_ref()?;
+        caps.get(&format!("{provider}/{slug}"))
+            .or_else(|| caps.get(slug))
+            .copied()
+            .filter(|cap| *cap > 0)
     }
 
     pub fn auto_mode_on(&self) -> bool {

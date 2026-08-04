@@ -57,5 +57,5 @@ pub use cache_economics::{
     is_cache_expired_rewrite, provider_cache_ttl_secs,
 };
 pub use catalog::{Catalog, CatalogEntry, Pricing, ToolDialect};
-pub use credential::{ApiKey, CredentialError};
+pub use credential::{ApiKey, AuxCredentials, CredentialError};
 pub use provider::Provider;

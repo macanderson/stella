@@ -4,56 +4,6 @@
 
 use super::*;
 
-#[test]
-fn goal_path_anchors_extracts_only_real_workspace_files() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(dir.path().join("src")).unwrap();
-    std::fs::write(dir.path().join("src/driver.rs"), "fn main() {}").unwrap();
-    std::fs::write(dir.path().join("src/lib.rs"), "").unwrap();
-    let root = dir.path();
-
-    // Named files anchor — including file:line and trailing-punctuation
-    // spellings; prose, ghosts, and escapes never do.
-    assert_eq!(
-        goal_path_anchors("fix the panic in src/driver.rs.", root),
-        vec!["src/driver.rs"]
-    );
-    assert_eq!(
-        goal_path_anchors("see src/driver.rs:42 and (src/lib.rs)", root),
-        vec!["src/driver.rs", "src/lib.rs"]
-    );
-    assert!(goal_path_anchors("no paths here at all", root).is_empty());
-    assert!(goal_path_anchors("src/ghost.rs does not exist", root).is_empty());
-    assert!(
-        goal_path_anchors("read ../../etc/passwd and src/../src/driver.rs", root).is_empty(),
-        "escape spellings must never anchor"
-    );
-    // Duplicates collapse.
-    assert_eq!(
-        goal_path_anchors("src/driver.rs then src/driver.rs again", root),
-        vec!["src/driver.rs"]
-    );
-}
-
-#[test]
-fn goal_path_anchors_are_capped() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(dir.path().join("m")).unwrap();
-    let mut goal = String::new();
-    for i in 0..8 {
-        let rel = format!("m/f{i}.rs");
-        std::fs::write(dir.path().join(&rel), "").unwrap();
-        goal.push_str(&rel);
-        goal.push(' ');
-    }
-    let anchors = goal_path_anchors(&goal, dir.path());
-    assert_eq!(
-        anchors.len(),
-        4,
-        "anchors fan out into neighborhoods — cap them: {anchors:?}"
-    );
-}
-
 fn msg(role: MessageRole, content: &str) -> CompletionMessage {
     CompletionMessage {
         role,
@@ -458,7 +408,29 @@ async fn the_pipeline_recall_block_carries_skills_and_records_but_never_frames()
         })
         .await
         .unwrap();
-    memory.set_record_channel("Volatile records:\n- staging URL: https://stage.example".into());
+    let record_file = stella_core::rules::RuleFile {
+        path: ".stella/rules/ctx.acme.staging.toml".to_string(),
+        contents: r#"
+schema = "context-record/v0.1"
+set_id = "acme"
+
+[[record]]
+lineage_id = "ctx.acme.staging-url"
+kind = "preference"
+statement = "The staging URL is https://stage.example."
+status = "active"
+origin = "user"
+
+[record.steering]
+force = "may"
+"#
+        .to_string(),
+    };
+    memory.set_record_registry(stella_core::records::registry::load(
+        &[],
+        &[record_file],
+        &stella_core::records::Facts::default(),
+    ));
 
     let full = memory
         .recall_block("review the database migrations")

@@ -54,6 +54,7 @@ import re
 import shlex
 import sys
 import uuid
+from collections.abc import Sequence
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as distribution_version
 from pathlib import Path
@@ -73,7 +74,10 @@ from .credential_bundle import (
     ENV_CREDENTIAL_SOURCE,
     HOST_CREDENTIAL_BUNDLE_FD_ENV,
     HOST_CREDENTIAL_SOURCE,
+    PROVIDER_CREDENTIAL_SPECS,
+    SelectedProviderCredentials,
     read_bundle_from_environment,
+    select_route_credentials,
 )
 from .exit_cause import (
     EXIT_CAUSE_LOG_NAME,
@@ -87,6 +91,7 @@ from .posture import (
     _ASSURANCE_TIERS_VERSION,
     _CANDIDATES_ENV,
     _ENGINE_POSTURE_VERSION,
+    _JUDGE_EVIDENCE_DEMAND_ENV,
     _MAX_REVISIONS_ENV,
     _MODEL_TIMEOUT_ENV,
     _TRIAGE_MODEL_ENV,
@@ -97,6 +102,7 @@ from .posture import (
     _benchmark_engine_posture,
     fold_witness_observations,
     resolve_candidates,
+    resolve_judge_evidence_demand,
     resolve_max_revisions,
     resolve_model_timeout,
     resolve_triage_model,
@@ -248,6 +254,7 @@ _HOST_ONLY_STELLA_ENV = frozenset(
         # unlisted selector refuses the run instead of enabling the arm.
         _MAX_REVISIONS_ENV,
         _CANDIDATES_ENV,
+        _JUDGE_EVIDENCE_DEMAND_ENV,
         # The third coupled ceiling (#1211 §6.2). Same bucket again: read on the
         # host, reaching Stella only inside the hashed posture.
         _MODEL_TIMEOUT_ENV,
@@ -269,20 +276,18 @@ _HOST_ONLY_STELLA_ENV = frozenset(
 
 _ENV_PREFIX = "STELLA_"
 
-# A benchmark run has one selected model provider. Forward exactly its one
-# authentication value over the anonymous-FD handoff; never spray every host
-# provider key into the task container. Compound AWS credentials are excluded
-# until the handoff protocol supports a typed multi-secret bundle.
+# A benchmark run has one selected model provider. Forward exactly what that
+# provider's route needs over the anonymous-FD handoff; never spray every host
+# provider key into the task container. Most providers need one value; Bedrock
+# needs an access key id plus a secret access key (and a session token when the
+# credentials are temporary), which is what #1301 opened the handoff up for.
+#
+# The declarations themselves live in `credential_bundle` so the launcher and
+# the adapter cannot disagree about what a route requires — a second copy here
+# is how a launcher sends two secrets to an adapter expecting one.
 _PROVIDER_CREDENTIAL_ENV: dict[str, tuple[str, ...]] = {
-    "anthropic": ("ANTHROPIC_API_KEY",),
-    "openai": ("OPENAI_API_KEY",),
-    "xai": ("XAI_API_KEY",),
-    "deepseek": ("DEEPSEEK_API_KEY",),
-    "zai": ("ZAI_API_KEY",),
-    "openrouter": ("OPENROUTER_API_KEY",),
-    "gemini": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
-    "google": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
-    "vertex": ("VERTEX_ACCESS_TOKEN",),
+    provider: spec.ordered_names()
+    for provider, spec in PROVIDER_CREDENTIAL_SPECS.items()
 }
 
 _PROVIDER_ADDRESS_ENV_VARS: tuple[str, ...] = (
@@ -505,26 +510,38 @@ async def _captured_process(argv: list[str], env: dict[str, str]) -> tuple[int, 
     return process.returncode or 0, stdout
 
 
-async def _verify_compose_containers_exclude_credential(
-    environment: BaseEnvironment, credential: str
+async def _verify_compose_containers_exclude_credentials(
+    environment: BaseEnvironment, credentials: Sequence[str]
 ) -> None:
-    """Fail unless every project container Config excludes the exact key.
+    """Fail unless every project container Config excludes every selected key.
 
     This runs after Harbor has created and health-checked the environment but
     before Stella binary upload/install, then again immediately before the
     anonymous-stdin handoff. It inspects all project containers (not only
     ``main``) and the complete Docker ``Config`` object, which covers Env,
     Cmd, Entrypoint, Labels, and any future config field.
+
+    Takes the whole set rather than one value: a Bedrock route has two or three
+    secrets, and checking only the first would leave the others free to sit in
+    a container's environment while the check reported clean.  The routing
+    region is deliberately not checked — it is disclosed evidence, not a secret.
     """
+    if not credentials:
+        raise RuntimeError("credential-absence check requires at least one credential")
     hook = getattr(environment, "_stella_verify_no_container_credential", None)
     if callable(hook):
-        if await hook(credential=credential) is not True:
-            raise RuntimeError("project container credential-absence check failed")
+        for credential in credentials:
+            if await hook(credential=credential) is not True:
+                raise RuntimeError("project container credential-absence check failed")
         return
 
     compose = _compose_base_argv(environment)
     host_env = _compose_host_environment(environment)
-    if any(credential in value for value in host_env.values()):
+    if any(
+        credential in value
+        for value in host_env.values()
+        for credential in credentials
+    ):
         raise RuntimeError(
             "selected provider credential remains in Docker's host environment"
         )
@@ -561,7 +578,7 @@ async def _verify_compose_containers_exclude_credential(
         config = container.get("Config") if isinstance(container, dict) else None
         if not isinstance(config, dict):
             raise RuntimeError("Docker container configuration omitted Config")
-        if _contains_credential(config, credential):
+        if any(_contains_credential(config, secret) for secret in credentials):
             raise RuntimeError(
                 "selected provider credential detected in project container "
                 "configuration; refusing handoff"
@@ -604,22 +621,27 @@ async def _secure_exec_with_credential_fd(
     *,
     command: list[str],
     env: dict[str, str],
-    credential: str,
+    credentials: Sequence[str],
     witness_author: str | None = None,
     expected_posture_json: str | None = None,
     posture_builder: PostureBuilder | None = None,
 ) -> ExecResult:
-    """Execute in Harbor Docker with the credential only on anonymous stdin.
+    """Execute in Harbor Docker with the credentials only on anonymous stdin.
 
     Harbor 0.6's regular ``environment.exec(..., env=...)`` translates every
     environment value into ``docker compose exec -e NAME=value`` arguments.
     That makes a provider key visible in the host process table before Stella
     can scrub child environments. The official Terminal-Bench runner uses
     Harbor's Docker environment, so build the equivalent Compose invocation
-    here and deliver the one secret through the subprocess stdin pipe. Compose
+    here and deliver the secrets through the subprocess stdin pipe. Compose
     invokes ``stella`` with a literal argv, so no launcher shell parses the
     instruction and repository-controlled ``BASH_ENV`` is never consulted.
     Stella consumes/closes fd 0 at startup.
+
+    One value per line, in the order named by
+    ``STELLA_CREDENTIAL_HANDOFF_TARGET``; Stella pairs them positionally. Most
+    routes send exactly one line, which is the format byte-for-byte as it was
+    before Bedrock needed a set (#1301).
 
     A deliberately named hook keeps unit tests independent of Docker; there is
     no insecure environment-variable fallback for production environments.
@@ -661,7 +683,13 @@ async def _secure_exec_with_credential_fd(
         )
     env[_ENGINE_CONFIG_ENV] = normalized_posture
     test_hook = getattr(environment, "_stella_secure_exec_with_stdin", None)
-    wire = bytearray(credential.encode("utf-8"))
+    if not credentials:
+        raise RuntimeError("secure benchmark runner requires at least one credential")
+    if any(not value or "\n" in value or "\r" in value for value in credentials):
+        # A newline inside a value would silently re-frame the pipe, handing
+        # Stella a different value under a name it trusts.
+        raise RuntimeError("provider credential is empty or contains a line break")
+    wire = bytearray("\n".join(credentials).encode("utf-8"))
     wire.append(ord("\n"))
     try:
         if callable(test_hook):
@@ -691,7 +719,11 @@ async def _secure_exec_with_credential_fd(
         # ordinary build settings, but its `/proc/<pid>/environ` cannot expose
         # the benchmark provider key either.
         host_env = _compose_host_environment(environment)
-        if any(credential in value for value in host_env.values()):
+        if any(
+            credential in value
+            for value in host_env.values()
+            for credential in credentials
+        ):
             raise RuntimeError(
                 "selected provider credential remains in Docker's host environment"
             )
@@ -1321,8 +1353,10 @@ class StellaAgent(BaseInstalledAgent):
         # project container's complete Config object and refuse to continue
         # if the exact selected key appears anywhere.
         if HOST_CREDENTIAL_BUNDLE_FD_ENV in os.environ:
-            _, credential = self._selected_provider_credential()
-            await _verify_compose_containers_exclude_credential(environment, credential)
+            selected = self._selected_provider_credentials()
+            await _verify_compose_containers_exclude_credentials(
+                environment, selected.secret_values()
+            )
             self._container_credential_absence_verified = True
         else:
             self._host_credential_source = ENV_CREDENTIAL_SOURCE
@@ -1520,16 +1554,24 @@ class StellaAgent(BaseInstalledAgent):
             base_url=self._base_url,
         )
 
-        credential_target, credential = self._selected_provider_credential()
+        selected = self._selected_provider_credentials()
         if self._host_credential_source == HOST_CREDENTIAL_SOURCE:
-            await _verify_compose_containers_exclude_credential(environment, credential)
+            await _verify_compose_containers_exclude_credentials(
+                environment, selected.secret_values()
+            )
             self._container_credential_absence_verified = True
         else:
             self._container_credential_absence_verified = False
         env[_HANDOFF_FD_ENV] = "0"
-        env[_HANDOFF_TARGET_ENV] = credential_target
+        # One name per value, in the order the values are written to the pipe.
+        # Stella pairs them positionally, so this ordering is the contract.
+        env[_HANDOFF_TARGET_ENV] = ",".join(selected.credentials)
+        # Routing rides as ordinary registered container environment: a region
+        # is disclosed in the manifest, not a secret to keep out of `/proc`.
+        env.update(selected.routing)
         env[_DURABLE_STREAM_ENV] = _STREAM_EVENTS_PATH
         self._credential_handoff_mode = _HANDOFF_MODE
+        self._provider_routing = dict(selected.routing)
 
         # Do not use environment.exec(env={credential: ...}): Harbor renders
         # those values into `docker compose exec -e` argv. The secure runner
@@ -1539,7 +1581,7 @@ class StellaAgent(BaseInstalledAgent):
             environment,
             command=command,
             env=env,
-            credential=credential,
+            credentials=tuple(selected.credentials.values()),
             witness_author=witness_author,
             expected_posture_json=self._engine_posture_json,
             posture_builder=self._build_engine_posture,
@@ -1685,6 +1727,9 @@ class StellaAgent(BaseInstalledAgent):
                 self._configured_value(_MAX_REVISIONS_ENV)
             ),
             candidates=resolve_candidates(self._configured_value(_CANDIDATES_ENV)),
+            judge_evidence_demand=resolve_judge_evidence_demand(
+                self._configured_value(_JUDGE_EVIDENCE_DEMAND_ENV)
+            ),
             model_timeout_secs=resolve_model_timeout(
                 self._configured_value(_MODEL_TIMEOUT_ENV)
             ),
@@ -1765,75 +1810,39 @@ class StellaAgent(BaseInstalledAgent):
         parts += ["run", "--", instruction]
         return parts
 
-    def _selected_provider_credential(self) -> tuple[str, str]:
-        """Resolve exactly one credential for the effective model provider."""
+    def _selected_provider_credentials(self) -> SelectedProviderCredentials:
+        """Resolve every credential and routing value the model provider needs.
+
+        Most providers resolve to exactly one credential; Bedrock resolves to
+        an access key id, a secret access key, an optional session token, and a
+        region (#1301).  The policy itself lives in :mod:`credential_bundle`,
+        beside the specs it reads, so the launcher and the adapter cannot
+        disagree about what a route requires; only the Harbor-shaped inputs are
+        bound here.
+        """
         model = (
             getattr(self, "model_name", None)
             or self._configured_value("STELLA_MODEL")
             or _DEFAULT_MODEL
         )
-        provider = model.split("/", 1)[0].strip().lower()
-        candidates = _PROVIDER_CREDENTIAL_ENV.get(provider)
-        if not candidates:
-            if provider == "local":
-                # Config's local provider accepts an arbitrary nonempty key,
-                # but it still travels through the same FD-only seam.
-                candidates = ("LOCAL_API_KEY",)
-            elif provider == "bedrock":
-                raise RuntimeError(
-                    "secure Harbor benchmarking does not yet support Bedrock's "
-                    "multi-value credential chain; refusing env forwarding"
-                )
-            else:
-                raise RuntimeError(
-                    "no secure provider-credential mapping for model provider "
-                    f"`{provider}`"
-                )
+        # Every place a value could have been copied to under a name of the
+        # copier's choosing.  A secure launch must not retain a duplicate of a
+        # bundled key anywhere ambient; the descriptor is the sole source.
+        ambient_values = list(os.environ.values())
+        for attr in ("_resolved_env_vars", "extra_env", "_extra_env"):
+            extra = getattr(self, attr, None)
+            if isinstance(extra, dict):
+                ambient_values.extend(str(item) for item in extra.values())
 
-        bundled = read_bundle_from_environment(os.environ)
-        if bundled is not None:
-            if len(bundled) != 1:
-                raise RuntimeError(
-                    "host credential bundle must contain exactly one provider key"
-                )
-            for name in candidates:
-                value = bundled.get(name)
-                if value is None:
-                    continue
-                # A secure launch must not retain a duplicate of the selected
-                # key under any ambient/Harbor-extra variable, regardless of
-                # that variable's name. The anonymous descriptor is the sole
-                # host source of truth.
-                ambient_values = list(os.environ.values())
-                for attr in ("_resolved_env_vars", "extra_env", "_extra_env"):
-                    extra = getattr(self, attr, None)
-                    if isinstance(extra, dict):
-                        ambient_values.extend(str(item) for item in extra.values())
-                if any(value and value in ambient for ambient in ambient_values):
-                    raise RuntimeError(
-                        "selected provider credential is duplicated in Harbor's "
-                        "ambient configuration; refusing claim-eligible execution"
-                    )
-                self._host_credential_source = HOST_CREDENTIAL_SOURCE
-                self._host_credential_name = name
-                return name, value
-            raise RuntimeError(
-                f"host credential bundle has no key for provider `{provider}`"
-            )
-
-        self._host_credential_source = ENV_CREDENTIAL_SOURCE
-        self._host_credential_name = None
-        for name in candidates:
-            value = self._configured_value(name)
-            if value is not None:
-                if value:
-                    return name, value
-                raise RuntimeError(f"selected provider credential {name} is empty")
-        if provider == "local":
-            return "LOCAL_API_KEY", "local"
-        raise RuntimeError(
-            f"selected provider `{provider}` requires one of: {', '.join(candidates)}"
+        resolution = select_route_credentials(
+            model,
+            lookup=self._configured_value,
+            bundled=read_bundle_from_environment(os.environ),
+            ambient_values=ambient_values,
         )
+        self._host_credential_source = resolution.source
+        self._host_credential_name = resolution.handoff_target
+        return resolution.selected
 
     def _configured_value(self, key: str, default: str | None = None) -> str | None:
         """Resolve one env value with Harbor's per-run overrides taking priority."""
@@ -2033,6 +2042,15 @@ class StellaAgent(BaseInstalledAgent):
             self, "_host_credential_source", ENV_CREDENTIAL_SOURCE
         )
         host_credential_name = getattr(self, "_host_credential_name", None)
+        # The comma-joined target list is one string on purpose: it is the exact
+        # value of STELLA_CREDENTIAL_HANDOFF_TARGET, so a reader comparing the
+        # manifest against the wire sees the same bytes. The count is derived
+        # from it rather than hard-coded to 1 — a Bedrock route carries two or
+        # three, and a manifest that always said "1" would be false.
+        host_credential_bundle_count = (
+            len(host_credential_name.split(",")) if host_credential_name else 0
+        )
+        provider_routing = getattr(self, "_provider_routing", None) or None
         container_credential_absence_verified = getattr(
             self, "_container_credential_absence_verified", False
         )
@@ -2064,6 +2082,16 @@ class StellaAgent(BaseInstalledAgent):
         stream_view = envelope.get("_stella_stream") if envelope is not None else None
         witness_authored_state = (
             stream_view.get("witness_authored_state")
+            if isinstance(stream_view, dict)
+            else None
+        ) or "not_reported"
+        # Stella's own verdict on its own work, as a top-level field for the
+        # same reason the witness state is one: the A/B this exists for (#1284)
+        # compares it against the external grader's reward, and a comparison
+        # that has to reach into a nested blob is one an analysis quietly skips.
+        # A trial with no stream made no claim — "not_reported", never "failed".
+        self_verdict_state = (
+            stream_view.get("self_verdict_state")
             if isinstance(stream_view, dict)
             else None
         ) or "not_reported"
@@ -2103,9 +2131,11 @@ class StellaAgent(BaseInstalledAgent):
             "stella_credential_handoff": credential_handoff_mode,
             "stella_host_credential_source": host_credential_source,
             "stella_host_credential_name": host_credential_name,
-            "stella_host_credential_bundle_count": (
-                1 if host_credential_name is not None else 0
-            ),
+            "stella_host_credential_bundle_count": host_credential_bundle_count,
+            # Non-secret route addressing (AWS_REGION today). Disclosed, not
+            # scrubbed: a Bedrock number nobody can attribute to a region is a
+            # number nobody can reproduce.
+            "stella_provider_routing": provider_routing,
             "stella_container_credential_absence_verified": (
                 container_credential_absence_verified
             ),
@@ -2125,6 +2155,7 @@ class StellaAgent(BaseInstalledAgent):
             "stella_assurance_tiers_sha256": assurance_tiers_sha256,
             "stella_witness_author_model": witness_author_model,
             "stella_witness_authored_state": witness_authored_state,
+            "stella_self_verdict_state": self_verdict_state,
             "stella_workspace_git_baseline": workspace_git_baseline,
         }
         if envelope is not None:
@@ -2167,9 +2198,7 @@ class StellaAgent(BaseInstalledAgent):
                 credential_handoff=credential_handoff_mode,
                 host_credential_source=host_credential_source,
                 host_credential_name=host_credential_name,
-                host_credential_bundle_count=(
-                    1 if host_credential_name is not None else 0
-                ),
+                host_credential_bundle_count=host_credential_bundle_count,
                 container_credential_absence_verified=(
                     container_credential_absence_verified
                 ),

@@ -459,6 +459,38 @@ values, because those describe the posture the launcher will actually emit —
 a document that disagrees with the code is the `harbor==0.6.1` failure again,
 in a different file.
 
+#### 8.4.3 The catalog moved and these digests did not (#1290)
+
+Sonnet 5's entry in `stella-model/src/catalog.rs` was corrected from 64,000 to
+its real 128,000. That number is the ceiling **every stella user** gets on the
+model, and it was wrong: Anthropic's own `GET /v1/models` reports
+`"max_tokens": 128000`, as does OpenRouter for the same model on the gateway
+route. The 64,000 it carried was never a fact about Sonnet 5 — it was where
+Claude Code's steps were measured stopping, recorded against a row that means
+something else.
+
+**No digest in the table above moves.** `anthropic/claude-sonnet-5` is still
+`3c428a22…`. The benchmark still caps at 64,000, so every posture it emits is
+byte-identical to the one that produced the published runs, and no result is
+invalidated.
+
+That the two survived apart is the point of the change rather than a lucky
+escape. The product number and the comparison number were one literal doing two
+jobs, and they only agreed by coincidence; correcting the product half would
+normally have dragged the benchmark with it and re-frozen the SUT. They are now
+separate statements:
+
+- the catalog says what Sonnet 5 **can** write — 128,000, cited to the provider;
+- `posture.py` says what an arm **asks for** — 64,000, recorded in
+  `_SUB_CEILING_RATIONALE` with the reason, which is that matching what the
+  comparator actually does is the whole point of a head-to-head.
+
+`TestOutputCeilingParity` enforces the distinction rather than the old
+equality: an arm may cap below a model's ceiling only where a rationale is
+written down, may never cap above it, and a bookable model with no seeded
+ceiling at all is now its own failure — that case used to drop silently out of
+the parity loop and run at the engine's global 16384.
+
 ### 8.5 The measured baseline
 
 See `bench/evidence/` for the run manifest, per-trial rows, per-task results and
@@ -504,6 +536,19 @@ The arm changes `stella_engine_posture_sha256`, and therefore the registered
 SUT — that is intended. Two arms over the same 89 tasks on the same SUT is a
 direct, falsifiable test of whether the ladder's witness rung improves outcomes;
 one arm alone cannot answer it in either direction.
+
+**That test is now a procedure rather than a suggestion** ([#1284](https://github.com/macanderson/stella/issues/1284)):
+`bench/evidence/run/witness_ab.sh` runs one arm with the arm named as an
+argument and the task list pinned across both, and
+`bench/evidence/compare_arms.py` turns the two into the answer — tasks gained
+and lost, wrong "this passed" calls fixed and introduced, spend per additional
+task passed — under a decision rule fixed in
+[`bench/evidence/witness-ab/`](evidence/witness-ab/) before any data exists.
+The comparison refuses two runs that are not one experiment, and refuses a
+treatment arm whose trials authored no witness: the #1147 failure below is
+detectable only from the run's own proof stream, never from the posture that
+claims the tier. **The run has not been executed.** Everything up to the
+credential is in the tree.
 
 Constraints, each enforced fail-closed by `_validated_witness_author`:
 

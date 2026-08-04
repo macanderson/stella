@@ -73,6 +73,8 @@ fn spec_for(prompt: &str) -> SessionSpec {
         checkpoint: None,
         goal: None,
         sub_agents: None,
+        extensions: stella_serve::Extensions::new(),
+        calibration: None,
     }
 }
 

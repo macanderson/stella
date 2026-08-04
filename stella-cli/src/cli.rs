@@ -834,9 +834,18 @@ pub enum AuthCmd {
         /// stella auth set zai --stdin`.
         #[arg(long)]
         stdin: bool,
+
+        /// Store one companion value a provider needs beyond its key, as
+        /// NAME=VALUE, repeatable. Only Bedrock has any today:
+        /// AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, AWS_REGION. Omit these
+        /// for an interactive masked prompt covering each one. WARNING: like
+        /// --key, a value passed here is visible in shell history and `ps`.
+        #[arg(long = "field", value_name = "NAME=VALUE")]
+        fields: Vec<String>,
     },
 
-    /// Remove a provider's stored key from credentials.toml.
+    /// Remove a provider's stored key (and companion values) from
+    /// credentials.toml.
     Remove {
         /// Provider id
         provider: String,

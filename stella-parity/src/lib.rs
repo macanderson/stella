@@ -99,6 +99,11 @@ pub struct Capability {
 pub const COMPOSITION_SEAMS: &[&str] = &[
     "with_sleeper",
     "with_call_role",
+    // The reader for `with_call_role`, and an assembly detail for the same
+    // reason the setter is: a host that drives `run_step` itself owns the turn
+    // framing, and the `agent.turn.started` payload names the role — so it
+    // reads the engine's rather than keeping a second copy of the default.
+    "call_role",
     "with_turn_instance",
     "max_steps",
 ];
@@ -307,15 +312,31 @@ pub static CAPABILITIES: &[Capability] = &[
             witness: "an_interrupted_turn_resumes_at_the_step_boundary_not_the_turn_boundary",
         },
         // Deliberately phrased to AGREE with `turn.checkpoint` above rather
-        // than restate it differently: serve does reach both write seams, so
-        // the gap here is not the seam and not the writing. It is that there is
-        // nowhere to read one back FROM, and nothing to key it on.
+        // than restate it differently. #1198 closed the two things this row
+        // used to name — serve had no store, and `SessionSpec` had no identity
+        // to key one on — so the gap is no longer the seam, the writing, the
+        // durability, or the read-back: a served turn writes the versioned
+        // `Checkpoint` at every step boundary and a host reads it back byte
+        // for byte. What is missing is the OTHER direction. Nothing accepts
+        // one: no route takes a checkpoint, and `Engine::resume_turn` still
+        // has zero production callers on either surface.
+        //
+        // That serve does not re-drive a turn itself is a decision, not an
+        // omission (`stella-serve/src/checkpoint.rs`, "Resume is
+        // host-initiated"): a resumed turn's first act is a reverse request
+        // only a host can answer, so a server that resumed on restart would
+        // park a thread on a request nobody is listening for. The declared gap
+        // is therefore the *verb*, not the mechanism — an API host holding a
+        // valid resume point today can only continue it by driving
+        // `stella-engine` in its own process.
         api: SurfacePosture::Deferred {
-            waiting_on: "somewhere for a served session to read a resume point back from: serve \
-                         reaches the write seams (see turn.checkpoint) but has no store, and \
-                         SessionSpec carries no session identity to key one on — so nothing \
-                         survives the process to resume. Note stella-serve/tests/resume.rs is SSE \
-                         stream resumption, a different resume entirely",
+            waiting_on: "a way to hand a resume point back: serve writes one and returns it (see \
+                         turn.checkpoint), and the artifact does reconstitute the turn it came \
+                         from — a_served_resume_point_reconstitutes_the_turn_it_came_from — but \
+                         no route accepts one and nothing calls Engine::resume_turn, so an API \
+                         host cannot ask the server to continue from where it crashed. Note \
+                         stella-serve/tests/resume.rs is SSE stream resumption, a different \
+                         resume entirely",
         },
     },
     Capability {
@@ -372,12 +393,14 @@ pub static CAPABILITIES: &[Capability] = &[
             missing: "a CLI-side test pinning that a configured workspace hook actually fires \
                       through agent wiring (core has hook tests; the CLI wiring has none)",
         },
-        api: SurfacePosture::Deferred {
-            waiting_on: "attaching the HookBus in serve's session assembly: shell hooks are \
-                         deliberately not run server-side (a host must not be able to make the \
-                         sidecar spawn shells), and with_bus is the server-shaped observer seam \
-                         built for exactly this — but serve never attaches it, so an API host \
-                         gets no lifecycle boundary events",
+        api: SurfacePosture::Shipped {
+            mechanism: "operator-installed ServeExtensions on a per-turn HookBus (#1298): \
+                        turn/step/model boundaries observable, tool.call.requested \
+                        interceptable before the reverse request leaves. Shell hooks stay \
+                        deliberately unreachable server-side (a host must not be able to make \
+                        the sidecar spawn shells) and NO route registers an extension — the \
+                        bearer token authenticates a host, which is not the operator",
+            witness: "operator_hooks_fire_across_a_served_turn",
         },
     },
     Capability {
@@ -404,9 +427,12 @@ pub static CAPABILITIES: &[Capability] = &[
                       calibration on session start (stella-core and stella-store each test their \
                       half; the CLI seam between them has no witness)",
         },
-        api: SurfacePosture::Deferred {
-            waiting_on: "serve attaching a CalibrationMap (and somewhere to persist samples — \
-                         serve deliberately has no store): every served turn estimates uncorrected",
+        api: SurfacePosture::Shipped {
+            mechanism: "a process-lifetime CalibrationMap per provider_id, fed by every \
+                        committed step and read at GET /v1/calibration (#1298). Samples are \
+                        not persisted — serve deliberately has no store — so a redeployed \
+                        sidecar re-converges, which is why the report carries `samples`",
+            witness: "the_drift_report_is_readable_through_the_api",
         },
     },
     Capability {
@@ -527,7 +553,9 @@ mod tests {
     fn api_sources() -> [&'static str; 11] {
         [
             include_str!("../../stella-serve/src/server.rs"),
+            include_str!("../../stella-serve/tests/calibration.rs"),
             include_str!("../../stella-serve/tests/checkpoint.rs"),
+            include_str!("../../stella-serve/tests/hooks.rs"),
             include_str!("../../stella-serve/tests/bridge.rs"),
             include_str!("../../stella-serve/tests/control.rs"),
             include_str!("../../stella-serve/tests/sessions.rs"),
@@ -583,6 +611,39 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A `Deferred` row may name a test too, and when it does the name is
+    /// checked like a witness — because the risk it guards is the one this
+    /// row already realized once (#1302).
+    ///
+    /// `turn.checkpoint_resume`'s API deferral turns on a distinction that is
+    /// easy to state backwards: serve *does* write the versioned `Checkpoint`
+    /// and *does* hand it back, and the artifact really does reconstitute the
+    /// turn — the gap is that nothing accepts one. A reader who takes "not
+    /// shipped" to mean "nothing is written" rebuilds what exists, which is
+    /// exactly what a stale row costs. So the row cites the test that pins the
+    /// resumable half, and this keeps that citation from decaying into a name
+    /// nothing answers to.
+    #[test]
+    fn the_deferred_resume_row_cites_a_test_that_exists() {
+        let row = capability("turn.checkpoint_resume").expect("the row is declared");
+        let SurfacePosture::Deferred { waiting_on } = row.api else {
+            panic!(
+                "turn.checkpoint_resume's API posture moved — if serve now accepts a resume point \
+                 back, this row is Shipped and needs a witness, not a citation"
+            );
+        };
+        let cited = "a_served_resume_point_reconstitutes_the_turn_it_came_from";
+        assert!(
+            waiting_on.contains(cited),
+            "the deferral no longer cites {cited} — say what proves the artifact is resumable, or \
+             the row is back to asserting the gap without evidence"
+        );
+        assert!(
+            witness_exists(&api_sources(), cited),
+            "the deferral cites {cited}, which no swept serve source defines"
+        );
     }
 
     /// The unwitnessed-claims ratchet: exact equality, so witnessing a row

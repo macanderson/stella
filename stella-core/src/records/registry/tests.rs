@@ -635,3 +635,69 @@ fn an_empty_workspace_loads_an_empty_registry() {
     assert_eq!(registry, Registry::default());
     assert!(registry.render(Channel::Cached, None).text.is_empty());
 }
+
+// Per-turn selection: `applies_to` finally consulted (see records::select).
+
+#[test]
+fn render_volatile_for_turn_selects_scoped_records_by_the_turns_facts() {
+    let scoped = r#"
+schema = "context-record/v0.1"
+set_id = "acme.web"
+
+[defaults]
+origin = "user"
+status = "active"
+
+[[record]]
+lineage_id = "ctx.acme.web.license-allowlist"
+kind = "preference"
+statement = "New dependencies must clear the deny.toml allowlist."
+
+[record.steering]
+force = "may"
+applies_to = { paths = ["deny.toml"], tasks = ["install"] }
+
+[[record]]
+lineage_id = "ctx.acme.web.staging-url"
+kind = "preference"
+statement = "The staging deploy answers on port 8788."
+
+[record.steering]
+force = "info"
+"#;
+    let registry = load(&[], &[md(".stella/rules/acme.web.toml", scoped)], &facts());
+
+    // A turn matching the scope carries both records.
+    let named = vec!["deny.toml".to_string()];
+    let matching = registry.render_volatile_for_turn(
+        &super::super::select::TurnFacts {
+            text: "add leftpad and update deny.toml",
+            paths: &named,
+        },
+        None,
+    );
+    assert_eq!(matching.rendered, vec!["license-allowlist", "staging-url"]);
+
+    // An unrelated turn still carries the unscoped record — an empty
+    // `applies_to` matches everything — but not the scoped one.
+    let unrelated = registry.render_volatile_for_turn(
+        &super::super::select::TurnFacts {
+            text: "write a haiku about the ocean",
+            paths: &[],
+        },
+        None,
+    );
+    assert_eq!(
+        unrelated.rendered,
+        vec!["staging-url"],
+        "a scoped record must sit out a turn its applies_to does not match: {}",
+        unrelated.text
+    );
+
+    // The unconditional render still carries both — per-turn selection is the
+    // turn-aware door, not a change to what the registry holds.
+    assert_eq!(
+        registry.render(Channel::Volatile, None).rendered,
+        vec!["license-allowlist", "staging-url"]
+    );
+}

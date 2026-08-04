@@ -196,6 +196,17 @@ const CALIBRATION_SAMPLE_MAX_RATIO: f64 = CALIBRATION_MAX_FACTOR * 2.0;
 pub struct Calibration {
     ratio_ewma: f64,
     samples: u32,
+    /// Sum of the raw pre-call estimates behind `samples`, unclamped.
+    ///
+    /// Kept alongside the EWMA rather than derived from it because they answer
+    /// different questions. The EWMA is what *corrects* the next estimate, and
+    /// it is deliberately smoothed and clamped so one bad sample cannot steer
+    /// budgeting; these totals are what *reports* the gap, and a report that
+    /// inherited the clamp would understate exactly the drift it exists to
+    /// surface. See [`CalibrationMap::report`].
+    estimated_total: u64,
+    /// Sum of the provider-reported actuals behind `samples`, unclamped.
+    actual_total: u64,
 }
 
 impl Default for Calibration {
@@ -210,6 +221,8 @@ impl Calibration {
         Self {
             ratio_ewma: 1.0,
             samples: 0,
+            estimated_total: 0,
+            actual_total: 0,
         }
     }
 
@@ -235,11 +248,41 @@ impl Calibration {
                 CALIBRATION_ALPHA * ratio + (1.0 - CALIBRATION_ALPHA) * self.ratio_ewma;
         }
         self.samples += 1;
+        // The RAW pair, before the clamp above: the report's whole job is to
+        // say how far the estimate is from the bill, and a truncated sample
+        // would make a catastrophic tokenizer mismatch read as a mild one.
+        self.estimated_total = self.estimated_total.saturating_add(estimated);
+        self.actual_total = self.actual_total.saturating_add(actual);
     }
 
     /// How many samples have been recorded.
     pub fn samples(&self) -> u32 {
         self.samples
+    }
+
+    /// Total raw estimated input tokens across every recorded sample.
+    pub fn estimated_total(&self) -> u64 {
+        self.estimated_total
+    }
+
+    /// Total provider-reported input tokens across every recorded sample.
+    pub fn actual_total(&self) -> u64 {
+        self.actual_total
+    }
+
+    /// Observed drift over the whole sample history: `actual / estimated`,
+    /// unsmoothed and unclamped. `1.0` with no samples (nothing observed is
+    /// reported as no drift, never as a division by zero).
+    ///
+    /// Distinct from [`Calibration::factor`] on purpose. `factor` is the
+    /// number the engine multiplies by — smoothed, bounded, and exactly 1.0
+    /// until enough samples exist. This is the number a *human* reads: the
+    /// measured gap, whatever it is.
+    pub fn drift_ratio(&self) -> f64 {
+        if self.estimated_total == 0 {
+            return 1.0;
+        }
+        self.actual_total as f64 / self.estimated_total as f64
     }
 
     /// The correction factor to multiply a raw estimate by: exactly 1.0
@@ -322,6 +365,33 @@ impl CalibrationMap {
         }
     }
 
+    /// Every model's observed drift, sorted by model id.
+    ///
+    /// The read half of the loop `record` feeds: an operator (or a host
+    /// reading it through an API) can see how far Stella's own estimate is
+    /// from what the provider actually billed, per model, instead of
+    /// believing the estimate until the invoice disagrees.
+    ///
+    /// Sorted rather than in `HashMap` order so two consecutive reads of an
+    /// unchanged map are byte-identical — a report that reshuffles itself
+    /// every call is unusable for diffing and untestable.
+    pub fn report(&self) -> Vec<ModelDrift> {
+        let inner = self.lock();
+        let mut rows: Vec<ModelDrift> = inner
+            .iter()
+            .map(|(model, calibration)| ModelDrift {
+                model: model.clone(),
+                samples: calibration.samples(),
+                estimated_input_tokens: calibration.estimated_total(),
+                actual_input_tokens: calibration.actual_total(),
+                drift_ratio: calibration.drift_ratio(),
+                applied_factor: calibration.factor(),
+            })
+            .collect();
+        rows.sort_by(|a, b| a.model.cmp(&b.model));
+        rows
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Calibration>> {
         // Poisoning means a panic mid-record; the state is a plain f64+u32
         // pair that cannot be left torn — keep calibrating.
@@ -329,6 +399,34 @@ impl CalibrationMap {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+}
+
+/// One model's cost-drift row — what [`CalibrationMap::report`] hands back.
+///
+/// Counts and identifiers only. Nothing here is derived from transcript
+/// content, so a host may publish it (`stella-serve` does, at
+/// `GET /v1/calibration`) without opening a second exposure path for the
+/// conversation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelDrift {
+    /// The model string the provider reported on the results behind this row.
+    pub model: String,
+    /// Samples recorded. Below the minimum the correction needs (three),
+    /// `applied_factor` is still exactly 1.0 — the drift is measured but
+    /// deliberately not yet acted on.
+    pub samples: u32,
+    /// Raw estimated input tokens summed across those samples.
+    pub estimated_input_tokens: u64,
+    /// Provider-reported input tokens (fresh + cache reads + cache writes)
+    /// summed across the same samples.
+    pub actual_input_tokens: u64,
+    /// `actual / estimated` over the whole history — the gap itself.
+    /// Above 1.0 means Stella under-estimated what the provider billed.
+    pub drift_ratio: f64,
+    /// The bounded correction currently multiplied into estimates
+    /// ([`Calibration::factor`]), which is *not* `drift_ratio`: it is smoothed,
+    /// clamped, and 1.0 until enough samples exist.
+    pub applied_factor: f64,
 }
 
 #[cfg(test)]
@@ -587,5 +685,84 @@ mod tests {
             1.0,
             "two entries and no model named: never guess"
         );
+    }
+
+    // ---- Drift reporting ---------------------------------------------------
+
+    /// The report is the read half of the calibration loop: it must say what
+    /// was estimated, what was billed, and the gap — per model, sorted, and
+    /// from the RAW pairs rather than the clamped EWMA the engine budgets on.
+    #[test]
+    fn the_report_names_every_model_and_its_measured_gap() {
+        let map = CalibrationMap::new();
+        map.seed("zeta-1", &[(1000, 1500), (1000, 1500), (1000, 1500)]);
+        map.record("alpha-1", 2000, 1000);
+
+        let report = map.report();
+        assert_eq!(
+            report.iter().map(|r| r.model.as_str()).collect::<Vec<_>>(),
+            ["alpha-1", "zeta-1"],
+            "rows are sorted by model, so two reads of an unchanged map match"
+        );
+
+        let zeta = &report[1];
+        assert_eq!(zeta.samples, 3);
+        assert_eq!(zeta.estimated_input_tokens, 3000);
+        assert_eq!(zeta.actual_input_tokens, 4500);
+        assert!((zeta.drift_ratio - 1.5).abs() < 1e-9);
+        assert!(
+            (zeta.applied_factor - 1.5).abs() < 1e-9,
+            "three samples is the minimum, so the correction is live"
+        );
+
+        let alpha = &report[0];
+        assert_eq!(alpha.samples, 1);
+        assert!(
+            (alpha.drift_ratio - 0.5).abs() < 1e-9,
+            "the gap is measured…"
+        );
+        assert_eq!(
+            alpha.applied_factor, 1.0,
+            "…while one sample is still below the minimum to act on it"
+        );
+    }
+
+    /// The reported gap must not inherit the sample clamp. The clamp exists so
+    /// one absurd pair cannot steer budgeting; a *report* that hid the same
+    /// pair would understate exactly the tokenizer mismatch it exists to
+    /// surface.
+    #[test]
+    fn the_report_shows_the_raw_gap_not_the_clamped_one() {
+        let map = CalibrationMap::new();
+        // 100x drift — far past CALIBRATION_SAMPLE_MAX_RATIO (4.0).
+        map.record("wild-1", 1_000, 100_000);
+        let row = &map.report()[0];
+        assert_eq!(row.estimated_input_tokens, 1_000);
+        assert_eq!(row.actual_input_tokens, 100_000);
+        assert!(
+            (row.drift_ratio - 100.0).abs() < 1e-9,
+            "the report must show 100x, not the 4x the EWMA was allowed to see"
+        );
+        assert!(
+            row.applied_factor <= CALIBRATION_MAX_FACTOR,
+            "…while the applied correction stays bounded"
+        );
+    }
+
+    /// A model whose pairs were all zero-sided recorded nothing, so it must
+    /// not appear as a row claiming zero drift over zero tokens.
+    #[test]
+    fn an_empty_map_reports_nothing() {
+        let map = CalibrationMap::new();
+        assert!(map.report().is_empty());
+        map.record("silent-1", 0, 0);
+        assert_eq!(
+            map.report().len(),
+            1,
+            "the model was seen, so it is listed…"
+        );
+        let row = &map.report()[0];
+        assert_eq!(row.samples, 0);
+        assert_eq!(row.drift_ratio, 1.0, "…with no drift claimed from no data");
     }
 }

@@ -55,6 +55,7 @@
 //! a real cache write is exercised, not just accepted-but-inert) and asserting
 //! the call succeeds.
 
+use stella_model::AuxCredentials;
 use stella_model::catalog::Catalog;
 use stella_model::credential::{ApiKey, CredentialsFile};
 use stella_model::factory::{Dialect, ProviderSpec, build_provider};
@@ -458,6 +459,11 @@ fn every_row_constructs_through_the_real_factory() {
             ApiKey::new("smoke-test-not-a-real-key".to_string()),
             provider.base_url.to_string(),
             None,
+            // Empty: these rows authenticate with one key, and the two that do
+            // not are skipped above. The Bedrock arm falls back to the standard
+            // AWS environment variables for an empty set, which is what the
+            // armed test below relies on.
+            &AuxCredentials::default(),
         )
         .unwrap_or_else(|e| panic!("`{}` must construct through the factory: {e}", provider.id));
         assert_eq!(
@@ -542,6 +548,9 @@ fn armed_provider(provider: &LiveProvider) -> Option<Box<dyn Provider>> {
         key,
         provider.base_url.to_string(),
         None,
+        // An armed live run supplies Bedrock's companion values the way the
+        // adapter's own fallback expects them: as AWS environment variables.
+        &AuxCredentials::default(),
     ) {
         Ok(built) => Some(built),
         Err(e) => panic!(

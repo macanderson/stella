@@ -1223,3 +1223,57 @@ fn a_red_test_does_not_corroborate_a_judge_pass() {
     };
     assert!(red.judge_pass_stands_alone());
 }
+
+/// #1295: the ask is bought only where an answer is reachable, and the
+/// tracked command is what decides that. Without one, `judge_pass_stands_alone`
+/// is true no matter what the worker does with the turn — so a demand there is
+/// a turn spent to learn nothing, which is what the feature was measured as and
+/// reverted for the first time.
+#[test]
+fn an_evidence_demand_needs_a_command_that_could_answer_it() {
+    let config = crate::PipelineConfig {
+        judge_evidence_demand: true,
+        max_revisions: 2,
+        ..Default::default()
+    };
+    assert!(
+        !evidence_demand_is_worth_a_turn(&config, 0, 0, None),
+        "no tracked command — no worker could satisfy the ask on any turn"
+    );
+    assert!(evidence_demand_is_worth_a_turn(
+        &config,
+        0,
+        0,
+        Some("cargo test")
+    ));
+}
+
+/// The three bounds that keep the ask cheap: off means off, one per candidate,
+/// and never past the revision budget a real failure spends.
+#[test]
+fn an_evidence_demand_is_bounded_on_every_axis() {
+    let on = crate::PipelineConfig {
+        judge_evidence_demand: true,
+        max_revisions: 2,
+        ..Default::default()
+    };
+    let cmd = Some("cargo test");
+
+    let off = crate::PipelineConfig {
+        judge_evidence_demand: false,
+        ..on.clone()
+    };
+    assert!(!evidence_demand_is_worth_a_turn(&off, 0, 0, cmd), "off");
+    assert!(
+        !evidence_demand_is_worth_a_turn(&on, 1, 0, cmd),
+        "already asked once — the second ask goes to a worker that answered"
+    );
+    assert!(
+        !evidence_demand_is_worth_a_turn(&on, 0, 2, cmd),
+        "the revision budget is spent"
+    );
+    assert!(
+        evidence_demand_is_worth_a_turn(&on, 0, 1, cmd),
+        "one revision left is enough to ask"
+    );
+}

@@ -294,6 +294,24 @@ pub(crate) async fn handle_metrics(
     res.json("200 OK", &body).await
 }
 
+/// `GET /v1/calibration` — the cost-drift report (#1298).
+///
+/// What the engine estimated a request's input tokens to be, against what the
+/// provider said it actually billed, per `(provider_id, model)`. A host that
+/// cannot read this believes its own cost numbers until the invoice disagrees.
+///
+/// Read-only and authenticated, like `/v1/metrics` and for the same reason:
+/// token volumes and model ids describe the host's traffic. It carries no
+/// transcript content — see `crate::calibration` for the shape and for what
+/// the numbers do and do not claim.
+pub(crate) async fn handle_calibration(
+    res: &mut Responder<'_>,
+    state: &ServerState,
+) -> std::io::Result<()> {
+    let body = serde_json::to_vec(&state.calibration().report()).unwrap_or_default();
+    res.json("200 OK", &body).await
+}
+
 pub(crate) async fn handle_create(
     res: &mut Responder<'_>,
     state: &Arc<ServerState>,
@@ -364,6 +382,10 @@ pub(crate) async fn handle_create(
     let sub_agents = turn
         .sub_agents
         .and_then(|spec| state.sub_agent_policy().clamp(spec.into()));
+    let extensions = state.extensions();
+    // Keyed on the declared provider so two providers serving the same model
+    // name never blend their drift — see `crate::calibration`.
+    let calibration = Some(state.calibration().for_provider(&turn.provider_id));
     let registered = state.register_turn(move |turn_id| {
         Session::start(SessionSpec {
             provider_id: turn.provider_id,
@@ -382,6 +404,8 @@ pub(crate) async fn handle_create(
             checkpoint: checkpoint_state.checkpoint_for(turn_id),
             goal,
             sub_agents,
+            extensions,
+            calibration,
         })
     });
     let Some(id) = registered else {
@@ -1214,6 +1238,8 @@ pub(crate) async fn handle_session_turn(
     let sub_agents = request
         .sub_agents
         .and_then(|spec| state.sub_agent_policy().clamp(spec.into()));
+    let extensions = state.extensions();
+    let calibration = Some(state.calibration().for_provider(&request.provider_id));
     let registered = state.register_turn(move |turn_id| {
         Session::start(SessionSpec {
             provider_id: request.provider_id,
@@ -1228,6 +1254,8 @@ pub(crate) async fn handle_session_turn(
             checkpoint,
             goal,
             sub_agents,
+            extensions,
+            calibration,
         })
     });
     let Some(turn_id) = registered else {
