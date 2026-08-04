@@ -715,7 +715,7 @@ function renderLaneHeads(snapshot) {
       verdict.className = 'lane-verdict v-run';
       verdict.textContent = cell.status + (cell.age_s != null ? ` ${Math.round(cell.age_s)}s` : '');
     }
-    $('.lane-metrics', lane).replaceChildren(
+    $('.lane-metrics', lane).replaceChildren(...[
       el('span', {}, 'steps ', el('b', {}, String(cell.steps))),
       el('span', {}, 'tools ', el('b', {}, String(cell.tools))),
       el('span', {}, 'in ', el('b', {}, fmt.tokens(cell.tokens_in))),
@@ -723,8 +723,10 @@ function renderLaneHeads(snapshot) {
       el('span', {}, 'cache ', el('b', {}, `${fmt.tokens(cell.cache_read)}/${fmt.tokens(cell.cache_write)}`)),
       el('span', {}, 'cost ', el('b', {}, fmt.money(cell.total_cost))),
       el('span', {}, fmt.clock(cell.clock_time)),
+      // `.filter(Boolean)`: replaceChildren() stringifies a bare null into the
+      // literal text "null", which is how a metrics row read `32:10 null`.
       cell.cap_hits ? el('span', { style: 'color:var(--warn)' }, `⚠ ${cell.cap_hits} output-cap`) : null,
-    );
+    ].filter(Boolean));
 
     const videoBox = $('.lane-video', lane);
     if (cell.has_video && videoBox.hidden) {

@@ -28,23 +28,33 @@
   --bad:        #F2545B;
   --warn:       var(--citron);
 
-  --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
-  --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  /* The brand is monospace throughout — `--sans` stays defined only so any
+     rule still asking for it resolves to the same face rather than to a
+     system serif fallback. */
+  --sans: var(--mono);
 
-  --r: 10px;
-  --pad: 18px;
+  --r: 8px;
+  --pad: 12px;
 }
 
 * { box-sizing: border-box; }
+
+/* `[hidden]` must win over any author `display`.
+   Without this, a rule like `.stage-empty { display: grid }` silently defeats
+   the UA's `[hidden] { display: none }` — which is exactly how the empty
+   "select a task" placeholder ended up rendering *above* a live transcript,
+   as a screen-height void in the middle of the page. */
+[hidden] { display: none !important; }
 
 html, body {
   margin: 0;
   padding: 0;
   background: var(--ink);
   color: var(--text);
-  font-family: var(--sans);
-  font-size: 14px;
-  line-height: 1.5;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.45;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -68,7 +78,7 @@ body > * { position: relative; z-index: 1; }
 .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .muted { color: var(--muted); }
 .spacer { flex: 1; }
-h1, h2, h3 { margin: 0; font-weight: 650; letter-spacing: -.01em; }
+h1, h2, h3 { margin: 0; font-weight: 650; letter-spacing: -.01em; text-transform: lowercase; }
 code { font-family: var(--mono); font-size: .92em; color: var(--citron); }
 
 /* ---------------------------------------------------------------- topbar */
@@ -92,13 +102,16 @@ code { font-family: var(--mono); font-size: .92em; color: var(--citron); }
 .brand-name {
   font-family: var(--mono);
   font-weight: 700;
-  letter-spacing: .16em;
+  letter-spacing: .18em;
   font-size: 13px;
+  /* Stella brand: lowercase, monospace, gold on ink. */
+  text-transform: lowercase;
 }
 .brand-accent { color: var(--amber); }
 
 .tabs { display: flex; gap: 4px; }
 .tab {
+  text-transform: lowercase;
   background: none;
   border: 0;
   color: var(--muted);
@@ -263,7 +276,7 @@ input:focus, select:focus, textarea:focus {
 
 .seat-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 .field { display: flex; flex-direction: column; gap: 5px; }
-.field > span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.field > span { font-size: 11px; color: var(--muted); text-transform: lowercase; letter-spacing: .06em; }
 .field-sm { max-width: 130px; }
 
 .seat-adv { margin-top: 14px; }
@@ -364,7 +377,7 @@ input:focus, select:focus, textarea:focus {
 
 /* ---------------------------------------------------------------- arena */
 
-#view-arena { padding: 22px 22px 40px; }
+#view-arena { padding: 12px 14px 20px; }
 
 .arena-head {
   display: flex;
@@ -376,7 +389,7 @@ input:focus, select:focus, textarea:focus {
 .arena-sub { font-size: 11.5px; margin-top: 3px; }
 .arena-clock { margin-left: auto; text-align: right; }
 .clock-value { font-size: 30px; font-weight: 300; letter-spacing: -.02em; line-height: 1; }
-.clock-label { font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: .1em; margin-top: 4px; }
+.clock-label { font-size: 10px; color: var(--dim); text-transform: lowercase; letter-spacing: .1em; margin-top: 4px; }
 .arena-actions { display: flex; align-items: center; gap: 10px; }
 
 .pill {
@@ -386,7 +399,7 @@ input:focus, select:focus, textarea:focus {
   border-radius: 999px;
   border: 1px solid var(--line);
   color: var(--muted);
-  text-transform: uppercase;
+  text-transform: lowercase;
   letter-spacing: .07em;
 }
 .pill.is-running { color: var(--amber); border-color: rgba(255,176,0,.45); background: rgba(255,176,0,.08); }
@@ -407,9 +420,9 @@ input:focus, select:focus, textarea:focus {
 
 .scoreboard {
   display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  margin-bottom: 18px;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  margin-bottom: 8px;
 }
 
 .card {
@@ -457,7 +470,7 @@ input:focus, select:focus, textarea:focus {
 
 .card-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 14px; }
 .stat { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 11.5px; }
-.stat-k { color: var(--dim); text-transform: uppercase; letter-spacing: .05em; font-size: 9.5px; }
+.stat-k { color: var(--dim); text-transform: lowercase; letter-spacing: .05em; font-size: 9.5px; }
 .stat-v { font-family: var(--mono); font-size: 12.5px; }
 .stat.is-best .stat-v { color: var(--seat); font-weight: 600; }
 .card-warn { margin-top: 11px; font-size: 11px; color: var(--warn); font-family: var(--mono); }
@@ -472,13 +485,13 @@ input:focus, select:focus, textarea:focus {
 
 .race {
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--r);
   background: var(--panel);
-  padding: 15px 18px;
-  margin-bottom: 18px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
 }
 .race-row { display: grid; grid-template-columns: 116px 1fr; gap: 14px; align-items: center; padding: 6px 0; }
-.race-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--dim); }
+.race-label { font-size: 10.5px; text-transform: lowercase; letter-spacing: .07em; color: var(--dim); }
 .race-label i { font-style: normal; color: var(--line); margin-left: 5px; }
 .race-track { display: flex; flex-direction: column; gap: 3px; }
 .race-bar { display: grid; grid-template-columns: 1fr 78px; gap: 10px; align-items: center; }
@@ -496,7 +509,7 @@ input:focus, select:focus, textarea:focus {
 
 /* ---------------------------------------------------------- arena body */
 
-.arena-body { display: grid; grid-template-columns: 272px 1fr; gap: 14px; align-items: start; }
+.arena-body { display: grid; grid-template-columns: 216px 1fr; gap: 10px; align-items: start; }
 
 .task-rail {
   border: 1px solid var(--line);
@@ -514,7 +527,7 @@ input:focus, select:focus, textarea:focus {
   padding: 11px 14px;
   border-bottom: 1px solid var(--line);
   font-size: 11px;
-  text-transform: uppercase;
+  text-transform: lowercase;
   letter-spacing: .08em;
   color: var(--muted);
 }
@@ -550,14 +563,16 @@ input:focus, select:focus, textarea:focus {
 
 /* ---------------------------------------------------------------- stage */
 
+/* No fixed min-height: the stage sizes to whatever it is actually showing.
+   A tall floor here is what reserved a screen of emptiness under a short
+   transcript. */
 .stage {
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--r);
   background: var(--panel);
-  min-height: 480px;
 }
-.stage-empty { display: grid; place-items: center; min-height: 480px; color: var(--dim); text-align: center; }
-.stage-empty-mark { font-size: 30px; color: var(--line); margin-bottom: 10px; }
+.stage-empty { display: grid; place-items: center; min-height: 180px; color: var(--dim); text-align: center; padding: 20px; }
+.stage-empty-mark { font-size: 22px; color: var(--line); margin-bottom: 6px; }
 
 .stage-head {
   display: flex; align-items: center; gap: 14px;
@@ -568,7 +583,7 @@ input:focus, select:focus, textarea:focus {
 .stage-tools { margin-left: auto; display: flex; gap: 7px; }
 
 .lanes { display: grid; gap: 1px; background: var(--line); }
-.lane { background: var(--panel); display: flex; flex-direction: column; min-height: 380px; }
+.lane { background: var(--panel); display: flex; flex-direction: column; min-width: 0; }
 .lane-head {
   display: flex; align-items: center; gap: 9px;
   padding: 9px 13px;
@@ -600,8 +615,11 @@ input:focus, select:focus, textarea:focus {
 .feed {
   flex: 1;
   overflow-y: auto;
-  max-height: 620px;
-  padding: 10px 13px;
+  /* Viewport-relative so the transcript fills the screen it is on instead of
+     a fixed pixel budget that is a void on a laptop and a crop on a monitor. */
+  max-height: 56vh;
+  min-height: 140px;
+  padding: 8px 11px;
   font-family: var(--mono);
   font-size: 11.5px;
   line-height: 1.62;
@@ -610,7 +628,7 @@ input:focus, select:focus, textarea:focus {
 .ent { display: flex; gap: 9px; padding: 2px 0; }
 .ent-t { color: var(--dim); flex: 0 0 46px; font-size: 10px; padding-top: 2px; }
 .ent-b { min-width: 0; flex: 1; white-space: pre-wrap; word-break: break-word; }
-.ent-tag { font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em; opacity: .8; }
+.ent-tag { font-size: 9.5px; text-transform: lowercase; letter-spacing: .06em; opacity: .8; }
 
 .k-reasoning .ent-b { color: var(--violet); opacity: .85; }
 .k-text .ent-b { color: var(--text); }
