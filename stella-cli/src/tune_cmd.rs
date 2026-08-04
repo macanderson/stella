@@ -248,15 +248,29 @@ fn run_status(workspace_root: &Path) -> Result<(), String> {
 }
 
 /// Read a loop-bench `--json` result file into trials.
+///
+/// Two shapes are accepted. Since #1299 a single run emits
+/// `{"trials": [...], "tally": {...}, "reconciliation": {...}}`; before that it
+/// was the bare array. Reading an artifact from an older run is an ordinary
+/// thing to do here — the whole point of the file is to be trended — so the
+/// older shape stays readable rather than failing with a parse error that
+/// sounds like the file is corrupt.
 fn read_trials(path: &Path) -> Result<Vec<BenchTrial>, String> {
     let contents = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    serde_json::from_str::<Vec<BenchTrial>>(&contents).map_err(|e| {
-        format!(
-            "cannot parse {} as a loop-bench --json array of trial reports: {e}",
+    let report = engine::parse_bench_report(&contents)
+        .map_err(|problem| format!("cannot parse {}: {problem}", path.display()))?;
+    if report.tally.crashed > 0 {
+        eprintln!(
+            "note: {} of {} trials in {} did not finish — harbor recorded a crash. \
+             They count as failures below, which reads an infrastructure outcome as \
+             this knob's fault; re-run those trials before promoting on them.",
+            report.tally.crashed,
+            report.tally.total,
             path.display()
-        )
-    })
+        );
+    }
+    Ok(report.trials)
 }
 
 fn print_report(report: &ExperimentReport) {

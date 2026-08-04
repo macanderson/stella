@@ -77,6 +77,66 @@ pub(crate) struct BenchTrial {
     pub loop_detected: u32,
 }
 
+/// The object form of a loop-bench `--json` report (#1299), where a single run
+/// used to emit the bare `trials` array. Both shapes are accepted: tuning
+/// against an artifact from an older run is an ordinary thing to do, and the
+/// trials inside are the same objects either way.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub(crate) struct BenchReport {
+    /// Deliberately **not** `#[serde(default)]`, unlike every other field
+    /// here: it is what makes this shape identifiable. Defaulted, any JSON
+    /// object at all would parse as a report of zero trials, and a wrong file
+    /// would reach the A/B as "insufficient samples" instead of "this is not a
+    /// loop-bench report".
+    pub trials: Vec<BenchTrial>,
+    #[serde(default)]
+    pub tally: BenchTally,
+}
+
+/// The run-level counts loop-bench folds its trials into. Only the ones this
+/// module has something to say about are read.
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+pub(crate) struct BenchTally {
+    #[serde(default)]
+    pub total: usize,
+    /// Trials harbor recorded as having raised. They count as failures in the
+    /// A/B below — dropping them would let an arm improve by crashing — but a
+    /// tuning decision made largely out of crashed trials is a decision about
+    /// the machine, so it is worth saying out loud.
+    #[serde(default)]
+    pub crashed: usize,
+}
+
+/// Parse a loop-bench `--json` result file's contents.
+///
+/// Two shapes are accepted. Since #1299 a single run emits
+/// `{"trials": [...], "tally": {...}, "reconciliation": {...}}`; before that it
+/// was the bare `trials` array. Tuning against an artifact from an older run is
+/// an ordinary thing to do — the file exists to be trended — so the older shape
+/// stays readable rather than failing with a parse error that sounds like the
+/// file is corrupt.
+///
+/// The object is tried first. An array cannot deserialize into it, so the
+/// fallback is a genuine "not that shape" rather than a sniffing guess. An old
+/// file simply reports a zero tally: it carries no crash count, and no count is
+/// reported as no count rather than as an affirmative "nothing crashed".
+pub(crate) fn parse_bench_report(contents: &str) -> Result<BenchReport, String> {
+    if let Ok(report) = serde_json::from_str::<BenchReport>(contents) {
+        return Ok(report);
+    }
+    serde_json::from_str::<Vec<BenchTrial>>(contents)
+        .map(|trials| BenchReport {
+            trials,
+            tally: BenchTally::default(),
+        })
+        .map_err(|e| {
+            format!(
+                "expected a loop-bench --json report — an object with a `trials` array, \
+                 or the bare array older runs emitted: {e}"
+            )
+        })
+}
+
 /// The result of one A/B experiment: the decision plus each arm's stats, ready
 /// to print and to append to the ledger as a receipt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -415,6 +475,57 @@ mod tests {
         cfg.agent(EngineAgentKind::Worker)
             .and_then(|a| a.effort)
             .map(|e| effort_label(e).to_string())
+    }
+
+    /// #1299: loop-bench's single-run `--json` became an object where it was a
+    /// bare array. Both shapes must read, and to the same trials — an operator
+    /// A/Bing this month's arm against last month's artifact is the ordinary
+    /// use of this command, not an edge case.
+    #[test]
+    fn a_bench_report_reads_in_either_shape() {
+        let array = r#"[
+            {"task":"a","reward":1.0,"spend_usd":0.50,"loop_detected":0},
+            {"task":"b","reward":null,"spend_usd":0.10,"loop_detected":2}
+        ]"#;
+        let object = format!(
+            r#"{{"trials":{array},
+                 "tally":{{"total":2,"solved":1,"loop_broken":1,"crashed":1}},
+                 "reconciliation":null}}"#
+        );
+
+        let old = parse_bench_report(array).expect("the pre-#1299 array still reads");
+        let new = parse_bench_report(&object).expect("the object reads");
+        assert_eq!(old.trials.len(), 2);
+        assert_eq!(new.trials.len(), 2);
+        assert_eq!(new.trials[0].reward, Some(1.0));
+        assert_eq!(new.trials[1].reward, None, "never verified is not a zero");
+        assert_eq!(new.trials[1].loop_detected, 2);
+        assert_eq!(new.tally.crashed, 1);
+        assert_eq!(
+            old.tally.crashed, 0,
+            "an older file carries no crash count; that is silence, and the note \
+             it drives simply does not fire"
+        );
+
+        // The arithmetic must not depend on which shape the file was in.
+        let weights = RewardWeights::default();
+        let from_array = arm_from_trials("a", "high", &old.trials, &weights);
+        let from_object = arm_from_trials("a", "high", &new.trials, &weights);
+        assert_eq!(from_array.rewards, from_object.rewards);
+    }
+
+    /// A file that is neither shape stays an error. In particular a JSON object
+    /// that is not a report must not read as a report of zero trials, which
+    /// would reach the A/B as "insufficient samples" — a statement about the
+    /// experiment, when the truth is a statement about the file.
+    #[test]
+    fn a_file_that_is_not_a_bench_report_is_an_error() {
+        for contents in ["not json at all", r#"{"schema_version":3,"rows":[]}"#, "{}"] {
+            let err = parse_bench_report(contents)
+                .err()
+                .unwrap_or_else(|| panic!("{contents} must not parse as a report"));
+            assert!(err.contains("`trials`"), "{err}");
+        }
     }
 
     #[test]

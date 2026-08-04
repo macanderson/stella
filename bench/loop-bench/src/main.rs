@@ -38,7 +38,7 @@
 //!
 //! - `0` — every trial that reported did real work (or passed).
 //! - `1` — the loop misbehaved on at least one trial: silent death, zero
-//!   work, a stuck loop, or a requested task that never ran.
+//!   work, a stuck loop, or a requested trial that never ran.
 //! - `2` — bad invocation: the task list resolved to nothing, or
 //!   `--json-out` names a path that cannot be written.
 //! - `3` — no trial artifacts were found at all — an infrastructure failure
@@ -49,10 +49,18 @@
 //! - `6` — `--compare --require-winner` and no arm confidently beat the
 //!   baseline, or one did and a guard metric regressed. Opt-in, like `4`: a
 //!   comparison is a measurement, and "no winner" is a legitimate answer to it.
+//! - `7` — the job directory holds trials this run did not ask for, so every
+//!   figure was computed over a task set that is not the requested one (#1299).
 //!
 //! `1` outranks `4`: when both fire, the loop failure is the one a human can
 //! act on, and a broken loop explains the missing passes anyway. `1` outranks
-//! `6` for the same reason.
+//! `6` and `7` for the same reason.
+//!
+//! A crash is deliberately **not** an exit code. It is a verdict on the row
+//! and a count under the table, because the gate here is loop health and a
+//! trial the machine killed is not evidence about the loop — the same reason
+//! `UNREADABLE` and `BUDGET-CAP` do not gate. What it must never again be is
+//! silent, or dressed as `ran (unsolved)`.
 
 use std::path::Path;
 use std::process::Command;
@@ -61,7 +69,11 @@ use std::time::{Duration, Instant};
 use clap::Parser;
 
 use loop_bench::compare::{arm_trials, default_guards, print_comparison};
-use loop_bench::{TrialReport, analyze, below_pass_floor, print_table, tally};
+use loop_bench::reconcile::Requested;
+use loop_bench::{
+    Analysis, TrialReport, analyze, below_pass_floor, json_report, print_analysis,
+    print_reconciliation, tally,
+};
 use stella_core::comparison::{ArmTrials, ComparisonConfig, Metric, compare};
 
 /// A small, representative default pool — mixed languages and difficulties, the
@@ -225,8 +237,13 @@ fn main() {
     // Prove the report path is writable BEFORE spending anything. A typo'd
     // artifact path discovered after a paid run costs the whole run; caught
     // here it costs one message and no API calls.
+    // `{}` and not `[]`: if the run dies before overwriting this, the leftover
+    // must not parse as a *valid, empty* report. An empty array does — a
+    // consumer would read it as a run of zero trials and say "insufficient
+    // samples", a statement about the experiment when the truth is that the
+    // file is a placeholder (#1299).
     if let Some(path) = &args.json_out
-        && let Err(err) = std::fs::write(path, "[]\n")
+        && let Err(err) = std::fs::write(path, "{}\n")
     {
         eprintln!("--json-out {path} is not writable: {err}");
         std::process::exit(2);
@@ -243,16 +260,25 @@ fn main() {
 /// The original one-config run: measure the loop, render the table, apply the
 /// loop gate and the opt-in pass floor.
 fn run_single(args: &Args, tasks: &[String]) -> i32 {
-    let reports = match collect_arm(args, tasks, &args.model, &args.job_name) {
-        Ok(reports) => reports,
+    let analysis = match collect_arm(args, tasks, &args.model, &args.job_name) {
+        Ok(analysis) => analysis,
         Err(code) => return code,
     };
+    let reports = &analysis.trials;
 
-    let json = serde_json::to_string_pretty(&reports).unwrap_or_else(|_| "[]".into());
+    let json =
+        serde_json::to_string_pretty(&json_report(&analysis)).unwrap_or_else(|_| "{}".into());
     if args.json {
         println!("{json}");
+        // The reconciliation is inside the JSON, but a mismatch has to reach
+        // the run log too: `--json` output is piped somewhere to be trended,
+        // and a mismatch nobody sees until they open the artifact is a
+        // mismatch that already did its damage.
+        if let Some(record) = &analysis.reconciliation {
+            print_reconciliation(record);
+        }
     } else {
-        print_table(&reports);
+        print_analysis(&analysis);
     }
     let report_lost = write_artifact(args, &json);
 
@@ -262,10 +288,13 @@ fn run_single(args: &Args, tasks: &[String]) -> i32 {
     if reports.iter().any(TrialReport::loop_broken) {
         return 1;
     }
+    if let Some(code) = contamination_exit(&analysis) {
+        return code;
+    }
     // The second, opt-in gate (#873). Checked after loop health so a run that
     // fails both reports the actionable half.
-    if below_pass_floor(&reports, args.min_pass) {
-        let solved = tally(&reports).solved;
+    if below_pass_floor(reports, args.min_pass) {
+        let solved = tally(reports).solved;
         eprintln!(
             "PASS FLOOR: {solved}/{} solved is below the required --min-pass {}",
             reports.len(),
@@ -274,6 +303,26 @@ fn run_single(args: &Args, tasks: &[String]) -> i32 {
         return 4;
     }
     if report_lost { 5 } else { 0 }
+}
+
+/// Exit `7` when the analysis covered trials this run did not ask for (#1299).
+///
+/// Missing trials need no code of their own: they become `NOT-RUN` rows that
+/// already gate red at `1` and are visible on the table. Surplus is the half
+/// with nowhere else to surface — an extra trial directory renders as an
+/// ordinary, healthy row, so without this the run reports a pass rate over a
+/// sample that includes an earlier run's results and looks entirely clean
+/// doing it.
+fn contamination_exit(analysis: &Analysis) -> Option<i32> {
+    let record = analysis.reconciliation.as_ref()?;
+    if !record.contaminated() {
+        return None;
+    }
+    eprintln!(
+        "RECONCILIATION: the reported trials are not the requested ones; \
+         the figures above are not this run's"
+    );
+    Some(7)
 }
 
 /// The `--compare` run (#876): the same task set under each named config, then
@@ -298,14 +347,22 @@ fn run_comparison(args: &Args, tasks: &[String]) -> i32 {
 
     let mut arms: Vec<ArmTrials> = Vec::with_capacity(configs.len());
     let mut loop_broken = false;
+    let mut contaminated: Option<i32> = None;
     for (index, model) in configs.iter().enumerate() {
         let job_name = arm_job_name(&args.job_name, index, model);
-        let reports = match collect_arm(args, tasks, model, &job_name) {
-            Ok(reports) => reports,
+        let analysis = match collect_arm(args, tasks, model, &job_name) {
+            Ok(analysis) => analysis,
             Err(code) => return code,
         };
-        loop_broken |= reports.iter().any(TrialReport::loop_broken);
-        arms.push(arm_trials(model, model, &reports));
+        if let Some(record) = &analysis.reconciliation {
+            print_reconciliation(record);
+        }
+        loop_broken |= analysis.trials.iter().any(TrialReport::loop_broken);
+        // One arm's contaminated denominator is the whole comparison's
+        // problem: the arms are compared trial-for-trial, so a stale directory
+        // under one of them moves a lift that no model produced.
+        contaminated = contaminated.or_else(|| contamination_exit(&analysis));
+        arms.push(arm_trials(model, model, &analysis.trials));
     }
 
     // The first config named is the incumbent; every other is a candidate
@@ -328,6 +385,9 @@ fn run_comparison(args: &Args, tasks: &[String]) -> i32 {
     if loop_broken {
         return 1;
     }
+    if let Some(code) = contaminated {
+        return code;
+    }
     if args.require_winner && !report.verdict.is_winner() {
         eprintln!("NO WINNER: --require-winner was set and no arm cleared both bars");
         return 6;
@@ -346,27 +406,39 @@ fn collect_arm(
     tasks: &[String],
     model: &str,
     job_name: &str,
-) -> Result<Vec<TrialReport>, i32> {
+) -> Result<Analysis, i32> {
     if !args.analyze_only
         && let Err(code) = run_harbor(args, tasks, model, job_name)
     {
         eprintln!("harbor run failed (exit {code}); analyzing whatever landed");
     }
-    // The resolved task set scopes the analysis (#611): stale trial dirs from
-    // an earlier run under the same job name are skipped, and requested tasks
-    // that never launched become NOT-RUN rows. `--analyze-only` reads
-    // whatever the finished jobs dir holds instead.
-    let requested = if args.analyze_only { None } else { Some(tasks) };
+    // The resolved request scopes the analysis (#611): stale trial dirs from
+    // an earlier run under the same job name are skipped, and requested trials
+    // that never launched become NOT-RUN rows. The trial count travels with
+    // the task list because `-k` is half the denominator — a task that ran
+    // two of five trials is as under-measured as one that ran none of one
+    // (#1299). `--analyze-only` reads whatever the finished jobs dir holds
+    // instead, and reconciles nothing.
+    let requested = (!args.analyze_only).then(|| Requested {
+        tasks,
+        trials_per_task: args.trials.max(1),
+    });
     let job_dir = Path::new(&args.jobs_dir).join(job_name);
-    let reports = analyze(&job_dir, requested);
-    if reports.is_empty() {
+    let analysis = analyze(&job_dir, requested);
+    // "Nothing landed" and "every row is a row we invented because nothing
+    // landed" are the same fact. Only the first used to reach here: once a
+    // requested set exists, `analyze` synthesizes a NOT-RUN row per missing
+    // trial, so a harbor that launched nothing at all produced a full table of
+    // them and exited `1` — the loop code — for a run in which the loop never
+    // ran. Exit `3` is the one that says infrastructure (#1299).
+    if analysis.is_empty() || analysis.trials.iter().all(|trial| trial.not_run) {
         eprintln!(
             "no trial artifacts found under {} — nothing to report",
             job_dir.display()
         );
         return Err(3);
     }
-    Ok(reports)
+    Ok(analysis)
 }
 
 /// Write `--json-out`, returning whether the artifact was lost.
