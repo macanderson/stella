@@ -158,12 +158,28 @@ pub(crate) enum Screen {
 /// terminal in raw mode.
 pub(crate) struct TerminalGuard {
     state: Arc<TermState>,
+    /// Silences the diagnostic plane's terminal sink for exactly as long as
+    /// this guard owns the screen.
+    ///
+    /// The lifetimes have to be the same one, which is why the hold lives here
+    /// rather than around each `run_deck`/`fleet_dashboard` call: those are two
+    /// call sites today and every future renderer is a third. `ratatui` paints
+    /// stdout through a buffer it assumes nothing else writes to, so a `warn`
+    /// record going straight to stderr lands at the cursor and wedges itself
+    /// into the frame — which is what put `WARN agent.tool.result …` through
+    /// the middle of the composer. Records still reach the crash ring and any
+    /// `--log-file`; see `stella_diag::TerminalHold`.
+    _diag_hold: stella_diag::TerminalHold,
 }
 
 impl TerminalGuard {
     pub(crate) fn enter(mouse: bool, screen: Screen) -> io::Result<Self> {
         let guard = Self {
             state: Arc::new(TermState::default()),
+            // Taken with the guard, before the first `execute!` below: an
+            // `enter` that fails part-way still drops the guard, and the hold
+            // has to have covered the writes that already happened.
+            _diag_hold: stella_diag::TerminalHold::acquire(),
         };
         let mut out = io::stdout();
         enable_raw_mode()?;

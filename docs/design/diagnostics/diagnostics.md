@@ -301,6 +301,26 @@ JSONL when it is not. Everything at every level, always, goes to the ring (§7.4
 regardless of filter — the filter governs *sinks*, never *emission*, which is
 what keeps counters correct at any verbosity.
 
+**The TTY sink yields to the presentation plane.** §2.1 routes each plane to its
+own destination, and the one collision that rule does not describe is that
+"stderr" and "the deck" are the same terminal. `ratatui` paints stdout through a
+diff-based buffer it assumes owns the screen, so a record written straight to
+stderr does not scroll past — it lands at the hardware cursor and wedges itself
+into the frame, which is how a routine `agent.tool.result ok=false` (a `warn` by
+design; §8 wants the failure signal) ended up printed through the middle of the
+composer. So the TTY sink is wrapped in `TerminalGated` and a renderer takes a
+`TerminalHold` for exactly as long as it owns the screen — `TerminalGuard` in
+`stella-tui`, which is the workspace's only caller of `enable_raw_mode`.
+
+This is a routing decision, not a discard, and it costs an operator nothing: the
+ring still takes every record at every level, and `--log-file` is not a terminal
+and is not gated, so *attach the log* keeps working through a deck session. Only
+the copy that would have corrupted the frame is dropped. The redirected branch is
+never gated — a pipe is not a frame, and whoever is reading it wants everything.
+Human-facing messages are unaffected either way: those are the presentation
+plane's `eprintln!`s, including the one naming a crash dump, and they never went
+through a sink.
+
 ---
 
 ## 7. Correlation without spans

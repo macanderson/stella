@@ -20,6 +20,7 @@
 
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::filter::Filter;
@@ -220,6 +221,93 @@ impl Sink for TextSink {
     }
 }
 
+/// How many live [`TerminalHold`]s there are.
+///
+/// A count rather than a flag, because the holds genuinely nest: the deck can
+/// hand the terminal to the fleet dashboard and take it back, and a flag would
+/// let whichever one exited first un-silence stderr underneath the other.
+static TERMINAL_HOLDS: AtomicUsize = AtomicUsize::new(0);
+
+/// Claims the terminal for a full-screen renderer until it is dropped.
+///
+/// §2.1 routes each plane to its own destination and §6 sends the diagnostic
+/// plane's default to stderr — but "stderr" and "the deck" are the same
+/// terminal, which is the one collision the routing rule does not describe.
+/// `ratatui` paints stdout through a diff-based buffer it believes it owns
+/// exclusively; a record written straight to stderr lands at the hardware
+/// cursor instead, so the frame acquires bytes the buffer has no cell for and
+/// will not repaint until something else dirties that row. The user sees a
+/// `WARN …` line wedged through the middle of the composer.
+///
+/// So a renderer takes a hold for exactly as long as it owns the screen, and
+/// [`TerminalGated`] declines to write while one is live.
+///
+/// This is a routing decision, not a discard: the filter already declines
+/// records per-sink without that counting as a loss, and the same records still
+/// reach the crash ring — which takes everything at every level regardless of
+/// filter (§7.4) — and any `--log-file`, which is not a terminal and is not
+/// gated. "Attach the log" keeps working through a deck session; it is only
+/// the copy that would have corrupted the frame that is dropped.
+#[derive(Debug)]
+#[must_use = "the terminal is released the instant this is dropped"]
+pub struct TerminalHold(());
+
+impl TerminalHold {
+    /// Take a hold. Release is [`Drop`], so a renderer that panics or bails
+    /// part-way through setup un-silences stderr on the way out.
+    pub fn acquire() -> Self {
+        TERMINAL_HOLDS.fetch_add(1, Ordering::AcqRel);
+        Self(())
+    }
+
+    /// Whether any renderer currently owns the terminal.
+    #[must_use]
+    pub fn is_active() -> bool {
+        TERMINAL_HOLDS.load(Ordering::Acquire) > 0
+    }
+}
+
+impl Drop for TerminalHold {
+    fn drop(&mut self) {
+        TERMINAL_HOLDS.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// A sink whose bytes land on the terminal, silenced while a [`TerminalHold`]
+/// is live.
+///
+/// Wrap the stderr sink in this **only when stderr is a TTY**. When it has been
+/// redirected to a file or a pipe it is not the terminal any renderer is
+/// drawing on, nothing can be corrupted, and a consumer on the other end of
+/// that pipe is entitled to every record.
+pub struct TerminalGated {
+    inner: Arc<dyn Sink>,
+}
+
+impl TerminalGated {
+    pub fn new(inner: impl Sink + 'static) -> Self {
+        Self {
+            inner: Arc::new(inner),
+        }
+    }
+}
+
+impl Sink for TerminalGated {
+    fn write(&self, record: &Record) -> Result<(), SinkError> {
+        if TerminalHold::is_active() {
+            return Ok(());
+        }
+        self.inner.write(record)
+    }
+
+    /// Forwarded unconditionally: a flush moves bytes already accepted and
+    /// paints nothing new, and skipping it would strand whatever was written
+    /// before the renderer took the screen.
+    fn flush(&self) -> Result<(), SinkError> {
+        self.inner.flush()
+    }
+}
+
 /// Discards everything.
 ///
 /// The default when a caller does not care, and what keeps every library type
@@ -370,6 +458,53 @@ mod tests {
         assert_eq!(
             shared.text(),
             "WARN  store.migration.retry stella_store::migrate turn=3 attempt=2 reason=locked\n"
+        );
+    }
+
+    /// The whole gate in one test, deliberately: `TERMINAL_HOLDS` is a
+    /// process-wide static and the test binary is threaded, so splitting these
+    /// assertions into separate `#[test]`s would let one function's hold
+    /// silence another function's sink and fail at random.
+    #[test]
+    fn a_gated_sink_goes_quiet_exactly_while_a_renderer_owns_the_terminal() {
+        let shared = Shared::default();
+        let sink = TerminalGated::new(TextSink::to_writer(shared.clone()));
+
+        assert!(!TerminalHold::is_active(), "nothing should hold by default");
+        sink.write(&a_record()).expect("write");
+        assert!(
+            shared.text().contains("store.migration.retry"),
+            "an unheld terminal must still get its records: {:?}",
+            shared.text()
+        );
+
+        let before = shared.text();
+        let outer = TerminalHold::acquire();
+        sink.write(&a_record()).expect("write");
+        assert_eq!(
+            shared.text(),
+            before,
+            "a record written while the deck owns the screen lands mid-frame"
+        );
+
+        // Nested, because the deck can hand the screen to the fleet dashboard
+        // and take it back. The inner release must not un-silence the outer.
+        let inner = TerminalHold::acquire();
+        drop(inner);
+        assert!(TerminalHold::is_active(), "the outer hold is still live");
+        sink.write(&a_record()).expect("write");
+        assert_eq!(shared.text(), before, "the inner drop released too much");
+
+        // A flush is still forwarded — it moves bytes already accepted and
+        // paints nothing new.
+        sink.flush().expect("flush");
+
+        drop(outer);
+        assert!(!TerminalHold::is_active(), "the screen is back");
+        sink.write(&a_record()).expect("write");
+        assert!(
+            shared.text().len() > before.len(),
+            "a restored terminal must get records again"
         );
     }
 

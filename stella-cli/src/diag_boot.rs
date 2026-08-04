@@ -48,7 +48,8 @@ use std::sync::{Arc, OnceLock};
 
 use colored::Colorize;
 use stella_diag::{
-    Bound, Cx, Dx, Filter, JsonlSink, Level, LevelFilter, Parsed, Record, Sink, TextSink, diag,
+    Bound, Cx, Dx, Filter, JsonlSink, Level, LevelFilter, Parsed, Record, Sink, TerminalGated,
+    TextSink, diag,
 };
 
 use crate::cli::GlobalArgs;
@@ -122,16 +123,9 @@ pub(crate) fn install(globals: &GlobalArgs, workspace_root: &Path) -> Arc<Dx> {
     let Parsed { filter, bad } = resolve_filter(globals);
     let mut sinks = Vec::new();
 
-    // Human-readable on a TTY, JSONL when redirected — §6. A person watching a
-    // terminal and a program parsing a pipe want different things, and which
-    // one is present is knowable without asking.
     if !filter.is_off() {
-        let stderr_sink: Arc<dyn Sink> = if std::io::stderr().is_terminal() {
-            Arc::new(TextSink::stderr())
-        } else {
-            Arc::new(JsonlSink::stderr())
-        };
-        sinks.push(Bound::new(filter.clone(), stderr_sink));
+        let sink = stderr_sink(std::io::stderr().is_terminal(), std::io::stderr());
+        sinks.push(Bound::new(filter.clone(), sink));
     }
 
     // A failed `--log-file` is reported and then dropped, never fatal: the
@@ -203,6 +197,35 @@ pub(crate) fn install(globals: &GlobalArgs, workspace_root: &Path) -> Arc<Dx> {
         verbosity = globals.verbose,
     );
     dx
+}
+
+/// The stderr sink §6 describes, and the one place the TTY question is asked.
+///
+/// Human-readable on a terminal, JSONL when redirected: a person watching a
+/// screen and a program parsing a pipe want different things, and which one is
+/// present is knowable without asking.
+///
+/// The terminal branch is additionally **gated**, and that is the half §6 did
+/// not anticipate. On a TTY this sink and the deck are aimed at the same
+/// screen, and `ratatui` paints through a buffer it assumes owns it — so a
+/// `warn` written straight to stderr does not scroll past, it lands at the
+/// hardware cursor and wedges itself into the frame. `TerminalGated` declines
+/// to write while a renderer holds the screen; the crash ring and any
+/// `--log-file` still take those records, so nothing an operator would attach
+/// is lost (see [`stella_diag::TerminalHold`]).
+///
+/// The redirected branch is deliberately **not** gated. A pipe is not the
+/// terminal, no frame can be corrupted through it, and whatever is reading the
+/// other end is entitled to every record even mid-deck.
+///
+/// `writer` is a parameter rather than `TextSink::stderr()` inline so a test
+/// can ask both branches what they do without owning the process's stderr.
+fn stderr_sink(is_terminal: bool, writer: impl std::io::Write + Send + 'static) -> Arc<dyn Sink> {
+    if is_terminal {
+        Arc::new(TerminalGated::new(TextSink::to_writer(writer)))
+    } else {
+        Arc::new(JsonlSink::to_writer(writer))
+    }
 }
 
 /// A sink error as a closed vocabulary rather than a message.
@@ -351,6 +374,78 @@ mod tests {
             crash_dir(Path::new("/w")),
             Path::new("/w/.stella/private"),
             "a crash dump must land in the 0700 directory trace.rs establishes"
+        );
+    }
+
+    /// A writer that hands its bytes back, so a sink's real output is
+    /// assertable without owning the process's stderr.
+    #[derive(Clone, Default)]
+    struct Shared(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl Shared {
+        fn text(&self) -> String {
+            String::from_utf8(self.0.lock().expect("lock").clone()).expect("utf8")
+        }
+    }
+
+    impl std::io::Write for Shared {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("lock").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn a_warning() -> Record {
+        Record::new(
+            Level::Warn,
+            "agent.tool.result",
+            "stella::diag_bridge",
+            Cx::EMPTY,
+            stella_diag::Fields::new().with("ok", false),
+        )
+    }
+
+    /// The regression this gate exists for: a `warn` record reaching a live
+    /// terminal while the deck is drawing on it lands at the cursor and wedges
+    /// itself through the frame. `agent.tool.result ok=false` is a `warn` by
+    /// design — a benchmark needs the failure signal — so the fix has to be
+    /// that the terminal sink stays quiet, not that the record stops existing.
+    ///
+    /// Both branches are asserted in one test on purpose: the hold is a
+    /// process-wide static, so a second test function holding it concurrently
+    /// would silence this one's sink at random.
+    #[test]
+    fn only_the_terminal_branch_goes_quiet_while_the_deck_owns_the_screen() {
+        let on_tty = Shared::default();
+        let redirected = Shared::default();
+        let tty_sink = stderr_sink(true, on_tty.clone());
+        let pipe_sink = stderr_sink(false, redirected.clone());
+
+        let hold = stella_diag::TerminalHold::acquire();
+        tty_sink.write(&a_warning()).expect("write");
+        pipe_sink.write(&a_warning()).expect("write");
+
+        assert_eq!(
+            on_tty.text(),
+            "",
+            "this is the byte that painted `WARN agent.tool.result` over the composer"
+        );
+        assert!(
+            redirected.text().contains("agent.tool.result"),
+            "a pipe is not a frame and must still get every record: {:?}",
+            redirected.text()
+        );
+
+        drop(hold);
+        tty_sink.write(&a_warning()).expect("write");
+        assert!(
+            on_tty.text().contains("agent.tool.result"),
+            "a terminal with no renderer on it is an ordinary stderr: {:?}",
+            on_tty.text()
         );
     }
 
