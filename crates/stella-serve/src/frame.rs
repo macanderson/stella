@@ -265,6 +265,12 @@ pub enum ProviderDelta {
 pub enum ProviderErrorWire {
     Transport {
         message: String,
+        /// Accounting a host's dying stream had already observed. Carried
+        /// across the wire so a remote provider loses no more usage than a
+        /// local one does; `serde(default)` keeps hosts that predate the
+        /// field (and the many failures with nothing to report) valid.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        partial: Option<stella_protocol::PartialUsage>,
     },
     RateLimited {
         message: String,
@@ -289,7 +295,13 @@ pub enum ProviderErrorWire {
 impl From<ProviderErrorWire> for ProviderError {
     fn from(wire: ProviderErrorWire) -> Self {
         match wire {
-            ProviderErrorWire::Transport { message } => ProviderError::Transport(message),
+            ProviderErrorWire::Transport { message, partial } => {
+                let error = ProviderError::transport(message);
+                match partial {
+                    Some(partial) => error.with_partial(partial),
+                    None => error,
+                }
+            }
             ProviderErrorWire::RateLimited {
                 message,
                 retry_after_ms,
@@ -309,7 +321,10 @@ impl From<ProviderErrorWire> for ProviderError {
 impl From<&ProviderError> for ProviderErrorWire {
     fn from(err: &ProviderError) -> Self {
         match err {
-            ProviderError::Transport(m) => ProviderErrorWire::Transport { message: m.clone() },
+            ProviderError::Transport { message, partial } => ProviderErrorWire::Transport {
+                message: message.clone(),
+                partial: *partial,
+            },
             ProviderError::RateLimited {
                 message,
                 retry_after_ms,
@@ -521,7 +536,7 @@ mod tests {
     #[test]
     fn every_provider_error_class_survives_the_round_trip() {
         let cases = [
-            ProviderError::Transport("dns".into()),
+            ProviderError::transport("dns"),
             ProviderError::RateLimited {
                 message: "429".into(),
                 retry_after_ms: Some(1500),

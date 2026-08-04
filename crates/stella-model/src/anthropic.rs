@@ -500,7 +500,7 @@ fn classify_anthropic_stream_error(err: &AnthropicStreamError) -> ProviderError 
         format!("Anthropic stream error: {}", err.message)
     };
     match err.kind.as_str() {
-        "overloaded_error" | "api_error" | "timeout_error" => ProviderError::Transport(detail),
+        "overloaded_error" | "api_error" | "timeout_error" => ProviderError::transport(detail),
         "rate_limit_error" => ProviderError::RateLimited {
             message: detail,
             retry_after_ms: None,
@@ -813,7 +813,7 @@ impl AnthropicProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| ProviderError::Transport(e.to_string()))?;
+            .map_err(|e| ProviderError::transport(e.to_string()))?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -829,7 +829,7 @@ impl AnthropicProvider {
         }
 
         let (text, tool_calls, usage, stop_reason) =
-            aggregate_anthropic_stream(response, observer).await?;
+            aggregate_anthropic_stream(response, observer, self.pricing.as_ref()).await?;
         let cost_usd = self.pricing.map(|p| p.cost_usd(&usage)).unwrap_or(0.0);
         let finish_reason = map_stop_reason(stop_reason.as_deref());
         Ok(CompletionResult {
@@ -869,6 +869,7 @@ fn map_stop_reason(stop_reason: Option<&str>) -> Option<FinishReason> {
 async fn aggregate_anthropic_stream(
     response: reqwest::Response,
     observer: Option<&dyn ToolCallObserver>,
+    pricing: Option<&Pricing>,
 ) -> Result<(String, Vec<ToolCall>, CompletionUsage, Option<String>), ProviderError> {
     use std::collections::BTreeMap;
 
@@ -888,7 +889,14 @@ async fn aggregate_anthropic_stream(
     let mut message_stop_seen = false;
     let mut stream = response.bytes_stream();
 
-    while let Some(chunk) = http::next_with_timeout(&mut stream, http::STREAM_IDLE_TIMEOUT).await? {
+    // The stream can die at any chunk, and by then `message_start` has
+    // usually already told us exactly what the prompt cost. Attaching that to
+    // the error is the difference between "this attempt is unaccounted" and a
+    // real floor under the turn's spend.
+    while let Some(chunk) = http::next_with_timeout(&mut stream, http::STREAM_IDLE_TIMEOUT)
+        .await
+        .map_err(|e| e.with_partial(http::partial_usage(&usage, &text, pricing)))?
+    {
         decoder
             .push_bytes(&chunk)
             .map_err(|e| ProviderError::Malformed(e.to_string()))?;
@@ -1041,10 +1049,10 @@ async fn aggregate_anthropic_stream(
     // Transport, upholding the same "never a truncated Ok" promise as the
     // in-stream error path above.
     if !message_stop_seen {
-        return Err(http::stream_ended_before_terminal(
-            "Anthropic",
-            "message_stop",
-        ));
+        return Err(
+            http::stream_ended_before_terminal("Anthropic", "message_stop")
+                .with_partial(http::partial_usage(&usage, &text, pricing)),
+        );
     }
 
     // The one content block the token limit could have cut: the last block

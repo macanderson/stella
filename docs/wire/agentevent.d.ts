@@ -97,6 +97,47 @@ export interface CompiledContextFrameBuilt {
 }
 
 /**
+ * Token accounting for a single completion, normalized across providers
+ * into one envelope: normalization lives in the adapter, not the caller.
+ */
+export interface CompletionUsage {
+  /**
+   * Tokens WRITTEN to the provider's prompt cache by this call
+   * (Anthropic `cache_creation_input_tokens`, Bedrock
+   * `cacheWriteInputTokens`). Unlike `cached_input_tokens` this is NOT a
+   * subset of `input_tokens` — providers report writes separately, and
+   * folding them into `input_tokens` would change cost accounting
+   * (`Pricing::cost_usd` bills them on their own line at the catalog's
+   * `cache_write_usd_per_mtok`, so folding would double-charge). 0 for providers
+   * that never report cache writes (the OpenAI-compatible dialects).
+   * `serde(default)` so envelopes serialized before this field existed
+   * still parse.
+   */
+  cache_write_tokens?: number;
+  /**
+   * The subset of `input_tokens` served from the provider's prompt cache
+   * — billed at the cache-read rate, not the input rate. 0 for providers
+   * that never report a cache hit.
+   */
+  cached_input_tokens?: number;
+  /**
+   * Tokens the prompt cost, cache hits included.
+   */
+  input_tokens: number;
+  /**
+   * Tokens the model generated.
+   */
+  output_tokens: number;
+  /**
+   * The adapter observed the provider's authoritative usage-bearing
+   * terminal response. This is explicit because a legitimate call can
+   * report all zero counters, while a missing usage frame can accompany
+   * non-empty streamed text. Legacy envelopes fail closed.
+   */
+  reported?: boolean;
+}
+
+/**
  * A context frame as cited in a `ContextRecall` event. `citation_label`
  * is mandatory and human-readable; the raw `id` (when the frame is
  * materialized at all) belongs only in inspectable detail views, never as
@@ -560,6 +601,50 @@ export interface OracleObservation {
    * Which tree the observation ran against.
    */
   tree: ProofTree;
+}
+
+/**
+ * The accounting an adapter had already observed when an attempt died before
+ * its terminal usage frame arrived.
+ *
+ * A mid-stream disconnect is not a total loss of accounting. The
+ * Anthropic-shaped dialects report the prompt's cost in `message_start`,
+ * inside the first few hundred bytes of the response, so a stream cut during
+ * generation has *already* delivered exact input, cache-read and cache-write
+ * counts. Before this type existed those numbers travelled exactly as far as
+ * the adapter's stack frame: [`crate::error::ProviderError`] carried a
+ * `String` and nothing else, the `?` on the next chunk dropped the whole
+ * envelope, and the turn was recorded as though the attempt had cost nothing.
+ * A user watching a dropped connection was told their accounting was
+ * "incomplete" for numbers the process had been holding a moment earlier.
+ *
+ * Every field is a LOWER BOUND, and that is the point: it is a floor under
+ * real spend, never a substitute for a provider-attested total. `reported`
+ * on the inner [`CompletionUsage`] is therefore always `false`, which keeps a
+ * partial structurally unable to pass [`CompletionUsage::is_complete`] and so
+ * out of the settled-accounting path no matter how complete it looks.
+ */
+export interface PartialUsage {
+  /**
+   * `usage` priced at the serving model's catalog rates, or `0.0` when the
+   * adapter had no pricing row for the model. Never provider-attested.
+   */
+  cost_usd: number;
+  /**
+   * Whether the input-side counts came from the provider's own frame
+   * rather than a local estimate. `true` is the common case for
+   * Anthropic-shaped streams and `false` for the OpenAI-shaped ones, which
+   * send usage only at the end — the distinction a reader needs before
+   * treating `usage.input_tokens` as fact.
+   */
+  input_reported?: boolean;
+  /**
+   * Counts observed before the failure. Input-side figures are the
+   * provider's own when the dialect front-loads them; `output_tokens` is
+   * whatever the last usage frame stated, or an estimate over the text
+   * that actually arrived when no such frame did.
+   */
+  usage: CompletionUsage;
 }
 
 /**
@@ -1214,6 +1299,20 @@ export type AgentEvent = {
 } | {
   duration_ms: number;
   model: string;
+  /**
+   * Accounting the adapter had already observed when the attempt died.
+   *
+   * "Incomplete" is not the same as "unknown", and this field is the
+   * difference. A stream cut mid-answer has usually already been told
+   * what the prompt cost, so `Some` here turns a bare warning into a
+   * number: how much of this attempt we can actually account for.
+   * `None` is the honest answer for a failure that learned nothing —
+   * a connect timeout, a cancelled call, a 5xx with no stream.
+   *
+   * Token counts are content-free, so carrying them keeps this event
+   * inside its no-prompts-no-bodies contract.
+   */
+  partial?: PartialUsage | null;
   provider: string;
   reason: UsageIncompleteReason;
   /**

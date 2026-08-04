@@ -288,18 +288,31 @@ impl DomainBridge {
                 reason,
                 duration_ms,
                 retries,
+                partial,
             } => {
-                self.emit(
-                    Level::Warn,
-                    "agent.step.usage_incomplete",
-                    self.at_seq()
-                        .with("role", role_name(*role))
-                        .with("provider", operator_id(provider))
-                        .with("model", operator_id(model))
-                        .with("reason", usage_incomplete_reason(*reason))
-                        .with("duration_ms", *duration_ms)
-                        .with("retries", *retries),
-                );
+                // Token counts are content-free, so the recovered figures ride
+                // the diagnostic timeline like any other operator id. They are
+                // what turns this line from "an attempt failed" into "an
+                // attempt failed and here is what it cost" — the question an
+                // operator reading a run's timeline actually has.
+                let mut fields = self
+                    .at_seq()
+                    .with("role", role_name(*role))
+                    .with("provider", operator_id(provider))
+                    .with("model", operator_id(model))
+                    .with("reason", usage_incomplete_reason(*reason))
+                    .with("duration_ms", *duration_ms)
+                    .with("retries", *retries)
+                    .with("recovered", partial.is_some());
+                if let Some(partial) = partial {
+                    fields = fields
+                        .with("recovered_input_tokens", partial.usage.input_tokens)
+                        .with("recovered_output_tokens", partial.usage.output_tokens)
+                        .with("recovered_cached_tokens", partial.usage.cached_input_tokens)
+                        .with("recovered_cost_usd", partial.cost_usd)
+                        .with("input_reported", partial.input_reported);
+                }
+                self.emit(Level::Warn, "agent.step.usage_incomplete", fields);
             }
             // `reason` is `error.to_string()` — a provider's own prose, and
             // exactly the string §5.3 exists to keep out. The attempt number is
