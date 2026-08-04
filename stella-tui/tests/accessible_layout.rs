@@ -186,6 +186,7 @@ fn scoped_session(accessible: bool) -> (WorkspaceModel, DeckUi) {
             steps: vec!["stack the graph panes".into(), "stack the skills".into()],
             estimated_files: 4,
             estimated_cost_usd: Some(0.40),
+            ..Default::default()
         },
     }));
     model.apply_inbound(&event(AgentEvent::Stage {

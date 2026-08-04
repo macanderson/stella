@@ -599,6 +599,7 @@ mod tests {
                 steps: vec!["write the widget".to_string()],
                 estimated_files: 1,
                 estimated_cost_usd: Some(0.02),
+                ..Default::default()
             },
         })
         .unwrap();

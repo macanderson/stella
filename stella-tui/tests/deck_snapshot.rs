@@ -75,6 +75,86 @@ fn deck_renders_every_tab_with_real_content() {
         assert!(text.contains("SESSION"), "tab bar should render on {tab:?}");
     }
 
+    // The redesigned chrome, on the same scripted session (D1/D2/D5): the
+    // four-zone statline, the unified stage stepper, and the nested
+    // subagent rows under the lead's header.
+    let session = render_tab(&model, DeckTab::Session, 190, 44);
+    for needle in [
+        "✦",         // statline zone A brand glyph
+        "ctx ",      // zone B resource meter
+        "run $",     // zone C money
+        "✓ plan",    // stepper: completed stage
+        "▸ execute", // stepper: active stage beside the track
+        "◆",         // a nested subagent's identity mark
+        "subagent",  // its dim role word
+        "returns:",  // its contract line
+    ] {
+        assert!(
+            session.contains(needle),
+            "the SESSION chrome should show {needle:?}, got:\n{session}"
+        );
+    }
+
+    // Each floating card over the same scenario (D3–D6), with its
+    // load-bearing copy.
+    let card_cases: [(stella_tui::deck_ui::cards::Card, &[&str]); 5] = [
+        (
+            stella_tui::deck_ui::cards::Card::Tasks,
+            // 5 of 7 done after the second board snapshot; the active row's
+            // live elapsed/cost readout rides the right edge.
+            &["tasks", "5 of 7 done", "Workflows canvas", "✓", "○"],
+        ),
+        (
+            stella_tui::deck_ui::cards::Card::Scope,
+            &[
+                "scope",
+                "repo",
+                "write",
+                "budget",
+                "think",
+                "verify",
+                "oracle flips red → green",
+                "(witness confirms from evidence)",
+            ],
+        ),
+        (
+            stella_tui::deck_ui::cards::Card::Witness,
+            &[
+                "witness",
+                "author",
+                "test built before the patch",
+                "execute",
+                "run 2 of 3",
+                "deterministic seed 7741",
+                "result",
+                "red ──▸ green",
+            ],
+        ),
+        (
+            stella_tui::deck_ui::cards::Card::Models,
+            &["models", "think", "work", "verify"],
+        ),
+        (
+            stella_tui::deck_ui::cards::Card::Budget,
+            &["budget", "new cap"],
+        ),
+    ];
+    for (card, needles) in card_cases {
+        let mut ui = DeckUi::default();
+        ui.splash.skip();
+        ui.graph = Some(demo_graph());
+        ui.cards.raise(card);
+        let mut terminal = Terminal::new(TestBackend::new(190, 44)).unwrap();
+        terminal.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+        let text = buffer_text(terminal.backend().buffer());
+        for needle in needles {
+            assert!(
+                text.contains(needle),
+                "the {card:?} card should show {needle:?}, got:\n{text}"
+            );
+        }
+    }
+
     // Write all five tabs to a human-readable artifact under the target dir —
     // never into the source tree, which `cargo test` must leave clean.
     let mut out = String::new();

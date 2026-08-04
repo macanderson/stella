@@ -285,9 +285,10 @@ pub(crate) const SLASH_POPUP_MAX_ROWS: usize = 8;
 /// Where the slash popup floats: anchored to the composer's left edge,
 /// opening upward, tall enough for the matches (capped at
 /// [`SLASH_POPUP_MAX_ROWS`]) and clamped to the frame on small terminals. The
-/// `+3` reserves the two borders and the one-line key legend.
+/// `+2` reserves the two border rows — the key hints ride the top border and
+/// the scroll affordance the bottom one, so no interior row is chrome.
 pub(crate) fn slash_popup_area(root: Rect, composer: Rect, matches: usize) -> Rect {
-    let h = ((matches.min(SLASH_POPUP_MAX_ROWS) as u16) + 3).min(root.height);
+    let h = ((matches.min(SLASH_POPUP_MAX_ROWS) as u16) + 2).min(root.height);
     let w = root.width.min(56);
     Rect {
         x: composer.x,
@@ -312,55 +313,79 @@ pub(crate) fn scroll_window_start(len: usize, selected: usize, visible: usize) -
     (selected + 1).saturating_sub(visible).min(len - visible)
 }
 
-/// The floating slash-command menu: an accent-bordered popup with the
-/// selected row highlighted and a one-line key legend. Shared by the
-/// single-session REPL and the deck (both anchor it above their composer).
+/// The floating slash-command menu: each row is `/<name>` followed by its
+/// one-line effect description, dimmed; user-authored commands keep their
+/// `SlashKind` glyph. The selected row carries the mandatory `▸` marker
+/// glyph *plus* the background tint — the golden suite strips style, so a
+/// style-only selection would be invisible to it. Key hints ride the top
+/// border, dim and right-aligned. Shared by the single-session REPL and the
+/// deck (both anchor it above their composer).
+///
+/// `live` overrides descriptions with values read from the model at render
+/// time (`/inbox — 29 unread`), keyed by command name — computed by the
+/// caller each frame, never cached in view state.
 ///
 /// When more commands match than fit, the rows window around `selected` so
-/// arrow-key navigation always keeps the highlight visible, and the legend
-/// shows how many rows are hidden above (`▲`) / below (`▼`).
-pub(crate) fn render_slash_popup(menu: &SlashMenu, selected: usize, area: Rect, buf: &mut Buffer) {
+/// arrow-key navigation always keeps the highlight visible, and the bottom
+/// border shows how many rows are hidden above (`▲`) / below (`▼`).
+pub(crate) fn render_slash_popup(
+    menu: &SlashMenu,
+    selected: usize,
+    live: &[(String, String)],
+    area: Rect,
+    buf: &mut Buffer,
+) {
     ratatui::widgets::Clear.render(area, buf);
     let total = menu.matches.len();
     let selected = selected.min(total.saturating_sub(1));
-    // The interior minus the legend line is what the command rows scroll in.
-    let visible = inner_height(area).saturating_sub(1).max(1);
+    let visible = inner_height(area).max(1);
     let first = scroll_window_start(total, selected, visible);
     let last = (first + visible).min(total);
-    let mut lines: Vec<Line<'static>> = menu.matches[first..last]
+    let lines: Vec<Line<'static>> = menu.matches[first..last]
         .iter()
         .enumerate()
         .map(|(offset, c)| {
             let is_sel = first + offset == selected;
             let marker = if is_sel { "▸ " } else { "  " };
-            let mut name_style = theme::accent();
-            let mut desc_style = theme::muted();
+            let description = live
+                .iter()
+                .find(|(name, _)| *name == c.name)
+                .map(|(_, live_desc)| live_desc.clone())
+                .unwrap_or_else(|| c.description.clone());
+            let mut line = Line::from(vec![
+                Span::styled(marker.to_string(), theme::accent()),
+                Span::styled(format!("{} ", c.kind.glyph()), theme::accent()),
+                Span::styled(format!("{:<12}", c.name), theme::accent()),
+                Span::styled(description, Style::new().fg(theme::TEXT_TERTIARY)),
+            ]);
             if is_sel {
-                name_style = name_style.add_modifier(Modifier::REVERSED);
-                desc_style = desc_style.add_modifier(Modifier::REVERSED);
+                line.style = line.style.bg(theme::SELECT_BG);
             }
-            Line::from(vec![
-                Span::styled(marker.to_string(), name_style),
-                Span::styled(format!("{} ", c.kind.glyph()), name_style),
-                Span::styled(c.name.clone(), name_style),
-                Span::styled("  ", desc_style),
-                Span::styled(c.description.clone(), desc_style),
-            ])
+            line
         })
         .collect();
     let hidden_above = first;
     let hidden_below = total.saturating_sub(last);
-    let legend = if hidden_above > 0 || hidden_below > 0 {
-        // Compact when scrolling so the ▲/▼ affordance still fits the width.
-        format!(" ↑↓ choose · tab fill · ⏎ run · esc · ▲{hidden_above} ▼{hidden_below}")
-    } else {
-        " ↑/↓ choose · tab complete · enter run · esc dismiss".to_string()
-    };
-    lines.push(Line::from(Span::styled(legend, theme::muted())));
-    let block = Block::default()
+    let mut block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme::accent())
-        .title(format!(" / commands · {total} "));
+        .title(format!(" / commands · {total} "))
+        .title(
+            Line::from(Span::styled(
+                " ↑↓ move · ↵ run · esc close ",
+                theme::muted(),
+            ))
+            .alignment(ratatui::layout::Alignment::Right),
+        );
+    if hidden_above > 0 || hidden_below > 0 {
+        block = block.title_bottom(
+            Line::from(Span::styled(
+                format!(" ▲{hidden_above} ▼{hidden_below} "),
+                theme::muted(),
+            ))
+            .alignment(ratatui::layout::Alignment::Right),
+        );
+    }
     Paragraph::new(Text::from(lines))
         .block(block)
         .render(area, buf);

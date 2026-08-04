@@ -360,8 +360,15 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     // gates, because it is the same kind of thing — work parked on an answer.
     let dispatch_h: u16 = if ui.pending_dispatch.is_some() { 7 } else { 0 };
 
+    // The nested subagent blocks (D5), directly under the lead's identity
+    // header. 0 when there are none or the focused lane is itself a
+    // subagent. Full-width rows, so in accessible mode nothing here ever
+    // shares a rendered row with the transcript.
+    let subs_h = crate::views::subagents::band_height(model, ui);
+
     let bands = Layout::vertical([
         Constraint::Length(1),          // identity header
+        Constraint::Length(subs_h),     // nested subagent rows (0 = none)
         Constraint::Length(3),          // HUD
         Constraint::Length(scope_h),    // pending scope review (0 = collapsed)
         Constraint::Length(ask_h),      // pending ask-user (0 = collapsed)
@@ -388,31 +395,34 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
             Constraint::Min(1),
             Constraint::Length(crate::views::work_rail::RAIL_W),
         ])
-        .split(bands[6]);
+        .split(bands[7]);
         (cols[0], Some(cols[1]))
     } else {
-        (bands[6], None)
+        (bands[7], None)
     };
 
     render_header(agent, model.now_ms, bands[0], buf);
-    render_hud(&sm.hud, bands[1], buf);
+    if subs_h > 0 {
+        crate::views::subagents::render(model, ui, bands[1], buf);
+    }
+    render_hud(&sm.hud, bands[2], buf);
     // `answered` flips the card to its "sent — awaiting engine…" form: the
     // pending gate clears only on the engine's follow-on event, and until
     // then the card must not keep advertising decision keys that would
     // double-submit (the latch in `handle_focused_gates`).
     if let Some(proposal) = &sm.pending_scope_review {
         let answered = ui.scope_answered.contains(&agent.meta.id);
-        render_scope_review(proposal, answered, bands[2], buf);
+        render_scope_review(proposal, answered, bands[3], buf);
     }
     if let Some(prompt) = &sm.pending_ask_user {
         let answered = ui.ask_answered.contains(&agent.meta.id);
-        render_ask_user(prompt, answered, bands[3], buf);
+        render_ask_user(prompt, answered, bands[4], buf);
     }
     if let Some(pending) = &ui.pending_dispatch {
-        crate::views::dispatch_card::render(pending, bands[4], buf);
+        crate::views::dispatch_card::render(pending, bands[5], buf);
     }
     if let Some(strip) = strip {
-        Paragraph::new(strip).render(bands[5], buf);
+        Paragraph::new(strip).render(bands[6], buf);
     }
     if let Some(rail) = rail_area {
         crate::views::work_rail::render_rail(sm, rail, buf);
@@ -544,7 +554,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         buf,
     );
     if proof_h > 0 {
-        crate::views::proof::render(&sm.proof, bands[7], buf);
+        crate::views::proof::render(&sm.proof, bands[8], buf);
     }
 }
 
@@ -686,6 +696,7 @@ mod tests {
                     steps: vec![],
                     estimated_files: 3,
                     estimated_cost_usd: None,
+                    ..Default::default()
                 },
             },
         });
@@ -729,6 +740,7 @@ mod tests {
                     steps: vec![],
                     estimated_files: 3,
                     estimated_cost_usd: None,
+                    ..Default::default()
                 },
             },
         });

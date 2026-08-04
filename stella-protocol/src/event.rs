@@ -1221,16 +1221,40 @@ pub enum ProofStep {
     /// The flip oracle observed one run of the tracked command against one
     /// tree. A fail in `Baseline` followed by a pass in `Candidate` is the
     /// flip; anything else is not.
+    ///
+    /// `run`/`runs_required`/`seed` are the witness surface's replay facts
+    /// (D6) — which candidate replay this observation is, how many the flip
+    /// requires, and the deterministic seed the replay pinned. All additive
+    /// (`serde(default)`): observations recorded before they existed parse
+    /// with each absent, and an emitter that has no replay discipline (a
+    /// single-run oracle) simply omits them.
     Oracle {
         command: String,
         passed: bool,
         tree: ProofTree,
+        /// Which candidate replay this observation is (1-based). `None` on
+        /// baseline runs and on single-run oracles.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run: Option<u32>,
+        /// How many passing candidate replays the flip requires, when the
+        /// oracle runs more than one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        runs_required: Option<u32>,
+        /// The deterministic seed the replay pinned, when one was pinned.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        seed: Option<u64>,
     },
 }
 
 /// What a `ScopeReview` gate presents for approval before a large plan
 /// executes (L-E5).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// The fields after `estimated_cost_usd` are the scope-card grid's facts
+/// (repo/branch, read/write globs, shell policy) — all additive
+/// (`serde(default)`), so streams recorded before they existed parse with
+/// every one absent, and a proposal that names none serializes exactly as it
+/// always has.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ScopeProposal {
     /// One line describing the work, for the approval prompt's headline.
@@ -1243,6 +1267,23 @@ pub struct ScopeProposal {
     /// Projected spend, when the planner could estimate one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub estimated_cost_usd: Option<f64>,
+    /// The repository the scope binds to (`owner/name`, or a workspace
+    /// path), when the planner named one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    /// The branch the work lands on, when named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Path globs the plan intends to WRITE within. Empty = not stated.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub write_globs: Vec<String>,
+    /// Path globs the plan reads beyond its write set. Empty = not stated.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub read_globs: Vec<String>,
+    /// The shell policy in force for the run (e.g. `allowlisted`,
+    /// `read-only`, `none`), when stated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell_policy: Option<String>,
 }
 
 /// Which kind of media artifact a job produces.
@@ -1988,6 +2029,7 @@ mod tests {
                     steps: vec!["step 1".into(), "step 2".into()],
                     estimated_files: 12,
                     estimated_cost_usd: Some(1.25),
+                    ..Default::default()
                 },
             },
             AgentEvent::Pr {
@@ -2004,6 +2046,93 @@ mod tests {
             let json = serde_json::to_string(&event).unwrap();
             let _back: AgentEvent = serde_json::from_str(&json).unwrap();
         }
+    }
+
+    /// Invariant #4: the scope-card facts (repo/branch, globs, shell policy)
+    /// round-trip byte-for-byte, and a proposal recorded before they existed
+    /// still parses with every one absent.
+    #[test]
+    fn scope_proposal_roundtrips_its_scope_card_facts_and_stays_additive() {
+        let full = ScopeProposal {
+            summary: "wire the automations API".into(),
+            steps: vec!["extract types".into()],
+            estimated_files: 4,
+            estimated_cost_usd: Some(0.42),
+            repo: Some("macanderson/stella".into()),
+            branch: Some("feat/automations".into()),
+            write_globs: vec!["apps/api/**".into(), "apps/app/automations/**".into()],
+            read_globs: vec!["packages/shared/**".into()],
+            shell_policy: Some("allowlisted".into()),
+        };
+        let json = serde_json::to_string(&full).unwrap();
+        let back: ScopeProposal = serde_json::from_str(&json).unwrap();
+        assert_eq!(full, back);
+
+        // A pre-existing stream: none of the new keys, all default in.
+        let legacy = r#"{"summary":"s","steps":["a"],"estimated_files":2}"#;
+        let old: ScopeProposal = serde_json::from_str(legacy).unwrap();
+        assert_eq!(old.repo, None);
+        assert!(old.write_globs.is_empty());
+        assert_eq!(old.shell_policy, None);
+        // And a proposal that states none of them serializes without the keys.
+        let json = serde_json::to_string(&old).unwrap();
+        assert!(!json.contains("write_globs"), "{json}");
+        assert!(!json.contains("repo"), "{json}");
+    }
+
+    /// Invariant #4: the oracle observation's replay facts (`run`,
+    /// `runs_required`, `seed`) round-trip byte-for-byte, and an observation
+    /// recorded before they existed still parses with each absent.
+    #[test]
+    fn proof_oracle_roundtrips_replay_facts_and_stays_additive() {
+        let step = ProofStep::Oracle {
+            command: "cargo test -p x".into(),
+            passed: true,
+            tree: ProofTree::Candidate,
+            run: Some(2),
+            runs_required: Some(3),
+            seed: Some(7741),
+        };
+        let event = AgentEvent::Proof { step: step.clone() };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: AgentEvent = serde_json::from_str(&json).unwrap();
+        match back {
+            AgentEvent::Proof { step: parsed } => assert_eq!(parsed, step),
+            other => panic!("unexpected variant: {other:?}"),
+        }
+
+        let legacy = r#"{"type":"proof","step":{"kind":"oracle","command":"cargo test","passed":false,"tree":"baseline"}}"#;
+        let old: AgentEvent = serde_json::from_str(legacy).unwrap();
+        match old {
+            AgentEvent::Proof {
+                step:
+                    ProofStep::Oracle {
+                        run,
+                        runs_required,
+                        seed,
+                        ..
+                    },
+            } => {
+                assert_eq!(run, None);
+                assert_eq!(runs_required, None);
+                assert_eq!(seed, None);
+            }
+            other => panic!("unexpected variant: {other:?}"),
+        }
+        // A single-run oracle serializes without the replay keys.
+        let single = AgentEvent::Proof {
+            step: ProofStep::Oracle {
+                command: "c".into(),
+                passed: false,
+                tree: ProofTree::Baseline,
+                run: None,
+                runs_required: None,
+                seed: None,
+            },
+        };
+        let json = serde_json::to_string(&single).unwrap();
+        assert!(!json.contains("runs_required"), "{json}");
+        assert!(!json.contains("seed"), "{json}");
     }
 
     #[test]

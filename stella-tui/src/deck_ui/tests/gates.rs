@@ -18,6 +18,7 @@ fn scope_card() -> Inbound {
                 steps: vec!["s1".into(), "s2".into()],
                 estimated_files: 8,
                 estimated_cost_usd: None,
+                ..Default::default()
             },
         },
     }

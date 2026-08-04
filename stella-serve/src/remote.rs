@@ -1006,6 +1006,7 @@ mod tests {
             steps: vec!["step one".to_string()],
             estimated_files: 1,
             estimated_cost_usd: None,
+            ..Default::default()
         };
 
         let review = tokio::spawn(async move { gate.review(&proposal).await });
@@ -1034,6 +1035,7 @@ mod tests {
             steps: vec!["step one".to_string()],
             estimated_files: 1,
             estimated_cost_usd: None,
+            ..Default::default()
         };
         assert_eq!(gate.review(&proposal).await, ScopeDecision::Abort);
     }

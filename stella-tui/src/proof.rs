@@ -60,6 +60,15 @@ pub struct Flip {
     pub baseline_passed: Option<bool>,
     /// What it did on the executed tree; `None` until observed.
     pub candidate_passed: Option<bool>,
+    /// How many candidate replays have been observed so far — the witness
+    /// panel's `run N` counter. Counts observations, so it is honest even
+    /// when the emitter carries no explicit `run` ordinal.
+    pub candidate_runs: u32,
+    /// How many passing candidate replays the flip requires, when the
+    /// emitter stated one (`ProofStep::Oracle::runs_required`).
+    pub runs_required: Option<u32>,
+    /// The deterministic seed the replay pinned, when one was pinned.
+    pub seed: Option<u64>,
 }
 
 impl Flip {
@@ -116,6 +125,17 @@ pub struct ProofState {
     /// nothing could observe must not read `✓ passed` just because nothing
     /// failed it either.
     pub unverifiable: Option<String>,
+    /// The witness-tamper check's stated result, from the verdict's ladder
+    /// snapshot: `Some(true)` = every witness artifact matched its pinned
+    /// identity (the witness panel's `tamper check ✓` line). `None` = the
+    /// check never ran or the verdict predates the snapshot.
+    pub witness_intact: Option<bool>,
+    /// A would-be flip was refused because the pass demonstrably fixed a
+    /// *different* failure — the witness panel's distinct refused-flip result
+    /// state, never rendered as a generic failure.
+    pub flip_refused: bool,
+    /// A flip was observed but its confirmation re-run did not pass.
+    pub unstable_flip: bool,
     /// Whether the turn has ended. Flips `pending` rows to *not reported* —
     /// see the module docs; this is the half of the invariant that does not
     /// depend on any pipeline path cooperating.
@@ -183,23 +203,48 @@ impl ProofState {
                 command,
                 passed,
                 tree,
+                run,
+                runs_required,
+                seed,
             } => {
                 self.flip.command = Some(command.clone());
+                if let Some(required) = runs_required {
+                    self.flip.runs_required = Some(*required);
+                }
+                if let Some(seed) = seed {
+                    self.flip.seed = Some(*seed);
+                }
                 match tree {
                     ProofTree::Baseline => self.flip.baseline_passed = Some(*passed),
-                    ProofTree::Candidate => self.flip.candidate_passed = Some(*passed),
+                    ProofTree::Candidate => {
+                        self.flip.candidate_passed = Some(*passed);
+                        // The stated ordinal wins when present (a re-emitted
+                        // observation must not double-count); otherwise each
+                        // candidate observation is one more run.
+                        self.flip.candidate_runs = match run {
+                            Some(n) => (*n).max(self.flip.candidate_runs),
+                            None => self.flip.candidate_runs + 1,
+                        };
+                    }
                 }
             }
         }
     }
 
-    /// Fold the verdict that closes the turn.
+    /// Fold the verdict that closes the turn — and the ladder facts riding
+    /// it that the witness panel renders (tamper exclusion, a refused or
+    /// unstable flip).
     pub fn apply_verdict(&mut self, passed: bool, evidence: &JudgeEvidence) {
         self.verdict = Some(VerdictStanding {
             passed,
             deterministic: evidence.deterministic,
             summary: evidence.summary.clone(),
         });
+        if let Some(ladder) = &evidence.ladder {
+            self.witness_intact = ladder.witness_intact;
+            self.flip_refused = ladder.flip_refused_different_failure;
+            self.unstable_flip = ladder.unstable_flip;
+        }
     }
 
     /// The rail's rows, in fixed order. Always five, so a surface that shows
@@ -578,6 +623,9 @@ mod tests {
             command: "cargo test clear_reset".into(),
             passed,
             tree,
+            run: None,
+            runs_required: None,
+            seed: None,
         }
     }
 
@@ -710,6 +758,9 @@ mod tests {
                     } else {
                         ProofTree::Candidate
                     },
+                    run: None,
+                    runs_required: None,
+                    seed: None,
                 }
             ),
         ]

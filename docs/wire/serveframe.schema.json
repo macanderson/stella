@@ -2510,7 +2510,7 @@
           "type": "object"
         },
         {
-          "description": "The flip oracle observed one run of the tracked command against one\ntree. A fail in `Baseline` followed by a pass in `Candidate` is the\nflip; anything else is not.",
+          "description": "The flip oracle observed one run of the tracked command against one\ntree. A fail in `Baseline` followed by a pass in `Candidate` is the\nflip; anything else is not.\n\n`run`/`runs_required`/`seed` are the witness surface's replay facts\n(D6) — which candidate replay this observation is, how many the flip\nrequires, and the deterministic seed the replay pinned. All additive\n(`serde(default)`): observations recorded before they existed parse\nwith each absent, and an emitter that has no replay discipline (a\nsingle-run oracle) simply omits them.",
           "properties": {
             "command": {
               "type": "string"
@@ -2521,6 +2521,33 @@
             },
             "passed": {
               "type": "boolean"
+            },
+            "run": {
+              "description": "Which candidate replay this observation is (1-based). `None` on\nbaseline runs and on single-run oracles.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "runs_required": {
+              "description": "How many passing candidate replays the flip requires, when the\noracle runs more than one.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "seed": {
+              "description": "The deterministic seed the replay pinned, when one was pinned.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "tree": {
               "$ref": "#/$defs/ProofTree"
@@ -2602,8 +2629,15 @@
       ]
     },
     "ScopeProposal": {
-      "description": "What a `ScopeReview` gate presents for approval before a large plan\nexecutes (L-E5).",
+      "description": "What a `ScopeReview` gate presents for approval before a large plan\nexecutes (L-E5).\n\nThe fields after `estimated_cost_usd` are the scope-card grid's facts\n(repo/branch, read/write globs, shell policy) — all additive\n(`serde(default)`), so streams recorded before they existed parse with\nevery one absent, and a proposal that names none serializes exactly as it\nalways has.",
       "properties": {
+        "branch": {
+          "description": "The branch the work lands on, when named.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "estimated_cost_usd": {
           "description": "Projected spend, when the planner could estimate one.",
           "format": "double",
@@ -2618,6 +2652,27 @@
           "minimum": 0,
           "type": "integer"
         },
+        "read_globs": {
+          "description": "Path globs the plan reads beyond its write set. Empty = not stated.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "repo": {
+          "description": "The repository the scope binds to (`owner/name`, or a workspace\npath), when the planner named one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shell_policy": {
+          "description": "The shell policy in force for the run (e.g. `allowlisted`,\n`read-only`, `none`), when stated.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "steps": {
           "description": "The plan's steps, in the order the worker will attempt them.",
           "items": {
@@ -2628,6 +2683,13 @@
         "summary": {
           "description": "One line describing the work, for the approval prompt's headline.",
           "type": "string"
+        },
+        "write_globs": {
+          "description": "Path globs the plan intends to WRITE within. Empty = not stated.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "required": [

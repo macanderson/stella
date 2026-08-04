@@ -161,7 +161,7 @@ fn deck_slash_popup_selects_completes_and_dispatches() {
     let mut ui = ready_ui();
     ui.slash_commands = vec![
         SlashCommand::new("/help", "show help"),
-        SlashCommand::new("/models", "list models"),
+        SlashCommand::new("/profile", "retune every role"),
     ];
     handle_deck_key(ch('/'), &model, &mut ui);
     handle_deck_key(key(KeyCode::Down), &model, &mut ui);
@@ -169,16 +169,39 @@ fn deck_slash_popup_selects_completes_and_dispatches() {
     // Tab completes into the buffer while the popup is open (it does NOT
     // cycle tabs).
     handle_deck_key(key(KeyCode::Tab), &model, &mut ui);
-    assert_eq!(ui.composer.buffer(), "/models");
+    assert_eq!(ui.composer.buffer(), "/profile");
     assert_eq!(ui.tab, DeckTab::Session, "tab did not cycle");
     // Enter dispatches the (still-matching) selection as a prompt.
     let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
     assert_eq!(
         action,
         DeckAction::Send(WorkspaceInput::Enqueue {
-            text: "/models".into()
+            text: "/profile".into()
         })
     );
+}
+
+#[test]
+fn slash_models_opens_the_routing_card_instead_of_enqueueing() {
+    // `/models` left the driver vocabulary's enqueue path: routing is a
+    // deck-local card now (D3), so the selection must open it — not spend a
+    // model turn listing what a card can show.
+    let model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ui.slash_commands = vec![SlashCommand::new("/models", "model routing")];
+    for c in "/models".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(action, DeckAction::Handled, "/models is consumed locally");
+    assert_eq!(
+        ui.cards.open,
+        Some(crate::deck_ui::cards::Card::Models),
+        "the routing card is up"
+    );
+    // Esc closes the topmost card before any other Esc meaning fires.
+    handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
+    assert!(!ui.cards.is_open());
 }
 
 #[test]

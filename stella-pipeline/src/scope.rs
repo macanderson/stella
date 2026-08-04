@@ -95,6 +95,7 @@ pub fn build_proposal(goal: &str, plan: &[PlanStep], estimate: &ScopeEstimate) -
         steps,
         estimated_files: estimate.estimated_files,
         estimated_cost_usd: estimate.estimated_cost_usd,
+        ..Default::default()
     }
 }
 

@@ -223,6 +223,7 @@ mod tests {
             steps: vec!["a".into(), "b".into()],
             estimated_files: 9,
             estimated_cost_usd: None,
+            ..Default::default()
         };
         assert_eq!(g.review(&proposal).await, ScopeDecision::Abort);
     }

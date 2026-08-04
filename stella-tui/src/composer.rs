@@ -594,18 +594,35 @@ pub struct SlashMenu<'a> {
 }
 
 impl<'a> SlashMenu<'a> {
-    /// ASCII-case-insensitive prefix filter over `commands`. An empty query
-    /// (just `/`) matches everything. Command names are ASCII slugs, so the
-    /// cheap fold is exact for every name the CLI actually registers.
+    /// Fuzzy filter over `commands`, matching name then description: a
+    /// name-prefix match ranks first, a name-substring match second, a
+    /// description-substring match third — stable within each rank, so the
+    /// caller's vocabulary order survives. An empty query (just `/`) matches
+    /// everything. Case-insensitive on the ASCII fold; command names are
+    /// ASCII slugs, so the cheap fold is exact for every name the CLI
+    /// actually registers.
     pub fn filter(commands: &'a [SlashCommand], query: &str) -> Self {
-        let needle = query.to_ascii_lowercase();
-        let matches = commands
+        let needle = query.trim_start_matches('/').to_ascii_lowercase();
+        let rank = |c: &SlashCommand| -> Option<u8> {
+            let name = c.name.trim_start_matches('/').to_ascii_lowercase();
+            if name.starts_with(&needle) {
+                Some(0)
+            } else if name.contains(&needle) {
+                Some(1)
+            } else if c.description.to_ascii_lowercase().contains(&needle) {
+                Some(2)
+            } else {
+                None
+            }
+        };
+        let mut ranked: Vec<(u8, &SlashCommand)> = commands
             .iter()
-            .filter(|c| c.name.to_ascii_lowercase().starts_with(&needle))
+            .filter_map(|c| rank(c).map(|r| (r, c)))
             .collect();
+        ranked.sort_by_key(|(r, _)| *r); // stable: vocabulary order within a rank
         Self {
             query: query.to_string(),
-            matches,
+            matches: ranked.into_iter().map(|(_, c)| c).collect(),
         }
     }
 
@@ -808,7 +825,7 @@ mod tests {
     }
 
     #[test]
-    fn slash_menu_filters_by_prefix() {
+    fn slash_menu_fuzzy_ranks_name_prefix_over_substring_over_description() {
         let cmds = commands();
         let mut c = Composer::new();
         for ch in "/f".chars() {
@@ -816,7 +833,22 @@ mod tests {
         }
         let menu = c.slash_menu(&cmds).expect("slash menu active");
         let names: Vec<&str> = menu.matches.iter().map(|m| m.name.as_str()).collect();
-        assert_eq!(names, vec!["/files"]);
+        // `/files` starts with the query; `/diff` merely contains it — the
+        // prefix match must lead.
+        assert_eq!(names, vec!["/files", "/diff"]);
+    }
+
+    #[test]
+    fn slash_menu_falls_back_to_description_matches() {
+        let cmds = commands();
+        let mut c = Composer::new();
+        for ch in "/transcript".chars() {
+            c.insert_char(ch);
+        }
+        let menu = c.slash_menu(&cmds).expect("slash menu active");
+        let names: Vec<&str> = menu.matches.iter().map(|m| m.name.as_str()).collect();
+        // No name contains "transcript"; `/clear`'s description does.
+        assert_eq!(names, vec!["/clear"]);
     }
 
     #[test]
