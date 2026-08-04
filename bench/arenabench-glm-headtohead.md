@@ -41,12 +41,25 @@ harbor --version            # must print 0.6.1 — the Stella adapter's launcher
 docker info --format '{{.MemTotal}}'
 ```
 
-**Dataset** — already fetched if `arenabench datasets` reports 89 tasks.
-Otherwise:
+**Export the dataset. This is not an optimisation — it is what lets a match
+finish.**
 
 ```bash
-harbor download 'terminal-bench/terminal-bench-2-1@sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0ea7c4186773687d177ad3a0699a'
+arenabench export terminal-bench-2.1
 ```
+
+Given a registry ref, Harbor resolves *every task against its backend at run
+time*, once per task, even though the tasks are already unpacked on disk. One
+failed lookup raises out of the job and kills every remaining trial — and since
+both contestants are separate processes failing for the same reason at the same
+moment, the scoreboard reads like a contest result rather than an outage. Three
+10-task matches died this way at tasks 3, 7 and 3 before the cause was found.
+
+Running from an export removes the network from that path entirely. Provenance
+is unchanged: the export is produced *from* the pinned digest, so the bytes are
+the pinned bytes — the digest is resolved once, at download, rather than ninety
+times under load. ArenaBench prefers the export automatically and warns on any
+seat that has none.
 
 **Stella's benchmark binary** must be a Linux/amd64 build; the task images
 publish `linux/amd64` only, and a macOS binary uploads happily and then fails
@@ -177,3 +190,17 @@ finding. Cache write crowns nobody on the scoreboard anyway.
 timeout between them. Stella has historically burned its full timeout on tasks
 it had already solved, so a `reward 1.0` alongside a timeout is a known
 signature worth checking in the transcript before reading it as a loss.
+
+**Read the "never started" count before the solve rate.** Trials that died in
+setup, environment start, credentials, or a broken verifier are held out of the
+solve rate and counted separately, because they say nothing about coding. This
+matters asymmetrically: Claude Code installs a Node toolchain into every
+container while Stella uploads one static binary, so on a slow or contended
+host Claude Code's arm is the one that fails to start. A 10–0 board where six
+of those trials never began is not a result — raise **Setup timeout ×** and run
+it again.
+
+An install that *fails* rather than times out still surfaces as
+`NonZeroAgentExitCodeError` and is counted as an agent loss. Distinguishing it
+would mean substring-matching Harbor's setup command out of an exception
+message; raising the setup budget addresses the cause instead.
