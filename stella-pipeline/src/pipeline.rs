@@ -2079,7 +2079,7 @@ impl<'a> Pipeline<'a> {
         let untracked_before = surface.repo_status.untracked_fingerprints().await;
 
         let mut state = CandidateState {
-            messages: base_messages.to_vec(),
+            messages: crate::candidate_narration::messages_rooted_at(base_messages, surface.cwd),
             final_text: String::new(),
             file_changes: 0,
             mutating_actions: 0,
