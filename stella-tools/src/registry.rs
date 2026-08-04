@@ -205,6 +205,19 @@ pub struct ToolRegistry {
     /// must NOT be announced — a Best-of-N or witness candidate, whose edits
     /// live in a shadow worktree and are discarded unless adopted.
     events: std::sync::RwLock<Option<stella_core::EventSender>>,
+    /// Whether *mutating* touches may be announced on `events`. False only on a
+    /// candidate registry ([`ToolRegistry::attach_read_events`]).
+    ///
+    /// The withholding rule is about writes: a candidate's edits live in a
+    /// shadow worktree and are not the user's until adoption re-emits them
+    /// against the real tree. Reads carry none of that — a read mutates
+    /// nothing, so it claims nothing — but they used to be silenced by the
+    /// same blanket `events: None`, which is why an isolated run
+    /// (`create_worktrees`, Best-of-N, an authored witness) showed a
+    /// completely empty Files tab: not one read, and no mutation until a
+    /// passing verdict adopted. Splitting the two lets the invariant say what
+    /// it actually means.
+    announce_mutations: std::sync::atomic::AtomicBool,
     /// How many **mutating** touches [`ToolRegistry::record_touch`] has
     /// recorded, ever, on this registry. Bumped inside the same locked section
     /// that writes the ledger and immediately before the `FileChange` is sent,
@@ -519,6 +532,7 @@ impl ToolRegistry {
             bus: std::sync::RwLock::new(None),
             policy_bridge: std::sync::Mutex::new(None),
             events: std::sync::RwLock::new(None),
+            announce_mutations: std::sync::atomic::AtomicBool::new(true),
             mutations: std::sync::atomic::AtomicU64::new(0),
             process_free,
         }
@@ -587,6 +601,28 @@ impl ToolRegistry {
     /// user's — a candidate workspace's, until adoption.
     pub fn attach_events(&self, events: stella_core::EventSender) {
         *self.events.write().unwrap_or_else(|p| p.into_inner()) = Some(events);
+        self.announce_mutations
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Announce only this registry's **reads** on `events` — the candidate
+    /// posture. Mutations stay withheld until adoption re-emits them against
+    /// the real tree (`Pipeline::run_best_of_n`).
+    ///
+    /// The alternative, and what this replaces, was attaching nothing at all.
+    /// That did keep a losing candidate's edits out of the user's Files tab —
+    /// but it also meant an isolated run announced *nothing whatsoever*, so a
+    /// session that answered "yes" to `create_worktrees` watched 40 `read_file`
+    /// calls scroll past a Files tab reading "no files touched yet". Reads are
+    /// safe to announce the moment they happen precisely because adoption has
+    /// no opinion about them: there is nothing to adopt, and nothing claimed.
+    ///
+    /// Call once per candidate, with the session channel. `detach_event_stream`
+    /// is the counterpart, and restores the announcing default.
+    pub fn attach_read_events(&self, events: stella_core::EventSender) {
+        *self.events.write().unwrap_or_else(|p| p.into_inner()) = Some(events);
+        self.announce_mutations
+            .store(false, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Release this turn's event channel: the counterpart every turn owes
@@ -603,6 +639,10 @@ impl ToolRegistry {
     /// Idempotent, and safe on a registry that never attached either one.
     pub fn detach_event_stream(&self) {
         *self.events.write().unwrap_or_else(|p| p.into_inner()) = None;
+        // Back to the announcing default, so a registry re-attached later (a
+        // next turn) is never left silently withholding a real tree's edits.
+        self.announce_mutations
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         // Dropping the subscription unsubscribes it, releasing the sender the
         // bridge closure captured.
         *self.policy_bridge.lock().unwrap_or_else(|p| p.into_inner()) = None;
@@ -1919,7 +1959,17 @@ impl ToolRegistry {
             self.mutations
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
-        if let Some(events) = self.events() {
+        // A candidate registry (`attach_read_events`) announces its reads and
+        // withholds its mutations: the edits are not the user's tree's until
+        // adoption re-emits them. The counter above is deliberately OUTSIDE
+        // this gate — `mutations_recorded` must stay true no matter which
+        // events were announced, or the verification ladder goes blind exactly
+        // where #973 found it blind.
+        let announce = !kind.is_mutation()
+            || self
+                .announce_mutations
+                .load(std::sync::atomic::Ordering::Relaxed);
+        if announce && let Some(events) = self.events() {
             let _ = events.send(stella_protocol::AgentEvent::FileChange {
                 path,
                 kind,

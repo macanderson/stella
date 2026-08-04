@@ -367,6 +367,14 @@ impl GitCandidateWorkspaces {
                 // before the `Arc<dyn ToolExecutor>` coercion below erases it.
                 if let Some(events) = &self.events {
                     registry.bridge_policy_plane(events.clone());
+                    // Reads only. A candidate's *mutations* are re-emitted by
+                    // adoption against the real tree, so announcing them here
+                    // would claim edits the user's checkout has not received —
+                    // but silencing the whole stream (what this used to do)
+                    // also swallowed every read, leaving an isolated run's
+                    // Files tab reading "no files touched yet" through
+                    // hundreds of tool calls.
+                    registry.attach_read_events(events.clone());
                 }
                 // The candidate's tool surface: the snapshot-rooted registry
                 // plus the session's custom script tools, owned as one value

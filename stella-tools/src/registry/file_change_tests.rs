@@ -250,6 +250,123 @@ async fn an_unattached_registry_records_but_announces_nothing() {
     let _ = dir;
 }
 
+/// A candidate fixture: announcing, but in the read-only posture a shadow
+/// worktree runs in.
+fn candidate_fixture() -> (
+    tempfile::TempDir,
+    ToolRegistry,
+    tokio::sync::mpsc::UnboundedReceiver<stella_protocol::AgentEvent>,
+) {
+    let (dir, reg) = telemetry_fixture();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    reg.attach_read_events(stella_core::EventSender::new(tx));
+    (dir, reg, rx)
+}
+
+/// The regression: an isolated run showed a completely empty Files tab.
+///
+/// `create_worktrees` (default `ask`) moves a run into a candidate workspace,
+/// and a candidate registry used to be left wholly unattached — the only guard
+/// against announcing edits the user's checkout had not received. But that
+/// silenced reads too, and reads are most of what a run does: one recorded
+/// session made 40 `read_file` calls and 0 `FileChange`s, so the tab read "no
+/// files touched yet" from the first tool call to the last.
+///
+/// Reads announce immediately (they mutate nothing, so they claim nothing);
+/// mutations stay withheld for adoption to re-emit.
+#[tokio::test]
+async fn a_candidate_announces_its_reads_and_withholds_its_mutations() {
+    let (dir, reg, mut rx) = candidate_fixture();
+    std::fs::write(dir.path().join("r.rs"), "one\ntwo\n").unwrap();
+
+    exec_ok(&reg, "read_file", serde_json::json!({ "path": "r.rs" })).await;
+    exec_ok(
+        &reg,
+        "write_file",
+        serde_json::json!({ "path": "new.rs", "content": "a\nb\n" }),
+    )
+    .await;
+    exec_ok(
+        &reg,
+        "edit_file",
+        serde_json::json!({ "path": "r.rs", "old_string": "one", "new_string": "ONE" }),
+    )
+    .await;
+
+    assert_eq!(
+        drain_changes(&mut rx),
+        vec![(
+            "r.rs".to_string(),
+            stella_protocol::FileChangeKind::Read,
+            0,
+            0,
+            false
+        )],
+        "the read is announced; the create and the edit wait for adoption"
+    );
+}
+
+/// The #973 invariant, re-pinned across the read-only posture: withholding an
+/// *event* must never withhold the *count*. The verification ladder reads
+/// `mutations_recorded` precisely because it is immune to which channel — or
+/// which posture — the events took.
+#[tokio::test]
+async fn a_candidate_still_counts_the_mutations_it_withheld() {
+    let (dir, reg, mut rx) = candidate_fixture();
+    let before = reg.mutations_recorded();
+    std::fs::write(dir.path().join("e.rs"), "one\n").unwrap();
+
+    exec_ok(
+        &reg,
+        "write_file",
+        serde_json::json!({ "path": "c.rs", "content": "x\n" }),
+    )
+    .await;
+    exec_ok(
+        &reg,
+        "edit_file",
+        serde_json::json!({ "path": "e.rs", "old_string": "one", "new_string": "ONE" }),
+    )
+    .await;
+
+    assert_eq!(
+        reg.mutations_recorded() - before,
+        2,
+        "an unannounced mutation is still a mutation"
+    );
+    assert!(
+        drain_changes(&mut rx).is_empty(),
+        "and none of them were announced"
+    );
+}
+
+/// The posture is per-attachment, not sticky: a candidate registry is a
+/// candidate for as long as it is one. A registry handed a real turn's channel
+/// announces mutations again — otherwise one isolated run would silently blind
+/// every later turn that reused the registry.
+#[tokio::test]
+async fn re_attaching_a_real_turn_restores_mutation_announcements() {
+    let (dir, reg, _candidate_rx) = candidate_fixture();
+    reg.detach_event_stream();
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    reg.attach_events(stella_core::EventSender::new(tx));
+    exec_ok(
+        &reg,
+        "write_file",
+        serde_json::json!({ "path": "after.rs", "content": "x\n" }),
+    )
+    .await;
+
+    let changes = drain_changes(&mut rx);
+    assert_eq!(
+        changes.iter().map(|c| c.1).collect::<Vec<_>>(),
+        vec![stella_protocol::FileChangeKind::Created],
+        "the real turn's tree announces its own edits: {changes:?}"
+    );
+    let _ = dir;
+}
+
 /// The counterpart every turn owes `attach_events` — and the whole of #960.
 ///
 /// A one-shot run drops its own sender and then awaits the renderer, which
