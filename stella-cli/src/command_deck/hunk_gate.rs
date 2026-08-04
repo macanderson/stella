@@ -122,7 +122,10 @@ mod tests {
         while let Ok(Inbound::Event { event, .. }) = in_rx.try_recv() {
             events.push(event);
         }
-        assert!(matches!(events.first(), Some(AgentEvent::HunkReview { .. })));
+        assert!(matches!(
+            events.first(),
+            Some(AgentEvent::HunkReview { .. })
+        ));
         assert!(matches!(
             events.last(),
             Some(AgentEvent::ToolResult { call_id, .. }) if call_id == "hunk-review-1"

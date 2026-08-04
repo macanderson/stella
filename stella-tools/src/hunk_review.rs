@@ -252,7 +252,12 @@ impl<'a> HunkGate<'a> {
 fn batch_paths(batch: &Value) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
-    for edit in batch.get("edits").and_then(Value::as_array).into_iter().flatten() {
+    for edit in batch
+        .get("edits")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         let Some(path) = edit.get("path").and_then(Value::as_str) else {
             continue;
         };
@@ -302,12 +307,18 @@ impl ToolExecutor for HunkGate<'_> {
         }
         let total = hunks.len();
         let proposal = HunkProposal {
-            id: format!("hunk-review-{}", NEXT_REVIEW_ID.fetch_add(1, Ordering::Relaxed)),
+            id: format!(
+                "hunk-review-{}",
+                NEXT_REVIEW_ID.fetch_add(1, Ordering::Relaxed)
+            ),
             tool: name.to_string(),
             hunks,
         };
 
-        let io = self.io.as_ref().expect("proposed_changes returns None without an io");
+        let io = self
+            .io
+            .as_ref()
+            .expect("proposed_changes returns None without an io");
         let accepted = match io.review(&proposal).await {
             Ok(accepted) => accepted,
             // Fail closed. An unreachable reviewer is the one case where
@@ -354,7 +365,11 @@ impl ToolExecutor for HunkGate<'_> {
              file(s) do NOT look the way you wrote them. Declined:\n{}\nRe-read anything you \
              intend to change again before proposing further edits.",
             declined.len(),
-            declined.iter().map(|h| label(h)).collect::<Vec<_>>().join("\n")
+            declined
+                .iter()
+                .map(|h| label(h))
+                .collect::<Vec<_>>()
+                .join("\n")
         );
 
         let Some(rewritten) = self.rewrite(name, input, &changes, &mask) else {
@@ -451,7 +466,11 @@ mod tests {
     async fn a_two_hunk_batch_with_one_declined_applies_exactly_one_hunk() {
         let (dir, reg, _) = fixture();
         let io = ScriptedIo::accepting(vec![0]);
-        let gate = HunkGate::new(&reg, Some(io.clone() as Arc<dyn HunkReviewIo>), dir.path().to_path_buf());
+        let gate = HunkGate::new(
+            &reg,
+            Some(io.clone() as Arc<dyn HunkReviewIo>),
+            dir.path().to_path_buf(),
+        );
 
         let out = gate
             .execute(
@@ -479,7 +498,11 @@ mod tests {
     #[tokio::test]
     async fn the_declined_hunk_is_named_in_the_tool_result() {
         let (dir, reg, _) = fixture();
-        let gate = HunkGate::new(&reg, Some(ScriptedIo::accepting(vec![0])), dir.path().to_path_buf());
+        let gate = HunkGate::new(
+            &reg,
+            Some(ScriptedIo::accepting(vec![0])),
+            dir.path().to_path_buf(),
+        );
 
         let out = gate
             .execute(
@@ -495,7 +518,10 @@ mod tests {
         };
         assert!(content.contains("declined 1 of 2"), "{content}");
         assert!(content.contains("a.rs"), "{content}");
-        assert!(content.contains("@@"), "the hunk must be positioned: {content}");
+        assert!(
+            content.contains("@@"),
+            "the hunk must be positioned: {content}"
+        );
     }
 
     /// Declining everything is a refusal, and a refusal must not read as a
@@ -503,7 +529,11 @@ mod tests {
     #[tokio::test]
     async fn declining_every_hunk_writes_nothing_and_errors() {
         let (dir, reg, original) = fixture();
-        let gate = HunkGate::new(&reg, Some(ScriptedIo::accepting(vec![])), dir.path().to_path_buf());
+        let gate = HunkGate::new(
+            &reg,
+            Some(ScriptedIo::accepting(vec![])),
+            dir.path().to_path_buf(),
+        );
 
         let out = gate
             .execute(
@@ -548,7 +578,10 @@ mod tests {
             panic!("{out:?}");
         };
         // The tool's own per-edit report, not a rewritten one-edit batch.
-        assert!(content.contains("applied 2 edits across 1 file(s)"), "{content}");
+        assert!(
+            content.contains("applied 2 edits across 1 file(s)"),
+            "{content}"
+        );
         assert!(!content.contains("hunk review"), "{content}");
         let landed = std::fs::read_to_string(dir.path().join("a.rs")).unwrap();
         assert!(landed.contains("TWO\n") && landed.contains("TWENTY-FIVE\n"));
@@ -558,7 +591,11 @@ mod tests {
     #[tokio::test]
     async fn an_unreachable_reviewer_fails_closed() {
         let (dir, reg, original) = fixture();
-        let gate = HunkGate::new(&reg, Some(ScriptedIo::unreachable()), dir.path().to_path_buf());
+        let gate = HunkGate::new(
+            &reg,
+            Some(ScriptedIo::unreachable()),
+            dir.path().to_path_buf(),
+        );
 
         let out = gate
             .execute(
@@ -579,7 +616,11 @@ mod tests {
     async fn a_multi_file_batch_can_decline_one_file_entirely() {
         let (dir, reg, original) = fixture();
         std::fs::write(dir.path().join("b.rs"), "keep me\n").unwrap();
-        let gate = HunkGate::new(&reg, Some(ScriptedIo::accepting(vec![1])), dir.path().to_path_buf());
+        let gate = HunkGate::new(
+            &reg,
+            Some(ScriptedIo::accepting(vec![1])),
+            dir.path().to_path_buf(),
+        );
 
         let out = gate
             .execute(
@@ -608,7 +649,11 @@ mod tests {
     async fn a_dry_run_is_never_gated() {
         let (dir, reg, _) = fixture();
         let io = ScriptedIo::accepting(vec![]);
-        let gate = HunkGate::new(&reg, Some(io.clone() as Arc<dyn HunkReviewIo>), dir.path().to_path_buf());
+        let gate = HunkGate::new(
+            &reg,
+            Some(io.clone() as Arc<dyn HunkReviewIo>),
+            dir.path().to_path_buf(),
+        );
 
         let out = gate
             .execute(
@@ -629,7 +674,11 @@ mod tests {
     async fn a_call_that_would_fail_validation_is_not_gated() {
         let (dir, reg, _) = fixture();
         let io = ScriptedIo::accepting(vec![]);
-        let gate = HunkGate::new(&reg, Some(io.clone() as Arc<dyn HunkReviewIo>), dir.path().to_path_buf());
+        let gate = HunkGate::new(
+            &reg,
+            Some(io.clone() as Arc<dyn HunkReviewIo>),
+            dir.path().to_path_buf(),
+        );
 
         let out = gate
             .execute(
@@ -641,7 +690,10 @@ mod tests {
             panic!("{out:?}");
         };
         assert!(message.contains("old_string not found"), "{message}");
-        assert!(io.proposal().is_none(), "no card for a call that cannot run");
+        assert!(
+            io.proposal().is_none(),
+            "no card for a call that cannot run"
+        );
     }
 
     /// A run with no reviewer must be indistinguishable from one before this
@@ -665,7 +717,10 @@ mod tests {
         let ToolOutput::Ok { content } = out else {
             panic!("{out:?}");
         };
-        assert!(content.contains("applied 2 edits across 1 file(s)"), "{content}");
+        assert!(
+            content.contains("applied 2 edits across 1 file(s)"),
+            "{content}"
+        );
         assert!(!content.contains("hunk review"), "{content}");
         let landed = std::fs::read_to_string(dir.path().join("a.rs")).unwrap();
         assert!(landed.contains("TWO\n") && landed.contains("TWENTY-FIVE\n"));
@@ -676,9 +731,15 @@ mod tests {
     async fn ungated_tools_are_untouched() {
         let (dir, reg, _) = fixture();
         let io = ScriptedIo::accepting(vec![]);
-        let gate = HunkGate::new(&reg, Some(io.clone() as Arc<dyn HunkReviewIo>), dir.path().to_path_buf());
+        let gate = HunkGate::new(
+            &reg,
+            Some(io.clone() as Arc<dyn HunkReviewIo>),
+            dir.path().to_path_buf(),
+        );
 
-        let out = gate.execute("read_file", &serde_json::json!({ "path": "a.rs" })).await;
+        let out = gate
+            .execute("read_file", &serde_json::json!({ "path": "a.rs" }))
+            .await;
         assert!(!out.is_error(), "{out:?}");
         assert!(io.proposal().is_none());
     }
@@ -689,20 +750,25 @@ mod tests {
     #[tokio::test]
     async fn a_single_edit_file_call_is_reviewable_hunk_by_hunk() {
         let (dir, reg, _) = fixture();
-        let gate = HunkGate::new(&reg, Some(ScriptedIo::accepting(vec![0])), dir.path().to_path_buf());
+        let gate = HunkGate::new(
+            &reg,
+            Some(ScriptedIo::accepting(vec![0])),
+            dir.path().to_path_buf(),
+        );
 
         // One edit spanning lines 2..25 — far enough apart that the two real
         // changes inside it decompose into two hunks.
         let old: String = (2..=25).map(|i| format!("line {i}\n")).collect();
         let new = old.replace("line 2\n", "TWO\n").replace("line 25\n", "X\n");
-        let out = gate
-            .execute("edit_file", &edit("a.rs", &old, &new))
-            .await;
+        let out = gate.execute("edit_file", &edit("a.rs", &old, &new)).await;
         assert!(!out.is_error(), "{out:?}");
 
         let landed = std::fs::read_to_string(dir.path().join("a.rs")).unwrap();
         assert!(landed.contains("TWO\n"), "{landed}");
-        assert!(landed.contains("line 25\n") && !landed.contains("\nX\n"), "{landed}");
+        assert!(
+            landed.contains("line 25\n") && !landed.contains("\nX\n"),
+            "{landed}"
+        );
     }
 
     /// A `write_file` over an existing file is reviewable the same way, and its
@@ -710,7 +776,11 @@ mod tests {
     #[tokio::test]
     async fn a_write_file_over_an_existing_file_is_reviewable() {
         let (dir, reg, original) = fixture();
-        let gate = HunkGate::new(&reg, Some(ScriptedIo::accepting(vec![0])), dir.path().to_path_buf());
+        let gate = HunkGate::new(
+            &reg,
+            Some(ScriptedIo::accepting(vec![0])),
+            dir.path().to_path_buf(),
+        );
 
         let replacement = original
             .replace("line 2\n", "TWO\n")
@@ -736,7 +806,11 @@ mod tests {
         let (dir, reg, _) = fixture();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         reg.attach_events(stella_core::EventSender::new(tx));
-        let gate = HunkGate::new(&reg, Some(ScriptedIo::accepting(vec![0])), dir.path().to_path_buf());
+        let gate = HunkGate::new(
+            &reg,
+            Some(ScriptedIo::accepting(vec![0])),
+            dir.path().to_path_buf(),
+        );
 
         let out = gate
             .execute(

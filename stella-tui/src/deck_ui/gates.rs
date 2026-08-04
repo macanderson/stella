@@ -1,7 +1,7 @@
 //! The focused agent's blocking gates: the scope-review card, the per-hunk
 //! approval card (#1265), and the `ask_user` question.
 //!
-//! Both follow one rule — a pending, unanswered gate owns the user's next
+//! All three follow one rule — a pending, unanswered gate owns the user's next
 //! submission. That rule is what makes a card answerable at all: the deck's
 //! driver reads any other mid-turn submission as a *new request* and spawns a
 //! sidecar sub-session for it, so a gate that does not claim the submit chord
@@ -34,10 +34,7 @@ impl HunkMarks {
     /// and start toggling the wrong one.
     pub fn move_cursor(&mut self, delta: isize) {
         let last = self.accepted.len().saturating_sub(1);
-        self.cursor = self
-            .cursor
-            .saturating_add_signed(delta)
-            .min(last);
+        self.cursor = self.cursor.saturating_add_signed(delta).min(last);
     }
 
     /// Flip the hunk under the cursor.
@@ -59,8 +56,9 @@ impl HunkMarks {
     }
 }
 
-/// Scope-review / ask-user gates for the focused agent. Returns `Some` to
-/// short-circuit; `None` to fall through to normal editing.
+/// The focused agent's gates, in the order a turn can raise them: scope review,
+/// per-hunk approval, then `ask_user`. Returns `Some` to short-circuit; `None`
+/// to fall through to normal editing.
 pub(super) fn handle_focused_gates(
     key: KeyEvent,
     model: &WorkspaceModel,
