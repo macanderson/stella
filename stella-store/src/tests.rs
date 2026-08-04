@@ -1096,8 +1096,11 @@ fn skill_usage_records_per_execution_version_rows() {
     // 'ok' | 'error') plus the two indexes the live writer reads through, so an
     // in-flight turn's calls are visible while it runs and a crashed one's are
     // recoverable from the log. v19 recounts every stored block cost under one
-    // shared token rule, NULL when that block's preimage is gone (#925).
-    assert_eq!(SCHEMA_VERSION, 19);
+    // shared token rule, NULL when that block's preimage is gone (#925). v20
+    // adds `foundry_tools` (#830): per self-authored tool, the witness that
+    // proved it, the digests of the bytes it ran against, and the human
+    // `enabled` flag adoption never sets. Additive.
+    assert_eq!(SCHEMA_VERSION, 20);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")

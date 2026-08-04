@@ -207,6 +207,7 @@ mod tests {
             input_schema: serde_json::json!({}),
             env: Default::default(),
             source: std::path::PathBuf::from("/tmp/x.toml"),
+            foundry: None,
         }
     }
 

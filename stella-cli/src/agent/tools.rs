@@ -413,10 +413,13 @@ pub(crate) fn workspace_ports(
     // discovered from the same root, so a candidate sees exactly the custom
     // tools the session does (re-rooted at its snapshot at create time).
     let home = crate::paths::home();
-    let custom_tools = stella_tools::custom::discover_in_scopes(
+    let custom_tools = crate::tool_foundry::adopt::gate_discovery(
+        stella_tools::custom::discover_in_scopes(
+            &root,
+            home.as_deref(),
+            cfg.authority.project_custom_tools_allowed,
+        ),
         &root,
-        home.as_deref(),
-        cfg.authority.project_custom_tools_allowed,
     )
     .tools;
     let mut candidate_workspaces = crate::candidate_ws::GitCandidateWorkspaces::new(

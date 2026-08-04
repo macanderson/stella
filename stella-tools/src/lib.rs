@@ -24,6 +24,8 @@ pub mod exec;
 pub mod exploration;
 pub mod file_touch;
 pub mod foundry_author;
+pub mod foundry_gate;
+pub mod foundry_witness;
 pub mod gather;
 pub mod github_rest;
 pub mod glob;

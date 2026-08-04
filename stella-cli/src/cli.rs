@@ -397,11 +397,40 @@ pub(crate) enum Command {
 
         /// Author a tool-foundry proposal into a staged custom tool:
         /// writes `<name>.toml` + `<name>.sh` under .stella/tools/proposed/
-        /// (inert until a human moves the manifest into .stella/tools/).
-        /// Omit the value to list the current proposals mined from recent
-        /// bash receipts.
+        /// (inert until it is adopted AND enabled). Omit the value to list
+        /// the current proposals mined from recent bash receipts.
         #[arg(long, value_name = "NAME", conflicts_with = "validate")]
         author: Option<Option<String>>,
+
+        /// Adopt a staged tool: move it into .stella/tools/ and run its
+        /// capability witness — the call must FAIL on the existing tool
+        /// surface and PASS with the new tool, producing a real value.
+        /// Records the proof. Does NOT make the tool usable.
+        #[arg(long, value_name = "NAME", conflicts_with_all = ["validate", "author"])]
+        adopt: Option<String>,
+
+        /// Enable an adopted tool — the one approval in the protocol a
+        /// machine never grants itself. Refused if the tool's bytes changed
+        /// since its witness ran.
+        #[arg(long, value_name = "NAME", conflicts_with_all = ["validate", "author", "adopt"])]
+        enable: Option<String>,
+
+        /// Stop offering an adopted tool, keeping its proof on file
+        #[arg(
+            long,
+            value_name = "NAME",
+            conflicts_with_all = ["validate", "author", "adopt", "enable"]
+        )]
+        disable: Option<String>,
+
+        /// Report every self-authored tool: its witness, whether it is
+        /// enabled, and how often it has actually been reused since adoption
+        /// (with the never-used ones named as the cost)
+        #[arg(
+            long,
+            conflicts_with_all = ["validate", "author", "adopt", "enable", "disable"]
+        )]
+        foundry: bool,
     },
 
     /// Fan tasks out to a fleet of worker agents in one tree

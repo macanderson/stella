@@ -1644,6 +1644,9 @@ pub(crate) async fn discover_custom_tools(
     })
     .await
     .unwrap_or_else(|_| custom_tool_report_for_scopes(&cfg.workspace_root, include_workspace));
+    // The tool-foundry gate (#830) — applied at this chokepoint because it
+    // needs the adoption ledger and discovery has no store handle.
+    let report = crate::tool_foundry::adopt::gate_discovery(report, &cfg.workspace_root);
     if print_diagnostics {
         for diagnostic in &report.diagnostics {
             eprintln!(
@@ -1768,11 +1771,13 @@ pub fn run_tools_listing() -> Result<(), String> {
     }
 
     let home = crate::paths::home();
-    let report = custom::discover_in_scopes(
+    // Gated: an ungated listing would advertise a withheld tool as available.
+    let found = custom::discover_in_scopes(
         &workspace_root,
         home.as_deref(),
         settings.authority_policy.project_custom_tools_allowed,
     );
+    let report = crate::tool_foundry::adopt::gate_discovery(found, &workspace_root);
     println!(
         "\n  {}",
         "custom (.stella/tools/, ~/.stella/tools/):".dimmed()

@@ -8,7 +8,8 @@ List every tool available to the agent for the current session — built-in tool
 ## Synopsis
 
 ```bash
-stella tools [--validate [DIR]] [--author [NAME]] [global flags]
+stella tools [--validate [DIR]] [--author [NAME]] [--adopt NAME]
+             [--enable NAME] [--disable NAME] [--foundry] [global flags]
 ```
 
 ## What it does
@@ -35,9 +36,24 @@ Custom tools come from a `<name>.toml` manifest dropped in `<workspace>/.stella/
   </OptionCard>
   <OptionCard name="--author [NAME]">
     Author a tool-foundry proposal into a staged custom tool: writes `NAME.toml` +
-    `NAME.sh` under `.stella/tools/proposed/`, where discovery cannot see them — nothing
-    registers or executes until you move the manifest into `.stella/tools/`. Omit `NAME`
-    to list the proposals currently mined from recent `bash` receipts.
+    `NAME.sh` under `.stella/tools/proposed/`, where discovery cannot see them. Omit
+    `NAME` to list the proposals currently mined from recent `bash` receipts.
+  </OptionCard>
+  <OptionCard name="--adopt NAME">
+    Move a staged tool into `.stella/tools/` and run its **capability witness**: the same
+    call must fail on the existing tool surface and succeed with the new tool, producing a
+    real value. Records the proof. The tool stays **disabled**.
+  </OptionCard>
+  <OptionCard name="--enable NAME">
+    Approve an adopted tool, so the model is offered it. Refused if the manifest or script
+    changed since the witness ran.
+  </OptionCard>
+  <OptionCard name="--disable NAME">
+    Stop offering an adopted tool, keeping its proof on file.
+  </OptionCard>
+  <OptionCard name="--foundry">
+    Report every self-authored tool: its witness, whether it is enabled, and how often it
+    has been reused since adoption — including the ones never used.
   </OptionCard>
 </CardGrid>
 
@@ -63,17 +79,41 @@ Validate one directory of manifests before installing them:
 stella tools --validate ./contrib/stella-tools
 ```
 
-Stage a tool-foundry proposal for review, pre-flight it, then enable it:
+Take a tool-foundry proposal all the way from receipts to a usable tool:
 
 ```bash
 stella tools --author            # list current proposals
 stella tools --author jq         # stage jq.toml + jq.sh in .stella/tools/proposed/
 stella tools --validate .stella/tools/proposed
-mv .stella/tools/proposed/jq.toml .stella/tools/   # the explicit human enablement
+stella tools --adopt jq          # run its witness; records the proof, stays disabled
+stella tools --enable jq         # the one human approval
+stella tools --foundry           # what was adopted, and what it has been worth
 ```
+
+## Self-authored tools
 
 When the agent keeps reconstructing the same shell shape by hand, the tool foundry
 proposes a reusable tool in `/inbox`. `--author` turns one proposal into a reviewable
-manifest + script pair — staged, never installed. The generated script expands every
-parameter as a quoted `"$STELLA_INPUT_*"` reference, so parameter values stay data
-rather than shell syntax.
+manifest + script pair. The generated script expands every parameter as a quoted
+`"$STELLA_INPUT_*"` reference, so parameter values stay data rather than shell syntax.
+
+An authored tool carries a `[foundry]` table, and a manifest carrying one registers only
+while **all three** of these hold:
+
+1. it was **adopted** — its capability witness flipped;
+2. a human **enabled** it;
+3. the manifest and script still hold the exact bytes the witness ran against.
+
+So moving a staged manifest into `.stella/tools/` by hand grants nothing, and editing an
+approved tool's script revokes its approval rather than inheriting it. Every withheld tool
+is reported by name and reason in `stella tools`, so a missing tool is never silent.
+
+<Callout type="info">
+The witness is a fail→pass flip, not a smoke test. The call must fail on the tool surface
+you have today, succeed with the new tool, and assert on a value the tool really produced.
+A tool that answers in both worlds is a synonym for something you already had; one that
+prints nothing, or only echoes its own argument, proves nothing and is refused.
+</Callout>
+
+Hand-written manifests are untouched by any of this — dropping your own `<name>.toml` in
+`.stella/tools/` works exactly as it always has.

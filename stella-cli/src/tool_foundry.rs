@@ -19,6 +19,8 @@ use stella_core::{GapDetectionConfig, ProposedTool, ShellInvocation, detect_tool
 use stella_store::{Notification, NotificationStore, Store, ToolCallRow};
 use stella_tools::foundry_author::{self, PROPOSED_DIR};
 
+pub(crate) mod adopt;
+
 /// How many recent `bash` receipts to mine per pass. A few hundred is plenty:
 /// the detector only needs enough history to see a shape recur, and the read
 /// is index-backed and cheap.
@@ -282,17 +284,23 @@ fn run_tools_author_in(
     println!(
         "\n  {}",
         format!(
-            "staged only — discovery cannot see {PROPOSED_DIR}/, so nothing is \
-             registered or executable until a human enables it:"
+            "staged only — discovery cannot see {PROPOSED_DIR}/, and moving the manifest \
+             by hand grants nothing: a self-authored tool registers only once it has been \
+             proven AND approved."
         )
         .dimmed()
     );
     println!(
-        "  {}\n  {}",
+        "  {}\n  {}\n  {}",
         format!("pre-flight:  stella tools --validate {PROPOSED_DIR}").dimmed(),
         format!(
-            "enable:      mv {PROPOSED_DIR}/{} .stella/tools/",
-            authored.manifest_filename
+            "prove:       stella tools --adopt {}   (runs its capability witness)",
+            authored.name
+        )
+        .dimmed(),
+        format!(
+            "approve:     stella tools --enable {}  (the one human decision)",
+            authored.name
         )
         .dimmed()
     );
