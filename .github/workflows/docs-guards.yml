@@ -1,8 +1,8 @@
 name: docs-guards
 
-# Two guards over prose. Neither needs a Rust toolchain, which is why they live
-# here rather than in ci.yml -- that workflow deliberately ignores `docs/**` and
-# `*.md`, and this one triggers on exactly those paths.
+# Three guards over prose. None needs a Rust toolchain, which is why they live
+# here rather than in ci.yml -- that workflow deliberately ignores `docs/**`,
+# `website/**` and `*.md`, and this one triggers on exactly those paths.
 #
 #  1. doc-links (scripts/check-doc-links.py): every citation resolves to a
 #     document that has declared an identity. Documents are addressed by a
@@ -19,8 +19,14 @@ name: docs-guards
 #     CONTRIBUTING.md and README.md each carried a drifted second copy before
 #     this existed.
 #
-# Rust sources are in the path filter because both read them: a citation added
-# to a .rs comment is exactly how one goes stale.
+#  3. command-docs (scripts/check-command-docs.sh): every `stella` subcommand
+#     has a reference page the sidebar lists, and every page names a command
+#     that still exists (#993). #928 found seven undocumented surfaces at once
+#     precisely because nothing related the two.
+#
+# Rust sources are in the path filter because all three read them: a citation
+# added to a .rs comment is exactly how one goes stale, and the subcommand list
+# the third guard checks is itself a Rust enum.
 on:
   pull_request:
     paths:
@@ -29,6 +35,8 @@ on:
       - "**/*.rs"
       - "scripts/check-doc-links.py"
       - "scripts/check-invariants.sh"
+      - "website/content/docs/commands/**"
+      - "scripts/check-command-docs.sh"
       - ".github/workflows/docs-guards.yml"
   push:
     branches: [main]
@@ -38,6 +46,8 @@ on:
       - "**/*.rs"
       - "scripts/check-doc-links.py"
       - "scripts/check-invariants.sh"
+      - "website/content/docs/commands/**"
+      - "scripts/check-command-docs.sh"
       - ".github/workflows/docs-guards.yml"
   workflow_dispatch:
 
@@ -66,3 +76,12 @@ jobs:
       - name: the architectural invariants have one home and stable numbering
         if: ${{ !cancelled() }}
         run: bash scripts/check-invariants.sh
+
+      # Also runs in ci.yml, which is where the important half is caught: a new
+      # `Command` variant is a .rs change, so the required check sees it. This
+      # copy covers the other direction, which ci.yml structurally cannot —
+      # `paths-ignore: website/**` means a PR that only deletes a reference
+      # page or drops it from meta.json never starts that workflow.
+      - name: every subcommand has a reference page
+        if: ${{ !cancelled() }}
+        run: bash scripts/check-command-docs.sh

@@ -140,6 +140,16 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-file-size.sh
 
+      # Also toolchain-free. #928 found seven CLI surfaces documented nowhere,
+      # and the reason seven accumulated is that no gate related the `Command`
+      # enum to the reference pages — a new subcommand could ship undocumented
+      # and every check stayed green (#993). `doc-links` is a different
+      # property: it checks that citations resolve, so a command nobody cited
+      # was invisible to it.
+      - name: every subcommand has a reference page
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-command-docs.sh
+
       # Also toolchain-free (shellcheck ships preinstalled on ubuntu-latest).
       # install.sh is fetched over the network and piped into `sh` by
       # strangers before Stella is installed; the guard scripts are what the
