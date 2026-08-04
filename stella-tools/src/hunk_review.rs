@@ -879,6 +879,65 @@ mod tests {
         );
     }
 
+    /// The issue's third acceptance criterion, verbatim: a **partial** apply
+    /// that fails mid-way rolls back completely. The rewritten batch is still
+    /// one `apply_edits` call, so this is that tool's existing guarantee — and
+    /// this test is what proves the gate did not weaken it by routing around
+    /// the transaction.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_partial_apply_that_fails_mid_way_rolls_back_completely() {
+        use std::os::unix::fs::PermissionsExt;
+        // Root bypasses DAC, so the induced write failure never happens —
+        // skip rather than assert the wrong thing in a root container.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let (dir, reg, original) = fixture();
+        let second: String = (1..=30).map(|i| format!("row {i}\n")).collect();
+        let locked = dir.path().join("b.rs");
+        std::fs::write(&locked, &second).unwrap();
+
+        // Four hunks across two files; one declined in each, so BOTH files get
+        // a synthesized edit and the batch is a genuine two-file partial.
+        let gate = HunkGate::new(
+            &reg,
+            Some(ScriptedIo::accepting(vec![0, 2])),
+            dir.path().to_path_buf(),
+        );
+        // The SECOND file is unwritable, so a.rs lands first and the batch then
+        // aborts with one write already on disk.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o444)).unwrap();
+        let out = gate
+            .execute(
+                "apply_edits",
+                &serde_json::json!({ "edits": [
+                    edit("a.rs", "line 2\n", "TWO\n"),
+                    edit("a.rs", "line 25\n", "TWENTY-FIVE\n"),
+                    edit("b.rs", "row 2\n", "ROW-TWO\n"),
+                    edit("b.rs", "row 25\n", "ROW-TWENTY-FIVE\n"),
+                ]}),
+            )
+            .await;
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let ToolOutput::Error { message } = out else {
+            panic!("expected the batch to abort: {out:?}");
+        };
+        assert!(message.contains("batch aborted"), "{message}");
+        // The accepted-and-written file is back to its pre-batch bytes: a
+        // partial apply is still all-or-nothing across the surviving set.
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("a.rs")).unwrap(),
+            original,
+            "the already-written file must roll back"
+        );
+        assert_eq!(std::fs::read_to_string(&locked).unwrap(), second);
+        // …and the reviewer's refusal still reaches the model, so it does not
+        // retry the declined hunks believing nobody saw them.
+        assert!(message.contains("declined 2 of 4"), "{message}");
+    }
+
     /// The compare-and-swap property. If the file moves between the review and
     /// the apply, the rewritten batch must fail with the existing drift
     /// attribution rather than overwrite the newer bytes.
