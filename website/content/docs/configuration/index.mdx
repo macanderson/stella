@@ -17,6 +17,11 @@ key; teams and power users reach for `settings.json`.
     Project-scope settings — highest precedence, and a
     [trust boundary](/docs/configuration/settings#the-project-trust-boundary).
   </OptionCard>
+  <OptionCard name="<repo>/stella.toml">
+    The same configuration as [settings.json](/docs/configuration/settings), in a
+    comment-preserving TOML format — see [stella.toml](/docs/configuration/stella-toml).
+    Lives at the repository root, not under `.stella/`.
+  </OptionCard>
   <OptionCard name="org-managed settings.json">
     Organization defaults ([see below](#the-settings-hierarchy)). The only scope that may
     carry `authority` or `enterprise_telemetry`.
@@ -60,7 +65,9 @@ the same layering the rest of Stella's settings use.
 <SettingsCascadeDiagram />
 
 See **[settings.json](/docs/configuration/settings)** for the full schema — all ten
-top-level sections — the org-managed path, and worked examples.
+top-level sections — the org-managed path, and worked examples. The same configuration is
+also available as **[stella.toml](/docs/configuration/stella-toml)**, a comment-preserving
+format with a `stella migrate config` command to convert an existing `settings.json`.
 
 ## Configuration vs. credentials
 
