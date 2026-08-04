@@ -553,6 +553,25 @@ fn collapse_whitespace(text: &str) -> String {
         .to_ascii_lowercase()
 }
 
+/// Admit a field only if the grain actually reached still covers it.
+///
+/// Every field of a [`FailureBrief`] passes through here, gated on the *final*
+/// grain rather than on the branch that built it — so a brief can never report
+/// a grain lower than the content it carries.
+///
+/// Factored out of [`redact`] so the guard is reachable from a test. Two of
+/// the three call sites fire in normal operation; the `reproduction` one
+/// cannot be driven through `redact` at all today, because a reproduction
+/// candidate is the bare command wrapped in backticks — a strict superset, so
+/// it scrubs strictly harder, and a surviving reproduction therefore implies a
+/// surviving command. That makes the guard dormant rather than dead only if
+/// something exercises it: a check that cannot fire is indistinguishable from
+/// a check that has quietly broken, and there would be no history of it
+/// passing to compare against on the day the condition first occurs. See #1303.
+fn admit<T>(reached: DisclosureGrain, needs: DisclosureGrain, value: Option<T>) -> Option<T> {
+    (reached >= needs).then_some(value).flatten()
+}
+
 /// Build the brief the worker sees, at no more than `requested` grain.
 ///
 /// The scrubber runs on every field that could carry sealed material. A field
@@ -604,24 +623,16 @@ pub fn redact(sealed: &SealedFailure<'_>, requested: DisclosureGrain) -> Failure
 
     FailureBrief {
         grain,
-        // A grain that fell on a failed command scrub withholds the command;
-        // one that merely lost its reproduction keeps it.
-        command: (grain >= DisclosureGrain::Command)
-            .then_some(command)
-            .flatten(),
-        symptom: (grain >= DisclosureGrain::Symptom)
-            .then_some(symptom)
-            .flatten(),
-        // Gated by the *final* grain like its siblings, not just the branch
-        // that built it. `reproduction` can only be `Some` when the command
-        // scrubbed clean (the reproduction candidate is a superset of the bare
-        // command, so it scrubs strictly harder), which means `grain` never
-        // fell below `Reproduction` here — the guard is a no-op today. It exists
-        // so a future change to the reproduction candidate can never leave a
-        // brief reporting a low grain while still carrying a reproduction.
-        reproduction: (grain >= DisclosureGrain::Reproduction)
-            .then_some(reproduction)
-            .flatten(),
+        // Each field is gated on the *final* grain, not on the branch that
+        // built it: a grain that fell on a failed command scrub withholds the
+        // command, while one that merely lost its reproduction keeps it.
+        //
+        // The `reproduction` gate is a no-op today — see [`admit`] for why it
+        // cannot fire through this function, and why it is kept and tested
+        // anyway rather than deleted.
+        command: admit(grain, DisclosureGrain::Command, command),
+        symptom: admit(grain, DisclosureGrain::Symptom, symptom),
+        reproduction: admit(grain, DisclosureGrain::Reproduction, reproduction),
     }
 }
 
