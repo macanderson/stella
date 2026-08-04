@@ -65,6 +65,16 @@ stella fleet \
          AND a.success = 0;"
    ```
 
+   Under the shared tree the `commits` table records the commits each worker
+   was **observed** making: a commit runs while its worker holds a
+   workspace-wide commit lane, so no sibling can move `HEAD` inside that
+   window and the advance across it belongs to exactly one task. The trade is
+   deliberate — a commit made some other way in a shared tree (through the
+   shell, which is off by default) is left out of the table rather than
+   stamped onto whichever task happened to be open. An isolated task has one
+   writer in its own worktree, so its whole range of commits is recorded,
+   however they were made.
+
 6. **Review.** Shared-tree work lands directly on your current branch as
    interleaved commits. Isolated tasks' worktrees and `fleet/*` branches are
    deliberately **left in place** — those branches *are* the work product.
