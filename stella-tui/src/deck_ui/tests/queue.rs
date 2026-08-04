@@ -464,6 +464,132 @@ fn slash_diff_switches_to_files_and_opens_the_diff() {
     assert!(ui.files_diff_open, "/diff opens the viewer");
 }
 
+/// A model whose lead is mid-turn — the state whose queue/steering machinery
+/// view commands must never enter.
+fn model_with_running_lead() -> WorkspaceModel {
+    let mut m = model_with(&["lead"]);
+    m.apply_inbound(&Inbound::Status {
+        agent: "lead".into(),
+        status: AgentStatus::Running,
+    });
+    m
+}
+
+#[test]
+fn a_view_command_typed_past_the_popup_still_acts_immediately() {
+    // A trailing space closes the slash popup (the menu is a single-`/`-word
+    // view), so this submission takes the plain-Enter road — which used to
+    // enqueue the command for the driver, where it no-opped. The view switch
+    // must not depend on which road the ⏎ took.
+    let model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ui.slash_commands = vec![SlashCommand::new("/files", "files")];
+    ui.files_diff_open = true;
+    for c in "/files ".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
+    assert!(slash_matches(&ui).is_empty(), "the popup is closed");
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(action, DeckAction::Handled, "/files is consumed locally");
+    assert_eq!(ui.tab, DeckTab::Files);
+    assert!(!ui.files_diff_open, "/files shows the tree, not a diff");
+    assert!(ui.composer.is_empty(), "the submission spent the buffer");
+}
+
+#[test]
+fn a_view_command_bypasses_a_running_turn_and_the_routing_card() {
+    // Submitted mid-turn (popup inactive: unknown-to-the-menu vocabulary), a
+    // view command must neither raise the dispatch card nor enqueue — it
+    // changes what the user is looking at, so it takes effect NOW.
+    let model = model_with_running_lead();
+    let mut ui = ready_ui();
+    ui.slash_commands = vec![]; // no menu — the bare typed text is submitted
+    for c in "/mcp".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(action, DeckAction::Handled, "/mcp is consumed locally");
+    assert_eq!(ui.tab, DeckTab::Mcp);
+    assert!(
+        ui.pending_dispatch.is_none(),
+        "a view switch is never asked steer/next/parallel"
+    );
+}
+
+#[test]
+fn a_view_command_during_a_hold_neither_spends_nor_releases_it() {
+    // The double-Esc hold reserves the NEXT PROMPT's front-of-queue slot.
+    // Peeking at another tab while holding must not count as that prompt.
+    let model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ui.dispatch_held = true;
+    ui.slash_commands = vec![];
+    for c in "/graph".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(action, DeckAction::Handled);
+    assert_eq!(ui.tab, DeckTab::Graph);
+    assert!(ui.dispatch_held, "the hold survives a view switch");
+}
+
+#[test]
+fn slash_help_opens_the_overlay_immediately_even_mid_turn() {
+    // `/help` used to round-trip through the driver's queue, so mid-turn it
+    // opened only when the turn finished. It is pure view state — the same
+    // overlay `?` opens — and must behave like one.
+    let model = model_with_running_lead();
+    let mut ui = ready_ui();
+    ui.slash_commands = vec![SlashCommand::new("/help", "help")];
+    for c in "/help".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(action, DeckAction::Handled, "/help is consumed locally");
+    assert!(ui.help_open, "the overlay is up before the turn ends");
+}
+
+#[test]
+fn a_view_command_with_arguments_stays_a_prompt() {
+    // Every view command is no-argument (the driver's dispatcher applies the
+    // same whole-input rule), so `/diff main` is prompt-shaped — it enqueues
+    // rather than switching views and silently discarding "main".
+    let model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ui.slash_commands = vec![];
+    for c in "/diff main".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(
+        action,
+        DeckAction::Send(WorkspaceInput::Enqueue {
+            text: "/diff main".into()
+        })
+    );
+    assert_eq!(ui.tab, DeckTab::Session, "no view switch happened");
+}
+
+#[test]
+fn a_driver_command_still_enqueues_like_a_prompt() {
+    // `/clear` (and every non-view slash: driver commands, custom ⚡
+    // commands, unknowns) can be steering or new work — the deck can't know,
+    // so it keeps the normal prompt road to the driver.
+    let model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ui.slash_commands = vec![SlashCommand::new("/clear", "clear")];
+    for c in "/clear".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(
+        action,
+        DeckAction::Send(WorkspaceInput::Enqueue {
+            text: "/clear".into()
+        })
+    );
+}
+
 #[test]
 fn a_refreshed_graph_snapshot_updates_the_view_out_of_band() {
     use crate::graph::{GraphNode, GraphSnapshot};
