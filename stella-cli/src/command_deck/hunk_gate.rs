@@ -106,29 +106,73 @@ mod tests {
 
     /// The round trip: the card goes out, the answer comes back verbatim, and
     /// the echoed `ToolResult` carries the proposal's id so the fold clears it.
+    ///
+    /// The answer is sent only AFTER the card is observed, and that ordering is
+    /// the contract rather than test choreography: `review` drains the decision
+    /// channel before parking, so anything queued in advance is discarded as a
+    /// stale answer belonging to a card that no longer exists. Pre-loading it
+    /// deadlocks — which is the drain doing its job.
     #[tokio::test]
     async fn the_card_goes_out_and_the_echo_clears_it() {
         let (in_tx, mut in_rx) = mpsc::unbounded_channel();
         let (dtx, drx) = mpsc::unbounded_channel();
-        dtx.send(vec![0]).unwrap();
         let io = DeckHunkReviewIo {
             agent: "lead".into(),
             inbound: in_tx,
             decisions: Arc::new(tokio::sync::Mutex::new(drx)),
         };
-        assert_eq!(io.review(&proposal()).await.unwrap(), vec![0]);
 
-        let mut events = Vec::new();
-        while let Ok(Inbound::Event { event, .. }) = in_rx.try_recv() {
-            events.push(event);
-        }
+        let answer_the_card = async {
+            // Resolves once `review` has emitted the card, which it does before
+            // it awaits — so this send always lands after the drain.
+            let raised = in_rx.recv().await;
+            dtx.send(vec![0]).unwrap();
+            raised
+        };
+        let proposal = proposal();
+        let (answer, raised) = tokio::join!(io.review(&proposal), answer_the_card);
+        assert_eq!(answer.unwrap(), vec![0]);
         assert!(matches!(
-            events.first(),
-            Some(AgentEvent::HunkReview { .. })
+            raised,
+            Some(Inbound::Event {
+                event: AgentEvent::HunkReview { .. },
+                ..
+            })
         ));
+
+        // …and the echo that clears the card follows it, keyed by the id.
         assert!(matches!(
-            events.last(),
-            Some(AgentEvent::ToolResult { call_id, .. }) if call_id == "hunk-review-1"
+            in_rx.try_recv(),
+            Ok(Inbound::Event {
+                event: AgentEvent::ToolResult { call_id, .. },
+                ..
+            }) if call_id == "hunk-review-1"
+        ));
+    }
+
+    /// The drain itself, as a property rather than a footnote: an answer that
+    /// arrived before the card belongs to a card that no longer exists, and
+    /// acting on it would write files the reviewer never saw proposed.
+    #[tokio::test]
+    async fn an_answer_queued_before_the_card_is_discarded_as_stale() {
+        let (in_tx, mut in_rx) = mpsc::unbounded_channel();
+        let (dtx, drx) = mpsc::unbounded_channel();
+        dtx.send(vec![0, 1]).unwrap(); // stranded by a cancelled turn
+        drop(dtx);
+        let io = DeckHunkReviewIo {
+            agent: "lead".into(),
+            inbound: in_tx,
+            decisions: Arc::new(tokio::sync::Mutex::new(drx)),
+        };
+        // The stale answer is dropped, and with no live sender left the review
+        // fails closed rather than applying it.
+        assert!(io.review(&proposal()).await.is_err());
+        assert!(matches!(
+            in_rx.try_recv(),
+            Ok(Inbound::Event {
+                event: AgentEvent::HunkReview { .. },
+                ..
+            })
         ));
     }
 }
