@@ -757,6 +757,22 @@ pub trait CandidateWorkspace: Send + Sync {
     /// tree's semantics (the tamper watchlist and zero-diff guard must keep
     /// working unchanged inside a candidate).
     fn repo_status(&self) -> &dyn RepoStatusPort;
+    /// Workspace-relative paths that exist in the real tree but NOT in this
+    /// snapshot, as a display list for the candidate's own context.
+    ///
+    /// A git-shaped snapshot carries tracked content and untracked-but-not-
+    /// ignored files; everything in `.gitignore` is absent by construction.
+    /// That is defensible — ignored bytes are derived state, and copying them
+    /// per candidate can cost more than the fan-out — but it is invisible from
+    /// inside the snapshot, where a missing `node_modules/` surfaces only as a
+    /// test command failing for no stated reason.
+    ///
+    /// Empty by default: a substrate that copies whole trees omits nothing and
+    /// has nothing to declare. Only a snapshot that *elides* part of the tree
+    /// owes the candidate this list.
+    fn omitted_paths(&self) -> &[String] {
+        &[]
+    }
     /// Commit the current candidate bytes into its private immutable history
     /// immediately before a final verification observation.
     async fn seal(&self) -> Result<(), WorkspaceError>;
