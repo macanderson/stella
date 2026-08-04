@@ -171,10 +171,13 @@ jobs:
       # Draft CHANGELOG entries from the diff this tag is about to release,
       # once, into a file both sync-versions.sh call sites read (the tagged
       # release commit below and the bot/version-sync PR after it), so the tag
-      # and main roll identical text. The script prints nothing when it can't
-      # draft (no key, API failure) and sync-versions.sh skips injection when
-      # a contributor already wrote [Unreleased] entries by hand — either way
-      # the release proceeds exactly as it did before this step existed.
+      # and main roll identical text. This is the sole author of CHANGELOG.md
+      # entries — sync-versions.sh overwrites [Unreleased] with this draft
+      # regardless of what (if anything) a PR put there, so changelog
+      # authorship lives entirely in this CI job and never in a coding agent
+      # or contributor hand-editing the file. The script prints nothing when
+      # it can't draft (no key, API failure), and sync-versions.sh then rolls
+      # [Unreleased] as-is rather than blocking the release on it.
       - name: Draft changelog entries from the release diff
         if: steps.ver.outputs.skip != 'true'
         env:

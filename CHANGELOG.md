@@ -6,23 +6,26 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## How this file works
 
-**Every merge to main cuts a release** (see [`RELEASING.md`](RELEASING.md)).
-Hand-written entries still come first: add a bullet under `## [Unreleased]` in
-the same PR as your change whenever that change is something a user would
-notice — a new flag, a changed default, a fixed bug, a breaking rename — and
-the release rolls your words verbatim.
+**Every merge to main cuts a release** (see [`RELEASING.md`](RELEASING.md)),
+and **CI writes this file, not contributors or coding agents.** Don't add a
+bullet under `## [Unreleased]` in your PR — leave the section alone. The
+release job drafts the entries itself from the **released diff**
+(`scripts/changelog-ai.sh`, the same AI Gateway that writes the GitHub
+Release notes) and rolls those beneath the new version heading, replacing
+whatever was under `[Unreleased]` (normally nothing). A release whose diff
+has nothing user-facing gets a one-line `_Internal: …_` note instead of
+bullets.
 
-When a release arrives with `## [Unreleased]` empty — which is most releases,
-at one release per merge — the release job drafts the entries itself from the
-**released diff** (`scripts/changelog-ai.sh`, the same AI Gateway that writes
-the GitHub Release notes) and rolls those beneath the new version heading. A
-release whose diff has nothing user-facing gets a one-line
-`_Internal: …_` note instead of bullets. Hand-written entries always win: the
-drafted text is only injected when the section is empty, and the draft is
-grounded in the diff, not the commit messages.
+Changelog authorship used to be split between hand-written PR entries and
+this drafter, with hand-written text winning whenever present. That produced
+inconsistent, sometimes-mangled entries, so the drafter is now the only
+author: one voice, always grounded in the diff rather than in whatever a PR
+happened to say about itself. If your change needs context the diff alone
+won't convey, put it in the PR description — `changelog-ai.sh` reads commit
+bodies (squash-merge PR descriptions) too, not just the code.
 
-Internal refactors, test-only changes, and CI work do not need a hand-written
-entry — the drafter files those under the `_Internal_` line on its own.
+Internal refactors, test-only changes, and CI work need no action from
+you — the drafter files those under the `_Internal_` line on its own.
 
 Each GitHub Release additionally carries per-release notes generated at publish
 time from the same diff. Those are release-note prose; this file is the
