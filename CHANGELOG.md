@@ -35,6 +35,8 @@ skip the roll) were re-inserted the same way.
 
 ## [Unreleased]
 
+## [0.6.83] — 2026-08-04
+
 ### Added
 
 - Bedrock is now a first-class provider everywhere the credential chain reaches,
