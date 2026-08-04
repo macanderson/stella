@@ -252,7 +252,9 @@ pub(crate) async fn handle_session_turn(
         .sub_agents
         .and_then(|spec| state.sub_agent_policy().clamp(spec.into()));
     let extensions = state.extensions();
-    let calibration = Some(state.calibration().for_provider(&request.provider_id));
+    // `None` when the registry's bounds refuse this id — see
+    // `crate::calibration` for why a host-supplied key gets a bounded map.
+    let calibration = state.calibration().for_provider(&request.provider_id);
     let registered = state.register_turn(move |turn_id| {
         Session::start(SessionSpec {
             provider_id: request.provider_id,

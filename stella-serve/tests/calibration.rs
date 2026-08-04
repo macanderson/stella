@@ -81,11 +81,13 @@ async fn the_drift_report_is_readable_through_the_api() {
 
     // Before any turn: an empty list, which is an honest "nothing measured"
     // rather than a zero that would read as "measured, and perfect".
+    // `untracked_turns` rides along at zero — nothing has been refused a map,
+    // so the empty list above is the whole picture and says so.
     let (status, body) = get_json_authed(addr, "/v1/calibration", TOKEN).await;
     assert!(status.contains("200"), "calibration: {status} {body}");
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&body).unwrap(),
-        json!({ "models": [] })
+        json!({ "models": [], "untracked_turns": 0 })
     );
 
     run_billed_turn(addr, "mock", 4_000).await;
