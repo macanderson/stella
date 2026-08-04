@@ -203,7 +203,7 @@ passes it through, it does not.**
 
 An issue provider is a TOML manifest under `.stella/issues/<name>.toml`,
 discovered exactly the way custom script tools already are
-(`stella-tools/src/custom.rs`): workspace first, then `~/.stella/issues/`, one
+(`crates/stella-tools/src/custom.rs`): workspace first, then `~/.stella/issues/`, one
 provider per file, a malformed file becomes a typed per-file diagnostic rather
 than a fatal startup error.
 
@@ -757,7 +757,7 @@ P4 is the phase that pays for the document. P0–P3 are the substrate it needs.
 | Residue detection Pass 1 + Pass 2, policy evaluation, discharge rules | `stella-core` (pure, proptestable, no I/O) |
 | The gate stage, Pass 3's judge call | `stella-pipeline`, beside `verify` and `witness` |
 | Provider manifests, transports, the `exec` adapter | `stella-tools`, generalizing `issue_ops.rs` |
-| `[delivery]`, `.stella/issues/*.toml` discovery | `stella-cli/src/settings` |
+| `[delivery]`, `.stella/issues/*.toml` discovery | `crates/stella-cli/src/settings` |
 | Issue claims | `stella-fleet` ledger |
 | Receipts carrying the issue key | `stella-core::receipts` |
 

@@ -18,7 +18,7 @@
 ## Context
 
 ADR 0011 chose TOML and stopped there, on purpose. But `docs/context-record-examples/`
-has since been written against a concrete field schema, `stella-core/src/ingest/record.rs`
+has since been written against a concrete field schema, `crates/stella-core/src/ingest/record.rs`
 implements it as typed serde bodies, and epic #897 built a loader, a renderer, a
 truth sweep, and a guard bridge on top of it. Code now depends on answers the
 schema never formally gave, and the examples' own README carries four open

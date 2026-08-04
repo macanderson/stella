@@ -27,7 +27,7 @@ It arrives in **two blocks**, because `force` decides the channel.
 ### Cached — every turn, byte-identical
 
 `must` and `should` records. This block sits in the system prefix, built once per
-session and reused verbatim (`stella-cli/src/agent.rs:698`). It does not depend on
+session and reused verbatim (`crates/stella-cli/src/agent.rs:698`). It does not depend on
 the prompt, so it never changes and never invalidates the cache.
 
 ```text
@@ -92,7 +92,7 @@ which heading the record renders under.
 
 ### Why grouping by force matters
 
-The current renderer (`stella-core/src/rules.rs:387`) emits every rule under one
+The current renderer (`crates/stella-core/src/rules.rs:387`) emits every rule under one
 header — `## Workspace rules (binding — follow exactly; guarded rules are
 hard-blocked)` — so a `may`-force preference and a `must`-force constraint are
 indistinguishable, and a fact about a staging URL is presented as something to
@@ -103,7 +103,7 @@ of repeating it per line, and stops the renderer overstating what a record is.
 
 This is what forces the two-block split. The system prefix is built once per
 session and reused verbatim under a prompt-cache contract
-(`stella-cli/src/agent.rs:698`). Anything selected per turn cannot live there
+(`crates/stella-cli/src/agent.rs:698`). Anything selected per turn cannot live there
 without rebuilding the cache every turn — which is why `must`/`should` are
 unconditional and only facts are relevance-gated.
 
@@ -120,7 +120,7 @@ or dropped. The decision reaches the prompt; the reasoning does not.
 Not for explainability. The handle is the **attribution key**, and without it the
 feedback loop cannot close.
 
-`ContextUseKind` (`stella-core/src/context_record/context_use.rs:19`) is a
+`ContextUseKind` (`crates/stella-core/src/context_record/context_use.rs:19`) is a
 three-stage funnel:
 
 | Stage | Means | Deterministic? |

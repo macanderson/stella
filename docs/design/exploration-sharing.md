@@ -9,11 +9,11 @@ status: implemented
 **Status:** Largely implemented — this is now a reference for shipped behaviour,
 not a proposal. `save_exploration` / `explorations` ship in `stella-tools`
 (`exploration.rs`), and the code cites this document by section as its normative
-source: the staleness oracle (§3b) in `stella-tools/src/staleness.rs`, save-time
-read-path capture (§3d) in `stella-tools/src/exploration.rs`, the prompt
-metadata block (§4a) in `stella-cli/src/agent/prompt.rs`, the Observatory
-startup index (§4e) in `stella-observatory/src/fsview.rs`, and the registry
-wiring (§6) in `stella-tools/src/registry.rs`. Sections carrying no such
+source: the staleness oracle (§3b) in `crates/stella-tools/src/staleness.rs`, save-time
+read-path capture (§3d) in `crates/stella-tools/src/exploration.rs`, the prompt
+metadata block (§4a) in `crates/stella-cli/src/agent/prompt.rs`, the Observatory
+startup index (§4e) in `crates/stella-observatory/src/fsview.rs`, and the registry
+wiring (§6) in `crates/stella-tools/src/registry.rs`. Sections carrying no such
 citation may still be aspirational — read the code before assuming a section
 describes the shipped behaviour.
 **Goal:** Any Stella session, at turn 1, knows every exploration map any session
@@ -41,11 +41,11 @@ systems failure with five concrete causes, all verifiable in code:
 
 | # | Cause | Evidence |
 |---|---|---|
-| 1 | **Discovery is pull-only.** The `explorations` tool exists but nothing surfaces the store at session start; the model must *think* to call it before exploring. | `stella-tools/src/exploration.rs:128-216`; system prompt assembly injects memories and rules, never the exploration index (`stella-cli/src/agent.rs:141-152`) |
+| 1 | **Discovery is pull-only.** The `explorations` tool exists but nothing surfaces the store at session start; the model must *think* to call it before exploring. | `crates/stella-tools/src/exploration.rs:128-216`; system prompt assembly injects memories and rules, never the exploration index (`crates/stella-cli/src/agent.rs:141-152`) |
 | 2 | **Staleness is repo-global and binary.** A map's only validity signal is `git rev-parse HEAD` equality — one commit anywhere degrades *every* map, and a mismatch says nothing about *which* covered files actually moved. | `exploration.rs:162-171` |
-| 3 | **No in-flight visibility.** The session registry knows pids, titles, statuses — not what a session is exploring. Two live sessions can map the same slice concurrently and neither knows. | `stella-store/src/sessions.rs:79-93` |
-| 4 | **The context plane cannot see explorations.** Maps are not embedded, not nodes in `context.db`, never recalled, and not linked to the code graph. The per-turn recall block carries only memories/episodes (5 frames / 1,200 tokens). | `stella-cli/src/memory.rs:661-670`; provider seam "designed here but not yet built" (`stella-context/src/provider.rs:6-10`) |
-| 5 | **Two artifact systems, two staleness models.** `gather_context` packs already carry a per-file `path → sha256` manifest re-hashed on read; explorations carry only `git_head`. Same problem, disjoint oracles. | `stella-tools/src/gather.rs:79-92, 230-240` vs `exploration.rs:51-54` |
+| 3 | **No in-flight visibility.** The session registry knows pids, titles, statuses — not what a session is exploring. Two live sessions can map the same slice concurrently and neither knows. | `crates/stella-store/src/sessions.rs:79-93` |
+| 4 | **The context plane cannot see explorations.** Maps are not embedded, not nodes in `context.db`, never recalled, and not linked to the code graph. The per-turn recall block carries only memories/episodes (5 frames / 1,200 tokens). | `crates/stella-cli/src/memory.rs:661-670`; provider seam "designed here but not yet built" (`crates/stella-context/src/provider.rs:6-10`) |
+| 5 | **Two artifact systems, two staleness models.** `gather_context` packs already carry a per-file `path → sha256` manifest re-hashed on read; explorations carry only `git_head`. Same problem, disjoint oracles. | `crates/stella-tools/src/gather.rs:79-92, 230-240` vs `exploration.rs:51-54` |
 
 This is the same *passive-vs-active* failure the schema-graph spec identified
 for schema drift (`docs/design/schema-graph.md`, "Retrieval is passive — the
@@ -64,9 +64,9 @@ The original framing was "use the existing filelock system backed by git
 hashes to determine staleness." Ground truth from the code — these are **two
 unrelated subsystems**, and this spec deliberately recombines their ideas:
 
-- **`file_locks`** (`stella-store/src/lib.rs:516-520, 1835-1875`) is a
+- **`file_locks`** (`crates/stella-store/src/lib.rs:516-520, 1835-1875`) is a
   path-keyed, holder-string, cooperative claims table used only by
-  `stella-fleet` dispatch (`stella-fleet/src/fleet.rs:356-406`). It contains
+  `stella-fleet` dispatch (`crates/stella-fleet/src/fleet.rs:356-406`). It contains
   **no hashes of any kind**, has no renew and no expiry, and a crashed run
   leaks its rows. What it *does* contribute is a proven pattern: **claim
   identity embeds liveness evidence** (holder = `run_id/task_id`, where
@@ -74,8 +74,8 @@ unrelated subsystems**, and this spec deliberately recombines their ideas:
 - **Per-file content hashing** exists in two places, neither of them a lock:
   pack manifests (`gather.rs:141-143, 230-240` — SHA-256 of file bytes,
   re-hashed on read, exact drift report) and the code graph's incremental
-  index (`stella-graph/src/store.rs:194-200` — `content_sha256` per file,
-  kept live by the 200 ms-debounced watcher, `stella-graph/src/watch.rs`).
+  index (`crates/stella-graph/src/store.rs:194-200` — `content_sha256` per file,
+  kept live by the 200 ms-debounced watcher, `crates/stella-graph/src/watch.rs`).
 - **Git hashes proper** appear only as `git rev-parse HEAD` provenance
   (packs: display-only; explorations: the coarse compare of cause #2).
 
@@ -128,7 +128,7 @@ turn finalize).
 ### 3a. Record schema (additive; v1 records keep deserializing via defaults)
 
 ```rust
-// stella-tools/src/exploration.rs
+// crates/stella-tools/src/exploration.rs
 struct ExplorationRecord {
     // ── existing v1 fields, unchanged ──
     slice: String,
@@ -148,7 +148,7 @@ struct ExplorationRecord {
     /// `complete` = finished map. Default `complete` for v1 compat.
     status: ExplorationStatus,
     /// Session that produced/last updated it (`ses-<ms>-<pid>` from the
-    /// registry, stella-store/src/sessions.rs:97-110) — provenance + liveness.
+    /// registry, crates/stella-store/src/sessions.rs:97-110) — provenance + liveness.
     session_id: Option<String>,
     /// Execution row in .stella/private/store.db that produced it — provenance into
     /// the event log.
@@ -162,7 +162,7 @@ struct ExplorationRecord {
 
 Extract the manifest/staleness code already shipped in `gather.rs`
 (`hex_sha256`, `stale_paths` — `gather.rs:141-143, 230-240`) into a shared
-module (`stella-tools/src/staleness.rs`) used by **both** packs and
+module (`crates/stella-tools/src/staleness.rs`) used by **both** packs and
 explorations. One oracle, two artifact types (resolves cause #5).
 
 ```rust
@@ -190,7 +190,7 @@ Verdict rules, in order:
 Cost note: SHA-256 over a few dozen source files is single-digit milliseconds;
 this runs at session start (once) and on explicit reads, never per turn. A
 later optimization can join the manifest against the graph's live
-`code_graph_files.content_sha256` (`stella-graph/src/store.rs:40-47`) to skip
+`code_graph_files.content_sha256` (`crates/stella-graph/src/store.rs:40-47`) to skip
 I/O for indexed files — but the graph only covers six languages and skips
 `.md`/config files, so direct hashing stays the correctness path. Do not build
 the join until profiling demands it.
@@ -204,7 +204,7 @@ verdict:
   HEAD reads as untrustworthy even when nothing it covers changed. That
   over-invalidation is cause #2 and actively trains agents to ignore the store.
 - `Drifted` → `(drifted: 2/9 files changed — sections touching
-  stella-tui/src/render.rs, stella-cli/src/agent.rs need re-verification;
+  crates/stella-tui/src/render.rs, crates/stella-cli/src/agent.rs need re-verification;
   rest is current)`.
 - `Unknown` → today's soft HEAD warning.
 
@@ -220,7 +220,7 @@ computes it:
 
 - Union of: the `files` array the model passed, plus every path with an `R`
   event in the session's `FileTouchLedger`
-  (`ToolRegistry::file_touch_telemetry`, `stella-tools/src/file_touch.rs`) at
+  (`ToolRegistry::file_touch_telemetry`, `crates/stella-tools/src/file_touch.rs`) at
   save time, filtered to paths that still exist.
 - Hash each; store `path → sha256`. Cap at 200 entries, largest-degree first
   (an exploration that read 500 files is really several slices — the save
@@ -237,7 +237,7 @@ reasons (`website/content/docs/telemetry/files-touched.mdx`), so the manifest is
 ### 4a. Startup index injection (the active half of discovery)
 
 At system-prompt assembly (`assemble_system_prompt`,
-`stella-cli/src/agent.rs:141-152`), after workspace memories, inject a
+`crates/stella-cli/src/agent.rs:141-152`), after workspace memories, inject a
 **workspace-maps index** — *metadata only, never map bodies*:
 
 ```
@@ -271,7 +271,7 @@ never thinks to call `gather_context` with those inputs at all.
 
 ### 4b. Registry: what is each live session exploring?
 
-Extend `SessionRecord` (`stella-store/src/sessions.rs:79-93`) with:
+Extend `SessionRecord` (`crates/stella-store/src/sessions.rs:79-93`) with:
 
 ```rust
 /// Slices this session is currently mapping (draft explorations it holds).
@@ -280,7 +280,7 @@ pub exploring: Vec<String>,
 ```
 
 Written on draft save / finalize (§4c) through the existing per-turn registry
-refresh (`stella-cli/src/command_deck.rs:660-665`). The deck's SESSIONS
+refresh (`crates/stella-cli/src/command_deck.rs:660-665`). The deck's SESSIONS
 overlay (`command_deck.rs:1336-1351`) renders it, so a human running three
 decks sees "session 2 is mapping `cli-agent-loop`" before typing a prompt
 that would re-map it. Liveness stays derived from `kill(pid, 0)` at read time
@@ -315,20 +315,20 @@ JSON file is already the store's semantics (`exploration.rs:16-18`).
 ### 4d. The save-side nudge (production, not just consumption)
 
 Consumption fixes only half the waste — maps must reliably get *written*. At
-turn finalize (`record_execution_end`, `stella-cli/src/agent.rs:496`), when
+turn finalize (`record_execution_end`, `crates/stella-cli/src/agent.rs:496`), when
 the session's file-touch ledger shows ≥ N distinct files read (default 12)
 whose paths are not covered by any fresh exploration manifest, and no
 `save_exploration` happened this session, emit a one-line reflection prompt
 into the existing Reflect stage: "you explored unmapped territory
-(stella-fleet/*, 14 files) — save an exploration so other sessions reuse it."
+(crates/stella-fleet/*, 14 files) — save an exploration so other sessions reuse it."
 This is a nudge, not a gate; it reuses the reflection machinery
-(`stella-cli/src/memory.rs:800-879`) and costs nothing when the session
+(`crates/stella-cli/src/memory.rs:800-879`) and costs nothing when the session
 stayed inside mapped territory.
 
 ### 4e. Observatory view
 
 The Observatory already renders memories, reflections, and the code graph
-from read-only DB opens (`stella-observatory/src/lib.rs:119-151`). Add
+from read-only DB opens (`crates/stella-observatory/src/lib.rs:119-151`). Add
 `/api/explorations`: the record inventory with per-map freshness verdicts,
 drift lists, draft/complete status, producing session, and manifest sizes —
 the human-facing twin of the §4a index. Reads the JSON directory directly
@@ -338,10 +338,10 @@ the human-facing twin of the §4a index. Reads the JSON directory directly
 
 ## 5. Surface C — context-plane ingestion (wiring the seam)
 
-The `ProviderRegistry` seam (`stella-context/src/provider.rs`) was never
+The `ProviderRegistry` seam (`crates/stella-context/src/provider.rs`) was never
 finished because cross-provider fusion is real design work: the registry can
 only concatenate + dedup, while all scoring (RRF, MMR, budget packing) lives
-inside `ContextStore::recall` (`stella-context/src/retrieval.rs:112-305`).
+inside `ContextStore::recall` (`crates/stella-context/src/retrieval.rs:112-305`).
 **We sidestep that entirely: exploration metadata becomes nodes *in* the
 store, so the existing single-provider pipeline scores them.** No
 multi-provider fusion needed; the seam gets its second content type for free.
@@ -351,7 +351,7 @@ directory against the index):
 
 - Upsert a node: `NodeKind::Artifact`, label `exploration:<slice>`, content =
   `title + "\n" + summary` (NOT the full map — see below), via the existing
-  `NodeInput` write path (`stella-context/src/writeback.rs`). The
+  `NodeInput` write path (`crates/stella-context/src/writeback.rs`). The
   `HashEmbedder` embeds it like any other node; when the real ONNX embedder
   lands, explorations upgrade with everything else.
 - Upsert edges: exploration-node → File node for each manifest path
@@ -376,7 +376,7 @@ already exists" exactly like it recalls a map.
 **Closing the loop — was the map actually useful?** Memories already have a
 feedback economy: recalled frames carry an id and a `cite_memory` instruction,
 and citations aggregate into promotion eligibility
-(`stella-cli/src/memory.rs:703-722`; `memory_citations` in `store.db`). Reuse
+(`crates/stella-cli/src/memory.rs:703-722`; `memory_citations` in `store.db`). Reuse
 it verbatim: a recalled exploration pointer frame carries its node id; when
 the agent then reads that map, the `explorations` tool records an implicit
 citation (usefulness = it was read and the session proceeded without
@@ -408,7 +408,7 @@ documented orientation op with no grep equivalent
   freshness)]`) built in `ToolRegistry` at construction and refreshed on
   `save_exploration` — the read-side analogue of the schema gate's
   `SchemaIndex`, which already lives there
-  (`stella-tools/src/registry.rs:47-77`, field `schema_index`). Freshness in
+  (`crates/stella-tools/src/registry.rs:47-77`, field `schema_index`). Freshness in
   the coverage index is the session-start verdict; it degrades to "computed
   Ns ago" rather than re-hashing per query.
 
@@ -437,7 +437,7 @@ Two upgrades earn their keep here; neither blocks Phase 1:
    (`graph-tool-analysis.md` §6: import edges for Rust are stored unresolved,
    so "what depends on this file" returns empty on the dominant language).
    Fixing it (longest-prefix module-path resolution, as the observatory
-   already does for its snapshot, `stella-observatory/src/codegraph.rs:189-214`)
+   already does for its snapshot, `crates/stella-observatory/src/codegraph.rs:189-214`)
    makes *drift triage* mechanical: when a map is `Drifted` on file F, the
    graph can answer "which other manifest files import F" and the re-verify
    list shrinks from "2 changed files" to "2 changed files + 1 dependent."
@@ -447,7 +447,7 @@ Two upgrades earn their keep here; neither blocks Phase 1:
 
 Explicit non-goal: symbols/manifests do **not** get new tables in
 `codegraph.db`, and the reserved `graph_nodes`/`graph_edges` tables in
-`store.db` (`stella-store/src/lib.rs:36-38, 521-530`) stay unused. The
+`store.db` (`crates/stella-store/src/lib.rs:36-38, 521-530`) stay unused. The
 coverage index is derived in memory from the JSON records; adding a third
 persistence home for exploration data would recreate cause #5.
 
@@ -455,7 +455,7 @@ persistence home for exploration data would recreate cause #5.
 
 ## 7. Fleet and worktree sessions
 
-Fleet workers run in per-task git worktrees (`stella-fleet/src/fleet.rs`,
+Fleet workers run in per-task git worktrees (`crates/stella-fleet/src/fleet.rs`,
 `Isolation::Isolated`), whose cwd-derived workspace root would resolve
 `.stella/explorations/` to the worktree — an empty store. The fleet
 orchestrator already owns the primary root and the single `Store`; it must
@@ -465,7 +465,7 @@ by a wave, stamped with the fleet run's holder identity). One plumbing
 parameter through `FleetWorker`, no new coordination.
 
 Sessions in sibling checkouts of the same repo share nothing today (workspace
-identity is the canonicalized cwd path, `stella-store/src/usage.rs:55-64`) and
+identity is the canonicalized cwd path, `crates/stella-store/src/usage.rs:55-64`) and
 this spec does not change that: manifests are content-hashes of *this*
 checkout's bytes, so cross-checkout sharing would need a remote-keyed store —
 out of scope, noted for the future.
@@ -547,23 +547,23 @@ re-implemented.
 
 | Existing asset (where) | Role in this design | Status |
 |---|---|---|
-| `explorations` / `save_exploration` + `.stella/explorations/*.json` (`stella-tools/src/exploration.rs`) | The core artifact. v2 manifest, draft status, provenance (§3); injected, claimed, recalled, hinted (§4–6) | **Extended** |
-| `gather_context` packs + sha256 manifests + `request_key` dedup (`stella-tools/src/gather.rs`) | Manifest/staleness code extracted as the shared oracle (§3b); packs join the startup index (§4a), context.db ingestion (§5), and coverage hints | **Unified** — oracle promoted from one consumer to two |
+| `explorations` / `save_exploration` + `.stella/explorations/*.json` (`crates/stella-tools/src/exploration.rs`) | The core artifact. v2 manifest, draft status, provenance (§3); injected, claimed, recalled, hinted (§4–6) | **Extended** |
+| `gather_context` packs + sha256 manifests + `request_key` dedup (`crates/stella-tools/src/gather.rs`) | Manifest/staleness code extracted as the shared oracle (§3b); packs join the startup index (§4a), context.db ingestion (§5), and coverage hints | **Unified** — oracle promoted from one consumer to two |
 | Code graph: `codegraph.db`, `graph_query`, live watcher, per-file `content_sha256` (`stella-graph`) | Orientation surface carries coverage lines (§6a); watcher hashes are the later verdict optimization (§3b); import-resolution fix powers drift triage (§6c) | **Extended** |
 | Context plane: nodes/edges/embeddings/episodes/recall RRF+MMR (`stella-context`) | Explorations and packs become embedded, domain-tagged nodes with File edges; pointer frames ride `recall_scoped` unchanged (§5) | **Wired** — gains two content types with no pipeline changes |
-| `ProviderRegistry` seam, "designed but not yet built" (`stella-context/src/provider.rs`) | Fulfilled by ingestion rather than a new provider: the store remains the one scored provider and now carries the content the seam was reserved for (§5) | **Wired** — the deferred fusion problem is dissolved, not solved |
-| File-touch ledger (`stella-tools/src/file_touch.rs`, `files_touched` in store.db) | Evidence source: auto-manifest at save (§3d), unmapped-exploration detection for the nudge (§4d), duplication metric (§9) | **Wired** — first consumer beyond telemetry |
-| Session registry + SESSIONS overlay (`stella-store/src/sessions.rs`, deck) | Liveness oracle for drafts; new `exploring` field; overlay shows in-flight maps (§4b–c) | **Extended** |
+| `ProviderRegistry` seam, "designed but not yet built" (`crates/stella-context/src/provider.rs`) | Fulfilled by ingestion rather than a new provider: the store remains the one scored provider and now carries the content the seam was reserved for (§5) | **Wired** — the deferred fusion problem is dissolved, not solved |
+| File-touch ledger (`crates/stella-tools/src/file_touch.rs`, `files_touched` in store.db) | Evidence source: auto-manifest at save (§3d), unmapped-exploration detection for the nudge (§4d), duplication metric (§9) | **Wired** — first consumer beyond telemetry |
+| Session registry + SESSIONS overlay (`crates/stella-store/src/sessions.rs`, deck) | Liveness oracle for drafts; new `exploring` field; overlay shows in-flight maps (§4b–c) | **Extended** |
 | `file_locks` claims + fleet holder pattern (`stella-store`, `stella-fleet`) | Pattern donor: identity-embeds-liveness reused by draft records; table itself untouched, fleet claims untouched (§1, §4c) | **Untouched** — pattern reused, no new rows |
-| Fleet worktree isolation (`stella-fleet/src/fleet.rs`) | Workers get read access to the primary map store; orchestrator saves wave-produced maps (§7) | **Extended** — one plumbed parameter |
+| Fleet worktree isolation (`crates/stella-fleet/src/fleet.rs`) | Workers get read access to the primary map store; orchestrator saves wave-produced maps (§7) | **Extended** — one plumbed parameter |
 | Memory citations economy (`cite_memory`, `memory_citations`) | Reused verbatim for map-usefulness feedback; feeds refresh prioritization (§5) | **Wired** |
-| Reflection machinery + `reflections.jsonl` (`stella-cli/src/memory.rs`) | Carries the save-side nudge (§4d) | **Wired** |
+| Reflection machinery + `reflections.jsonl` (`crates/stella-cli/src/memory.rs`) | Carries the save-side nudge (§4d) | **Wired** |
 | Recall A/B suppression (`context.retrieval.ab_recall_rate`) | Measures pointer-frame value for free (§9) | **Wired** — armed on every driver over a durable schedule (#1221) |
 | Workspace memories `.stella/memories/*.md` → system prompt | Distinct by design: memories are durable *lessons*, explorations are *maps of code as of a state*. Boundary: content describing "how area X works" belongs in an exploration (stalenessable), not a memory (not) | **Untouched** — boundary now stated |
-| Episodes (`stella-context/src/writeback.rs`) | Already recalled by the store; unchanged. Explorations are the durable, refreshable complement to episodic one-turn summaries | **Untouched** |
-| Compaction & dedup (`stella-core/src/compaction.rs`) | Already dedups byte-identical repeated tool outputs, so re-reading a map inside one session is near-free; unchanged | **Untouched** |
-| Speculative read-only execution (`stella-core/src/driver.rs:517-543`) | `explorations` is `read_only: true`, so map reads already parallelize with streaming; unchanged | **Untouched** |
-| Schema gate + `SchemaIndex` (`stella-tools/src/schema_gate.rs`) | Precedent: the coverage index (§6a) is its read-side analogue in the same struct; gate itself unchanged | **Untouched** — pattern reused |
+| Episodes (`crates/stella-context/src/writeback.rs`) | Already recalled by the store; unchanged. Explorations are the durable, refreshable complement to episodic one-turn summaries | **Untouched** |
+| Compaction & dedup (`crates/stella-core/src/compaction.rs`) | Already dedups byte-identical repeated tool outputs, so re-reading a map inside one session is near-free; unchanged | **Untouched** |
+| Speculative read-only execution (`crates/stella-core/src/driver.rs:517-543`) | `explorations` is `read_only: true`, so map reads already parallelize with streaming; unchanged | **Untouched** |
+| Schema gate + `SchemaIndex` (`crates/stella-tools/src/schema_gate.rs`) | Precedent: the coverage index (§6a) is its read-side analogue in the same struct; gate itself unchanged | **Untouched** — pattern reused |
 | Observatory (`stella-observatory`) | Gains `/api/explorations` (§4e), rendered in the dashboard's **memory & rules** tab: every map with its freshness verdict, drift counts, and in-flight claims | **Extended** |
 | Skills frontloading, `usage.db` cross-project rollup, hooks | Out of this spec's scope: skills are behavioral, not cartographic; cross-checkout map sharing needs a remote-keyed store (§7); SessionStart hooks remain available for user-side injection | **Bounded** — reasons stated |
 

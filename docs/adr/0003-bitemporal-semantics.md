@@ -23,7 +23,7 @@ The plan forbids guessing what today's `as_of` means before migrating off the
 live graph (roadmap §2, plan §4). It must be characterized, not assumed.
 
 The current `stella-context` behavior is now characterized. `edges_as_of`/
-`neighbors` in `stella-context/src/store.rs` filter on **transaction/belief time
+`neighbors` in `crates/stella-context/src/store.rs` filter on **transaction/belief time
 only**: `recorded_at <= t AND (superseded_at IS NULL OR superseded_at > t)`
 (store.rs:806-807). This is a half-open `[recorded_at, superseded_at)` belief
 interval — it selects which beliefs were *held* at `t`. It does **not** filter

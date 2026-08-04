@@ -37,7 +37,7 @@ is **SUPERSEDED and must not be implemented**. Per the roadmap §2, `memory` and
 `fact` must not be restored as directive kinds. Mine that doc for lifecycle
 *ideas* only (citation stats, archive ratios), never its type shapes.
 
-The existing `stella-core/src/rules/metadata.rs` `RuleRecordKind::Directive`
+The existing `crates/stella-core/src/rules/metadata.rs` `RuleRecordKind::Directive`
 (carrying `scope_paths`/`enforcement`/`confidence`) is subsumed and renamed
 into this taxonomy in Phase 1; it is not deleted in Phase 0.
 

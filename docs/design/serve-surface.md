@@ -19,7 +19,7 @@ the **SIGTERM drain and `GET /readyz`**, — as of #971 phase 2 —
 observable hold** (`turn_held` / `turn_released` frames, `held` on the session
 view), and — as of #931 — **server-owned sessions** (`/v1/sessions`, retained
 history, per-session budget) *have* shipped. Sections below flag the gaps
-individually; treat `stella-serve/src/` as the state and this doc as the
+individually; treat `crates/stella-serve/src/` as the state and this doc as the
 destination.
 
 **The two crates this document assumed did not exist now do (#971):**
@@ -44,7 +44,7 @@ what it deliberately does not.
 **Companion:** `oxagen-platform/docs/specs/agent-engine-v2/` (ADR-033 + spec) —
 the host side. ADR-033 lives in that repository, not in this one: Stella's own
 `docs/adr/` is a separate 0001-0009 series scoped to Phase 0 adaptive-context,
-so every bare "ADR-033" reference here and in `stella-serve/src/` means the
+so every bare "ADR-033" reference here and in `crates/stella-serve/src/` means the
 Oxagen ADR. That repository is private to Oxagen; this document is the
 *Stella* side of the same integration and is self-contained without it.
 
@@ -56,7 +56,7 @@ Oxagen ADR. That repository is private to Oxagen; this document is the
 *destination*; this is the surface a request actually reaches, verified end to
 end against a running binary by Oxagen's sidecar smoke test (oxagen #1132) —
 the `/v1/sessions` and steer/pause rows landed after that smoke test and are
-verified by `stella-serve/tests/sessions.rs` and `tests/control.rs`. Any path
+verified by `crates/stella-serve/tests/sessions.rs` and `tests/control.rs`. Any path
 not in this table is a 404.
 
 | Method | Path | Notes |
@@ -211,7 +211,7 @@ results never enter the parent's transcript.
   the pool and the per-child step cap. A request past a ceiling is clamped,
   not refused.
 
-Both are witnessed end to end in `stella-serve/tests/goal_and_subagents.rs`,
+Both are witnessed end to end in `crates/stella-serve/tests/goal_and_subagents.rs`,
 and both are claimed by `stella-parity`'s capability matrix (`goal.loop`,
 `agent.subagents`).
 
@@ -243,7 +243,7 @@ adding such a route would be a security change rather than a feature: the
 bearer token authenticates a *host*, not the operator, and a host that could
 install a handler could read every tool call's raw input — file contents and
 shell command lines included — and `Deny` its way into steering the engine.
-`stella-serve/tests/hooks.rs` pins that rule as a sweep over the route table,
+`crates/stella-serve/tests/hooks.rs` pins that rule as a sweep over the route table,
 so the reversal fails a test rather than passing review.
 
 What an extension may do follows the bus's own split:
@@ -353,13 +353,13 @@ the engine is structured as a headless library, not a terminal program:
    `features = ["sync"]` only — no `rt`/`io`/`net`/`fs`/`process`/`time`. No
    `println!`, no `std::env`, no `current_dir`, no `process::exit`, no globals,
    no `unsafe`. `Engine::run_turn(&mut messages, &mut budget, &events)`
-   (`stella-core/src/driver.rs:329`) holds no conversation state — the caller
+   (`crates/stella-core/src/driver.rs:329`) holds no conversation state — the caller
    owns history, budget, and calibration. The engine is driven entirely through
    **10 injected trait ports** (`Provider`, `ToolExecutor`, `Clock`, `TurnGate`,
    `TurnSteering`, `Sleeper`, `HookRunner`, `RuleSource`, `SkillSource`,
    `ToolCallObserver`) with zero process-global state.
 
-2. **`AgentEvent` is already the wire format.** `stella-protocol/src/event.rs`
+2. **`AgentEvent` is already the wire format.** `crates/stella-protocol/src/event.rs`
    defines a ~30-variant, `#[serde(tag = "type", rename_all = "snake_case")]`
    enum. The `--output-format stream-json` mode is literally
    `serde_json::to_string(&event)` per line, additive-only, with round-trip
@@ -377,7 +377,7 @@ the engine is structured as a headless library, not a terminal program:
    "surface `ScopeReviewRequiredHeadless` to the host as a decision", and the
    premise does not hold for `stella-serve` as built: **a served turn never
    reaches a scope review at all.** `ApprovalGate::review` has exactly one
-   call site — `stella-pipeline/src/pipeline/scope_stage.rs` — and
+   call site — `crates/stella-pipeline/src/pipeline/scope_stage.rs` — and
    `stella-serve` does not depend on `stella-pipeline`. It drives the
    *engine* (`stella_engine::run_step`), which has no plan or scope stage.
    Only `stella-cli` and `stella-runtime` link the pipeline.
@@ -433,7 +433,7 @@ the engine is structured as a headless library, not a terminal program:
 
 | Gap | Evidence | Fixed by |
 |---|---|---|
-| ~~**Bin-only crate.**~~ **CLOSED (#971 phase 0).** `stella-cli` is still bin-only, but the wiring it duplicated across seven call sites now lives in **`stella-runtime`**, which any surface can link. Its invariant — no `std::env`, no `current_dir()`, every ambient switch an explicit `RuntimeSpec` field — is what makes N sessions with N roots and N trust postures sound in one process, and is enforced executably by `stella-runtime/tests/no_ambient_reads.rs`. | was: `agent.rs`, `agent/goal.rs`, `command_deck.rs`, `fleet_cmd.rs`, `subsession.rs` each re-assembling the stack. | Done. |
+| ~~**Bin-only crate.**~~ **CLOSED (#971 phase 0).** `stella-cli` is still bin-only, but the wiring it duplicated across seven call sites now lives in **`stella-runtime`**, which any surface can link. Its invariant — no `std::env`, no `current_dir()`, every ambient switch an explicit `RuntimeSpec` field — is what makes N sessions with N roots and N trust postures sound in one process, and is enforced executably by `crates/stella-runtime/tests/no_ambient_reads.rs`. | was: `agent.rs`, `agent/goal.rs`, `command_deck.rs`, `fleet_cmd.rs`, `subsession.rs` each re-assembling the stack. | Done. |
 | ~~**Whole-loop API only.**~~ **CLOSED (#971 phase 1).** **`stella-engine`** exposes `run_step(&mut TurnState) -> StepOutcome`, a versioned serde `Checkpoint`, and a `CancelToken` read at the same safe boundary as the pause gate and budget enforcer. `run_turn` is now a loop over `run_step`, so there is one code path — `driver.rs` shrank rather than grew. **Not yet consumed by `stella-serve`.** | was: `run_turn` owning the whole `for step in 0..max_steps` loop. | Done; wiring into serve is the next increment. |
 | **No transport / no server.** The event channel and control ports exist but are only wired to stdin/TUI. No process hosts them over a socket; no graceful shutdown. | Observatory is read-only; `run_turn` future is `!Send`. | **`stella-serve`** — HTTP/SSE + reverse-tool-RPC sidecar, thread-per-session. |
 
@@ -441,7 +441,7 @@ the engine is structured as a headless library, not a terminal program:
 
 Three independent sweeps flagged it: the engine turn future is **deliberately
 `!Send`** (it holds provider futures and the retry-jitter RNG across awaits) —
-documented at `stella-cli/src/fleet_cmd.rs:375-380`. **A server cannot
+documented at `crates/stella-cli/src/fleet_cmd.rs:375-380`. **A server cannot
 `tokio::spawn(engine.run_turn())`** on a multi-thread runtime. The fleet already
 solved this: each worker gets a **dedicated OS thread running a current-thread
 tokio runtime**, bridged to the async side by a `Send` oneshot
@@ -536,7 +536,7 @@ requests.
 
 **Accept-loop lifetime.** `serve` runs until a **fatal** accept error, not the
 first one (#637). `accept()` failures are classified in
-`stella-serve/src/accept.rs` — duplicated byte-identically in
+`crates/stella-serve/src/accept.rs` — duplicated byte-identically in
 `stella-observatory`, with a test enforcing that: a peer that hung up before we
 accepted it is retried at once, resource exhaustion backs off 10ms→1s, and only
 a structurally unusable listener — or one that has accepted nothing across 64
@@ -545,7 +545,7 @@ consecutive backoffs — ends the loop.
 ### The step-scoped facade (`stella-engine`)
 
 ```rust
-// stella-engine/src/lib.rs (facade over stella-core + stella-pipeline)
+// crates/stella-engine/src/lib.rs (facade over stella-core + stella-pipeline)
 pub struct TurnState { /* messages, budget, oracle_state, calibration, seq */ }
 
 impl Engine {
@@ -619,7 +619,7 @@ Oxagen's existing Firecracker/Modal sandbox** (the same isolation
 mode:
 
 - **binds to a token-gated port only** (no ambient trust), behind a
-  DNS-rebinding `Host`-header guard (`stella-serve/src/hostguard.rs`, #1130)
+  DNS-rebinding `Host`-header guard (`crates/stella-serve/src/hostguard.rs`, #1130)
   that runs before route dispatch on every route — `/healthz` included, since
   that is the one route the bearer token does not cover. The policy is derived
   from the bind rather than hardcoded, because the Observatory's
@@ -683,7 +683,7 @@ ADR-033 §7 names).
    `docs/wire/`. `scripts/check-wire-schema.sh` fails the gate on drift, and
    `validate_stream` runs as a conformance check over recorded fixtures and
    deliberate corruptions.
-   **Correction:** `validate_stream` lives in `stella-pipeline/src/replay.rs`,
+   **Correction:** `validate_stream` lives in `crates/stella-pipeline/src/replay.rs`,
    not `stella-protocol` as earlier editions of this document said.
 5. ✅ **DONE (#1133).** Bus lifecycle events at the turn, step and model-call
    boundaries — closes "the bus is only emitted from the tool registry."

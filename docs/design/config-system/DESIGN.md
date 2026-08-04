@@ -4,7 +4,7 @@
 **Date:** 2026-07-30
 
 **Built:** `toml_edit` comment-preserving writes
-(`stella-cli/src/settings/toml_io.rs`, §3.1); the `stella.toml` document and
+(`crates/stella-cli/src/settings/toml_io.rs`, §3.1); the `stella.toml` document and
 its lowering into `Settings` (`settings/toml_config.rs`); three-scope
 discovery with the project file at the **repo root** (§3.2, decided); the
 dual read with TOML winning whole and the shadowed JSON announced (§6.1);
@@ -288,7 +288,7 @@ one question desynchronize. Keep the pipeline's; `[agents.*]` has no
 a config-validation error at load, not a runtime surprise.
 
 **The stage vocabulary is not the six obvious ones.** `StageKind`
-(`stella-protocol/src/event.rs`) has eleven variants: `Triage`,
+(`crates/stella-protocol/src/event.rs`) has eleven variants: `Triage`,
 `ContextRecall`, `Plan`, `ScopeReview`, `Witness`, `Execute`, `Verify`,
 `Judge`, `Reflect`, `ContextWrite`, `Complete`. `stella.next.toml` shows six
 for readability; the real block must be built against the enum, not against
@@ -478,7 +478,7 @@ literal. That constant is already shared with the fail-closed
 `[context.retrieval]` defaults were wrong** — plausible round numbers instead
 of the real constants (`recency_weight` 0.3 vs 0.15, `ann_probes` 8 vs 12,
 `lexical_limit` 20 vs 8, and four more). They were caught only by grepping
-`stella-context/src/retrieval.rs` afterwards.
+`crates/stella-context/src/retrieval.rs` afterwards.
 
 That is not a drafting failure to be more careful about next time; it is
 evidence about the artifact. A documented-defaults config file is a second

@@ -41,7 +41,7 @@ levels may survive only as UI labels over those two enforcement states, never as
 a second enforcement enum.
 
 **Amendment — legacy `informational` edge (ratified 2026-07-24, ADR 0009):** the
-live legacy enum `RuleEnforcement` (`stella-core/src/rules/metadata.rs:31-38`)
+live legacy enum `RuleEnforcement` (`crates/stella-core/src/rules/metadata.rs:31-38`)
 carries a *third* value, `informational`, present in neither the four-value
 `context-prs-spec.md` vocabulary nor the two-value `DirectiveEnforcement`. It
 migrates as **`informational → advisory`**: `informational` ("inform reviewers

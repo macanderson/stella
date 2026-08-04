@@ -15,7 +15,7 @@
 ## Context
 
 Today `context.db` is a bi-temporal knowledge graph — `node`/`edge`/`memory`/
-`episode` tables managed by `stella-context/src/store.rs` (`migrate()` +
+`episode` tables managed by `crates/stella-context/src/store.rs` (`migrate()` +
 `SCHEMA_VERSION`, currently v3) — **not** a record authority. The live `recall`
 path, `memory promote`, and the code graph all read these tables. The roadmap
 names Phase 2 the single riskiest step: it evolves a live authoritative store,

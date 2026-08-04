@@ -9,9 +9,9 @@ status: living
 How the golden-trajectory fixtures are recorded and refreshed, and what a
 **reference** engine has to do before its runs can join them.
 
-Machinery: `stella-pipeline/src/replay.rs` (`validate_stream`,
+Machinery: `crates/stella-pipeline/src/replay.rs` (`validate_stream`,
 `structural_diff`, `streams_equivalent`) and
-`stella-pipeline/src/replay/golden.rs` (the fixture format and its load gates).
+`crates/stella-pipeline/src/replay/golden.rs` (the fixture format and its load gates).
 
 ---
 
@@ -26,7 +26,7 @@ A golden's manifest names its `source`, and the distinction is load-bearing:
 
 Encoding this in the fixture rather than in prose is what stops a baseline from
 being cited later as a reference. `RecordingSource::is_reference()` is asserted
-in `stella-pipeline/src/pipeline/tests/golden.rs`.
+in `crates/stella-pipeline/src/pipeline/tests/golden.rs`.
 
 Today every committed golden is a `rust_stack` baseline. No `reference`
 recording exists — see [The reference-engine gap](#the-reference-engine-gap).
@@ -35,7 +35,7 @@ recording exists — see [The reference-engine gap](#the-reference-engine-gap).
 
 ## The fixture format
 
-Two files per task under `stella-pipeline/tests/fixtures/golden/`:
+Two files per task under `crates/stella-pipeline/tests/fixtures/golden/`:
 
 - `<task_id>.jsonl` — one `AgentEvent` per line, the same wire format
   `stella run --output-format stream-json` emits.
@@ -72,7 +72,7 @@ or directly:
 STELLA_REFRESH_GOLDEN=1 cargo test -p stella-pipeline --lib golden
 ```
 
-The recorders live in `stella-pipeline/src/pipeline/tests/golden.rs`. Each
+The recorders live in `crates/stella-pipeline/src/pipeline/tests/golden.rs`. Each
 drives the real `Pipeline` over scripted model/test ports and records the
 stream it actually emits — deterministic, no API key, runnable in CI, which is
 the only reason a recording can be asserted on every `cargo test` instead of
@@ -84,7 +84,7 @@ the change that caused it; if it is not, you have found a regression.
 
 ### Adding a task
 
-1. Add a `#[tokio::test]` to `stella-pipeline/src/pipeline/tests/golden.rs`
+1. Add a `#[tokio::test]` to `crates/stella-pipeline/src/pipeline/tests/golden.rs`
    that drives the pipeline over scripted ports and ends in `check_golden`.
 2. Run `make record-golden` to write the fixture.
 3. Read the recorded `.jsonl`. It is evidence — confirm it is the flow you
@@ -129,7 +129,7 @@ structural identity fails. A half-imported reference recording would therefore
 be **all volatile content and no structure**: it would parse into something
 shaped like a trajectory that asserts nothing. That is why the loader gates
 instead of trusting a recording, and why
-`stella-pipeline/tests/reference_conformance.rs` pins the gap executably rather
+`crates/stella-pipeline/tests/reference_conformance.rs` pins the gap executably rather
 than leaving it as a comment that can rot.
 
 Note also that `structural_diff` is *positional* by design. Even with the wire
@@ -139,7 +139,7 @@ or `ContextWrite` stage at all.
 
 ### The adapter
 
-The adapter is `stella-pipeline/src/replay/reference_adapter.rs`
+The adapter is `crates/stella-pipeline/src/replay/reference_adapter.rs`
 (`adapt_reference_stream`, manifest id `replay::reference_adapter@v1`). It
 discharges the obligations `reference_conformance.rs` states — a typed
 `StageKind` per known stage label, synthesized `ref-N` call ids with FIFO

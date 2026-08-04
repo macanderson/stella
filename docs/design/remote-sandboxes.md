@@ -8,12 +8,12 @@ status: proposed
 
 **Status:** Proposed · **Date:** 2026-08-02 · **Nothing here is built.**
 This document describes a destination, not the code. Where it names a
-file or a type that exists today (`stella-tools/src/registry.rs`,
+file or a type that exists today (`crates/stella-tools/src/registry.rs`,
 `Tool::execute`, `stella-fleet`'s worktree port), that is the *current*
 state being generalized; where it names the `Sandbox` trait, its two
 implementations, or the provider protocol, that is new surface to build.
 
-**This document also proposed deleting `stella-tools/src/sandbox.rs`** —
+**This document also proposed deleting `crates/stella-tools/src/sandbox.rs`** —
 the opt-in Seatbelt/bubblewrap confinement that wrapped the `bash` tool
 and nothing else. §2 makes that case from the module's own documentation
 and from `threat-model.md`. **That deletion has landed (#1300);** it is
@@ -53,7 +53,7 @@ that maps each design decision back to the invariant it protects.
 
 ## 2. Delete the local sandbox; isolation becomes structural
 
-`stella-tools/src/sandbox.rs` appeared to occupy this space. **It should
+`crates/stella-tools/src/sandbox.rs` appeared to occupy this space. **It should
 be deleted, not generalized** — and it has been, in #1300. The case is
 short, and it is made almost entirely out of the module's own
 documentation and the project's own threat model. It is kept here in the
@@ -151,11 +151,11 @@ belongs in a release note, not in a footnote (§11).
 
 | Site | Change |
 |---|---|
-| `stella-tools/src/sandbox.rs` | delete (597 lines: ~358 implementation, ~239 tests) |
-| `stella-tools/src/bash.rs` | drop the `host_argv` call site and the module docs describing it |
-| `stella-cli/src/enterprise_telemetry.rs` | drop `STELLA_BASH_SANDBOX` from the reported-env allowlist |
+| `crates/stella-tools/src/sandbox.rs` | delete (597 lines: ~358 implementation, ~239 tests) |
+| `crates/stella-tools/src/bash.rs` | drop the `host_argv` call site and the module docs describing it |
+| `crates/stella-cli/src/enterprise_telemetry.rs` | drop `STELLA_BASH_SANDBOX` from the reported-env allowlist |
 | `website/content/docs/agent-tools/permissions.mdx` | replace *"Sandboxing the shell tool"* with the sandbox-location docs |
-| `README.md`, `stella-tools/README.md` | drop the env-var mentions |
+| `README.md`, `crates/stella-tools/README.md` | drop the env-var mentions |
 | `docs/design/threat-model.md` | retire R3 and re-grade P8/P9 — the mitigation is now all-or-nothing rather than bash-only |
 | `bench/harbor_adapter/tests/test_adapter.py` | drop the env passthrough assertion |
 
@@ -183,7 +183,7 @@ inserted, and three of them are wrong.
 ### 3.1 Cut at `ToolExecutor` — rejected
 
 Remote the whole tool call. This is exactly what `stella-serve` already
-does (`stella-serve/src/remote.rs`: `RemoteToolExecutor` emits a
+does (`crates/stella-serve/src/remote.rs`: `RemoteToolExecutor` emits a
 reverse-RPC frame and parks until the host answers), so the machinery
 exists and it is tempting.
 
@@ -395,7 +395,7 @@ regex crosses and the matches come back.
 
 ### 6.2 `WorkspaceProbe` — the one that decides the whole design
 
-`stella-tools/src/shell_touch.rs` fingerprints the workspace *either side
+`crates/stella-tools/src/shell_touch.rs` fingerprints the workspace *either side
 of every `bash` call*, because a shell command is an opaque string and
 the ledger cannot read its intent. That is two tree walks per shell call,
 and `bash` was 757 of 1,063 tool calls in the measured Terminal-Bench run
@@ -520,7 +520,7 @@ Three declared modes:
 
 - **`git`** (default) — the provider clones the origin at a named ref;
   Stella then pushes the uncommitted delta. That delta is produced by the
-  pattern `stella-cli/src/candidate_ws.rs` already uses for best-of-N
+  pattern `crates/stella-cli/src/candidate_ws.rs` already uses for best-of-N
   shadow worktrees: `git diff --binary HEAD` plus a byte-for-byte copy of
   untracked non-ignored files. Reusing a proven mechanism, not inventing
   a transfer format.

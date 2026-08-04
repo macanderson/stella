@@ -31,7 +31,7 @@ status: living
 > runtime*. The "Context Frame" it describes below is the **task-wide compiled
 > aggregate** — in the boundary vocabulary a host-owned **`CompiledContextFrame`**,
 > *not* the protocol's atomic `ContextFrame`. The live record/directive model is
-> `stella-core/src/context_record` (four directive kinds; `memory`/`fact` are
+> `crates/stella-core/src/context_record` (four directive kinds; `memory`/`fact` are
 > **not** directive kinds), which supersedes the six directive buckets sketched
 > here. On the wire, temporal fields use CGP's names (`valid_from`/`valid_to`/
 > `recorded_at` + query `as_of`), **not** `as_of_valid_at`/`as_of_observed_at`.

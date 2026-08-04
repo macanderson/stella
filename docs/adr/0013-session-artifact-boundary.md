@@ -13,7 +13,7 @@
 
 Stella can already survive a crash. It cannot survive a *machine*.
 
-The durable record exists and is good: `stella-store/src/work_journal.rs` keeps
+The durable record exists and is good: `crates/stella-store/src/work_journal.rs` keeps
 a git repository in Stella's own directory, attaches the user's workspace as a
 work tree, and commits the agent's file changes onto a per-session ref
 (`refs/stella/<session>/head`, `work_journal.rs:56`). Riding in the same commit
@@ -48,7 +48,7 @@ whose field order is the wire order, and `Engine::resume_turn`
 written the cross-surface matrix recorded that this format had **no production
 writers**: the CLI replayed its own `session_persist` journal and never called
 `to_checkpoint`/`resume_turn`, and nothing behind `stella-serve` persisted at
-all (the `turn.checkpoint_resume` row in `stella-parity/src/lib.rs`, deferred
+all (the `turn.checkpoint_resume` row in `crates/stella-parity/src/lib.rs`, deferred
 on both surfaces).
 
 > **Update — 2026-08-03 (#1302).** That sentence is out of date, in the
@@ -60,7 +60,7 @@ on both surfaces).
 > `GET /v1/sessions/{id}/checkpoint` (#1198). What still has **no production
 > caller** is `Engine::resume_turn` — neither surface replays a snapshot into a
 > `TurnState`, so the format is written, stored, and handed back, but never fed
-> back in. The live statement of both halves is `stella-parity/src/lib.rs`
+> back in. The live statement of both halves is `crates/stella-parity/src/lib.rs`
 > (`turn.checkpoint`, `turn.checkpoint_resume`); the paragraph above is kept as
 > the state this decision was taken against, because §4's version contract is
 > an obligation incurred *before* there were writers to bind — and now there
@@ -85,14 +85,14 @@ artifacts names, accounts, tenancy, retention and audit.
 **1. It is the boundary Stella already has.** `stella-serve` states it
 outright: the host assembles the turn and "every governed side effect — model
 calls and tool calls — is remoted back to the host"; "the engine never holds
-ambient authority" (`stella-serve/src/lib.rs:7`). A served turn is structurally
+ambient authority" (`crates/stella-serve/src/lib.rs:7`). A served turn is structurally
 incapable of reading a user's file, because reading a file is a request the
 host answers. The matrix reasoned from that line when it deferred server-side
 checkpointing — "in the reverse-RPC model the workspace lives on the HOST side,
 so serve has no filesystem location it could honestly checkpoint against" — and
 #1198 held the line while promoting that row: what a server may own is the
 engine's own turn state, not the work, and the location stays the embedder's
-(the `turn.checkpoint` row's API note in `stella-parity/src/lib.rs` is the
+(the `turn.checkpoint` row's API note in `crates/stella-parity/src/lib.rs` is the
 current text). Applying the same line to durability is consistency, not a new
 concept to defend.
 
@@ -186,7 +186,7 @@ whatever tree happens to be there. The bundle — not `Checkpoint::to_json` — 
 the unit of the API.
 
 **The CLI sidecar is deliberately excluded from v1.** `journal.jsonl`,
-`history.json` and `queue.json` (`stella-store/src/journal.rs:50-54`) are not
+`history.json` and `queue.json` (`crates/stella-store/src/journal.rs:50-54`) are not
 in the artifact:
 
 - `history.json` is a `Vec<CompletionMessage>` — the same conversation
@@ -195,7 +195,7 @@ in the artifact:
 - `journal.jsonl` is the deck's own append-only replay format, which is a
   *different* resumption path from the engine checkpoint. Converging the two is
   already a declared deferral (the `turn.checkpoint_resume` row's CLI posture in
-  `stella-parity/src/lib.rs`), and this ADR does not get to pretend it is
+  `crates/stella-parity/src/lib.rs`), and this ADR does not get to pretend it is
   solved.
 - `queue.json` is the pending prompt backlog — user intent not yet acted on.
   It is genuinely part of a session and is the one sidecar file worth carrying,
@@ -387,7 +387,7 @@ A control plane adds, on top of the artifact API and without changing it:
 - **The web resume experience** — pick a session, resume it somewhere else.
 
 The seam is not hypothetical. `stella-serve` exists as the headless,
-host-driven engine for exactly this host (`stella-serve/src/lib.rs:4-12`), and
+host-driven engine for exactly this host (`crates/stella-serve/src/lib.rs:4-12`), and
 the Oxagen↔Stella sidecar integration is live work (oxagen#1140 / stella#856).
 This ADR describes an extension of that seam, not a new one.
 
@@ -425,7 +425,7 @@ from anything above, and each would need its own decision:
   records that the artifact does not wait on the answer.
 - **Server-side checkpointing in `stella-serve`.** The reverse-RPC model still
   means the workspace is the host's (the `turn.checkpoint` row's API note in
-  `stella-parity/src/lib.rs`). This ADR
+  `crates/stella-parity/src/lib.rs`). This ADR
   gives an embedder a defined artifact to persist; it does not give the server a
   filesystem. (#1198 shipped a checkpoint *port* inside that line rather than
   across it: `ServeConfig::checkpoints` is `None` by default, the crate names no
