@@ -250,6 +250,18 @@ pub struct RetrievalSettings {
     /// exact and slower; the probe widens past this on its own when the
     /// ranking's own depth requirements demand it, so this is a floor.
     pub ann_probes: usize,
+    /// A/B recall control: every `rate`-th turn in this workspace runs with
+    /// recall suppressed, so recall's value is readable from the outcomes of
+    /// the two arms. `0` (and `1`) disable the control entirely; the schedule
+    /// is counted durably in `context.db`, across processes, so a
+    /// one-turn-per-process surface takes part in it too (#1221).
+    ///
+    /// Settings-backed rather than a constant because arming it on every
+    /// driver makes it load-bearing: it is now the reason ~1 turn in
+    /// `ab_recall_rate` sees no memories, no skills, and no records anywhere
+    /// in the pipeline, and a workspace that would rather not pay that needs a
+    /// way to say so that is not a source edit.
+    pub ab_recall_rate: u32,
 }
 
 impl Default for RetrievalSettings {
@@ -270,6 +282,7 @@ impl Default for RetrievalSettings {
             mmr_candidate_multiple: t.mmr_candidate_multiple,
             ann_enabled: t.ann_enabled,
             ann_probes: t.ann_probes,
+            ab_recall_rate: DEFAULT_AB_RECALL_RATE,
         }
     }
 }
@@ -278,6 +291,10 @@ impl Default for RetrievalSettings {
 pub const DEFAULT_RECALL_MAX_FRAMES: u32 = 5;
 /// Token budget those frames are packed into — likewise.
 pub const DEFAULT_RECALL_MAX_TOKENS: u32 = 1200;
+/// A/B recall control rate — the value that shipped as `AB_RECALL_RATE`, the
+/// compile-time constant this setting replaces. 10 means every tenth turn in a
+/// workspace is a control turn; 0 disables the control.
+pub const DEFAULT_AB_RECALL_RATE: u32 = 10;
 
 impl RetrievalSettings {
     /// The store-level knobs, as the context plane's own type.
@@ -430,7 +447,8 @@ mod tests {
                 "lexical_limit":17,
                 "mmr_candidate_multiple":6,
                 "ann_enabled":true,
-                "ann_probes":23
+                "ann_probes":23,
+                "ab_recall_rate":7
             }
         }}"#;
         let s: Settings = serde_json::from_str(json).expect("parse");
@@ -476,6 +494,7 @@ mod tests {
         assert_eq!(r.mmr_candidate_multiple, 6);
         assert!(r.ann_enabled);
         assert_eq!(r.ann_probes, 23);
+        assert_eq!(r.ab_recall_rate, 7);
     }
 
     /// The defaults must reproduce the values that shipped as `const`s, or
@@ -507,6 +526,10 @@ mod tests {
              kind of invisible behavior change §5.5 forbids"
         );
         assert_eq!(d.ann_probes, stella_context::DEFAULT_ANN_PROBES);
+        assert_eq!(
+            d.ab_recall_rate, 10,
+            "the rate that shipped as the `AB_RECALL_RATE` constant"
+        );
         assert_eq!(
             d.tuning(),
             stella_context::RecallTuning::default(),

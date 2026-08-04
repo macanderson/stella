@@ -3342,6 +3342,7 @@ dependencies = [
  "serde_json",
  "stella-core",
  "stella-engine",
+ "stella-pipeline",
  "stella-protocol",
  "tempfile",
  "thiserror 2.0.19",

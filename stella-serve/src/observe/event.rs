@@ -122,6 +122,12 @@ pub enum Route {
     TurnPause,
     #[serde(rename = "/v1/turns/{id}/resume")]
     TurnResume,
+    /// Resolve a pipeline-driven turn's scope-review gate (#1288) — the
+    /// reverse-RPC counterpart to [`Route::TurnToolResult`] /
+    /// [`Route::TurnProviderResult`], for the one decision a pipeline run
+    /// asks a human rather than a model or a tool.
+    #[serde(rename = "/v1/turns/{id}/approve")]
+    TurnApprove,
     /// `GET` (read back) and `DELETE` (reclaim) share the member path, the
     /// same one-resource-two-verbs shape as [`Route::Session`].
     #[serde(rename = "/v1/turns/{id}/checkpoint")]
@@ -161,6 +167,7 @@ impl Route {
             Self::TurnSteer => "/v1/turns/{id}/steer",
             Self::TurnPause => "/v1/turns/{id}/pause",
             Self::TurnResume => "/v1/turns/{id}/resume",
+            Self::TurnApprove => "/v1/turns/{id}/approve",
             Self::TurnCheckpoint => "/v1/turns/{id}/checkpoint",
             Self::SessionsCreate => "/v1/sessions",
             Self::Session => "/v1/sessions/{id}",
@@ -181,7 +188,7 @@ impl Route {
     /// method's exhaustive match until the author classifies it, and the
     /// tests assert `ALL` contains exactly the `is_real` variants it names —
     /// so the array cannot silently lag the enum.
-    pub const ALL: [Route; 18] = [
+    pub const ALL: [Route; 19] = [
         Route::Healthz,
         Route::Readyz,
         Route::Metrics,
@@ -195,6 +202,7 @@ impl Route {
         Route::TurnSteer,
         Route::TurnPause,
         Route::TurnResume,
+        Route::TurnApprove,
         Route::TurnCheckpoint,
         Route::SessionsCreate,
         Route::Session,
@@ -223,6 +231,7 @@ impl Route {
             | Route::TurnSteer
             | Route::TurnPause
             | Route::TurnResume
+            | Route::TurnApprove
             | Route::TurnCheckpoint
             | Route::SessionsCreate
             | Route::Session
@@ -452,6 +461,10 @@ impl StreamEndReason {
 pub enum ReverseKind {
     Provider,
     Tool,
+    /// A pipeline scope-review gate reached over the wire (#1288): the
+    /// pipeline-driven turn's `ApprovalGate::review` call, remoted the same
+    /// way a tool or provider call is.
+    ScopeReview,
 }
 
 /// Which half of the checkpoint sink failed.

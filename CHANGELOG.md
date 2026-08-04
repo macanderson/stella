@@ -6,23 +6,26 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## How this file works
 
-**Every merge to main cuts a release** (see [`RELEASING.md`](RELEASING.md)).
-Hand-written entries still come first: add a bullet under `## [Unreleased]` in
-the same PR as your change whenever that change is something a user would
-notice — a new flag, a changed default, a fixed bug, a breaking rename — and
-the release rolls your words verbatim.
+**Every merge to main cuts a release** (see [`RELEASING.md`](RELEASING.md)),
+and **CI writes this file, not contributors or coding agents.** Don't add a
+bullet under `## [Unreleased]` in your PR — leave the section alone. The
+release job drafts the entries itself from the **released diff**
+(`scripts/changelog-ai.sh`, the same AI Gateway that writes the GitHub
+Release notes) and rolls those beneath the new version heading, replacing
+whatever was under `[Unreleased]` (normally nothing). A release whose diff
+has nothing user-facing gets a one-line `_Internal: …_` note instead of
+bullets.
 
-When a release arrives with `## [Unreleased]` empty — which is most releases,
-at one release per merge — the release job drafts the entries itself from the
-**released diff** (`scripts/changelog-ai.sh`, the same AI Gateway that writes
-the GitHub Release notes) and rolls those beneath the new version heading. A
-release whose diff has nothing user-facing gets a one-line
-`_Internal: …_` note instead of bullets. Hand-written entries always win: the
-drafted text is only injected when the section is empty, and the draft is
-grounded in the diff, not the commit messages.
+Changelog authorship used to be split between hand-written PR entries and
+this drafter, with hand-written text winning whenever present. That produced
+inconsistent, sometimes-mangled entries, so the drafter is now the only
+author: one voice, always grounded in the diff rather than in whatever a PR
+happened to say about itself. If your change needs context the diff alone
+won't convey, put it in the PR description — `changelog-ai.sh` reads commit
+bodies (squash-merge PR descriptions) too, not just the code.
 
-Internal refactors, test-only changes, and CI work do not need a hand-written
-entry — the drafter files those under the `_Internal_` line on its own.
+Internal refactors, test-only changes, and CI work need no action from
+you — the drafter files those under the `_Internal_` line on its own.
 
 Each GitHub Release additionally carries per-release notes generated at publish
 time from the same diff. Those are release-note prose; this file is the
@@ -37,6 +40,27 @@ skip the roll) were re-inserted the same way.
 
 ## [0.6.88] — 2026-08-04
 
+### Changed
+
+- The A/B recall control now runs on **every** surface, not only the
+  interactive REPL's plain prompts (#1221). `stella run`, `/goal`, and the
+  Command Deck each arm it at turn start, and its schedule is counted durably
+  per workspace in `context.db` instead of per session — which is what makes a
+  one-turn-per-process surface capable of producing a control turn at all. A
+  control turn is now frameless end to end: the pipeline's recall port returns
+  nothing on it, so the planner and witness author no longer run on recalled
+  context while the turn is recorded as suppressed.
+- The control's rate is configurable as `context.retrieval.ab_recall_rate`
+  (default 10, as the compile-time constant it replaces; `0` disables the
+  experiment).
+
+### Fixed
+
+- A control turn's `[ab-control]` episode tag no longer disappears when the
+  prompt is longer than 240 characters. The tag was composed into the prompt
+  before truncation, so exactly the turns the measurement is made of were filed
+  as ordinary ones; it is now appended by the episode writer, after truncation,
+  on every surface that records an episode.
 ## [0.6.87] — 2026-08-04
 
 ## [0.6.86] — 2026-08-04

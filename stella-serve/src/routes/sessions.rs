@@ -268,6 +268,7 @@ pub(crate) async fn handle_session_turn(
             on_settled: Some(hook_sess.settle_hook(token)),
             checkpoint,
             goal,
+            pipeline: None,
             sub_agents,
             extensions,
             calibration,

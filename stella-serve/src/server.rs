@@ -1227,6 +1227,7 @@ async fn route(
             // Body-bearing but not body-*requiring*: an empty pause is the
             // shape the route shipped with and stays valid (#932).
             | Route::TurnPause
+            | Route::TurnApprove
             | Route::SessionsCreate
             | Route::SessionTurns,
         ) => {}
@@ -1261,6 +1262,7 @@ async fn route(
         Route::TurnProviderDelta => routes::handle_provider_delta(res, state, id, &req.body).await,
         Route::TurnSteer => routes::handle_steer(res, state, id, &req.body).await,
         Route::TurnPause => routes::handle_pause(res, state, id, &req.body).await,
+        Route::TurnApprove => routes::handle_approve(res, state, id, &req.body).await,
         Route::SessionsCreate => routes::handle_session_create(res, state, &req.body).await,
         Route::SessionTurns => routes::handle_session_turn(res, state, id, &req.body).await,
         // Unreachable: the match above admits exactly the body-bearing
@@ -1358,6 +1360,7 @@ mod tests {
             observer: crate::observe::null_observer(),
             on_settled: None,
             goal: None,
+            pipeline: None,
             sub_agents: None,
             checkpoint: None,
             extensions: crate::extensions::Extensions::new(),

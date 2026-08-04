@@ -77,6 +77,7 @@ fn spec_with(extensions: Vec<Arc<dyn ServeExtension>>) -> SessionSpec {
         // assert on what the hook plane saw, so the goal loop and sub-agents
         // stay off — their own acceptance lives in `goal_and_subagents.rs`.
         goal: None,
+        pipeline: None,
         sub_agents: None,
     }
 }
@@ -175,12 +176,14 @@ async fn run_turn(session: &mut Session) -> Vec<(String, serde_json::Value)> {
                     .unwrap();
             }
             ServerFrame::TurnComplete { .. } => break,
-            // Nothing here pauses, so the control frames are inert; matched
-            // rather than wildcarded so a new frame kind lands as a compile
-            // error in a test that reads the stream.
+            // Nothing here pauses or runs the pipeline, so the control frames
+            // and the scope-review request are inert; matched rather than
+            // wildcarded so a new frame kind lands as a compile error in a
+            // test that reads the stream.
             ServerFrame::Event { .. }
             | ServerFrame::TurnHeld { .. }
-            | ServerFrame::TurnReleased => {}
+            | ServerFrame::TurnReleased
+            | ServerFrame::ScopeReviewRequest { .. } => {}
         }
     }
     tool_requests

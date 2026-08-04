@@ -24,6 +24,7 @@ pub(crate) fn route_addresses_a_turn(route: Route) -> bool {
             | Route::TurnSteer
             | Route::TurnPause
             | Route::TurnResume
+            | Route::TurnApprove
             | Route::TurnCheckpoint
     )
 }
@@ -49,6 +50,7 @@ pub(crate) fn classify<'a>(segs: &[&'a str]) -> (Route, Option<&'a str>) {
         ["v1", "turns", id, "steer"] => (Route::TurnSteer, Some(id)),
         ["v1", "turns", id, "pause"] => (Route::TurnPause, Some(id)),
         ["v1", "turns", id, "resume"] => (Route::TurnResume, Some(id)),
+        ["v1", "turns", id, "approve"] => (Route::TurnApprove, Some(id)),
         ["v1", "turns", id, "checkpoint"] => (Route::TurnCheckpoint, Some(id)),
         ["v1", "sessions"] => (Route::SessionsCreate, None),
         ["v1", "sessions", id] => (Route::Session, Some(id)),
@@ -107,6 +109,7 @@ pub(crate) fn allowed(route: Route) -> &'static str {
         | Route::TurnSteer
         | Route::TurnPause
         | Route::TurnResume
+        | Route::TurnApprove
         | Route::SessionsCreate
         | Route::SessionTurns => "POST",
         Route::Session | Route::TurnCheckpoint | Route::SessionCheckpoint => "GET, DELETE",

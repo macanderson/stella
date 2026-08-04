@@ -117,6 +117,13 @@ pub struct SessionSpec {
     /// boundary, and the settlement hook writes its transcript back. See
     /// [`GoalRun`](crate::GoalRun)'s own module for the full argument.
     pub goal: Option<crate::goal::GoalRun>,
+    /// Drive this turn through the verification pipeline (#1288) instead of
+    /// a bare engine step loop or a judged goal run. Mutually exclusive with
+    /// [`SessionSpec::goal`] and [`SessionSpec::sub_agents`] — the route
+    /// layer refuses a request naming more than one, since the pipeline
+    /// already loops internally (revisions, best-of-N) and drives its own
+    /// judge. `None` — the default — is the pre-#1288 behavior exactly.
+    pub pipeline: Option<crate::pipeline_run::PipelineRun>,
     /// What this turn's sub-agents may do (#1297), after the operator's
     /// [`crate::SubAgentPolicy`] has clamped the caller's request. `None`
     /// advertises no `task` tool at all, so the model never learns children
@@ -758,45 +765,76 @@ fn run_session(
             engine = engine.with_calibration(calibration);
         }
 
-        let outcome = match &spec.goal {
-            // A judged multi-round run (#1297). Its judge announces its own
-            // provider id and `role: judge` on every frame, so a host can
-            // route it to a different family than the worker — the property
-            // the goal loop exists for, and the one the engine cannot enforce
-            // because the host owns the model calls.
-            Some(run) => {
-                let judge_provider = crate::remote::RemoteProvider::new(
-                    run.judge_provider_id
-                        .clone()
-                        .unwrap_or_else(|| provider.id_string()),
-                    frame_tx.clone(),
-                    pending.clone(),
-                    spec.reverse_request_timeout,
-                )
-                .with_role(stella_protocol::ModelCallRole::Judge);
-                crate::goal::drive_goal(
-                    &engine,
-                    &judge_provider,
-                    run,
-                    spec.config.turn_instance,
-                    spec.messages,
-                    spec.budget,
-                    &event_tx,
-                    cancel,
-                    bus.as_ref(),
-                )
-                .await
-            }
-            None => {
-                drive_turn(
-                    &engine,
-                    spec.messages,
-                    spec.budget,
-                    &event_tx,
-                    cancel,
-                    bus.as_ref(),
-                )
-                .await
+        // Three mutually exclusive modes, in the order they were added:
+        // plain turn, judged goal run (#1297), pipeline-driven turn (#1288).
+        // `spec.pipeline` and `spec.goal` never both hold — the route layer
+        // refuses a request naming both (see `routes::handle_create`) — so
+        // this reads top-to-bottom as a priority list rather than a real
+        // ambiguity.
+        let outcome = if let Some(run) = &spec.pipeline {
+            // The pipeline drives its own internal engine turns and its own
+            // judge; it does not ride the `engine`/`tool_view` built above
+            // through the goal loop's step machinery. It DOES reuse
+            // `tool_view` itself (the turn's hook-gated tool executor,
+            // sub-agent-delegating or not) so its execute-stage tool calls
+            // are governed identically to an ordinary turn's — see
+            // `pipeline_run::drive_pipeline`'s own docs for the full account
+            // of what is and is not shared with the plain turn/goal paths.
+            crate::pipeline_run::drive_pipeline(
+                run,
+                provider.id_string(),
+                tool_view,
+                spec.config.clone(),
+                spec.messages,
+                spec.budget,
+                frame_tx.clone(),
+                pending.clone(),
+                spec.reverse_request_timeout,
+                &event_tx,
+                &gate,
+            )
+            .await
+        } else {
+            match &spec.goal {
+                // A judged multi-round run (#1297). Its judge announces its
+                // own provider id and `role: judge` on every frame, so a host
+                // can route it to a different family than the worker — the
+                // property the goal loop exists for, and the one the engine
+                // cannot enforce because the host owns the model calls.
+                Some(run) => {
+                    let judge_provider = crate::remote::RemoteProvider::new(
+                        run.judge_provider_id
+                            .clone()
+                            .unwrap_or_else(|| provider.id_string()),
+                        frame_tx.clone(),
+                        pending.clone(),
+                        spec.reverse_request_timeout,
+                    )
+                    .with_role(stella_protocol::ModelCallRole::Judge);
+                    crate::goal::drive_goal(
+                        &engine,
+                        &judge_provider,
+                        run,
+                        spec.config.turn_instance,
+                        spec.messages,
+                        spec.budget,
+                        &event_tx,
+                        cancel,
+                        bus.as_ref(),
+                    )
+                    .await
+                }
+                None => {
+                    drive_turn(
+                        &engine,
+                        spec.messages,
+                        spec.budget,
+                        &event_tx,
+                        cancel,
+                        bus.as_ref(),
+                    )
+                    .await
+                }
             }
         };
         let messages = outcome.messages;

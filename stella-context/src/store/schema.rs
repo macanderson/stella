@@ -14,7 +14,7 @@ use crate::embed::EmbedderFingerprint;
 use crate::error::ContextError;
 
 /// The current on-disk schema version, tracked in `PRAGMA user_version`.
-pub(crate) const SCHEMA_VERSION: i64 = 10;
+pub(crate) const SCHEMA_VERSION: i64 = 11;
 
 /// The v1 schema. Applied once, inside the migration transaction. Bi-temporal
 /// columns (`valid_from`/`valid_to`/`recorded_at`/`superseded_at`) exist on both
@@ -481,6 +481,33 @@ fn migrate_v10(tx: &Connection) -> Result<(), ContextError> {
     Ok(())
 }
 
+/// V11 — **the A/B recall control's durable turn counter** (#1221,
+/// [`crate::store::ab_control`]).
+///
+/// The control promises that every `rate`-th turn runs recall-suppressed, so
+/// recall's value is readable from episode outcomes. The counter behind that
+/// schedule lived in the session's memory, and the surfaces the measurement
+/// most needs — `stella run`, a fleet task, one `/goal` — are a single turn per
+/// process. A per-session counter there never reaches the rate at all, so those
+/// surfaces produced no control turns and the comparison was structurally
+/// impossible on them.
+///
+/// One row per named experiment, keyed by the experiment rather than by
+/// surface: the arms have to be one interleaved sequence across every driver in
+/// the workspace, not one schedule per driver that each surface restarts.
+/// `turns` is the count claimed so far and only ever rises.
+///
+/// `IF NOT EXISTS` for the reason V4–V7 have it: a store whose `user_version`
+/// was rewound — a partial restore, or the migration fixtures — must be able to
+/// re-run this without failing on an existing table.
+pub(crate) const MIGRATION_V11: &str = "\
+CREATE TABLE IF NOT EXISTS ab_control_counter (
+    experiment  TEXT PRIMARY KEY,
+    turns       INTEGER NOT NULL DEFAULT 0,
+    updated_at  TEXT NOT NULL
+);
+";
+
 /// Open a connection with the plane's fixed pragmas: WAL for concurrent
 /// reader/writer, `NORMAL` sync (durable enough with WAL, far cheaper than
 /// `FULL`), foreign keys on, and a busy timeout so a warm-task write never
@@ -602,6 +629,9 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), ContextError> {
     if version < 10 {
         migrate_v10(&tx)?;
     }
+    if version < 11 {
+        tx.execute_batch(MIGRATION_V11)?;
+    }
     // ── APPEND POINT — RESERVED SLOT ────────────────────────────────────
     // This is an ordered `if version < N` ladder and `SCHEMA_VERSION` is its
     // high-water mark. Two branches that each add "the next step" merge
@@ -618,7 +648,10 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), ContextError> {
     //       see `migrate_v8`. (The v6 slot originally reserved for it went
     //       to the compaction watermark, `MIGRATION_V6`.)
     //
-    // The next free step is v11: take it and add your own line here.
+    //   v11: the A/B recall control's durable turn counter (#1221) — TAKEN,
+    //        see `MIGRATION_V11`.
+    //
+    // The next free step is v12: take it and add your own line here.
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
     Ok(())
