@@ -473,15 +473,30 @@ fn inspect_overlay_renders_the_call_list_then_the_context_sent() {
         "the verdict is shown:\n{detail}"
     );
 
-    // A torn journal must read differently from a coverage gap.
+    // A digest mismatch must read differently from a coverage gap.
     if let Some(view) = ui.inspect_view.as_mut() {
         view.verified = false;
         view.digest_mismatches = 2;
     }
-    let torn = render(&mut ui);
+    let mismatched = render(&mut ui);
     assert!(
-        torn.contains("did not re-hash"),
-        "a digest mismatch is called out, not folded into 'unverified':\n{torn}"
+        mismatched.contains("did not re-hash"),
+        "a digest mismatch is called out, not folded into 'unverified':\n{mismatched}"
+    );
+    // ...and it must NOT read as tampering. The common cause is a compaction
+    // rewrite the journal never learned about, so the line names that instead
+    // of accusing the journal of being torn or altered. Pinned because the
+    // wording IS the feature here: an integrity alarm that fires on ordinary
+    // housekeeping is one the reader learns to skip.
+    for accusation in ["torn", "altered", "tamper"] {
+        assert!(
+            !mismatched.contains(accusation),
+            "the mismatch line must not imply tampering, found {accusation:?}:\n{mismatched}"
+        );
+    }
+    assert!(
+        mismatched.contains("compaction rewrite"),
+        "the likely benign cause is named:\n{mismatched}"
     );
 }
 

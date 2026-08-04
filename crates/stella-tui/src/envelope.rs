@@ -453,8 +453,11 @@ pub struct InspectView {
     /// Blocks with no recoverable preimage — a documented coverage gap
     /// (synthetic results, discarded speculation, attachments).
     pub unresolved: usize,
-    /// Blocks whose bytes did NOT re-hash — a torn or altered journal. Kept
-    /// distinct from `unresolved`: the two mean very different things.
+    /// Blocks whose recovered bytes did NOT re-hash to the digest they
+    /// recorded — the preimage shown is the closest one the journal holds, not
+    /// the exact bytes this step sent. Usually a compaction rewrite the journal
+    /// was never told about, not evidence of tampering. Kept distinct from
+    /// `unresolved`: the two mean very different things.
     pub digest_mismatches: usize,
 }
 

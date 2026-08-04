@@ -764,9 +764,10 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
             ),
             theme::muted(),
         )));
-        // The two failure modes read very differently and are never merged:
-        // an unresolved block is a documented coverage gap, a digest mismatch
-        // means the journal is torn or was altered.
+        // Never merged: unresolved is a coverage gap, a mismatch means the
+        // recovered bytes are not this block's. Neither is phrased as tampering
+        // — the common cause is a compaction rewrite the journal was never told
+        // about, and an alarm that fires on housekeeping is one nobody reads.
         if view.unresolved > 0 {
             lines.push(Line::from(Span::styled(
                 format!(
@@ -778,13 +779,12 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
             )));
         }
         if view.digest_mismatches > 0 {
+            // Kept short enough to survive the overlay's clip: the cause is the
+            // whole point of the line, so it must not fall off the right edge.
+            let n = view.digest_mismatches;
             lines.push(Line::from(Span::styled(
-                format!(
-                    "  !! {} block(s) did not re-hash to the recorded digest — journal torn \
-                     or altered",
-                    view.digest_mismatches
-                ),
-                Style::default().fg(theme::DANGER),
+                format!("  ! {n} block(s) did not re-hash — showing closest preimage, likely a compaction rewrite"),
+                Style::default().fg(theme::WARN),
             )));
         }
         if view.verified {
