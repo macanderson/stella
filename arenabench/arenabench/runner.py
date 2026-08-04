@@ -346,10 +346,28 @@ class MatchRunner:
                 "virtualenv that has it."
             )
 
+        # Prefer an offline export. Given a registry ref, Harbor resolves
+        # every task against its backend at run time, and one failed lookup
+        # raises out of the job and kills every remaining trial — for both
+        # contestants at once, since they die independently but for the same
+        # reason. The export carries the same bytes as the pinned digest, so
+        # this costs no provenance and removes the network from the hot path.
+        local_path = self.registry.local_run_path(match.spec.dataset)
+        if local_path is not None:
+            source = ["--path", str(local_path)]
+            run.notes.append(f"tasks read offline from {local_path}")
+        else:
+            source = ["--dataset", match.dataset.harbor_id]
+            run.warnings.append(
+                "no local export: Harbor will resolve each task over the "
+                "network mid-run, and one failed lookup ends the job. "
+                f"`arenabench export {match.spec.dataset}` removes that."
+            )
+
         command = [
             "harbor", "run",
             "--env", "docker",
-            "--dataset", match.dataset.harbor_id,
+            *source,
             *launch_flags(contestant),
             "--model", launch_model(contestant),
             "--job-name", job_name,
@@ -363,8 +381,16 @@ class MatchRunner:
                 "--agent-setup-timeout-multiplier",
                 str(match.spec.setup_timeout_multiplier),
             ]
+        # Task names are namespaced by the *registry*, not by the task itself.
+        # Filtering a ref'd dataset therefore needs `<namespace>/<task>`, while
+        # an export on disk is just directories and answers to the bare name.
+        # Sending the wrong form matches nothing and Harbor exits immediately —
+        # loudly, at least, rather than by quietly running fewer tasks.
         for task in match.spec.tasks:
-            command += ["--include-task-name", f"{match.dataset.namespace}/{task}"]
+            command += [
+                "--include-task-name",
+                task if local_path is not None else f"{match.dataset.namespace}/{task}",
+            ]
 
         env = _base_environment()
         env.update(contestant.env)
