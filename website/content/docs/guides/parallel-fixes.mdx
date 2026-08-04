@@ -66,13 +66,13 @@ For anything beyond a handful of prompts, write the list down. A plan file is a
 id = "store-clippy"
 title = "Clippy: stella-store"
 prompt = "Fix every clippy warning in stella-store. Do not silence with #[allow]."
-claims = ["stella-store/src/lib.rs", "stella-store/src/write.rs"]
+claims = ["crates/stella-store/src/lib.rs", "crates/stella-store/src/write.rs"]
 
 [[tasks]]
 id = "graph-clippy"
 title = "Clippy: stella-graph"
 prompt = "Fix every clippy warning in stella-graph. Do not silence with #[allow]."
-claims = ["stella-graph/src/lib.rs"]
+claims = ["crates/stella-graph/src/lib.rs"]
 
 [[tasks]]
 id = "workspace-lints"

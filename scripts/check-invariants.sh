@@ -15,7 +15,7 @@
 #      they found the short one.
 #
 #   2. **Renumbering.** The list is cited BY NUMBER from Rust doc comments,
-#      from runtime error strings in stella-store/src/content_free.rs, and from
+#      from runtime error strings in crates/stella-store/src/content_free.rs, and from
 #      four crate READMEs. Nothing checked those numbers, so inserting an entry
 #      mid-list would have silently repointed every citation at the wrong rule
 #      — invisibly, because a stale "#3" still renders as a plausible "#3".

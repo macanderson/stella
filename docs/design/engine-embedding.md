@@ -169,7 +169,7 @@ API surface from quietly falling behind it.
 ## 3. The parity contract: features ship on both surfaces, or the absence is declared
 
 The failure mode this repo already solved once for providers —
-"per-provider divergence nothing enforced" (`stella-model/src/provider_parity.rs`)
+"per-provider divergence nothing enforced" (`crates/stella-model/src/provider_parity.rs`)
 — exists one level up, between surfaces. Measured on the tree at the time of
 writing: the API could set exactly **one** of `EngineConfig`'s ~15 tuning
 knobs (`max_steps`); the goal loop, sub-agents, hooks, and calibration were

@@ -12,13 +12,13 @@ Status: descriptive — this documents the posture as shipped, not a plan
 
 Stella's security reasoning has always been written down. It was just never
 written down *together*: the project trust boundary is argued in
-`stella-cli/src/settings/merge.rs`, the authority ceiling in
+`crates/stella-cli/src/settings/merge.rs`, the authority ceiling in
 `settings/authority.rs`, the subprocess scrub in
-`stella-tools/src/subprocess_env.rs`, the shell tool's scope in
-`stella-tools/src/bash.rs`, the web egress denylist in
-`stella-tools/src/web_egress.rs`, the filesystem identity checks in
-`stella-store/src/private.rs`, and the dotenv refusals in
-`stella-cli/src/env_files.rs`. Each is careful. None of them can tell you
+`crates/stella-tools/src/subprocess_env.rs`, the shell tool's scope in
+`crates/stella-tools/src/bash.rs`, the web egress denylist in
+`crates/stella-tools/src/web_egress.rs`, the filesystem identity checks in
+`crates/stella-store/src/private.rs`, and the dotenv refusals in
+`crates/stella-cli/src/env_files.rs`. Each is careful. None of them can tell you
 whether the set is *complete*, because none of them enumerates the assets or
 the adversary.
 
@@ -90,7 +90,7 @@ already is the user.
 ### B1 — Repository content → configuration authority
 
 The load-bearing boundary. `Settings::load`
-(`stella-cli/src/settings/merge.rs:205`) merges user, managed, and project
+(`crates/stella-cli/src/settings/merge.rs:205`) merges user, managed, and project
 scopes per provider id and per field, and the project scope is treated as
 untrusted input.
 
@@ -142,7 +142,7 @@ See [R2](#r2--the-default-tool-surface-executes-code).
 
 ### B4 — Process → subprocess (ambient authority)
 
-`stella-tools/src/subprocess_env.rs` scrubs two families before every spawn
+`crates/stella-tools/src/subprocess_env.rs` scrubs two families before every spawn
 (16 sites): credential-shaped names, and ambient-authority names that would
 turn a subprocess into arbitrary code execution — `GIT_CONFIG_*` (including
 the unbounded `GIT_CONFIG_KEY_n`/`VALUE_n` pairs), `GIT_SSH_COMMAND`,
@@ -153,7 +153,7 @@ globs, and is read from Stella's own environment — so a repository tool
 manifest cannot widen the policy about to be applied to it. A registered
 model-credential name is never re-admitted.
 
-`stella-cli/src/env_files.rs` applies the same logic to dotenv loading: it
+`crates/stella-cli/src/env_files.rs` applies the same logic to dotenv loading: it
 refuses to ever apply `LD_*`, `DYLD_*`, `PATH`, `NODE_OPTIONS`, `BASH_ENV`,
 `GIT_SSH_COMMAND`, `LESSOPEN`, and friends, because applying them would make
 `git clone && stella` arbitrary code execution on the first subprocess.
@@ -193,7 +193,7 @@ so the descriptor walk degrades to the string resolver — see
 
 ### B6 — Stella's private state → other local processes
 
-`stella-store/src/private.rs` asserts *identity* on every private read and
+`crates/stella-store/src/private.rs` asserts *identity* on every private read and
 write: `O_NOFOLLOW|O_CLOEXEC`, regular file, `uid == geteuid()`, `nlink == 1`,
 mode `0600`, inside a `0700` directory whose parent is owner-controlled with
 no group/other write. `.stella/.gitignore` is generated so private state
@@ -205,7 +205,7 @@ This is the boundary most weakened off Unix — see
 ### B7 — Local execution data → network
 
 Zero telemetry egress by default is an `AGENTS.md` invariant with a real
-enforcement mechanism: `stella-store/src/content_free.rs` holds a reviewed
+enforcement mechanism: `crates/stella-store/src/content_free.rs` holds a reviewed
 allowlist of hub columns plus a sentinel harness every egress encoder
 registers with, and adding a column or an encoder key fails `make gate` until
 the allowlist is edited in the same PR.
@@ -304,7 +304,7 @@ operator re-opens a specific destination with `[egress] allow` in
 `~/.stella/web_auth.toml` — user scope, deliberately not `settings.json`, which
 a repo can write.
 
-Two residuals remain, both recorded in `stella-tools/src/web_egress.rs`:
+Two residuals remain, both recorded in `crates/stella-tools/src/web_egress.rs`:
 
 - **Proxies.** With `HTTP_PROXY`/`HTTPS_PROXY` set, reqwest resolves and
   connects to the *proxy*; the real destination travels in the `CONNECT` line

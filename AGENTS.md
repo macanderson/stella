@@ -191,7 +191,7 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    and local identifiers are never exportable. Update checks and anonymous
    analytics remain prohibited.
 
-   This is **enforced, not assumed** — `stella-store/src/content_free.rs` holds
+   This is **enforced, not assumed** — `crates/stella-store/src/content_free.rs` holds
    the reviewed allowlist of hub `telemetry` columns and a sentinel harness
    every egress encoder registers with. Adding a hub column, or a key to an
    encoder, fails `make gate` until the allowlist is edited in the same PR, so
@@ -213,11 +213,11 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    deterministic — prompt-cache hits are a feature, and nondeterminism there
    is a cost regression. Memories are loaded once per session and concatenated
    in sorted filename order; recalled context rides as a volatile message
-   *after* the stable prefix (see `stella-cli/src/agent.rs::build_system_prompt`
-   and `stella-cli/src/memory.rs` for the L-E8 discipline).
+   *after* the stable prefix (see `crates/stella-cli/src/agent.rs::build_system_prompt`
+   and `crates/stella-cli/src/memory.rs` for the L-E8 discipline).
 8. **Provider feature parity is declared, not assumed.** Providers diverge
    in sneaky ways, and this is guarded on **two axes** today in
-   `stella-model/src/provider_parity.rs`:
+   `crates/stella-model/src/provider_parity.rs`:
    - **`CachePosture`** — how the prompt cache is engaged/observed
      (Anthropic's cache is explicit opt-in; DeepSeek spells its cache-hit
      telemetry differently; OpenRouter needs a request-root `cache_control`
@@ -258,7 +258,7 @@ refactors, docs, and CI changes don't need a witness — say so in the PR
 template. If a witness is genuinely impractical (e.g. TUI rendering), explain
 how you verified the change instead.
 
-The `verify_done` tool (`stella-tools/src/verify.rs`) automates this in a
+The `verify_done` tool (`crates/stella-tools/src/verify.rs`) automates this in a
 detached shadow git worktree at `HEAD` — it copies only the test files from the
 working tree into the shadow, runs the suite, and expects a failure there.
 **The working tree is never mutated** (no stash, no checkout). Path resolution
@@ -280,34 +280,77 @@ loop, and the `/pipeline` deck toggle.
 
 ## Workspace layout — where a change goes
 
-Twenty crates. The one-sentence rule of thumb below routes you to the right
-one; **each crate's own `README.md`** (linked from the table) then covers its
-layout, invariants, gotchas, and extension recipe in depth. Read that before
-changing code inside a crate you don't already know.
+Twenty crates, every one under the `crates/` directory (`crates/stella-core`,
+`crates/stella-cli`, …; the two bench members stay under `bench/`). The
+one-sentence rule of thumb below routes you to the right one; **each crate's
+own `README.md`** (linked from the table) then covers its boundary, layout,
+invariants, gotchas, and extension recipe in depth. Read that before changing
+code inside a crate you don't already know — its "Boundary" section answers
+whether your change belongs there at all, and its "God files" section names
+the files you must plan around (see below).
 
 | You want to… | Crate | Notes |
 |---|---|---|
-| Change the agent loop (plan / retry / compact / budget / loop-detect / hooks / skills / rules) | [`stella-core`](stella-core/README.md) | **No I/O allowed.** Decision logic only. |
-| Add/fix a model provider (SSE, tool-call dialect, pricing) | [`stella-model`](stella-model/README.md) | One file per adapter (`anthropic.rs`, `openai.rs`, `gemini.rs`, `vertex.rs`, `bedrock.rs`, `zai.rs`). Copy an existing adapter's shape. |
-| Add/fix a built-in tool (`read_file`, `verify_done`, `bash`, …) | [`stella-tools`](stella-tools/README.md) | Implement the `Tool` trait, register in `ToolRegistry`. |
-| Change CLI commands, flags, or agent wiring | [`stella-cli`](stella-cli/README.md) | This is the shipping binary. |
-| Change REPL rendering / panels / keybindings | [`stella-tui`](stella-tui/README.md) | Pure-fold ratatui REPL — the Command Deck, the default interactive shell on a TTY. |
-| Touch shared types crossing a crate boundary | [`stella-protocol`](stella-protocol/README.md) | **Zero logic, zero I/O — types only.** |
-| Resolve where `~/.stella` is — home dir, stella home, the user-tier data dir | [`stella-home`](stella-home/README.md) | **A leaf with NO dependencies at all**, which is what lets `stella-store` and `stella-observatory` share it (the observatory must not link the store). Every resolver has a pure `resolve_*` half that reads no environment. |
-| Emit a diagnostic — a record explaining *why* the program did something | [`stella-diag`](stella-diag/README.md) | **A leaf: `serde` only, so anything may depend on it.** Field values cannot hold a `String`, a `Path`, or model output — that is a compile error, not a review question. Design: [`docs/design/diagnostics/diagnostics.md`](docs/design/diagnostics/diagnostics.md). |
-| Persistence: executions, events, telemetry (SQLite) | [`stella-store`](stella-store/README.md) | |
-| Retrieval: graph, embeddings, episodic memory | [`stella-context`](stella-context/README.md) | |
-| Tree-sitter code indexing | [`stella-graph`](stella-graph/README.md) | |
-| Triage → … → judge orchestration plane | [`stella-pipeline`](stella-pipeline/README.md) | |
-| MCP client (external tool servers) | [`stella-mcp`](stella-mcp/README.md) | |
-| Multimodal generation | [`stella-media`](stella-media/README.md) | |
-| Multi-agent fan-out, worktree isolation | [`stella-fleet`](stella-fleet/README.md) | |
-| The Observatory telemetry dashboard (`stella observe`) | [`stella-observatory`](stella-observatory/README.md) | Loopback-only, read-only, embedded HTML. |
-| The headless engine server a host process drives over the wire | [`stella-serve`](stella-serve/README.md) | Its **own binary**, not linked into [`stella-cli`](stella-cli/README.md). Every model/tool call is remoted back to the host; the engine holds no ambient authority. Design: [`docs/design/serve-surface.md`](docs/design/serve-surface.md). |
-| Drive the engine one step at a time from a durable host (checkpoint/resume) | `stella-engine` | Re-export-only facade over `stella-core`'s step loop (#971); no logic, no I/O. Consumed by [`stella-serve`](stella-serve/README.md) and external hosts — `stella-cli` does not link it. |
-| Share the engine-assembly bottom half (provider, registry, store, budget) | `stella-runtime` | `RuntimeSpec` → `RuntimeBuilder` → `SessionRuntime`, construction only. Reads no ambient environment by contract (`tests/no_ambient_reads.rs`). |
-| Declare CLI-vs-API capability parity (witnessed, ratcheted) | `stella-parity` | The cross-surface capability matrix: every engine capability carries a posture + named witness test per surface, so a feature cannot ship on one surface and silently miss the other. |
+| Change the agent loop (plan / retry / compact / budget / loop-detect / hooks / skills / rules) | [`stella-core`](crates/stella-core/README.md) | **No I/O allowed.** Decision logic only. |
+| Add/fix a model provider (SSE, tool-call dialect, pricing) | [`stella-model`](crates/stella-model/README.md) | One file per adapter (`anthropic.rs`, `openai.rs`, `gemini.rs`, `vertex.rs`, `bedrock.rs`, `zai.rs`). Copy an existing adapter's shape. |
+| Add/fix a built-in tool (`read_file`, `verify_done`, `bash`, …) | [`stella-tools`](crates/stella-tools/README.md) | Implement the `Tool` trait, register in `ToolRegistry`. |
+| Change CLI commands, flags, or agent wiring | [`stella-cli`](crates/stella-cli/README.md) | This is the shipping binary. |
+| Change REPL rendering / panels / keybindings | [`stella-tui`](crates/stella-tui/README.md) | Pure-fold ratatui REPL — the Command Deck, the default interactive shell on a TTY. |
+| Touch shared types crossing a crate boundary | [`stella-protocol`](crates/stella-protocol/README.md) | **Zero logic, zero I/O — types only.** |
+| Resolve where `~/.stella` is — home dir, stella home, the user-tier data dir | [`stella-home`](crates/stella-home/README.md) | **A leaf with NO dependencies at all**, which is what lets `stella-store` and `stella-observatory` share it (the observatory must not link the store). Every resolver has a pure `resolve_*` half that reads no environment. |
+| Emit a diagnostic — a record explaining *why* the program did something | [`stella-diag`](crates/stella-diag/README.md) | **A leaf: `serde` only, so anything may depend on it.** Field values cannot hold a `String`, a `Path`, or model output — that is a compile error, not a review question. Design: [`docs/design/diagnostics/diagnostics.md`](docs/design/diagnostics/diagnostics.md). |
+| Persistence: executions, events, telemetry (SQLite) | [`stella-store`](crates/stella-store/README.md) | |
+| Retrieval: graph, embeddings, episodic memory | [`stella-context`](crates/stella-context/README.md) | |
+| Tree-sitter code indexing | [`stella-graph`](crates/stella-graph/README.md) | |
+| Triage → … → judge orchestration plane | [`stella-pipeline`](crates/stella-pipeline/README.md) | |
+| MCP client (external tool servers) | [`stella-mcp`](crates/stella-mcp/README.md) | |
+| Multimodal generation | [`stella-media`](crates/stella-media/README.md) | |
+| Multi-agent fan-out, worktree isolation | [`stella-fleet`](crates/stella-fleet/README.md) | |
+| The Observatory telemetry dashboard (`stella observe`) | [`stella-observatory`](crates/stella-observatory/README.md) | Loopback-only, read-only, embedded HTML. |
+| The headless engine server a host process drives over the wire | [`stella-serve`](crates/stella-serve/README.md) | Its **own binary**, not linked into [`stella-cli`](crates/stella-cli/README.md). Every model/tool call is remoted back to the host; the engine holds no ambient authority. Design: [`docs/design/serve-surface.md`](docs/design/serve-surface.md). |
+| Drive the engine one step at a time from a durable host (checkpoint/resume) | [`stella-engine`](crates/stella-engine/README.md) | Re-export-only facade over `stella-core`'s step loop (#971); no logic, no I/O. Consumed by [`stella-serve`](crates/stella-serve/README.md) and external hosts — `stella-cli` does not link it. |
+| Share the engine-assembly bottom half (provider, registry, store, budget) | [`stella-runtime`](crates/stella-runtime/README.md) | `RuntimeSpec` → `RuntimeBuilder` → `SessionRuntime`, construction only. Reads no ambient environment by contract (`tests/no_ambient_reads.rs`). |
+| Declare CLI-vs-API capability parity (witnessed, ratcheted) | [`stella-parity`](crates/stella-parity/README.md) | The cross-surface capability matrix: every engine capability carries a posture + named witness test per surface, so a feature cannot ship on one surface and silently miss the other. |
 | Context Graph Protocol (wire types / host / conformance) | external repo: [`context-graph-protocol`](https://github.com/macanderson/context-graph-protocol) | Split out of this workspace; Stella depends on it as registry crates (`contextgraph-*`) pinned with exact `=` version requirements in the root `[workspace.dependencies]`. Stays dependency-light by contract. |
+
+### God files — plan around them, never into them
+
+Read this **before** planning any change, because it constrains where new
+lines may land. The gate's `file-size` guard (`scripts/check-file-size.sh`)
+enforces a 1500-line ratchet with a grandfather list
+(`scripts/file-size-baseline.txt`). Two rules follow, and both are planning
+inputs, not review afterthoughts:
+
+- **No new god file can exist.** A new file that crosses 1500 lines fails the
+  gate outright, and the baseline accepts no new entries — a file approaching
+  the limit gets split, not grown over it.
+- **The grandfathered god files below are closed to growth: do not add lines
+  to them.** Plan work so new logic lands in a sibling submodule instead
+  (`crates/stella-core/src/driver/settlement.rs`, split out of `driver.rs`,
+  is the pattern). A ceiling moves only via `make file-size-update`, which
+  lands as a reviewable baseline diff to be justified like any other change —
+  an escape hatch for a genuinely irreducible line (a module declaration in
+  an already-oversized `lib.rs`), never something a plan may assume.
+
+The workspace's Rust god files, by crate (ceiling in lines; the bench
+harness's Python offenders sit in the same baseline). The baseline file is
+normative — if this table and the baseline ever disagree, the baseline
+governs:
+
+| Crate | God files (ceiling) |
+|---|---|
+| `stella-cli` | `src/command_deck.rs` (4754), `src/agent.rs` (2271), `src/agent_tests.rs` (1750), `src/candidate_ws.rs` (1585), `src/fleet_cmd.rs` (1506) |
+| `stella-core` | `src/driver/tests.rs` (3672), `src/driver.rs` (2765), `src/bus.rs` (2129) |
+| `stella-model` | `src/openai.rs` (2072), `src/zai/tests.rs` (1843), `src/anthropic/tests.rs` (1677), `src/zai.rs` (1572) |
+| `stella-pipeline` | `src/pipeline.rs` (3691), `src/pipeline/tests.rs` (2621) |
+| `stella-protocol` | `src/event.rs` (2906) |
+| `stella-store` | `src/tests.rs` (2264), `src/lib.rs` (2080), `src/usage.rs` (1916) |
+| `stella-tools` | `src/registry.rs` (2326), `src/scripts.rs` (1839), `src/media.rs` (1569) |
+| `stella-tui` | `src/deck_ui.rs` (4068), `src/views/engine.rs` (1665), `src/views/session.rs` (1621), `src/deck_render.rs` (1600), `src/deck.rs` (1528) |
+
+The other twelve crates carry no god files — keep it that way. Each crate's
+README repeats its own list under "God files — do not add lines", so the
+constraint is in view wherever planning starts.
 
 **Status — what ships.** The live runtime path is
 `stella-cli` → `stella-core` → `stella-model` / `stella-tools` / `stella-store` /
@@ -377,18 +420,18 @@ the identity that scopes it.
 
 Five different ids in this workspace can all be read as "one thing the agent
 did", and they are genuinely distinct entities owned by different crates. The
-join keys are correct today (`stella-observatory/src/db.rs` joins both
+join keys are correct today (`crates/stella-observatory/src/db.rs` joins both
 `execution_id` and `run_id`), so this is a naming hazard, not a bug — but read
 this before assuming two of them mean the same thing:
 
 | Term | Identifier | Owner | What it is |
 |---|---|---|---|
-| **session** | `SessionRecord::id` | `stella-store/src/sessions.rs` | One run of the CLI, tracked in the cross-process registry under `~/.stella/sessions/`. Stamped onto `executions.session_id` (schema v8) so `Store::session_events` can reassemble a session's whole journal across its turns. |
-| **execution** | `execution_id` | `stella-store/src/ddl.rs` | One row in the `executions` table — the store's unit of work (one goal/turn) with its prompt, provider/model, outcome and cost. The foreign key every child telemetry table hangs off. |
-| **turn** | `turn_instance` | `stella-protocol/src/event.rs` | One `run_turn` — a prompt through the model/tool loop to an answer. Monotonic per session; groups the steps of that turn in `step_manifest`/`step_receipt`. In the store one turn is one execution. |
-| **step** | `(step, call_seq)` | `stella-protocol/src/event.rs` | One iteration inside a turn: one model call plus the tools it requested. `call_seq` disambiguates the several calls that can share a `(turn_instance, step)` — the engine's worker call is 0, the overflow summarizer and the pipeline's triage/judge/plan/guidance roles take 1, 2, … |
-| **fleet run** | `run_id` | `stella-fleet/src/ledger.rs` | One multi-agent fan-out, top of the fleet hierarchy: run → task → attempt → commits/spend. **Not** an `execution_id` and **not** a session. |
-| **task** | `TaskId` / `tasks` row | `stella-fleet/src/plan.rs`, [`stella-store`](stella-store/README.md) | Two things that share a word: in the fleet ledger, one unit of work dispatched to a worker within a run; in the store, one row of the agent's own task-board snapshot, keyed `(session, task id)` and mirrored from `TaskUpdate` events. |
+| **session** | `SessionRecord::id` | `crates/stella-store/src/sessions.rs` | One run of the CLI, tracked in the cross-process registry under `~/.stella/sessions/`. Stamped onto `executions.session_id` (schema v8) so `Store::session_events` can reassemble a session's whole journal across its turns. |
+| **execution** | `execution_id` | `crates/stella-store/src/ddl.rs` | One row in the `executions` table — the store's unit of work (one goal/turn) with its prompt, provider/model, outcome and cost. The foreign key every child telemetry table hangs off. |
+| **turn** | `turn_instance` | `crates/stella-protocol/src/event.rs` | One `run_turn` — a prompt through the model/tool loop to an answer. Monotonic per session; groups the steps of that turn in `step_manifest`/`step_receipt`. In the store one turn is one execution. |
+| **step** | `(step, call_seq)` | `crates/stella-protocol/src/event.rs` | One iteration inside a turn: one model call plus the tools it requested. `call_seq` disambiguates the several calls that can share a `(turn_instance, step)` — the engine's worker call is 0, the overflow summarizer and the pipeline's triage/judge/plan/guidance roles take 1, 2, … |
+| **fleet run** | `run_id` | `crates/stella-fleet/src/ledger.rs` | One multi-agent fan-out, top of the fleet hierarchy: run → task → attempt → commits/spend. **Not** an `execution_id` and **not** a session. |
+| **task** | `TaskId` / `tasks` row | `crates/stella-fleet/src/plan.rs`, [`stella-store`](crates/stella-store/README.md) | Two things that share a word: in the fleet ledger, one unit of work dispatched to a worker within a run; in the store, one row of the agent's own task-board snapshot, keyed `(session, task id)` and mirrored from `TaskUpdate` events. |
 
 ---
 
@@ -482,10 +525,10 @@ be closed by exactly one PR; if a fix spans several, close on the last and
 - **Witness tests** for features — see above.
 - **Wiremock-based adapter tests** for provider SSE parsing and HTTP error
   classification (`stella-model`, `stella-mcp`, `stella-media`).
-- **Integration tests** with fixture MCP servers (`stella-mcp/tests/`).
-- **Replay fixtures** for pipeline stages (`stella-pipeline/tests/`).
+- **Integration tests** with fixture MCP servers (`crates/stella-mcp/tests/`).
+- **Replay fixtures** for pipeline stages (`crates/stella-pipeline/tests/`).
 - **Golden frames** for the command deck
-  (`stella-tui/tests/deck_render_snapshots.rs`). Each tab and overlay renders
+  (`crates/stella-tui/tests/deck_render_snapshots.rs`). Each tab and overlay renders
   into a fixed-size `TestBackend` and the whole character grid is compared
   against a committed snapshot under `tests/snapshots/deck/`. This catches what
   a `contains` assertion cannot — a column that shifted, a panel that moved, a

@@ -18,7 +18,7 @@ API key, no Docker). The third is bought deliberately.
 
 ## Layer 1 — the degradation gate (blocking, per-PR)
 
-`stella-pipeline/src/pipeline/tests/degradation_gate.rs` drives the **real
+`crates/stella-pipeline/src/pipeline/tests/degradation_gate.rs` drives the **real
 pipeline** — triage, execution, witness plumbing, the verification ladder,
 the judge — over scripted model/test doubles, through a fixed matrix of
 scenarios, and pins three things per scenario:
@@ -57,7 +57,7 @@ the fixture diff as a contract change. It is not independent evidence; both
 sides are the same code.
 
 The wire schema itself (`docs/wire/agentevent.schema.json`) is committed and
-asserted by `stella-protocol/tests/wire_contract.rs`; regenerate with
+asserted by `crates/stella-protocol/tests/wire_contract.rs`; regenerate with
 `scripts/export-agentevent-schema.sh`. Protocol changes must be additive —
 old streams must keep parsing (pinned by tests).
 

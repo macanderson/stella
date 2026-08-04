@@ -1015,7 +1015,11 @@ class TestWitnessArmEndToEnd:
 
 
 _CATALOG_RS = (
-    Path(__file__).resolve().parents[3] / "stella-model" / "src" / "catalog.rs"
+    Path(__file__).resolve().parents[3]
+    / "crates"
+    / "stella-model"
+    / "src"
+    / "catalog.rs"
 )
 
 
@@ -1187,10 +1191,10 @@ class TestOutputCeilingParity:
     `params.max_tokens` exists to stop Stella capping itself below what the
     comparator gets — "never be the side that stops first". It is a literal
     in `posture.py`, and the model's actual ceiling is a literal in
-    `stella-model/src/catalog.rs`. Nothing connected the two, so a catalog
-    that learns a higher ceiling leaves the benchmark quietly capped at the
-    old one: the exact handicap the constant was introduced to remove, now
-    invisible because both numbers still look deliberate.
+    `crates/stella-model/src/catalog.rs`. Nothing connected the two, so a
+    catalog that learns a higher ceiling leaves the benchmark quietly capped
+    at the old one: the exact handicap the constant was introduced to remove,
+    now invisible because both numbers still look deliberate.
     """
 
     def test_catalog_is_readable_and_seeds_ceilings(self) -> None:

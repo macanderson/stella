@@ -9,7 +9,7 @@ status: living
 Worked examples of the TOML context-record surface. For the fields they cover
 these are **the schema reference**: [ADR 0012](../adr/0012-context-record-field-schema.md)
 ratified that schema on 2026-07-30 and retired this file's former "illustrative,
-not ratified" caveat, and `stella-core/src/records/` implements it.
+not ratified" caveat, and `crates/stella-core/src/records/` implements it.
 
 `docs/design/adaptive-context/context-pr.md` remains the canonical specification for the workflow around
 records, and none of these files is loaded by the engine — they are examples, not
@@ -75,7 +75,7 @@ than arbitrary shell. See "Probe kinds" below.
 
 **Two channels, chosen by `force`.** `must` and `should` records are **always**
 injected and live in the byte-stable system prefix, so they ride the prompt cache
-(`stella-cli/src/agent.rs:698`). `may` and `info` records are selected by
+(`crates/stella-cli/src/agent.rs:698`). `may` and `info` records are selected by
 relevance and ride the volatile block alongside memories
 (`inject_recall_block`).
 
@@ -98,7 +98,7 @@ each, and no record is stored twice.
 A memory is fetched per turn by relevance and is not cached. A context record is
 a file: the project's git tree for `repository` and `organization` scope,
 `~/.stella/rules/` for `personal` scope — which the loader already reads
-(`rule_search_dirs`, `stella-core/src/rules.rs:345`). `sharing_scope` chooses
+(`rule_search_dirs`, `crates/stella-core/src/rules.rs:345`). `sharing_scope` chooses
 *which* file location, not whether it is a file at all.
 
 Promotion is how a memory becomes a context record.
@@ -212,7 +212,7 @@ compressing each one.
 
 All four, plus the handle-collision question in `07-agent-projection.md`, are
 answered in [ADR 0012](../adr/0012-context-record-field-schema.md) and implemented
-in `stella-core/src/records/`:
+in `crates/stella-core/src/records/`:
 
 1. **`set_id` in citations** → nothing cites it. The citation key is the
    `^handle`, derived from `lineage_id`; `set_id` is a grouping namespace and the

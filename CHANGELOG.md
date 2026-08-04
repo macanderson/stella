@@ -38,6 +38,10 @@ skip the roll) were re-inserted the same way.
 
 ## [Unreleased]
 
+## [0.6.98] — 2026-08-04
+
+## [0.6.97] — 2026-08-04
+
 ## [0.6.96] — 2026-08-04
 
 ## [0.6.95] — 2026-08-04
@@ -132,7 +136,7 @@ skip the roll) were re-inserted the same way.
 - **The `bash` sandbox is gone (#1300).** `STELLA_BASH_SANDBOX` —
   `workspace-write` / `restricted`, backed by `sandbox-exec` (Seatbelt) on
   macOS and `bwrap` (bubblewrap) on Linux — has been removed along with
-  `stella-tools/src/sandbox.rs`. **The variable is now inert:** it is read
+  `crates/stella-tools/src/sandbox.rs`. **The variable is now inert:** it is read
   nowhere, so a value left in a shell profile, CI job, or service unit does
   nothing and warns about nothing. Setting it no longer fails a tool call
   either — an unrecognized value used to be an error, and now it is ignored

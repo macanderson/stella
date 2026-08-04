@@ -116,14 +116,14 @@ lines.
 | File | Raw | Substantive (§5.1) |
 |---|---:|---:|
 | `bench/terminal_bench_analysis/tb21_analysis.py` | 8,211 | — |
-| `stella-cli/src/command_deck.rs` | 4,551 | 3,164 |
+| `crates/stella-cli/src/command_deck.rs` | 4,551 | 3,164 |
 | `bench/harbor_adapter/stella_harbor/secure_launcher.py` | 4,277 | — |
 | `bench/terminal_bench_analysis/tests/test_tb21_analysis.py` | 4,207 | — |
-| `stella-tui/src/deck_ui.rs` | 3,902 | 2,783 |
-| `stella-core/src/driver/tests.rs` | 3,660 | 3,062 |
-| `stella-pipeline/src/pipeline.rs` | 3,465 | 2,115 |
-| `stella-protocol/src/event.rs` | 2,806 | 1,696 |
-| `stella-core/src/driver.rs` | 2,725 | 1,423 |
+| `crates/stella-tui/src/deck_ui.rs` | 3,902 | 2,783 |
+| `crates/stella-core/src/driver/tests.rs` | 3,660 | 3,062 |
+| `crates/stella-pipeline/src/pipeline.rs` | 3,465 | 2,115 |
+| `crates/stella-protocol/src/event.rs` | 2,806 | 1,696 |
+| `crates/stella-core/src/driver.rs` | 2,725 | 1,423 |
 
 ### 2.3 The functions are already fine — this is a *filing* problem
 
@@ -145,19 +145,19 @@ finding in this document, because it means **remediation is mostly mechanical**:
 moving already-clean functions into named modules, not redesigning them.
 
 The one genuine outlier is `run_deck_session` at
-`stella-cli/src/command_deck.rs:307` — **1,825 lines in a single function**,
+`crates/stella-cli/src/command_deck.rs:307` — **1,825 lines in a single function**,
 5× the next largest. It needs real surgery; almost nothing else does.
 
 Worst offenders, for the record:
 
 | Lines | Location |
 |---:|---|
-| 1,825 | `stella-cli/src/command_deck.rs:307` `run_deck_session` |
-| 667 | `stella-tui/src/render/entry.rs:210` `entry_body` |
-| 573 | `stella-protocol/tests/wire_contract.rs:479` `sample_events` |
-| 570 | `stella-pipeline/src/pipeline.rs:2119` `verify_candidate` |
-| 509 | `stella-tools/src/registry.rs:712` `execute` |
-| 495 | `stella-cli/src/main.rs:471` `run` |
+| 1,825 | `crates/stella-cli/src/command_deck.rs:307` `run_deck_session` |
+| 667 | `crates/stella-tui/src/render/entry.rs:210` `entry_body` |
+| 573 | `crates/stella-protocol/tests/wire_contract.rs:479` `sample_events` |
+| 570 | `crates/stella-pipeline/src/pipeline.rs:2119` `verify_candidate` |
+| 509 | `crates/stella-tools/src/registry.rs:712` `execute` |
+| 495 | `crates/stella-cli/src/main.rs:471` `run` |
 
 ### 2.4 Cost is concentrated in ten files
 
@@ -167,16 +167,16 @@ carried by the tree:
 
 | Read-cost | Lines | Edits | File |
 |---:|---:|---:|---|
-| 527,916 | 4,551 | 116 | `stella-cli/src/command_deck.rs` |
-| 309,029 | 2,359 | 131 | `stella-cli/src/agent.rs` |
-| 280,665 | 3,465 | 81 | `stella-pipeline/src/pipeline.rs` |
-| 234,120 | 3,902 | 60 | `stella-tui/src/deck_ui.rs` |
-| 212,550 | 2,725 | 78 | `stella-core/src/driver.rs` |
-| 170,392 | 2,242 | 76 | `stella-tools/src/registry.rs` |
-| 160,006 | 2,078 | 77 | `stella-store/src/lib.rs` |
-| 151,524 | 2,806 | 54 | `stella-protocol/src/event.rs` |
-| 111,370 | 2,590 | 43 | `stella-pipeline/src/pipeline/tests.rs` |
-| 102,480 | 1,830 | 56 | `stella-tui/src/deck_render.rs` |
+| 527,916 | 4,551 | 116 | `crates/stella-cli/src/command_deck.rs` |
+| 309,029 | 2,359 | 131 | `crates/stella-cli/src/agent.rs` |
+| 280,665 | 3,465 | 81 | `crates/stella-pipeline/src/pipeline.rs` |
+| 234,120 | 3,902 | 60 | `crates/stella-tui/src/deck_ui.rs` |
+| 212,550 | 2,725 | 78 | `crates/stella-core/src/driver.rs` |
+| 170,392 | 2,242 | 76 | `crates/stella-tools/src/registry.rs` |
+| 160,006 | 2,078 | 77 | `crates/stella-store/src/lib.rs` |
+| 151,524 | 2,806 | 54 | `crates/stella-protocol/src/event.rs` |
+| 111,370 | 2,590 | 43 | `crates/stella-pipeline/src/pipeline/tests.rs` |
+| 102,480 | 1,830 | 56 | `crates/stella-tui/src/deck_render.rs` |
 
 **Ten files out of 800 carry 35% of the total read-cost of this codebase.**
 Thirty files carry 53%.
@@ -186,7 +186,7 @@ Two conclusions follow, and both shape §9:
 - `tb21_analysis.py`, the **largest file in the repo at 8,211 lines**, was
   edited **twice** in a year. It is nearly free. Splitting it first would be
   motion, not progress.
-- `stella-cli/src/agent.rs` is only the 8th-largest file but has the **highest
+- `crates/stella-cli/src/agent.rs` is only the 8th-largest file but has the **highest
   edit count in the workspace** (131). By cost it is second. Size alone would
   have missed it.
 
@@ -199,7 +199,7 @@ Two conclusions follow, and both shape §9:
 | Integration tests under `tests/` | 93 files |
 
 Three conventions coexist with no rule choosing between them. **30 of the 118
-files over 1,000 lines are test files**, and `stella-core/src/driver/tests.rs`
+files over 1,000 lines are test files**, and `crates/stella-core/src/driver/tests.rs`
 is 3,660 lines. Tests are ~22% of the tree and grow with no structure
 whatsoever.
 
@@ -209,14 +209,14 @@ whatsoever.
 
 ```
 NEWOVER
-  stella-tui/src/render/tests.rs is 1703 lines, over the 1500-line limit
+  crates/stella-tui/src/render/tests.rs is 1703 lines, over the 1500-line limit
 
 GREW
   bench/harbor_adapter/stella_harbor/__init__.py grew to 2264, ceiling 2263 (+1)
-  stella-cli/src/fleet_cmd.rs                    grew to 1515, ceiling 1504 (+11)
-  stella-core/src/driver.rs                      grew to 2725, ceiling 2589 (+136)
-  stella-core/src/driver/tests.rs                grew to 3660, ceiling 3543 (+117)
-  stella-pipeline/src/pipeline.rs                grew to 3465, ceiling 3387 (+78)
+  crates/stella-cli/src/fleet_cmd.rs                    grew to 1515, ceiling 1504 (+11)
+  crates/stella-core/src/driver.rs                      grew to 2725, ceiling 2589 (+136)
+  crates/stella-core/src/driver/tests.rs                grew to 3660, ceiling 3543 (+117)
+  crates/stella-pipeline/src/pipeline.rs                grew to 3465, ceiling 3387 (+78)
 ```
 
 Two distinct violations, and the second one is the alarming one.
@@ -225,7 +225,7 @@ Two distinct violations, and the second one is the alarming one.
 `driver.rs` by 136 lines, `driver/tests.rs` by 117. That is the escape hatch of
 §3.3 being used.
 
-**One file, `stella-tui/src/render/tests.rs` at 1,703 lines, is not
+**One file, `crates/stella-tui/src/render/tests.rs` at 1,703 lines, is not
 grandfathered at all.** It is a file that crossed the limit under the rule
 `check-file-size.sh` describes as *"a hard block… the rule that actually stops
 the tree getting worse."* It is on `main`. The hard block did not hold either.
@@ -277,9 +277,9 @@ branch that changes any large file. It merge-conflicts constantly, and a
 resolution that "kept both sides" left this:
 
 ```
-4551 stella-cli/src/command_deck.rs
-4551 stella-cli/src/command_deck.rs
-4551 stella-cli/src/command_deck.rs
+4551 crates/stella-cli/src/command_deck.rs
+4551 crates/stella-cli/src/command_deck.rs
+4551 crates/stella-cli/src/command_deck.rs
 ```
 
 Three entries, from two bad merges. The mechanism corrodes under exactly the
@@ -301,7 +301,7 @@ without which the rest does not bind.
 
 **3.6 — The metric taxes the behavior we want.**
 Raw line count charges you for doc comments, module docs, and imports.
-`stella-core/src/driver.rs` is 2,725 raw lines of which **48% are blanks,
+`crates/stella-core/src/driver.rs` is 2,725 raw lines of which **48% are blanks,
 comments, and imports** — 1,423 substantive lines. It is one of the
 better-documented files in the tree and the gate punishes it for that. An agent
 optimizing against this metric learns to delete documentation.
@@ -461,16 +461,16 @@ directory — with only 5 `mod.rs` files against 110 module directories. Keep it
 It is the right idiom and it makes splitting a mechanical operation:
 
 ```
-stella-cli/src/command_deck.rs          4,551 lines, 63 items
+crates/stella-cli/src/command_deck.rs          4,551 lines, 63 items
     ↓
-stella-cli/src/command_deck.rs          ~120 lines: the //! doc, mod decls, run_deck_session's shell
-stella-cli/src/command_deck/session.rs  the turn loop extracted from run_deck_session
-stella-cli/src/command_deck/pr.rs       PrObservation, spawn_pr_monitor, observe_pr, aggregate_ci
-stella-cli/src/command_deck/issues.rs   issue_backend, list_issue_rows, handle_issues_input, *_hit
-stella-cli/src/command_deck/services.rs service_registry_action, service_inspect_action, workers
-stella-cli/src/command_deck/config.rs   engine_config_inbound, tool_policy_inbound, handlers
-stella-cli/src/command_deck/agents.rs   handle_agents_input, save_agent, pin_agent
-stella-cli/src/command_deck/commands.rs DeckCommand, ModelsCommand, parsing
+crates/stella-cli/src/command_deck.rs          ~120 lines: the //! doc, mod decls, run_deck_session's shell
+crates/stella-cli/src/command_deck/session.rs  the turn loop extracted from run_deck_session
+crates/stella-cli/src/command_deck/pr.rs       PrObservation, spawn_pr_monitor, observe_pr, aggregate_ci
+crates/stella-cli/src/command_deck/issues.rs   issue_backend, list_issue_rows, handle_issues_input, *_hit
+crates/stella-cli/src/command_deck/services.rs service_registry_action, service_inspect_action, workers
+crates/stella-cli/src/command_deck/config.rs   engine_config_inbound, tool_policy_inbound, handlers
+crates/stella-cli/src/command_deck/agents.rs   handle_agents_input, save_agent, pin_agent
+crates/stella-cli/src/command_deck/commands.rs DeckCommand, ModelsCommand, parsing
 ```
 
 The seams are already visible in the file's own line ordering (§2.3) — the
@@ -483,7 +483,7 @@ A crate root is a **façade**: `//!` crate docs, `mod` declarations, and
 `pub use` re-exports naming the crate's public surface. Under §5.1 all three are
 free, so a correct crate root has a substantive line count near zero.
 
-`stella-store/src/lib.rs` is 2,078 raw / 1,265 substantive lines and is 7th by
+`crates/stella-store/src/lib.rs` is 2,078 raw / 1,265 substantive lines and is 7th by
 read-cost. It is a crate root doing a module's job.
 
 ### 6.4 Extraction is the default response to growth
@@ -528,7 +528,7 @@ extra rule is how they split:
 
 > **A test file splits by behavior, never by number.**
 
-`stella-core/src/driver/tests.rs` at 3,660 lines becomes
+`crates/stella-core/src/driver/tests.rs` at 3,660 lines becomes
 `driver/tests/compaction.rs`, `driver/tests/retry.rs`,
 `driver/tests/budget.rs`, `driver/tests/loop_detect.rs` — **never**
 `tests_1.rs` / `tests_2.rs`. Done this way the test directory becomes a
@@ -632,7 +632,7 @@ names its path.
 (Unchanged: property tests cover loop detection, retry history, skill selection,
 the task board, retrieval fusion, fleet planning, witness verification, and
 render/scroll. Wiremock for provider adapters. Fixture MCP servers in
-`stella-mcp/tests/`. Replay fixtures in `stella-pipeline/tests/`.)
+`crates/stella-mcp/tests/`. Replay fixtures in `crates/stella-pipeline/tests/`.)
 ```
 
 ### 8.3 Parity-lock the numbers
@@ -658,16 +658,16 @@ read-cost:
 
 | # | File | Cost | Shape of the split |
 |---|---|---:|---|
-| 1 | `stella-cli/src/command_deck.rs` | 528k | 8 submodules per §6.2. **Includes the real surgery: `run_deck_session` at 1,825 lines.** |
-| 2 | `stella-cli/src/agent.rs` | 309k | Highest churn in the repo. `run_pipeline_one_shot` (453) and `run_interactive` (426) extract first. |
-| 3 | `stella-pipeline/src/pipeline.rs` | 281k | Stage-per-module; `verify_candidate` (570) is its own file. |
-| 4 | `stella-tui/src/deck_ui.rs` | 234k | 15 types + 65 fns; split by panel. `handle_deck_key` (386), `ingest_inbound` (311). |
-| 5 | `stella-core/src/driver.rs` | 213k | Only 1,423 substantive of 2,725 — **the cheapest win on the list**. |
-| 6 | `stella-tools/src/registry.rs` | 170k | `execute` (509) extracts; registry vs. dispatch separate. |
-| 7 | `stella-store/src/lib.rs` | 160k | §6.3 — a crate root doing a module's job. Mostly mechanical. |
-| 8 | `stella-protocol/src/event.rs` | 152k | 21 types. Split by event family. Watch the serde round-trip tests (invariant #4). |
-| 9 | `stella-pipeline/src/pipeline/tests.rs` | 111k | §7.3, split by behavior alongside #3. |
-| 10 | `stella-tui/src/deck_render.rs` | 102k | `render_status_bar` (305); split by rendered region. |
+| 1 | `crates/stella-cli/src/command_deck.rs` | 528k | 8 submodules per §6.2. **Includes the real surgery: `run_deck_session` at 1,825 lines.** |
+| 2 | `crates/stella-cli/src/agent.rs` | 309k | Highest churn in the repo. `run_pipeline_one_shot` (453) and `run_interactive` (426) extract first. |
+| 3 | `crates/stella-pipeline/src/pipeline.rs` | 281k | Stage-per-module; `verify_candidate` (570) is its own file. |
+| 4 | `crates/stella-tui/src/deck_ui.rs` | 234k | 15 types + 65 fns; split by panel. `handle_deck_key` (386), `ingest_inbound` (311). |
+| 5 | `crates/stella-core/src/driver.rs` | 213k | Only 1,423 substantive of 2,725 — **the cheapest win on the list**. |
+| 6 | `crates/stella-tools/src/registry.rs` | 170k | `execute` (509) extracts; registry vs. dispatch separate. |
+| 7 | `crates/stella-store/src/lib.rs` | 160k | §6.3 — a crate root doing a module's job. Mostly mechanical. |
+| 8 | `crates/stella-protocol/src/event.rs` | 152k | 21 types. Split by event family. Watch the serde round-trip tests (invariant #4). |
+| 9 | `crates/stella-pipeline/src/pipeline/tests.rs` | 111k | §7.3, split by behavior alongside #3. |
+| 10 | `crates/stella-tui/src/deck_render.rs` | 102k | `render_status_bar` (305); split by rendered region. |
 
 Then, and only then, the low-churn tail: the four `bench/` Python files
 (15,900 lines between them, 14 edits in a year) are the **last** thing to touch.
@@ -752,7 +752,7 @@ time until §9 is done. Revisit afterward for maintenance.
    run. That turns §1.1 from a reasoned claim into a measured one, and we have
    the harness to do it.
 2. **Should the item-count rule (§5.6) apply to `enum` variants?**
-   `stella-protocol/src/event.rs` is 21 types and legitimately wide. A protocol
+   `crates/stella-protocol/src/event.rs` is 21 types and legitimately wide. A protocol
    crate may warrant its own band.
 3. **Does the non-increase rule need a per-PR escape for a security fix?** The
    current answer is no — a security fix is nearly always net-neutral or a

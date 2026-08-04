@@ -27,7 +27,7 @@ path = "src/main.rs"
 # (#836), a tuned knob (#831/#1065), an eval-gated skill (#1067) — must be
 # reading the same aggregates, the same guard set, and the same significance
 # test the offline harness applied, and two report types is two standards.
-stella-core = { path = "../../stella-core" }
+stella-core = { path = "../../crates/stella-core" }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
