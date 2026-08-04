@@ -241,7 +241,7 @@ pub(crate) const HUNK_CARD_DIFF_ROWS: usize = 6;
 /// title and the footer legend. Capped so a fifty-hunk proposal cannot eat the
 /// transcript.
 #[must_use]
-pub fn hunk_review_height(hunks: usize) -> u16 {
+pub(crate) fn hunk_review_height(hunks: usize) -> u16 {
     let rows = hunks + HUNK_CARD_DIFF_ROWS + 4;
     (rows as u16).min(20)
 }
