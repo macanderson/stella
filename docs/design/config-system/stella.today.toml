@@ -175,6 +175,13 @@ reasoning_auto = "on"   # on = thinking on for judge/worker/default, off for
 # disposable and the budget cap is the real guard.
 headless_scope_bypass = "off"
 
+# on = every apply_edits/edit_file/write_file call pauses on a per-hunk
+# approval card and applies only the hunks the reviewer keeps (#1265). Read
+# only by surfaces that HAVE a reviewer: a headless run ignores it rather than
+# blocking on a card nobody will see. OFF by default — this is the one gate
+# that fires on ordinary work rather than above a threshold.
+hunk_review = "off"
+
 # ---- per-agent overrides. Every field optional = "no opinion" ---------------
 #
 # The JSON nests these one level deeper (`agent_engine_config.agents.judge`).

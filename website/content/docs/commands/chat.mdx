@@ -51,9 +51,28 @@ fix the flaky login test           ← starts a separate sub-session
 <Callout type="info">
 A bare `⏎` **always** submits, even while an agent is busy — that is what makes the two
 behaviors above possible without waiting. The one exception is a **pending gate on the focused
-agent** (a scope review or an `ask_user` question): there the submit answers the gate rather
-than steering or starting anything. Answer it first, then steer.
+agent** (a scope review, a hunk review, or an `ask_user` question): there the submit answers the
+gate rather than steering or starting anything. Answer it first, then steer.
 </Callout>
+
+### Reviewing a write hunk by hunk
+
+With [`agent_engine_config.hunk_review`](/docs/configuration/agent-engine-config) on, every
+write pauses on a card listing the hunks it would apply, and only the ones you keep are written.
+A turn that produces one wanted and one unwanted change is no longer all-or-nothing.
+
+| Key | Effect |
+| --- | --- |
+| `↑` / `↓` | move between hunks |
+| `space` | keep or drop the hunk under the cursor |
+| `⏎` | apply the kept hunks — the footer always names how many that is |
+| `esc` | decline every hunk; nothing is written |
+
+Or type the ones to keep and press `⏎`: `1 3`, `2-4`, `all`, `none`. The mark keys act only
+while the composer is empty, so they never eat a line you are typing.
+
+Declined hunks are reported back to the model, so it knows why the file does not look the way
+it wrote it — a silent partial apply would look to it like somebody else edited the file.
 
 A *modified* `⏎` (`⌘⏎` / `⌃⏎` / `⌥⏎`) inserts a line break instead of submitting, and the break
 is kept verbatim in the prompt. On a terminal that cannot report the chord it folds back to a
