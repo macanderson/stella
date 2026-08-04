@@ -1638,18 +1638,18 @@
           "type": "string"
         },
         "kind": {
-          "description": "`\"exact_repeat\"` | `\"short_cycle\"` — mirrors\n`stella-core::loop_detect::LoopVerdict` (kept as a string here so\n`stella-protocol` never depends on `stella-core`).",
+          "description": "`\"exact_repeat\"` | `\"short_cycle\"` | `\"stagnation\"` — mirrors\n`stella-core::loop_detect::LoopVerdict` (kept as a string here so\n`stella-protocol` never depends on `stella-core`).",
           "type": "string"
         },
         "pattern": {
-          "description": "Tool names of the repeated signature, in cycle order (one entry\nfor an exact repeat).",
+          "description": "Tool names of the repeated signature, in cycle order (one entry\nfor an exact repeat or a stagnating tool).",
           "items": {
             "type": "string"
           },
           "type": "array"
         },
         "repeats": {
-          "description": "Consecutive identical calls (exact repeat) or full cycles (short\ncycle) observed.",
+          "description": "Consecutive identical calls (exact repeat), full cycles (short\ncycle), or consecutive no-progress calls (stagnation) observed.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
