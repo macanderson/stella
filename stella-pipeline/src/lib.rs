@@ -116,7 +116,7 @@ pub use pipeline::{
     PipelineRunError, PipelineStatus, RoleCallOverrides, Verdict,
 };
 pub use ports::{
-    AdoptedChange, AlwaysAbortGate, ApprovalGate, ArtifactIdentity, ArtifactKind,
+    AdoptedChange, AlwaysAbortGate, ApprovalGate, ArtifactIdentity, ArtifactKind, AuthoredChange,
     CandidateWorkspace, CandidateWorkspacePort, CmdKind, CmdOutcome, ContextRecallPort,
     CoverageProbe, DiagnosticInvocation, DiagnosticRunner, FileTouchPort, LineMutation, LintProbe,
     LintRecord, McpPrefetchPort, MutantOutcome, MutationProbe, NoContextRecall, NoFileTouches,

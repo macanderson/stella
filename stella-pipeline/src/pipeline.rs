@@ -103,6 +103,7 @@ use crate::witness::{
     validate_witness_identity, validate_witness_invocation, witness_identity_matches,
     witness_prompt, witness_repair_prompt,
 };
+mod authored;
 mod disclosure;
 mod fanout_stage;
 mod judge_stage;
@@ -3331,9 +3332,27 @@ impl<'a> Pipeline<'a> {
         // second walk of an identical tree.
         self.touches.settle_workspace_probe();
         state.file_changes = self.observed_mutations(state);
-        state.diff_lines = probe.lines;
+        // The authored channel is read AFTER settling, for the same reason the
+        // count is: the probe's attributions are recorded through the same
+        // emitter, so reading first would describe the turn before its opaque
+        // calls had been accounted for.
+        let authored = self.touches.authored_diff();
+        // `max`, not a sum — these are two independent LOWER BOUNDS on one
+        // number, not two disjoint tallies. A tracked file edited through
+        // `write_file` is counted by both, and adding them would double it.
+        // (The same reasoning as `observed_mutations` above.)
+        state.diff_lines = probe.lines.max(authored.lines);
+        // Deliberately NOT widened by the authored channel. `diff_available`
+        // means "the configured probe could read the working tree", and the
+        // ladder's blind-evidence rung is built on that exact claim. An
+        // authored diff proves what was written, never what survived to sit on
+        // disk at the end of the turn — so it informs the judge without
+        // asserting that the tree was successfully re-read.
         state.diff_available = probe.available;
-        state.diff_text = verification_honest_diff(probe.text, state.file_changes);
+        state.diff_text = verification_honest_diff(
+            authored::splice_authored(probe.text, &authored),
+            state.file_changes,
+        );
     }
 
     /// Emit this recall's telemetry. The projection itself lives on

@@ -228,7 +228,12 @@ pub fn warrant(diff: &str, file_changes: u32) -> WitnessWarrant {
 /// stripped — a deletion still reports what it removed, and a rename
 /// contributes both its old and new path to the "every path must agree"
 /// rules.
-fn changed_paths(diff: &str) -> Vec<String> {
+/// `pub(crate)` so the authored-diff channel can assert, at its own seam, that
+/// what it renders is parsed here as real paths. That property is invisible
+/// from inside this module and silent when it breaks — the parser simply
+/// returns nothing — so the test that guards it has to live next to the
+/// producer.
+pub(crate) fn changed_paths(diff: &str) -> Vec<String> {
     let mut paths = Vec::new();
     for line in diff.lines() {
         let raw = if let Some(rest) = line.strip_prefix("+++ ") {

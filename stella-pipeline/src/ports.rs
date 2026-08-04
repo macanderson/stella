@@ -286,6 +286,27 @@ pub trait FileTouchPort: Send + Sync {
     /// decides for the event.
     fn mutations_recorded(&self) -> u64;
 
+    /// The change the agent **authored**, rendered as a unified diff by the
+    /// file tools themselves at the moment they wrote it.
+    ///
+    /// This is the companion channel to the configured diff diagnostic, and it
+    /// exists because that diagnostic is `git diff`, which answers a question
+    /// about *tree state* when verification needs one about *authorship*. Git
+    /// is structurally unable to answer twice over:
+    ///
+    /// * a task directory that is not a repository (every Terminal-Bench
+    ///   image), where the probe can only report that it could not look; and
+    /// * a newly created file, which git cannot see until it is staged — so
+    ///   the commonest shape of agent work reached the judge as a bare path
+    ///   and a line count, with none of its content.
+    ///
+    /// The recorder holds both images of every write it performed, so it can
+    /// answer both. Default empty, so a host with no recorder — and every test
+    /// double — behaves exactly as it did before this existed.
+    fn authored_diff(&self) -> AuthoredChange {
+        AuthoredChange::default()
+    }
+
     /// Take a before-image of the workspace for the turn about to run.
     ///
     /// The pair with [`Self::settle_workspace_probe`] exists because a tool's
@@ -315,6 +336,34 @@ pub trait FileTouchPort: Send + Sync {
     /// Records through the same emitter as every other touch, so the ledger
     /// keeps exactly one birthplace for a `FileChange`.
     fn settle_workspace_probe(&self) {}
+}
+
+/// What the file recorder authored this session, as reported by
+/// [`FileTouchPort::authored_diff`].
+///
+/// Deliberately plain data rather than a borrowed view of the recorder's
+/// ledger: this crate does not depend on the tool crate that owns it, and the
+/// host bridging the two must be free to render once and hand the result over.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AuthoredChange {
+    /// Unified-diff text for changes a file tool declared by path, plus
+    /// bounded marker lines for paths that were merely observed changing.
+    /// Empty when the session authored nothing.
+    pub text: String,
+    /// Net lines changed by **declared** writes only.
+    ///
+    /// Paths that were merely observed (a `tar` extraction, a build) are
+    /// excluded on purpose: this number is compared against a size budget, and
+    /// unpacking a source tree must not be able to spend it.
+    pub lines: u32,
+}
+
+impl AuthoredChange {
+    /// Whether this carries anything a reader could act on.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.text.trim().is_empty()
+    }
 }
 
 /// A [`FileTouchPort`] that never observes anything, for hosts with no file

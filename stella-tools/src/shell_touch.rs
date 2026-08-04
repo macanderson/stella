@@ -50,6 +50,14 @@ const SKIP_DIRS: &[&str] = &[
     ".tox",
 ];
 
+/// The `tool` label every touch this module attributes is recorded under.
+///
+/// A constant rather than a literal at the call site because it is now read
+/// back: [`crate::authored_diff::Provenance::for_tool`] uses it to tell a
+/// change the agent *declared* from one this module merely *observed*, and
+/// those two must never be compared through two copies of a string.
+pub const PROBE_TOOL_LABEL: &str = "workspace_probe";
+
 /// Entry ceiling for one walk. Past this the probe stops and says so.
 const MAX_ENTRIES: usize = 20_000;
 /// Depth ceiling, so a symlink cycle or a pathological tree cannot hang a turn.

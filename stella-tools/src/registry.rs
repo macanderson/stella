@@ -130,6 +130,13 @@ pub struct ToolRegistry {
     /// why an unbracketed session behaves exactly as it did before this
     /// existed.
     workspace_probe: std::sync::Mutex<Option<crate::shell_touch::WorkspaceProbe>>,
+    /// The session's authored-change ledger — what the agent *meant* to change,
+    /// as opposed to how the tree now differs from a commit. Fed from
+    /// [`Self::record_touch`] because that is the one place holding both images
+    /// of a write, and read by the verification pipeline wherever `git diff`
+    /// structurally cannot answer (an untracked file, or no repository at all).
+    /// See [`crate::authored_diff`] for why the two are different questions.
+    authored: std::sync::Mutex<crate::authored_diff::AuthoredDiffLedger>,
     /// Whether this session brackets turns at all, latched by the first
     /// [`ToolRegistry::begin_workspace_probe`] and never cleared.
     ///
@@ -518,6 +525,7 @@ impl ToolRegistry {
             work_journal: std::sync::RwLock::new(None),
             span_reads,
             workspace_probe: std::sync::Mutex::new(None),
+            authored: std::sync::Mutex::new(crate::authored_diff::AuthoredDiffLedger::default()),
             turn_bracketing: std::sync::atomic::AtomicBool::new(false),
             citations,
             agent_uses: std::sync::Mutex::new(crate::agent_use::AgentUseLedger::default()),
@@ -1847,8 +1855,13 @@ impl ToolRegistry {
         // Counts and rendered diff come out of the SAME pre/post pair, so the
         // ledger, the telemetry payload and the TUI describe one reality.
         let pre = pre_content.as_deref().unwrap_or("");
-        let (lines_added, lines_removed, diff) = match pending.op {
-            FileOp::Read => (0, 0, None),
+        // `post` rides alongside the counts so the authored-change ledger can
+        // keep BOTH images of this write. It costs nothing extra to produce —
+        // every arm below already computes it to render its own diff — and it
+        // is the difference between a judge that can read the agent's change
+        // and one that is handed a filename (see [`crate::authored_diff`]).
+        let (lines_added, lines_removed, diff, post) = match pending.op {
+            FileOp::Read => (0, 0, None, None),
             FileOp::Create => {
                 // `write_file` carries the new content in its input. A file
                 // created by an opaque call (a shell redirect, a compiler
@@ -1867,6 +1880,7 @@ impl ToolRegistry {
                     count_lines(content),
                     0,
                     crate::file_touch::changed_region_diff("", content),
+                    Some(content.to_string()),
                 )
             }
             FileOp::Update => {
@@ -1884,18 +1898,31 @@ impl ToolRegistry {
                         .unwrap_or_default(),
                 };
                 let (added, removed) = line_diff(pre, &post);
-                (
-                    added,
-                    removed,
-                    crate::file_touch::changed_region_diff(pre, &post),
-                )
+                let diff = crate::file_touch::changed_region_diff(pre, &post);
+                (added, removed, diff, Some(post))
             }
             FileOp::Delete => (
                 0,
                 count_lines(pre),
                 crate::file_touch::changed_region_diff(pre, ""),
+                Some(String::new()),
             ),
         };
+        // Reads yield `None` above and the ledger refuses them again on its own
+        // account — two guards, because this caller has already been the place
+        // a read leaked into a change count once.
+        if let Some(post) = &post {
+            self.authored
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .record(
+                    &pending.path,
+                    pending.op,
+                    crate::authored_diff::Provenance::for_tool(tool),
+                    pre,
+                    post,
+                );
+        }
         let path = pending.path;
         let (revision, record, total_files) = {
             let mut touched = self.touched.lock().unwrap_or_else(|p| p.into_inner());
@@ -1992,6 +2019,21 @@ impl ToolRegistry {
         self.mutations.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// The session's authored change, rendered as a unified diff.
+    ///
+    /// The companion to [`Self::mutations_recorded`]: that answers *how many*
+    /// changes happened, this answers *what they were*. Both are read by the
+    /// verification pipeline, and this one exists because the channel it
+    /// previously read — `git diff` — cannot answer at all in the two
+    /// workspaces that matter most (no repository; a newly created file).
+    #[must_use]
+    pub fn authored_diff(&self) -> crate::authored_diff::AuthoredDiff {
+        self.authored
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .render()
+    }
+
     /// Take a before-image of the workspace for the turn about to run.
     ///
     /// Paired with [`Self::settle_workspace_probe`]. `classify_file_op` reads
@@ -2069,7 +2111,7 @@ impl ToolRegistry {
                     op: touch.op,
                 },
                 pre_content,
-                "workspace_probe",
+                crate::shell_touch::PROBE_TOOL_LABEL,
                 &serde_json::json!({ "reason": "observed in the workspace" }),
                 None,
             );

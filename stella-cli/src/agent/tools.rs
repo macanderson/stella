@@ -381,6 +381,18 @@ impl stella_pipeline::FileTouchPort for RegistryTouches<'_> {
         self.0.mutations_recorded()
     }
 
+    /// Rendered here rather than borrowed, because the two crates on either
+    /// side of this bridge do not depend on each other: the tool crate owns the
+    /// ledger, the pipeline crate owns the question, and this is the only place
+    /// that can see both.
+    fn authored_diff(&self) -> stella_pipeline::AuthoredChange {
+        let rendered = self.0.authored_diff();
+        stella_pipeline::AuthoredChange {
+            text: rendered.text,
+            lines: rendered.lines,
+        }
+    }
+
     fn begin_workspace_probe(&self) {
         self.0.begin_workspace_probe();
     }
