@@ -376,9 +376,14 @@ impl PersistOutcome {
                 token_summary(&partial),
                 partial.cost_usd,
             )),
+            // Deliberately not "failed": this branch also covers a call that
+            // SETTLED without a provider usage frame, where the work landed
+            // fine and only the accounting is short. Asserting a failure that
+            // did not happen is the same class of mistake as the session-wide
+            // wording this replaces.
             PersistOutcome::UsageIncomplete(None) => Some(format!(
-                "{what} failed after dispatch with no usage reported — that one \
-                 attempt is unaccounted (the work itself is unaffected)"
+                "{what} reported no final usage — that call's tokens and cost \
+                 are unaccounted (the work itself is unaffected)"
             )),
         }
     }
@@ -713,8 +718,11 @@ mod usage_recovery_tests {
         let bare = PersistOutcome::UsageIncomplete(None)
             .message("one model call")
             .expect("still a sentence");
-        assert!(bare.contains("one attempt is unaccounted"), "{bare}");
+        assert!(bare.contains("tokens and cost"), "{bare}");
         assert!(!bare.contains("this session"), "{bare}");
+        // A call that settled without a usage frame did not "fail", and the
+        // sentence must not claim it did.
+        assert!(!bare.contains("failed"), "{bare}");
 
         // A genuine store failure keeps its own, more serious wording.
         let store_failed = PersistOutcome::StoreWriteFailed
