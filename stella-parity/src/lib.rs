@@ -578,7 +578,7 @@ mod tests {
 
     /// API sources a witness may live in: the serve crate's unit tests plus
     /// its end-to-end suites.
-    fn api_sources() -> [&'static str; 13] {
+    fn api_sources() -> [&'static str; 14] {
         [
             include_str!("../../stella-serve/src/server.rs"),
             include_str!("../../stella-serve/tests/calibration.rs"),
@@ -593,6 +593,7 @@ mod tests {
             include_str!("../../stella-serve/tests/http.rs"),
             include_str!("../../stella-serve/tests/hostguard.rs"),
             include_str!("../../stella-serve/tests/goal_and_subagents.rs"),
+            include_str!("../../stella-serve/tests/pipeline.rs"),
         ]
     }
 

@@ -253,7 +253,18 @@ jobs:
           if [ -d loop-bench-jobs ]; then
             find loop-bench-jobs -name stella-events.jsonl -print0 \
               | while IFS= read -r -d '' stream; do
-                  trial="$(basename "$(dirname "$(dirname "$stream")")")"
+                  # `<trial>/agent/` for a single-step trial. A multi-step one
+                  # lives at `<trial>/steps/<step>/agent/`, where this alone
+                  # would name the file after the STEP — so several trials'
+                  # streams would overwrite each other and the evidence for a
+                  # verdict would be some other task's (#1299).
+                  owner="$(dirname "$(dirname "$stream")")"
+                  trial="$(basename "$owner")"
+                  case "$owner" in
+                    */steps/*)
+                      trial="$(basename "$(dirname "$(dirname "$owner")")").$trial"
+                      ;;
+                  esac
                   cp "$stream" "loop-bench-out/events/$trial.jsonl"
                 done
           fi
@@ -285,11 +296,13 @@ jobs:
             # than making a reader open bench/loop-bench/src/main.rs.
             case "${EXIT_CODE:-}" in
               0) echo "**PASS** — every trial that reported did real work." ;;
-              1) echo "**FAIL (loop)** — silent death, zero work, a stuck loop, or a task that never ran." ;;
+              1) echo "**FAIL (loop)** — silent death, zero work, a stuck loop, or a trial that never ran." ;;
               2) echo "**FAIL (invocation)** — the task list resolved to nothing, or the report path was unwritable." ;;
               3) echo "**FAIL (infrastructure)** — no trial artifacts at all; harbor never launched anything." ;;
               4) echo "**FAIL (pass floor)** — the loop was healthy but too few tasks passed." ;;
               5) echo "**FAIL (report)** — the run completed but the JSON report could not be written." ;;
+              6) echo "**FAIL (no winner)** — \`--require-winner\` was set and no arm cleared both bars." ;;
+              7) echo "**FAIL (reconciliation)** — the job directory held trials this run did not ask for, so every figure above covers a task set that is not the requested one." ;;
               "") echo "**FAIL** — loop-bench never ran; an earlier step failed." ;;
               *) echo "**FAIL** — exit $EXIT_CODE is outside the harness's contract: a build failure or a crash, not a verdict." ;;
             esac

@@ -180,3 +180,63 @@ class TestProfilingNeverBreaksInstall:
         with pytest.raises(BinaryIncompatibleWithContainerError) as caught:
             asyncio.run(agent.install(_Environment()))
         assert "GLIBC_2.34" in str(caught.value)
+
+
+class TestGitIsInstalledForTheCandidateMachinery:
+    """Stella's candidate machinery snapshots the working tree with git.
+
+    Without the binary the snapshot fails, the trial logs "candidate setup
+    failed before any execution; running a bare worker turn", and the witness
+    and diff probes go blind — the agent silently degrades to a bare worker
+    loop. A measured run hit exactly that on every trial, so the install step
+    now provisions git and this pins both halves of it.
+    """
+
+    def test_install_provisions_git_before_uploading_the_binary(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        binary = tmp_path / "stella"
+        binary.write_bytes(build_elf(requirements={"libc.so.6": []}))
+        binary.chmod(0o755)
+        monkeypatch.setenv("STELLA_BINARY", str(binary))
+
+        seen: list[str] = []
+
+        async def _exec_as_root(environment: object, *, command: str, **kwargs: object):
+            seen.append(command)
+            if "sha256sum" in command:
+                digest = _sha256_file(binary)
+                return SimpleNamespace(stdout=f"{digest}  /tmp/stella-upload\n")
+            return SimpleNamespace(stdout="")
+
+        agent = _agent()
+        agent.exec_as_root = _exec_as_root
+        asyncio.run(agent.install(_Environment()))
+
+        git_steps = [c for c in seen if "git" in c]
+        assert git_steps, "install must try to provision git"
+        assert seen.index(git_steps[0]) < seen.index(
+            next(c for c in seen if "sha256sum" in c)
+        ), "git must be provisioned before the binary install, not after"
+
+    def test_a_container_that_cannot_install_git_still_runs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An evidence-channel setup step must never be able to fail a trial.
+        An image with no package manager, no network, or a read-only root runs
+        diff-blind exactly as every published number did — it does not die."""
+        binary = tmp_path / "stella"
+        binary.write_bytes(build_elf(requirements={"libc.so.6": []}))
+        binary.chmod(0o755)
+        monkeypatch.setenv("STELLA_BINARY", str(binary))
+
+        async def _exec_as_root(environment: object, *, command: str, **kwargs: object):
+            if "apk add" in command or "apt-get" in command or "command -v git" in command:
+                raise NonZeroAgentExitCodeError("Command failed (exit 1): read-only")
+            if "sha256sum" in command:
+                return SimpleNamespace(stdout=f"{_sha256_file(binary)}  /tmp/stella-upload\n")
+            return SimpleNamespace(stdout="")
+
+        agent = _agent()
+        agent.exec_as_root = _exec_as_root
+        asyncio.run(agent.install(_Environment()))  # must not raise

@@ -6,6 +6,14 @@ description: Configure providers, agents, tools, context, and managed authority 
 `settings.json` is Stella's configuration file. It has ten top-level sections, each with
 its own merge rule across the [scope hierarchy](#the-scope-hierarchy):
 
+<Callout type="info">
+  The same configuration is also available as
+  **[`stella.toml`](/docs/configuration/stella-toml)** — a comment-preserving format with a
+  `[meta]` schema-version seam, converted from an existing `settings.json` with
+  `stella migrate config`. Every merge rule, trust boundary, and section below applies
+  identically to both formats; only the file shape differs.
+</Callout>
+
 <CardGrid size="md">
   <SpecCard
     title={<code>providers</code>}
