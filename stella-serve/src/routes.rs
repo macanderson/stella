@@ -393,8 +393,11 @@ pub(crate) async fn handle_create(
         .and_then(|spec| state.sub_agent_policy().clamp(spec.into()));
     let extensions = state.extensions();
     // Keyed on the declared provider so two providers serving the same model
-    // name never blend their drift — see `crate::calibration`.
-    let calibration = Some(state.calibration().for_provider(&turn.provider_id));
+    // name never blend their drift. `None` when the registry's bounds refuse
+    // this id — the turn then runs uncalibrated rather than the server growing
+    // a permanent entry per distinct string a host sends. See
+    // `crate::calibration`.
+    let calibration = state.calibration().for_provider(&turn.provider_id);
     let registered = state.register_turn(move |turn_id| {
         Session::start(SessionSpec {
             provider_id: turn.provider_id,
