@@ -151,6 +151,29 @@ fn tuned_engine_config(
             engine.tool_result_horizon_steps = (steps > 0).then_some(steps as usize);
         }
     }
+    // `--max-output-tokens`, last and therefore highest (#1290). It outranks
+    // both settings surfaces because it is the most specific thing anyone can
+    // say — this invocation, right now — and because it is what an operator
+    // reaches for when a CONFIGURED value is the thing going wrong. A flag
+    // that a settings file could quietly beat would be useless in exactly
+    // that moment.
+    //
+    // Applies to every role for the same reason the turn budget does: what it
+    // bounds is the process's spend, not one agent's. Capping the worker while
+    // a judge kept the model's full ceiling would move the cost rather than
+    // reduce it.
+    //
+    // Clamped to the model's own ceiling, like the per-model setting. The flag
+    // is the likeliest of the three to carry a fat-fingered digit — it is
+    // typed fresh each run, with no file to review it — and over-asking is not
+    // a longer answer, it is a rejection on every step that bills the round
+    // trip and needs another call to retry.
+    if let Some(cap) = cfg.max_output_tokens {
+        engine.max_output_tokens = Some(match model_ceiling {
+            Some(ceiling) => cap.min(ceiling),
+            None => cap,
+        });
+    }
     // Capability clamp: a catalog-confirmed non-reasoning model must not
     // carry effort/reasoning onto the wire — providers reject or silently
     // ignore them, and both outcomes are worse than omitting the fields

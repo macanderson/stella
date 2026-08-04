@@ -138,6 +138,24 @@ pub(crate) struct GlobalArgs {
     #[arg(long, global = true, env = "STELLA_TURN_BUDGET", value_parser = parse_turn_budget)]
     pub(crate) turn_budget: Option<std::time::Duration>,
 
+    /// Cap output tokens per step, below what the model can write
+    ///
+    /// The default is the model's OWN maximum, which the catalog learns from
+    /// the provider — so you never need this to get a full-length answer. Use
+    /// it to deliberately spend LESS: bound cost on a long unattended run, cut
+    /// latency, or match a comparator that stops lower.
+    ///
+    /// Clamped to the model's real ceiling rather than sent as written.
+    /// Over-asking is not a longer answer, it is a provider-side rejection on
+    /// every step — one that costs the round trip and then needs another call
+    /// to retry.
+    ///
+    /// Wins over `[models.output_caps]` and per-agent `params.max_tokens`, and
+    /// applies to every role. Omit for the model's own ceiling.
+    /// Env: STELLA_MAX_OUTPUT_TOKENS.
+    #[arg(long, global = true, env = "STELLA_MAX_OUTPUT_TOKENS", value_parser = parse_max_output_tokens)]
+    pub(crate) max_output_tokens: Option<u32>,
+
     /// Use the plain line REPL instead of the Command Deck
     ///
     /// The deck (the tabbed TUI) also steps aside automatically when stdin or
@@ -995,4 +1013,28 @@ fn parse_turn_budget(raw: &str) -> Result<std::time::Duration, String> {
         ));
     }
     Ok(std::time::Duration::from_secs_f64(value))
+}
+
+/// `--max-output-tokens`: a positive step ceiling, refused rather than
+/// reinterpreted when it is anything else.
+///
+/// Zero is rejected by name instead of being read as "no limit". Elsewhere in
+/// this engine `0` does spell "no ceiling" (`model_timeout_secs`), but here
+/// the flag's ABSENCE already means "the model's own maximum", so zero has no
+/// second meaning left to carry — and taking it literally would ask the
+/// provider for an empty completion on every step, which fails a run in a way
+/// that looks like the model refusing to work.
+fn parse_max_output_tokens(raw: &str) -> Result<u32, String> {
+    let value: u32 = raw
+        .trim()
+        .parse()
+        .map_err(|_| format!("`{raw}` is not a whole number of output tokens"))?;
+    if value == 0 {
+        return Err(
+            "max output tokens must be greater than 0 — omit the flag to use \
+             the model's own maximum"
+                .to_string(),
+        );
+    }
+    Ok(value)
 }
