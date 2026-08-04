@@ -70,6 +70,63 @@ def git_baseline_script(workdir: str | None) -> str:
     )
 
 
+async def ensure_git(agent: Any, environment: Any) -> None:
+    """Install ``git`` into the task container if it is not already there.
+
+    **Without it Stella runs as a bare worker loop.** The candidate machinery
+    snapshots the working tree with ``git rev-parse`` before it generates
+    anything; when the spawn fails the trial logs "candidate setup failed
+    before any execution; running a bare worker turn on the working tree" and
+    continues — degraded, but not obviously so. The witness and diff probes go
+    blind for the same reason. A measured run recorded exactly that on every
+    trial: the pipeline the contest is supposed to be measuring was never
+    engaged. It is also the first branch ``git_baseline_script`` gives up on,
+    which is what makes this module the place it belongs.
+
+    Installing it is no more intrusive than what the comparison already allows
+    the other side. Harbor's own Claude Code agent ``apt-get``s curl and a full
+    Node toolchain into these same images as part of its setup, so a task image
+    is plainly not treated as immutable — and a version-control binary changes
+    what an agent can *observe*, not what the verifier checks.
+
+    Best-effort by construction, for the same reason the baseline script is: an
+    evidence-channel setup step must never be able to fail a trial. An image
+    whose package manager is absent, offline, or read-only runs exactly as
+    every published number did — diff-blind — and says so in the baseline
+    metadata rather than dying here.
+
+    A free function taking the agent, matching `run_git_baseline` below: it
+    reads nothing off ``self`` but ``exec_as_root``, so binding it to the class
+    bought nothing and cost the package root fifty lines.
+    """
+    try:
+        await agent.exec_as_root(
+            environment,
+            command=(
+                "if command -v git >/dev/null 2>&1; then exit 0; fi; "
+                "if command -v apk >/dev/null 2>&1; then apk add --no-cache git; "
+                "elif command -v apt-get >/dev/null 2>&1; then "
+                "  apt-get update && apt-get install -y --no-install-recommends git; "
+                "elif command -v dnf >/dev/null 2>&1; then dnf install -y git; "
+                "elif command -v yum >/dev/null 2>&1; then yum install -y git; "
+                "fi; "
+                # Always succeed: the baseline probe reports the outcome.
+                "command -v git >/dev/null 2>&1 || true"
+            ),
+            env={"DEBIAN_FRONTEND": "noninteractive"},
+            timeout_sec=240,
+        )
+    except Exception:  # noqa: BLE001 - never fail a trial for this
+        # Deliberately swallowed and deliberately silent. The outcome is
+        # already reported through the git-baseline marker, which is the one
+        # channel a reader checks; raising a second, louder signal here would
+        # let a missing package manager end a trial that would otherwise have
+        # run diff-blind exactly as every published number did. Nothing on the
+        # agent is touched, because this must also hold for one built without
+        # `__init__` — which is how the install tests construct one.
+        pass
+
+
 async def run_git_baseline(agent: Any, environment: Any) -> None:
     """Give a bare task workspace a git baseline before the agent starts.
 

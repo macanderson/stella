@@ -7,7 +7,7 @@
 # must be split instead. Raising an existing ceiling is allowed but is
 # never silent — it lands as a visible diff here, to be justified in
 # review like any other change.
-2301 bench/harbor_adapter/stella_harbor/__init__.py
+2302 bench/harbor_adapter/stella_harbor/__init__.py
 4292 bench/harbor_adapter/stella_harbor/secure_launcher.py
 2339 bench/harbor_adapter/tests/test_adapter.py
 3360 bench/harbor_adapter/tests/test_secure_launcher.py
@@ -17,7 +17,6 @@
 1615 bench/terminal_bench_analysis/tests/test_tb21_evidence_contract.py
 1749 stella-cli/src/agent_tests.rs
 2371 stella-cli/src/agent.rs
-1749 stella-cli/src/agent_tests.rs
 1576 stella-cli/src/candidate_ws.rs
 4583 stella-cli/src/command_deck.rs
 1506 stella-cli/src/fleet_cmd.rs
