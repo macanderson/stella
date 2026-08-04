@@ -266,6 +266,7 @@ impl ServeConfig {
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
             checkpoints: None,
             sub_agents: crate::SubAgentPolicy::default(),
+            extensions: crate::extensions::Extensions::new(),
         }
     }
 
@@ -276,8 +277,7 @@ impl ServeConfig {
     #[must_use]
     pub fn with_sub_agents(mut self, policy: crate::SubAgentPolicy) -> Self {
         self.sub_agents = policy;
-            extensions: crate::extensions::Extensions::new(),
-        }
+        self
     }
 
     /// Install an operator hook extension on every turn this server runs

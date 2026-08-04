@@ -82,7 +82,7 @@ pub struct CalibrationReport {
     /// — which is what decides whether gating on it taxes every turn.
     pub uncorroborated_verdicts: u32,
     /// Model-judge PASSes where the condition held — the turns
-    /// `require_evidence_for_lone_judge_pass` would actually have sent back,
+    /// `judge_evidence_demand` would actually have sent back,
     /// and the ones the pipeline relabels UNVERIFIED while it is off.
     pub judge_passes_standing_alone: u32,
     /// …of the reconciled judge passes, how many were settled by a **revert**
@@ -122,7 +122,7 @@ impl CalibrationReport {
     /// as zero.
     ///
     /// **The number that decides
-    /// `PipelineConfig::require_evidence_for_lone_judge_pass`.** A minority
+    /// `PipelineConfig::judge_evidence_demand`.** A minority
     /// rate is the situation the send-back was designed for; a majority rate
     /// is the Terminal-Bench measurement that switched it off, and leaving it
     /// off is then the answer with the reason recorded beside it.
@@ -174,7 +174,7 @@ pub fn render_calibration(report: &CalibrationReport) -> String {
         Some(rate) => format!(
             "  judge-alone rate: {:.0}% of {} snapshotted verdict(s) had no flip and no green \
              test ({} of them were model-judge PASSes)\n  \
-             → a MINORITY is the condition `require_evidence_for_lone_judge_pass` was built for; \
+             → a MINORITY is the condition `judge_evidence_demand` was built for; \
              a majority reproduces the measurement that switched it off (#1295)",
             100.0 * rate,
             report.snapshotted_verdicts,

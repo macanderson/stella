@@ -435,23 +435,6 @@ pub struct AgentEngineConfig {
     /// stay behind.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_candidates: Option<u32>,
-    /// Send a turn back for deterministic evidence when a model judge's PASS
-    /// is the only thing behind it — no flip, no green test
-    /// (`stella_pipeline::PipelineConfig::require_evidence_for_lone_judge_pass`,
-    /// #1295). Absent is off, which is the measured default.
-    ///
-    /// A key rather than a constant because the answer is a *measurement*,
-    /// not a preference: the send-back is worth a turn exactly where the
-    /// uncorroborated condition is a suspicious minority, and it made things
-    /// worse on Terminal-Bench where it held on most turns. Run `stella
-    /// calibration` for this workspace's own rate before switching it on —
-    /// the judge-alone line reports it with its denominator.
-    ///
-    /// Costs at most one revision turn per candidate and never changes a
-    /// verdict from pass to fail: with the revisions spent, the turn takes
-    /// the same UNVERIFIED relabel it takes while this is off.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_evidence_for_lone_judge_pass: Option<Toggle>,
     /// Escalate to the judge when the diff-coverage overlap could not be
     /// measured (`stella_pipeline::PipelineConfig::require_diff_coverage`,
     /// #1291). Absent is off.
@@ -717,7 +700,7 @@ impl AgentEngineConfig {
         take!(headless_scope_bypass);
         take!(pipeline_max_revisions);
         take!(pipeline_candidates);
-        take!(pipeline_evidence_for_lone_judge_pass);
+        take!(pipeline_judge_evidence_demand);
         take!(pipeline_require_diff_coverage);
         take!(model_timeout_secs);
         take!(compaction_budget_tokens);
@@ -816,14 +799,6 @@ impl AgentEngineConfig {
 
     pub fn headless_scope_bypass_on(&self) -> bool {
         self.headless_scope_bypass.is_some_and(Toggle::is_on)
-    }
-
-    /// Whether the pipeline should ask for evidence behind an uncorroborated
-    /// judge PASS (#1295). Absent is off — see the field's own docs for the
-    /// measurement to take before turning it on.
-    pub fn pipeline_evidence_for_lone_judge_pass_on(&self) -> bool {
-        self.pipeline_evidence_for_lone_judge_pass
-            .is_some_and(Toggle::is_on)
     }
 
     /// Whether an unmeasurable diff-coverage overlap withholds a
