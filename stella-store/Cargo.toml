@@ -10,6 +10,10 @@ publish.workspace = true
 
 [dependencies]
 stella-protocol = { path = "../stella-protocol" }
+# The one implementation of `~/.stella` resolution in the workspace (#1139).
+# Zero dependencies of its own, which is what lets stella-observatory depend on
+# it too without linking this crate.
+stella-home = { path = "../stella-home" }
 rusqlite.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }

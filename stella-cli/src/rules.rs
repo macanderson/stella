@@ -231,7 +231,7 @@ pub(crate) fn load_workspace_rules(
         return ResolvedRules::default();
     }
     let user_rules_dir =
-        crate::settings::user_home_dir().map(|home| home.join(".stella").join("rules"));
+        crate::paths::user_extension_home().map(|home| home.join(".stella").join("rules"));
     let markdown = load_rules_from_with_authority(
         workspace_root,
         user_rules_dir,
@@ -657,10 +657,7 @@ mod tests {
         );
         let registry = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
         {
-            let _env = crate::test_env::lock();
-            let _restore = crate::test_env::EnvRestore::capture(&["HOME"]);
-            // SAFETY: serialized behind the binary-wide environment lock.
-            unsafe { std::env::set_var("HOME", home.path()) };
+            let _home = crate::paths::test_user_home(home.path().to_path_buf());
             enforce_workspace_rules(
                 &registry,
                 root.path(),

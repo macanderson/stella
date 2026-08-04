@@ -21,18 +21,16 @@ use std::sync::Once;
 
 /// The user's home directory: `HOME`, else `USERPROFILE` (Windows).
 fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
+    stella_home::home_dir()
 }
 
 /// The stella home: `$STELLA_HOME`, else `~/.stella`. `None` only when no
 /// home directory is discoverable at all.
+///
+/// Resolution lives in `stella-home` so `stella-observatory` — which must not
+/// link this crate — can share it instead of copying it (#1139).
 pub fn stella_home() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("STELLA_HOME") {
-        return Some(PathBuf::from(dir));
-    }
-    home_dir().map(|home| home.join(".stella"))
+    stella_home::stella_home()
 }
 
 /// The pre-`~/.stella` platform data dir (macOS Application Support,
@@ -268,10 +266,8 @@ fn copy_into(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<(
 pub fn migrate_legacy_global_dirs() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        for var in ["STELLA_HOME", "STELLA_DATA_DIR", "STELLA_CONFIG_DIR"] {
-            if std::env::var_os(var).is_some() {
-                return;
-            }
+        if stella_home::any_override_set() {
+            return;
         }
         let Some(target) = stella_home() else {
             return;

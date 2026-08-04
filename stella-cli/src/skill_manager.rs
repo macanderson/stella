@@ -47,9 +47,7 @@ const STATE_FILE: &str = ".stella-skills.json";
 pub fn scope_root(scope: SkillScope, workspace_root: &Path) -> Option<PathBuf> {
     match scope {
         SkillScope::Project => Some(workspace_root.join(".stella").join("skills")),
-        SkillScope::User => {
-            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".stella").join("skills"))
-        }
+        SkillScope::User => crate::paths::stella_root().map(|root| root.join("skills")),
     }
 }
 
@@ -577,39 +575,21 @@ mod tests {
         .unwrap();
     }
 
-    /// Bundles the process-wide env lock with the `HOME` restore guard so a
-    /// single returned value keeps both alive for the caller's whole test.
-    /// Field order matters: struct fields drop in declaration order, so
-    /// `restore` (which puts the real `HOME` back) runs before `lock` is
-    /// released — no other test can observe an unrestored `HOME`.
-    struct ScratchGuard {
-        _restore: crate::test_env::EnvRestore,
-        _lock: std::sync::MutexGuard<'static, ()>,
-    }
-
-    /// A tempdir workspace with `HOME` pointed inside it so the user scope is
-    /// isolated. Holds the process-wide env lock for the whole test (returned
-    /// as the third element) — `setenv`/`getenv` races are UB and the harness
-    /// runs these on parallel threads. Returns (workspace_root, home, guard).
-    fn scratch() -> (tempfile::TempDir, PathBuf, ScratchGuard) {
-        let lock = crate::test_env::lock();
-        let restore = crate::test_env::EnvRestore::capture(&["HOME"]);
+    /// A tempdir workspace with the user home pointed inside it, so the user
+    /// scope is isolated. Returns (workspace_root, home, guard); the guard
+    /// only has to outlive the caller's test.
+    ///
+    /// This used to hold the binary-wide environment lock for the whole test
+    /// and restore the real `HOME` on the way out, because `setenv`/`getenv`
+    /// races are UB and the harness runs these on parallel threads. The
+    /// redirect is per-thread now (#1139), so there is nothing to serialize
+    /// and no window in which another test could see an unrestored `HOME`.
+    fn scratch() -> (tempfile::TempDir, PathBuf, crate::paths::TestPathsGuard) {
         let td = tempfile::tempdir().unwrap();
         let home = td.path().join("home");
         std::fs::create_dir_all(&home).unwrap();
-        // SAFETY: the env lock above serializes every HOME-mutating test in
-        // this binary; the guard is held for the caller's whole test.
-        unsafe {
-            std::env::set_var("HOME", &home);
-        }
-        (
-            td,
-            home,
-            ScratchGuard {
-                _restore: restore,
-                _lock: lock,
-            },
-        )
+        let guard = crate::paths::test_user_home(home.clone());
+        (td, home, guard)
     }
 
     #[test]

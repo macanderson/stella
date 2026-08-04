@@ -30,6 +30,7 @@ use stella_store::enterprise_telemetry::{
 use stella_store::usage::ExecutionRollupRow;
 
 use crate::TelemetryCmd;
+use crate::startup::StartupPhase;
 
 const ENROLLMENT_SCHEMA: &str = "stella.enterprise.telemetry.enrollment.v1";
 const MAX_POLICY_ENTRIES: usize = 16;
@@ -473,7 +474,18 @@ impl StartupAuthoritySnapshot {
         }
     }
 
-    pub(crate) fn restore_after_project_env(&self, loaded: &[String]) -> Vec<String> {
+    /// Put every captured privileged value back, and report which of them a
+    /// project dotenv file had managed to set.
+    ///
+    /// Takes the [`StartupPhase`] token because it writes the process
+    /// environment: `main` calls it between env-file loading and runtime
+    /// start, and nothing may call it from a later lifecycle hook (#1140).
+    pub(crate) fn restore_after_project_env(
+        &self,
+        phase: &StartupPhase,
+        loaded: &[String],
+    ) -> Vec<String> {
+        phase.assert_before_runtime("StartupAuthoritySnapshot::restore_after_project_env");
         let loaded: BTreeSet<&str> = loaded.iter().map(String::as_str).collect();
         let mut rejected = Vec::new();
         for (name, value) in &self.values {
@@ -482,6 +494,13 @@ impl StartupAuthoritySnapshot {
             }
             // Restoring all privileged values also closes loaders which do not
             // report a complete set of parsed names.
+            //
+            // SAFETY: `main` calls this during single-threaded startup, after
+            // env-file loading and before the Tokio runtime or any thread
+            // exists, so no concurrent `getenv`/`setenv` can race these writes.
+            // The `phase` parameter and the assertion above are what hold that
+            // true — this site was the one of the three carrying no
+            // thread-safety justification at all (#1140).
             unsafe {
                 match value {
                     Some(value) => std::env::set_var(name, value),
@@ -710,7 +729,7 @@ pub(crate) fn host_spool_path(workspace_root: &Path) -> Result<PathBuf, String> 
     let workspace = workspace_root
         .canonicalize()
         .map_err(|error| format!("cannot resolve workspace for telemetry: {error}"))?;
-    let data = std::path::absolute(stella_store::usage::data_dir())
+    let data = std::path::absolute(crate::paths::data_dir())
         .map_err(|error| format!("cannot resolve host data directory: {error}"))?;
     if data.starts_with(&workspace) {
         return Err("enterprise telemetry host data directory is inside the workspace".into());

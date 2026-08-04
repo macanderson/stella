@@ -3071,6 +3071,7 @@ dependencies = [
  "stella-diag",
  "stella-fleet",
  "stella-graph",
+ "stella-home",
  "stella-mcp",
  "stella-media",
  "stella-model",
@@ -3193,6 +3194,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "stella-home"
+version = "0.6.85"
+
+[[package]]
 name = "stella-mcp"
 version = "0.6.88"
 dependencies = [
@@ -3265,6 +3270,7 @@ dependencies = [
  "rusqlite",
  "serde_json",
  "sha2 0.11.0",
+ "stella-home",
  "stella-protocol",
  "stella-store",
  "tempfile",
@@ -3360,6 +3366,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "stella-home",
  "stella-protocol",
  "tempfile",
 ]

@@ -775,7 +775,7 @@ fn no_settings_skips_user_managed_and_project_files() {
         std::env::set_var("STELLA_TRUST_PROJECT", "1");
         std::env::set_var("STELLA_PROJECT_HOOKS", "1");
     }
-    let _isolation = test_filesystem_isolation(true);
+    let _isolation = crate::paths::test_filesystem_isolation(true);
 
     let loaded = Settings::load(&workspace).unwrap();
     assert_eq!(
@@ -1071,17 +1071,11 @@ fn enable_recap_survives_the_scope_merge() {
 /// had yet written `enable_recap` into its scratch home.
 #[test]
 fn enable_recap_defaults_off_when_no_scope_sets_it() {
-    let _lock = crate::test_env::lock();
-    let _restore = crate::test_env::EnvRestore::capture(&["HOME"]);
     let dir = tempfile::tempdir().expect("tempdir");
     let workspace = dir.path();
     std::fs::create_dir_all(workspace.join(".stella")).expect("mkdir .stella");
     std::fs::write(workspace.join(".stella/settings.json"), r#"{}"#).expect("write settings");
-    // SAFETY: the env lock above serializes every HOME-mutating test in this
-    // binary, and `_restore` puts the real value back on the way out.
-    unsafe {
-        std::env::set_var("HOME", workspace.join("empty-home"));
-    }
+    let _home = crate::paths::test_user_home(workspace.join("empty-home"));
 
     let merged = Settings::load(workspace).expect("settings load");
     assert!(!merged.recap_enabled(), "recap defaults off");

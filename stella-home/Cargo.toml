@@ -1,0 +1,20 @@
+[package]
+name = "stella-home"
+description = "Where the user-global `~/.stella` home resolves: home directory, stella home, and the user-tier data dir. One implementation, so two crates cannot hand-sync their way apart."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+# A LEAF crate with NO dependencies at all — not even `serde`. That is the
+# property this exists for: `stella-observatory` must never link
+# `stella-store` (its `Store::open` runs migrations, and an observer must not
+# mutate what it observes), which is why the two carried hand-synced copies of
+# `data_dir()` with a comment asking future readers to keep them equal (#1139).
+# A crate that pulls in nothing can sit under both without touching that
+# isolation. Adding any dependency here — workspace or registry — takes that
+# away, so don't.
+[dependencies]

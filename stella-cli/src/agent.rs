@@ -1767,7 +1767,7 @@ pub fn run_tools_listing() -> Result<(), String> {
         );
     }
 
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let home = crate::paths::home();
     let report = custom::discover_in_scopes(
         &workspace_root,
         home.as_deref(),

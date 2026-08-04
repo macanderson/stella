@@ -27,6 +27,10 @@ formula = "stella"
 # for a structured log whose fields cannot carry prompts, paths, or model
 # output.
 stella-diag = { path = "../stella-diag" }
+# The workspace's single `~/.stella` resolution, behind this crate's own
+# `paths` seam (#1139). Depended on directly so the CLI's resolved paths cannot
+# drift from the crates that own the files they name.
+stella-home = { path = "../stella-home" }
 stella-protocol = { path = "../stella-protocol" }
 contextgraph-types.workspace = true
 contextgraph-host.workspace = true

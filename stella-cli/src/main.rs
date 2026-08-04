@@ -73,6 +73,7 @@ mod memory_compact;
 mod memory_index;
 mod memory_retire_cmd;
 mod model_catalog;
+mod paths;
 mod scoreboard_cmd;
 // The `/profile` posture planner (fast · balanced · pro · ultra).
 mod profile;
@@ -87,6 +88,7 @@ mod settings;
 mod settings_check;
 mod signals;
 mod skill_manager;
+mod startup;
 mod stats;
 mod stats_graph;
 mod storage_cmd;
@@ -361,17 +363,39 @@ fn main() -> ExitCode {
     // included) has to already know that.
     term_policy::apply_dumb_terminal_policy();
 
+    // Resolve every user-global anchor — home, XDG state home, the user-tier
+    // data dir, the filesystem-isolation boundary — ONCE, here, before any
+    // loader can reach for one (#1139). Nothing downstream reads `HOME` out of
+    // `std::env`; it asks `paths`. Placed above env-file loading on purpose,
+    // and safely: every name this resolves is on `env_files::DENIED_EXACT`,
+    // so no project `.env` can move it afterwards.
+    paths::install(paths::UserPaths::from_environment());
+
     // Everything user-global lives at ~/.stella; move data from the legacy
     // split layout (platform data dir + ~/.config/stella) before any store,
     // settings, or extension loader resolves a path.
     stella_store::home::migrate_legacy_global_dirs();
+
+    // The process's one license to write the process environment. Three
+    // production paths do — dotenv loading, the credential-handoff scrub, and
+    // the privileged-value rollback — and all three demand this token, so the
+    // window in which they are reachable is bounded by the lifetime of a local
+    // in `main` rather than by a comment (#1140). `None` is unreachable here:
+    // nothing else in the binary claims it.
+    let Some(startup) = startup::StartupPhase::claim() else {
+        eprintln!(
+            "{} startup phase was already claimed",
+            "stella:".red().bold()
+        );
+        return ExitCode::FAILURE;
+    };
 
     // A trusted benchmark launcher may provide the selected provider key on
     // an inherited anonymous FD. Consume and close it before project env-file
     // loading, clap, a runtime, or any model/repository-controlled process.
     // The raw key is retained only in the credential module's in-memory slot;
     // it is never installed into this process's environment.
-    if let Err(error) = credential_handoff::consume_at_startup() {
+    if let Err(error) = credential_handoff::consume_at_startup(&startup) {
         eprintln!(
             "{} secure credential handoff failed: {error}",
             "stella:".red().bold()
@@ -389,14 +413,15 @@ fn main() -> ExitCode {
         .flatten();
     let authority_snapshot =
         enterprise_telemetry::StartupAuthoritySnapshot::capture(managed_snapshot.as_ref());
-    let mut loaded_env = env_files::maybe_load();
+    let mut loaded_env = env_files::maybe_load(&startup);
     // The snapshot rolls back any privileged name a dotenv file did manage to
     // set (the second-loader backstop behind `env_files`' own deny-list). It
     // returns the names it clawed back — fold them into the load record so the
     // rollback is REPORTED like every other refusal rather than swallowed, and
     // so the diagnostics can't go on claiming a variable was loaded when its
     // host value was put straight back (#553).
-    let rejected_privileged = authority_snapshot.restore_after_project_env(&loaded_env.names);
+    let rejected_privileged =
+        authority_snapshot.restore_after_project_env(&startup, &loaded_env.names);
     for name in rejected_privileged {
         loaded_env.names.retain(|loaded| loaded != &name);
         loaded_env.name_files.remove(&name);
@@ -432,6 +457,17 @@ fn main() -> ExitCode {
     let diag_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let dx = diag_boot::install(&cli.globals, &diag_root);
 
+    // The startup window closes HERE, and `close` consumes the token, so this
+    // is the only place it can: the next line detaches a delivery thread, and
+    // everything past it (the Tokio runtimes in `run`, the tool and hook
+    // subprocesses) assumes a multi-threaded process. Below this line the three
+    // environment writers are unreachable — no token — and a caller that got
+    // one some other way trips the assertion each of them carries (#1140).
+    //
+    // Note this is the first *thread*, not the first runtime. That is the
+    // boundary that matters: `setenv` races a `getenv` on any thread, Tokio's
+    // or not.
+    startup.close();
     enterprise_telemetry::start_best_effort_flush();
     loaded_env
         .names

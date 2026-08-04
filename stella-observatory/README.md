@@ -13,14 +13,20 @@ opens an outbound connection, writes a file, or answers a method other than
 
 ## Where it sits
 
-A leaf. [`Cargo.toml`](Cargo.toml) lists `rusqlite`, `serde_json`,
-`sha2`, `thiserror`, `tokio` (the `net` feature only) and `toml` — no `stella-*`
-dependency at all. That is deliberate: `stella_store::Store::open` creates
-`.stella/` and runs schema migrations, and an observer that migrates what it
-observes is not an observer. The price is two acknowledged copies —
-`global::data_dir` and `project_id_for` ([`src/global.rs:27`](src/global.rs),
-`:48`) mirror `../stella-store/src/usage.rs`, and `/api/explorations` re-hashes
-exploration manifests itself.
+Nearly a leaf. [`Cargo.toml`](Cargo.toml) lists `rusqlite`, `serde_json`,
+`sha2`, `thiserror`, `tokio` (the `net` feature only), `toml` — and exactly one
+`stella-*` dependency, [`stella-home`](../stella-home), which has no
+dependencies of its own. Everything heavier is excluded deliberately:
+`stella_store::Store::open` creates `.stella/` and runs schema migrations, and
+an observer that migrates what it observes is not an observer.
+
+The price used to be three acknowledged copies. `global::data_dir` was one of
+them — a hand-synced mirror of `../stella-store/src/usage.rs` with a comment
+asking readers to keep it equal — and is now shared through `stella-home`
+instead (#1139); linking a crate that is pure path arithmetic over environment
+variables and opens nothing costs none of the isolation above. Two copies
+remain: `project_id_for` ([`src/global.rs`](src/global.rs)) still mirrors the
+store's, and `/api/explorations` re-hashes exploration manifests itself.
 
 Only [`stella-cli`](../stella-cli) depends on it: `run_observe`
 ([`../stella-cli/src/storage_cmd.rs:47`](../stella-cli/src/storage_cmd.rs))
@@ -195,7 +201,8 @@ accent): the glyph and the badge context, never the hue, say "warning".
   those columns. A column this crate *does* read, renamed in the store, keeps
   this suite green and breaks the dashboard at runtime.
 - **Store paths are hardcoded**, `<root>/.stella/private/<name>` — this crate
-  can't use `stella-store`'s path resolver (see *Where it sits*), so a
+  can't use `stella-store`'s path resolver (see *Where it sits*; `stella-home`
+  answers where `~/.stella` is, not where a workspace's private store is), so a
   workspace still in the pre-`private/` legacy layout renders empty.
   `stella observe` sidesteps that: the CLI's `preflight_observatory_stores`
   resolves and migrates first. `--example serve` does not.

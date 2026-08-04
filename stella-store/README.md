@@ -121,9 +121,14 @@ A leak here is a privacy incident, not a test failure.
 
 Plus three file-backed stores under `~/.stella/`: `sessions/` (one JSON record
 per session, one writer per file), `sessions/<id>/` (the resume sidecar), and
-`notifications/`. [`home.rs`](src/home.rs) resolves `~/.stella` on every platform
-— no OS data-dir guessing — with `STELLA_HOME` moving the whole home and
-`STELLA_DATA_DIR` / `STELLA_CONFIG_DIR` as narrower overrides.
+`notifications/`. `~/.stella` resolves the same on every platform — no OS
+data-dir guessing — with `STELLA_HOME` moving the whole home and
+`STELLA_DATA_DIR` / `STELLA_CONFIG_DIR` as narrower overrides. The resolution
+itself lives in [`stella-home`](../stella-home), a dependency-free leaf crate,
+because [`stella-observatory`](../stella-observatory) needs the same answer and
+must not link this one; [`home.rs`](src/home.rs) keeps the part that is
+genuinely this crate's — the one-time migration off the legacy split layout,
+which checkpoints and moves SQLite families whole (#1139).
 
 Flow between the two SQLite tiers is **one-way**: `store.db` → `usage.db` via a
 durable per-project cursor; nothing writes back, and a missing or unopenable hub

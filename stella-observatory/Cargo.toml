@@ -9,6 +9,12 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+# `~/.stella` resolution, shared rather than copied (#1139). This crate used to
+# carry its own `data_dir()` with a comment asking readers to keep it equal to
+# `stella_store::usage::data_dir` by hand. `stella-home` has no dependencies at
+# all, so depending on it costs none of the isolation the dev-dependency note
+# below protects — it is path arithmetic over env vars and opens nothing.
+stella-home = { path = "../stella-home" }
 rusqlite.workspace = true
 serde_json = { workspace = true }
 # Re-hash exploration-map manifests for the /api/explorations freshness

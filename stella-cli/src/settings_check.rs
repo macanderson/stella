@@ -909,20 +909,29 @@ mod tests {
         );
     }
 
-    /// A scratch workspace holding `.stella/settings.json`. The user scope is
-    /// already inert under `cfg(test)` (`settings::user_home_dir` reads a
-    /// thread-local nobody sets here), so what this file says is what
-    /// `Settings::load` sees.
-    fn workspace(settings: &str) -> tempfile::TempDir {
+    /// A scratch workspace holding `.stella/settings.json`, with the user
+    /// scope pointed at an empty directory inside it — so what this file says
+    /// is what `Settings::load` sees.
+    ///
+    /// This used to claim the user scope was "already inert under
+    /// `cfg(test)`", citing the `settings::user_home_dir` thread-local. It was
+    /// not: that thread-local fed the *extension* loaders, while the settings
+    /// chain resolved `~/.stella/settings.json` from the ambient `HOME` — so
+    /// every assertion here quietly depended on the developer's own user-scope
+    /// settings, and passed in CI only because the runner has none (#1139).
+    /// One seam now, and the redirect is real.
+    fn workspace(settings: &str) -> (tempfile::TempDir, crate::paths::TestPathsGuard) {
         let dir = tempfile::tempdir().expect("workspace");
         std::fs::create_dir_all(dir.path().join(".stella")).expect("dot dir");
         std::fs::write(dir.path().join(".stella/settings.json"), settings).expect("settings");
-        dir
+        let home = crate::paths::test_user_home(dir.path().join("empty-home"));
+        (dir, home)
     }
 
     #[test]
     fn a_bad_default_model_is_reported_once_and_attributed_to_its_setting() {
-        let dir = workspace(r#"{"agent_engine_config": {"default_model": "openrouter/auto"}}"#);
+        let (dir, _home) =
+            workspace(r#"{"agent_engine_config": {"default_model": "openrouter/auto"}}"#);
         let report = inspect_model_config(dir.path(), None, None);
         assert_eq!(
             report.issues.len(),
@@ -944,7 +953,8 @@ mod tests {
     /// the flag rather than to the innocent setting underneath it.
     #[test]
     fn the_override_outranks_the_setting_and_is_named_as_the_source() {
-        let dir = workspace(r#"{"agent_engine_config": {"default_model": "zai/glm-5.2"}}"#);
+        let (dir, _home) =
+            workspace(r#"{"agent_engine_config": {"default_model": "zai/glm-5.2"}}"#);
         let report = inspect_model_config(dir.path(), Some("openrouter/auto"), None);
         assert_eq!(report.resolved.as_deref(), Some("openrouter/auto"));
         assert_eq!(report.source, "--model / STELLA_MODEL");
@@ -954,7 +964,8 @@ mod tests {
 
     #[test]
     fn a_valid_default_reports_the_model_and_no_issues() {
-        let dir = workspace(r#"{"agent_engine_config": {"default_model": "zai/glm-5.2"}}"#);
+        let (dir, _home) =
+            workspace(r#"{"agent_engine_config": {"default_model": "zai/glm-5.2"}}"#);
         let report = inspect_model_config(dir.path(), None, None);
         assert!(report.issues.is_empty(), "{:?}", report.issues);
         assert_eq!(report.resolved.as_deref(), Some("zai/glm-5.2"));
@@ -967,7 +978,7 @@ mod tests {
     fn an_agents_default_pin_is_named_as_the_source_not_the_flat_key() {
         // Both keys are set and both are valid; only the one that actually
         // answers may be named, or the user edits the wrong line.
-        let dir = workspace(
+        let (dir, _home) = workspace(
             r#"{"agent_engine_config": {
                  "default_model": "zai/glm-5.2",
                  "agents": {"default": {"model": "openai/gpt-5.5"}}

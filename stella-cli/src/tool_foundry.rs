@@ -265,7 +265,7 @@ fn run_tools_author_in(
         "·".green(),
         script_path.display()
     );
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let home = crate::paths::home();
     let live = stella_tools::custom::discover_in(root, home.as_deref());
     if live.tools.iter().any(|t| t.name == authored.name) {
         println!(

@@ -276,9 +276,9 @@ fn attachable(kind: AttachmentKind) -> bool {
 /// Expand a leading `~/` against `$HOME`.
 fn expand_home(token: &str) -> PathBuf {
     if let Some(rest) = token.strip_prefix("~/")
-        && let Some(home) = std::env::var_os("HOME")
+        && let Some(home) = crate::paths::home()
     {
-        return PathBuf::from(home).join(rest);
+        return home.join(rest);
     }
     PathBuf::from(token)
 }
