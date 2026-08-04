@@ -279,6 +279,97 @@ cross-family as your lineup changes:
 }
 ```
 
+## Output token ceilings
+
+**By default every model is asked for its own maximum.** Stella reads that
+ceiling from the model catalog, which learns it from the provider's own
+`/models` endpoint, so you never have to configure anything to get a
+full-length answer. A cap set below the model's ceiling decides where work
+stops instead of the model doing so — and a step cut off mid-reasoning emits
+no tool call and does no work at all.
+
+So the only thing worth configuring here is spending **less** than the model
+allows: bounding cost on a long unattended run, cutting latency, or matching a
+comparator that stops lower. Two ways to say it.
+
+### `--max-output-tokens` — this run
+
+```bash
+stella run "audit the auth module" --max-output-tokens 32000
+```
+
+Global flag, applies to every role, also readable as
+`STELLA_MAX_OUTPUT_TOKENS`. Use it when you want one invocation to behave
+differently, or when a configured value is the thing you are debugging — it
+outranks both settings surfaces below for exactly that reason.
+
+### `[models.output_caps]` — this workspace
+
+```toml
+[models.output_caps]
+"anthropic/claude-sonnet-5" = 64000   # this model on this provider
+"deepseek-chat" = 32000               # this model on any route
+```
+
+Keys are `provider/slug` or a bare slug; the provider-qualified form wins when
+both match, so you can cap a model only on the gateway you pay per-token for.
+Entries merge per model across settings scopes, so a project pinning one model
+never drops your pins on others.
+
+This is an **override, never a definition**. A model absent from the table
+simply gets its own maximum, so a model that ships tomorrow needs no entry —
+and deleting an entry restores a correct default rather than leaving a stale
+number behind.
+
+### Precedence, and two rules worth knowing
+
+Highest wins:
+
+1. `--max-output-tokens` (this invocation)
+2. `[models.output_caps]` (per model)
+3. per-agent `params.max_tokens` under `agent_engine_config`
+4. the model's own ceiling, from the catalog — **the default**
+
+<Callout type="warn">
+**A value above the model's real ceiling is clamped, not sent.** Asking a
+provider for more than the model can write is not a longer answer — it is a
+rejection on every request, which bills the round trip and then needs another
+call to retry. Clamping gives you what an over-large number was asking for
+anyway.
+
+**`0` is refused, not read as "unlimited".** Absence already means "the
+model's own maximum", so zero has no second meaning left to carry. (This
+differs from `model_timeout_secs`, where `0` *does* mean "no ceiling".)
+</Callout>
+
+### Where the ceiling comes from
+
+| provider | field read from its `/models` |
+| --- | --- |
+| Anthropic | `max_tokens` (output) and `max_input_tokens` (context) |
+| OpenRouter | `top_provider.max_completion_tokens` |
+| Gemini | `outputTokenLimit` |
+| OpenAI-compatible | `max_output_tokens` or `max_completion_tokens` |
+
+A bare `max_tokens` on an OpenAI-compatible listing is deliberately **not**
+read: it means the output cap on some gateways and the whole context window on
+others, and reading it the wrong way round would seed a ceiling several times
+the model's real one.
+
+Bedrock and Vertex publish no listing Stella can read, so those rows carry a
+seeded value instead. `stella models refresh` (and the startup sync) replaces
+seeded numbers with the provider's own wherever one is published.
+
+<Callout type="info">
+**One model is a documented estimate: `grok-4`.** No catalog source publishes a
+cap for that exact slug. Its generation siblings — `grok-4.3` and the
+`grok-4.20-*` variants — all report 30,000, so that is what ships. The later
+`grok-4.5` reports 500,000, but taking a different generation's number would
+risk a rejection on every request rather than merely leaving headroom unused.
+It is corrected automatically the first time xAI's listing publishes a real
+figure.
+</Callout>
+
 ## Generation parameters
 
 Every entry under `params` follows **include-when-set** semantics: an absent
