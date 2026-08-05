@@ -89,6 +89,7 @@ use crate::compaction::compact_measured;
 use crate::receipts::TranscriptRevision;
 use lifecycle::{step_outcome_label, turn_outcome_payload};
 
+mod confident_zero;
 pub mod lifecycle;
 mod loop_evidence;
 mod truncation;
@@ -2345,6 +2346,35 @@ impl<'a> Engine<'a> {
                         result.usage.output_tokens
                     ),
                 };
+                let _ = events.send(AgentEvent::Error {
+                    message: reason.clone(),
+                    retryable: true,
+                });
+                return Some(TurnOutcome::Aborted {
+                    reason,
+                    cost_usd: total_cost_usd,
+                });
+            }
+            // A "confident zero" (#1477): the turn is about to report
+            // `Completed` on text that is non-empty but reads as a stray,
+            // cut-off thought — and this turn's whole tool-call history shows
+            // investigation with no artifact (every call it made was
+            // read-only). Left alone this looks exactly like a successful
+            // run, unlike a timeout or the empty-response abort above, right
+            // up until an external grader scores it zero. Excluded from the
+            // length-truncated path below: that is a distinct, already-honest
+            // "ran out of room" ending, not a voluntary stop.
+            if result.finish_reason != Some(FinishReason::Length)
+                && let Some(zero) = confident_zero::detect(messages, &read_only_tools, &result.text)
+            {
+                let reason = format!(
+                    "the model ended this turn after {} tool call(s) that changed nothing in \
+                     the workspace, closing on a line that narrates ongoing activity rather than \
+                     stating a result (\"{}\") — this reads as an abandoned attempt, not a \
+                     finished answer. Retry, or continue with more specific direction.",
+                    zero.tool_calls,
+                    result.text.trim(),
+                );
                 let _ = events.send(AgentEvent::Error {
                     message: reason.clone(),
                     retryable: true,
