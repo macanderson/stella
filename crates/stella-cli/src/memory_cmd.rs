@@ -217,7 +217,8 @@ pub fn run_memory_list(format: MemoryFormat) -> Result<(), String> {
             if quarantined > 0 {
                 println!(
                     "\n{} {quarantined} quarantined memor{them} excluded from recall — \
-                     cited untruthful {threshold}+ times. Review with `stella memory list --json`.",
+                     cited untruthful {threshold}+ times. Review with \
+                     `stella memory list --format json`.",
                     "⚠".yellow(),
                     them = if quarantined == 1 { "y" } else { "ies" },
                     threshold = stella_store::QUARANTINE_NEGATIVES_THRESHOLD,
