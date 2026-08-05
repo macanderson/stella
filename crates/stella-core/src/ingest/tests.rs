@@ -145,7 +145,11 @@ fn instructional_by_directory_regardless_of_filename() {
 
 #[test]
 fn ordinary_docs_are_descriptive_not_instructional() {
-    for path in ["README.md", "docs/spec/storage-map.md", "docs/adr/0001-x.md"] {
+    for path in [
+        "README.md",
+        "docs/spec/storage-map.md",
+        "docs/adr/0001-x.md",
+    ] {
         let c = classify(path, "# Title\n\nThis describes the system.\n");
         assert_eq!(c.tier, Tier::Descriptive, "{path}");
         assert!(!c.is_offered_by_default(), "{path}");
