@@ -248,8 +248,10 @@ fn stopping_ends_the_whole_group_and_records_it_as_deliberate() {
     // about reap latency, not about `stop`.
     assert!(
         eventually(Duration::from_secs(10), || {
-            // SAFETY: probing a group with signal 0 sends nothing.
-            unsafe { libc::kill(-group, 0) } != 0
+            // SAFETY: probing a group with signal 0 sends nothing. The
+            // parentheses are load-bearing: a bare `unsafe { … }` opening a
+            // statement ends the statement at the block, orphaning the `!=`.
+            (unsafe { libc::kill(-group, 0) }) != 0
         }),
         "the whole process group must be gone"
     );
