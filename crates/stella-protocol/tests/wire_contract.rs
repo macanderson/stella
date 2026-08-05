@@ -62,8 +62,8 @@ use stella_protocol::receipt::{
     ManifestEntry, ProviderShare,
 };
 use stella_protocol::{
-    AgentEvent, CompiledContextFrameBuilt, VerdictEvidence, KNOWN_TYPE_TAGS, MediaArtifactRef,
-    SubAgentPhase, SubAgentStatus, ToolCall, ToolOutput,
+    AgentEvent, CompiledContextFrameBuilt, KNOWN_TYPE_TAGS, MediaArtifactRef, SubAgentPhase,
+    SubAgentStatus, ToolCall, ToolOutput, VerdictEvidence,
 };
 
 // ---------------------------------------------------------------------------

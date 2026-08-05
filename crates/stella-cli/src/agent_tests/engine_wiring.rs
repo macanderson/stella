@@ -556,7 +556,10 @@ fn a_trusted_posture_whose_verifier_pin_cannot_be_built_refuses_the_run() {
         "an unbuildable author must still degrade softly at the wiring layer"
     );
     assert!(
-        wiring.notices.iter().any(|notice| notice.contains("verifier")),
+        wiring
+            .notices
+            .iter()
+            .any(|notice| notice.contains("verifier")),
         "the dropped pin must say so: {:?}",
         wiring.notices
     );

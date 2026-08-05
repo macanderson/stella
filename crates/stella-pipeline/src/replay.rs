@@ -43,7 +43,7 @@ pub mod ground_truth;
 pub mod reference_adapter;
 
 use ground_truth::PendingPass;
-use stella_protocol::{AgentEvent, VerdictEvidence, OracleObservation, ProofTree, StageKind};
+use stella_protocol::{AgentEvent, OracleObservation, ProofTree, StageKind, VerdictEvidence};
 
 /// Verifier-calibration tallies folded from recorded event streams (#871).
 ///
@@ -180,9 +180,8 @@ pub fn render_calibration(report: &CalibrationReport) -> String {
             report.snapshotted_verdicts,
             report.verifier_passes_standing_alone,
         ),
-        None => {
-            "  verifier-alone rate: unmeasured (no verdict carried a ladder snapshot yet)".to_string()
-        }
+        None => "  verifier-alone rate: unmeasured (no verdict carried a ladder snapshot yet)"
+            .to_string(),
     };
     // #1293: reverts are counted apart from CI, because they are a different
     // and stronger statement — a human deciding later that the work should
@@ -944,7 +943,7 @@ pub fn to_jsonl(events: &[AgentEvent]) -> String {
 mod tests {
     use super::*;
     use stella_protocol::event::BudgetMode;
-    use stella_protocol::{VerdictEvidence, ToolCall, ToolOutput};
+    use stella_protocol::{ToolCall, ToolOutput, VerdictEvidence};
 
     fn stage(name: StageKind) -> AgentEvent {
         AgentEvent::Stage { name }
@@ -1026,7 +1025,10 @@ mod tests {
             StageKind::Verify,
             StageKind::Execute
         ));
-        assert!(stage_transition_legal(StageKind::Verifier, StageKind::Execute));
+        assert!(stage_transition_legal(
+            StageKind::Verifier,
+            StageKind::Execute
+        ));
         // Witness authoring is demand-driven and FOLLOWS execution (the
         // warrant reads the executed diff first), so Execute → Witness is the
         // forward move and the revise back-edges jump over Witness back to
@@ -1221,7 +1223,7 @@ mod tests {
 #[cfg(test)]
 mod calibration_tests {
     use super::*;
-    use stella_protocol::{CiStatus, VerdictEvidence, PrStatus};
+    use stella_protocol::{CiStatus, PrStatus, VerdictEvidence};
 
     fn verdict(passed: bool, deterministic: bool) -> AgentEvent {
         AgentEvent::Verdict {
@@ -1391,7 +1393,7 @@ mod calibration_tests {
 mod late_reconciliation_tests {
     use super::ground_truth::{GroundTruth, reconcile};
     use super::*;
-    use stella_protocol::{CiStatus, VerdictEvidence, PrStatus};
+    use stella_protocol::{CiStatus, PrStatus, VerdictEvidence};
 
     fn verifier_pass() -> AgentEvent {
         AgentEvent::Verdict {

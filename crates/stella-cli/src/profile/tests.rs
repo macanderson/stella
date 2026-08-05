@@ -182,7 +182,10 @@ fn a_verifier_more_than_one_rung_below_loses_to_capability_and_is_recorded() {
     ];
     let p = plan(Profile::Ultra, &models);
     assert_eq!(model_of(&p, EngineAgentKind::Worker), "anthropic/claude-c");
-    assert_eq!(model_of(&p, EngineAgentKind::Verifier), "anthropic/claude-c");
+    assert_eq!(
+        model_of(&p, EngineAgentKind::Verifier),
+        "anthropic/claude-c"
+    );
     assert!(
         p.verifier_shares_worker_family,
         "a correlated verifier must be reported, not absorbed"
@@ -273,7 +276,10 @@ fn effort_is_clamped_down_to_the_rungs_the_provider_exposes() {
         .cloned()
         .unwrap();
     assert_eq!(verifier.effort, Some(ReasoningEffort::High));
-    assert_eq!(verifier.effort_downgraded_from, Some(ReasoningEffort::Xhigh));
+    assert_eq!(
+        verifier.effort_downgraded_from,
+        Some(ReasoningEffort::Xhigh)
+    );
 }
 
 #[test]
@@ -504,7 +510,10 @@ fn applying_a_profile_preserves_what_it_does_not_own() {
     };
     apply(&plan(Profile::Pro, &spread()), &mut engine);
     let verifier = engine.agents.as_ref().unwrap().verifier.as_ref().unwrap();
-    assert_eq!(verifier.prompt.as_deref(), Some("You are a strict reviewer."));
+    assert_eq!(
+        verifier.prompt.as_deref(),
+        Some("You are a strict reviewer.")
+    );
     assert_eq!(verifier.provider.as_deref(), Some("openrouter"));
     let params = verifier.params.as_ref().unwrap();
     assert_eq!(params.temperature, Some(0.2));
@@ -690,7 +699,10 @@ fn restore_auto_preserves_a_custom_prompt_and_temperature() {
     apply(&plan(Profile::Pro, &spread()), &mut engine);
     restore_auto(&mut engine);
     let verifier = engine.agents.as_ref().unwrap().verifier.as_ref().unwrap();
-    assert_eq!(verifier.prompt.as_deref(), Some("You are a strict reviewer."));
+    assert_eq!(
+        verifier.prompt.as_deref(),
+        Some("You are a strict reviewer.")
+    );
     assert_eq!(verifier.params.as_ref().unwrap().temperature, Some(0.2));
 }
 

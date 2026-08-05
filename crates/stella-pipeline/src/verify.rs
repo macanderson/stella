@@ -66,7 +66,7 @@ pub mod mutation;
 
 use std::collections::BTreeSet;
 
-use stella_protocol::{VerdictEvidence, LadderRung};
+use stella_protocol::{LadderRung, VerdictEvidence};
 
 /// The flip oracle's state. `None` = no failing observation yet; `Failing` =
 /// the tracked command has been seen failing; `Flipped` = the tracked command

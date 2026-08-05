@@ -113,7 +113,7 @@ escape hatch for an irreducible line (a module declaration in an oversized
 | [`src/provider.rs`](src/provider.rs) | The `Provider` port and `ToolCallObserver`, the seam speculative tool execution hangs on. |
 | [`src/tool.rs`](src/tool.rs) | `ToolSchema`, `ToolCall`, `ToolOutput`, `ToolResult` — the engine's single internal tool dialect. |
 | [`src/attachment.rs`](src/attachment.rs) | Multimodal *input* attachments, plus `classify_media_type`, `media_type_for_path`, `human_bytes`. |
-| [`src/role.rs`](src/role.rs) | `Role` (worker/triage/plan/judge/embed/vision/image/video) and `ModelRef`. |
+| [`src/role.rs`](src/role.rs) | `Role` (worker/triage/plan/verifier/embed/vision/image/video) and `ModelRef`. |
 | [`src/error.rs`](src/error.rs) | `ProviderError` and its retry classification. |
 | [`src/cache.rs`](src/cache.rs) | `CacheCause` and the one-line hint each carries, so the CLI receipt and the deck panel print identical wording. |
 

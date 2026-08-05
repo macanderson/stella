@@ -259,7 +259,7 @@ Prefer `api_key_env` over a literal `api_key` — settings files get committed.
 ### Agent engine config (`agent_engine_config`)
 
 The engine runs four configurable agents — **default** (the interactive /
-step-loop agent) and the pipeline's **worker**, **judge**, and **triage**.
+step-loop agent) and the pipeline's **worker**, **verifier**, and **triage**.
 The `agent_engine_config` object in the same `settings.json` scope chain
 configures each one's model, gateway, system prompt, reasoning, and sampling
 parameters — and in the Command Deck, `/settings` opens the SETTINGS tab,
@@ -274,7 +274,7 @@ commands — the SETTINGS tab is the one place models are configured.
     // Flat per-role models ("provider/slug", or a bare catalog slug).
     "default_model": "anthropic/claude-fable-5",
     "pipeline_worker_model": "zai/glm-5.2",
-    "pipeline_judge_model": "openrouter/openai/gpt-5.5",
+    "pipeline_verifier_model": "openrouter/openai/gpt-5.5",
     "pipeline_triage_model": "deepseek/deepseek-chat",
 
     // The model vocabulary the TUI pickers offer and auto_mode selects from.
@@ -284,11 +284,11 @@ commands — the SETTINGS tab is the one place models are configured.
       "openrouter/openai/gpt-5.5",
     ],
 
-    // "on" = pick the judge automatically from allowed_models: prefer a
+    // "on" = pick the verifier automatically from allowed_models: prefer a
     // different model family than the worker's, then the highest catalog
     // price tier. You never worry about it.
     "auto_mode": "off",
-    // "on" = per-agent effort is chosen for you (judge high, worker
+    // "on" = per-agent effort is chosen for you (verifier high, worker
     // medium, triage low), overriding any per-agent "effort".
     "effort_auto": "off",
     // "on" = thinking mode chosen for you (on everywhere except triage).
@@ -297,10 +297,10 @@ commands — the SETTINGS tab is the one place models are configured.
     // Per-agent deep config. Every field is optional — set it and it goes
     // on the wire; leave it out and the provider default applies.
     "agents": {
-      "judge": {
+      "verifier": {
         "provider": "openrouter", // gateway: the slug goes to THIS
         "model": "openai/gpt-5.5", // provider verbatim (BYOK per agent)
-        "prompt": "You are a strict, evidence-first code judge.",
+        "prompt": "You are a strict, evidence-first code verifier.",
         "effort": "high", // low | medium | high | xhigh | max
         "reasoning": "on", // thinking mode on/off
         "params": {
@@ -324,14 +324,14 @@ commands — the SETTINGS tab is the one place models are configured.
 Precedence per agent: `--model` flag > `agents.<agent>.model` >
 `pipeline_<agent>_model` > `default_model` > auto-detect. An agent's
 `provider` field routes its slug through that gateway verbatim, so the
-worker can run on your Anthropic key while the judge routes
+worker can run on your Anthropic key while the verifier routes
 `openai/gpt-5.5` through your OpenRouter key and triage hits Z.ai. Each
 adapter forwards only the parameters its wire supports (`verbosity` and
 `service_tier` are dropped where meaningless); reasoning maps to GLM's
 `thinking`, OpenRouter's `reasoning`, Anthropic extended thinking (with an
 effort-tiered budget), OpenAI `reasoning.effort`, and Gemini
 `thinkingLevel`. Custom prompts replace the built-in base instructions;
-workspace memories and rules still append. A judge/triage model whose
+workspace memories and rules still append. A verifier/triage model whose
 provider has no resolvable key degrades softly — the role rides the worker
 and a notice says so.
 
@@ -347,7 +347,7 @@ each row links to its reference page on [stella.oxagen.sh](https://stella.oxagen
 | [`run <prompt>`](https://stella.oxagen.sh/docs/commands/run)          | Send a one-shot prompt, non-interactive — the staged pipeline by default                                          |
 | [`chat`](https://stella.oxagen.sh/docs/commands/chat)                 | Interactive session: the Command Deck TUI (also what a bare `stella` opens)                                       |
 | [`resume [id]`](https://stella.oxagen.sh/docs/commands/resume)        | Reopen a durable past session exactly where it stood; `--list` browses them                                       |
-| [`goal <goal>`](https://stella.oxagen.sh/docs/commands/goal)          | Work in judged rounds until a judge model confirms the goal is met                                                |
+| [`goal <goal>`](https://stella.oxagen.sh/docs/commands/goal)          | Work in judged rounds until a verifier model confirms the goal is met                                                |
 | [`monitor [target]`](https://stella.oxagen.sh/docs/commands/monitor)  | Watch a branch/PR's CI and fix failures until it is fully green                                                   |
 | [`fleet <tasks…>`](https://stella.oxagen.sh/docs/commands/fleet)      | Fan tasks out to worker agents, wave-scheduled and recorded in a ledger                                           |
 | [`init`](https://stella.oxagen.sh/docs/commands/init)                 | Infer this workspace's domain taxonomy and build the code-graph index                                             |
@@ -727,7 +727,7 @@ extending it.
 | [`stella-protocol`](crates/stella-protocol/README.md)       | Zero-logic, zero-I/O stability contract: shared serde types + the `Provider`/tool ports                                                                                                                                                |
 | [`stella-context`](crates/stella-context/README.md)         | The context plane: reflection-memory recall + embedding index, episodes, bi-temporal facts                                                                                                                                             |
 | [`stella-graph`](crates/stella-graph/README.md)             | Tree-sitter symbol + import-edge indexer (Rust/Python/JS/TS/TSX/SQL/Go/Java/C/PHP)                                                                                                                                                     |
-| [`stella-pipeline`](crates/stella-pipeline/README.md)       | The orchestration plane above the engine — the default `stella run` path: triage → plan → scope review → witness → execute → verify → judge ([docs](https://stella.oxagen.sh/docs/inference-pipeline))                                 |
+| [`stella-pipeline`](crates/stella-pipeline/README.md)       | The orchestration plane above the engine — the default `stella run` path: triage → plan → scope review → witness → execute → verify → verifier ([docs](https://stella.oxagen.sh/docs/inference-pipeline))                                 |
 | [`stella-fleet`](crates/stella-fleet/README.md)             | The multi-agent fleet behind `stella fleet`: DAG planner + wave scheduling, a shared tree with cooperative file claims by default, opt-in git-worktree isolation per task                                                              |
 | [`stella-media`](crates/stella-media/README.md)             | Multimodal generation behind one `MediaProvider` port — `generate_svg` always on; `generate_image` and `generate_video`/`poll_video` registered when a media-capable key is set (video behind a headless cost gate)                    |
 | [`stella-tui`](crates/stella-tui/README.md)                 | The Command Deck — a pure event-fold core + thin crossterm shell                                                                                                                                                                       |

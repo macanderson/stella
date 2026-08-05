@@ -426,7 +426,8 @@ pub(crate) async fn run_goal_turn(
     // call below, so it is bound here. `None` → the verifier is the worker
     // provider (single-family/failure fallback — the v1 behavior).
     let configured = crate::config::discover_configured_providers();
-    let routed_verifier = resolve_cross_family_verifier(cfg.provider.id, &cfg.model_id, &configured);
+    let routed_verifier =
+        resolve_cross_family_verifier(cfg.provider.id, &cfg.model_id, &configured);
     if let Some((_, verifier_id)) = &routed_verifier {
         println!(
             "  {} cross-family verifier: {} worker · {} verifier — independent, bias-resistant \
@@ -473,7 +474,14 @@ pub(crate) async fn run_goal_turn(
             engine = engine.with_hooks(hooks, &hook_runner);
         }
         engine
-            .run_goal(verifier, goal, messages, budget, &tx, &GoalConfig::default())
+            .run_goal(
+                verifier,
+                goal,
+                messages,
+                budget,
+                &tx,
+                &GoalConfig::default(),
+            )
             .await
     };
     drop(tx);
@@ -609,11 +617,12 @@ async fn run_goal_pipeline_turn(
     } else {
         None
     };
-    let (verifier, verifier_id): (&dyn Provider, Option<String>) = match (&engine_verifier, &routed_verifier) {
-        (Some((provider, id)), _) => (*provider, Some(id.clone())),
-        (None, Some((boxed, id))) => (&**boxed, Some(id.clone())),
-        (None, None) => (provider, None),
-    };
+    let (verifier, verifier_id): (&dyn Provider, Option<String>) =
+        match (&engine_verifier, &routed_verifier) {
+            (Some((provider, id)), _) => (*provider, Some(id.clone())),
+            (None, Some((boxed, id))) => (&**boxed, Some(id.clone())),
+            (None, None) => (provider, None),
+        };
     if let Some(verifier_id) = &verifier_id {
         println!(
             "  {} cross-family verifier: {} worker · {} verifier — independent, bias-resistant \

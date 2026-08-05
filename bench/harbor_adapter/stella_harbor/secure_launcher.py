@@ -405,7 +405,7 @@ _ENGINE_POSTURE_FIELDS = frozenset(
         "agents",
     }
 )
-_ENGINE_POSTURE_AGENT_ROLES = frozenset({"default", "worker", "judge", "triage"})
+_ENGINE_POSTURE_AGENT_ROLES = frozenset({"default", "worker", "verifier", "triage"})
 # The outcome-bearing roles also carry `params` (`{"max_tokens": …}`); triage
 # keeps the engine default and has no `params` key. Kept in step with
 # `posture.py`, the normative home these sets describe.
@@ -3537,7 +3537,7 @@ def _binary_version_texts(path: Path) -> set[str]:
     return matches
 
 
-def _witness_author_env_name() -> str:
+def _verifier_env_name() -> str:
     """The adapter's witness-author knob, read from the adapter itself.
 
     Resolved lazily rather than imported at module scope: this module is loaded
@@ -3570,11 +3570,11 @@ def _validate_claim_environment(environ: Mapping[str, str]) -> tuple[Path, str]:
     # arm while every hash the launcher published described the control arm —
     # a disclosed configuration that was never the one measured, which is the
     # failure #1007 exists to close rather than reopen elsewhere.
-    witness_author_env = _witness_author_env_name()
-    if environ.get(witness_author_env):
+    verifier_env = _verifier_env_name()
+    if environ.get(verifier_env):
         raise RuntimeError(
             "secure launcher refuses an ambient "
-            f"{witness_author_env}: the audited claim path pins the "
+            f"{verifier_env}: the audited claim path pins the "
             "witness-off arm, and this launcher's disclosed posture hashes are "
             "computed for that arm. Run the witness arm through the "
             "development-baseline path (bench/evidence/run) instead."

@@ -5,7 +5,7 @@
 //! output files, byte-identity — lives in `tests/dataset_export_cli.rs`.
 
 use super::*;
-use stella_protocol::{FileChangeKind, VerdictEvidence, ModelCallRole, ToolCall, ToolOutput};
+use stella_protocol::{FileChangeKind, ModelCallRole, ToolCall, ToolOutput, VerdictEvidence};
 use stella_store::SessionEventRecord;
 
 fn journal(events: Vec<AgentEvent>) -> Vec<SessionEventRecord> {

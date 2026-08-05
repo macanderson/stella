@@ -246,7 +246,9 @@ impl Engine<'_> {
                 };
             }
 
-            messages.push(CompletionMessage::user(verifier_feedback_text(goal, &verdict)));
+            messages.push(CompletionMessage::user(verifier_feedback_text(
+                goal, &verdict,
+            )));
         }
 
         GoalOutcome::Unmet {
@@ -335,15 +337,17 @@ impl Engine<'_> {
             .await
         {
             SubAgentOutcome::Completed(report) => {
-                let verdict = parse_verdict(&report.summary).unwrap_or_else(|| GoalVerifierVerdict {
-                    met: false,
-                    reasoning: "verifier response was not parseable JSON — treated as not met".into(),
-                    feedback: format!(
-                        "Continue working toward the goal; the previous assessment was \
+                let verdict =
+                    parse_verdict(&report.summary).unwrap_or_else(|| GoalVerifierVerdict {
+                        met: false,
+                        reasoning: "verifier response was not parseable JSON — treated as not met"
+                            .into(),
+                        feedback: format!(
+                            "Continue working toward the goal; the previous assessment was \
                          unreadable (verifier said: {})",
-                        truncate_chars(&report.summary, 500)
-                    ),
-                });
+                            truncate_chars(&report.summary, 500)
+                        ),
+                    });
                 Ok((verdict, report.cost_usd))
             }
             // A partial judgement is not a judgement. The loop's contract is
@@ -1157,7 +1161,10 @@ mod tests {
                            {\"status\": \"passed\"} — verified.\n\
                            {\"met\": true, \"reasoning\": \"witness confirmed\"}";
         let verdict = parse_verdict(brace_prose).expect("prose braces must not break the verdict");
-        assert!(verdict.met, "the verifier said met:true and must be believed");
+        assert!(
+            verdict.met,
+            "the verifier said met:true and must be believed"
+        );
         assert_eq!(verdict.reasoning, "witness confirmed");
     }
 
@@ -1235,7 +1242,9 @@ mod tests {
             reasoning: "tests missing".into(),
             feedback: "  ".into(),
         };
-        assert!(verifier_feedback_text("ship it", &bare).contains("Verifier feedback: tests missing"));
+        assert!(
+            verifier_feedback_text("ship it", &bare).contains("Verifier feedback: tests missing")
+        );
         // Worker rounds take even slots; `Engine::assess` adds the verifier's +1.
         assert_eq!(goal_round_turn_offset(1), 0);
         assert_eq!(goal_round_turn_offset(2), 2);

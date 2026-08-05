@@ -112,7 +112,7 @@ frozen." Verified on `fa2ec5b`:
 | Analyzer self-tests (`terminal_bench_analysis/tests`) | ✅ 234 passed |
 | Harbor adapter self-tests (`harbor_adapter/tests`) | ✅ 226 passed (after the two fixes in §4; was 224/2) |
 | Engine-posture parses through Stella's strict seam | ✅ `config::tests::the_benchmark_engine_posture_survives_the_trusted_launcher_seam` — proves `headless_scope_bypass:"on"` is accepted, not fail-closed |
-| Witness-arm posture parses through the same seam | ✅ `config::tests::the_benchmark_witness_arm_posture_survives_the_trusted_launcher_seam` — `pipeline_judge_model` survives the round trip (§9) |
+| Witness-arm posture parses through the same seam | ✅ `config::tests::the_benchmark_witness_arm_posture_survives_the_trusted_launcher_seam` — `pipeline_verifier_model` survives the round trip (§9) |
 | Readiness-fixture integrity (`synthetic-adapter-sentinel`) | ✅ no drift since the `#301` freeze (only commit touching it) → still hashes to pinned `05a040c7…`; value pinned in `test_secure_launcher.py` |
 | Secret scan over git-tracked publication source | ✅ 1 finding = the scanner's *own synthetic test fixture* (`test_artifact_secret_scan.py`), by design; no real credential. (`.venv` hits are third-party dependency data, not publication content.) |
 | Cross-build toolchain reachable from macOS host | ✅ produced the frozen ELF (§1) |
@@ -316,7 +316,7 @@ consumer network should do the same.
 
 ### 8.4 Effort was `high` against a `max` comparator (#1007)
 
-The posture froze `effort: high` for default/worker/judge. The comparator this
+The posture froze `effort: high` for default/worker/verifier. The comparator this
 benchmark is scored against is *"Claude Code using GLM-5.1 at **max effort**"*
 (protocol §Comparator and thresholds), and the public leaderboard carries
 `high`, `xhigh` and `max` as distinct values — so this was not a naming
@@ -325,7 +325,7 @@ variation, it was **less compute applied to one side only**.
 Every Terminal-Bench number published before this change was produced under that
 handicap, including the retracted run on [#1002](https://github.com/macanderson/stella/issues/1002).
 
-Fixed: default/worker/judge now use `max`. `triage` stays `low`/`off` — it emits
+Fixed: default/worker/verifier now use `max`. `triage` stays `low`/`off` — it emits
 a three-line classification and never edits the workspace, so raising it would
 change what Stella *is* rather than what it was allowed to spend.
 
@@ -491,6 +491,46 @@ written down, may never cap above it, and a bookable model with no seeded
 ceiling at all is now its own failure — that case used to drop silently out of
 the parity loop and run at the engine's global 16384.
 
+#### 8.4.4 The verifier rename moved every digest in the table above
+
+The non-worker verification model was called `verifier` in five places and
+`witness author` / `test author` / `author` in the rest. It is now `verifier`
+everywhere, and the posture key it is pinned with went with it:
+
+    pipeline_verifier_model  ->  pipeline_verifier_model
+    agents.verifier          ->  agents.verifier
+
+**Every digest in 8.4.2 moved, and none of the postures behind them changed.**
+The digest is a hash over the posture dict *including its key names*, so a
+rename with no behavioral content still re-hashes. This is the one case 8.4.3
+was careful to avoid and could not be avoided here: the key name *is* the
+vocabulary being fixed.
+
+| model | published as (`verifier`) | now (`verifier`) |
+|---|---|---|
+| deepseek-v4-pro | `9d7ad135…` | `0d732c3e…` |
+| z-ai/glm-5.2 | `7e9da633…` | `ce79d6b9…` |
+| x-ai/grok-4.5 | `19c4d345…` | `0a59db13…` |
+| z-ai/glm-5.1 | `8530a36f…` | `9242ff5a…` |
+| anthropic/claude-sonnet-5 | `3c428a22…` | `c8536200…` |
+| anthropic/claude-fable-5 | `5d42e236…` | `642746e4…` |
+| openrouter/anthropic/claude-fable-5 | `18a1ba22…` | `e5059092…` |
+
+What this does and does not invalidate:
+
+- **No published number is wrong.** Every run recorded under the left column
+  ran the posture that column describes. `bench/evidence/` is untouched — the
+  run manifests, per-trial rows, and the `verifier-evidence-demand-1295` record
+  keep their original digests and their original vocabulary.
+- **What is lost is cross-boundary digest equality.** A post-rename run of an
+  arm that is behaviorally identical to a pre-rename one will not produce a
+  matching digest, so "same posture as #950" can no longer be shown by
+  comparing hashes. It has to be argued from the posture dict instead.
+- `preflight_effort.sh` now defaults `EXPECT_DIGEST` to `c8536200`. A rig still
+  holding the old default will fail preflight — that is the gate working.
+
+Anyone re-freezing an arm across this boundary should quote both digests.
+
 ### 8.5 The measured baseline
 
 See `bench/evidence/` for the run manifest, per-trial rows, per-task results and
@@ -513,7 +553,7 @@ inferable only from a log line ([#1007](https://github.com/macanderson/stella/is
 |---|---|---|
 | Deterministic verify (flip oracle, recorded test results) | on | on |
 | Authored witness | **off** — no author independent of the worker | on |
-| Model judge | on, **same model as the worker** | on, independent of the worker |
+| Model verifier | on, **same model as the worker** | on, independent of the worker |
 
 **Every Terminal-Bench number published before #1007 is the control arm.** The
 posture pinned one model for every role; Stella will not let a worker author the
@@ -557,21 +597,21 @@ Constraints, each enforced fail-closed by `_validated_witness_author`:
 - The author must share the worker's provider. A trial carries exactly one
   provider credential over the anonymous FD, resolved from the worker's
   provider, so a cross-provider author authenticates against nothing.
-- The author reaches Stella only as `pipeline_judge_model` inside the hashed
+- The author reaches Stella only as `pipeline_verifier_model` inside the hashed
   posture. It is never forwarded into the task container, so there is exactly
   one channel and exactly one thing that can disagree.
 - The author must be a slug Stella's **offline seed catalog** carries for that
   provider. A trial runs with `STELLA_CATALOG_AUTO_REFRESH=0`, so an unlisted
-  slug fails model validation and the judge pin is dropped — which is how the
+  slug fails model validation and the verifier pin is dropped — which is how the
   first witness-arm run executed the control arm under a witness-arm digest
   (#1147). The posture is unchanged; what changed is that such a run now
   refuses instead of scoring.
 
 Guarded by `config::tests::the_benchmark_witness_arm_posture_survives_the_trusted_launcher_seam`
 (the arm passes the fail-closed launcher seam),
-`agent::tests::engine_wiring::the_benchmark_posture_splits_worker_and_judge_only_on_the_witness_arm`
+`agent::tests::engine_wiring::the_benchmark_posture_splits_worker_and_verifier_only_on_the_witness_arm`
 (the arm actually separates the two roles the witness check compares),
-`agent::tests::engine_wiring::the_flat_pipeline_judge_model_alone_resolves_role_judge_to_the_witness_author`
-(the flat root key alone reaches `Role::Judge`), and
+`agent::tests::engine_wiring::the_flat_pipeline_verifier_model_alone_resolves_role_verifier_to_the_witness_author`
+(the flat root key alone reaches `Role::Verifier`), and
 `pipeline::tests::witness_isolation::requiring_an_independent_witness_refuses_before_spending_anything`
 (a witness arm without an independent author produces no number at all).

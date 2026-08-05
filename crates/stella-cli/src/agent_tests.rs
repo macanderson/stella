@@ -1287,8 +1287,15 @@ fn distinct_families_route_a_cross_family_verifier() {
     let configured = vec![configured_provider("zai"), configured_provider("anthropic")];
     let (verifier, verifier_id) = resolve_cross_family_verifier("zai", "glm-5.2", &configured)
         .expect("a distinct family must route a cross-family verifier");
-    assert_eq!(verifier_id, "anthropic", "verifier must be the distinct family");
-    assert_eq!(verifier.id(), "anthropic", "verifier adapter must be Anthropic's");
+    assert_eq!(
+        verifier_id, "anthropic",
+        "verifier must be the distinct family"
+    );
+    assert_eq!(
+        verifier.id(),
+        "anthropic",
+        "verifier adapter must be Anthropic's"
+    );
     assert_ne!(
         verifier.id(),
         "zai",

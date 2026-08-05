@@ -458,7 +458,9 @@ impl Router {
     /// reports on, never a guarantee it can make from one key.
     fn resolve_verifier(&self) -> Result<RouterDecision, RouterError> {
         if self.profiles.is_empty() {
-            return Err(RouterError::NoProvidersConfigured { role: Role::Verifier });
+            return Err(RouterError::NoProvidersConfigured {
+                role: Role::Verifier,
+            });
         }
 
         // Availability is checked FIRST so an all-breakers-open state reports a
@@ -471,7 +473,9 @@ impl Router {
             .filter(|p| self.breaker.is_available(&p.id))
             .collect();
         let Some(&first_healthy) = available.first() else {
-            return Err(RouterError::AllProvidersUnavailable { role: Role::Verifier });
+            return Err(RouterError::AllProvidersUnavailable {
+                role: Role::Verifier,
+            });
         };
 
         // What Worker actually resolves to right now (pin included) — the
@@ -728,7 +732,9 @@ mod tests {
         );
         assert_eq!(
             router.resolve(Role::Verifier).unwrap_err(),
-            RouterError::NoProvidersConfigured { role: Role::Verifier }
+            RouterError::NoProvidersConfigured {
+                role: Role::Verifier
+            }
         );
     }
 
@@ -892,7 +898,8 @@ mod tests {
     }
 
     #[test]
-    fn verifier_reports_both_fallback_and_same_family_caveat_when_only_the_worker_family_is_healthy() {
+    fn verifier_reports_both_fallback_and_same_family_caveat_when_only_the_worker_family_is_healthy()
+     {
         // zai is broken; anthropic is the only healthy provider, and it's
         // also the family worker ends up resolving to (since zai is down).
         // Verifier must report the breaker fallback (zai -> anthropic) AND
@@ -910,7 +917,9 @@ mod tests {
 
         let verifier = router.resolve(Role::Verifier).unwrap();
         assert_eq!(verifier.model_ref, model("anthropic", "claude-fable-5"));
-        let fallback = verifier.fallback.expect("breaker fallback must be reported");
+        let fallback = verifier
+            .fallback
+            .expect("breaker fallback must be reported");
         assert_eq!(fallback.from, "zai");
         assert_eq!(fallback.to, "anthropic");
         assert!(

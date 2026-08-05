@@ -1,6 +1,6 @@
 # The model panel
 
-The premise: **a model is a poor judge of its own output.** It repeats its own blind spots,
+The premise: **a model is a poor verifier of its own output.** It repeats its own blind spots,
 defends its own claims, and cannot see the bug it just wrote. Every trust-bearing step in this
 audit is therefore performed by a model *other than* the one whose work is being judged, and
 the score itself is a median across three independent frontier models rather than one model's

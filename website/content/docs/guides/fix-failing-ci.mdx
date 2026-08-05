@@ -65,7 +65,7 @@ the interesting part:
    `stella goal` it exposes no `--no-pipeline` escape hatch.
 3. **Commit and push.** The remote is the only thing that can produce the next
    round's evidence.
-4. **Judge.** A separate judge model — by preference from a
+4. **Verifier.** A separate verifier model — by preference from a
    [different family](/docs/inference-pipeline#per-role-model-routing) than the
    worker — assesses whether the objective is met. It can call `ci_status`
    itself, so it is checking the run rather than reading the worker's account of
@@ -92,14 +92,14 @@ tool, which replays a new test against the previous code in a shadow worktree at
 `git HEAD`. The test must fail there and pass on the change to earn a
 **WITNESS CONFIRMED**.
 
-**Across rounds**, the outer goal judge only ends the loop when the *latest CI
+**Across rounds**, the outer goal verifier only ends the loop when the *latest CI
 run for the target has completed with every check successful*. Not "the tests I
 ran locally passed". Not "I believe this is fixed". A run on the remote, green,
 that you can open in a browser.
 
 <Callout type="info">
-Pipelined goal rounds mean **double verification**: the pipeline's own judge
-checks each round's work, and the outer goal judge checks the objective. A fix
+Pipelined goal rounds mean **double verification**: the pipeline's own verifier
+checks each round's work, and the outer goal verifier checks the objective. A fix
 that passes locally but doesn't turn CI green gets caught by the second one.
 </Callout>
 
@@ -116,7 +116,7 @@ the new root cause. That is what the round loop is for.
 ### The same failure comes back
 
 A revision that has already deterministically failed triggers **distress
-guidance**: Stella spends one judge call producing a course-correction note that
+guidance**: Stella spends one verifier call producing a course-correction note that
 rides along with the next revision prompt, rather than letting the worker keep
 digging in the same direction. You will see the same-failure case resolve or
 change shape rather than repeat identically.
@@ -204,7 +204,7 @@ thresholds ends the run rather than silently auto-approving itself. See
     The reference: synopsis, flags, exit behavior.
   </SpecCard>
   <SpecCard title="Goal mode" href="/docs/agent-modes#outcome-driven-goal-mode">
-    The round loop `monitor` is built on, and how the judge is chosen.
+    The round loop `monitor` is built on, and how the verifier is chosen.
   </SpecCard>
   <SpecCard title="Work within a budget" href="/docs/guides/budget">
     Where the abort lands, and how to make the money go further.

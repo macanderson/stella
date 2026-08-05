@@ -11,7 +11,7 @@ use std::path::Path;
 use std::process::Command;
 
 use stella_protocol::{
-    AgentEvent, FileChangeKind, VerdictEvidence, ModelCallRole, ToolCall, ToolOutput,
+    AgentEvent, FileChangeKind, ModelCallRole, ToolCall, ToolOutput, VerdictEvidence,
 };
 use stella_store::Store;
 

@@ -141,7 +141,7 @@ raw trials, and disclosed comparator below.
 - Engine posture: the adapter atomically replaces merged repository/user
   `agent_engine_config` through the trusted `STELLA_ENGINE_CONFIG_JSON` seam
   after all Harbor extras. Every role inherits the exact selected model from
-  `default_model`; default/worker/judge use reasoning `on` at effort `xhigh`
+  `default_model`; default/worker/verifier use reasoning `on` at effort `xhigh`
   with a raised `params.max_tokens` output cap of `64000` (retuned from the
   original `high`/uncapped posture after the effort-parity and
   output-truncation findings in `bench/READINESS.md` §8.4 — the digests in the
@@ -174,11 +174,11 @@ raw trials, and disclosed comparator below.
     test that verifies it and requires an author resolving to a different model;
     with one model there is no such author, so the **authored-witness tier
     cannot run on any task**, each trial emits `ProofStep::WitnessUnavailable`,
-    and the model-judge rung runs on the worker's own model. Every number
+    and the model-verifier rung runs on the worker's own model. Every number
     published before #1007 is this arm — a lower bound on the full ladder, not
     a measurement of it.
   - **`witness-on` (treatment).** A second model from the roster above is pinned
-    for the judge role via `pipeline_judge_model`, the field the witness author
+    for the verifier role via `pipeline_verifier_model`, the field the witness author
     resolves from, and `allowed_models` names both. Nothing is auto-selected and
     the posture is still exactly one hash; the hash simply now distinguishes
     which frozen configuration produced the number. It parses through the same

@@ -104,7 +104,7 @@ fn deterministic_floor_leaves_plain_prompts_at_lookup() {
 
 #[test]
 fn parses_the_structured_assurance_answer() {
-    let a = parse_triage_response("CLASS: single\nWITNESS: no\nJUDGE: yes")
+    let a = parse_triage_response("CLASS: single\nWITNESS: no\nVERIFIER: yes")
         .expect("a well-formed answer parses");
     assert_eq!(a.class, TaskClass::SingleTask);
     assert_eq!(a.require_witness, Some(false));
@@ -126,13 +126,14 @@ fn a_bare_token_answer_still_classifies_and_claims_no_assurance_opinion() {
 
 #[test]
 fn an_answer_with_no_class_keyword_is_not_a_guess() {
-    assert_eq!(parse_triage_response("WITNESS: no\nJUDGE: no"), None);
+    assert_eq!(parse_triage_response("WITNESS: no\nVERIFIER: no"), None);
     assert_eq!(parse_triage_response("hmm, hard to say"), None);
 }
 
 #[test]
 fn assurance_flags_tolerate_bullets_punctuation_and_case() {
-    let a = parse_triage_response("- CLASS: Multi\n- Witness: NO\n* verifier : none").expect("parses");
+    let a =
+        parse_triage_response("- CLASS: Multi\n- Witness: NO\n* verifier : none").expect("parses");
     assert_eq!(a.class, TaskClass::MultiStep);
     assert_eq!(a.require_witness, Some(false));
     assert_eq!(a.require_verifier, Some(false));
@@ -143,8 +144,8 @@ fn a_chat_answer_parses_as_conversational_and_parks_the_class() {
     // The whole point: a greeting must have somewhere to land. A `chat`
     // CLASS carries no orchestration keyword, so the class parks at the
     // cheapest tier and the conversational flag is what the pipeline reads.
-    let a =
-        parse_triage_response("CLASS: chat\nWITNESS: no\nJUDGE: no").expect("a chat answer parses");
+    let a = parse_triage_response("CLASS: chat\nWITNESS: no\nVERIFIER: no")
+        .expect("a chat answer parses");
     assert!(a.conversational);
     assert_eq!(a.class, TaskClass::SimpleLookup);
 
@@ -172,7 +173,7 @@ fn classify_conversational_is_first_class_keyword_wins() {
 fn a_non_chat_answer_is_not_conversational() {
     assert!(!parse_triage_response("single").unwrap().conversational);
     assert!(
-        !parse_triage_response("CLASS: lookup\nWITNESS: no\nJUDGE: no")
+        !parse_triage_response("CLASS: lookup\nWITNESS: no\nVERIFIER: no")
             .unwrap()
             .conversational
     );
@@ -505,13 +506,13 @@ fn the_labeled_class_line_outranks_justification_prose() {
     // answer — "task" here classified this multi answer as SINGLE…
     assert_eq!(
         classify_triage_response(
-            "This task spans several files.\nCLASS: multi\nWITNESS: yes\nJUDGE: yes"
+            "This task spans several files.\nCLASS: multi\nWITNESS: yes\nVERIFIER: yes"
         ),
         Some(TaskClass::MultiStep)
     );
     // …and "plan" classified this single answer as MULTI.
     assert_eq!(
-        classify_triage_response("No plan needed here.\nCLASS: single\nWITNESS: no\nJUDGE: no"),
+        classify_triage_response("No plan needed here.\nCLASS: single\nWITNESS: no\nVERIFIER: no"),
         Some(TaskClass::SingleTask)
     );
     // Chat on the labeled line wins over class words in the prose.
@@ -534,7 +535,7 @@ fn flag_scan_survives_near_miss_lines() {
     // unrecognized value on an early line must not end the scan before
     // the real answer further down is read.
     let a = parse_triage_response(
-        "CLASS: single\njudgement: seems fine\nwitness: probably\nWITNESS: no\nJUDGE: no",
+        "CLASS: single\njudgement: seems fine\nwitness: probably\nWITNESS: no\nVERIFIER: no",
     )
     .expect("parses");
     assert_eq!(a.class, TaskClass::SingleTask);

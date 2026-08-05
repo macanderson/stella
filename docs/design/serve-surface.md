@@ -142,7 +142,7 @@ Two capabilities used to exist only on the command line — not restricted, not
 disabled, simply unrequestable over the wire. Both are now blocks on the turn
 request, on `/v1/turns` and `/v1/sessions/{id}/turns` alike.
 
-**`goal` — keep working until an independent judge agrees it is done.**
+**`goal` — keep working until an independent verifier agrees it is done.**
 
 ```jsonc
 {
@@ -152,14 +152,14 @@ request, on `/v1/turns` and `/v1/sessions/{id}/turns` alike.
   "goal": {
     "goal": "make `cargo test -p widget` pass",
     "max_rounds": 6,              // clamped to 32
-    "judge_provider_id": "judge-model",  // optional; omitted = the turn's own
-    "judge_max_output_tokens": 1024,     // optional
-    "judge_transcript_chars": 24000      // optional
+    "verifier_provider_id": "verifier-model",  // optional; omitted = the turn's own
+    "verifier_max_output_tokens": 1024,     // optional
+    "verifier_transcript_chars": 24000      // optional
   }
 }
 ```
 
-A round is one working turn plus one judge assessment. What a client must
+A round is one working turn plus one verifier assessment. What a client must
 know:
 
 - **Progress is the stream, not a poll.** Each round emits a `goal_verdict`
@@ -171,13 +171,13 @@ know:
   unwinds at its next step boundary; completed rounds keep their work (it is
   in the transcript the session writes back, and their events have already
   been delivered), and the turn settles as `aborted` carrying its real cost.
-- **A met goal completes the turn**, with the judge's reasoning as the
-  terminal frame's `text`. An unmet one — round cap, an aborted round, a judge
+- **A met goal completes the turn**, with the verifier's reasoning as the
+  terminal frame's `text`. An unmet one — round cap, an aborted round, a verifier
   that could not answer — is `aborted` with a reason naming which. It is never
   a silent success.
-- **The judge is only independent if the host makes it so.** Every judge call
-  arrives as a `provider_request` whose `provider_id` is `judge_provider_id`
-  and whose `role` is `judge`; routing it to a different model family is the
+- **The verifier is only independent if the host makes it so.** Every verifier call
+  arrives as a `provider_request` whose `provider_id` is `verifier_provider_id`
+  and whose `role` is `verifier`; routing it to a different model family is the
   host's to do. The engine cannot enforce it, because the host owns the calls.
 
 **`sub_agents` — let a turn delegate.**
@@ -218,7 +218,7 @@ and both are claimed by `stella-parity`'s capability matrix (`goal.loop`,
 One frame-shape note for anyone mirroring this protocol: `provider_request`
 carries `provider_id` and `role` alongside `request_id` and `request`. Both
 are additive — a single-model host can ignore them and answer every request
-with its one model, exactly as before — and both are what make a judge or a
+with its one model, exactly as before — and both are what make a verifier or a
 child addressable as a *different* model.
 ## Hooks — who may register one (#1298)
 

@@ -774,7 +774,7 @@
         },
         {
           "const": "verdict",
-          "description": "The verifier's verdict call, reached only on inconclusive\ndeterministic evidence.",
+          "description": "The verifier's verdict call, on inconclusive deterministic evidence.",
           "type": "string"
         },
         {

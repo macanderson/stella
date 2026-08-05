@@ -153,10 +153,10 @@ allowed = [
 # The default agent's model, and the base for every role with no more
 # specific setting. A model string is either `provider/slug`, or a bare slug
 # sent verbatim to THAT provider when the agent's `provider` field is set.
-default_model           = "anthropic/claude-fable-5"
-pipeline_worker_model   = "zai/glm-5.2"
-pipeline_verifier_model = "openrouter/openai/gpt-5.5"
-pipeline_triage_model   = "deepseek/deepseek-chat"
+default_model         = "anthropic/claude-fable-5"
+pipeline_worker_model = "zai/glm-5.2"
+pipeline_verifier_model  = "openrouter/openai/gpt-5.5"
+pipeline_triage_model = "deepseek/deepseek-chat"
 
 # on/off toggles. A dedicated enum, not a bool: a typo must be a loud parse
 # error, never a silently-false setting.
@@ -538,11 +538,10 @@ theme = "stella-dark"   # stella-dark | stella-light
 #
 # LOWER IS SUPPORTED. HIGHER THAN `deterministic_weight` IS REFUSED: above that
 # line a model's opinion outranks a test's observation, which inverts the
-# premise the verification ladder is built on. `verifier_weight = 0.0` is legal
-# and means "do not train on this verifier at all" — those turns are DISCARDED
-# (with the reason `verifier_distrusted`), not scored as zero. A zero is a
-# claim that a neutral outcome was observed; a discard is the refusal to claim
-# anything.
+# premise the verification ladder is built on. `verifier_weight = 0.0` is legal and
+# means "do not train on this verifier at all" — those turns are DISCARDED (with
+# the reason `verifier_distrusted`), not scored as zero. A zero is a claim that a
+# neutral outcome was observed; a discard is the refusal to claim anything.
 #
 # UNLIKE `[context.retrieval]` ABOVE, AN OUT-OF-RANGE VALUE HERE IS REJECTED,
 # NOT CLAMPED. The postures differ because the failures differ: a bad retrieval
@@ -560,7 +559,7 @@ theme = "stella-dark"   # stella-dark | stella-light
 
 [reward]
 deterministic_weight = 1.0    # a fail->pass flip, or touched tests red
-verifier_weight      = 0.5    # a model verifier's opinion; 0.0 discards instead
+verifier_weight         = 0.5    # a model verifier's opinion; 0.0 discards instead
 per_step             = 0.02   # subtracted per model call
 per_usd              = 0.5    # subtracted per USD
 per_revision         = 0.1    # subtracted per verification round after the first

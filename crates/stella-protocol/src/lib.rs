@@ -73,9 +73,9 @@ pub use error::ProviderError;
 pub use event::{
     AgentEvent, BlockKind, BlockOrigin, BudgetMode, BudgetScope, CacheZone, CiStatus,
     ContextFrameRef, ContextProviderUsage, ContextUsage, FileChangeKind, HunkProposal,
-    VerdictEvidence, KNOWN_TYPE_TAGS, ManifestEntry, MediaArtifactRef, MediaJobState, MediaKind,
-    ModelCallRole, PolicyKind, PrStatus, ProofStep, ProposedHunk, ProviderShare, ScopeProposal,
-    StageKind, TaskItem, TaskStatus, UsageIncompleteReason,
+    KNOWN_TYPE_TAGS, ManifestEntry, MediaArtifactRef, MediaJobState, MediaKind, ModelCallRole,
+    PolicyKind, PrStatus, ProofStep, ProposedHunk, ProviderShare, ScopeProposal, StageKind,
+    TaskItem, TaskStatus, UsageIncompleteReason, VerdictEvidence,
 };
 // The ladder vocabulary moved out of `event` when the rung joined it (#1043);
 // re-exported here so `stella_protocol::LadderSnapshot` never moved.

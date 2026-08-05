@@ -36,10 +36,10 @@ draft's machinery has something to attach to at all:
   crate to install new vocabulary.
 - **Tamper exclusion.** The witness artifact's full filesystem identity is
   pinned and re-checked at verify time, and a mismatch aborts the candidate
-  before any model judge can weigh in. The draft calls this an authority
+  before any model verifier can weigh in. The draft calls this an authority
   boundary; Stella already treats it as one.
-- **Deterministic-first laddering.** A red test never costs a judge call, and
-  the judge never overrides a deterministic failure.
+- **Deterministic-first laddering.** A red test never costs a verifier call, and
+  the verifier never overrides a deterministic failure.
 
 Anything below that would weaken these is out of scope by construction.
 
@@ -67,7 +67,7 @@ then fails for unrelated reason B, then passes, credits a flip that no single
 defect ever explains. ROADMAP §2 names this.
 
 **D3 — Verdict evidence is unstructured and unreferenced.**
-`JudgeEvidence::evidence_refs` exists on the wire and is populated at zero
+`VerifierEvidence::evidence_refs` exists on the wire and is populated at zero
 construction sites. A verdict therefore asserts a summary no reader can go
 check. ROADMAP §4 names this.
 
@@ -76,7 +76,7 @@ check. ROADMAP §4 names this.
 the flip state, the touched-test result, the diff size against its budget — are
 discarded. Nobody can later ask *why* a run passed. ROADMAP §6 names this.
 
-**D5 — The judge reads worker-authored text as prose.** `judge_prompt`
+**D5 — The verifier reads worker-authored text as prose.** `verifier_prompt`
 interpolates the diff directly into the prompt body. Diff content is authored
 by the party being judged, so a comment addressed to the reviewer arrives as
 undelimited instruction text.
@@ -91,8 +91,8 @@ From the draft, three principles carry over intact:
 - **P6 — Replayable evidence.** A verdict that cannot be reproduced from what
   it carries is an anecdote. (Fixes D3, D4.)
 - **P1 — Separation of authorship.** Whatever writes the code does not author
-  what grades it. Stella already routes the witness author and judge through
-  `Role::Judge`'s cross-family preference; this document does not weaken that.
+  what grades it. Stella already routes the witness author and verifier through
+  `Role::Verifier`'s cross-family preference; this document does not weaken that.
 
 ## 4. The Feedback Airlock
 
@@ -172,7 +172,7 @@ neither. What is adopted is the *replayable* half — verdict provenance (§2 D4
 
 **Dual independent Examiners with divergence-stops-build.** Two full exam
 derivations per run multiplies model spend on a tool whose pitch is a hard
-per-run budget. The existing cross-family judge routing is the affordable
+per-run budget. The existing cross-family verifier routing is the affordable
 version of the same idea, and it already ships.
 
 **Replacing the single witness with generated exam families.** The draft's P5
@@ -185,7 +185,7 @@ this is the first thing to revisit.
 **Criteria ratification with a frozen `AC_HASH`.** Not declined on merit —
 declined as *already spoken for*. `stella-core::context_record::contract`
 already carries a typed acceptance model (`ArtifactContract`, `Requirement`,
-`RequirementKind::{COMMAND, SEMANTIC_JUDGE}`, `ContractValidation`,
+`RequirementKind::{COMMAND, SEMANTIC_VERIFIER}`, `ContractValidation`,
 `contract_hash`) implementing the Context Graph Protocol's lifecycle §8.12–8.14.
 It is unwired today, and its own module docs say an executor interprets it in a
 later phase. Introducing a second, parallel criteria model beside it would
@@ -218,7 +218,7 @@ one. The pipeline held itself to a stricter rule than it held people to.
 ### 7.1 Predict-then-commit is the bug
 
 The pipeline decided how much ceremony to buy by **predicting** difficulty once,
-up front, from the prompt — the single worst moment to judge, because no work
+up front, from the prompt — the single worst moment to verifier, because no work
 has happened yet. Two consequences:
 
 - **Triage was a paid model call on every prompt, including `hi`.** The
@@ -271,7 +271,7 @@ best-of-N.
 
 The warrant reads a diff, so it can only answer after execution. While
 authoring ran *before* execute, that left the saving half-collected: the
-warrant spared the judge call but not the author call that had already been
+warrant spared the verifier call but not the author call that had already been
 paid. A docs edit still bought a test for prose.
 
 Authoring now runs after execution, gated on the warrant. A change with

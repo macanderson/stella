@@ -775,7 +775,7 @@ pub fn provider_mix_label(mix: &[ProviderShare]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stella_protocol::{ContextFrameRef, VerdictEvidence, MediaArtifactRef, ScopeProposal};
+    use stella_protocol::{ContextFrameRef, MediaArtifactRef, ScopeProposal, VerdictEvidence};
 
     // ── Byte-exact fixtures ──────────────────────────────────────────────
     //

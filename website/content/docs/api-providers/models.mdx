@@ -22,10 +22,10 @@ your provider before budgeting — prices and lineups drift.
 
 | Model | Provider | Context | In $/Mtok | Out $/Mtok | Cached-in $/Mtok | Released | Best for |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| <ProviderMark id="anthropic" /> `claude-fable-5` | `anthropic` | 200k | 3.00 | 15.00 | 0.30 | 2026 | The strongest coding/agentic model in the catalog — first of the Claude 5 family. Best-in-class worker for hard multi-file changes; superb judge. |
-| <ProviderMark id="openai" /> `gpt-5.5` | `openai` | 400k | 1.25 | 10.00 | 0.125 | late 2025 | Top-tier reasoning with a 400k window at a mid price. Excellent cross-family judge over a Claude or GLM worker; strong worker. |
-| <ProviderMark id="gemini" /> `gemini-3-pro` | `gemini` (also `vertex`) | 1M | 1.25 | 10.00 | 0.31 | Q4 2025 | The 1M-token window: whole-repo comprehension, long-log analysis. Solid worker, good judge. |
-| <ProviderMark id="xai" /> `grok-4` | `xai` | 256k | 3.00 | 15.00 | 0.75 | Q3 2025 | Strong reasoning; a distinct model family, useful as an alternate judge. |
+| <ProviderMark id="anthropic" /> `claude-fable-5` | `anthropic` | 200k | 3.00 | 15.00 | 0.30 | 2026 | The strongest coding/agentic model in the catalog — first of the Claude 5 family. Best-in-class worker for hard multi-file changes; superb verifier. |
+| <ProviderMark id="openai" /> `gpt-5.5` | `openai` | 400k | 1.25 | 10.00 | 0.125 | late 2025 | Top-tier reasoning with a 400k window at a mid price. Excellent cross-family verifier over a Claude or GLM worker; strong worker. |
+| <ProviderMark id="gemini" /> `gemini-3-pro` | `gemini` (also `vertex`) | 1M | 1.25 | 10.00 | 0.31 | Q4 2025 | The 1M-token window: whole-repo comprehension, long-log analysis. Solid worker, good verifier. |
+| <ProviderMark id="xai" /> `grok-4` | `xai` | 256k | 3.00 | 15.00 | 0.75 | Q3 2025 | Strong reasoning; a distinct model family, useful as an alternate verifier. |
 | <ProviderMark id="deepseek" /> `deepseek-chat` | `deepseek` | 128k | 0.27 | 1.10 | 0.07 | Q4 2024 (V3 line, revised through 2025) | The price/performance outlier. Ideal triage model; a very capable budget worker. |
 | <ProviderMark id="zai" /> `glm-5.2` | `zai` | 200k | 0.60 | 2.20 | 0.11 | 2026 | Excellent coding at a fraction of flagship price — Stella's default worker tier. The coding-plan endpoint makes it a subscription workhorse. |
 | <ProviderMark id="bedrock" /> `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | `bedrock` | 200k | 3.00 | 15.00 | 0.30 | Sep 2025 | Claude under AWS governance — for orgs that must keep inference inside their cloud account. |
@@ -41,9 +41,9 @@ different things from a model:
   is where quality is bought. Worker tokens dominate a run, but most of them are
   cached-input tokens (see below), so the effective price gap between tiers is smaller
   than the list price suggests.
-- **Judge** — verifies the work at high effort. It wants a **different family** than the
+- **Verifier** — verifies the work at high effort. It wants a **different family** than the
   worker: cross-family judging resists same-model bias, where a model forgives the
-  mistakes it would itself have made. A Claude worker with a GPT judge (or vice versa)
+  mistakes it would itself have made. A Claude worker with a GPT verifier (or vice versa)
   catches more than either family judging itself.
 - **Triage** — classifies the task. It emits one token under a 10-second ceiling, so it
   wants the cheapest fast model you have a key for. Paying flagship prices here buys
@@ -51,7 +51,7 @@ different things from a model:
 
 Three named lineups, ready to copy:
 
-| Lineup | Worker | Judge | Triage |
+| Lineup | Worker | Verifier | Triage |
 | --- | --- | --- | --- |
 | [Max quality](/docs/examples#maximum-quality) | `claude-fable-5` | `gpt-5.5` | `deepseek-chat` |
 | [Balanced](/docs/examples#balanced) | `glm-5.2` | `claude-fable-5` or `gpt-5.5` | `deepseek-chat` |

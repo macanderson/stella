@@ -534,7 +534,7 @@ pub fn append_trace(workspace_root: &Path, record: &TraceRecord) -> Result<PathB
 mod tests {
     use super::*;
     use stella_protocol::{
-        VerdictEvidence, LadderRung, LadderSnapshot, ModelCallRole, StageKind, ToolCall, ToolOutput,
+        LadderRung, LadderSnapshot, ModelCallRole, StageKind, ToolCall, ToolOutput, VerdictEvidence,
     };
     use stella_store::{ContextBlockRow, ManifestBlockRow, StepManifestRow};
 

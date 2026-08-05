@@ -98,7 +98,7 @@
 //! it. `tests::verifier_prose_never_reaches_a_label` is the property test.
 
 use serde::{Deserialize, Serialize};
-use stella_protocol::{VerdictEvidence, LadderRung};
+use stella_protocol::{LadderRung, VerdictEvidence};
 
 /// Default magnitude of a label backed by a deterministic test observation.
 const DETERMINISTIC_WEIGHT: f64 = 1.0;

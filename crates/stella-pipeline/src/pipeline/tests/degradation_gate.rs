@@ -139,7 +139,7 @@ async fn run_scenario(s: Scenario) {
     );
 }
 
-use ModelCallRole::{Verdict, Triage, Worker};
+use ModelCallRole::{Triage, Verdict, Worker};
 
 /// The paved road: a genuine fail→pass flip fast-submits deterministically.
 /// Exactly two paid calls (triage, worker) and three suite runs (baseline,

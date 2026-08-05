@@ -133,10 +133,10 @@ racing a mis-kinded one is rejected as unknown — the host gets a 409 for a res
 it will not send twice, and the engine step stays parked forever.
 
 **A turn is not always one agent (#1297).** A `goal` block runs judged rounds
-until an independent judge says the goal is met; a `sub_agents` block lets the
+until an independent verifier says the goal is met; a `sub_agents` block lets the
 model delegate research to a read-only child. Both put several agents behind
 one turn id, which is why `ProviderRequest` carries `provider_id` and `role`:
-a host reads them to route the judge — or the children — to a different model
+a host reads them to route the verifier — or the children — to a different model
 than the worker. Both fields are additive, so a single-model host answers
 every request with its one model exactly as before. The caller's knobs are
 bounded by the server (`MAX_SERVED_GOAL_ROUNDS`, `ServeConfig::sub_agents`),

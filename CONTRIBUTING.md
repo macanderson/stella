@@ -161,7 +161,7 @@ rule of thumb is one sentence each:
 | Persistence: executions, events, telemetry (SQLite) | `stella-store` |
 | Retrieval: graph, embeddings, episodic memory | `stella-context` |
 | Tree-sitter code indexing | `stella-graph` |
-| The triage → … → judge orchestration plane | `stella-pipeline` |
+| The triage → … → verifier orchestration plane | `stella-pipeline` |
 | MCP client (external tool servers) | `stella-mcp` |
 | Multimodal generation | `stella-media` |
 | Multi-agent fan-out, worktree isolation | `stella-fleet` |

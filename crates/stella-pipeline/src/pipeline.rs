@@ -55,8 +55,8 @@ use stella_core::retry::{RetryPolicy, Sleeper};
 use stella_core::router::FallbackInfo;
 use stella_core::{BudgetGuard, Engine, EngineConfig, EventSender, Router, TurnOutcome};
 use stella_protocol::{
-    AgentEvent, CompletionMessage, VerdictEvidence, LadderRung, LadderSnapshot, MessageRole,
-    ModelCallRole, ModelRef, OracleObservation, ProofStep, ProofTree, Provider, Role, StageKind,
+    AgentEvent, CompletionMessage, LadderRung, LadderSnapshot, MessageRole, ModelCallRole,
+    ModelRef, OracleObservation, ProofStep, ProofTree, Provider, Role, StageKind, VerdictEvidence,
 };
 
 use crate::candidate::{
@@ -89,10 +89,10 @@ use stella_protocol::ToolOutput;
 use crate::flip_halt::{FlipHalt, command_of};
 use crate::verify::coverage::DiffCoverage;
 use crate::verify::{
-    FlipOracle, Verdict as ModelVerifierVerdict, LadderDecision, LadderInputs,
+    FlipOracle, LadderDecision, LadderInputs, Verdict as ModelVerifierVerdict,
     deterministic_fail_evidence, deterministic_pass_evidence, evidence_demand_is_worth_a_turn,
-    guidance_prompt, heuristic_fallback, verifier_prompt, ladder_decision, model_verdict_evidence,
-    nothing_attempted_evidence, parse_verifier_response, unverifiable_evidence,
+    guidance_prompt, heuristic_fallback, ladder_decision, model_verdict_evidence,
+    nothing_attempted_evidence, parse_verifier_response, unverifiable_evidence, verifier_prompt,
 };
 use crate::witness::airlock::{
     DisclosureGrain, FailureFingerprint, SealedFailure, grain_for_repeats, redact, scrub,
@@ -106,11 +106,11 @@ use crate::witness::{
 mod authored;
 mod disclosure;
 mod fanout_stage;
-mod verifier_stage;
 mod raw_usage;
 mod run_error;
 mod scope_stage;
 mod stage_budget;
+mod verifier_stage;
 mod verify_probes;
 mod witness_stage;
 use fanout_stage::SerialCreates;
@@ -3395,7 +3395,8 @@ impl<'a> Pipeline<'a> {
                 worker.model_ref
             )),
             Err(_) => WitnessAuthorIndependence::Unavailable(
-                "no author independent of the worker (the verifier role is unresolvable)".to_string(),
+                "no author independent of the worker (the verifier role is unresolvable)"
+                    .to_string(),
             ),
         }
     }

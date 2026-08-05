@@ -393,5 +393,8 @@ async fn model_verdict_call_is_metered_separately_from_worker() {
         .run("Look up the answer", &mut messages, &mut budget)
         .await
         .unwrap();
-    assert_eq!(usage_roles(&drain(&mut rx)), ["triage", "worker", "verifier"]);
+    assert_eq!(
+        usage_roles(&drain(&mut rx)),
+        ["triage", "worker", "verdict"]
+    );
 }

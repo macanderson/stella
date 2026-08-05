@@ -46,7 +46,7 @@
 //! renderer to style. No ratatui types, so the fold is unit-testable without a
 //! terminal (L-T1, and the buffer-not-ANSI discipline in `deck_ui::tests`).
 
-use stella_protocol::{VerdictEvidence, ProofStep, ProofTree};
+use stella_protocol::{ProofStep, ProofTree, VerdictEvidence};
 
 use crate::textline::Tone;
 

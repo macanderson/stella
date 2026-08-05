@@ -161,7 +161,11 @@ registry_url = "https://registry.example"
 #[test]
 fn an_absent_reward_key_is_the_default_not_zero() {
     let dir = tempfile::tempdir().unwrap();
-    let path = write(dir.path(), "stella.toml", "[reward]\nverifier_weight = 0.1\n");
+    let path = write(
+        dir.path(),
+        "stella.toml",
+        "[reward]\nverifier_weight = 0.1\n",
+    );
     let settings = load_toml(&path, ConfigScope::User).unwrap();
     let policy = settings.reward_policy().unwrap();
     assert_eq!(policy.outcome.judged, 0.1);
@@ -191,7 +195,11 @@ fn no_reward_block_is_exactly_the_defaults() {
 #[test]
 fn a_verifier_weight_above_the_ceiling_fails_the_load_by_name() {
     let dir = tempfile::tempdir().unwrap();
-    let path = write(dir.path(), "stella.toml", "[reward]\nverifier_weight = 2.0\n");
+    let path = write(
+        dir.path(),
+        "stella.toml",
+        "[reward]\nverifier_weight = 2.0\n",
+    );
     let settings = load_toml(&path, ConfigScope::User).unwrap();
     let error = settings
         .reward_policy()

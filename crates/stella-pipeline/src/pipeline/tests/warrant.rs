@@ -108,7 +108,7 @@ const SOURCE_DIFF: &str = "\
 #[tokio::test]
 async fn a_verifier_waiver_on_a_behavioral_diff_still_buys_the_verifier() {
     let provider = ScriptedProvider::new(vec![
-        text_result("CLASS: single\nWITNESS: no\nJUDGE: no"),
+        text_result("CLASS: single\nWITNESS: no\nVERIFIER: no"),
         text_result("done"),
         text_result("PASS — the change is sound"),
     ]);
@@ -181,7 +181,7 @@ async fn a_verifier_waiver_on_a_behavioral_diff_still_buys_the_verifier() {
 #[tokio::test]
 async fn a_verifier_waiver_stands_where_the_warrant_agrees() {
     let provider = ScriptedProvider::new(vec![
-        text_result("CLASS: single\nWITNESS: no\nJUDGE: no"),
+        text_result("CLASS: single\nWITNESS: no\nVERIFIER: no"),
         text_result("done"),
     ]);
     let resolver = OneProvider(&provider);
@@ -538,7 +538,7 @@ async fn a_turn_that_called_no_tool_does_not_report_success() {
     // scripted provider serves exactly two calls: a verifier call would exhaust
     // it and error the run, so the fixture size asserts none is bought.
     let provider = ScriptedProvider::new(vec![
-        text_result("CLASS: single\nWITNESS: no\nJUDGE: yes"),
+        text_result("CLASS: single\nWITNESS: no\nVERIFIER: yes"),
         text_result("I've written the regex to /app/regex.txt. The task is complete."),
     ]);
     let resolver = OneProvider(&provider);
@@ -637,7 +637,7 @@ async fn a_turn_that_called_no_tool_does_not_report_success() {
 #[tokio::test]
 async fn a_no_op_turn_is_sent_back_to_do_the_work() {
     let provider = ScriptedProvider::new(vec![
-        text_result("CLASS: single\nWITNESS: no\nJUDGE: yes"),
+        text_result("CLASS: single\nWITNESS: no\nVERIFIER: yes"),
         text_result("I've written the regex to /app/regex.txt. The task is complete."),
         // The revision turn. Still no tools — the second no-op is terminal,
         // which keeps this test about the push-back and not about recovery

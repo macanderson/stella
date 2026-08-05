@@ -8,8 +8,8 @@
 
 use serde_json::json;
 use stella_protocol::{
-    AgentEvent, ContextFrameRef, FileChangeKind, VerdictEvidence, ModelCallRole, PrStatus, ProofStep,
-    ProviderShare, ScopeProposal, StageKind, ToolCall, ToolOutput,
+    AgentEvent, ContextFrameRef, FileChangeKind, ModelCallRole, PrStatus, ProofStep, ProviderShare,
+    ScopeProposal, StageKind, ToolCall, ToolOutput, VerdictEvidence,
 };
 
 use crate::envelope::{AgentMeta, AgentStatus, Inbound};

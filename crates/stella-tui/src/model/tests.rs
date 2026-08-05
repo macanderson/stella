@@ -7,7 +7,7 @@
 
 use super::*;
 use stella_protocol::{
-    ContextFrameRef, VerdictEvidence, MediaArtifactRef, MediaJobState, ProviderShare, ToolCall,
+    ContextFrameRef, MediaArtifactRef, MediaJobState, ProviderShare, ToolCall, VerdictEvidence,
 };
 
 fn text(delta: &str) -> AgentEvent {

@@ -38,7 +38,7 @@ Most keys keep their names. Four change, and each has a reason:
 | --- | --- | --- |
 | `enable_recap` | `[run].recap` | A bare key at the document root attaches to whatever `[table]` precedes it — move one line and it silently belongs to that table. Every scalar gets a table home. |
 | `agent_engine_config` | `[agents]` | Shorter, and the JSON name described the struct rather than the thing. |
-| `agent_engine_config.agents.<name>` | `[agents.<name>]` | One nesting level removed. Safe because the agent set is closed — `default`, `worker`, `judge`, `triage`. |
+| `agent_engine_config.agents.<name>` | `[agents.<name>]` | One nesting level removed. Safe because the agent set is closed — `default`, `worker`, `verifier`, `triage`. |
 | `agent_engine_config.allowed_models` | `[models].allowed` | It is a statement about models, not about any one agent. |
 
 `[mcp].registry_url` carries over. **`[mcp.servers]` does not work yet** — MCP servers still load from `.stella/mcp.toml`. If you move them, stella says so at startup rather than failing to start them silently.

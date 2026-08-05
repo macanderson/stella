@@ -77,7 +77,7 @@ ladder ran:
 <CardGrid size="sm">
   <OptionCard name="completed">
     The turn finished. On the pipeline path this also means verification
-    passed — check `verdict.deterministic` to see whether a judge was spent.
+    passed — check `verdict.deterministic` to see whether a verifier was spent.
   </OptionCard>
   <OptionCard name="verification_failed">
     Pipeline only. The work happened but did not verify; `reason` carries the
@@ -269,7 +269,7 @@ esac
 ## A complete CI job
 
 The whole contract in one GitHub Actions step: a budget cap that cannot be
-exceeded, a deterministic oracle so most runs never spend a judge call, JSON on
+exceeded, a deterministic oracle so most runs never spend a verifier call, JSON on
 stdout, and the summary parsed for the job log.
 
 ```yaml title=".github/workflows/autofix.yml"
@@ -336,7 +336,7 @@ The summary object and the event stream answer different questions. A few
 pipelines worth keeping:
 
 ```bash
-# Gate a script on deterministic evidence only — refuse a judge-only pass.
+# Gate a script on deterministic evidence only — refuse a verifier-only pass.
 stella --output-format json run --test-command "make test" "$TASK" \
   | jq -e '.status == "completed" and .verdict.deterministic == true' >/dev/null \
   || { echo "no deterministic proof — not merging" >&2; exit 1; }
@@ -353,7 +353,7 @@ stella --output-format json run --no-pipeline "tidy up the error types in stella
 ```bash
 # Watch the stages go by, live, without parsing anything else. Stage names are
 # snake_case: triage, context_recall, plan, scope_review, witness, execute,
-# verify, judge.
+# verify, verifier.
 stella --output-format stream-json run "$TASK" \
   | jq -r --unbuffered 'select(.type == "stage") | "→ \(.name)"'
 ```

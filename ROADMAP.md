@@ -1,7 +1,7 @@
 # ROADMAP — Verification Pipeline
 
 Improvement proposals for the verification half of `stella-pipeline` — the
-flip oracle, the evidence ladder, witness authoring, the judge escalation
+flip oracle, the evidence ladder, witness authoring, the verifier escalation
 path, and best-of-N candidate scoring (`verify.rs`, `witness.rs`,
 `candidate.rs`, and the verify/revise wiring in `pipeline.rs`).
 
@@ -28,12 +28,12 @@ ship it" false positives.
 - **Flip oracle** (`verify::FlipOracle`): only a fail→pass flip of the *same
   normalized command* counts as deterministic verification.
 - **Evidence ladder** (`verify::ladder_decision`): submit fast on strong
-  evidence, revise on clear failure, escalate to the model judge only when
+  evidence, revise on clear failure, escalate to the model verifier only when
   evidence is genuinely inconclusive.
 - **Witness authoring** (`witness`): when no `--test-command` is armed, an
   independent model authors the failing witness test, with tamper exclusion
   at verify time.
-- **Candidate scoring** (`candidate`): `DeterministicPass > JudgePass >
+- **Candidate scoring** (`candidate`): `DeterministicPass > VerifierPass >
   Unverified > Failed`, tie-broken by diff size.
 
 The proposals below strengthen the *quality* of the evidence, not just its
@@ -51,7 +51,7 @@ the test *constrains* the change well.
   restore (`FsMutationProbe`; a failed restore fails the candidate closed).
   A witness that fails under any mutant keeps its credit (early exit at the
   first kill); one that stays green under every observed mutant is
-  tautological: the fast-submit is withheld and the judge decides with
+  tautological: the fast-submit is withheld and the verifier decides with
   `witness_tautological=true` in evidence. Authored witnesses only.
 - **Assertion-density heuristic on authored witnesses.** *Done (#863).*
   `witness::density::screen_witness_source` is the static "test must be able
@@ -69,10 +69,10 @@ the test *constrains* the change well.
   `verify::coverage` intersects the executed lines with the diff's added
   ones. Three-valued, and **neither non-`covered` answer is a pass**:
   - `not_covered` (measured, no overlap) withholds the deterministic credit
-    and escalates to the judge — the flip is a coincidence, which is worth a
+    and escalates to the verifier — the flip is a coincidence, which is worth a
     second opinion. Never a failure, never a deterministic red.
   - `unmeasured` (no tooling, no probe, an unreadable report) takes the
-    fast-submit — no judge call, no extra turn — but is **scored
+    fast-submit — no verifier call, no extra turn — but is **scored
     `Unverified`**, with the verdict summary leading `UNPROVEN` and the status
     on the ladder snapshot. The honest answer costs a ranking position rather
     than a model call, which is what makes it affordable by default; escalating
@@ -91,7 +91,7 @@ can produce a *false flip* (fails for an unrelated reason, then passes).
 - **Confirmation run on flip.** *Done (#859).* Gated on the *decision*
   rather than the flip transition: only a run about to claim `SubmitFast`
   pays the one extra suite run. A failed (or infra, #860) confirmation moves
-  the oracle to `Unstable` — not `Flipped`, not `Failing` — and the judge is
+  the oracle to `Unstable` — not `Flipped`, not `Failing` — and the verifier is
   told `unstable_flip=true`.
 - **Failure-fingerprint matching.** *Done (#867).* `FlipOracle::observe_run`
   records the failing test names each failing observation reports
@@ -153,17 +153,17 @@ Lint/typecheck are rightly excluded from the flip oracle. But they can still
   per-file "touched set" left to widen — the concern this item named is
   covered by the per-iteration re-observation.
 
-## 4. Judge escalation — make the inconclusive path richer
+## 4. Verifier escalation — make the inconclusive path richer
 
-- **Structured judge evidence.** *Done (#864).* `JudgeEvidence` carries the
+- **Structured verifier evidence.** *Done (#864).* `VerifierEvidence` carries the
   full `LadderSnapshot` (oracle trace in observation order, diagnostics
-  delta, tamper-check result, and every later audit finding), and the judge
+  delta, tamper-check result, and every later audit finding), and the verifier
   prompt renders it compactly — one `oracle_trace=[…]` fragment and a ≤3-line
   lint sample, never a log dump.
-- **Judge verdict calibration telemetry.** *Done (#871), first slice.*
+- **Verifier verdict calibration telemetry.** *Done (#871), first slice.*
   Everything needed was already persisted (verdicts with snapshots, PR/CI
   observations in the same stream), so `replay::calibration` folds it and
-  `stella calibration` reports the judge's measured false-positive rate
+  `stella calibration` reports the verifier's measured false-positive rate
   beside the deterministic cohort's — unmeasured stays unmeasured, never 0%.
 - **An answer key: reverts, and verdicts that arrive late.** *Done (#1293).*
   Two gaps in the first slice are closed. `replay::ground_truth` reads git's
@@ -190,12 +190,12 @@ Lint/typecheck are rightly excluded from the flip oracle. But they can still
 mutation-survived, then fewer new diagnostics, then the smaller diff — all
 read off the verdict's own provenance snapshot, so selection needed no new
 plumbing. The coarse ordering is untouched and pinned by test: a warning-free
-judge-pass never beats a warned deterministic pass.
+verifier-pass never beats a warned deterministic pass.
 
 ## 6. Verification honesty & replay
 
 - **Verdict provenance in `PipelineOutcome`.** *Done (#865).* Every verdict
-  (and every emitted `JudgeVerdict` event) carries the `LadderSnapshot`
+  (and every emitted `VerifierVerdict` event) carries the `LadderSnapshot`
   frozen at decision time; `replay::verdict_provenance` renders "why?" from
   the recording alone, and a pre-snapshot stream reads as *not recorded*,
   never reconstructed.
@@ -210,7 +210,7 @@ judge-pass never beats a warned deterministic pass.
 | Phase | Items | Status |
 |-------|-------|--------|
 | 1 | §2 confirmation run (#859), §2 typed infra outcomes (#860), §3 regression veto (#861) | **Done** — PR #1033 |
-| 2 | §1 assertion-density check (#863), §4 structured judge evidence (#864), §6 verdict provenance (#865) | **Done** — #863 earlier; PR #1035 |
+| 2 | §1 assertion-density check (#863), §4 structured verifier evidence (#864), §6 verdict provenance (#865) | **Done** — #863 earlier; PR #1035 |
 | 3 | §2 failure fingerprints (#867), §4 early distress guidance (#868, already satisfied), §5 score refinement (#869) | **Done** — PR #1049 |
 | 4 | §1 mutation check (#870), §4 calibration telemetry (#871) | **Done** — PRs #1052, #1055 |
 | — | §1 diff-coverage (needs a coverage-tooling decision), §3 impacted selection as ladder evidence (see the design constraint above) | Remaining |
@@ -221,5 +221,5 @@ later change to this pipeline lands against a matrix that fails loudly on
 drift.
 
 Each phase preserves the two core invariants: `Flipped` is reachable only
-through `Failing` of the same normalized command, and the judge never
+through `Failing` of the same normalized command, and the verifier never
 overrides a deterministic failure.

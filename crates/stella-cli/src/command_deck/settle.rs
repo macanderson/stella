@@ -351,7 +351,10 @@ mod tests {
     /// agent's ask would leave every session painted `needs input`.
     #[test]
     fn the_users_own_question_is_not_the_agents() {
-        let turn = [user("why is the verifier diff empty?"), assistant("Fixed it.")];
+        let turn = [
+            user("why is the verifier diff empty?"),
+            assistant("Fixed it."),
+        ];
         assert!(!ends_with_a_question(&turn));
     }
 

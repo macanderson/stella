@@ -108,18 +108,18 @@ target the wrong stage.
 | Witness | ~1 engine turn | only when you pass no `--test-command` |
 | **Execute** | **5–40+ steps** | **most of the bill** |
 | Verify | 0 | free — the deterministic ladder |
-| Judge | 0–1 per verification | cents |
+| Verifier | 0–1 per verification | cents |
 
 Three consequences follow, and they are most of what you need:
 
 1. **The worker's output price dominates.** Moving the worker to a cheaper model
-   changes the bill several-fold. Moving the judge barely changes it at all.
-2. **A flagship judge is cheap insurance.** One judge call is a few thousand
+   changes the bill several-fold. Moving the verifier barely changes it at all.
+2. **A flagship verifier is cheap insurance.** One verifier call is a few thousand
    input tokens and under a thousand out. Keep it in a *different family* than
    the worker.
 3. **`--test-command` is the strongest cost flag on the CLI.** It arms the
    deterministic flip oracle, so most runs finish on evidence alone with the
-   **judge skipped entirely** — and it skips the witness-author call too.
+   **verifier skipped entirely** — and it skips the witness-author call too.
 
 ```bash
 # Cheapest correct shape: deterministic oracle armed, hard ceiling on top.

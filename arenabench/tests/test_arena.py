@@ -143,10 +143,10 @@ class TestEngine:
         assert bare.qualified_model == already.qualified_model == "openrouter/z-ai/glm-5.2"
 
     def test_a_role_inherits_the_baseline_unless_it_overrides(self):
-        engine = Engine(effort="xhigh", reasoning=True, roles={"judge": RoleConfig(effort="low")})
+        engine = Engine(effort="xhigh", reasoning=True, roles={"verifier": RoleConfig(effort="low")})
         assert engine.effective_role("worker").effort == "xhigh"
-        assert engine.effective_role("judge").effort == "low"
-        assert engine.effective_role("judge").reasoning is True
+        assert engine.effective_role("verifier").effort == "low"
+        assert engine.effective_role("verifier").reasoning is True
 
     def test_round_trips_through_json(self):
         engine = Engine(
@@ -438,9 +438,9 @@ class TestPosture:
     def test_a_role_model_is_qualified_with_the_workers_provider(self):
         """A pin typed as a bare slug is silently dropped by the engine, so
         the provider is inferred from the model that *is* routed."""
-        engine = Engine(model="z-ai/glm-5.2", roles={"judge": RoleConfig(model="openai/gpt-5.5")})
+        engine = Engine(model="z-ai/glm-5.2", roles={"verifier": RoleConfig(model="openai/gpt-5.5")})
         posture, _, _ = arena_posture("openrouter/z-ai/glm-5.2", engine)
-        assert posture["pipeline_judge_model"] == "openrouter/openai/gpt-5.5"
+        assert posture["pipeline_verifier_model"] == "openrouter/openai/gpt-5.5"
         assert "openrouter/openai/gpt-5.5" in posture["allowed_models"]
 
     def test_the_digest_changes_when_the_configuration_does(self):
@@ -461,11 +461,11 @@ class TestPosture:
         """Stella's trusted-launcher seam fails closed on an unknown root key,
         so an extra field here would refuse the run rather than be ignored."""
         allowed = {
-            "default_model", "pipeline_judge_model", "pipeline_worker_model",
+            "default_model", "pipeline_verifier_model", "pipeline_worker_model",
             "pipeline_triage_model", "allowed_models", "auto_mode", "effort_auto",
             "reasoning_auto", "headless_scope_bypass", "agents",
         }
-        engine = Engine(model="m", roles={r: RoleConfig(model="x") for r in ("worker", "judge", "triage")})
+        engine = Engine(model="m", roles={r: RoleConfig(model="x") for r in ("worker", "verifier", "triage")})
         posture, _, _ = arena_posture("openrouter/m", engine)
         assert set(posture) <= allowed
 
@@ -483,7 +483,7 @@ class TestAgentRegistry:
 
     def test_a_knob_the_agent_ignores_is_reported(self):
         spec = resolve_agent("aider")
-        missed = spec.unhonoured(Engine(model="m", roles={"judge": RoleConfig(effort="low")}))
+        missed = spec.unhonoured(Engine(model="m", roles={"verifier": RoleConfig(effort="low")}))
         assert any("pipeline" in m for m in missed)
 
     def test_an_unset_knob_is_not_reported(self):

@@ -1687,7 +1687,10 @@ async fn witness_authored_command_arms_the_flip_oracle_and_submits_fast() {
 
     let s = stages(&events);
     assert!(s.contains(&StageKind::Witness), "witness stage emitted");
-    assert!(!s.contains(&StageKind::Verifier), "verifier skipped on the flip");
+    assert!(
+        !s.contains(&StageKind::Verifier),
+        "verifier skipped on the flip"
+    );
 }
 
 /// The point of the assessment: triage can route work onto a cheaper path
@@ -1705,7 +1708,7 @@ async fn witness_authored_command_arms_the_flip_oracle_and_submits_fast() {
 #[tokio::test]
 async fn triage_can_route_work_onto_a_cheaper_path_than_the_keyword_floor() {
     let provider = ScriptedProvider::new(vec![
-        text_result("CLASS: single\nWITNESS: no\nJUDGE: no"),
+        text_result("CLASS: single\nWITNESS: no\nVERIFIER: no"),
         text_result("done"),
         text_result("PASS looks right"),
     ]);
@@ -1755,7 +1758,7 @@ async fn triage_can_route_work_onto_a_cheaper_path_than_the_keyword_floor() {
 #[tokio::test]
 async fn a_chat_classification_on_a_files_request_still_reaches_execute() {
     let provider = ScriptedProvider::new(vec![
-        text_result("CLASS: chat\nWITNESS: no\nJUDGE: no"),
+        text_result("CLASS: chat\nWITNESS: no\nVERIFIER: no"),
         text_result("done"),
         // The zero-diff guard revokes the lookup's verifier-skip and the diff is
         // behavioral, so the `VERIFIER: no` waiver does not stand.
@@ -1789,7 +1792,7 @@ async fn a_chat_classification_on_a_files_request_still_reaches_execute() {
 #[tokio::test]
 async fn headless_runs_ignore_a_model_chat_call_and_reach_execute() {
     let provider = ScriptedProvider::new(vec![
-        text_result("CLASS: chat\nWITNESS: no\nJUDGE: no"),
+        text_result("CLASS: chat\nWITNESS: no\nVERIFIER: no"),
         text_result("done"),
         // Behavioral diff → the `VERIFIER: no` waiver does not stand.
         text_result("PASS looks right"),
@@ -2067,7 +2070,7 @@ async fn a_setup_failure_degrades_to_a_bare_execution_instead_of_aborting() {
     // the worker once. The verifier runs despite `VERIFIER: no` — the diff is
     // behavioral, so the waiver does not stand (`verifier_waiver_stands`).
     let provider = ScriptedProvider::new(vec![
-        text_result("CLASS: single\nWITNESS: no\nJUDGE: no"),
+        text_result("CLASS: single\nWITNESS: no\nVERIFIER: no"),
         text_result("done"),
         text_result("PASS looks right"),
     ]);
@@ -2334,11 +2337,6 @@ mod degradation_gate;
 /// Golden-trajectory recordings of this pipeline's real event stream — a
 /// child module so it reaches the scripted ports above via `super::*`.
 mod golden;
-/// Asking for corroboration when only a model verifier approved the work
-/// (#1295), and — the part that decides whether the ask is affordable —
-/// declining to ask where no tracked command could ever answer. A child
-/// module, so it reaches the scripted ports above via `super::*`.
-mod verifier_evidence_demand;
 /// The orchestrator MCP pre-fetch hook (issue #248) — split out for
 /// the same file-size reason `tests.rs` itself was split from
 /// `pipeline.rs`; a child module, so it reaches the fakes above via
@@ -2348,6 +2346,11 @@ mod scope_gate_interactive;
 mod terminal_outcomes;
 mod usage;
 mod verification_hardening;
+/// Asking for corroboration when only a model verifier approved the work
+/// (#1295), and — the part that decides whether the ask is affordable —
+/// declining to ask where no tracked command could ever answer. A child
+/// module, so it reaches the scripted ports above via `super::*`.
+mod verifier_evidence_demand;
 /// Proportionate verification: changes with nothing to prove complete with a
 /// stated reason rather than escalating. A child module, so it reaches the
 /// scripted ports above via `super::*`.
@@ -2362,7 +2365,7 @@ mod witness_isolation;
 async fn headless_scope_bypass_proceeds_instead_of_asking_a_gate_that_always_aborts() {
     // Six steps clears the default 5-step threshold, so scope review fires.
     let provider = ScriptedProvider::new(vec![
-        text_result("CLASS: multi\nWITNESS: no\nJUDGE: no"),
+        text_result("CLASS: multi\nWITNESS: no\nVERIFIER: no"),
         text_result(r#"["a","b","c","d","e","f"]"#),
         text_result("done"),
     ]);
@@ -2449,7 +2452,7 @@ impl ContextRecallPort for MeteredRecall {
 #[tokio::test]
 async fn the_context_recall_event_carries_the_cgp_usage_report() {
     let provider = ScriptedProvider::new(vec![
-        text_result("CLASS: single\nWITNESS: no\nJUDGE: no"),
+        text_result("CLASS: single\nWITNESS: no\nVERIFIER: no"),
         text_result("done"),
     ]);
     let resolver = OneProvider(&provider);

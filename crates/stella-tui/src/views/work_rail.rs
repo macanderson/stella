@@ -543,7 +543,7 @@ mod tests {
     use super::tests_support::*;
     use super::*;
     use crate::proof::ProofState;
-    use stella_protocol::{VerdictEvidence, ProofStep, ProofTree};
+    use stella_protocol::{ProofStep, ProofTree, VerdictEvidence};
 
     fn text_of(line: &Line<'static>) -> String {
         line.spans.iter().map(|s| s.content.as_ref()).collect()

@@ -109,7 +109,7 @@ crossing is never silent.
   </OptionCard>
 </CardGrid>
 
-Baselines are always **same-role**. A step that ran the worker and a judge holds
+Baselines are always **same-role**. A step that ran the worker and a verifier holds
 two unrelated prompts; diffing across them produces noise, not a delta.
 
 ### Why the prompt is a baseline at all
@@ -146,7 +146,7 @@ stability invariant is holding.
 
 ## Why `--call-seq` exists
 
-A single step can involve more than one model call. The engine's own worker call is always `0`; the overflow summarizer that may run during that step's compaction is `1`; the pipeline's management roles (triage, judge, plan, guidance, conversational) allocate `2` and up.
+A single step can involve more than one model call. The engine's own worker call is always `0`; the overflow summarizer that may run during that step's compaction is `1`; the pipeline's management roles (triage, verifier, plan, guidance, conversational) allocate `2` and up.
 
 These auxiliary calls assemble their own prompts — a role task prompt, an optional settings-supplied system override, and a rendered transcript that exists nowhere else — so their receipt is the only record of what they sent. `stella inspect <EXEC>` lists every recorded call with its role, so you rarely have to guess a sequence number.
 
@@ -192,7 +192,7 @@ Reconstruct the worker call at step 3 and read it as a transcript:
 stella inspect 42 --step 3
 ```
 
-Read the judge's prompt instead of the worker's — the auxiliary calls at that step:
+Read the verifier's prompt instead of the worker's — the auxiliary calls at that step:
 
 ```bash
 stella inspect 42 --step 3 --call-seq 2 --full

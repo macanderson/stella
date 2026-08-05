@@ -16,7 +16,7 @@
 4207 bench/terminal_bench_analysis/tests/test_tb21_analysis.py
 1615 bench/terminal_bench_analysis/tests/test_tb21_evidence_contract.py
 2271 crates/stella-cli/src/agent.rs
-1750 crates/stella-cli/src/agent_tests.rs
+1757 crates/stella-cli/src/agent_tests.rs
 1585 crates/stella-cli/src/candidate_ws.rs
 4754 crates/stella-cli/src/command_deck.rs
 1506 crates/stella-cli/src/fleet_cmd.rs
@@ -27,9 +27,9 @@
 2072 crates/stella-model/src/openai.rs
 1572 crates/stella-model/src/zai.rs
 1843 crates/stella-model/src/zai/tests.rs
-3691 crates/stella-pipeline/src/pipeline.rs
-2621 crates/stella-pipeline/src/pipeline/tests.rs
-2907 crates/stella-protocol/src/event.rs
+3692 crates/stella-pipeline/src/pipeline.rs
+2624 crates/stella-pipeline/src/pipeline/tests.rs
+2906 crates/stella-protocol/src/event.rs
 2082 crates/stella-store/src/lib.rs
 2264 crates/stella-store/src/tests.rs
 1916 crates/stella-store/src/usage.rs

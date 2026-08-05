@@ -220,8 +220,7 @@ pub enum ModelCallRole {
     Worker,
     /// Course-correction handed to a worker that is looping or stuck.
     DistressGuidance,
-    /// The verifier's verdict call, reached only on inconclusive
-    /// deterministic evidence.
+    /// The verifier's verdict call, on inconclusive deterministic evidence.
     Verdict,
     /// Generating an agent definition.
     AgentAuthor,
@@ -2421,7 +2420,7 @@ mod tests {
 
     #[test]
     fn usage_incomplete_is_a_closed_content_free_signal() {
-        let json = r#"{"type":"usage_incomplete","role":"verifier","provider":"anthropic","model":"claude-sonnet-4-5","reason":"timeout","duration_ms":2500,"retries":null}"#;
+        let json = r#"{"type":"usage_incomplete","role":"verdict","provider":"anthropic","model":"claude-sonnet-4-5","reason":"timeout","duration_ms":2500,"retries":null}"#;
         let event: AgentEvent = serde_json::from_str(json).unwrap();
         let roundtrip = serde_json::to_value(event).unwrap();
         assert_eq!(roundtrip["type"], "usage_incomplete");
