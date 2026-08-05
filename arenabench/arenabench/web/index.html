@@ -17,9 +17,25 @@
 <body>
 
 <header class="topbar">
+  <!--
+    The lockup: "arenabench / by stella*", where the asterisk is the comet
+    itself — a four-point star with its trail, flying left to right, drawn
+    from the same geometry as the stella logomark so the two are the same
+    mark at two sizes. Gold appears exactly once, on the star.
+  -->
   <div class="brand">
-    <span class="brand-mark">◆</span>
-    <span class="brand-name">ARENA<span class="brand-accent">BENCH</span></span>
+    <svg class="comet" viewBox="0 0 96 34" role="img" aria-label="stella">
+      <line class="trail" x1="6"  y1="17" x2="34" y2="17" stroke-width="7"/>
+      <line class="trail" x1="17" y1="4"  x2="34" y2="4"  stroke-width="7"/>
+      <line class="trail" x1="17" y1="30" x2="34" y2="30" stroke-width="7"/>
+      <path class="star"
+            d="M68 -5 C69.65 8.2 76.8 15.35 90 17 C76.8 18.65 69.65 25.8 68 39
+               C66.35 25.8 59.2 18.65 46 17 C59.2 15.35 66.35 8.2 68 -5 Z"/>
+    </svg>
+    <span class="brand-stack">
+      <span class="brand-name">arena<span class="brand-accent">bench</span></span>
+      <span class="brand-by">by <b>stella</b></span>
+    </span>
   </div>
   <nav class="tabs">
     <button class="tab is-active" data-view="setup">Setup</button>
@@ -35,6 +51,38 @@
 <!-- SETUP                                                                 -->
 <!-- ==================================================================== -->
 <main class="view is-active" id="view-setup">
+
+  <!--
+    Entry point. A match is either assembled here or restored from an
+    arenabench.toml — the same document CI runs, so what you design in the
+    browser and what runs on a schedule are literally the same file.
+  -->
+  <section class="step" id="step-start">
+    <h2><span class="step-n">0</span> New run</h2>
+    <p class="step-hint">
+      Start from a template or build from scratch. A template is an
+      <code>arenabench.toml</code> — commit it, and
+      <code>arenabench run it.toml</code> reproduces this match exactly.
+      Templates never contain secrets.
+    </p>
+    <div class="start-grid">
+      <button class="start-card is-on" id="start-scratch">
+        <span class="start-title">set up from scratch</span>
+        <span class="start-sub">walk the wizard below</span>
+      </button>
+      <label class="start-card" id="start-upload">
+        <span class="start-title">load a template</span>
+        <span class="start-sub">upload an arenabench.toml</span>
+        <input type="file" id="template-file" accept=".toml,text/plain" hidden>
+      </label>
+      <button class="start-card" id="start-download">
+        <span class="start-title">download this match</span>
+        <span class="start-sub">save the current setup as .toml</span>
+      </button>
+    </div>
+    <div class="errors" id="template-errors" hidden></div>
+    <div class="template-ok" id="template-ok" hidden></div>
+  </section>
 
   <section class="step">
     <h2><span class="step-n">1</span> Benchmark</h2>
