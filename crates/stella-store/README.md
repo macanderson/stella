@@ -79,11 +79,9 @@ goes in a new submodule, following this crate's own precedent
 [`src/migrations.rs`](src/migrations.rs)) — and code you touch in one of them
 is a candidate to extract.
 
-| God file | Ceiling (lines) |
-|---|---|
-| [`src/lib.rs`](src/lib.rs) | 2080 |
-| [`src/tests.rs`](src/tests.rs) | 2264 |
-| [`src/usage.rs`](src/usage.rs) | 1916 |
+- [`src/lib.rs`](src/lib.rs)
+- [`src/tests.rs`](src/tests.rs)
+- [`src/usage.rs`](src/usage.rs)
 
 A ceiling can move only via `make file-size-update`, which lands as a
 reviewable baseline diff justified like any other change — treat it as an

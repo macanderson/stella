@@ -21,7 +21,7 @@ pub(crate) const WORKSPACE_GENERATED_IGNORE: &[u8] =
     b"*.db\n*.db-wal\n*.db-shm\nreflections.jsonl\nprivate/\n";
 
 #[cfg(unix)]
-fn read_committable_file(path: &Path) -> Result<(Vec<u8>, u32)> {
+fn read_committable_file(path: &Path) -> Result<Option<(Vec<u8>, u32)>> {
     use std::io::Read as _;
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 
@@ -29,15 +29,36 @@ fn read_committable_file(path: &Path) -> Result<(Vec<u8>, u32)> {
     options
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-    let mut file = options.open(path).map_err(|e| {
-        StoreError(format!(
-            "cannot open committable file {}: {e}",
-            path.display()
-        ))
-    })?;
+    let mut file = match options.open(path) {
+        Ok(file) => file,
+        // Unlinked between the caller's look and this open. Same benign
+        // publisher as the `nlink() == 0` arm below, seen one instant earlier.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(StoreError(format!(
+                "cannot open committable file {}: {e}",
+                path.display()
+            )));
+        }
+    };
     let metadata = file
         .metadata()
         .map_err(|e| StoreError(format!("cannot inspect {}: {e}", path.display())))?;
+    // `nlink() == 0` is the one benign member of this family, and it must be
+    // split out before the assertion below rather than folded into it: it says
+    // the inode we are holding open was unlinked while we held it, which is
+    // exactly what a concurrent `write_atomic` rename does to the file it
+    // replaces. Nothing planted it — there is nothing left at the path to have
+    // planted. An attacker's file always presents at least one link, so
+    // conceding this case costs the injection defense nothing, while folding
+    // it in reports a fabricated attack on a file that merely lost a race
+    // (#617 item 10, and the residual window #1410 closes).
+    //
+    // Ownership is still asserted first, so a *foreign* unlinked inode is
+    // reported rather than quietly retried.
+    if metadata.is_file() && metadata.uid() == unsafe { libc::geteuid() } && metadata.nlink() == 0 {
+        return Ok(None);
+    }
     if !metadata.is_file() || metadata.uid() != unsafe { libc::geteuid() } || metadata.nlink() != 1
     {
         return Err(StoreError(format!(
@@ -49,7 +70,7 @@ fn read_committable_file(path: &Path) -> Result<(Vec<u8>, u32)> {
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
         .map_err(|e| StoreError(format!("cannot read {}: {e}", path.display())))?;
-    Ok((bytes, mode))
+    Ok(Some((bytes, mode)))
 }
 
 /// Read a workspace file that is *meant* to be committed (the generated
@@ -63,9 +84,19 @@ fn read_committable_file(path: &Path) -> Result<(Vec<u8>, u32)> {
 /// `workspace_private_*` path resolution, so a non-unix build could not open
 /// its own store at all (#617).
 #[cfg(not(unix))]
-fn read_committable_file(path: &Path) -> Result<(Vec<u8>, u32)> {
-    let metadata = std::fs::symlink_metadata(path)
-        .map_err(|e| StoreError(format!("cannot inspect {}: {e}", path.display())))?;
+fn read_committable_file(path: &Path) -> Result<Option<(Vec<u8>, u32)>> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        // `None` carries the same meaning on both arms: no stable file to
+        // judge yet, so the caller settles rather than concluding anything.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(StoreError(format!(
+                "cannot inspect {}: {e}",
+                path.display()
+            )));
+        }
+    };
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(StoreError(format!(
             "committable file {} must be a regular file",
@@ -74,7 +105,7 @@ fn read_committable_file(path: &Path) -> Result<(Vec<u8>, u32)> {
     }
     let bytes = std::fs::read(path)
         .map_err(|e| StoreError(format!("cannot read {}: {e}", path.display())))?;
-    Ok((bytes, MODE_SHARED))
+    Ok(Some((bytes, MODE_SHARED)))
 }
 
 /// Create the generated ignore exclusively, or report that someone else won.
@@ -131,32 +162,28 @@ fn create_generated_ignore_exclusively(path: &Path) -> Result<bool> {
     }
 }
 
+/// How long a loser waits for the winner's bytes before deciding a zero-length
+/// generated ignore is content of its own.
+///
+/// The window it covers is a single `write_all` of a 47-byte constant, so it
+/// shuts in microseconds and the budget is never spent in practice. It is
+/// generous anyway because the cost of the two mistakes is nothing alike:
+/// waiting a few milliseconds too long is invisible, while giving up too early
+/// puts the loser back on the rename path and resurrects the exact failure
+/// `create_generated_ignore_exclusively` was written to end.
+const IGNORE_SETTLE_ATTEMPTS: u32 = 50;
+const IGNORE_SETTLE_PAUSE: std::time::Duration = std::time::Duration::from_millis(1);
+
 pub(crate) fn ensure_workspace_generated_ignore(dot: &Path) -> Result<()> {
     let path = dot.join(".gitignore");
     // Try to be the one that creates it. Whoever wins writes content that
     // already contains `private/`, so every loser falls through to the read
     // below, finds the entry, and returns without writing — no rename races a
-    // reader in the common case.
+    // reader.
     if create_generated_ignore_exclusively(&path)? {
         return Ok(());
     }
-    let (mut bytes, mode) = match std::fs::symlink_metadata(&path) {
-        Ok(_) => read_committable_file(&path)?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            // Created and then removed between the two calls. Rare enough to
-            // report rather than loop on.
-            return Err(StoreError(format!(
-                "generated ignore {} vanished while being inspected",
-                path.display()
-            )));
-        }
-        Err(error) => {
-            return Err(StoreError(format!(
-                "cannot inspect generated ignore {}: {error}",
-                path.display()
-            )));
-        }
-    };
+    let (mut bytes, mode) = settled_generated_ignore(&path)?;
     if bytes
         .split(|byte| *byte == b'\n')
         .any(|line| line == b"private/")
@@ -168,6 +195,55 @@ pub(crate) fn ensure_workspace_generated_ignore(dot: &Path) -> Result<()> {
     }
     bytes.extend_from_slice(b"private/\n");
     write_atomic(&path, &bytes, mode)
+}
+
+/// The generated ignore's contents once no publisher is still mid-flight.
+///
+/// Losing the exclusive create says a file exists; it does *not* say the
+/// winner has written to it yet. Between `create_new` returning and the
+/// winner's `write_all` landing, the path holds a zero-length file — and a
+/// loser that read it went on to treat it as a real ignore missing `private/`
+/// and repaired it with [`write_atomic`], whose rename unlinks the winner's
+/// inode. Any third opener holding that inode open for validation then saw
+/// `nlink() == 0` and reported the generated ignore as something planted.
+///
+/// That is the residual of #617 item 10 (#1410): the exclusive create removed
+/// the *common* rename-races-a-reader path, and this closes the window it
+/// left. Waiting is the whole fix — the winner's bytes contain `private/` by
+/// construction, so a loser that waits has nothing left to write.
+///
+/// A file that is still empty after the budget is a real empty file that
+/// nobody is writing, and it is repaired exactly as before. Skipping it
+/// instead would be a permanent skip, not a wait: the next open would find the
+/// same empty file and skip again, and `private/` would never be added.
+fn settled_generated_ignore(path: &Path) -> Result<(Vec<u8>, u32)> {
+    let mut last = None;
+    for attempt in 0..IGNORE_SETTLE_ATTEMPTS {
+        match read_committable_file(path)? {
+            // Settled and non-empty: the common case, and the only one that
+            // can be answered on the first look.
+            Some((bytes, mode)) if !bytes.is_empty() => return Ok((bytes, mode)),
+            // Present but empty — a winner mid-write, or a genuinely empty
+            // file. Indistinguishable in this instant, so keep it and look
+            // again; whichever it is declares itself by whether it changes.
+            Some(empty) => last = Some(empty),
+            // Unlinked under us mid-publication. Nothing to keep: the inode we
+            // looked at is gone and the replacement is not visible yet.
+            None => {}
+        }
+        if attempt + 1 < IGNORE_SETTLE_ATTEMPTS {
+            std::thread::sleep(IGNORE_SETTLE_PAUSE);
+        }
+    }
+    // The budget is spent. An empty file we saw the whole way through is one
+    // nobody is publishing, so it is ours to repair.
+    last.ok_or_else(|| {
+        StoreError(format!(
+            "generated ignore {} never settled: it was still being replaced \
+             after {IGNORE_SETTLE_ATTEMPTS} attempts",
+            path.display()
+        ))
+    })
 }
 
 pub(crate) fn ensure_workspace_state_dir(workspace_root: &Path) -> Result<(PathBuf, bool)> {
@@ -742,3 +818,6 @@ fn immutable_uri(path: &Path) -> Result<String> {
     uri.push_str("?immutable=1");
     Ok(uri)
 }
+
+#[cfg(test)]
+mod tests;

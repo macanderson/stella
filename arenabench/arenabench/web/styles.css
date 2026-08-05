@@ -1,23 +1,45 @@
-/*
- * SPDX-License-Identifier: Apache-2.0
- * Copyright (c) 2026 the ArenaBench authors
- *
- * The arena's look: near-black stage, sharp geometry, monospace numerals, and
- * colour reserved almost entirely for meaning — each contestant owns one accent
- * and the only things that glow are the ones that are winning.
- */
+/* ==========================================================================
+   arenabench — styled on the stella brand kit v1.0
+   One colour, owned: Phosphor Gold on Ink. Everything else is restraint.
+   Tokens mirror docs/brand/css/tokens.css so the two cannot drift apart.
+   ========================================================================== */
+
+/* The brand voice is JetBrains Mono, self-hosted so it renders the same on a
+   machine that has never installed it. Licence: fonts/LICENSE-OFL.txt. */
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal; font-weight: 400; font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal; font-weight: 500; font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal; font-weight: 700; font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal; font-weight: 800; font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin-800-normal.woff2") format("woff2");
+}
 
 :root {
-  --ink:        #07080B;
-  --panel:      #0E1016;
-  --panel-2:    #12151D;
-  --line:       #1E2230;
-  --line-soft:  #171B26;
-  --text:       #D6DBE5;
-  --muted:      #7E8AA0;
-  --dim:        #4B5468;
+  /* Brand core — exact values from the kit, not near-misses. */
+  --ink:        #0B0B0C;   /* Ink: the terminal, not pure black */
+  --panel:      #131315;   /* dark surface */
+  --panel-2:    #1A1A1D;
+  --line:       #232327;   /* dark border */
+  --line-soft:  #17171A;
+  --text:       #F4F1EA;   /* Paper: warm text on dark */
+  --muted:      #9B9890;
+  --dim:        #6E6A5F;
 
-  --amber:      #FFB000;
+  --amber:      #FFB000;   /* Phosphor Gold — the only owned colour */
+  --gold-deep:  #A37200;   /* gold that passes contrast on light */
   --cyan:       #37D5F2;
   --mint:       #5CE68A;
   --rose:       #FF6B9D;
@@ -34,8 +56,17 @@
      system serif fallback. */
   --sans: var(--mono);
 
-  --r: 8px;
+  --r: 10px;         /* --stella-radius-md */
+  --r-lg: 18px;      /* --stella-radius-xl: cards, tiles */
   --pad: 12px;
+
+  /* Motion — "assemble, don't spin". */
+  --ease-arrive: cubic-bezier(0.22, 0.9, 0.35, 1);
+  --ease-pop:    cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+
+  --glow-gold: 0 0 24px rgb(255 176 0 / 0.28), 0 0 96px rgb(255 176 0 / 0.12);
 }
 
 * { box-sizing: border-box; }
@@ -69,7 +100,7 @@ body::before {
     linear-gradient(var(--line-soft) 1px, transparent 1px),
     linear-gradient(90deg, var(--line-soft) 1px, transparent 1px);
   background-size: 56px 56px;
-  opacity: .35;
+  opacity: .05;
   mask-image: radial-gradient(ellipse 120% 80% at 50% 0%, #000 30%, transparent 78%);
 }
 
@@ -80,6 +111,44 @@ body > * { position: relative; z-index: 1; }
 .spacer { flex: 1; }
 h1, h2, h3 { margin: 0; font-weight: 650; letter-spacing: -.01em; text-transform: lowercase; }
 code { font-family: var(--mono); font-size: .92em; color: var(--citron); }
+
+
+/* ------------------------------------------------------------- the lockup */
+/* "arenabench — by stella*", where the asterisk IS the comet: a four-point
+   star with the trail behind it, flying left to right per the brand rule. */
+
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-stack { display: flex; flex-direction: column; gap: 1px; line-height: 1; }
+.brand-name {
+  font-family: var(--mono);
+  font-weight: 800;                       /* display weight */
+  letter-spacing: -.02em;                 /* --stella-tracking-tight */
+  font-size: 15px;
+  text-transform: lowercase;
+  color: var(--text);
+}
+.brand-accent { color: var(--amber); }
+.brand-by {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 9.5px;
+  letter-spacing: .14em;                  /* --stella-tracking-wide */
+  text-transform: lowercase;
+  color: var(--dim);
+}
+.brand-by b { font-weight: 500; color: var(--muted); }
+/* The comet, inline. Gold is the signal — it is the only gold in the lockup. */
+.comet { display: block; width: 34px; height: 12px; flex: none; }
+.comet .star { fill: var(--amber); }
+.comet .trail { stroke: var(--amber); stroke-linecap: round; }
+/* Assemble on load: the trail arrives, then the star lands. */
+@media (prefers-reduced-motion: no-preference) {
+  .comet .trail { animation: trail-in var(--dur-base) var(--ease-arrive) both; }
+  .comet .trail:nth-of-type(2) { animation-delay: 40ms; }
+  .comet .trail:nth-of-type(3) { animation-delay: 80ms; }
+  .comet .star  { animation: star-land 280ms var(--ease-pop) 120ms both; }
+}
+@keyframes trail-in { from { opacity: 0; transform: translateX(-6px); } }
+@keyframes star-land { from { opacity: 0; transform: scale(.4); } }
 
 /* ---------------------------------------------------------------- topbar */
 
@@ -97,17 +166,6 @@ code { font-family: var(--mono); font-size: .92em; color: var(--citron); }
   z-index: 40;
 }
 
-.brand { display: flex; align-items: center; gap: 9px; }
-.brand-mark { color: var(--amber); font-size: 15px; }
-.brand-name {
-  font-family: var(--mono);
-  font-weight: 700;
-  letter-spacing: .18em;
-  font-size: 13px;
-  /* Stella brand: lowercase, monospace, gold on ink. */
-  text-transform: lowercase;
-}
-.brand-accent { color: var(--amber); }
 
 .tabs { display: flex; gap: 4px; }
 .tab {
@@ -656,4 +714,40 @@ input:focus, select:focus, textarea:focus {
    decoration, and a benchmark dashboard is something people stare at. */
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
+}
+
+/* ------------------------------------------------------- new-run entry */
+
+.start-grid {
+  display: grid; gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+.start-card {
+  display: flex; flex-direction: column; gap: 3px;
+  text-align: left;
+  padding: 13px 15px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition: border-color var(--dur-base) var(--ease-arrive),
+              background var(--dur-base) var(--ease-arrive);
+}
+.start-card:hover { border-color: var(--dim); background: var(--panel-2); }
+.start-card.is-on {
+  border-color: var(--amber);
+  background: linear-gradient(180deg, rgb(255 176 0 / .07), transparent 70%), var(--panel);
+}
+.start-title { font-weight: 700; font-size: 13px; text-transform: lowercase; }
+.start-sub { font-size: 11px; color: var(--muted); }
+
+.template-ok {
+  margin-top: 12px; padding: 10px 13px;
+  border: 1px solid rgb(92 230 138 / .35);
+  background: rgb(92 230 138 / .06);
+  border-radius: var(--r);
+  color: var(--ok);
+  font-size: 12.5px;
 }

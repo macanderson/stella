@@ -34,6 +34,7 @@ import os
 import random
 import threading
 import time
+import tomllib
 import uuid
 from dataclasses import replace
 from http import HTTPStatus
@@ -43,6 +44,7 @@ from typing import Any, Callable, Iterator
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .agents import AGENTS
+from .config import MatchTemplateError, dump_match, match_from_toml, required_env
 from .model import EFFORTS, ROLES, MatchSpec
 from .recorder import preflight as recorder_preflight
 from .registry import DEFAULT_REGISTRY, Registry, sample_tasks
@@ -181,6 +183,45 @@ class ArenaServer:
             raise KeyError(match_id)
         return match.snapshot()
 
+    def template_for(self, match_id: str) -> str:
+        """A running match rendered back out as a committable template."""
+        match = self.runner.matches.get(match_id)
+        if match is None:
+            raise KeyError(match_id)
+        return dump_match(match.spec)
+
+    def render_template(self, payload: dict[str, Any]) -> str:
+        """Render an in-progress wizard configuration as TOML.
+
+        Lets an operator design a match in the UI and take the file away
+        without running it — which is how a template gets into a repository
+        in the first place.
+        """
+        return dump_match(MatchSpec.from_json(payload))
+
+    def parse_template(self, text: str) -> Any:
+        """Validate an uploaded template and hand the wizard back a spec.
+
+        Returns the same JSON shape the wizard already speaks, plus the
+        credential names each seat needs, so the UI can prompt for exactly
+        those and nothing else.
+        """
+        if not text.strip():
+            raise ValueError("no TOML supplied")
+        try:
+            data = tomllib.loads(text)
+        except tomllib.TOMLDecodeError as exc:
+            raise ValueError(f"not valid TOML: {exc}") from exc
+        try:
+            spec = match_from_toml(data)
+        except MatchTemplateError as exc:
+            return {"ok": False, "problems": exc.problems}
+        return {
+            "ok": True,
+            "match": spec.to_json(),
+            "required_env": required_env(spec),
+        }
+
     def cancel(self, match_id: str) -> Any:
         match = self.runner.matches.get(match_id)
         if match is None:
@@ -273,6 +314,19 @@ def _handler_factory(arena: ArenaServer) -> type[BaseHTTPRequestHandler]:
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _toml(self, text: str, filename: str) -> None:
+            body = text.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/toml; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            # `attachment` so a click downloads the file rather than rendering
+            # it — this is a document you commit, not a page you read.
+            self.send_header(
+                "Content-Disposition", f'attachment; filename="{filename}"'
+            )
             self.end_headers()
             self.wfile.write(body)
 
@@ -422,6 +476,8 @@ def _handler_factory(arena: ArenaServer) -> type[BaseHTTPRequestHandler]:
                     self._sse(
                         lambda: arena.stream_transcript(match_id, contestant, task)
                     )
+                case ["matches", match_id, "template.toml"]:
+                    self._toml(arena.template_for(match_id), f"{match_id}.toml")
                 case ["matches", match_id, "video", contestant, task]:
                     video = arena.video(match_id, contestant, task)
                     if video is None:
@@ -448,6 +504,10 @@ def _handler_factory(arena: ArenaServer) -> type[BaseHTTPRequestHandler]:
                 match parts[1:]:
                     case ["matches"]:
                         self._json(arena.create_match(payload))
+                    case ["templates", "parse"]:
+                        self._json(arena.parse_template(payload.get("toml") or ""))
+                    case ["templates", "render"]:
+                        self._json({"toml": arena.render_template(payload)})
                     case ["matches", match_id, "cancel"]:
                         self._json(arena.cancel(match_id))
                     case _:

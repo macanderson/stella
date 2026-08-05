@@ -93,9 +93,7 @@ their inline round-trip tests with them. A genuinely new `AgentEvent` variant
 cannot avoid its lines in `event.rs`; offset them by extracting the variant's
 supporting types, or move the ceiling honestly as below.
 
-| God file | Ceiling (lines) |
-|---|---|
-| [`src/event.rs`](src/event.rs) | 2906 |
+- [`src/event.rs`](src/event.rs)
 
 A ceiling can move only via `make file-size-update`, which lands as a
 reviewable baseline diff justified like any other change — treat it as an

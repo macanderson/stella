@@ -89,13 +89,11 @@ key handling goes in a `src/deck_ui/` submodule the way
 split buys headroom, not immunity, so code you touch inside any of these
 files is a candidate to extract.
 
-| God file | Ceiling (lines) |
-|---|---|
-| [`src/deck.rs`](src/deck.rs) | 1528 |
-| [`src/deck_render.rs`](src/deck_render.rs) | 1600 |
-| [`src/deck_ui.rs`](src/deck_ui.rs) | 4068 |
-| [`src/views/engine.rs`](src/views/engine.rs) | 1665 |
-| [`src/views/session.rs`](src/views/session.rs) | 1621 |
+- [`src/deck.rs`](src/deck.rs)
+- [`src/deck_render.rs`](src/deck_render.rs)
+- [`src/deck_ui.rs`](src/deck_ui.rs)
+- [`src/views/engine.rs`](src/views/engine.rs)
+- [`src/views/session.rs`](src/views/session.rs)
 
 A ceiling can move only via `make file-size-update`, which lands as a
 reviewable baseline diff justified like any other change — treat it as an
