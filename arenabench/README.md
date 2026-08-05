@@ -54,6 +54,10 @@ missing — an unauthenticated arm scores zero, and a zero is indistinguishable
 from a real result on a scoreboard. Override with `--allow-missing-env` if you
 genuinely mean it.
 
+While the match runs, `run` also applies the [watch rules](#watch-a-running-match-for-the-failures-that-invalidate-it)
+inline (`!!` lines in the log) and exits `3` if a detection invalidated the
+match — so a CI job fails at the failure, not at the publish step.
+
 ```yaml
 # .github/workflows/bench.yml
 - run: arenabench run matches/nightly.toml --results results.json

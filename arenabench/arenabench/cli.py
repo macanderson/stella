@@ -48,6 +48,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     import time
 
     from .config import MatchTemplateError, load_match, required_env
+    from .monitor import MatchWatcher
     from .runner import MatchRunner
     from .server import ArenaServer
 
@@ -92,8 +93,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     match = runner.create(spec)
     runner.start(match)
+    # The built-in supervisor: the same rules `arenabench watch` runs from
+    # another process, reported inline so a CI log shows a dead arm at the
+    # minute it died rather than in the postmortem (#1480).
+    watcher = MatchWatcher(match.workspace)
     while match.status == "running":
         time.sleep(args.poll)
+        for detection in watcher.scan():
+            print(f"  !! {detection.to_line()}")
         if args.progress:
             snapshot = match.snapshot()
             parts = [
@@ -101,6 +108,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 for c in snapshot["contestants"]
             ]
             print(f"  [{snapshot['elapsed'] / 60:5.1f}m] " + "  ".join(parts))
+    for detection in watcher.scan():
+        print(f"  !! {detection.to_line()}")
 
     snapshot = match.snapshot()
     print(f"\nfinished in {snapshot['elapsed'] / 60:.1f}m")
@@ -124,6 +133,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
             json.dumps(snapshot, indent=2), encoding="utf-8"
         )
         print(f"  results -> {args.results}")
+    if watcher.invalidating:
+        # Same contract as `arenabench watch`: exit 3 means these numbers
+        # must not be published, which outranks "an arm judged nothing".
+        print("match invalidated — see the !! lines above", file=sys.stderr)
+        return 3
     return worst
 
 
