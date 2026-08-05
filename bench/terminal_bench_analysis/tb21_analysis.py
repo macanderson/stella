@@ -1447,14 +1447,42 @@ def _elapsed_seconds(start: Any, finish: Any) -> float | None:
     return elapsed if elapsed >= 0 else None
 
 
+def _stella_envelope_in(message: str) -> dict[str, Any] | None:
+    """The Stella result envelope embedded in a captured-stdout exception.
+
+    An exception message is stdout with diagnostics around it, and the stream
+    can carry per-step objects that also have a ``cost_usd``. So the envelope
+    is identified by shape — the object carrying the ``events`` list — rather
+    than by whichever ``cost_usd`` appears first.
+    """
+    decoder = json.JSONDecoder()
+    position = 0
+    while True:
+        start = message.find("{", position)
+        if start == -1:
+            return None
+        try:
+            parsed, end = decoder.raw_decode(message, start)
+        except json.JSONDecodeError:
+            position = start + 1
+            continue
+        position = max(end, start + 1)
+        if isinstance(parsed, dict) and isinstance(parsed.get("events"), list):
+            return parsed
+
+
 def _recover_cost_from_exception(message: Any) -> float | None:
-    """Recover only Stella's top-level envelope cost from captured stdout."""
+    """Recover only Stella's top-level envelope cost from captured stdout.
+
+    Returns None when no envelope is recoverable, so a per-step figure is
+    never stamped with the envelope's provenance.
+    """
     if not isinstance(message, str):
         return None
-    match = re.search(r'"cost_usd"\s*:\s*([0-9]+(?:\.[0-9]+)?)', message)
-    if match is None:
+    envelope = _stella_envelope_in(message)
+    if envelope is None:
         return None
-    return _nonnegative_float(float(match.group(1)))
+    return _nonnegative_float(envelope.get("cost_usd"))
 
 
 def _validate_atif(path: Path | None) -> dict[str, Any]:
@@ -7268,6 +7296,21 @@ def _coerce_file_row(
     }
 
 
+def _contained_trial_result(trials_root: Path, trial_id: str) -> Path | None:
+    """``<trials_root>/<trial_id>/result.json``, or None if it escapes the root.
+
+    ``trial_id`` is read straight out of a supplied comparator manifest, and
+    the file it names is hashed, JSON-parsed, and its absolute path published
+    into ``report.json``. A traversing component, or a symlink inside
+    ``trials/`` aimed elsewhere, is refused rather than read.
+    """
+    root = trials_root.resolve()
+    candidate = (trials_root / trial_id / "result.json").resolve()
+    if not candidate.is_relative_to(root):
+        return None
+    return candidate
+
+
 def _enrich_comparator_manifest_rows(
     rows: list[dict[str, Any]], source: Path, warnings: list[str]
 ) -> list[dict[str, Any]]:
@@ -7282,12 +7325,19 @@ def _enrich_comparator_manifest_rows(
             ),
             None,
         )
-        result_path = (
-            source.parent / "trials" / trial_id / "result.json"
-            if isinstance(trial_id, str)
-            else None
-        )
-        if result_path is None or not result_path.is_file():
+        if not isinstance(trial_id, str):
+            enriched.append(item)
+            continue
+        trials_root = source.parent / "trials"
+        result_path = _contained_trial_result(trials_root, trial_id)
+        if result_path is None:
+            warnings.append(
+                f"{source}: comparator manifest trial id {trial_id!r} resolves "
+                f"outside {trials_root}; the row was not enriched"
+            )
+            enriched.append(item)
+            continue
+        if not result_path.is_file():
             enriched.append(item)
             continue
         try:
@@ -7311,7 +7361,7 @@ def _enrich_comparator_manifest_rows(
             task = task if isinstance(task, dict) else {}
             item["task_ref"] = task_id.get("ref") or task.get("ref")
             item["task_checksum"] = result.get("task_checksum")
-            item["result_path"] = str(result_path.resolve())
+            item["result_path"] = str(result_path)
         enriched.append(item)
     return enriched
 
@@ -7758,7 +7808,7 @@ def task_cluster_bootstrap(
             base["dimensions"][name] = dimension
             continue
         inferential_point, lower = estimate
-        point_meets_threshold = full_point >= WIN_THRESHOLD
+        point_meets_threshold = inferential_point >= WIN_THRESHOLD
         lower_bound_exceeds_threshold = lower > WIN_THRESHOLD
         dimension.update(
             {
@@ -7909,11 +7959,13 @@ def render_markdown(report: dict[str, Any]) -> str:
             [
                 f"Fixed seed `{bootstrap['seed']}`, {bootstrap['draws']:,} draws, "
                 f"one-sided {bootstrap['one_sided_confidence']:.2%} lower bounds.",
-                f"Point gates use all {bootstrap['expected_tasks']} confirmatory "
-                f"tasks; inferential estimates and LCBs use the "
-                f"{bootstrap['observed_inference_tasks']} non-calibration tasks.",
+                f"Both halves of the win rule — the point gate and the LCB — use "
+                f"the {bootstrap['observed_inference_tasks']} non-calibration "
+                f"tasks. The all-{bootstrap['expected_tasks']}-task point is "
+                f"descriptive only: it includes the tasks Stella was tuned on.",
                 "",
-                "| Dimension | Full point | 79-task inferential point | Lower bound | "
+                "| Dimension | Full point (descriptive) | 79-task inferential point "
+                "(gated) | Lower bound | "
                 "Eligible | "
                 "Point >=10% and LCB >10% |",
                 "|---|---:|---:|---:|:---:|:---:|",
@@ -8110,7 +8162,16 @@ def build_report(
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog=(
+            "Exit status is the report's verdict, not merely whether files were "
+            "written: 0 when the externally audited comparative claim is "
+            "established, 1 when it is not — a failed study validation, a failed "
+            "live public-timing audit, or fewer than two registered wins. The "
+            "output directory is written in both cases."
+        ),
+    )
     parser.add_argument("jobs", type=Path, nargs="+", help="Harbor job directories")
     parser.add_argument(
         "--comparator",
@@ -8204,7 +8265,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit(f"analysis failed: {error}") from error
     write_outputs(report, args.output_dir)
     print(args.output_dir.resolve())
-    return 0
+    return 0 if report["bootstrap"]["claim_established"] else 1
 
 
 if __name__ == "__main__":

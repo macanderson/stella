@@ -1,4 +1,28 @@
-"""Canonical task-partition contract for the preregistered TB 2.1 study."""
+"""Canonical task-partition contract for the TB 2.1 hybrid study.
+
+NOT WIRED — this is the study design that did not ship.
+
+Two TB 2.1 designs exist in this directory. The one that shipped is the v6
+study in ``tb21_analysis.py``, whose run ledger is
+``stella-tb21-run-ledger-v2``. This module, ``tb21_hybrid_analysis.py``, and
+the ``tb21_study_seed.py`` identities they read are the *other* one — study id
+``stella-tb21-hybrid-study-v1``, run ledger ``-v3``. It has never been run.
+
+The two ledgers are incompatible by construction, not by accident:
+
+- ``RUN_LEDGER_FIELDS`` below adds ``candidates`` and ``budget_authorizations``
+  and drops ``ledger_path``, so ``tb21_analysis._validate_run_ledger`` rejects
+  a v3 ledger on its field set alone.
+- ``github_public_timing._ledger_is_prefix`` demands set equality over the four
+  v2 arrays, so a v3 ledger can never pass public-timing verification.
+
+Nothing outside ``tests/`` imports this module and there is no console script
+for it. None of the four artifacts ``FIXED_PATHS`` names exists anywhere in the
+repository, so ``validate_run_ledger`` has never run against a real one: every
+validator here is exercised by fixtures only. ``bench/RUNBOOK.md`` and
+``bench/tb21_preregistration.py`` state the operational rule in the
+imperative — author to v2 ONLY, never this contract.
+"""
 
 from __future__ import annotations
 

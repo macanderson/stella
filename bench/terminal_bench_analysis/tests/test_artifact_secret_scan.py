@@ -152,7 +152,8 @@ def test_zip_member_secret_is_blocked(tmp_path: Path) -> None:
 
     assert findings, "a secret inside a zip member must be caught"
     assert all(
-        secret not in finding.path and secret not in finding.kind for finding in findings
+        secret not in finding.path and secret not in finding.kind
+        for finding in findings
     )
 
 

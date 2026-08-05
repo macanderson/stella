@@ -1,4 +1,11 @@
-"""Pure exact estimands for the preregistered TB 2.1 hybrid study."""
+"""Pure exact estimands for the TB 2.1 hybrid study.
+
+NOT WIRED — part of the v3 hybrid design, which did not ship. Read
+``tb21_evidence_contract``'s module docstring first: it says which of the two
+designs in this directory is live and why the two run-ledger schemas cannot be
+mixed. The shipped study's estimands are in
+``tb21_analysis.task_cluster_bootstrap``.
+"""
 
 from __future__ import annotations
 

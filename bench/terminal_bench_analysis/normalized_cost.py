@@ -37,6 +37,15 @@ disjoint windows, and a caller that does not say which day a run happened on
 gets an exception rather than whichever entry happened to be listed first —
 silently pricing an August run at September's rate is the same class of error
 as pricing it off the wrong table.
+
+Who applies it, stated so a reader does not have to infer it from the "both
+arms" in the first line. The one production consumer is
+``bench/telemetry_store/ingest.py``, which loads this file by path and fills
+``trials.cost_usd_norm`` for every arm it ingests. The Terminal-Bench 2.1
+analyzer next door (``tb21_analysis.py``) does NOT use it: its ``cost_usd``
+column is the arm's own self-report, carrying a ``cost_source`` that says so.
+So "one table for both arms" is a true statement about the telemetry store and
+not yet a true statement about the published TB 2.1 report.
 """
 
 from __future__ import annotations
@@ -120,15 +129,47 @@ class OverlappingPriceWindows(ValueError):
 # always resolves to exactly one entry. `tests/test_normalized_cost.py` asserts
 # that as a property over the whole table rather than per row.
 PRICE_TABLE: dict[str, tuple[DatedPrice, ...]] = {
-    # Unbounded on both sides: this is the rate every published GLM figure was
-    # computed from, and narrowing it to a window would move those numbers.
+    # The study's pinned worker, `openrouter/z-ai/glm-5.1`. Without this row the
+    # confirmatory run's every trial is unpriced, which is the one model the
+    # table exists to cover.
+    "z-ai/glm-5.1": always(
+        TokenPrice(
+            input_per_m=0.966,
+            cached_input_per_m=0.1794,
+            output_per_m=3.036,
+        ),
+        source=(
+            "OpenRouter published rates for z-ai/glm-5.1, read 2026-08-04; "
+            "matches the `z-ai/glm-5.1` OpenRouter row in "
+            "crates/stella-model/src/catalog.rs"
+        ),
+    ),
+    # The gateway route, which is what `z-ai/...` names. The bare `glm-5.2`
+    # entry below is the first-party z.ai route and is materially cheaper; the
+    # two are separate rows for the reason `_slug` strips only one prefix.
     "z-ai/glm-5.2": always(
+        TokenPrice(
+            input_per_m=0.76,
+            cached_input_per_m=0.14,
+            output_per_m=2.42,
+        ),
+        source=(
+            "OpenRouter published rates for z-ai/glm-5.2, read 2026-08-04; "
+            "matches the `z-ai/glm-5.2` OpenRouter row in "
+            "crates/stella-model/src/catalog.rs"
+        ),
+    ),
+    # First-party z.ai, reached as `zai/glm-5.2`.
+    "glm-5.2": always(
         TokenPrice(
             input_per_m=0.60,
             cached_input_per_m=0.11,
             output_per_m=2.20,
         ),
-        source="OpenRouter published rates for z-ai/glm-5.2",
+        source=(
+            "z.ai published rates for glm-5.2; matches the `zai` provider row "
+            "in crates/stella-model/src/catalog.rs"
+        ),
     ),
     # Anthropic-native Sonnet 5. Two entries, not one edited entry: the
     # introductory rate is in force through 2026-08-31 and the standard rate
