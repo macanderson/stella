@@ -520,7 +520,10 @@ deleted file mode 100644
                 "src/edited.rs".to_string(),
                 PathDivergence::ChangedUnderTheRun,
             ),
-            ("app/vm.js".to_string(), PathDivergence::CandidateWroteOutside),
+            (
+                "app/vm.js".to_string(),
+                PathDivergence::CandidateWroteOutside,
+            ),
         ];
         let reason = describe_divergence(&classified, false).expect("a divergence is described");
 
@@ -543,7 +546,10 @@ deleted file mode 100644
     /// diagnosis down the wrong path.
     #[test]
     fn a_pure_escape_does_not_mention_a_mid_run_edit() {
-        let classified = vec![("app/vm.js".to_string(), PathDivergence::CandidateWroteOutside)];
+        let classified = vec![(
+            "app/vm.js".to_string(),
+            PathDivergence::CandidateWroteOutside,
+        )];
         let reason = describe_divergence(&classified, false).expect("described");
         assert!(reason.contains("wrote outside its workspace"), "{reason}");
         assert!(

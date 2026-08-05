@@ -898,11 +898,14 @@ impl GitCandidateWorkspace {
             // `--path` so the clean filter is applied exactly as it was when
             // the blob was written; without it a repo with `.gitattributes`
             // filters would hash raw bytes and every path would look diverged.
-            let real = blob_id(
-                git(&self.toplevel, &["hash-object", "--path", path, "--", path]).await,
-            );
+            let real =
+                blob_id(git(&self.toplevel, &["hash-object", "--path", path, "--", path]).await);
             let baseline = blob_id(
-                git(&self.dir, &["rev-parse", &format!("{}:{path}", self.baseline)]).await,
+                git(
+                    &self.dir,
+                    &["rev-parse", &format!("{}:{path}", self.baseline)],
+                )
+                .await,
             );
             let sealed_blob =
                 blob_id(git(&self.dir, &["rev-parse", &format!("{sealed}:{path}")]).await);

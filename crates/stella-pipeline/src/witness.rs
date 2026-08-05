@@ -618,7 +618,10 @@ pub fn witness_prompt(
          - End your reply with exactly one line:\n\
          TEST_COMMAND: <the direct, artifact-specific test command>\n",
     );
-    if let Some(command) = project_test_command.map(str::trim).filter(|c| !c.is_empty()) {
+    if let Some(command) = project_test_command
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+    {
         // The strongest available evidence that a runner exists, and the only
         // one that is a fact rather than an inference: this project names this
         // command, so its toolchain is installed here. Given first, above the

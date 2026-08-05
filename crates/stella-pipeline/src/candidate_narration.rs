@@ -284,7 +284,8 @@ mod tests {
     #[test]
     fn an_isolated_candidate_is_told_its_work_is_adopted_for_it() {
         let ws = NoticeOnlyWorkspace::at("/tmp/stella_candidate_7_0");
-        let rooted = messages_rooted_at(&[CompletionMessage::user("write vm.js to /app")], Some(&ws));
+        let rooted =
+            messages_rooted_at(&[CompletionMessage::user("write vm.js to /app")], Some(&ws));
         let notice = &rooted[1].content;
 
         assert!(
