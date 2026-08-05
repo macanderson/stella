@@ -12,6 +12,7 @@
     "---Run many at once---",
     "fleet",
     "monitor",
+    "fullauto",
     "arena",
     "---Ask about this workspace---",
     "graph",
