@@ -25,14 +25,35 @@ If that were the whole list, this document should not exist. It is not the
 whole list. The remaining arguments get **sharper** under agent authorship, and
 three of them exist *only* because agents write the code.
 
-**1.1 — The file is the read unit, so file size is a toll on every edit.**
-An agent changing three lines in `command_deck.rs` must first read
-`command_deck.rs`: roughly 60,000 tokens to change three lines. It pays that on
-every turn that touches the file, in every session, forever, in real money. We
-have already measured this problem from the other end — the benchmark notes
-record Claude Code winning the same Terminal-Bench tasks at 45k–64k tokens per
-step while Stella truncates at 32k. Large files spend our scarcest resource on
-code irrelevant to the task.
+**1.1 — A large file is never read; it is re-read.**
+*(Rewritten 2026-08-05. The original claim — "an agent must first read the whole
+file, roughly 60,000 tokens to change three lines" — was **measured and
+refuted**. See §2.7 / EXP-1. Keeping a refuted argument because it supports the
+right conclusion is how the last limit died.)*
+
+Agents do not read large files whole. Measured over 557 `read_file` calls in
+`.stella/private/store.db`, the fraction of reads that are *ranged*
+(`limit`/`offset`/symbol rather than the whole file) rises monotonically with
+file size and hits a ceiling:
+
+| File size | Reads | Ranged | Whole-file |
+|---|---:|---:|---:|
+| <400 | 52 | 77% | 23% |
+| 400–1000 | 165 | 94% | 6% |
+| 1000–2000 | 149 | 98% | 2% |
+| 2000+ | 154 | **100%** | **0%** |
+
+Not one whole-file read of a 2,000+ line file, in the entire store. The toll is
+real but its shape is the opposite of what this section originally claimed: a
+file too large to hold is not loaded once at great expense, it is **peeked at
+repeatedly**, and each peek must first be *located*. That locate step is the
+grep traffic — 293 calls returning ~262k tokens against 557 reads returning
+~729k. The tax is search-and-fragment, not bulk load.
+
+This matters for policy: a cost model based on "size of the file you must load"
+is wrong, and a budget justified by it would be justified by nothing. The
+defensible version is §1.5 (a file with no internal names is expensive to
+navigate) plus §2.7's growth-curve finding.
 
 **1.2 — Irrelevant context makes the model worse, not merely slower.**
 This is a correctness argument, not an efficiency one. A human skims past
@@ -49,14 +70,27 @@ than serializing into merge conflicts. The proof is in the enforcement layer
 itself: `scripts/file-size-baseline.txt` is a single shared file, it conflicted,
 and a resolution silently triple-entered `command_deck.rs` (§3.4).
 
-**1.4 — Agents append. That is the mechanism, and it never self-corrects.**
-Asked to add a feature, an agent adds code at the end. It will not restructure,
-because restructuring risks breaking code it cannot fully see and costs tokens
-it does not have. Unbounded growth is therefore not an accident that care can
-prevent — it is the **default trajectory** of agent-authored code. The header
-comment of `check-file-size.sh` records this happening in the open:
-`deck_ui.rs` grew from 6,632 to 6,884 lines *while three separate design
-documents asserted a 1,500-line cap*. Nothing enforced it, so it grew.
+**1.4 — Growth is the default, but *not* because agents append.**
+*(Rewritten 2026-08-05. The original claim — "asked to add a feature, an agent
+adds code at the end… unbounded growth is the default trajectory" — was the most
+confidently stated mechanism in this document and it is **flatly wrong**. See
+§2.7 / EXP-2, n = 246,010 added lines.)*
+
+Agents edit **throughout** the file. Mean normalized position of an added line
+is 0.480 against a uniform-editing null of 0.500, and only 8.0% of added lines
+land in the last 10% of the file — *below* the 10% that random editing would
+produce. There is no append bias, and no size interaction (delta −0.009).
+
+What survives, and is measured (EXP-3, 4,752 edits with renames and the crates/
+restructure excluded): **files grow relentlessly regardless.** 75–80% of edits
+increase a file's length, 8–15% shrink it, net **+24.95 lines per edit**. So the
+"only turns one way" premise behind the non-increase rule (§5.3) holds — it just
+is not caused by appending. Code is added in the middle, everywhere, always.
+
+The corrected mechanism is in §2.7 and it changes where the budget should bite:
+growth is **fastest in the 400–1000 line band (+34.98 lines/edit)** and nearly
+stops above 2,000 (+4.64). A limit at 1,500 fires after the acceleration is
+over.
 
 **1.5 — A large file is a missing name, and names are how a stranger navigates.**
 Every agent session is a stranger. When 4,551 lines are called
@@ -81,11 +115,22 @@ inspection whether the other 4,550 lines still mean what they meant. Small
 files make the *unchanged* portion reviewable for free.
 
 > **The reframe.** For a human, file size is an ergonomics problem — unpleasant
-> but survivable. For an agent it is simultaneously a **correctness** problem
-> (1.2), a **concurrency** problem (1.3), and a **cost** problem (1.1). The
-> binding constraint moved from "what fits in a person's head" to "what fits in
-> a context window alongside everything else the task needs," and that
-> constraint is tighter.
+> but survivable. For an agent the binding constraint moved from "what fits in a
+> person's head" to "what fits in a context window alongside everything else the
+> task needs," and that constraint is tighter.
+>
+> **Evidence status of this section, after §2.7.** Measured and holding: the
+> navigation cost of a file with no internal names (1.1 as rewritten, 1.5, 1.6),
+> and relentless growth concentrated in the 400–1000 band (1.4 as rewritten).
+> Measured and **refuted**, now rewritten: whole-file reads (original 1.1),
+> append bias (original 1.4). Still **unmeasured** and flagged as such:
+> attention degradation (1.2 — plausible from the literature but not measured on
+> this codebase), merge-conflict cost (1.3 — §12.2 gives the experiment, and it
+> may well kill this one too), and dead-code accumulation (1.7).
+>
+> The conclusion did not move when two of its reasons died, which is the useful
+> thing to know about it. Do not quote an unmeasured line as though it were
+> §2.7.
 
 ---
 
@@ -243,6 +288,80 @@ different but the shape identical (seven files over ceiling, including
 `event.rs` +22 and `pipeline/tests.rs` +21). The set churns; the redness does
 not. Any design that does not explain *how this keeps happening* will be
 defeated the same way.
+
+---
+
+### 2.7 The experiments — what was measured, and what it killed
+
+*Added 2026-08-05.* §1 of the first draft argued from mechanism. Three of those
+mechanisms were guesses, so they were built into re-runnable experiments under
+`scripts/experiments/` and run. Two came back refuted. **The conclusion of this
+document survived; two of its stated reasons did not.**
+
+Each script states its claim, its prediction, its method, the confounds it
+handles, and refuses a verdict below a minimum sample.
+
+| Experiment | Claim tested | n | Verdict |
+|---|---|---:|---|
+| **EXP-1** `exp1_read_cost.py` | §1.1 — a big file must be read whole | 557 reads | **REFUTED** — 100% of 2000+ line reads are ranged |
+| **EXP-2** `exp2_append_bias.py` | §1.4 — agents append | 246,010 added lines | **REFUTED** — mean position 0.480 vs 0.500 null |
+| **EXP-3a** `exp3_growth_ratchet.py` | Growth is effectively one-way | 4,752 edits | **SUPPORTED** — 75–80% of edits grow, net +24.95/edit |
+| **EXP-3b** `exp3_growth_ratchet.py` | Large files grow *faster* | 4,752 edits | **REFUTED (reversed)** — they grow ~7× slower |
+
+**The growth curve — the finding that should set the thresholds.** Bucketing
+each edit by the file's length *before* that edit (so a file is never credited
+to the bucket its own growth created):
+
+| Size before the edit | Edits | Grew | Shrank | **Net lines/edit** |
+|---|---:|---:|---:|---:|
+| <400 | 1,515 | 77% | 8% | +26.05 |
+| 400–1000 | 1,533 | 80% | 8% | **+34.98** |
+| 1000–2000 | 1,193 | 79% | 11% | +19.35 |
+| 2000+ | 511 | 75% | **15%** | **+4.64** |
+
+Growth **accelerates through the 400–1000 band and then collapses.** A file past
+2,000 lines gains 4.64 lines per edit and is the most likely of any bucket to be
+actively shrunk. The history contains **64 deliberate reductions of ≥300 lines**
+— `deck_ui.rs` −2,958 (#697), `agent.rs` −2,187, `driver.rs` −1,929,
+`registry.rs` −1,776. Nobody was forced to do those; they were done because the
+files had become unbearable.
+
+Three consequences, all of which change the design rather than decorate it:
+
+1. **A 1,500-line limit is at the wrong end of the curve.** It fires after the
+   growth it was meant to prevent has already stopped. This is a better
+   explanation for the gate's uselessness than §3.1's "no gradient" and it is
+   measured rather than argued.
+2. **The 400–1000 band is where the budget must bite** — which independently
+   lands on the Green/Yellow boundary (§5.2) proposed for entirely different
+   reasons. That is a genuine confirmation, not a restatement.
+3. **The team already pays for splits, manually, late, and at maximum cost.**
+   The non-increase rule (§5.3) does not introduce new work; it moves 64
+   painful reductions earlier, where each one is small.
+
+**What could not be measured, and why.** The cost curve that would settle the
+threshold numbers directly — bytes read per line changed, by file size — needs
+executions that both read and edit the same file. `files_touched` holds 44 rows
+and yields 1–3 samples per bucket. **Not reportable.** EXP-1 prints the table
+with its n and a power warning rather than a number anyone could quote. Closing
+this needs more logged sessions, not more reasoning; see §12.1.
+
+**Confounds caught during the work, recorded so they are not re-discovered:**
+
+- The first EXP-3 run showed large files *shrinking* (−26.86 lines/edit) and
+  reported CLAIM A refuted. Cause: commit `7df3d73f` ("previous version") moved
+  303 files under `crates/`, deleting 121,963 lines, which git recorded as
+  delete+create and which landed entirely in the 2000+ bucket. Fixed with
+  `-M -C` rename detection plus a mass-move exclusion; the script now prints
+  what it dropped (10 commits, 1,380 rows, 869 rename rows) instead of dropping
+  it silently.
+- EXP-1's re-read tax rises 1.49 → 3.00 → 3.39 → 9.06 with size, which looks
+  like a strong size effect until you notice `deck_ui.rs` is **75% of all 2000+
+  reads**. The bucket is one file that happened to be the task. The script now
+  prints that share automatically so the trap cannot be walked into twice.
+- EXP-2 weights positions by lines added (capped at 50) so one large commit
+  cannot dominate, and excludes file-creation commits, which are 100% "append"
+  by construction and would have manufactured the very result being tested.
 
 ---
 
@@ -746,22 +865,40 @@ time until §9 is done. Revisit afterward for maintenance.
 
 ## 12. Open questions
 
-1. **Is 400/600/800 right?** They are argued from token cost in §5.2, not
-   measured. A cheap experiment: instrument `stella-cli` to log tokens spent on
-   file reads per turn, then correlate against file size across a Terminal-Bench
-   run. That turns §1.1 from a reasoned claim into a measured one, and we have
-   the harness to do it.
-2. **Should the item-count rule (§5.6) apply to `enum` variants?**
+1. **Is 400/600/800 right? — PARTIALLY ANSWERED (2026-08-05).** EXP-3 (§2.7)
+   independently locates the fastest growth in the **400–1000** band, which is
+   where the Green/Yellow boundary sits. That is real corroboration from a
+   direction the numbers were not chosen from. What is still **not** measured is
+   the cost curve — bytes read per line changed, by file size — which is what
+   would justify 800 rather than 700 or 1,000. `files_touched` yields 1–3
+   samples per bucket, far too thin.
+
+   **To close it:** the blocker is data, not method. `exp1_read_cost.py` already
+   computes the curve and takes a store path as its argument; it needs a store
+   with meaningfully more executions that both read and edit the same file.
+   Point it at a Terminal-Bench run's store, or at `~/.stella/usage.db`-scale
+   traffic, and the table fills in. Until then, treat 400/600/800 as a defensible
+   starting point corroborated on one axis, not as a measured optimum — and say
+   so wherever they are quoted.
+2. **Does file size actually cause merge conflicts (§1.3)?** Still a guess, and
+   the one remaining unmeasured claim in §1. It is genuinely uncertain because
+   **git merges by hunk, not by file** — two agents editing distant regions of
+   one 4,000-line file may never conflict, in which case §1.3 is wrong and the
+   concurrency argument for small files collapses. The experiment: for commit
+   pairs touching the same file on divergent branches, measure hunk-range
+   overlap, bucketed by file size. If overlap does not rise with size, delete
+   §1.3 rather than defending it.
+3. **Should the item-count rule (§5.6) apply to `enum` variants?**
    `crates/stella-protocol/src/event.rs` is 21 types and legitimately wide. A protocol
    crate may warrant its own band.
-3. **Does the non-increase rule need a per-PR escape for a security fix?** The
+4. **Does the non-increase rule need a per-PR escape for a security fix?** The
    current answer is no — a security fix is nearly always net-neutral or a
    deletion. If a real counterexample appears, the escape must be a human
    action (a signed trailer, a named reviewer), never a make target.
-4. **`bench/` Python:** these files have no `//!` equivalent enforced and are
+5. **`bench/` Python:** these files have no `//!` equivalent enforced and are
    currently the largest in the tree. Do they adopt the same bands, or does
    `bench/` get its own policy on the grounds that it is not shipped?
-5. **Migration order vs. `main`'s stability.** The repo's history shows `main`
+6. **Migration order vs. `main`'s stability.** The repo's history shows `main`
    repeatedly landing uncompilable. Ten large refactor PRs will conflict with
    in-flight work; §9's one-file-per-PR scoping is the mitigation, but the
    sequencing may need to yield to whatever else is in flight.
