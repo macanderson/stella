@@ -19,6 +19,11 @@ Per trial, Harbor and the agent leave:
     Stella's own event stream, appended and flushed per event. Richer than
     ATIF and *current* rather than final, so it is preferred wherever both
     speak — it is what makes a live transcript possible at all.
+``arena/flip.json``
+    When the trial started passing, recovered after the fact by
+    ``arenabench flip`` (:mod:`arenabench.replay`). Present only when an
+    operator captured snapshots *and* ran the replay, so it is read
+    tolerantly and its absence costs nothing.
 
 Beside the trials, the *runner* leaves one artifact of its own per job:
 ``<job>.seat.json``, the seat's launch record — which provider api and
@@ -27,8 +32,8 @@ no model id the agent or Harbor records can carry that fact (the launch
 spelling differs by route), and pricing needs it (#1498). A job without one —
 every archive predating the record — is read exactly as before.
 
-Two readers sit on top. :class:`MetricsReader` reduces a trial to the seven
-scoreboard dimensions and re-parses a file only when its size changes, so an
+Two readers sit on top. :class:`MetricsReader` reduces a trial to the
+scoreboard's dimensions and re-parses a file only when its size changes, so an
 idle dashboard costs ``stat()`` calls. :class:`TranscriptReader` keeps a byte
 offset per file and yields only what is new, which is what the SSE endpoint
 streams.
@@ -52,6 +57,7 @@ from .pricing import Price, price_for, price_for_route, price_on_route, trial_co
 
 __all__ = [
     "EVENTS_NAME",
+    "FLIP_NAME",
     "INFRASTRUCTURE_FAILURES",
     "LIVENESS_NAMES",
     "TRAJECTORY_NAME",
@@ -67,6 +73,11 @@ EVENTS_NAME = "agent/stella-events.jsonl"
 TRAJECTORY_NAME = "agent/trajectory.json"
 RESULT_NAME = "result.json"
 SEAT_MANIFEST_SUFFIX = ".seat.json"
+#: Where ``arenabench flip`` leaves its verdict on when the trial started
+#: passing (:func:`arenabench.replay.replay_flip`). Defined here, next to the
+#: reader, for the same reason as :func:`seat_manifest_path`: the writer
+#: imports it, so the two can never disagree about the location.
+FLIP_NAME = "arena/flip.json"
 
 #: Per-trial paths written incrementally *while the agent runs*, probed —
 #: never read — for liveness. Stella appends its event stream per event;
@@ -258,6 +269,17 @@ class TrialMetrics:
     #: final word, when that word was an error. Empty when the agent worked
     #: on after its most recent error.
     late_error: str = ""
+    #: Seconds from the trial's first workspace snapshot to the earliest one
+    #: the verifier passed — when the reward actually appeared, not when the
+    #: trial ended. Only ``arenabench flip`` can know this, so it is ``None``
+    #: for the overwhelming majority of trials: capture is opt-in and the
+    #: replay is a separate, deliberate act.
+    flip_elapsed: float | None = None
+    #: Seconds the trial kept running after it was already passing — strictly
+    #: negative expected value, and the window in which the agent could still
+    #: destroy its own solution. ``None`` whenever :attr:`flip_elapsed` is:
+    #: without a located flip there is no "after".
+    wasted_elapsed: float | None = None
 
     @property
     def cache_hit_rate(self) -> float | None:
@@ -301,6 +323,8 @@ class TrialMetrics:
             "declared_complete": self.declared_complete,
             "usage_incomplete": self.usage_incomplete,
             "late_error": self.late_error,
+            "flip_elapsed": self.flip_elapsed,
+            "wasted_elapsed": self.wasted_elapsed,
         }
 
 
@@ -636,6 +660,18 @@ class MetricsReader:
             if started is not None:
                 metrics.clock_time = max(0.0, time.time() - started)
 
+        # The flip replay's verdict, when an operator ran one. Silently absent
+        # otherwise — capture is opt-in and the replay is a separate act, so
+        # almost no trial has this file, and its absence must cost nothing.
+        flip = _load_json(trial_dir / FLIP_NAME)
+        if flip is not None:
+            elapsed = flip.get("flip_elapsed")
+            wasted = flip.get("wasted_elapsed")
+            if isinstance(elapsed, (int, float)):
+                metrics.flip_elapsed = float(elapsed)
+            if isinstance(wasted, (int, float)):
+                metrics.wasted_elapsed = float(wasted)
+
         metrics.has_video = (trial_dir / "arena" / "recording.mp4").exists()
         return metrics
 
@@ -691,6 +727,18 @@ def aggregate(trials: Iterable[TrialMetrics]) -> dict[str, Any]:
         "tools": sum(t.tools for t in trials),
         "steps": sum(t.steps for t in trials),
         "cap_hits": sum(t.cap_hits for t in trials),
+        # Wasted time exists only for trials somebody replayed with
+        # `arenabench flip`. The sum rides with its own denominator because
+        # "510s wasted" means something different across 3 replayed trials
+        # than across 30 — a total over an unknown denominator is a lie.
+        # `None` (not 0.0) when no trial was replayed, so the dimension
+        # crowns nobody instead of crowning whoever has a zero.
+        "wasted_time": (
+            sum(t.wasted_elapsed for t in trials if t.wasted_elapsed is not None)
+            if any(t.wasted_elapsed is not None for t in trials)
+            else None
+        ),
+        "flip_trials": sum(1 for t in trials if t.wasted_elapsed is not None),
     }
 
 

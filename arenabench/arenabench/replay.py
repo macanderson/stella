@@ -42,6 +42,7 @@ from .snapshot import (
     read_task_image,
     summarise_flip,
 )
+from .telemetry import FLIP_NAME
 
 __all__ = ["ReplayError", "replay_flip"]
 
@@ -214,7 +215,7 @@ def replay_flip(
         unknown=sum(1 for v in seen.values() if v is None),
     )
     try:
-        (trial_dir / "arena" / "flip.json").write_text(
+        (trial_dir / FLIP_NAME).write_text(
             json.dumps(result.to_json(), indent=2) + "\n", encoding="utf-8"
         )
     except OSError as exc:  # pragma: no cover - reporting must not fail the run

@@ -1,0 +1,66 @@
+---
+title: stella daemon
+description: Supervise detached runs — list sessions, stream a run's output, stop one gracefully.
+---
+
+Supervise runs started with `stella run --detach`. A detached run lives in its
+own process group with its output captured to a log file, so **closing the
+terminal that launched it never kills the work** — reopen any terminal and
+`stella daemon attach` picks the run back up.
+
+This is process-level supervision: the run survives its terminal, not a crash
+mid-turn. Everything stays on this machine; no API key is needed by any
+`stella daemon` verb.
+
+## Synopsis
+
+```bash
+stella run --detach "refactor the parser"   # start a supervised run
+stella daemon list                          # every session, detached runs marked
+stella daemon attach <id|pid>               # stream its output (Ctrl-C detaches)
+stella daemon stop <id|pid>                 # SIGTERM, then SIGKILL after a grace period
+stella daemon logs <id|pid>                 # print the log file's path
+```
+
+## What it does
+
+`stella run --detach` re-executes the same run supervised: its own process
+group, stdin closed, stdout and stderr appended to
+`~/.stella/daemon-logs/<pid>.log`. The run registers itself in the machine-wide
+session registry exactly as any headless run does, so `stella daemon list` is
+the same registry the Command Deck's SESSIONS view reads — with a `[detached]`
+marker on runs that have a daemon log.
+
+Every verb addresses a run by its **session id** (`ses-…`, printed at detach
+time) or its **pid**; both appear in `list`.
+
+- **`attach`** streams the log from the beginning and follows it live until
+  the run ends. Ctrl-C interrupts only the attach — the run is in its own
+  process group and never sees it.
+- **`stop`** sends SIGTERM to the run's process group first, so the run winds
+  down at its own safe boundaries (a budget abort never lands mid-tool), and
+  escalates to SIGKILL only if the run is still alive after a ten-second
+  grace period. The session is recorded `Cancelled` — a stop somebody asked
+  for, never an error.
+- **`logs`** prints the log path for tooling that wants the file itself.
+
+## What a detached run cannot do
+
+Its stdin is `/dev/null`, so anything interactive — a scope-review prompt, a
+credential prompt — must be answerable headlessly or the run will fail rather
+than wait forever. A prompt piped on stdin is handed to the detached run as a
+process argument, which makes it visible in `ps` exactly as an inline
+`stella run "…"` prompt already is.
+
+## Examples
+
+```bash
+# Start long work, close the laptop lid, come back later.
+stella run --detach "migrate every call site to the new API"
+# → detached: pid 84210
+#   follow: stella daemon attach ses-1754… 
+
+stella daemon list
+stella daemon attach ses-1754…   # watch it work; Ctrl-C leaves it running
+stella daemon stop ses-1754…     # ask it to stop, cleanly
+```

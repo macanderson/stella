@@ -37,6 +37,7 @@ export function fmtDim(key: string, value: unknown): string {
     case "solve_rate":
       return fmtPct(value);
     case "clock_time":
+    case "wasted_time":
       return fmtClock(value);
     case "priced_cost":
     case "total_cost":
