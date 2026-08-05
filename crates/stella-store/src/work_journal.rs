@@ -36,9 +36,19 @@
 //! The store is named by [`crate::workspace_local`]'s id, so moving or renaming
 //! the workspace keeps its history. Keying on the canonical path — the obvious
 //! choice — would orphan everything on the first `mv`.
+//!
+//! # Retention
+//!
+//! Every session leaves a permanent ref namespace behind, and `gc` is required
+//! to keep whatever a ref reaches — so compaction alone makes this store
+//! smaller, never smaller *forever*. [`WorkJournal::prune`] is the deletion
+//! path, built to the same shape as `store.db`'s [`crate::prune`]: an age
+//! cutoff plus a ceiling, both opt-in, run when a command asks rather than on
+//! every exit.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::{Result, StoreError};
 
@@ -49,6 +59,14 @@ pub struct WorkJournal {
     work_tree: PathBuf,
     index_file: PathBuf,
     session: String,
+    /// The directory the whole store lives in — this workspace's git dir and
+    /// every session's index file. Kept because [`WorkJournal::prune`] reaches
+    /// *other* sessions' sidecar indexes, which are named from it.
+    store_root: PathBuf,
+    /// [`crate::workspace_local`]'s id for this workspace, the prefix every
+    /// file in the store is named after. Held rather than re-derived from
+    /// `git_dir`, which would mean parsing an id back out of a filename.
+    workspace_id: String,
 }
 
 /// Where a session's commits accumulate. Per-session so concurrent sessions
@@ -66,6 +84,81 @@ fn turn_ref(session: &str, turn: u32) -> String {
 /// collide with a real workspace path.
 fn journal_blob_path(name: &str) -> String {
     format!(".stella-journal/{name}")
+}
+
+/// Where one session's private git index lives, beside the store's git dir
+/// and named after the same workspace id.
+fn index_file_path(store_root: &Path, workspace_id: &str, session: &str) -> PathBuf {
+    store_root.join(format!("{workspace_id}.{session}.index"))
+}
+
+/// A prune that removes at least this many refs runs `gc` on its own, so a
+/// large reclaim hands the space back without a second command. Mirrors
+/// `prune.rs`'s `LARGE_PRUNE_ROWS`, scaled to refs.
+const LARGE_PRUNE_REFS: u64 = 100;
+
+/// Retention knobs for [`WorkJournal::prune`] — the work journal's answer to
+/// what [`crate::prune::StorePrunePolicy`] is for `store.db`, and deliberately
+/// the same shape: an age cutoff, a hard ceiling, both opt-in, and a policy
+/// carrying neither is a no-op that deletes nothing.
+///
+/// The unit of retention is the **session**, because that is what the ref
+/// namespace is keyed on: a session owns `refs/stella/<session>/head` plus one
+/// `refs/stella/<session>/turn/<n>` per turn, and dropping some of a session's
+/// turns would leave a truncated history that reads as a complete one.
+#[derive(Debug, Clone, Default)]
+pub struct JournalPrunePolicy {
+    /// Sessions whose last commit is at least this old are dropped; `None`
+    /// disables age pruning, and [`Duration::ZERO`] therefore reaches every
+    /// session the guard does not protect. Measured against the commit's own
+    /// committer time — the store has no clock of its own, and the tip commit
+    /// is the last moment the session demonstrably did anything.
+    pub older_than: Option<Duration>,
+    /// Hard ceiling on retained sessions; the oldest are evicted until at or
+    /// under it. `None` disables the ceiling.
+    pub max_sessions: Option<usize>,
+    /// Reclaim the space immediately with `gc --prune=now` (also happens
+    /// automatically for a large prune). Without it the deleted sessions'
+    /// objects are merely unreachable, and the next `gc` collects them on
+    /// git's own expiry schedule.
+    pub gc: bool,
+    /// Compute the report without deleting anything.
+    pub dry_run: bool,
+}
+
+impl JournalPrunePolicy {
+    /// Whether this policy would do nothing at all — the caller turns this
+    /// into a helpful error rather than a silent success.
+    pub fn is_noop(&self) -> bool {
+        self.older_than.is_none() && self.max_sessions.is_none()
+    }
+}
+
+/// What [`WorkJournal::prune`] did (or, under `dry_run`, would do).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct JournalPruneReport {
+    /// Sessions removed by the age cutoff.
+    pub aged_out: u64,
+    /// Sessions evicted to satisfy the ceiling.
+    pub ceiling_evicted: u64,
+    /// Refs deleted across both phases — one `head` per session plus its turn
+    /// marks. This is the number that matters: a session's objects stay
+    /// reachable, and so unreclaimable, until its last ref is gone.
+    pub refs_deleted: u64,
+    /// Sidecar index files removed, one per pruned session that had one.
+    pub indexes_removed: u64,
+    /// Sessions still above the ceiling afterwards, because the only ones left
+    /// to evict were protected (the running session is never pruned).
+    pub still_over_ceiling: u64,
+    /// Whether `gc` ran.
+    pub gc_ran: bool,
+}
+
+impl JournalPruneReport {
+    /// Total sessions removed across both phases.
+    pub fn total_sessions(&self) -> u64 {
+        self.aged_out + self.ceiling_evicted
+    }
 }
 
 /// The reserved blob holding the in-flight turn's resume point.
@@ -111,12 +204,13 @@ impl WorkJournal {
         let root = store_root.to_path_buf();
         std::fs::create_dir_all(&root)
             .map_err(|e| StoreError(format!("cannot create work-journal root: {e}")))?;
-        let git_dir = root.join(format!("{}.git", identity.id));
         let journal = Self {
-            git_dir,
+            git_dir: root.join(format!("{}.git", identity.id)),
             work_tree: identity.path,
-            index_file: root.join(format!("{}.{session}.index", identity.id)),
+            index_file: index_file_path(&root, &identity.id, session),
             session: session.to_string(),
+            store_root: root,
+            workspace_id: identity.id,
         };
         journal.ensure_repo()?;
         Ok(journal)
@@ -447,10 +541,201 @@ impl WorkJournal {
     /// the loose-object count against its own `gc.auto` threshold and returns
     /// immediately when it is under, so a short session pays one subprocess and
     /// a long-lived workspace gets packed without anyone having to decide when.
+    ///
+    /// Compaction is not retention and cannot stand in for it: `gc` reclaims
+    /// nothing that a ref still reaches, and every session this store has ever
+    /// held leaves refs behind. [`Self::prune`] is the path that removes them.
     pub fn compact(&self) -> Result<()> {
         self.git(&["gc", "--quiet", "--auto"])?;
         Ok(())
     }
+
+    /// Bound the store's growth per a [`JournalPrunePolicy`]. Runs, in order:
+    /// age cutoff → session ceiling, then (optionally) `gc --prune=now`.
+    ///
+    /// # Why deleting refs is the whole job
+    ///
+    /// Every commit this store holds is reachable from
+    /// `refs/stella/<session>/head` or one of that session's turn marks, and a
+    /// reachable object is one `gc` is *required* to keep. So the retention
+    /// path is not a compaction knob — it is `update-ref -d` over a session's
+    /// entire namespace, after which its objects are unreachable and any `gc`,
+    /// including the automatic one [`Self::compact`] runs, can collect them.
+    /// A session's refs go in one transactional batch: half a namespace left
+    /// standing keeps the whole history reachable, which would report a prune
+    /// that reclaimed nothing.
+    ///
+    /// **The running session is never pruned**, whatever the policy says —
+    /// this is the analogue of `store.db`'s un-replicated-telemetry guard, and
+    /// like it, a ceiling the guard cannot satisfy is reported as
+    /// [`JournalPruneReport::still_over_ceiling`] rather than forced. Nothing
+    /// here can tell whether *another* session is live, so that is what the
+    /// age cutoff is for; a policy that keeps a day of history cannot reach a
+    /// session that committed a minute ago.
+    ///
+    /// `dry_run` reports what would go without touching a ref.
+    pub fn prune(&self, policy: &JournalPrunePolicy) -> Result<JournalPruneReport> {
+        let mut report = JournalPruneReport::default();
+        if policy.is_noop() {
+            return Ok(report);
+        }
+        let mut retained = self.recorded_sessions()?;
+        let mut doomed: Vec<String> = Vec::new();
+
+        if let Some(older_than) = policy.older_than {
+            let cutoff = unix_now().saturating_sub(older_than.as_secs() as i64);
+            retained.retain(|(session, at)| {
+                if *at <= cutoff && *session != self.session {
+                    doomed.push(session.clone());
+                    return false;
+                }
+                true
+            });
+            report.aged_out = doomed.len() as u64;
+        }
+
+        if let Some(max_sessions) = policy.max_sessions
+            && retained.len() > max_sessions
+        {
+            let mut excess = retained.len() - max_sessions;
+            // `recorded_sessions` is oldest-first, so this evicts in the same
+            // order `store.db`'s ceiling does.
+            retained.retain(|(session, _)| {
+                if excess > 0 && *session != self.session {
+                    excess -= 1;
+                    doomed.push(session.clone());
+                    report.ceiling_evicted += 1;
+                    return false;
+                }
+                true
+            });
+            report.still_over_ceiling = retained.len().saturating_sub(max_sessions) as u64;
+        }
+
+        for session in &doomed {
+            let refs = self.session_refs(session)?;
+            report.refs_deleted += refs.len() as u64;
+            if policy.dry_run {
+                continue;
+            }
+            self.delete_refs(&refs)?;
+            let index = index_file_path(&self.store_root, &self.workspace_id, session);
+            if std::fs::remove_file(&index).is_ok() {
+                report.indexes_removed += 1;
+            }
+        }
+
+        if !policy.dry_run
+            && report.refs_deleted > 0
+            && (policy.gc || report.refs_deleted >= LARGE_PRUNE_REFS)
+        {
+            self.git(&["gc", "--quiet", "--prune=now"])?;
+            report.gc_ran = true;
+        }
+        Ok(report)
+    }
+
+    /// Every session this store holds history for, oldest tip first, paired
+    /// with that tip's committer time.
+    ///
+    /// Read off `head` rather than the turn marks: a turn mark points at an
+    /// ancestor, so the head is the session's most recent moment, and a
+    /// session whose refname does not have the shape this module writes is
+    /// skipped rather than guessed at.
+    fn recorded_sessions(&self) -> Result<Vec<(String, i64)>> {
+        let listing = self.git(&[
+            "for-each-ref",
+            "--format=%(committerdate:unix) %(refname)",
+            "refs/stella/",
+        ])?;
+        let mut sessions: Vec<(String, i64)> = Vec::new();
+        for line in listing.lines() {
+            let Some((at, refname)) = line.trim().split_once(' ') else {
+                continue;
+            };
+            let Some(session) = refname
+                .strip_prefix("refs/stella/")
+                .and_then(|rest| rest.strip_suffix("/head"))
+                .filter(|session| !session.is_empty() && !session.contains('/'))
+            else {
+                continue;
+            };
+            let Ok(at) = at.parse::<i64>() else {
+                continue;
+            };
+            sessions.push((session.to_string(), at));
+        }
+        sessions.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+        Ok(sessions)
+    }
+
+    /// Every ref in one session's namespace — its head and all of its turn
+    /// marks.
+    fn session_refs(&self, session: &str) -> Result<Vec<String>> {
+        let listing = self.git(&[
+            "for-each-ref",
+            "--format=%(refname)",
+            &format!("refs/stella/{session}/"),
+        ])?;
+        Ok(listing
+            .lines()
+            .map(|line| line.trim().to_string())
+            .filter(|line| !line.is_empty())
+            .collect())
+    }
+
+    /// Delete `refs` in one `update-ref --stdin` transaction: they either all
+    /// go or none do, so a failure can never leave a session's objects
+    /// reachable through a surviving turn mark.
+    fn delete_refs(&self, refs: &[String]) -> Result<()> {
+        if refs.is_empty() {
+            return Ok(());
+        }
+        let mut input = String::new();
+        for name in refs {
+            input.push_str("delete ");
+            input.push_str(name);
+            input.push('\n');
+        }
+        let mut cmd = Command::new("git");
+        cmd.arg("--git-dir")
+            .arg(&self.git_dir)
+            .args(["update-ref", "--stdin"])
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", &self.git_dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| StoreError(format!("cannot run git update-ref: {e}")))?;
+        {
+            use std::io::Write as _;
+            let stdin = child.stdin.as_mut().expect("piped");
+            stdin
+                .write_all(input.as_bytes())
+                .map_err(|e| StoreError(format!("cannot write ref deletions: {e}")))?;
+        }
+        let out = child
+            .wait_with_output()
+            .map_err(|e| StoreError(format!("git update-ref failed: {e}")))?;
+        if !out.status.success() {
+            return Err(StoreError(format!(
+                "git update-ref failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Wall-clock seconds since the epoch, the same unit `git` reports a
+/// committer time in.
+fn unix_now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 fn run(cmd: &mut Command) -> Result<String> {
@@ -689,6 +974,140 @@ mod tests {
 
         assert_eq!(journal.read_at_turn(2, "first.txt").unwrap(), "one\n");
         assert_eq!(journal.read_at_turn(2, "second.txt").unwrap(), "two\n");
+    }
+
+    /// Whether the store still holds `oid` at all — `cat-file -e` is the
+    /// cheapest way to ask, and the only assertion that distinguishes "the ref
+    /// is gone" from "the bytes are gone".
+    fn object_exists(journal: &WorkJournal, oid: &str) -> bool {
+        journal.git(&["cat-file", "-e", oid]).is_ok()
+    }
+
+    #[test]
+    fn pruning_a_session_unreaches_its_objects_so_gc_can_reclaim_them() {
+        // The whole point of retention here: deleting the ref is what makes
+        // the objects collectable. `gc` on its own is required to KEEP
+        // anything a ref reaches, so a store with no ref deletion grows
+        // forever no matter how often it compacts.
+        let (_guard, ws, store) = scratch();
+        std::fs::write(ws.join("a.txt"), "theirs\n").unwrap();
+        let theirs = WorkJournal::open_in(&store, &ws, "ses-old").unwrap();
+        let dropped = theirs.record(&["a.txt".into()], &[], "their work").unwrap();
+        theirs.mark_turn(1, &dropped).unwrap();
+
+        std::fs::write(ws.join("b.txt"), "mine\n").unwrap();
+        let mine = WorkJournal::open_in(&store, &ws, "ses-live").unwrap();
+        let kept = mine.record(&["b.txt".into()], &[], "my work").unwrap();
+
+        let report = mine
+            .prune(&JournalPrunePolicy {
+                older_than: Some(Duration::ZERO),
+                gc: true,
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert_eq!(report.aged_out, 1, "the running session is never pruned");
+        assert_eq!(report.total_sessions(), 1);
+        assert_eq!(report.refs_deleted, 2, "the head plus its one turn mark");
+        assert_eq!(report.indexes_removed, 1, "and the sidecar index with it");
+        assert!(report.gc_ran);
+
+        assert!(
+            theirs.session_tip().is_none(),
+            "the pruned session's head is gone"
+        );
+        assert!(
+            theirs.read_at_turn(1, "a.txt").is_err(),
+            "and so is its turn mark"
+        );
+        assert!(
+            !index_file_path(&mine.store_root, &mine.workspace_id, "ses-old").exists(),
+            "the pruned session's index file is gone"
+        );
+        assert_eq!(
+            mine.session_tip().as_deref(),
+            Some(kept.as_str()),
+            "the live session is untouched"
+        );
+
+        assert!(object_exists(&mine, &kept), "a retained commit stays");
+        assert!(
+            !object_exists(&mine, &dropped),
+            "the pruned commit's objects were actually reclaimed"
+        );
+    }
+
+    #[test]
+    fn the_session_ceiling_evicts_the_oldest_and_reports_what_the_guard_blocks() {
+        let (_guard, ws, store) = scratch();
+        std::fs::write(ws.join("a.txt"), "shared\n").unwrap();
+        // Same second for all three, so the tiebreak is the session name and
+        // the eviction order is deterministic: ses-1 (this handle's, and
+        // therefore protected), then ses-2, then ses-3.
+        for session in ["ses-1", "ses-2", "ses-3"] {
+            let journal = WorkJournal::open_in(&store, &ws, session).unwrap();
+            journal.record(&["a.txt".into()], &[], session).unwrap();
+        }
+        let mine = WorkJournal::open_in(&store, &ws, "ses-1").unwrap();
+
+        let report = mine
+            .prune(&JournalPrunePolicy {
+                max_sessions: Some(1),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(report.aged_out, 0, "no age window means no age phase");
+        assert_eq!(report.ceiling_evicted, 2);
+        assert_eq!(report.still_over_ceiling, 0);
+        assert_eq!(mine.recorded_sessions().unwrap().len(), 1);
+
+        // A ceiling the guard cannot satisfy is reported, never forced: the
+        // running session outranks any policy.
+        let report = mine
+            .prune(&JournalPrunePolicy {
+                max_sessions: Some(0),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(report.ceiling_evicted, 0);
+        assert_eq!(report.still_over_ceiling, 1);
+        assert!(mine.session_tip().is_some());
+    }
+
+    #[test]
+    fn an_empty_policy_is_a_no_op_and_a_dry_run_deletes_nothing() {
+        let (_guard, ws, store) = scratch();
+        std::fs::write(ws.join("a.txt"), "theirs\n").unwrap();
+        let theirs = WorkJournal::open_in(&store, &ws, "ses-old").unwrap();
+        let tip = theirs.record(&["a.txt".into()], &[], "their work").unwrap();
+        theirs.mark_turn(1, &tip).unwrap();
+        let mine = WorkJournal::open_in(&store, &ws, "ses-live").unwrap();
+        mine.record(&["a.txt".into()], &[], "my work").unwrap();
+
+        assert_eq!(
+            mine.prune(&JournalPrunePolicy::default()).unwrap(),
+            JournalPruneReport::default(),
+            "a policy with neither knob set deletes nothing"
+        );
+
+        let report = mine
+            .prune(&JournalPrunePolicy {
+                older_than: Some(Duration::ZERO),
+                gc: true,
+                dry_run: true,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(report.aged_out, 1, "a dry run reports what it would drop");
+        assert_eq!(report.refs_deleted, 2);
+        assert_eq!(report.indexes_removed, 0);
+        assert!(!report.gc_ran, "and never reclaims");
+        assert_eq!(
+            theirs.session_tip().as_deref(),
+            Some(tip.as_str()),
+            "the session it named is still there"
+        );
     }
 
     #[test]

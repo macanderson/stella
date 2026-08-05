@@ -14,6 +14,16 @@
 //! is refused from metadata before the load, so a pathologically large file
 //! costs a `stat`, not its own size in RAM.
 //!
+//! That footer has a second reader: the loop detector strips it before
+//! comparing two reads, because the per-session tally it carries differs on
+//! every read and would otherwise make a reread spiral structurally
+//! undetectable. Its shape is therefore not this module's to spell — the
+//! fragments come from [`stella_core::driver::loop_evidence`], which is where
+//! the stripping lives, and
+//! `the_footer_a_read_writes_is_the_one_loop_comparison_strips` below pins the
+//! two ends together. (Named, not linked: it is `#[cfg(test)]`, so rustdoc
+//! cannot resolve it.)
+//!
 //! The tool also keeps the session's read-state ledger ([`ReadLedger`]): every
 //! successful read records a per-file tally (reported in the tool output) and
 //! the sha256 of the bytes that were current at read time. The hash is the
@@ -32,6 +42,10 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::Value;
+use stella_core::driver::loop_evidence::{
+    READ_FOOTER_CLAUSE_SEP, READ_FOOTER_CLOSE, READ_FOOTER_OPEN, READ_FOOTER_TALLY_END,
+    READ_FOOTER_TALLY_MID,
+};
 use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 use crate::registry::Tool;
@@ -399,24 +413,25 @@ impl Tool for ReadFile {
                 let total = lines.len();
                 let _ = write!(
                     numbered,
-                    "\n({shown}/{total} lines shown · read {reads}× this session"
+                    "{READ_FOOTER_OPEN}{shown}/{total}{READ_FOOTER_TALLY_MID}{reads}\
+                     {READ_FOOTER_TALLY_END}"
                 );
                 if clipped_lines > 0 {
                     let _ = write!(
                         numbered,
-                        " · {clipped_lines} line(s) clipped at the {MAX_LINE_BYTES}-byte \
-                         per-line cap"
+                        "{READ_FOOTER_CLAUSE_SEP}{clipped_lines} line(s) clipped at the \
+                         {MAX_LINE_BYTES}-byte per-line cap"
                     );
                 }
                 if payload_capped {
                     let _ = write!(
                         numbered,
-                        " · stopped at the {} KB payload cap — re-read with offset/limit to \
-                         continue",
+                        "{READ_FOOTER_CLAUSE_SEP}stopped at the {} KB payload cap — re-read \
+                         with offset/limit to continue",
                         MAX_RENDER_BYTES / 1024
                     );
                 }
-                numbered.push(')');
+                numbered.push_str(READ_FOOTER_CLOSE);
                 // Every line, and every line whole. `shown == total` alone is
                 // not enough: a full-range read can still hand back clipped
                 // lines or stop at the payload cap, and in both cases there are
@@ -651,6 +666,66 @@ mod tests {
             content.ends_with("(2/2 lines shown · read 1× this session)"),
             "{content}"
         );
+    }
+
+    /// The footer's producer is here and its consumer is in `stella-core`, so
+    /// neither crate's own tests can catch the two drifting apart. This is the
+    /// seam that can: real tool output, run through the real normalization the
+    /// loop detector compares. Reword the footer on either side without the
+    /// other and this fails.
+    ///
+    /// Every shape has to normalize away, not just the bare tally. A read that
+    /// clipped a long line or stopped at the payload cap appends further
+    /// clauses after it, and a match that ended at the tally would leave the
+    /// per-session count in the compared bytes for exactly the large-file
+    /// rereads a stuck agent produces most.
+    #[tokio::test]
+    async fn the_footer_a_read_writes_is_the_one_loop_comparison_strips() {
+        use stella_core::driver::loop_evidence::comparable_output;
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("plain.rs"), "fn main() {}\nlet x = 1;\n").unwrap();
+        std::fs::write(dir.path().join("wide.min.js"), "x".repeat(4 * MAX_LINE_BYTES)).unwrap();
+        let dump = std::iter::repeat_n("y".repeat(4096), 800)
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(dir.path().join("dump.sql"), &dump).unwrap();
+
+        // One tool, so the ledger's tally really does move between the two
+        // reads of a file — which is the whole reason the footer is volatile.
+        let tool = ReadFile::default();
+        for name in ["plain.rs", "wide.min.js", "dump.sql"] {
+            let input = serde_json::json!({ "path": name });
+            let first = tool.execute(&input, dir.path()).await;
+            let second = tool.execute(&input, dir.path()).await;
+            let (ToolOutput::Ok { content: raw }, ToolOutput::Ok { content: raw_again }) =
+                (&first, &second)
+            else {
+                panic!("expected ok for {name}, got: {first:?} / {second:?}");
+            };
+            assert!(
+                raw.ends_with(READ_FOOTER_CLOSE) && raw.contains(READ_FOOTER_TALLY_END),
+                "{name} emitted no recognizable footer: {raw}"
+            );
+            assert_ne!(
+                raw, raw_again,
+                "{name}: the tally must move, or this proves nothing"
+            );
+
+            let normalized = comparable_output(&first);
+            assert_eq!(
+                normalized,
+                comparable_output(&second),
+                "{name}: two identical reads must compare equal once the footer is off"
+            );
+            let ToolOutput::Ok { content } = normalized.as_ref() else {
+                unreachable!("normalizing an Ok output cannot change its variant");
+            };
+            assert!(
+                !content.contains(READ_FOOTER_TALLY_END),
+                "{name} kept part of the footer: {content}"
+            );
+        }
     }
 
     /// A binary file used to come back as "stream did not contain valid
