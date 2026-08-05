@@ -127,7 +127,9 @@ impl ApprovalGate for SidecarApprovalGate {
         {
             return ScopeDecision::Abort;
         }
-        let _ = self.registry.set_status(&self.id, SessionStatus::NeedsInput);
+        let _ = self
+            .registry
+            .set_status(&self.id, SessionStatus::NeedsInput);
 
         let decision = loop {
             if (self.interrupted)() {
@@ -149,7 +151,9 @@ impl ApprovalGate for SidecarApprovalGate {
         };
 
         self.clear_files();
-        let _ = self.registry.set_status(&self.id, SessionStatus::InProgress);
+        let _ = self
+            .registry
+            .set_status(&self.id, SessionStatus::InProgress);
         decision
     }
 }

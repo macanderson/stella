@@ -67,9 +67,8 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Str
 
     let provider = build_provider(cfg)?;
     let registry_options = registry_options(cfg);
-    let tools_registry: std::sync::Arc<ToolRegistry> = std::sync::Arc::new(
-        new_tool_registry(cfg.workspace_root.clone(), registry_options).await,
-    );
+    let tools_registry: std::sync::Arc<ToolRegistry> =
+        std::sync::Arc::new(new_tool_registry(cfg.workspace_root.clone(), registry_options).await);
     populate_schema_index(&tools_registry, &cfg.workspace_root)?;
     crate::subagent::install_for_session(cfg, &tools_registry)?;
     let _active_rules =
@@ -136,8 +135,9 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Str
     let execution = begin_execution(&store, "resume", &record.title, cfg, Some(&record.id));
     let files_before = tools_registry.files_touched().len();
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
-    tools_registry.bridge_policy_plane(tx.clone());
-    tools_registry.attach_events(tx.clone());
+    let events = stella_core::EventSender::new(tx.clone());
+    tools_registry.bridge_policy_plane(events.clone());
+    tools_registry.attach_events(events.clone());
     let renderer = spawn_renderer(
         rx,
         OutputFormat::Text,
@@ -147,7 +147,11 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Str
     );
 
     let outcome = {
-        let customs = CustomToolSet::new(base_tools, custom_tools.to_vec(), cfg.workspace_root.clone());
+        let customs = CustomToolSet::new(
+            base_tools,
+            custom_tools.to_vec(),
+            cfg.workspace_root.clone(),
+        );
         let interactive = InteractiveToolSet::new(&customs, tx.clone(), default_ask_io(true))
             .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
         let permitted = PolicyToolSet::new(&interactive, session_tool_policy(cfg));
@@ -161,12 +165,16 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Str
         if let Some(hooks) = &cfg.hooks {
             engine = engine.with_hooks(hooks, &hook_runner);
         }
-        let events = stella_core::EventSender::new(tx.clone());
         drive_resumed_turn(&engine, state, &events).await
     };
 
+    // The canonical teardown (#960): detach the registry's sender clones,
+    // drop ours, and only then await the renderer — otherwise the channel
+    // never closes and a completed resume hangs.
     drop(tx);
-    let persistence_complete = renderer.await.unwrap_or_default().persistence_complete;
+    let persistence_complete = close_event_stream(&tools_registry, events, renderer)
+        .await
+        .persistence_complete;
     let files = tools_registry.files_touched();
     if let Some((store, id)) = &execution {
         let (label, cost) = match &outcome {
@@ -182,7 +190,9 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Str
             cost,
             persistence_complete,
         ) {
-            warn_store_write_failed("the audit record (files touched / memory citations / outcome)");
+            warn_store_write_failed(
+                "the audit record (files touched / memory citations / outcome)",
+            );
         }
     }
     tui::files_touched_panel(&files);
@@ -411,8 +421,7 @@ mod tests {
             ..EngineConfig::default()
         };
         let state = TurnState::from_checkpoint(killed_mid_turn(), &config);
-        let engine =
-            Engine::with_sleeper(&provider, &tools, config, &crate::runtime::TokioSleeper);
+        let engine = Engine::with_sleeper(&provider, &tools, config, &crate::runtime::TokioSleeper);
         let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
         let events = stella_core::EventSender::new(tx);
 
@@ -475,8 +484,7 @@ mod tests {
         let mut at_cap = killed_mid_turn();
         at_cap.step = config.max_steps;
         let state = TurnState::from_checkpoint(at_cap, &config);
-        let engine =
-            Engine::with_sleeper(&provider, &tools, config, &crate::runtime::TokioSleeper);
+        let engine = Engine::with_sleeper(&provider, &tools, config, &crate::runtime::TokioSleeper);
         let (tx, _rx) = mpsc::unbounded_channel::<AgentEvent>();
         let events = stella_core::EventSender::new(tx);
 

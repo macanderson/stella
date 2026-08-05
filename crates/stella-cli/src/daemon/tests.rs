@@ -80,7 +80,6 @@ fn a_terminal_run_is_supervised_and_everything_else_is_not() {
     assert!(!should_supervise(false, true, true));
 }
 
-
 /// The witness for the whole feature: a supervised run leaves the terminal's
 /// session, so the `SIGHUP` a closing window sends to that session cannot
 /// reach it.

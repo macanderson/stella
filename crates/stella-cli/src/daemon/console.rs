@@ -75,7 +75,7 @@ const MIN_CAP: u64 = 64 * 1024;
 const INDEX_COMPACT_BYTES: u64 = 1024 * 1024;
 
 /// Which console a byte belongs to. Serialized as `"o"`/`"e"` in the index.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub(crate) enum Stream {
     #[serde(rename = "o")]
     Stdout,
@@ -159,9 +159,20 @@ impl Geometry {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum IndexRecord {
-    Geometry { s: Stream, g: Geometry },
-    Write { s: Stream, c: u64, n: u64, t_ms: u64 },
-    Closed { s: Stream, total: u64 },
+    Geometry {
+        s: Stream,
+        g: Geometry,
+    },
+    Write {
+        s: Stream,
+        c: u64,
+        n: u64,
+        t_ms: u64,
+    },
+    Closed {
+        s: Stream,
+        total: u64,
+    },
 }
 
 /// The shared, mutex-guarded index the two pump threads append to.
@@ -196,14 +207,10 @@ impl Index {
     /// The last geometry a stream declared, and its cumulative high-water
     /// mark — what a re-attaching writer continues from.
     fn last_state(&self, stream: Stream) -> Option<(Geometry, u64)> {
-        let geometry = self
-            .entries
-            .iter()
-            .rev()
-            .find_map(|record| match record {
-                IndexRecord::Geometry { s, g } if *s == stream => Some(*g),
-                _ => None,
-            })?;
+        let geometry = self.entries.iter().rev().find_map(|record| match record {
+            IndexRecord::Geometry { s, g } if *s == stream => Some(*g),
+            _ => None,
+        })?;
         let total = self
             .entries
             .iter()
@@ -257,13 +264,16 @@ impl Index {
         let err_total = total_of(&self.entries, Stream::Stderr);
         self.entries.retain(|record| match record {
             IndexRecord::Write { s, c, n, .. } => {
-                let total = if *s == Stream::Stdout { out_total } else { err_total };
+                let total = if *s == Stream::Stdout {
+                    out_total
+                } else {
+                    err_total
+                };
                 // ANY surviving byte keeps the record: a span straddling the
                 // head boundary keeps its preserved prefix readable even
                 // after the ring reclaims its tail. Spans are contiguous, so
                 // first-or-last surviving covers every case.
-                geometry(*s)
-                    .is_none_or(|g| g.survives(*c, total) || g.survives(c + n - 1, total))
+                geometry(*s).is_none_or(|g| g.survives(*c, total) || g.survives(c + n - 1, total))
             }
             _ => true,
         });

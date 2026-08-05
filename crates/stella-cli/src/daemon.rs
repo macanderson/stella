@@ -895,7 +895,10 @@ fn mark_stopped(registry: &SessionRegistry, id: &str) {
 /// is a timestamp and a pid and nobody is going to type it. `None` picks the
 /// most recent supervised run, which is what "the one I just started" means
 /// nine times in ten.
-pub(crate) fn resolve(registry: &SessionRegistry, id: Option<&str>) -> Result<SessionRecord, String> {
+pub(crate) fn resolve(
+    registry: &SessionRegistry,
+    id: Option<&str>,
+) -> Result<SessionRecord, String> {
     let supervised_runs: Vec<SessionRecord> = registry
         .list()
         .into_iter()

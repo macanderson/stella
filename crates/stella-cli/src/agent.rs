@@ -416,7 +416,8 @@ async fn run_pipeline_one_shot(
         // witness promotion is a one-shot `--keep-witness` concern only.
         pipeline_config.keep_witness = keep_witness;
 
-        let approval_gate = crate::daemon::approval::OneShotApprovalGate::select(approval_capability);
+        let approval_gate =
+            crate::daemon::approval::OneShotApprovalGate::select(approval_capability);
         let no_recall = NoContextRecall;
         // The workspace memory doubles as the pipeline's recall port so the
         // split-context planner sees the same durable lessons the worker's
