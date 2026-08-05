@@ -144,7 +144,7 @@ index.
 
 `list_scripts` — `read_only: true`, input `{ dir?: string }` (default: all
 packages). Returns the human frame shown under **Example rendering**; the
-same function serves `stella scripts list`, and `--json` emits the schema
+same function serves `stella scripts list`, and `--format json` emits the schema
 below.
 
 `run_script` — `read_only: false`, input:
@@ -195,7 +195,7 @@ cheap. An empty index renders nothing — no section, no noise.
 
 ## Index JSON Schema
 
-Emitted by `stella scripts list --json`; `schema_version` bumps on any
+Emitted by `stella scripts list --format json`; `schema_version` bumps on any
 shape change (2 = the `check` verb joined the set).
 
 ```json

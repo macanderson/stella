@@ -8,8 +8,8 @@ Read back what your runs actually cost. `stella stats` summarizes cost, tokens, 
 ## Synopsis
 
 ```bash
-stella stats [--format <table|json|csv>] [--provider <id>]
-stella stats graph [--format <table|json|csv>] [--limit <N>]
+stella stats [--format <text|json|csv>] [--provider <id>]
+stella stats graph [--format <text|json|csv>] [--limit <N>]
                    [--workspace <DIR>]... [--scan <DIR>] [--scan-depth <N>]
                    [--save-baseline <FILE>] [--label <TEXT>]
                    [--baseline <FILE>] [--fail-on-regression]
@@ -23,8 +23,8 @@ stella stats prune [--older-than <AGE>] [--max-rows <N>] [--force] [--vacuum] [-
 ## Flags
 
 <CardGrid size="md">
-  <OptionCard name="--format <table|json|csv>" defaultValue="table">
-    Output format. `table` prints aligned columns with a `TOTAL` row; `json` and `csv`
+  <OptionCard name="--format <text|json|csv>" defaultValue="text">
+    Output format. `text` prints aligned columns with a `TOTAL` row (`table` still parses as an alias); `json` (under the versioned query envelope) and `csv`
     are for piping into other tools.
   </OptionCard>
   <OptionCard name="--provider <id>">
@@ -80,13 +80,13 @@ stella stats --provider anthropic --format csv > anthropic-spend.csv
 Emit JSON for a dashboard or a jq pipeline:
 
 ```bash
-stella stats --format json | jq '.[] | {model, total_cost_usd, resolve_rate}'
+stella stats --format json | jq '.rows[] | {model, total_cost_usd, resolve_rate}'
 ```
 
 Find providers/models with a suspiciously low cache hit rate:
 
 ```bash
-stella stats --format json | jq '.[] | select(.cache_hit_rate < 0.2) | {provider, model, cache_hit_rate, cache_expired_rewrites}'
+stella stats --format json | jq '.rows[] | select(.cache_hit_rate < 0.2) | {provider, model, cache_hit_rate, cache_expired_rewrites}'
 ```
 
 <Callout type="info">
@@ -140,7 +140,7 @@ adoption: graph_query 16 of 84 structural searches (graph_query + grep + glob) =
     How many recent `graph_query` answers to classify. The adoption counts always come
     from the full projection; only the resolve-rate window is bounded.
   </OptionCard>
-  <OptionCard name="--format <table|json|csv>" defaultValue="table">
+  <OptionCard name="--format <text|json|csv>" defaultValue="text">
     `json` emits the whole report as one object (per-op rows, the total, and the adoption
     counts); `csv` emits the per-op rows plus a `TOTAL` row.
   </OptionCard>

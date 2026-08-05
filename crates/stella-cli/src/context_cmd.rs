@@ -100,18 +100,18 @@ pub enum ContextCmd {
     /// What currently steers this workspace: every loaded record, its handle, its
     /// force, and whether it actually blocks anything.
     List {
-        /// Emit JSON.
-        #[arg(long)]
-        json: bool,
+        /// Output format: text, or json under the versioned query envelope
+        #[arg(long, value_enum, default_value = "text")]
+        format: crate::query_format::QueryFormat,
     },
 
     /// Re-run every claim's truth probe now and report the result, plus every
     /// validation finding and equal-precedence conflict. Exits non-zero when
     /// something must not steer.
     Validate {
-        /// Emit JSON.
-        #[arg(long)]
-        json: bool,
+        /// Output format: text, or json under the versioned query envelope
+        #[arg(long, value_enum, default_value = "text")]
+        format: crate::query_format::QueryFormat,
     },
 
     /// Why did that rule apply? Provenance, evidence, enforcement, and efficacy
@@ -185,8 +185,8 @@ pub fn run_context(cmd: &ContextCmd) -> Result<(), String> {
             reason,
             cooldown,
         } => review::run_ignore(&root, candidate, reason.clone(), cooldown.as_deref()),
-        ContextCmd::List { json } => validate::run_list(&root, *json),
-        ContextCmd::Validate { json } => validate::run_validate(&root, *json),
+        ContextCmd::List { format } => validate::run_list(&root, *format),
+        ContextCmd::Validate { format } => validate::run_validate(&root, *format),
         ContextCmd::Explain { rule } => explain::run_explain(&root, rule),
         ContextCmd::Propose { rule, commit } => propose::run_propose(&root, rule, *commit),
         ContextCmd::Promote {

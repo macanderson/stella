@@ -13,12 +13,13 @@
 //! deliberately explicit and human-invoked: eligibility is computed
 //! automatically, the write only happens here.
 
-use clap::{Subcommand, ValueEnum};
+use clap::Subcommand;
 use colored::Colorize;
 use serde::Serialize;
 use stella_context::{ContextStore, NodeKind, NodeRow};
 
 use crate::memory::anchors::{extract_path_anchors, workspace_file_names};
+use crate::query_format::{QueryFormat, Rows};
 use stella_core::rules::{self, PromoteStatus, RuleCandidate};
 use stella_store::{ContextSurface, MemoryCitationStats, PROMOTION_CITATIONS_REQUIRED, Store};
 
@@ -31,9 +32,10 @@ pub enum MemoryCmd {
     /// List memories ranked by citation count, with average usefulness,
     /// truthfulness rate, and rule-promotion eligibility
     List {
-        /// Output format: table (aligned) or json
-        #[arg(long, value_enum, default_value = "table")]
-        format: MemoryFormat,
+        /// Output format: text (aligned table), or json under the versioned
+        /// query envelope
+        #[arg(long, value_enum, default_value = "text")]
+        format: QueryFormat,
     },
     /// Promote an eligible memory to a project rule at
     /// `.stella/rules/<slug>.md`. Eligibility is strict: cited successfully
@@ -148,19 +150,11 @@ pub enum MemoryCmd {
     Index(crate::memory_index::IndexArgs),
 }
 
-/// Output format for `stella memory list`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum MemoryFormat {
-    /// Aligned human-readable columns (default).
-    Table,
-    /// Pretty-printed JSON array of per-memory rows.
-    Json,
-}
-
 /// One memory in the inspection view: the stable id citations tie to, the
 /// citation aggregates (zeroed when never cited), and the memory text.
-/// Field order is the `--format json` serialization contract — append new
-/// fields at the end, never reorder.
+/// One row of the `--format json` envelope's `rows` array; field order is a
+/// courtesy, not the contract (consumers read by key), so append new fields
+/// at the end rather than reordering.
 #[derive(Debug, Clone, Serialize)]
 struct MemoryListRow {
     id: String,
@@ -184,7 +178,7 @@ fn is_false(b: &bool) -> bool {
 }
 
 /// Entry point for `stella memory list`.
-pub fn run_memory_list(format: MemoryFormat) -> Result<(), String> {
+pub fn run_memory_list(format: QueryFormat) -> Result<(), String> {
     let workspace_root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
     let rows = list_rows(&workspace_root)?;
@@ -193,17 +187,21 @@ pub fn run_memory_list(format: MemoryFormat) -> Result<(), String> {
         let message = "No memories recorded yet — run `stella chat`/`stella run` and let the \
                        post-turn reflection populate .stella/private/context.db.";
         match format {
-            MemoryFormat::Table => println!("{message}"),
-            MemoryFormat::Json => {
+            QueryFormat::Text => println!("{message}"),
+            QueryFormat::Json => {
                 eprintln!("{message}");
-                println!("[]");
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&Rows::<MemoryListRow>::new(&[]))
+                        .map_err(|e| format!("serialize: {e}"))?
+                );
             }
         }
         return Ok(());
     }
 
     match format {
-        MemoryFormat::Table => {
+        QueryFormat::Text => {
             print!("{}", render_table(&rows));
             let eligible = rows.iter().filter(|r| r.eligible).count();
             if eligible > 0 {
@@ -225,9 +223,10 @@ pub fn run_memory_list(format: MemoryFormat) -> Result<(), String> {
                 );
             }
         }
-        MemoryFormat::Json => println!(
+        QueryFormat::Json => println!(
             "{}",
-            serde_json::to_string_pretty(&rows).map_err(|e| format!("serialize: {e}"))?
+            serde_json::to_string_pretty(&Rows::new(&rows))
+                .map_err(|e| format!("serialize: {e}"))?
         ),
     }
     Ok(())

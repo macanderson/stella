@@ -304,7 +304,7 @@ Start with the cache columns — they explain most surprises:
 
 ```bash
 stella stats --format json |
-  jq '.[] | select(.cache_hit_rate < 0.2) | {provider, model, cache_hit_rate, cache_expired_rewrites}'
+  jq '.rows[] | select(.cache_hit_rate < 0.2) | {provider, model, cache_hit_rate, cache_expired_rewrites}'
 ```
 
 Then find what changed between turns, which is the usual culprit behind a cold

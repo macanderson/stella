@@ -9,7 +9,7 @@ description: Report, replicate, and prune the cross-project telemetry hub at ~/.
 
 ```bash
 stella usage
-stella usage report [--format <table|json|csv>] [--org <id>]
+stella usage report [--format <text|json|csv>] [--org <id>]
 stella usage sync [--all]
 stella usage prune [--older-than <AGE>] [--max-rows <N>] [--gc-deleted] [--force] [--vacuum] [--dry-run]
 ```
@@ -53,8 +53,8 @@ The hub stores **metadata and rollups**, never source code or tool output. Promp
 Group every hub row by org, provider, and model, and total it. Rows are ordered by cost, descending.
 
 <CardGrid size="md">
-  <OptionCard name="--format <table|json|csv>" defaultValue="table">
-    `table` prints aligned columns with a `TOTAL` row; `json` and `csv` are for piping
+  <OptionCard name="--format <text|json|csv>" defaultValue="text">
+    `text` prints aligned columns with a `TOTAL` row (`table` still parses as an alias); `json` (under the versioned query envelope) and `csv` are for piping
     into other tools. The three text columns in CSV are RFC-4180 escaped, so an org id or
     a model slug containing a comma cannot shift the following columns.
   </OptionCard>
@@ -188,13 +188,13 @@ Your five most expensive models across every project — the rows already arrive
 cost:
 
 ```bash
-stella usage report --format json | jq '.[0:5] | .[] | {provider, model, cost_usd}'
+stella usage report --format json | jq '.rows[0:5] | .[] | {provider, model, cost_usd}'
 ```
 
 Find the models you use across the most projects:
 
 ```bash
-stella usage report --format json | jq '.[] | select(.projects > 2) | {provider, model, projects, cost_usd}'
+stella usage report --format json | jq '.rows[] | select(.projects > 2) | {provider, model, projects, cost_usd}'
 ```
 
 Heal every stale cursor after a stretch of interrupted sessions, then report:

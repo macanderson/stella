@@ -106,6 +106,58 @@ pub struct SessionRecord {
     /// already on. Absent in pre-v2 records.
     #[serde(default)]
     pub exploring: Vec<String>,
+    /// Present when the session runs under the CLI's supervisor rather than in
+    /// the foreground of a terminal (#1552). Absent for every ordinary
+    /// session, and for every record written before supervision existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supervisor: Option<SupervisorInfo>,
+}
+
+/// What a **supervised** session's sidecar directory holds, beyond the durable
+/// journal every session gets. The names live here, beside
+/// [`SessionRegistry::sidecar_dir`], because the sidecar's layout has one owner
+/// and a second copy of these strings in the CLI is a rename away from
+/// pointing at a file nothing writes.
+pub mod supervised {
+    /// The child's stdout, verbatim.
+    ///
+    /// Two files rather than one merged console: `stella run --output-format
+    /// json` is piped into `jq`, and a warning folded into stdout breaks the
+    /// parse on the *caller's* side, where it is unattributable. Attaching
+    /// re-splits them onto the same two streams they were written from.
+    pub const STDOUT_LOG: &str = "stdout.log";
+    /// The child's stderr, verbatim. See [`STDOUT_LOG`].
+    pub const STDERR_LOG: &str = "stderr.log";
+    /// The prompt, handed to the child as its stdin.
+    ///
+    /// Not an argv element: an argv-borne prompt is visible to every user on
+    /// the machine in `ps`, and a long one hits `ARG_MAX`. A file in a `0700`
+    /// directory is neither.
+    pub const STDIN: &str = "stdin";
+    /// The advisory lock the child holds open for its whole life.
+    ///
+    /// The kernel releases it when the process dies — crash, `SIGKILL` and
+    /// power loss included — so "is the lock free?" answers "is this run
+    /// over?" without trusting a pid. See [`super::SupervisorInfo::pgid`] for
+    /// why that distinction is load-bearing rather than fastidious.
+    pub const LOCK: &str = "supervisor.lock";
+}
+
+/// How to reach a supervised session's work: it is a detached child in its own
+/// process group, its console is two files in the sidecar, and it outlives the
+/// terminal that started it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SupervisorInfo {
+    /// The process **group** to signal, which is also the child's pid: the
+    /// child `setsid`s before `exec`, so it leads its own session.
+    ///
+    /// Stored as a group rather than derived from [`SessionRecord::pid`] at
+    /// use because the two are only equal while that invariant holds, and the
+    /// cost of being wrong is asymmetric — signalling a group that is not ours
+    /// takes down a stranger's processes. A reader that wants to signal must
+    /// still confirm the run is live through [`supervised::LOCK`]: a pid (and
+    /// a pgid) is recycled by the kernel, an open lock is not.
+    pub pgid: i32,
 }
 
 /// A `<id>.json` that is present but unusable — the state
@@ -160,6 +212,7 @@ impl SessionRecord {
             started_at_ms: now,
             updated_at_ms: now,
             exploring: Vec::new(),
+            supervisor: None,
         }
     }
 }
@@ -205,6 +258,19 @@ impl SessionRegistry {
     /// `.json` files, so the directory never shadows a record.
     pub fn sidecar_dir(&self, id: &str) -> PathBuf {
         self.dir.join(Self::safe_id(id))
+    }
+
+    /// Create `id`'s sidecar directory owner-only, and answer its path.
+    ///
+    /// Every other writer of a sidecar creates it on its first write. A
+    /// supervised session needs it to exist *before* the session does: its
+    /// console files and its liveness lock ([`supervised`]) are opened into
+    /// the directory as the child is spawned, and the mode those files inherit
+    /// is not the caller's to reinvent.
+    pub fn prepare_sidecar(&self, id: &str) -> Result<PathBuf> {
+        let dir = self.sidecar_dir(id);
+        crate::ensure_private_dir(&dir)?;
+        Ok(dir)
     }
 
     /// Write (create or replace) `record` atomically, stamping
@@ -844,5 +910,56 @@ mod tests {
         assert!(reg.get(&paused.id).is_some());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Invariant 4 for the field #1552 added: a supervised record survives the
+    /// write/read the registry actually performs, not just `to_string`.
+    #[test]
+    fn a_supervised_record_round_trips_through_the_registry() {
+        let (dir, reg) = temp_registry("supervised-roundtrip");
+
+        let mut rec = SessionRecord::new("/w/space", "space: long run");
+        rec.supervisor = Some(SupervisorInfo { pgid: 4242 });
+        reg.upsert(&rec).unwrap();
+
+        let read = reg.get(&rec.id).expect("record readable");
+        assert_eq!(read.supervisor, Some(SupervisorInfo { pgid: 4242 }));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Every record on every machine that ever ran stella predates the
+    /// `supervisor` field. They must keep parsing: `list` drops what it cannot
+    /// parse, so a required field here would make every existing session
+    /// vanish from the SESSIONS view on upgrade — and take `resume` with it.
+    #[test]
+    fn a_record_written_before_supervision_still_parses() {
+        let pre_1552 = r#"{
+            "id": "ses-1-2",
+            "pid": 2,
+            "workspace": "/w/old",
+            "title": "old: a session from before",
+            "summary": "",
+            "status": "complete",
+            "started_at_ms": 1,
+            "updated_at_ms": 1
+        }"#;
+
+        let record: SessionRecord = serde_json::from_str(pre_1552).expect("legacy record parses");
+        assert_eq!(record.supervisor, None);
+        assert!(record.exploring.is_empty());
+    }
+
+    /// The absent case must stay absent on disk too. `list` is read by the
+    /// deck on every refresh, and a `"supervisor": null` in every record is
+    /// bytes and confusion bought for nothing.
+    #[test]
+    fn an_unsupervised_record_writes_no_supervisor_key() {
+        let rec = SessionRecord::new("/w/space", "space: ordinary");
+        let json = serde_json::to_string(&rec).unwrap();
+        assert!(
+            !json.contains("supervisor"),
+            "unsupervised records must not carry the key: {json}"
+        );
     }
 }
