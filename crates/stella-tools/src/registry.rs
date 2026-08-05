@@ -124,6 +124,11 @@ pub struct ToolRegistry {
     /// mid-execution, so [`ToolRegistry::classify_file_op`] cannot see it in
     /// the input the way it sees `read_file`'s `path`.
     span_reads: crate::read_symbol::SpanReadLedger,
+    /// The read-state ledger shared with `read_file`/`read_symbol`/`edit_file`/
+    /// `write_file`, held here for one question only: did a read actually show
+    /// the model the whole file? [`Self::remember_observed`] may not act on a
+    /// read that did not — see the gate in [`Self::record_touch`].
+    read_ledger: Arc<crate::read::ReadLedger>,
     /// The workspace before-image for the turn in flight, when one was taken
     /// ([`ToolRegistry::begin_workspace_probe`]). `None` before the first
     /// bracket, and `None` for every host that never brackets one — which is
@@ -524,6 +529,7 @@ impl ToolRegistry {
             observed: std::sync::Mutex::new(HashMap::new()),
             work_journal: std::sync::RwLock::new(None),
             span_reads,
+            read_ledger,
             workspace_probe: std::sync::Mutex::new(None),
             authored: std::sync::Mutex::new(crate::authored_diff::AuthoredDiffLedger::default()),
             turn_bracketing: std::sync::atomic::AtomicBool::new(false),
@@ -1839,7 +1845,23 @@ impl ToolRegistry {
         // here can fail or return early: the ledger is telemetry, but this is
         // the guarantee, and a touch whose digest went unrecorded would leave
         // the NEXT write to this path unguarded.
-        self.remember_observed(&pending.path);
+        //
+        // A read only earns that belief if it showed the model the whole file.
+        // `remember_observed` hashes what is on DISK, so a ranged read — or one
+        // clipped by the per-line or payload cap — would otherwise record the
+        // agent as having seen bytes it was never shown, and a later write over
+        // that unseen tail would sail past `clobbered_paths` clean. `read_file`
+        // defaults to a 2000-line window and `read_symbol` reads a span, so the
+        // partial case is the common one, not the exotic one.
+        //
+        // Skipping is not the same as forgetting: an earlier complete read's
+        // digest stays, so the guard keeps whatever real belief it had rather
+        // than downgrading to "never looked".
+        let establishes_belief = !matches!(pending.op, FileOp::Read)
+            || self.read_ledger.saw_whole_file(&self.root, &pending.path);
+        if establishes_belief {
+            self.remember_observed(&pending.path);
+        }
         let reason = input
             .get("reason")
             .and_then(|v| v.as_str())

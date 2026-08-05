@@ -912,6 +912,92 @@ async fn one_agent_cannot_clobber_another_agents_edit() {
     );
 }
 
+/// A ranged read must not launder an unseen edit into belief.
+///
+/// The remembered digest is of the WHOLE file, but a read only shows what it
+/// was asked for. So a peek at a region someone else did not touch used to
+/// overwrite the belief with the current hash — telling the guard the agent
+/// had seen an edit that was never on its screen — and the next write sailed
+/// through clean. That is the silent case the guard exists to prevent: no
+/// refusal, no warning, and the other agent's work simply gone.
+///
+/// `read_file` windows at 2000 lines by default and `read_symbol` reads a
+/// span, so the partial read is the ordinary case, not an exotic one.
+#[tokio::test]
+async fn a_ranged_read_does_not_launder_an_unseen_edit_into_belief() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("shared.txt");
+    // Long enough that a limited read is genuinely a window onto part of it.
+    let original: String = (1..=40).map(|n| format!("line {n}\n")).collect();
+    std::fs::write(&file, &original).unwrap();
+
+    let agent_a = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+    let agent_b = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+
+    // A reads the whole file. This belief is honest — A has seen every line.
+    let read = agent_a
+        .execute(
+            "read_file",
+            &serde_json::json!({ "path": "shared.txt", "reason": "planning an edit" }),
+        )
+        .await;
+    assert!(!read.is_error(), "A reads the whole file: {read:?}");
+
+    // B rewrites the tail. B has never heard of A and takes no lock.
+    let mut edited: String = (1..=39).map(|n| format!("line {n}\n")).collect();
+    edited.push_str("line 40 — B's careful work\n");
+    let b_wrote = agent_b
+        .execute(
+            "write_file",
+            &serde_json::json!({
+                "path": "shared.txt",
+                "content": edited,
+                "reason": "B does its job",
+            }),
+        )
+        .await;
+    assert!(!b_wrote.is_error(), "B's write lands: {b_wrote:?}");
+
+    // A peeks at the HEAD of the file — a region B did not touch, so this read
+    // tells A nothing about B's edit. It must not count as having seen it.
+    let peek = agent_a
+        .execute(
+            "read_file",
+            &serde_json::json!({
+                "path": "shared.txt",
+                "offset": 1,
+                "limit": 3,
+                "reason": "checking the header",
+            }),
+        )
+        .await;
+    assert!(!peek.is_error(), "the ranged read succeeds: {peek:?}");
+
+    let a_wrote = agent_a
+        .execute(
+            "write_file",
+            &serde_json::json!({
+                "path": "shared.txt",
+                "content": original,
+                "reason": "A does its job",
+            }),
+        )
+        .await;
+    match &a_wrote {
+        ToolOutput::Error { message } => assert!(
+            message.contains("shared.txt"),
+            "the refusal names the file so the model can act on it: {message}"
+        ),
+        other => panic!("A's write over an edit it never saw must be refused, got {other:?}"),
+    }
+    assert!(
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("B's careful work"),
+        "B's work survives — a peek at another part of the file is not consent"
+    );
+}
+
 /// A session writing its own file repeatedly must never trip the guard — the
 /// digest it remembers after each write is the one it finds on the next.
 /// Without this, the guarantee would make ordinary single-agent work fail.
