@@ -196,11 +196,19 @@ impl TextSink {
             let _ = write!(line, " step={step}");
         }
         for (key, value) in record.fields.iter() {
-            // Through serde rather than a second renderer: a hand-written
-            // formatter for `FieldValue` would be a place for the two spellings
-            // of a record to disagree, and the JSON one is the authority.
-            let rendered = serde_json::to_string(value).unwrap_or_else(|_| String::from("\"?\""));
-            let _ = write!(line, " {key}={}", rendered.trim_matches('"'));
+            // For Reviewed values, render only the reviewed content, not the note.
+            // The note carries reviewer justification, not runtime information,
+            // and belongs in files/debug sinks, not user-facing output.
+            let rendered = if let crate::FieldValue::Reviewed(reviewed) = value {
+                reviewed.value().to_owned()
+            } else {
+                // Through serde rather than a second renderer: a hand-written
+                // formatter for `FieldValue` would be a place for the two spellings
+                // of a record to disagree, and the JSON one is the authority.
+                let s = serde_json::to_string(value).unwrap_or_else(|_| String::from("\"?\""));
+                s.trim_matches('"').to_owned()
+            };
+            let _ = write!(line, " {key}={rendered}");
         }
         line
     }
@@ -569,5 +577,48 @@ mod tests {
             let mode = std::fs::metadata(&path).expect("stat").permissions().mode() & 0o777;
             assert_eq!(mode, 0o600, "a log file is owner-only");
         }
+    }
+
+    /// Terminal rendering must not include provenance notes, only the reviewed
+    /// value. The note carries reviewer justification, not runtime information,
+    /// and belongs in the file/debug sink, not in user-facing run output.
+    #[test]
+    fn text_sink_omits_provenance_notes_from_reviewed_fields() {
+        use crate::Redacted;
+
+        let shared = Shared::default();
+        let sink = TextSink::to_writer(shared.clone());
+
+        let record = Record::at(
+            1_754_006_400_123,
+            Level::Warn,
+            "agent.step.usage_incomplete",
+            "stella::diag_bridge",
+            Cx::new(),
+            Fields::new()
+                .with(
+                    "provider",
+                    Redacted::reviewed(
+                        "openrouter".to_owned(),
+                        crate::note!("a provider/model identifier chosen by the operator"),
+                    ),
+                )
+                .with("reason", "timeout")
+                .with("duration_ms", 10002_u64),
+        );
+
+        sink.write(&record).expect("write");
+        let output = shared.text();
+
+        // The rendered line should contain the reviewed value and the signal fields
+        assert!(output.contains("provider=openrouter"), "{output}");
+        assert!(output.contains("reason=timeout"), "{output}");
+        assert!(output.contains("duration_ms=10002"), "{output}");
+
+        // But it must NOT contain the provenance note
+        assert!(
+            !output.contains("chosen by the operator"),
+            "the note text leaked into terminal output: {output}"
+        );
     }
 }

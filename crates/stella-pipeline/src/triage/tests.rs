@@ -326,7 +326,7 @@ fn action_request_matching_is_whole_word() {
 
 #[test]
 fn the_triage_prompt_does_not_frame_every_real_class_as_code() {
-    let p = triage_prompt("anything");
+    let p = triage_prompt("anything").rendered();
     // The regression: `lookup`/`single`/`multi` each said "code", leaving a
     // non-code task no bucket but `chat`.
     assert!(
@@ -491,7 +491,7 @@ fn the_ceiling_leaves_every_other_witness_decision_untouched() {
 
 #[test]
 fn triage_prompt_names_all_four_class_tokens_and_the_goal() {
-    let p = triage_prompt("Fix the failing test");
+    let p = triage_prompt("Fix the failing test").rendered();
     assert!(p.contains("chat"));
     assert!(p.contains("lookup"));
     assert!(p.contains("single"));
@@ -598,7 +598,7 @@ fn requirement_bullets_do_not_floor_to_multi_step() {
 
 #[test]
 fn the_verifier_nudge_prefers_review_when_unsure() {
-    let p = triage_prompt("anything");
+    let p = triage_prompt("anything").rendered();
     // The witness keeps its skip-nudge; the verifier must not share it —
     // the verifier is only ever consulted when no test settled the outcome,
     // which is exactly when review has value.

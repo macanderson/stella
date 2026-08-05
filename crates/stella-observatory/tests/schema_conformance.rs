@@ -56,6 +56,7 @@ const ROUTES: &[(&str, Option<&str>)] = &[
     ("/api/overview", Some("/runs")),
     ("/api/executions", Some("/0/id")),
     ("/api/execution?id=1", Some("/steps/0/step")),
+    ("/api/execution-journal?id=1", Some("/0/type")),
     ("/api/models", Some("/0/provider")),
     ("/api/tools", Some("/0/name")),
     ("/api/files", Some("/0/path")),

@@ -98,6 +98,7 @@ pub(crate) mod candidate_fanout;
 pub(crate) mod candidate_narration;
 pub(crate) mod candidate_steering;
 pub mod flip_halt;
+pub mod management_prompt;
 pub(crate) mod mcp_prefetch;
 pub mod oom;
 pub mod pipeline;
