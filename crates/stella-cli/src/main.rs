@@ -44,7 +44,6 @@ mod credential_handoff;
 mod credential_status;
 mod daemon;
 // #872, the first slice of #836: the redacted training-trajectory exporter.
-mod daemon;
 mod dataset_cmd;
 mod deck_mcp;
 mod diag_boot;
@@ -953,20 +952,23 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             no_pipeline,
             test_command,
             keep_witness,
-            detach,
             output_format,
         } => {
-            // Whether the prompt is already in this argv — decided BEFORE
-            // resolution, because a detached child cannot re-read stdin and
-            // must be handed the resolved text explicitly.
-            let prompt_was_inline = prompt.as_deref().is_some_and(|p| p != "-");
             let prompt = prompt_source::resolve(
                 prompt,
                 std::io::stdin().is_terminal(),
                 prompt_source::read_stdin_to_string,
             )?;
-            if detach {
-                return daemon::detach_run(&prompt, prompt_was_inline);
+            // Resolved first on purpose: the prompt may have come from this
+            // process's stdin, and a detached child has none to read.
+            if let Some(scope_review_lost) = supervision(&cli.globals, output_format, &cfg) {
+                return daemon::supervise_this_invocation(
+                    rt()?,
+                    &cfg.workspace_root,
+                    &supervised_title(&cfg, &prompt),
+                    prompt.as_bytes(),
+                    scope_review_lost,
+                );
             }
             signals::block_on_interruptible(
                 rt()?,
@@ -980,9 +982,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                     keep_witness,
                 ),
             )?;
-        }
-        Command::Daemon { cmd } => {
-            daemon::run(cmd)?;
         }
         Command::Arena {
             task_dir,
