@@ -112,6 +112,12 @@ use truncation::{ContinuationBudget, ContinuationPlan, TIME_EXHAUSTED_PARTIAL, p
 // reaches it through `Continuation::into_parts`.
 #[cfg(test)]
 use truncation::LENGTH_CONTINUATION_NUDGE;
+// Named only by the loop-evidence tests (`tests::audit_fixes` and siblings);
+// the production path reaches all three through `loop_escalation`.
+#[cfg(test)]
+use crate::loop_detect::{LoopVerdict, detect_loop};
+#[cfg(test)]
+use loop_evidence::recent_call_records;
 // The latch count itself is only ever named by the test that pins it against
 // the number of failures the summarizer is actually allowed (`audit_fixes`);
 // the production path reads it through `SummarizerHealth::is_latched`.
