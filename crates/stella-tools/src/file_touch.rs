@@ -309,6 +309,31 @@ pub fn normalize_workspace_path(root: &Path, raw: &str) -> Option<String> {
     Some(parts.join("/"))
 }
 
+/// True for a normalized workspace-relative path inside Stella's own
+/// per-workspace state directory (`.stella/`).
+///
+/// That directory is the agent's implementation detail, not workspace
+/// content: on one Terminal-Bench trial the code-graph SQLite database and
+/// its WAL/SHM sidecars produced 1,518 `file_change` events against 24 tool
+/// calls, each carrying a text diff of binary pages (#1537). The ledger,
+/// the `file.*` facts and the `FileChange` stream all describe *what the
+/// agent did to the workspace*, so `.stella/` churn is excluded at the one
+/// emission point rather than filtered per consumer.
+pub fn is_stella_state_path(path: &str) -> bool {
+    path == ".stella" || path.starts_with(".stella/")
+}
+
+/// Fallback audit-log reason when the model omitted the tool's optional
+/// `reason` field — the schema requires a non-empty human-readable string.
+pub fn default_reason(op: FileOp) -> &'static str {
+    match op {
+        FileOp::Create => "file created (no reason given)",
+        FileOp::Read => "file read (no reason given)",
+        FileOp::Update => "file updated (no reason given)",
+        FileOp::Delete => "file deleted (no reason given)",
+    }
+}
+
 /// Line count as the telemetry defines it: the number of `str::lines()`
 /// items, so `""` is 0 lines and a trailing newline does not add one.
 pub fn count_lines(content: &str) -> u64 {
@@ -743,6 +768,23 @@ mod tests {
                 violations.iter().any(|v| v.contains(expected)),
                 "expected a violation containing `{expected}`, got {violations:?}"
             );
+        }
+    }
+
+    /// The exclusion keys off the ledger's normalized form, so only the
+    /// workspace-root `.stella/` matches — a task file that merely *contains*
+    /// the substring must stay visible (#1537).
+    #[test]
+    fn stella_state_paths_are_recognized_and_lookalikes_are_not() {
+        for state in [
+            ".stella",
+            ".stella/settings.json",
+            ".stella/private/codegraph.db",
+        ] {
+            assert!(is_stella_state_path(state), "`{state}` is stella state");
+        }
+        for task in ["src/main.rs", ".stellar/x.rs", "docs/.stella-notes.md"] {
+            assert!(!is_stella_state_path(task), "`{task}` is workspace content");
         }
     }
 

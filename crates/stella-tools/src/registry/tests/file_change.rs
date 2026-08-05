@@ -522,3 +522,54 @@ async fn an_unattached_registry_still_counts_its_mutations() {
         "an unannounced change is still a change"
     );
 }
+
+/// The `.stella/` exclusion (#1537): on a single bench trial the code-graph
+/// database and its WAL/SHM sidecars produced 1,518 `file_change` events
+/// against 24 tool calls, burying the agent's real edits in binary page
+/// churn. Stella's own state directory is not workspace content, so a touch
+/// there must reach no ledger, no fact stream, no mutation count, and no
+/// `FileChange` — while a task file recorded in the same session behaves
+/// exactly as before.
+#[tokio::test]
+async fn stellas_own_state_directory_is_never_announced() {
+    let (_dir, reg, mut rx) = announcing_fixture();
+    let before = reg.mutations_recorded();
+
+    exec_ok(
+        &reg,
+        "write_file",
+        serde_json::json!({
+            "path": ".stella/private/codegraph.db",
+            "content": "binary pages\n",
+            "reason": "graph index update",
+        }),
+    )
+    .await;
+
+    assert!(
+        drain_changes(&mut rx).is_empty(),
+        "state-directory churn must not be announced"
+    );
+    assert_eq!(
+        reg.mutations_recorded(),
+        before,
+        "state-directory churn is not attempted work"
+    );
+    assert!(
+        reg.files_touched().is_empty(),
+        "state-directory churn must not reach the ledger"
+    );
+
+    exec_ok(
+        &reg,
+        "write_file",
+        serde_json::json!({ "path": "src/main.rs", "content": "fn main() {}\n" }),
+    )
+    .await;
+
+    let changes = drain_changes(&mut rx);
+    assert_eq!(changes.len(), 1, "task files still announce: {changes:?}");
+    assert_eq!(changes[0].0, "src/main.rs");
+    assert_eq!(reg.mutations_recorded() - before, 1);
+    assert_eq!(reg.files_touched().len(), 1);
+}
