@@ -330,6 +330,20 @@ pub(crate) enum DaemonCmd {
         /// Run to stop. A unique prefix of the id is enough.
         id: String,
     },
+
+    /// Resume a killed supervised run from its last step boundary
+    ///
+    /// A supervised run killed mid-turn — OOM, `kill -9`, a reboot — leaves a
+    /// resume point at its last completed step. Resume relaunches the same
+    /// session and continues that turn from the boundary: completed steps are
+    /// already in its transcript and are not re-run, so no tool effect is
+    /// applied twice. A run that ended cleanly discarded its resume point on
+    /// the way out, and resume says so instead of restarting it.
+    Resume {
+        /// Run to resume. A unique prefix of the id is enough. Omitted: the
+        /// most recently started supervised run.
+        id: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]

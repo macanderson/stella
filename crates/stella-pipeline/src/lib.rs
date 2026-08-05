@@ -123,7 +123,7 @@ pub use ports::{
     LintRecord, McpPrefetchPort, MutantOutcome, MutationProbe, NoContextRecall, NoFileTouches,
     NoRepoStatus, NoRepoStructure, PipelinePorts, ProviderResolver, Recall, RecalledFrame,
     RepoStatusPort, RepoStructurePort, ScopeDecision, StdioApprovalGate, TestInvocation,
-    TestRunner, WorkspaceError,
+    TestRunner, WorkspaceError, decision_from_line,
 };
 pub use reward::{
     DiscardReason, OutcomeWeights, RewardLabel, RewardPolicy, RewardShaping, Settlement,
