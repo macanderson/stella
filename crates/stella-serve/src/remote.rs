@@ -102,6 +102,19 @@ pub(crate) const DEFAULT_REVERSE_REQUEST_TIMEOUT: Duration = Duration::from_secs
 /// an allocator through every construction site.
 static PROVIDER_INSTANCES: AtomicU64 = AtomicU64::new(0);
 
+/// Mints [`RemoteToolExecutor`] instance tags, for the reason
+/// [`PROVIDER_INSTANCES`] exists (#1496).
+///
+/// The tool port needed this as badly as the provider port and was left
+/// without it. `run_session` builds two executors over the **same** [`Pending`]
+/// registry — the parent's and the sub-agent view's — and each starts its
+/// counter at zero, so both mint `tool-0`. [`Pending::register_tool`] inserts
+/// with `HashMap::insert`, which *replaces* on collision: the displaced
+/// oneshot sender drops, the first waiter wakes with "serve host dropped the
+/// tool call without answering", and the host's answer for `tool-0` resolves
+/// whichever request happened to register last.
+static TOOL_EXECUTOR_INSTANCES: AtomicU64 = AtomicU64::new(0);
+
 /// Hand one streamed fragment to the engine's observer, on the channel that
 /// keeps answer text and thinking apart. A `None` observer (the plain
 /// `complete_ref` path) drops the fragment: the aggregated result is
@@ -339,6 +352,12 @@ impl Provider for RemoteProvider {
 /// [`ServerFrame::ToolRequest`] and blocks on the host's answer.
 pub(crate) struct RemoteToolExecutor {
     schemas: Vec<ToolSchema>,
+    /// Disambiguates this executor's request ids from every other executor
+    /// sharing the turn's [`Pending`] registry (#1496) — the same guarantee,
+    /// for the same reason, that [`RemoteProvider::instance`] gives the
+    /// provider port. See [`TOOL_EXECUTOR_INSTANCES`] for the collision this
+    /// makes unrepresentable.
+    instance: u64,
     frames: crate::backlog::FrameSink,
     pending: Pending,
     counter: AtomicU64,
@@ -364,6 +383,7 @@ impl RemoteToolExecutor {
     ) -> Self {
         Self {
             schemas,
+            instance: TOOL_EXECUTOR_INSTANCES.fetch_add(1, Ordering::Relaxed),
             frames,
             pending,
             counter: AtomicU64::new(0),
@@ -503,7 +523,11 @@ impl RemoteToolExecutor {
     /// and the caller is what brackets this with the hook plane's
     /// `started`/outcome pair.
     async fn dispatch(&self, name: &str, input: &Value) -> ToolOutput {
-        let request_id = format!("tool-{}", self.counter.fetch_add(1, Ordering::Relaxed));
+        let request_id = format!(
+            "tool-{}-{}",
+            self.instance,
+            self.counter.fetch_add(1, Ordering::Relaxed)
+        );
         let (tx, rx) = oneshot::channel();
         // Same refused-registration handling as the provider port: a cancel
         // landing between the check above and this call must not park the step
@@ -901,6 +925,61 @@ mod tests {
             Some(bus),
         );
         (port, seen)
+    }
+
+    /// Two executors sharing one registry never mint the same request id.
+    ///
+    /// This is the sub-agent boundary (#1496). `run_session` builds a second
+    /// [`RemoteToolExecutor`] over a **clone** of the parent's [`Pending`] —
+    /// and cloning shares the map — so before the instance tag both counters
+    /// started at zero and both first calls were `tool-0`.
+    /// [`Pending::register_tool`] inserts with `HashMap::insert`, which
+    /// replaces rather than rejects, so the collision was silent in the worst
+    /// way: the parent's parked sender dropped, its waiter woke claiming the
+    /// host had abandoned the call, and the host's single answer for `tool-0`
+    /// resolved whichever request registered second.
+    ///
+    /// Both dispatches here time out — the point is the ids on the frames that
+    /// went out, not the answers that never come back.
+    #[tokio::test]
+    async fn two_executors_over_one_registry_mint_distinct_request_ids() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = crate::backlog::FrameSink::new(
+            tx,
+            crate::backlog::FrameBacklog::new(crate::backlog::DEFAULT_MAX_QUEUED_FRAMES),
+        );
+        let pending = Pending::new(
+            crate::observe::null_observer(),
+            TurnRef::new("turn-subagent-boundary"),
+        );
+        let timeout = std::time::Duration::from_millis(20);
+
+        // The parent's port and the sub-agent view's, over the same registry.
+        let parent =
+            RemoteToolExecutor::new(Vec::new(), sink.clone(), pending.clone(), timeout, None);
+        let child = RemoteToolExecutor::new(Vec::new(), sink, pending, timeout, None);
+
+        let _ = parent.dispatch("parent_tool", &serde_json::json!({})).await;
+        let _ = child.dispatch("child_tool", &serde_json::json!({})).await;
+
+        let mut ids = Vec::new();
+        while let Ok(frame) = rx.try_recv() {
+            if let ServerFrame::ToolRequest { request_id, .. } = frame {
+                ids.push(request_id);
+            }
+        }
+
+        assert_eq!(
+            ids.len(),
+            2,
+            "both dispatches emit a request frame: {ids:?}"
+        );
+        assert_ne!(
+            ids[0], ids[1],
+            "a sub-agent's tool call collided with its parent's in the shared \
+             Pending registry — one of these two answers would resolve the \
+             wrong request"
+        );
     }
 
     /// A `tool.call.started` with no outcome after it leaves an observer
