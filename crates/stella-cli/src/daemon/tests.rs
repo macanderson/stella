@@ -80,16 +80,6 @@ fn a_terminal_run_is_supervised_and_everything_else_is_not() {
     assert!(!should_supervise(false, true, true));
 }
 
-#[test]
-fn losing_scope_review_is_only_a_loss_when_there_was_something_to_lose() {
-    // A terminal run could have answered; supervised, it cannot. Say so.
-    assert!(loses_interactive_scope_review(true, false));
-    // The workspace opted out of the gate, so nothing was going to be asked.
-    assert!(!loses_interactive_scope_review(true, true));
-    // Already headless (piped, json): supervision took nothing away.
-    assert!(!loses_interactive_scope_review(false, false));
-    assert!(!loses_interactive_scope_review(false, true));
-}
 
 /// The witness for the whole feature: a supervised run leaves the terminal's
 /// session, so the `SIGHUP` a closing window sends to that session cannot

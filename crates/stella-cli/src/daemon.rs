@@ -77,6 +77,8 @@ use stella_store::{SessionRecord, SessionRegistry, SessionStatus, SupervisorInfo
 
 use crate::DaemonCmd;
 
+pub(crate) mod approval;
+
 /// Carries the supervised session's registry id into the child.
 ///
 /// Two jobs. It tells the child which record to stamp on its way out — the
@@ -164,7 +166,6 @@ pub(crate) fn supervise_this_invocation(
     workspace: &Path,
     title: &str,
     stdin: &[u8],
-    scope_review_lost: bool,
 ) -> Result<(), String> {
     let exe = std::env::current_exe()
         .map_err(|e| format!("cannot locate the stella binary to supervise: {e}"))?;
@@ -185,7 +186,7 @@ pub(crate) fn supervise_this_invocation(
         &args,
         stdin,
     )?;
-    run.announce(scope_review_lost);
+    run.announce();
 
     match rt.block_on(crate::signals::until_interrupted(run.follow())) {
         Ok(followed) => {
@@ -229,23 +230,6 @@ pub(crate) fn has_controlling_terminal() -> bool {
     {
         false
     }
-}
-
-/// Whether supervising this invocation takes away an interactive scope-review
-/// answer it would otherwise have had.
-///
-/// A supervised child's stdin is a file and its stdout is a log, so
-/// `approval_capability_for` resolves to `Unavailable` and the pipeline runs
-/// headless — where a plan that expands scope stops at a named error instead
-/// of asking. When the terminal invocation *would* have been able to answer,
-/// that is a capability the supervisor removed, and the run must say so before
-/// the first model call rather than after paying for several.
-///
-/// It warns rather than refuses: a headless run that never expands scope is
-/// the common case, and disabling the default surface to protect the uncommon
-/// one would cost every user something to save a few.
-pub(crate) fn loses_interactive_scope_review(had_stdio_approval: bool, bypass_on: bool) -> bool {
-    had_stdio_approval && !bypass_on
 }
 
 /// Launch `program args…` as a detached child and register it as a supervised
@@ -393,7 +377,12 @@ impl Supervised {
     /// It is printed rather than assumed because supervision changes two
     /// things a user can otherwise only discover the hard way: the run is no
     /// longer this terminal's to lose, and there is an id to come back to.
-    pub(crate) fn announce(&self, scope_review_lost: bool) {
+    ///
+    /// There is deliberately no scope-review caveat here any more: a
+    /// supervised plan that expands scope parks and asks through the sidecar
+    /// (#1585) — this terminal while it stays, any `stella daemon attach`
+    /// after it goes — so supervision no longer takes that answer away.
+    pub(crate) fn announce(&self) {
         eprintln!(
             "{} {} — survives this terminal closing",
             "▸ supervised".green().bold(),
@@ -403,14 +392,6 @@ impl Supervised {
             "  reattach with {}",
             format!("stella daemon attach {}", self.id).cyan()
         );
-        if scope_review_lost {
-            eprintln!(
-                "  {} a supervised run is headless: a plan that expands scope stops \
-                 instead of asking. Use --foreground to answer it here, or set \
-                 `headless_scope_bypass = \"on\"`.",
-                "note:".yellow()
-            );
-        }
     }
 
     /// Stream the child's console to this terminal until it exits, and answer
@@ -419,10 +400,17 @@ impl Supervised {
     /// stdout and stderr are replayed onto stdout and stderr, never merged:
     /// see [`stella_store::supervised::STDOUT_LOG`].
     pub(crate) async fn follow(&mut self) -> Result<Option<u8>, String> {
+        use std::io::IsTerminal;
         let mut out = Tail::open(&self.sidecar.join(supervised::STDOUT_LOG))?;
         let mut err = Tail::open(&self.sidecar.join(supervised::STDERR_LOG))?;
+        let interactive = std::io::stdin().is_terminal();
+        let mut approval_noted = false;
         loop {
             let moved = out.pump(&mut std::io::stdout())? + err.pump(&mut std::io::stderr())?;
+            // The launching terminal is the first surface a parked scope
+            // review reaches (#1585) — this is the exact capability the
+            // supervisor used to take away.
+            approval::forward_pending_approval(&self.sidecar, interactive, &mut approval_noted);
             match self
                 .child
                 .try_wait()
@@ -823,6 +811,9 @@ fn list(registry: &SessionRegistry) -> Result<(), String> {
         // status is what the child last wrote, and a child killed between two
         // writes never got to correct it.
         let status = match (live, run.status) {
+            // Yellow, not green: a parked run is waiting on the human reading
+            // this table (`stella daemon attach` answers it — #1585).
+            (true, SessionStatus::NeedsInput) => SessionStatus::NeedsInput.label().yellow(),
             (true, status) if status.is_live() => status.label().green(),
             (true, _) => "Running".green(),
             (false, status) if status.is_live() => "Crashed".red(),
@@ -834,10 +825,13 @@ fn list(registry: &SessionRegistry) -> Result<(), String> {
 }
 
 fn attach(registry: &SessionRegistry, id: Option<&str>) -> Result<(), String> {
+    use std::io::IsTerminal;
     let record = resolve(registry, id)?;
     let sidecar = registry.sidecar_dir(&record.id);
     let mut out = Tail::open(&sidecar.join(supervised::STDOUT_LOG))?;
     let mut err = Tail::open(&sidecar.join(supervised::STDERR_LOG))?;
+    let interactive = std::io::stdin().is_terminal();
+    let mut approval_noted = false;
     eprintln!(
         "{} {} — {}",
         "▸ attached".green().bold(),
@@ -846,6 +840,9 @@ fn attach(registry: &SessionRegistry, id: Option<&str>) -> Result<(), String> {
     );
     loop {
         let moved = out.pump(&mut std::io::stdout())? + err.pump(&mut std::io::stderr())?;
+        // Attaching to a parked run is the issue's headline path (#1585):
+        // `daemon list` says Needs Input, attach asks the question.
+        approval::forward_pending_approval(&sidecar, interactive, &mut approval_noted);
         if lock_is_held(&sidecar) != Some(true) {
             // Same ordering as `follow`: drain after observing the end, so the
             // last thing the run wrote is never the thing attach misses.

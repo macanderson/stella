@@ -302,41 +302,23 @@ pub(crate) use cli::{
     AuthCmd, Cli, Command, ConnectCmd, DaemonCmd, McpCmd, MigrateCmd, ModelsCmd, TelemetryCmd,
 };
 
-/// Whether this invocation is handed to the supervisor (#1552), and what
-/// supervising it costs.
+/// Whether this invocation is handed to the supervisor (#1552).
 ///
-/// `None` runs the work in this process, exactly as every release before
-/// supervision existed. `Some(scope_review_lost)` supervises, and the flag
-/// says whether that took away an interactive scope-review answer this
-/// invocation would otherwise have had — see
-/// [`daemon::loses_interactive_scope_review`].
+/// `false` runs the work in this process, exactly as every release before
+/// supervision existed. Supervision costs no capability any more: a plan
+/// that expands scope parks and asks through the session sidecar (#1585)
+/// instead of dying at the headless scope-review error, so there is no
+/// longer a downgrade to warn about here.
 ///
-/// Computed here, once, because it is the only place the parsed flags, the
-/// resolved config, and the real terminal handles are all in hand; each
-/// long-running arm then asks one question instead of re-deriving three.
-fn supervision(
-    globals: &cli::GlobalArgs,
-    output_format: OutputFormat,
-    cfg: &config::Config,
-) -> Option<bool> {
-    if !daemon::should_supervise(
+/// Computed here, once, because it is the only place the parsed flags and
+/// the real terminal handle are both in hand; each long-running arm then
+/// asks one question instead of re-deriving three.
+fn supervision(globals: &cli::GlobalArgs) -> bool {
+    daemon::should_supervise(
         globals.foreground,
         daemon::supervised_id().is_some(),
         daemon::has_controlling_terminal(),
-    ) {
-        return None;
-    }
-    let approval = agent::approval_capability_for(
-        matches!(output_format, OutputFormat::Text),
-        std::io::stdin().is_terminal(),
-        std::io::stdout().is_terminal(),
-    );
-    Some(daemon::loses_interactive_scope_review(
-        approval == agent::PipelineApprovalCapability::Stdio,
-        cfg.engine_settings
-            .as_ref()
-            .is_some_and(|engine| engine.headless_scope_bypass_on()),
-    ))
+    )
 }
 
 /// The registry title for a supervised run: the same
@@ -961,13 +943,12 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             )?;
             // Resolved first on purpose: the prompt may have come from this
             // process's stdin, and a detached child has none to read.
-            if let Some(scope_review_lost) = supervision(&cli.globals, output_format, &cfg) {
+            if supervision(&cli.globals) {
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
                     &supervised_title(&cfg, &prompt),
                     prompt.as_bytes(),
-                    scope_review_lost,
                 );
             }
             signals::block_on_interruptible(
@@ -1012,13 +993,12 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 std::io::stdin().is_terminal(),
                 prompt_source::read_stdin_to_string,
             )?;
-            if let Some(scope_review_lost) = supervision(&cli.globals, OutputFormat::Text, &cfg) {
+            if supervision(&cli.globals) {
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
                     &supervised_title(&cfg, &goal),
                     goal.as_bytes(),
-                    scope_review_lost,
                 );
             }
             signals::block_on_interruptible(
@@ -1036,7 +1016,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             task_timeout,
             output_format,
         } => {
-            if let Some(scope_review_lost) = supervision(&cli.globals, output_format, &cfg) {
+            if supervision(&cli.globals) {
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
@@ -1048,7 +1028,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                         },
                     ),
                     &[],
-                    scope_review_lost,
                 );
             }
             signals::block_on_interruptible(
@@ -1069,13 +1048,12 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         }
         Command::Monitor { target } => {
             let target = target.unwrap_or_else(|| "main".to_string());
-            if let Some(scope_review_lost) = supervision(&cli.globals, OutputFormat::Text, &cfg) {
+            if supervision(&cli.globals) {
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
                     &supervised_title(&cfg, &format!("monitor {target}")),
                     &[],
-                    scope_review_lost,
                 );
             }
             // Monitoring IS a goal: the verifier (who can call ci_status

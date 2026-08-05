@@ -395,6 +395,7 @@ async fn run_pipeline_one_shot(
         // squash-merge collapsed into a bare `is_text` check, with no test to
         // catch the regression.
         let approval_capability = approval_capability_for(
+            crate::daemon::supervised_id().is_some(),
             is_text,
             std::io::stdin().is_terminal(),
             std::io::stdout().is_terminal(),
@@ -415,6 +416,9 @@ async fn run_pipeline_one_shot(
         pipeline_config.keep_witness = keep_witness;
 
         let stdio_gate = StdioApprovalGate;
+        // Present exactly when this process is a supervised child; the
+        // capability above says Sidecar in exactly that case (#1585).
+        let sidecar_gate = crate::daemon::approval::SidecarApprovalGate::for_supervised_child();
         let no_recall = NoContextRecall;
         // The workspace memory doubles as the pipeline's recall port so the
         // split-context planner sees the same durable lessons the worker's
@@ -437,10 +441,10 @@ async fn run_pipeline_one_shot(
             lint: Some(&ws_ports.lint_probe),
             mutation: Some(&ws_ports.mutation_probe),
             coverage: Some(&ws_ports.coverage_probe),
-            approvals: if approval_capability == PipelineApprovalCapability::Stdio {
-                &stdio_gate
-            } else {
-                &HEADLESS_APPROVAL_GATE
+            approvals: match (approval_capability, &sidecar_gate) {
+                (PipelineApprovalCapability::Stdio, _) => &stdio_gate,
+                (PipelineApprovalCapability::Sidecar, Some(gate)) => gate,
+                _ => &HEADLESS_APPROVAL_GATE,
             },
             sleeper: &TokioSleeper,
             hooks: cfg

@@ -850,7 +850,13 @@ pub trait McpPrefetchPort: Send + Sync {
 /// A human's decision at the scope-review gate (L-E5). `Trim` carries the
 /// indices (into the proposed plan) the user chose to keep, so the pipeline
 /// executes a reduced plan rather than the whole thing.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Serde because a decision can cross a *process* boundary, not just a crate
+/// one: a supervised run's gate parks the proposal in its session sidecar and
+/// an attached terminal answers by writing a `ScopeDecision` back (#1585).
+/// Snake-case tags so the file reads like every other sidecar document.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ScopeDecision {
     /// Execute the plan as proposed.
     Approve,
@@ -1020,14 +1026,7 @@ impl ApprovalGate for StdioApprovalGate {
         if stdin.lock().read_line(&mut line).is_err() {
             return ScopeDecision::Abort;
         }
-        let answer = line.trim();
-        match answer.to_ascii_lowercase().as_str() {
-            "y" | "yes" => ScopeDecision::Approve,
-            "" | "n" | "no" => ScopeDecision::Abort,
-            _ => ScopeDecision::Revise {
-                note: answer.to_string(),
-            },
-        }
+        decision_from_line(&line)
     }
 
     /// `[y/N]` on stdin. Fail-closed on EOF and read errors, and on a bare
@@ -1046,6 +1045,25 @@ impl ApprovalGate for StdioApprovalGate {
             return false;
         }
         matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+    }
+}
+
+/// One typed line of a scope-review answer, as a [`ScopeDecision`].
+///
+/// The single reading every line-based approval surface shares:
+/// [`StdioApprovalGate`] here, and the supervised sidecar transport's attached
+/// terminal in `stella-cli` (#1585). `y`/`yes` approves, a bare `n`/`no`/empty
+/// line aborts, and any other text is the reviewer's revision note — shared so
+/// the same keystrokes can never mean different things depending on whether
+/// the run happened to be supervised.
+pub fn decision_from_line(line: &str) -> ScopeDecision {
+    let answer = line.trim();
+    match answer.to_ascii_lowercase().as_str() {
+        "y" | "yes" => ScopeDecision::Approve,
+        "" | "n" | "no" => ScopeDecision::Abort,
+        _ => ScopeDecision::Revise {
+            note: answer.to_string(),
+        },
     }
 }
 
@@ -1117,6 +1135,28 @@ pub struct PipelinePorts<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Invariant 4: a decision that crosses the supervised sidecar boundary
+    /// (#1585) must round-trip byte-for-byte — the writing terminal and the
+    /// parked run are different processes, possibly different builds.
+    #[test]
+    fn scope_decision_round_trips_through_json() {
+        let decisions = [
+            ScopeDecision::Approve,
+            ScopeDecision::Trim {
+                keep_steps: vec![0, 2],
+            },
+            ScopeDecision::Revise {
+                note: "smaller: docs only".to_string(),
+            },
+            ScopeDecision::Abort,
+        ];
+        for decision in decisions {
+            let json = serde_json::to_string(&decision).expect("encode");
+            let back: ScopeDecision = serde_json::from_str(&json).expect("decode");
+            assert_eq!(back, decision, "{json}");
+        }
+    }
 
     #[test]
     fn cmd_outcome_passed_is_exit_zero_only() {

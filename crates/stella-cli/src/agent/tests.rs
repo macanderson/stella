@@ -905,17 +905,17 @@ fn approval_capability_for_requires_both_terminal_handles_not_just_text_format()
     // `is_text` check would wrongly select Stdio here and try to read an
     // approval decision from a pipe no one is at the other end of.
     assert_eq!(
-        approval_capability_for(true, false, true),
+        approval_capability_for(false, true, false, true),
         PipelineApprovalCapability::Unavailable,
         "text format alone must not select Stdio when stdin isn't a real terminal"
     );
     assert_eq!(
-        approval_capability_for(true, true, false),
+        approval_capability_for(false, true, true, false),
         PipelineApprovalCapability::Unavailable,
         "text format alone must not select Stdio when stdout isn't a real terminal"
     );
     assert_eq!(
-        approval_capability_for(true, false, false),
+        approval_capability_for(false, true, false, false),
         PipelineApprovalCapability::Unavailable
     );
 }
@@ -925,13 +925,49 @@ fn approval_capability_for_json_is_always_unavailable() {
     // Output serialization must never grant execution authority, regardless
     // of the terminal state — JSON output has nowhere to render a prompt.
     assert_eq!(
-        approval_capability_for(false, true, true),
+        approval_capability_for(false, false, true, true),
         PipelineApprovalCapability::Unavailable
     );
     assert_eq!(
-        approval_capability_for(false, false, false),
+        approval_capability_for(false, false, false, false),
         PipelineApprovalCapability::Unavailable
     );
+}
+
+/// #1585: a supervised child gets the sidecar transport in EVERY output
+/// format — its stdin is a staged file and its stdout a console log, so the
+/// terminal tests can never pass, and before the sidecar existed that meant
+/// supervision silently removed the scope-review answer a terminal run had.
+/// The prompt rides the attached terminal's stderr, so a machine-format
+/// caller's stdout stays parseable — format does not gate this capability.
+#[test]
+fn approval_capability_for_a_supervised_child_is_sidecar_in_every_format() {
+    for is_text in [true, false] {
+        for stdin_tty in [true, false] {
+            for stdout_tty in [true, false] {
+                assert_eq!(
+                    approval_capability_for(true, is_text, stdin_tty, stdout_tty),
+                    PipelineApprovalCapability::Sidecar,
+                );
+            }
+        }
+    }
+    // And the wired config consults the gate rather than failing headless:
+    // this is the witness that a supervised plan which expands scope parks
+    // instead of dying at the named headless error.
+    let cfg = cfg_for("zai");
+    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
+    let config = pipeline_config_for_approval_capability(
+        &cfg,
+        PipelineApprovalCapability::Sidecar,
+        None,
+        &model_ref,
+    );
+    assert!(
+        !config.headless,
+        "a supervised run has an approver — the sidecar — and must consult it"
+    );
+    assert!(!config.headless_bypass_scope_review);
 }
 
 #[test]
@@ -939,7 +975,7 @@ fn approval_capability_for_full_tty_text_is_stdio() {
     // Only the genuine interactive case — text format, real stdin, real
     // stdout — selects Stdio.
     assert_eq!(
-        approval_capability_for(true, true, true),
+        approval_capability_for(false, true, true, true),
         PipelineApprovalCapability::Stdio
     );
 }
@@ -961,7 +997,7 @@ fn non_tty_text_run_wiring_stays_headless_and_json_run_wiring_never_bypasses_sco
     // A non-TTY text-format run (e.g. `stella run` piped in a script or CI)
     // must not select the interactive stdio approval gate, and its wired
     // config must stay headless.
-    let text_capability = approval_capability_for(true, false, false);
+    let text_capability = approval_capability_for(false, true, false, false);
     let text_config =
         pipeline_config_for_approval_capability(&cfg, text_capability, None, &model_ref);
     assert_ne!(
@@ -977,7 +1013,7 @@ fn non_tty_text_run_wiring_stays_headless_and_json_run_wiring_never_bypasses_sco
     // A JSON-format one-shot run is headless by construction — and even with
     // both terminal handles real, its wired config must never bypass scope
     // review; JSON has nowhere to render a prompt regardless of TTY state.
-    let json_capability = approval_capability_for(false, true, true);
+    let json_capability = approval_capability_for(false, false, true, true);
     let json_config =
         pipeline_config_for_approval_capability(&cfg, json_capability, None, &model_ref);
     assert!(json_config.headless);
