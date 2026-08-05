@@ -318,16 +318,27 @@ fn slash_live_hints(model: &WorkspaceModel, ui: &DeckUi) -> Vec<(String, String)
 /// layout never scrolls, matching the previous bar's behaviour at deck widths.
 fn render_tab_bar(tab: DeckTab, area: Rect, buf: &mut Buffer) {
     let labels: Vec<&str> = DeckTab::ALL.iter().map(|t| t.title()).collect();
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::rule());
+    // The corner wordmark: the brand riding the top border row, which holds
+    // nothing but rule characters — zero rows of chrome spent. Dropped on
+    // narrow frames rather than crowding the border.
+    if area.width >= 44 {
+        block = block.title_top(
+            Line::from(vec![
+                Span::styled("✦ ", Style::new().fg(theme::GOLD)),
+                Span::styled("stella ", theme::muted()),
+            ])
+            .right_aligned(),
+        );
+    }
     let tabs = Tabs::new(labels)
         .select(tab.index())
         .style(theme::muted())
         .highlight_style(theme::accent())
         .divider(symbols::line::VERTICAL)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(theme::rule()),
-        );
+        .block(block);
     Widget::render(tabs, area, buf);
 }
 

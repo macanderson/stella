@@ -555,10 +555,16 @@ fn splash_cues_replay_and_release_the_launch_mark() {
     ingest_inbound(&Inbound::Splash(SplashCue::Replay), &mut model, &mut ui);
     assert!(!ui.splash.is_done(), "replay re-holds the mark over init");
 
-    // …and Release hands straight back to the deck — a fast init must never
-    // be made to wait out a reveal (exact timing is `splash::tests`).
+    // …and Release bounds the mark's life: it plays the assemble out (the
+    // brand's one beat of screen time — exact timing is `splash::tests`)
+    // rather than cutting mid-build, while a key press still cuts at once.
     ingest_inbound(&Inbound::Splash(SplashCue::Release), &mut model, &mut ui);
-    assert!(ui.splash.is_done(), "release cuts straight to the deck");
+    assert!(
+        !ui.splash.is_done(),
+        "a release straight after replay finishes the assemble first"
+    );
+    ui.splash.skip();
+    assert!(ui.splash.is_done(), "any key still cuts immediately");
 }
 
 /// The invariant this whole path exists for: the transcript is the home for
