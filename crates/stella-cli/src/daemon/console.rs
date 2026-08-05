@@ -910,8 +910,13 @@ pub(crate) fn replay_logs(
     let mut ordered: Vec<(Stream, Vec<u8>)> = Vec::new();
     let mut marked: std::collections::HashMap<Stream, bool> = std::collections::HashMap::new();
     // Bytes written before the pump attached have no records; they are the
-    // front of the head region and replay first, per stream.
-    for (&stream, &(geometry, _total)) in &streams {
+    // front of the head region and replay first, per stream — in a fixed
+    // stream order, because they carry no chronology of their own and a
+    // HashMap walk would order them differently run to run.
+    for stream in [Stream::Stdout, Stream::Stderr] {
+        let Some(&(geometry, _total)) = streams.get(&stream) else {
+            continue;
+        };
         let Some(geometry) = geometry else { continue };
         let pre_pump = geometry.start.min(geometry.head);
         if pre_pump > 0 {
@@ -955,23 +960,25 @@ pub(crate) fn replay_logs(
         }
     }
 
-    // `-n`: each stream keeps its newest `lines` lines, order preserved.
-    for stream in [Stream::Stdout, Stream::Stderr] {
+    // `-n`: each stream keeps its newest `lines` lines — computed per stream
+    // up front, then emitted in ONE pass over `ordered`. A stream-major pass
+    // here would regroup the output into the two monolithic blocks this whole
+    // function exists to avoid: the index order IS the chronology, and it
+    // must survive all the way to the sinks.
+    let skip_for = |stream: Stream| {
         let total_lines: usize = ordered
             .iter()
             .filter(|(s, _)| *s == stream)
             .map(|(_, b)| bytecount_lines(b))
             .sum();
-        let mut skip = total_lines.saturating_sub(lines);
-        for (s, bytes) in &ordered {
-            if *s != stream {
-                continue;
-            }
-            let sink: &mut dyn Write = match stream {
-                Stream::Stdout => out,
-                Stream::Stderr => err,
-            };
-            emit_after_skipping(bytes, &mut skip, sink);
+        total_lines.saturating_sub(lines)
+    };
+    let mut out_skip = skip_for(Stream::Stdout);
+    let mut err_skip = skip_for(Stream::Stderr);
+    for (s, bytes) in &ordered {
+        match s {
+            Stream::Stdout => emit_after_skipping(bytes, &mut out_skip, &mut *out),
+            Stream::Stderr => emit_after_skipping(bytes, &mut err_skip, &mut *err),
         }
     }
     let _ = out.flush();
