@@ -878,24 +878,9 @@ impl ToolRegistry {
         // abort because it is a recoverable, model-actionable condition — the
         // message names the file and the fix, and re-reading is one cheap step
         // where a failed turn would be a whole one.
-        let clobbered = self.clobbered_paths(&pending_ops);
-        if !clobbered.is_empty() {
+        if let Some(refusal) = self.refused_mutation(name, &pending_ops) {
             return ToolOutput::Error {
-                message: format!(
-                    "refusing to write: {} changed since you last read {}. Another \
-                     agent (or a person) edited it after you looked, and this call \
-                     would overwrite their work with a plan formed against content \
-                     that no longer exists.\n\nRe-read {} and redo the change \
-                     against what is there now. Your edit is not lost — nothing was \
-                     written.",
-                    clobbered.join(", "),
-                    if clobbered.len() == 1 { "it" } else { "them" },
-                    if clobbered.len() == 1 {
-                        "the file"
-                    } else {
-                        "those files"
-                    },
-                ),
+                message: refusal.message(),
             };
         }
         // Updates need the pre-write content for the line diff; deletes need
@@ -1746,6 +1731,11 @@ impl ToolRegistry {
     ///
     /// An unreadable file is not a conflict either — the tool's own error
     /// path reports that far better than a staleness message would.
+    ///
+    /// This is the digest half of the guard only. A file whose bytes match but
+    /// which the agent has only ever glimpsed is the *other* half, decided by
+    /// coverage rather than by hashing — see
+    /// [`Self::refused_mutation`], which calls this one first.
     fn clobbered_paths(&self, pending: &[PendingTouch]) -> Vec<String> {
         let observed = self.observed.lock().unwrap_or_else(|p| p.into_inner());
         pending

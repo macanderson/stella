@@ -15,11 +15,11 @@ zero score looks like a result. Values come from the process environment, a
 `.env` the operator pastes into the UI, or CI's own secret store.
 
 **Terminology.** The file says ``verifier`` for the role that checks the
-worker's output, because that is what it is called here. Stella's own engine
-config spells the same role ``judge`` (``pipeline_judge_model``), and that wire
-key is untouched — the translation happens at the boundary, in
-:func:`_roles_to_engine`, so the vocabulary can differ from the schema without
-either one bending.
+worker's output, and so does Stella's own engine config
+(``pipeline_verifier_model``) — the two vocabularies agree, so there is nothing
+to translate. Templates written against the older spelling ``judge`` still
+load: :data:`_ROLE_ALIASES` accepts it on the way in. Nothing writes it back
+out, so a match dumped today spells the role the way :data:`.ROLES` does.
 
 Round trip::
 
@@ -46,11 +46,11 @@ __all__ = [
     "required_env",
 ]
 
-#: The role name this project uses in files and UI, mapped to the key Stella's
-#: engine config actually reads. Keeping the mapping in one place is what lets
-#: the vocabulary change without touching the wire contract.
-_ROLE_ALIASES = {"verifier": "judge"}
-_ROLE_ALIASES_INVERSE = {v: k for k, v in _ROLE_ALIASES.items()}
+#: Retired role spellings accepted on read, mapped to their member of
+#: :data:`.ROLES`. Read-only on purpose: a committed template that predates the
+#: rename must keep loading, but nothing should keep *emitting* a name the rest
+#: of the codebase no longer uses, or the old spelling never dies.
+_ROLE_ALIASES = {"judge": "verifier"}
 
 
 class MatchTemplateError(ValueError):
@@ -71,7 +71,7 @@ class MatchTemplateError(ValueError):
 
 
 def _role_key(name: str) -> str:
-    """Translate a file/UI role name to the engine's own key."""
+    """Normalise a role name from a template to its member of :data:`.ROLES`."""
     return _ROLE_ALIASES.get(name.strip().lower(), name.strip().lower())
 
 
@@ -196,12 +196,20 @@ def required_env(
     list. This is what turns "no secrets in the file" from a restriction into
     a contract: the template still says exactly what must be supplied.
     """
-    from .agents import credential_env_for
+    from .agents import credential_env_for, resolve_agent
 
     out: dict[str, list[str]] = {}
     for contestant in spec.contestants:
         explicit = (declared or {}).get(contestant.id)
-        out[contestant.id] = list(explicit or credential_env_for(contestant.engine.api))
+        if explicit:
+            out[contestant.id] = list(explicit)
+            continue
+        candidates = list(credential_env_for(contestant.engine.api))
+        agent_spec = resolve_agent(contestant.agent)
+        for name in agent_spec.token_env + agent_spec.alt_credential_env:
+            if name not in candidates:
+                candidates.append(name)
+        out[contestant.id] = candidates
     return out
 
 
@@ -255,7 +263,7 @@ def match_to_toml_dict(spec: MatchSpec) -> dict[str, Any]:
                         if k not in ("roles", "qualified_model") and v is not None
                     },
                     "roles": {
-                        _ROLE_ALIASES_INVERSE.get(name, name): {
+                        name: {
                             k: v for k, v in role.to_json().items() if v is not None
                         }
                         for name, role in c.engine.roles.items()
@@ -336,8 +344,7 @@ def dump_match(spec: MatchSpec, env_by_seat: dict[str, list[str]] | None = None)
             out.append("")
             out.append("  # Per-role overrides. Blank inherits the engine baseline above.")
             for name, role in engine.roles.items():
-                label = _ROLE_ALIASES_INVERSE.get(name, name)
-                out.append(f"    [contestant.engine.roles.{label}]")
+                out.append(f"    [contestant.engine.roles.{name}]")
                 for key, value in role.to_json().items():
                     if value is not None:
                         out.append("    " + _line(key, value))

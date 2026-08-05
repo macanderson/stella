@@ -1,0 +1,112 @@
+# arenabench match template
+#
+#   arenabench run matches/fable5-claude-code-vs-stella.toml --progress
+#
+# Claude Code vs Stella, both working on Fable 5 — the variable under test is
+# the agent architecture, not the model. The seats authenticate differently on
+# purpose:
+#
+#   Claude Code  Anthropic first-party, on a Claude subscription
+#                (CLAUDE_CODE_OAUTH_TOKEN — no metered spend at all)
+#   Stella       OpenRouter, metered (OPENROUTER_API_KEY), because Stella's
+#                pipeline makes ~3 calls per step and a subscription's shared
+#                requests-per-minute cap would measure the quota, not the agent
+#                (see the z-ai/glm-5.2 catalog row for the measured version of
+#                this argument).
+#
+# The upstream-routing confound (same model, different provider) documented in
+# openrouter-headhead-routing-confound does not apply in this shape: OpenRouter
+# serves Anthropic models from Anthropic, and the arms are not meant to share a
+# provider here — one is deliberately on the subscription.
+#
+# This file carries no secrets. Export CLAUDE_CODE_OAUTH_TOKEN and
+# OPENROUTER_API_KEY before running.
+
+[match]
+name = "fable 5: claude code vs stella"
+dataset = "terminal-bench-2.1"
+# Six small-to-medium tasks: one easy, five medium (task.toml difficulty is
+# the dataset's own tag; make-mips-interpreter from the GLM panel is tagged
+# hard and is deliberately NOT here). Four carry over from the measured GLM
+# panel so the effort observations below still have evidence behind them.
+tasks = [
+  "fix-git",
+  "regex-log",
+  "sqlite-with-gcov",
+  "large-scale-text-editing",
+  "openssl-selfsigned-cert",
+  "nginx-request-logging",
+]
+attempts = 1
+# 1 per contestant = 2 task containers (~2GB each) + 2 recorders. Colima is
+# 10GB; raising this to 2 needs ~13GB and will thrash.
+concurrency = 1
+record_video = true
+# Claude Code installs itself per trial: apt-get + the claude.ai installer
+# measured at 229s in an emulated amd64 container, against a 360s default.
+setup_timeout_multiplier = 4.0
+
+[[contestant]]
+id = "claude-code"
+name = "Claude Code (Fable 5)"
+agent = "claude-code"
+color = "#FF6B9D"
+
+  [contestant.engine]
+  api = "anthropic"
+  model = "claude-fable-5"
+  reasoning = true
+  # `medium` on both arms, so effort is not a confound. Measured 2026-08-03 on
+  # four of these six tasks: xhigh timed out on every step budget it was
+  # given; medium finished. Fable is slower per token than the model that
+  # produced that measurement — the wrong direction to raise effort in.
+  effort = "medium"
+  # No base_url: this seat runs at Anthropic itself, authenticated by the
+  # subscription token. No budget_usd either — Claude Code does not honour a
+  # spend cap, and on the plan the marginal spend is zero; the plan's own
+  # quota is the ceiling.
+
+  [contestant.env]
+  # Names only — never values. Any ONE of these credentials the seat;
+  # the subscription token is the intended one for this match.
+  required = ["CLAUDE_CODE_OAUTH_TOKEN"]
+
+[[contestant]]
+id = "stella"
+name = "Stella (Fable 5 pipeline)"
+agent = "stella"
+color = "#FFB000"
+
+  [contestant.engine]
+  api = "openrouter"
+  model = "anthropic/claude-fable-5"
+  reasoning = true
+  effort = "medium"
+  # Fable's real output ceiling, same number on both routes (#1211 §6.2).
+  max_tokens = 128000
+  # Per-trial cap (becomes STELLA_BUDGET). Six trials x $16 = $96, inside the
+  # $100-per-agent envelope for the run, with per-trial isolation: one
+  # runaway trial cannot eat the other five tasks' budget.
+  budget_usd = 16.0
+
+  # Per-role overrides — the "full pipeline" arm. Every model named here is in
+  # Stella's OFFLINE seed catalog under `openrouter`: the adapter pins
+  # STELLA_CATALOG_AUTO_REFRESH=0, and a role pinned to an unlisted slug
+  # refuses the run rather than silently falling back.
+    [contestant.engine.roles.verifier]
+    # Cross-lab on purpose: verification independent of the model family being
+    # verified, and of the worker in particular. Kimi K3 is the strongest
+    # non-Anthropic model in the seed catalog on this provider.
+    model = "moonshotai/kimi-k3"
+    effort = "high"
+    reasoning = "on"
+
+    [contestant.engine.roles.triage]
+    # Seeded in the catalog for exactly this seat: cheapest fast family
+    # member, classification only, never touches the workspace.
+    model = "anthropic/claude-haiku-4.5"
+    effort = "low"
+    reasoning = "off"
+
+  [contestant.env]
+  required = ["OPENROUTER_API_KEY"]

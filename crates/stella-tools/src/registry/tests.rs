@@ -808,6 +808,7 @@ mod chain;
 mod fence;
 mod file_change;
 mod gate_batch;
+mod partial_belief;
 #[cfg(unix)]
 mod private_state;
 mod schema_gate;
@@ -1257,9 +1258,15 @@ async fn a_span_read_cannot_launder_a_whole_file_belief() {
 ///
 /// Above `read_file`'s 2000-line ceiling a whole-file read is unreachable, so
 /// a rule of "only a whole-file read may refresh" would refuse the write, then
-/// refuse every re-read's attempt to clear it — the agent could never write
+/// refuse every re-read's attempt to clear it — the agent could never touch
 /// the file again. A partial belief is refreshable by the partial reads that
 /// are all such a file can offer.
+///
+/// What the re-read buys back is the right to *edit*, not the right to replace
+/// the file whole: clearing the drift says the bytes have not moved, and says
+/// nothing about the 100 lines past the window that A still has not read. Those
+/// are two separate refusals and this pins both — see the `partial_belief`
+/// submodule for the coverage rule itself.
 #[tokio::test]
 async fn a_windowed_re_read_recovers_a_file_too_big_to_read_whole() {
     let root = tempfile::tempdir().unwrap();
@@ -1296,7 +1303,7 @@ async fn a_windowed_re_read_recovers_a_file_too_big_to_read_whole() {
         .await;
     assert!(refused.is_error(), "the file is guarded: {refused:?}");
 
-    // The recovery the refusal asks for — the only one this file can give.
+    // The recovery the refusal asks for — the only read this file can give.
     let reread = agent_a
         .execute(
             "read_file",
@@ -1305,15 +1312,46 @@ async fn a_windowed_re_read_recovers_a_file_too_big_to_read_whole() {
         .await;
     assert!(!reread.is_error(), "A re-reads: {reread:?}");
 
-    let retry = agent_a
+    // The drift is now cleared: the bytes A holds are the bytes on disk. What
+    // the re-read could NOT buy back is the tail — a 2,100-line file windows at
+    // 2,000, so 100 lines have still never been on A's screen and replacing the
+    // file whole would take them out. Same call, different refusal.
+    let still_refused = agent_a
         .execute(
             "write_file",
             &serde_json::json!({ "path": "huge.txt", "content": "A's work, rebased\n", "reason": "redone" }),
         )
         .await;
+    match &still_refused {
+        ToolOutput::Error { message } => assert!(
+            message.contains("only seen part of"),
+            "B's edit is no longer the objection; the unseen tail is: {message}"
+        ),
+        other => panic!("a whole-file rewrite over an unread tail must be refused, got {other:?}"),
+    }
+
+    // And this is the step that proves it is not a deadlock: a targeted edit
+    // lands, because it leaves every line A never read exactly where it was.
+    let retry = agent_a
+        .execute(
+            "edit_file",
+            &serde_json::json!({
+                "path": "huge.txt",
+                "old_string": "line 7\n",
+                "new_string": "line 7 — rebased on B\n",
+                "reason": "redone against a region A actually read",
+            }),
+        )
+        .await;
     assert!(
         !retry.is_error(),
-        "after re-reading, A writes normally — no deadlock: {retry:?}"
+        "after re-reading, A edits normally — no deadlock: {retry:?}"
+    );
+    assert!(
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("B's careful work"),
+        "and B's work is still there — A changed only what it looked at"
     );
 }
 
