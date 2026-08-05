@@ -263,6 +263,8 @@ pub(crate) async fn drive_resumed_turn(
             engine.discard_checkpoint();
             return TurnOutcome::Aborted {
                 reason,
+                // The engine's own cap exit calls this a policy stop, and a
+                // resumed turn must exit exactly as a fresh one would.
                 kind: stella_core::step::AbortKind::DeliberateStop,
                 cost_usd: state.total_cost_usd(),
             };
@@ -444,25 +446,29 @@ mod tests {
         };
         assert_eq!(text, "resumed answer");
 
-        let requests = provider.requests.lock().unwrap();
-        assert_eq!(
-            requests.len(),
-            1,
-            "resuming after step 0 makes exactly one further call — re-running \
-             the completed step would make two"
-        );
-        let transcript = &requests[0];
-        assert!(
-            transcript.iter().any(|m| m
-                .tool_results
-                .iter()
-                .any(|r| matches!(&r.output, ToolOutput::Ok { content } if content == "the file's contents"))),
-            "the completed step's tool result must arrive as transcript, not be re-executed"
-        );
-        assert_eq!(
-            transcript[0].content, "the original system prompt",
-            "mid-turn fidelity: the checkpointed system prompt rides verbatim"
-        );
+        // Scoped so the guard drops before the `rx.recv().await` below — a
+        // std MutexGuard must never be held across an await point.
+        {
+            let requests = provider.requests.lock().unwrap();
+            assert_eq!(
+                requests.len(),
+                1,
+                "resuming after step 0 makes exactly one further call — re-running \
+                 the completed step would make two"
+            );
+            let transcript = &requests[0];
+            assert!(
+                transcript.iter().any(|m| m
+                    .tool_results
+                    .iter()
+                    .any(|r| matches!(&r.output, ToolOutput::Ok { content } if content == "the file's contents"))),
+                "the completed step's tool result must arrive as transcript, not be re-executed"
+            );
+            assert_eq!(
+                transcript[0].content, "the original system prompt",
+                "mid-turn fidelity: the checkpointed system prompt rides verbatim"
+            );
+        }
 
         // A finished resume discards its checkpoint — leaving it would offer
         // to resume a turn everyone watched complete.

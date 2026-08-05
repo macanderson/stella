@@ -903,7 +903,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 // provider resolution, its cwd already pinned to the
                 // record's workspace by the parent's launch.
                 DaemonCmd::Resume { id } if !cli.globals.foreground => {
-                    return daemon::resume_supervised(rt()?, id.as_deref());
+                    return daemon::resume_supervised(rt()?, id.as_deref())
+                        .map_err(failure::CliFailure::from);
                 }
                 DaemonCmd::Resume { .. } => {}
                 _ => return daemon::run(cmd).map_err(failure::CliFailure::from),
@@ -998,7 +999,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     rt()?,
                     &cfg.workspace_root,
                     &supervised_title(&cfg, &prompt),
-                    prompt.as_bytes(),                ).map_err(failure::CliFailure::from);
+                    prompt.as_bytes(),
+                ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
                 rt()?,
@@ -1047,7 +1049,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     rt()?,
                     &cfg.workspace_root,
                     &supervised_title(&cfg, &goal),
-                    goal.as_bytes(),                ).map_err(failure::CliFailure::from);
+                    goal.as_bytes(),
+                ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
                 rt()?,
@@ -1075,7 +1078,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                             None => format!("fleet ({} tasks)", tasks.len()),
                         },
                     ),
-                    &[],                ).map_err(failure::CliFailure::from);
+                    &[],
+                ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
                 rt()?,
@@ -1100,7 +1104,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     rt()?,
                     &cfg.workspace_root,
                     &supervised_title(&cfg, &format!("monitor {target}")),
-                    &[],                ).map_err(failure::CliFailure::from);
+                    &[],
+                ).map_err(failure::CliFailure::from);
             }
             // Monitoring IS a goal: the verifier (who can call ci_status
             // itself) ends the loop only on a fully green latest run.
