@@ -214,6 +214,25 @@
       "status": "implemented",
       "title": "Design: Session-Shared Exploration Maps"
     },
+    "file-budget": {
+      "path": "docs/spec/file-budget.md",
+      "sections": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12
+      ],
+      "status": "proposed",
+      "title": "File budget, module boundaries, and test placement \u2014 a limit an agent cannot quietly exceed"
+    },
     "filesystem-layout": {
       "path": "docs/spec/filesystem-layout.md",
       "status": "living",
