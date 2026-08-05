@@ -17,7 +17,8 @@
 #   scripts/fullauto.sh aperture --list    # which audit lens is open
 #   scripts/fullauto.sh watch              # low-duty mode: wake only on a change
 #   scripts/fullauto.sh metrics            # the loop's evidence about ITSELF
-#   scripts/fullauto.sh bench loop|h2h     # the comparator arm
+#   scripts/fullauto.sh bench loop|h2h     # the comparator arm (h2h: --rig,
+#                                          #   --rig --dry-run = free rehearsal)
 #   scripts/fullauto.sh upgrade            # ship: brew from the tap, drop the shadow
 #   scripts/fullauto.sh install-commands   # put /fullauto in ~/.claude/commands
 #
@@ -1604,17 +1605,37 @@ bench_loop() {
 # both seats. Native x86_64 Linux only; the rig path starts the instance, runs,
 # pulls results back, and ALWAYS stops it again — an idle rig is $45.56/day and
 # has already tripped a $1,000 budget alert once.
+#
+# `--rig --dry-run` is the free rehearsal (#1550): every check the paid path
+# depends on, then the exact commands it would run, with the instance never
+# started. The paid path shipped unexecuted precisely because rehearsing it
+# cost real money; the dry run is what keeps it verifiable from now on.
 bench_h2h() {
-  local use_rig=0 out
+  ensure_state
+  local use_rig=0 dry_run=0 out
   out="$STATE_DIR/h2h-$(date -u +%Y%m%dT%H%M%SZ).json"
   while [ $# -gt 0 ]; do
     case "$1" in
-      --rig) use_rig=1; shift ;;
-      --out) out="${2:?}"; shift 2 ;;
+      --rig)     use_rig=1; shift ;;
+      --dry-run) dry_run=1; shift ;;
+      --out)     out="${2:?}"; shift 2 ;;
       *) die "bench h2h: unknown flag $1" ;;
     esac
   done
-  [ -f "$REPO_ROOT/$H2H_MATCH" ] || die "match template not found: $H2H_MATCH"
+  if [ "$dry_run" -eq 1 ] && [ "$use_rig" -eq 0 ]; then
+    die "--dry-run rehearses the rig path; add --rig"
+  fi
+
+  # An absolute FULLAUTO_MATCH points at an exported match file outside the
+  # repo (the harbor `--path` shape); a relative one is resolved against the
+  # repo root. The rig's own copy is always addressed relative to ~/stella,
+  # so an absolute local override only affects the local arm.
+  local match_path="$H2H_MATCH"
+  case "$match_path" in
+    /*) : ;;
+    *) match_path="$REPO_ROOT/$match_path" ;;
+  esac
+  [ -f "$match_path" ] || die "match template not found: $match_path"
 
   if [ "$use_rig" -eq 0 ]; then
     have arenabench || die "arenabench not installed (pip install arenabench)"
@@ -1625,26 +1646,95 @@ bench_h2h() {
     fi
     say "running $H2H_MATCH locally"
     DOCKER_DEFAULT_PLATFORM=linux/amd64 \
-      arenabench run "$REPO_ROOT/$H2H_MATCH" --progress --results "$out" \
+      arenabench run "$match_path" --progress --results "$out" \
       || die "arenabench run failed"
     pass "results -> $out"
     echo "$out"
     return 0
   fi
 
-  have aws || die "bench h2h --rig needs the aws CLI"
-  [ -f "$RIG_KEY" ] || die "rig key not found at $RIG_KEY (place it there, or point FULLAUTO_RIG_KEY at it)"
-  chmod 600 "$RIG_KEY" 2>/dev/null || true
+  # --- Free checks: everything the paid path depends on, at zero cost -------
+  # Also the whole of --dry-run. Nothing below this line starts the instance
+  # until the "starting rig" banner, so these can run any number of times
+  # between real runs without spending a cent.
+  say "rig preflight (free — the instance stays down)"
+  if have aws; then pass "aws CLI present"; else fail "aws CLI missing (brew install awscli)"; fi
+  if have ssh && have scp; then pass "ssh + scp present"; else fail "ssh/scp missing"; fi
+  if [ -f "$RIG_KEY" ]; then
+    chmod 600 "$RIG_KEY" 2>/dev/null || true
+    pass "rig key: $RIG_KEY"
+  else
+    fail "rig key not found at $RIG_KEY (place it there, or point FULLAUTO_RIG_KEY at it)"
+  fi
+  local state
+  if have aws; then
+    if aws sts get-caller-identity --output text >/dev/null 2>&1; then
+      pass "aws credentials valid"
+    else
+      fail "aws credentials invalid or expired (aws sts get-caller-identity failed)"
+    fi
+    state="$(aws ec2 describe-instances --region "$RIG_REGION" --instance-ids "$RIG_INSTANCE" \
+             --query 'Reservations[0].Instances[0].State.Name' --output text 2>/dev/null || echo unknown)"
+    case "$state" in
+      stopped) pass "rig $RIG_INSTANCE exists and is stopped (not billing)" ;;
+      running) warn "rig $RIG_INSTANCE is ALREADY RUNNING — billing \$1.90/hr right now" ;;
+      unknown) fail "rig $RIG_INSTANCE not found in $RIG_REGION (or describe-instances failed)" ;;
+      *)       warn "rig $RIG_INSTANCE is $state" ;;
+    esac
+  fi
+
+  if [ "$dry_run" -eq 1 ]; then
+    say "dry run — the paid path would execute, in order:"
+    # shellcheck disable=SC2016  # deliberate: `$ip` is literal in the printed
+    # plan — the paid path resolves it at run time, not this echo.
+    {
+      printf '  aws ec2 start-instances --region %s --instance-ids %s\n' "$RIG_REGION" "$RIG_INSTANCE"
+      printf '  aws ec2 wait instance-running --region %s --instance-ids %s\n' "$RIG_REGION" "$RIG_INSTANCE"
+      printf '  ip=$(aws ec2 describe-instances ... PublicIpAddress)  # read fresh: it changes across stop/start\n'
+      printf '  ssh -i %s %s@$ip true                                 # polled, up to %s x 10s\n' \
+        "$RIG_KEY" "$RIG_USER" "${FULLAUTO_RIG_SSH_TRIES:-20}"
+      printf '  ssh ... "test -d ~/stella && command -v arenabench && docker info"  # remote preflight, BEFORE the match\n'
+      printf '  ssh ... "cd ~/stella && DOCKER_DEFAULT_PLATFORM=linux/amd64 arenabench run %s --results /tmp/h2h.json"\n' \
+        "$H2H_MATCH"
+      printf '  scp ... %s@$ip:/tmp/h2h.json %s\n' "$RIG_USER" "$out"
+      printf '  aws ec2 stop-instances --region %s --instance-ids %s  # EXIT/INT/TERM trap: fires on every path out\n' \
+        "$RIG_REGION" "$RIG_INSTANCE"
+    }
+    echo
+    if [ "$HARD_FAIL" -ne 0 ]; then
+      printf '%sNOT READY%s — fix the failed checks above before paying for a run.\n' "$C_R" "$C_0"
+      return 1
+    fi
+    printf '%sREADY%s — every check green; drop --dry-run to run it for real.\n' "$C_G" "$C_0"
+    return 0
+  fi
+
+  [ "$HARD_FAIL" -eq 0 ] || die "rig preflight failed — nothing was started"
 
   # The rig bills by the hour. Stopping it is the only step in this script that
-  # MUST happen even on failure, interrupt, or a dropped SSH connection.
+  # MUST happen even on failure, interrupt, or a dropped SSH connection — and a
+  # stop REQUEST is not a stopped instance, so the trap also confirms the
+  # transition and prints the manual command when it cannot.
   # shellcheck disable=SC2317  # invoked via trap, not fallthrough
   stop_rig() {
-    say "stopping rig $RIG_INSTANCE (idle costs \$45.56/day)"
-    if aws ec2 stop-instances --region "$RIG_REGION" --instance-ids "$RIG_INSTANCE" >/dev/null 2>&1; then
-      pass "stop requested"
+    # Run once: an INT would otherwise fire this handler, then EXIT would fire
+    # it again on the way out. And everything here goes to stderr — the trap
+    # fires AFTER the results path is echoed, and a caller capturing stdout
+    # (`out=$(bench_h2h …)`) must receive the path as the last line, not this
+    # commentary.
+    trap - EXIT INT TERM
+    say "stopping rig $RIG_INSTANCE (idle costs \$45.56/day)" >&2
+    if ! aws ec2 stop-instances --region "$RIG_REGION" --instance-ids "$RIG_INSTANCE" >/dev/null 2>&1; then
+      warn "STOP REQUEST FAILED — the rig is billing until you run:" >&2
+      printf '        aws ec2 stop-instances --region %s --instance-ids %s\n' "$RIG_REGION" "$RIG_INSTANCE" >&2
+      return
+    fi
+    if aws ec2 wait instance-stopped --region "$RIG_REGION" --instance-ids "$RIG_INSTANCE" >/dev/null 2>&1; then
+      pass "rig confirmed stopped" >&2
     else
-      warn "STOP FAILED — stop it by hand, it is billing"
+      warn "stop requested but not yet confirmed — verify with:" >&2
+      printf "        aws ec2 describe-instances --region %s --instance-ids %s --query 'Reservations[0].Instances[0].State.Name' --output text\n" \
+        "$RIG_REGION" "$RIG_INSTANCE" >&2
     fi
   }
   trap stop_rig EXIT INT TERM
@@ -1662,15 +1752,28 @@ bench_h2h() {
   pass "rig at $ip (IP changes across stop/start — never hardcode it)"
 
   # SSH can be refused for a minute after instance-running; poll rather than
-  # racing it.
-  local tries=0
+  # racing it. The bound is a knob because 20 x 10s is a guess, not a
+  # measurement — pin FULLAUTO_RIG_SSH_TRIES when the rig proves slower.
+  local tries=0 max_tries="${FULLAUTO_RIG_SSH_TRIES:-20}"
   until ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 \
         -i "$RIG_KEY" "$RIG_USER@$ip" true 2>/dev/null; do
     tries=$((tries + 1))
-    [ "$tries" -gt 20 ] && die "rig unreachable over ssh after 20 tries"
+    [ "$tries" -ge "$max_tries" ] && die "rig unreachable over ssh after $max_tries tries"
     sleep 10
   done
   pass "ssh up"
+
+  # Assert the rig can host the match BEFORE paying for it: a missing checkout
+  # or a bare PATH turns a multi-hour billed run into garbage, and each is a
+  # one-second check. `die` exits through the trap, so a failed assert stops
+  # the instance having spent cents, not hours.
+  say "remote preflight"
+  ssh -o StrictHostKeyChecking=accept-new -i "$RIG_KEY" "$RIG_USER@$ip" \
+    'test -d "$HOME/stella" || { echo "~/stella missing on the rig" >&2; exit 70; }
+     command -v arenabench >/dev/null 2>&1 || { echo "arenabench not on the rig PATH" >&2; exit 71; }
+     docker info >/dev/null 2>&1 || { echo "docker unreachable on the rig" >&2; exit 72; }' \
+    || die "the rig cannot host the match (see above) — stopping it before the match spends anything"
+  pass "rig can host the match (~/stella, arenabench, docker)"
 
   say "running the head-to-head on the rig"
   ssh -o StrictHostKeyChecking=accept-new -i "$RIG_KEY" "$RIG_USER@$ip" \
@@ -1678,12 +1781,18 @@ bench_h2h() {
      DOCKER_DEFAULT_PLATFORM=linux/amd64 arenabench run $H2H_MATCH --progress --results /tmp/h2h.json" \
     || warn "the match returned nonzero — read the results before calling it a loss"
 
-  if scp -o StrictHostKeyChecking=accept-new -i "$RIG_KEY" \
+  # A missing results file is an error, not a phantom path: the old shape
+  # warned and then echoed a path that did not exist, which every caller took
+  # as success. When interpreting what does come back, the real reward lives
+  # at `verifier_result.rewards.reward` — `verifier_result.reward` is always
+  # null and scores every run as zero.
+  if ! scp -o StrictHostKeyChecking=accept-new -i "$RIG_KEY" \
        "$RIG_USER@$ip:/tmp/h2h.json" "$out" 2>/dev/null; then
-    pass "results -> $out"
-  else
-    warn "no results file came back"
+    die "no results file came back — the match died before writing /tmp/h2h.json; there is nothing to score"
   fi
+  python3 -m json.tool "$out" >/dev/null 2>&1 \
+    || die "results file does not parse as JSON: $out"
+  pass "results -> $out"
   echo "$out"
 }
 
