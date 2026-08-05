@@ -13,6 +13,8 @@ stella daemon attach [id]
 stella daemon logs [id] [-n LINES]
 stella daemon stop <id>
 stella daemon resume [id]
+stella daemon install [--label NAME] [--keep-alive] -- <stella args…>
+stella daemon uninstall <label>
 ```
 
 ## Why runs are supervised
@@ -106,6 +108,34 @@ $ stella daemon resume ses-1785956826121
 The relaunch continues the **same session** — same id, same sidecar, the crashed attempt's console preserved — as a fresh supervised child. Completed steps are already in the checkpointed transcript, tool results included, so nothing re-runs and no tool effect is applied twice; the no-clobber staleness map rides the same checkpoint, so a file something else edited while the run was dead is refused rather than overwritten. A run that ended cleanly has nothing to resume, and `resume` says so instead of restarting it.
 
 Two honest limits: a turn that was mid-*pipeline* resumes as a plain engine turn (the verify stages that would have followed do not re-run), and a turn that was executing in a candidate worktree resumes in the workspace — the candidate died with the process.
+
+## `install` / `uninstall`
+
+Supervision and resume both act on runs a human started; neither makes anything *start by itself* after a reboot — nothing a process arranges for itself can. Starting again is the OS service manager's job, and `install` is the explicit handshake with it, registering **one stella invocation you choose** as a per-user service:
+
+```bash
+stella daemon install -- monitor --interval 300
+stella daemon install --label night-fleet --keep-alive -- fleet watch
+stella daemon uninstall night-fleet
+```
+
+On **macOS** it writes a launchd agent (`~/Library/LaunchAgents/sh.oxagen.stella.<label>.plist`) and loads it with `launchctl bootstrap`; the command starts at every login, including the login after a reboot. On **Linux** it writes a `systemd --user` unit (`~/.config/systemd/user/stella-<label>.service`), enables it, and turns on lingering (`loginctl enable-linger`) so the command starts at boot and keeps running through logout. When a `launchctl`/`systemctl` call fails, the definition is still written and the exact command to load it by hand is printed.
+
+**Registration, not resume.** The service manager re-*starts*: the registered command begins a fresh turn, and a fresh spend, each time it is launched. Continuing a turn the reboot killed is [`resume`](#resume)'s job. So register standing verbs — a monitor, a fleet watch, a deliberately perpetual run — and let one-shot runs stay merely supervised. Nothing is ever registered implicitly.
+
+Two defaults keep a broken service from spending money unattended:
+
+- **A command that exits stays down** until the next boot. `--keep-alive` opts into restart-on-exit, throttled to once a minute, and on systemd additionally start-limited (five starts in ten minutes parks the unit in the failed state).
+- **The binary is resolved at load, loudly.** The service execs through a `/bin/sh` shim that tries the path recorded at install time, falls back to `PATH` (plus the usual Homebrew and cargo prefixes) — so a `brew upgrade` that moves the binary does not strand the service — and otherwise writes one line naming what is missing to the service console and exits 127.
+
+The service runs in the directory `install` was typed in, and its console is `~/.stella/services/<label>.log` (both streams, owner-only directory). A service-run stella has no terminal, so it is not re-supervised — the manager *is* its supervisor — and it does not appear in `stella daemon list`, which lists supervised runs. The platform's own query is its status surface:
+
+```bash
+launchctl print gui/$(id -u)/sh.oxagen.stella.<label>   # macOS
+systemctl --user status stella-<label>                  # Linux
+```
+
+`uninstall` unloads the service and deletes the definition — the queries above then report it gone. Uninstalling something already removed reports that and succeeds. On Linux, lingering is left as you set it, since other user services may depend on it.
 
 ## Where the state lives
 

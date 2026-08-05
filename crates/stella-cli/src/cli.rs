@@ -344,6 +344,48 @@ pub(crate) enum DaemonCmd {
         /// most recently started supervised run.
         id: Option<String>,
     },
+
+    /// Register a stella invocation with the OS's per-user service manager
+    ///
+    /// Supervision survives the terminal; only the service manager survives
+    /// logout and reboot. This writes a per-user definition — a launchd agent
+    /// on macOS, a `systemd --user` unit on Linux — that starts the given
+    /// invocation in the current directory at every login (macOS) or boot
+    /// (Linux, once lingering is on), and loads it now.
+    ///
+    /// Registration, not resume: the service manager re-starts the command
+    /// from scratch each time (`stella daemon resume` is what continues a
+    /// killed turn), so register standing verbs (`monitor`, a fleet watch) —
+    /// a one-shot `run` would repeat its work, and its spend, on every boot.
+    /// By default a command that exits stays down; `--keep-alive` opts into
+    /// restarts.
+    Install {
+        /// Name for the service (default: the command's first word).
+        /// Lowercase letters, digits and dashes.
+        #[arg(long)]
+        label: Option<String>,
+
+        /// Restart the command whenever it exits, at most once a minute.
+        /// Off by default: an agent that fails the moment it starts would
+        /// otherwise be restarted forever, spending budget each time.
+        #[arg(long)]
+        keep_alive: bool,
+
+        /// The stella invocation to register, after `--`:
+        /// `stella daemon install -- monitor --interval 300`
+        #[arg(last = true, required = true, value_name = "STELLA ARGS")]
+        command: Vec<String>,
+    },
+
+    /// Remove a service registered by `install`
+    ///
+    /// Unloads it from the service manager and deletes the definition.
+    /// Already-gone is reported and succeeds — uninstalling twice is the
+    /// requested state, not an error.
+    Uninstall {
+        /// The label `install` reported.
+        label: String,
+    },
 }
 
 #[derive(Subcommand)]
