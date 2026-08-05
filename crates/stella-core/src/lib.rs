@@ -23,6 +23,7 @@ pub mod driver;
 pub mod estimator;
 pub mod event_sender;
 pub mod extensions;
+pub mod fullauto;
 mod glob;
 pub mod goal;
 pub mod hooks;

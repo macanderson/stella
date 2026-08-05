@@ -15,9 +15,9 @@ use clap::{Parser, Subcommand};
 pub(crate) mod help;
 
 use crate::{
-    OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, dataset_cmd, ingest_cmd,
-    inspect, memory_cmd, proposals_cmd, query_format, scripts_cmd, stats, storage_cmd, tune_cmd,
-    usage_cmd,
+    OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, dataset_cmd, fullauto_cmd,
+    ingest_cmd, inspect, memory_cmd, proposals_cmd, query_format, scripts_cmd, stats, storage_cmd,
+    tune_cmd, usage_cmd,
 };
 
 #[derive(Parser)]
@@ -330,6 +330,20 @@ pub(crate) enum DaemonCmd {
         /// Run to stop. A unique prefix of the id is enough.
         id: String,
     },
+
+    /// Resume a killed supervised run from its last step boundary
+    ///
+    /// A supervised run killed mid-turn — OOM, `kill -9`, a reboot — leaves a
+    /// resume point at its last completed step. Resume relaunches the same
+    /// session and continues that turn from the boundary: completed steps are
+    /// already in its transcript and are not re-run, so no tool effect is
+    /// applied twice. A run that ended cleanly discarded its resume point on
+    /// the way out, and resume says so instead of restarting it.
+    Resume {
+        /// Run to resume. A unique prefix of the id is enough. Omitted: the
+        /// most recently started supervised run.
+        id: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -445,6 +459,22 @@ pub(crate) enum Command {
     Monitor {
         /// Branch name or PR number (default: main)
         target: Option<String>,
+    },
+
+    /// Drive the perpetual delivery loop: plan, cycle, audit, watch
+    ///
+    /// The deterministic half of fullauto — the loop that fixes a batch of
+    /// defects, audits what is left, files what it cannot fix, benchmarks,
+    /// ships, and repeats. These verbs are the machine-decidable controls:
+    /// the governor that sizes a cycle to this machine (plan), the ledger and
+    /// its folds (state, metrics, run), the audit lens ladder and the dedup
+    /// oracle that advance it (aperture, seen, cycle), and the low-duty
+    /// sentinel (watch). The judgement half stays with the model driving the
+    /// loop; `scripts/fullauto.sh` delegates these verbs here. Offline except
+    /// for `gh` reads of the defect queue; needs no API key.
+    Fullauto {
+        #[command(subcommand)]
+        cmd: fullauto_cmd::FullautoCmd,
     },
 
     /// Start an interactive session (the Command Deck)

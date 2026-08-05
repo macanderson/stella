@@ -62,6 +62,7 @@ mod fleet_cmd;
 mod fleet_commits;
 mod fleet_spend;
 mod fleet_warmth;
+mod fullauto_cmd;
 mod ingest_cmd;
 mod init_fx;
 mod inspect;
@@ -96,6 +97,7 @@ mod storage_cmd;
 mod subagent;
 mod subsession;
 mod term_policy;
+mod timefmt;
 mod tool_foundry;
 mod tool_policy;
 mod tool_switches;
@@ -303,41 +305,23 @@ pub(crate) use cli::{
     AuthCmd, Cli, Command, ConnectCmd, DaemonCmd, McpCmd, MigrateCmd, ModelsCmd, TelemetryCmd,
 };
 
-/// Whether this invocation is handed to the supervisor (#1552), and what
-/// supervising it costs.
+/// Whether this invocation is handed to the supervisor (#1552).
 ///
-/// `None` runs the work in this process, exactly as every release before
-/// supervision existed. `Some(scope_review_lost)` supervises, and the flag
-/// says whether that took away an interactive scope-review answer this
-/// invocation would otherwise have had — see
-/// [`daemon::loses_interactive_scope_review`].
+/// `false` runs the work in this process, exactly as every release before
+/// supervision existed. Supervision costs no capability any more: a plan
+/// that expands scope parks and asks through the session sidecar (#1585)
+/// instead of dying at the headless scope-review error, so there is no
+/// longer a downgrade to warn about here.
 ///
-/// Computed here, once, because it is the only place the parsed flags, the
-/// resolved config, and the real terminal handles are all in hand; each
-/// long-running arm then asks one question instead of re-deriving three.
-fn supervision(
-    globals: &cli::GlobalArgs,
-    output_format: OutputFormat,
-    cfg: &config::Config,
-) -> Option<bool> {
-    if !daemon::should_supervise(
+/// Computed here, once, because it is the only place the parsed flags and
+/// the real terminal handle are both in hand; each long-running arm then
+/// asks one question instead of re-deriving three.
+fn supervision(globals: &cli::GlobalArgs) -> bool {
+    daemon::should_supervise(
         globals.foreground,
         daemon::supervised_id().is_some(),
         daemon::has_controlling_terminal(),
-    ) {
-        return None;
-    }
-    let approval = agent::approval_capability_for(
-        matches!(output_format, OutputFormat::Text),
-        std::io::stdin().is_terminal(),
-        std::io::stdout().is_terminal(),
-    );
-    Some(daemon::loses_interactive_scope_review(
-        approval == agent::PipelineApprovalCapability::Stdio,
-        cfg.engine_settings
-            .as_ref()
-            .is_some_and(|engine| engine.headless_scope_bypass_on()),
-    ))
+    )
 }
 
 /// The registry title for a supervised run: the same
@@ -525,6 +509,18 @@ fn main() -> ExitCode {
         .names
         .retain(|name| !stella_tools::exec::is_sensitive_env_name(name));
 
+    // A supervised child's console becomes bounded and indexed from here on
+    // (#1588): everything this process prints below flows through the pump
+    // threads, which enforce the byte budget and write the ordering index.
+    // Installed after `startup.close()` — the pumps are threads, and threads
+    // before that boundary would race the env mutations it fences — and
+    // drained as this function's last act so the final lines land.
+    let console = daemon::supervised_id().and_then(|id| {
+        daemon::console::install_bounded(
+            &stella_store::SessionRegistry::open_default().sidecar_dir(&id),
+        )
+    });
+
     // Value-free confirmation (names only), gated on STELLA_ENV_DEBUG + a TTY +
     // a human output format so it never pollutes json/stream-json.
     env_files::announce(&loaded_env, cli.output_format());
@@ -533,7 +529,7 @@ fn main() -> ExitCode {
     // requested format to honour the machine-readable error contract.
     let output_format = cli.output_format();
 
-    match run(cli, &loaded_env) {
+    let code = match run(cli, &loaded_env) {
         Ok(()) => {
             daemon::record_outcome_if_supervised(true);
             // A supervisor's own exit code says only whether it managed to
@@ -571,7 +567,13 @@ fn main() -> ExitCode {
                 None => e.exit_code(),
             }
         }
+    };
+    // After the last print of every path above: restore the raw fds and join
+    // the pumps, so the console files carry this process's final lines.
+    if let Some(console) = console {
+        console.drain();
     }
+    code
 }
 
 /// The deck's presentation, resolved from the flags and their env synonyms.
@@ -596,6 +598,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
     if let Some(id) = daemon::supervised_id() {
         daemon::hold_liveness_lock(&stella_store::SessionRegistry::open_default(), &id);
     }
+
+    // Above the keyless dispatch because `daemon resume`'s parent half needs
+    // a runtime (it streams the child it spawns) while staying keyless.
+    let rt = || {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("failed to start runtime: {e}"))
+    };
 
     // Models and Version don't need a configured provider/key.
     match &cli.command {
@@ -764,6 +775,11 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             // Reads .stella/private/store.db only.
             return scoreboard_cmd::run().map_err(failure::CliFailure::from);
         }
+        Some(Command::Fullauto { cmd }) => {
+            // Reads and writes ~/.stella/fullauto/<slug>/ (plus `gh` reads
+            // of the defect queue) — works with zero API keys.
+            return fullauto_cmd::run(cmd);
+        }
         Some(Command::Memory { cmd }) => {
             // Reads local stores only (list) / writes one rule file
             // (promote) — works with zero API keys.
@@ -879,17 +895,22 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             let Some(Command::Daemon { cmd }) = &cli.command else {
                 unreachable!("matched Command::Daemon")
             };
-            return daemon::run(cmd).map_err(failure::CliFailure::from);
+            match cmd {
+                // `daemon resume` splits (#1586): the parent half below only
+                // spawns and streams, so it too works keyless from any
+                // directory — while the `--foreground` child half does the
+                // interrupted turn's actual work and falls through to
+                // provider resolution, its cwd already pinned to the
+                // record's workspace by the parent's launch.
+                DaemonCmd::Resume { id } if !cli.globals.foreground => {
+                    return daemon::resume_supervised(rt()?, id.as_deref());
+                }
+                DaemonCmd::Resume { .. } => {}
+                _ => return daemon::run(cmd).map_err(failure::CliFailure::from),
+            }
         }
         _ => {}
     }
-
-    let rt = || {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| format!("failed to start runtime: {e}"))
-    };
 
     // Everything past here resolves a provider (and may build one), so the
     // model catalog must be live first: open catalog.db, auto-sync each
@@ -972,7 +993,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             )?;
             // Resolved first on purpose: the prompt may have come from this
             // process's stdin, and a detached child has none to read.
-            if let Some(scope_review_lost) = supervision(&cli.globals, output_format, &cfg) {
+            if supervision(&cli.globals) {
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
@@ -1023,7 +1044,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 std::io::stdin().is_terminal(),
                 prompt_source::read_stdin_to_string,
             )?;
-            if let Some(scope_review_lost) = supervision(&cli.globals, OutputFormat::Text, &cfg) {
+            if supervision(&cli.globals) {
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
@@ -1047,7 +1068,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             task_timeout,
             output_format,
         } => {
-            if let Some(scope_review_lost) = supervision(&cli.globals, output_format, &cfg) {
+            if supervision(&cli.globals) {
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
@@ -1080,7 +1101,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         }
         Command::Monitor { target } => {
             let target = target.unwrap_or_else(|| "main".to_string());
-            if let Some(scope_review_lost) = supervision(&cli.globals, OutputFormat::Text, &cfg) {
+            if supervision(&cli.globals) {
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
@@ -1166,6 +1187,18 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 ),
             )?;
         }
+        // The `--foreground` child half of `daemon resume` (#1586): cfg has
+        // resolved from the record's workspace (the parent pinned the cwd),
+        // and the interrupted turn continues from its checkpoint. Every other
+        // daemon verb returned from the keyless dispatch above.
+        Command::Daemon {
+            cmd: DaemonCmd::Resume { id },
+        } => {
+            signals::block_on_interruptible(
+                rt()?,
+                agent::resume::run_resume(&cfg, id.as_deref()),
+            )?;
+        }
         // Models/Version (and Tools) short-circuit in the first match at the
         // top of `run` before a provider is resolved; Init is handled by the
         // caller. Reaching any of them here is impossible.
@@ -1191,6 +1224,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         | Command::Cloud { .. }
         | Command::Telemetry { .. }
         | Command::Memory { .. }
+        | Command::Fullauto { .. }
         | Command::Scoreboard
         | Command::Ingest(_)
         | Command::Mcp { .. }
