@@ -1,7 +1,7 @@
 use stella_protocol::AgentEvent;
 
 use super::TurnOutcome;
-use crate::budget::{BudgetAxis, BudgetGuard, BudgetOutcome};
+use crate::budget::{BudgetAxis, BudgetGuard, BudgetOutcome, DeadlineOutcome};
 use crate::event_sender::EventSender;
 
 /// Which budget axes have already surfaced an observed-mode warning during
@@ -127,18 +127,51 @@ impl super::Engine<'_> {
             record_settled_cost(budget, child_spend, warnings, events);
             *total_cost_usd += child_spend;
         }
-        check_budget(budget, *total_cost_usd, warnings, events)
+        // The one clock read on this path — `crate::budget`'s guard is pure
+        // and takes `now` as an owned parameter (module docs), mirroring how
+        // `run_step_inner` reads `state.started_at.elapsed()` for the
+        // existing per-turn `ContinuationBudget` rather than letting a pure
+        // decision function read the clock itself.
+        check_budget(
+            budget,
+            *total_cost_usd,
+            warnings,
+            events,
+            std::time::Instant::now(),
+        )
     }
 }
 
 /// The evaluation half, split from the drain above so the pure decision
 /// (guard state → abort or not) stays testable without an executor.
+///
+/// Checks the task deadline before the dollar axes (#1481): both are
+/// safe-boundary aborts checked at the exact same two call sites in
+/// `run_step_inner`, so a task already out of wall clock stops here just
+/// like an already-over-cap dollar budget does, before the next provider
+/// call is dispatched.
 fn check_budget(
     budget: &BudgetGuard,
     total_cost_usd: f64,
     warnings: &mut BudgetWarnings,
     events: &EventSender,
+    now: std::time::Instant,
 ) -> Option<TurnOutcome> {
+    if let DeadlineOutcome::Exceeded { overrun } = budget.check_deadline(now) {
+        let reason = format!(
+            "task deadline exceeded by {:.1}s — stopping with partial work",
+            overrun.as_secs_f64()
+        );
+        let _ = events.send(AgentEvent::Error {
+            message: reason.clone(),
+            retryable: false,
+        });
+        return Some(TurnOutcome::Aborted {
+            reason,
+            cost_usd: total_cost_usd,
+        });
+    }
+
     let outcome = budget.evaluate();
     emit_budget_warning(outcome, warnings, events);
     let BudgetOutcome::AbortTurn {

@@ -49,11 +49,21 @@ use super::{CONTINUATION_MARKER_PREFIX, LOOP_STEER_PREFIX, SUMMARY_MARKER_PREFIX
 /// the record's own call. A key that is absent — or poisoned because that
 /// same call produced two different outputs — leaves `identity: None` and
 /// the detector falls back to the output bytes.
-pub(super) fn recent_call_records<'a>(
-    messages: &'a [CompletionMessage],
-    identities: &ResultIdentities,
-) -> Vec<CallRecord<'a>> {
-    let turn_start = messages
+/// Where the current turn's messages start within `messages`: the index
+/// right after the last genuine user turn boundary, skipping the synthetic
+/// User-role markers the driver injects mid-turn (the overflow summary, the
+/// stuck-loop warning, the length-continuation nudge) — none of those are a
+/// real user turn, and treating one as the boundary would truncate the
+/// window right when a consumer needs the fuller history (on every
+/// summarization pass, or on the one path that exists precisely because the
+/// turn is not over).
+///
+/// Shared by [`recent_call_records`] (loop-detection evidence) and
+/// `driver::confident_zero` (turn-activity evidence for #1477): both need
+/// exactly this same window, and a second copy of the boundary rule would be
+/// a second place for it to drift out of sync with the first.
+pub(super) fn turn_start_index(messages: &[CompletionMessage]) -> usize {
+    messages
         .iter()
         .rposition(|m| {
             m.role == MessageRole::User
@@ -62,7 +72,14 @@ pub(super) fn recent_call_records<'a>(
                 && !m.content.starts_with(CONTINUATION_MARKER_PREFIX)
         })
         .map(|i| i + 1)
-        .unwrap_or(0);
+        .unwrap_or(0)
+}
+
+pub(super) fn recent_call_records<'a>(
+    messages: &'a [CompletionMessage],
+    identities: &ResultIdentities,
+) -> Vec<CallRecord<'a>> {
+    let turn_start = turn_start_index(messages);
     let mut records: Vec<CallRecord> = Vec::new();
     for message in &messages[turn_start..] {
         match message.role {

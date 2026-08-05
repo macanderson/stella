@@ -1,6 +1,7 @@
 //! Paid-call accounting witnesses for every raw pipeline role.
 
 use super::*;
+use stella_protocol::ToolCallObserver;
 
 fn usage_events(events: &[AgentEvent]) -> Vec<serde_json::Value> {
     events
@@ -179,6 +180,76 @@ async fn triage_timeout_emits_content_free_incompleteness() {
     assert_eq!(usage.len(), 1);
     assert_eq!(usage[0]["type"], "usage_incomplete");
     assert_eq!(usage[0]["reason"], "timeout");
+}
+
+/// Streams a fragment immediately, then goes quiet for longer than the
+/// ceiling before resolving — OpenRouter's `usage.include` gateway
+/// accounting shape (#1467): the answer streams promptly, but the routed
+/// call's usage/cost is reported in one final SSE frame that trails it,
+/// once the gateway has settled the price.
+struct DelayedUsageFrameProvider {
+    trailing_delay: Duration,
+}
+
+#[async_trait]
+impl Provider for DelayedUsageFrameProvider {
+    fn id(&self) -> &str {
+        "openrouter"
+    }
+
+    async fn complete_ref(
+        &self,
+        _req: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
+        panic!("this test dispatches through complete_observed_ref, not complete_ref");
+    }
+
+    async fn complete_observed_ref(
+        &self,
+        _req: CompletionRequestRef<'_>,
+        observer: &dyn ToolCallObserver,
+    ) -> Result<CompletionResult, ProviderError> {
+        observer.text_delta("lookup");
+        tokio::time::sleep(self.trailing_delay).await;
+        Ok(text_result("lookup"))
+    }
+}
+
+/// Witness for #1467: a triage call that streamed real content (one
+/// fragment, at dispatch) but whose result — carrying OpenRouter's
+/// usage/cost accounting — only resolves 80ms later, longer than the 50ms
+/// `triage_latency_ceiling` below. A ceiling measured as flat wall clock
+/// from dispatch start abandons the call at 50ms, before the 80ms result
+/// lands, and its usage/cost go unaccounted (`agent.step.usage_incomplete`,
+/// `reason=timeout`) even though the call was actively answering the whole
+/// time. Measured as idle time instead — since the last streamed fragment —
+/// the tick at dispatch re-arms the window and the 80ms result lands inside
+/// it, so the call is billed like any other successful one.
+#[tokio::test]
+async fn triage_survives_a_usage_frame_that_trails_the_content() {
+    let provider = DelayedUsageFrameProvider {
+        trailing_delay: Duration::from_millis(80),
+    };
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let config = PipelineConfig {
+        triage_latency_ceiling: Duration::from_millis(50),
+        ..PipelineConfig::default()
+    };
+    let (result, total, events) = run_triage_only(&provider, config, &mut budget).await;
+
+    assert!(
+        result.is_ok(),
+        "the trailing gap must not abandon a call that was actively answering: {result:?}"
+    );
+    assert_eq!(
+        total, 0.0001,
+        "the delayed usage frame's cost must still be billed"
+    );
+    let usage = usage_events(&events);
+    assert_eq!(usage.len(), 1, "{usage:?}");
+    assert_eq!(usage[0]["type"], "step_usage");
+    assert_eq!(usage[0]["role"], "triage");
+    assert_eq!(usage[0]["complete"], true);
 }
 
 #[tokio::test]
