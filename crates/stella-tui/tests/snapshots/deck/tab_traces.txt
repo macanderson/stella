@@ -9,7 +9,7 @@
 ┌ traces · all · 33 events · following · f: filter ────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │00:00  lead  [spend] $0.0210                                                                                                                                  │
 │00:00  lead  [stage] witness                                                                                                                                  │
-│00:00  lead  [verdict] assurance: witness on, judge waived                                                                                                    │
+│00:00  lead  [verdict] assurance: witness on, verifier waived                                                                                                 │
 │00:00  lead  [verdict] witness authored: apps/app/automations/triggers.test.ts                                                                                │
 │00:00  lead  [verdict] oracle: fail on base                                                                                                                   │
 │00:00  lead  [stage] execute                                                                                                                                  │

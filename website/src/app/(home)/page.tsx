@@ -87,7 +87,7 @@ const DOORS = [
   {
     href: "/docs/inference-pipeline",
     title: "Read the pipeline",
-    body: "triage, plan, witness, execute, verify, judge — and where a run can stop.",
+    body: "triage, plan, witness, execute, verify, verifier — and where a run can stop.",
   },
 ];
 

@@ -1,7 +1,7 @@
 # =============================================================================
 # agent_system.toml
 # Example config for a multi-agent system with:
-#   - per-agent configs (triage / worker / judge)
+#   - per-agent configs (triage / worker / verifier)
 #   - a pipeline object controlling which agents are active
 #   - multiple API providers, including providers that serve the same model
 #   - "track latest" model aliasing (e.g. auto-upgrades opus-4.5 -> opus-5)
@@ -186,13 +186,13 @@ tools               = [
   "browser_automation",
 ]
 
-[agents.judge]
+[agents.verifier]
 enabled             = true
 model               = "claude-opus"
 provider_preference = ["anthropic", "anthropic_vertex"]
 temperature         = 0.0
 max_tokens          = 4096
-system_prompt_file  = "prompts/judge.md"
+system_prompt_file  = "prompts/verifier.md"
 tools               = ["calculator", "memory_read"]
 
 
@@ -200,7 +200,7 @@ tools               = ["calculator", "memory_read"]
 # PIPELINE
 # Controls which agents actually run and in what order/mode. Disabling an
 # agent here short-circuits it even if the [agents.*] block above is enabled
-# -- e.g. flip judge.enabled = false for a cheap two-stage pipeline without
+# -- e.g. flip verifier.enabled = false for a cheap two-stage pipeline without
 # touching the agent's own config.
 # -----------------------------------------------------------------------------
 
@@ -210,16 +210,16 @@ mode = "sequential"                # "sequential" | "triage_route" | "single_age
   [pipeline.stages.triage]
   enabled       = true
   on_disable    = "skip"           # "skip" = go straight to next enabled stage
-  routes_to     = ["worker", "judge"]  # triage_route mode: where it can send a request
+  routes_to     = ["worker", "verifier"]  # triage_route mode: where it can send a request
 
   [pipeline.stages.worker]
   enabled       = true
   on_disable    = "skip"
 
-  [pipeline.stages.judge]
+  [pipeline.stages.verifier]
   enabled       = true
   on_disable    = "skip"           # if disabled, worker output is returned unreviewed
-  max_revisions = 2                # judge can bounce work back to worker up to N times
+  max_revisions = 2                # verifier can bounce work back to worker up to N times
 
 
 # -----------------------------------------------------------------------------
@@ -356,7 +356,7 @@ default_backend = "jira_prod"  # used when not specified
 
   [tools.create_follow_up_task.config]
   agent_may_choose_backend = true  # let the calling agent pick a backend via a tool-call arg
-  require_confirmation     = true  # judge/human must confirm before the ticket is actually filed
+  require_confirmation     = true  # verifier/human must confirm before the ticket is actually filed
   default_labels           = ["from-agent"]
 
 [tools.slack_post]

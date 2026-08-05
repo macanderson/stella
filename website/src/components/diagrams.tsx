@@ -206,7 +206,7 @@ export function HeroFlowDiagram() {
       <title>How Stella fits together</title>
       <Defs />
       <Node x={20} y={52} w={120} h={56} label="you" sub="a prompt, a goal" />
-      <Node x={280} y={40} w={160} h={80} label="stella" sub="tools · pipeline · judge" accent />
+      <Node x={280} y={40} w={160} h={80} label="stella" sub="tools · pipeline · verifier" accent />
       <Node x={580} y={52} w={120} h={56} label="provider" sub="your key, direct" />
       <Wire d="M140 80 H278" />
       <Wire d="M440 80 H578" />
@@ -224,14 +224,14 @@ export function PipelineFlowDiagram() {
     ["execute", "step loop"],
     ["witness", "failing test"],
     ["verify", "flip oracle"],
-    ["judge", "cross-family"],
+    ["verifier", "cross-family"],
   ];
   return (
     <svg
       className="sdg"
       viewBox="0 0 720 150"
       role="img"
-      aria-label="The staged pipeline: triage, plan, execute, witness, verify, judge — with a revise loop back into execute."
+      aria-label="The staged pipeline: triage, plan, execute, witness, verify, verifier — with a revise loop back into execute."
     >
       <title>The staged inference pipeline</title>
       <Defs />
@@ -246,13 +246,13 @@ export function PipelineFlowDiagram() {
               h={52}
               label={name}
               sub={sub}
-              accent={name === "verify" || name === "judge"}
+              accent={name === "verify" || name === "verifier"}
             />
             {i < stages.length - 1 && <Wire d={`M${x + 100} 70 H${x + 116}`} />}
           </g>
         );
       })}
-      {/* revise: judge back to execute */}
+      {/* revise: verifier back to execute */}
       <Wire d="M672 96 C672 132 302 132 302 98" />
       <text className="sdg-sub" x="487" y="142" textAnchor="middle">
         revise — bounded, with evidence

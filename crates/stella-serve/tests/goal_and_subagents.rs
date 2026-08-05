@@ -85,13 +85,13 @@ fn base_spec(prompt: &str) -> SessionSpec {
 
 /// #1297 acceptance, goal half: a judged multi-round run can be *requested*
 /// over the wire, its rounds arrive on the ordinary event stream, and the
-/// judge is addressable as a different model than the worker.
+/// verifier is addressable as a different model than the worker.
 ///
-/// Round 1: the worker answers, the judge says NOT met with feedback. Round 2:
-/// the worker answers again, the judge says met — and the turn completes
-/// carrying the judge's reasoning. Four model calls, two of them announcing
-/// `role: judge` and the judge's own provider id, which is what lets a host
-/// route the judge to another family: the property the goal loop exists for
+/// Round 1: the worker answers, the verifier says NOT met with feedback. Round 2:
+/// the worker answers again, the verifier says met — and the turn completes
+/// carrying the verifier's reasoning. Four model calls, two of them announcing
+/// `role: verifier` and the verifier's own provider id, which is what lets a host
+/// route the verifier to another family: the property the goal loop exists for
 /// and the one the engine cannot enforce, because the host owns the calls.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_goal_run_is_requestable_over_the_wire_and_streams_its_rounds() {
@@ -102,13 +102,13 @@ async fn a_goal_run_is_requestable_over_the_wire_and_streams_its_rounds() {
                 max_rounds: 4,
                 ..GoalConfig::default()
             },
-            judge_provider_id: Some("judge-model".to_string()),
+            verifier_provider_id: Some("verifier-model".to_string()),
         }),
         ..base_spec("ignored — the goal seeds its own first message")
     });
 
     let mut worker_calls = 0usize;
-    let mut judge_calls = 0usize;
+    let mut verifier_calls = 0usize;
     let mut verdicts: Vec<(usize, bool)> = Vec::new();
     let mut outcome = None;
 
@@ -126,13 +126,13 @@ async fn a_goal_run_is_requestable_over_the_wire_and_streams_its_rounds() {
                 ..
             } => {
                 let result = match role {
-                    ModelCallRole::Judge => {
-                        judge_calls += 1;
+                    ModelCallRole::Verdict => {
+                        verifier_calls += 1;
                         assert_eq!(
-                            provider_id, "judge-model",
-                            "a judge call must announce the provider the caller chose for it"
+                            provider_id, "verifier-model",
+                            "a verifier call must announce the provider the caller chose for it"
                         );
-                        if judge_calls == 1 {
+                        if verifier_calls == 1 {
                             answer(
                                 r#"{"met": false, "reasoning": "no evidence yet",
                                     "feedback": "run the tests"}"#,
@@ -174,7 +174,7 @@ async fn a_goal_run_is_requestable_over_the_wire_and_streams_its_rounds() {
     }
 
     assert_eq!(worker_calls, 2, "two working rounds");
-    assert_eq!(judge_calls, 2, "each round was judged");
+    assert_eq!(verifier_calls, 2, "each round was judged");
     assert_eq!(
         verdicts,
         vec![(1, false), (2, true)],
@@ -184,13 +184,13 @@ async fn a_goal_run_is_requestable_over_the_wire_and_streams_its_rounds() {
     match outcome {
         Some(TurnOutcomeWire::Completed { text, .. }) => assert!(
             text.contains("the tests pass"),
-            "the terminal frame carries the judge's reasoning: {text}"
+            "the terminal frame carries the verifier's reasoning: {text}"
         ),
         other => panic!("a met goal completes the turn, got {other:?}"),
     }
 }
 
-/// A goal run that never satisfies its judge ends at the round cap as an
+/// A goal run that never satisfies its verifier ends at the round cap as an
 /// `aborted` outcome with a named reason — never a silent success, and never
 /// an unbounded loop. The cap is the backstop the mode flag is safe behind.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -202,7 +202,7 @@ async fn an_unmet_goal_stops_at_the_round_cap_with_a_named_reason() {
                 max_rounds: 2,
                 ..GoalConfig::default()
             },
-            judge_provider_id: None,
+            verifier_provider_id: None,
         }),
         ..base_spec("unused")
     });
@@ -218,8 +218,8 @@ async fn an_unmet_goal_stops_at_the_round_cap_with_a_named_reason() {
                 ..
             } => {
                 let result = match role {
-                    ModelCallRole::Judge => {
-                        // No judge provider named: the judge rides the turn's
+                    ModelCallRole::Verdict => {
+                        // No verifier provider named: the verifier rides the turn's
                         // own model, which is the single-model deployment and
                         // must keep working.
                         assert_eq!(provider_id, "worker-model");

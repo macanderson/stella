@@ -18,7 +18,7 @@ stella run "add a --json flag to the export command and update the tests"
 | | |
 | --- | --- |
 | **BYOK, no lock-in** | Auto-detects the provider from whichever keys you have set. Anthropic, OpenAI, Gemini, Vertex, Bedrock, xAI, DeepSeek, Z.ai, OpenRouter, or any OpenAI-compatible local server. |
-| **Verified outcomes** | [Goal mode](/docs/agent-modes#outcome-driven-goal-mode) does not stop on a hunch — a separate judge model verifies the definition of done from evidence before the loop ends. |
+| **Verified outcomes** | [Goal mode](/docs/agent-modes#outcome-driven-goal-mode) does not stop on a hunch — a separate verifier model verifies the definition of done from evidence before the loop ends. |
 | **Tools behind a permission model** | Read, edit, glob, grep, shell, CI, screenshots, issue tracking, and developer-defined script tools, each gated per tool with optional [lifecycle hooks](/docs/agent-tools/hooks). |
 | **Config that scales to a team** | Override any provider's base URL, key, or model in [`settings.json`](/docs/configuration/settings), merged across a user → org-managed → project hierarchy. |
 | **Local-first telemetry** | Usage, cost, and per-step metering land in `.stella/private/store.db` on your disk. |

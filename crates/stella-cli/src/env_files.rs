@@ -392,7 +392,7 @@ const DENIED_EXACT: &[&str] = &[
     // `STELLA_PROJECT_HOOKS` are the very trust gate that decides whether
     // this repository's hooks may run; `STELLA_ENGINE_CONFIG_JSON` is the
     // trusted-launcher seam that replaces the merged engine posture
-    // wholesale (config.rs), replacement judge prompt included. A repository
+    // wholesale (config.rs), replacement verifier prompt included. A repository
     // granting itself any of these is the whole threat model.
     "STELLA_MANAGED_SETTINGS",
     "STELLA_NO_SETTINGS",

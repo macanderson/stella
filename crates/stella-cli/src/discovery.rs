@@ -928,7 +928,7 @@ mod tests {
         for expected in [TOOL_SEARCH, SKILL_SEARCH, MCP_SEARCH, "bash", "read_file"] {
             assert!(names.contains(&expected.to_string()), "missing {expected}");
         }
-        // All three are read-only, so the goal judge's ReadOnlyTools keeps them.
+        // All three are read-only, so the goal verifier's ReadOnlyTools keeps them.
         for s in set.schemas() {
             if [TOOL_SEARCH, SKILL_SEARCH, MCP_SEARCH].contains(&s.name.as_str()) {
                 assert!(s.read_only, "{} must be read-only", s.name);

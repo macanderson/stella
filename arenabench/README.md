@@ -158,7 +158,7 @@ independently.
 **The full engine config, not just a model.** Per contestant you choose the API,
 provider, model, reasoning on/off, and effort tier. For agents with a pipeline
 (Stella) you also configure each role independently — worker on one model at
-`xhigh`, judge on a different family so verification is independent of the
+`xhigh`, verifier on a different family so verification is independent of the
 thing being verified, triage cheap and thinking-off.
 
 **Per-seat credentials.** Paste that seat's `.env` straight into the form. A

@@ -105,7 +105,7 @@ tool's registration line in an already-oversized `registry.rs`), never as a plan
 | [`src/custom.rs`](src/custom.rs), [`src/validate.rs`](src/validate.rs) | Developer-defined TOML script tools — lenient discovery for a session, strict validation for `stella tools --validate`. |
 | [`src/schema_gate.rs`](src/schema_gate.rs) | The pre-write storage gate that makes duplicate or misplaced schema hard to write. |
 | [`src/hook_runner.rs`](src/hook_runner.rs) | The real-I/O half of the hooks framework (`stella-core` owns matching and blocking). |
-| [`src/screenshot.rs`](src/screenshot.rs) | `screenshot` — capture to `.stella/screenshots/` as visual evidence a judge can demand. |
+| [`src/screenshot.rs`](src/screenshot.rs) | `screenshot` — capture to `.stella/screenshots/` as visual evidence a verifier can demand. |
 
 ## Key concepts
 
@@ -127,7 +127,7 @@ because those used to be hand-maintained integers in six places: parallel PRs ea
 same number off the same base and squash-merged to a plausible-but-wrong count with no
 conflict. The `read_only` flag is load-bearing, not documentation — `stella-core`'s speculation
 gate forwards exactly the read-only set and drops everything after the first mutating call, and
-`ReadOnlyTools` uses it to give a judge evidence-gathering power without write authority.
+`ReadOnlyTools` uses it to give a verifier evidence-gathering power without write authority.
 
 **Root pinning — two primitives, and they are not interchangeable.**
 
@@ -179,7 +179,7 @@ verdict and a destroyed working tree:
 Every `git` invocation goes through `git_in`, which strips the repo-targeting env vars and
 scrubs credentials, so a surrounding git hook cannot redirect it at the outer repository. The
 verdict always includes the previous-code output tail: a *compile* error is a much weaker
-witness than an assertion failure, and the reader — model or judge — is told to check which it
+witness than an assertion failure, and the reader — model or verifier — is told to check which it
 got.
 
 ## Gotchas

@@ -549,7 +549,7 @@ impl Config {
         // unchanged. Pin-vs-spec precedence lives in `model_spec_for` — the
         // one resolver every engine agent goes through — so a stale pin
         // can't swallow a qualified flat spec into a phantom slug here
-        // while the judge/triage wiring resolves the same settings sanely.
+        // while the verifier/triage wiring resolves the same settings sanely.
         let engine_default: Option<String> = settings.agent_engine_config.as_ref().and_then(|e| {
             use crate::settings::EngineAgentKind;
             let ids = all_provider_ids(settings);
@@ -1384,14 +1384,14 @@ pub(crate) fn resolve_provider_key(
 /// resolved key. Produced by [`discover_configured_providers`] and consumed
 /// by the goal loop's role Router: the `config` supplies the id/family/model
 /// for a `stella_core::router::ProviderProfile`, the `api_key` builds the
-/// concrete judge adapter when this provider is routed as judge. `api_key`
+/// concrete verifier adapter when this provider is routed as verifier. `api_key`
 /// is an [`ApiKey`] (H3) so the derived `Debug` never leaks the secret.
 #[derive(Debug, Clone)]
 pub struct ConfiguredProvider {
     pub config: ProviderConfig,
     pub api_key: ApiKey,
     /// The provider's auxiliary values, resolved by the same chain and from
-    /// the same store as `api_key` — so a routed judge on Bedrock builds with
+    /// the same store as `api_key` — so a routed verifier on Bedrock builds with
     /// the credentials discovery actually verified, not a second lookup that
     /// could disagree.
     pub aux: AuxCredentials,
@@ -1407,12 +1407,12 @@ pub struct ConfiguredProvider {
 /// is not read at all and discovery uses an empty in-memory store.
 ///
 /// The goal loop calls this to build a role Router that can pick a
-/// cross-family JUDGE; with one configured family
-/// it returns a single entry and the judge stays the worker provider.
+/// cross-family VERIFIER; with one configured family
+/// it returns a single entry and the verifier stays the worker provider.
 pub fn discover_configured_providers() -> Vec<ConfiguredProvider> {
     // A trusted handoff/no-settings process must never inspect a task-image
     // credential store. Outside that boundary, a corrupt/unreadable file
-    // yields no discovery: the goal loop simply keeps the worker as judge.
+    // yields no discovery: the goal loop simply keeps the worker as verifier.
     let credentials_sealed =
         crate::credential_handoff::is_present() || crate::settings::filesystem_settings_disabled();
     let credentials_file = if credentials_sealed {
@@ -1423,7 +1423,7 @@ pub fn discover_configured_providers() -> Vec<ConfiguredProvider> {
         };
         credentials_file
     };
-    // Same degradation posture for settings: judge routing is best-effort,
+    // Same degradation posture for settings: verifier routing is best-effort,
     // so an unreadable settings.json costs the config-defined providers,
     // never the built-ins. (`Config::load` is where a bad file is loud.)
     let settings = env::current_dir()
@@ -1451,7 +1451,7 @@ pub fn discover_configured_providers() -> Vec<ConfiguredProvider> {
                 // A provider whose primary key resolves but whose required
                 // companion value does not cannot build — see
                 // `aux::has_required_aux`. Discovery is what auto-detection
-                // and judge routing pick from, so admitting it here would
+                // and verifier routing pick from, so admitting it here would
                 // hand both a provider that fails at construction.
                 let aux = provider_aux(&provider, &credentials_file);
                 has_required_aux(&provider, &aux).then_some(ConfiguredProvider {
@@ -1466,8 +1466,8 @@ pub fn discover_configured_providers() -> Vec<ConfiguredProvider> {
         if PROVIDERS.iter().any(|p| p.id == id.as_str()) || id == LOCAL_PROVIDER.id {
             continue;
         }
-        // The judge router needs a model to route to — an entry without
-        // `default_model` can't serve as a judge.
+        // The verifier router needs a model to route to — an entry without
+        // `default_model` can't serve as a verifier.
         if entry.default_model.as_deref().unwrap_or("").is_empty() {
             continue;
         }

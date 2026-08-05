@@ -475,10 +475,10 @@ mod tests {
     fn a_diverging_run_reports_the_golden_on_the_left() {
         let g = golden();
         let mut run = events();
-        run[1] = stage(StageKind::Judge);
+        run[1] = stage(StageKind::Verdict);
         let diff = g.diff(&run);
         assert_eq!(diff.len(), 1);
         assert_eq!(diff[0].left.as_deref(), Some("stage:Execute"));
-        assert_eq!(diff[0].right.as_deref(), Some("stage:Judge"));
+        assert_eq!(diff[0].right.as_deref(), Some("stage:Verdict"));
     }
 }

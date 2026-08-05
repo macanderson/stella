@@ -208,7 +208,7 @@ impl Settings {
         }
         // Reward weights (#1043): whole-block last-wins, same as `ui` above and
         // for the same reason — a project that declares any weight is stating a
-        // complete opinion about its own judge, so a per-field merge that left
+        // complete opinion about its own verifier, so a per-field merge that left
         // it with half of a user-scope policy would be a policy nobody wrote.
         // Must be listed explicitly or the block parses everywhere and merges
         // to `None`.

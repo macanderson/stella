@@ -326,7 +326,7 @@ async fn best_of_n_without_a_port_degrades_to_the_shared_tree_with_a_warning() {
 /// destructive by contract, so handing it to N candidate engines used to mean
 /// the first one to reach a step boundary consumed the user's words and the
 /// rest ran as if nothing had been typed — and since candidates run
-/// sequentially, that was always candidate 1. If the judge then picked another
+/// sequentially, that was always candidate 1. If the verifier then picked another
 /// candidate, the steer was absent from the winning transcript entirely.
 ///
 /// Counted via `Steered` events rather than the returned trajectory on purpose:

@@ -663,7 +663,7 @@ pub fn evaluate_guards(rules: &[Rule], action: &ProposedAction<'_>) -> GuardChec
 /// `RuleEvidence["source"]`). `TraceReasoning` is reserved for parity with
 /// the TS union — `observationsFromTrace` (not yet ported, see module
 /// docs) only ever produces `TraceFinding` today, deliberately: free-form
-/// judge reasoning is too verbose to cluster reliably on term overlap.
+/// verifier reasoning is too verbose to cluster reliably on term overlap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvidenceSource {
     TraceFinding,
@@ -676,7 +676,7 @@ pub enum EvidenceSource {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuleEvidence {
     pub source: EvidenceSource,
-    /// e.g. `trace:<turnId>#judge<round>.finding<i>` or `memory:<id>` (TS:
+    /// e.g. `trace:<turnId>#verifier<round>.finding<i>` or `memory:<id>` (TS:
     /// `ref` — renamed, `ref` is a Rust keyword).
     pub reference: String,
     pub occurred_at: u64,

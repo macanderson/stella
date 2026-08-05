@@ -424,7 +424,7 @@ pub struct GraphComparison {
     pub baseline_label: Option<String>,
 }
 
-/// Judge a current report against a baseline.
+/// Verifier a current report against a baseline.
 ///
 /// Pure: every threshold is a named constant above and no I/O happens here,
 /// so the grading rule is testable and reviewable as one function.

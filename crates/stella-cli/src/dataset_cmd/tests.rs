@@ -5,7 +5,7 @@
 //! output files, byte-identity — lives in `tests/dataset_export_cli.rs`.
 
 use super::*;
-use stella_protocol::{FileChangeKind, JudgeEvidence, ModelCallRole, ToolCall, ToolOutput};
+use stella_protocol::{FileChangeKind, ModelCallRole, ToolCall, ToolOutput, VerdictEvidence};
 use stella_store::SessionEventRecord;
 
 fn journal(events: Vec<AgentEvent>) -> Vec<SessionEventRecord> {
@@ -74,9 +74,9 @@ fn one_pass_over_the_journal_recovers_the_whole_trajectory() {
         removed: 0,
         diff: None,
     });
-    events.push(AgentEvent::JudgeVerdict {
+    events.push(AgentEvent::Verdict {
         passed: true,
-        evidence: JudgeEvidence {
+        evidence: VerdictEvidence {
             summary: "cargo test -p stella-cli flipped fail -> pass".into(),
             deterministic: true,
             evidence_refs: Vec::new(),
@@ -175,9 +175,9 @@ fn require_verdict_demands_a_passing_judgement() {
     );
 
     let mut events = edit_events();
-    events.push(AgentEvent::JudgeVerdict {
+    events.push(AgentEvent::Verdict {
         passed: false,
-        evidence: JudgeEvidence {
+        evidence: VerdictEvidence {
             summary: "the tests still fail".into(),
             deterministic: false,
             evidence_refs: Vec::new(),
@@ -187,8 +187,8 @@ fn require_verdict_demands_a_passing_judgement() {
     let failed = fold_journal(&journal(events));
     assert!(!is_accepted("completed", &failed, true));
 
-    assert!(!acceptance_predicate(false).contains("judge_verdict"));
-    assert!(acceptance_predicate(true).contains("judge_verdict"));
+    assert!(!acceptance_predicate(false).contains("verdict"));
+    assert!(acceptance_predicate(true).contains("verdict"));
 }
 
 /// The half-open window, on the timestamp form SQLite actually writes.

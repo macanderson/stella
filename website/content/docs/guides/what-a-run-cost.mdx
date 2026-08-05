@@ -114,7 +114,7 @@ A single step can hold several calls, and the numbering is fixed:
     The overflow summarizer that may run during that step's compaction.
   </OptionCard>
   <OptionCard name="--call-seq 2+">
-    The pipeline's management roles — triage, judge, plan, guidance, conversational.
+    The pipeline's management roles — triage, verifier, plan, guidance, conversational.
   </OptionCard>
 </CardGrid>
 
@@ -170,7 +170,7 @@ stella inspect 42 --step 0 --diff --only system
 That single added line is a plausible cause of a cold cache: anything that
 changes above the cache breakpoint invalidates the prefix for the whole turn.
 
-Three baselines, all **same-role** (diffing a worker prompt against a judge
+Three baselines, all **same-role** (diffing a worker prompt against a verifier
 prompt produces noise, not a delta):
 
 <CardGrid size="md">

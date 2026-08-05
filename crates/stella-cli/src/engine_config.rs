@@ -143,11 +143,11 @@ pub fn model_spec_for(
     }
 }
 
-/// Cross-family grouping key for judge diversity. Same-vendor providers
-/// count as ONE family (a Gemini judge over Vertex-served Gemini work
+/// Cross-family grouping key for verifier diversity. Same-vendor providers
+/// count as ONE family (a Gemini verifier over Vertex-served Gemini work
 /// carries the same bias), and an OpenRouter spec's family is the routed
 /// slug's vendor prefix — `openrouter/openai/gpt-5.5` IS an OpenAI model,
-/// and treating it as family "openrouter" would defeat the judge's
+/// and treating it as family "openrouter" would defeat the verifier's
 /// cross-family preference.
 pub fn spec_family(spec: &ModelSpec) -> String {
     match spec.provider.as_str() {
@@ -162,14 +162,14 @@ pub fn spec_family(spec: &ModelSpec) -> String {
     }
 }
 
-/// `auto_mode: on` — pick the judge from `allowed_models`, preferring a
+/// `auto_mode: on` — pick the verifier from `allowed_models`, preferring a
 /// family different from the worker's, then ranking by the seed catalog's
 /// output list price (the closest objective capability proxy the catalog
 /// carries; gateway-priced entries rank last at 0), then list order.
 /// Candidates whose provider has no resolvable credential are skipped —
 /// `configured` is the filter. `None` when nothing in the list is usable
-/// (the caller falls back to the normal judge routing).
-pub fn auto_judge_spec(
+/// (the caller falls back to the normal verifier routing).
+pub fn auto_verifier_spec(
     engine: &AgentEngineConfig,
     worker_family: &str,
     configured: &dyn Fn(&str) -> bool,
@@ -219,17 +219,17 @@ pub struct AgentTuning {
 }
 
 /// `effort_auto: on` — the per-agent effort nobody has to think about:
-/// the judge deliberates hard, the worker balances cost and quality, and
+/// the verifier deliberates hard, the worker balances cost and quality, and
 /// triage (a one-token classification under a latency ceiling) stays low.
 fn auto_effort(kind: EngineAgentKind) -> ReasoningEffort {
     match kind {
-        EngineAgentKind::Judge => ReasoningEffort::High,
+        EngineAgentKind::Verifier => ReasoningEffort::High,
         EngineAgentKind::Triage => ReasoningEffort::Low,
         EngineAgentKind::Default | EngineAgentKind::Worker => ReasoningEffort::Medium,
     }
 }
 
-/// `reasoning_auto: on` — thinking on wherever deliberation pays (judge,
+/// `reasoning_auto: on` — thinking on wherever deliberation pays (verifier,
 /// worker, default), off for triage (latency-bound, one bare token out).
 fn auto_reasoning(kind: EngineAgentKind) -> bool {
     !matches!(kind, EngineAgentKind::Triage)
@@ -305,7 +305,7 @@ pub fn model_supports_reasoning(provider: &str, model: &str) -> Option<bool> {
 /// One key reaches every vendor, so the interesting choice on OpenRouter is
 /// not "which model" but "which model per ROLE" — and the roles want
 /// genuinely different things. The driver wants a long-context agentic model
-/// thinking hard; the judge wants a different vendor's strongest reasoner, so
+/// thinking hard; the verifier wants a different vendor's strongest reasoner, so
 /// its verdict is not the worker grading its own homework (see
 /// [`spec_family`], which exists precisely to keep those apart); triage wants
 /// something fast and cheap that runs on every turn.
@@ -328,15 +328,15 @@ pub fn provider_engine_baseline(provider_id: &str) -> Option<AgentEngineConfig> 
         // reason this is a default rather than an override:
         // [`AgentEngineConfig::model_for`] reads `agents.<role>.model` BEFORE
         // the flat key, so a per-agent baseline would outrank a user's
-        // `pipeline_judge_model` — backwards. On the flat key the user's
+        // `pipeline_verifier_model` — backwards. On the flat key the user's
         // value simply replaces this one.
         //
         // Qualified rather than a bare slug plus an `agents.<role>.provider`
         // pin for the same reason: a pin survives an overlay that replaces
-        // only the model, so a user retargeting the judge at
+        // only the model, so a user retargeting the verifier at
         // `anthropic/claude-fable-5` would have it sent to OpenRouter as a
         // slug. The prefix travels WITH the model or not at all.
-        pipeline_judge_model: Some("openrouter/anthropic/claude-opus-5".to_string()),
+        pipeline_verifier_model: Some("openrouter/anthropic/claude-opus-5".to_string()),
         pipeline_triage_model: Some("openrouter/z-ai/glm-5.2".to_string()),
         // Unset: the worker rides the default agent's model, and saying so
         // twice is how the two drift apart.
@@ -363,7 +363,7 @@ pub fn provider_engine_baseline(provider_id: &str) -> Option<AgentEngineConfig> 
 /// Keyed on the provider that resolution actually PICKED, not on which
 /// credentials happen to exist. An instance with an OpenRouter key that was
 /// nonetheless pointed at `--model anthropic/…` is an Anthropic session, and
-/// quietly routing its judge through a different gateway — and a different
+/// quietly routing its verifier through a different gateway — and a different
 /// bill — would be the config surprising its user.
 pub fn engine_with_provider_baseline(
     provider_id: &str,
@@ -527,7 +527,7 @@ fn kind_for(role: EngineRole) -> EngineAgentKind {
     match role {
         EngineRole::Default => EngineAgentKind::Default,
         EngineRole::Worker => EngineAgentKind::Worker,
-        EngineRole::Judge => EngineAgentKind::Judge,
+        EngineRole::Verifier => EngineAgentKind::Verifier,
         EngineRole::Triage => EngineAgentKind::Triage,
     }
 }
@@ -538,7 +538,7 @@ fn flat_model(engine: &AgentEngineConfig, kind: EngineAgentKind) -> Option<&str>
     match kind {
         EngineAgentKind::Default => engine.default_model.as_deref(),
         EngineAgentKind::Worker => engine.pipeline_worker_model.as_deref(),
-        EngineAgentKind::Judge => engine.pipeline_judge_model.as_deref(),
+        EngineAgentKind::Verifier => engine.pipeline_verifier_model.as_deref(),
         EngineAgentKind::Triage => engine.pipeline_triage_model.as_deref(),
     }
 }
@@ -638,7 +638,7 @@ pub fn settings_from_state(state: &EngineConfigState) -> AgentEngineConfig {
         match kind {
             EngineAgentKind::Default => engine.default_model = model,
             EngineAgentKind::Worker => engine.pipeline_worker_model = model,
-            EngineAgentKind::Judge => engine.pipeline_judge_model = model,
+            EngineAgentKind::Verifier => engine.pipeline_verifier_model = model,
             EngineAgentKind::Triage => engine.pipeline_triage_model = model,
         }
         let params = AgentEngineParams {
@@ -699,9 +699,9 @@ mod tests {
     fn openrouter_baseline_routes_every_role_through_the_gateway() {
         let engine = provider_engine_baseline("openrouter").expect("openrouter has a baseline");
 
-        let judge = model_spec_for(&engine, EngineAgentKind::Judge, &is_builtin).unwrap();
-        assert_eq!(judge.provider, "openrouter");
-        assert_eq!(judge.model, "anthropic/claude-opus-5");
+        let verifier = model_spec_for(&engine, EngineAgentKind::Verifier, &is_builtin).unwrap();
+        assert_eq!(verifier.provider, "openrouter");
+        assert_eq!(verifier.model, "anthropic/claude-opus-5");
 
         let triage = model_spec_for(&engine, EngineAgentKind::Triage, &is_builtin).unwrap();
         assert_eq!(triage.provider, "openrouter");
@@ -717,14 +717,14 @@ mod tests {
         assert!(model_spec_for(&engine, EngineAgentKind::Default, &is_builtin).is_none());
     }
 
-    /// Judge diversity is the reason Opus 5 is the judge rather than another
+    /// Verifier diversity is the reason Opus 5 is the verifier rather than another
     /// Kimi. `spec_family` reads an OpenRouter spec's family from the routed
     /// vendor prefix, so this is the check that the default actually achieves
     /// the cross-family split it claims.
     #[test]
-    fn openrouter_baseline_judge_is_a_different_family_from_the_driver() {
+    fn openrouter_baseline_verifier_is_a_different_family_from_the_driver() {
         let engine = provider_engine_baseline("openrouter").unwrap();
-        let judge = model_spec_for(&engine, EngineAgentKind::Judge, &is_builtin).unwrap();
+        let verifier = model_spec_for(&engine, EngineAgentKind::Verifier, &is_builtin).unwrap();
         let driver = ModelSpec {
             provider: "openrouter".to_string(),
             model: crate::config::PROVIDERS
@@ -735,8 +735,8 @@ mod tests {
                 .to_string(),
         };
         assert_eq!(spec_family(&driver), "moonshotai");
-        assert_eq!(spec_family(&judge), "anthropic");
-        assert_ne!(spec_family(&driver), spec_family(&judge));
+        assert_eq!(spec_family(&verifier), "anthropic");
+        assert_ne!(spec_family(&driver), spec_family(&verifier));
     }
 
     #[test]
@@ -758,16 +758,16 @@ mod tests {
     #[test]
     fn configured_settings_beat_the_baseline_field_by_field() {
         let user = engine_from_json(
-            r#"{"pipeline_judge_model": "openrouter/openai/gpt-5.5",
+            r#"{"pipeline_verifier_model": "openrouter/openai/gpt-5.5",
                 "headless_scope_bypass": "on",
                 "agents": {"default": {"effort": "low"}}}"#,
         );
         let merged =
             engine_with_provider_baseline("openrouter", &Some(user)).expect("baseline applies");
 
-        // The user's judge wins...
-        let judge = model_spec_for(&merged, EngineAgentKind::Judge, &is_builtin).unwrap();
-        assert_eq!(judge.model, "openai/gpt-5.5");
+        // The user's verifier wins...
+        let verifier = model_spec_for(&merged, EngineAgentKind::Verifier, &is_builtin).unwrap();
+        assert_eq!(verifier.model, "openai/gpt-5.5");
         // ...their effort wins over the baseline's xhigh...
         let default = tuning_for(&merged, EngineAgentKind::Default);
         assert_eq!(default.effort, Some(ReasoningEffort::Low));
@@ -781,7 +781,7 @@ mod tests {
     }
 
     /// Keyed on the provider that resolution PICKED. An OpenRouter key in the
-    /// environment must not quietly re-route an Anthropic session's judge
+    /// environment must not quietly re-route an Anthropic session's verifier
     /// through a different gateway — and a different bill.
     #[test]
     fn a_non_openrouter_session_is_left_exactly_as_configured() {
@@ -823,9 +823,9 @@ mod tests {
     #[test]
     fn model_spec_honors_the_explicit_provider_pin_verbatim() {
         let engine = engine_from_json(
-            r#"{"agents": {"judge": {"provider": "openrouter", "model": "openai/gpt-5.5"}}}"#,
+            r#"{"agents": {"verifier": {"provider": "openrouter", "model": "openai/gpt-5.5"}}}"#,
         );
-        let spec = model_spec_for(&engine, EngineAgentKind::Judge, &is_builtin).unwrap();
+        let spec = model_spec_for(&engine, EngineAgentKind::Verifier, &is_builtin).unwrap();
         // No prefix splitting: the slug goes to the pinned provider whole.
         assert_eq!(spec.provider, "openrouter");
         assert_eq!(spec.model, "openai/gpt-5.5");
@@ -855,10 +855,10 @@ mod tests {
         // The TUI-save shape — pin plus a flat spec naming the SAME seeded
         // provider — resolves to the catalog slug, not `provider/provider/…`.
         let engine = engine_from_json(
-            r#"{"pipeline_judge_model": "anthropic/claude-fable-5",
-                "agents": {"judge": {"provider": "anthropic"}}}"#,
+            r#"{"pipeline_verifier_model": "anthropic/claude-fable-5",
+                "agents": {"verifier": {"provider": "anthropic"}}}"#,
         );
-        let spec = model_spec_for(&engine, EngineAgentKind::Judge, &is_builtin).unwrap();
+        let spec = model_spec_for(&engine, EngineAgentKind::Verifier, &is_builtin).unwrap();
         assert_eq!(spec.provider, "anthropic");
         assert_eq!(spec.model, "claude-fable-5");
 
@@ -874,10 +874,10 @@ mod tests {
         // model whose prefix names another provider — that slug shape is
         // exactly how OpenRouter routes (`openai/gpt-5.5` IS its slug).
         let engine = engine_from_json(
-            r#"{"pipeline_judge_model": "openai/gpt-5.5",
-                "agents": {"judge": {"provider": "openrouter"}}}"#,
+            r#"{"pipeline_verifier_model": "openai/gpt-5.5",
+                "agents": {"verifier": {"provider": "openrouter"}}}"#,
         );
-        let spec = model_spec_for(&engine, EngineAgentKind::Judge, &is_builtin).unwrap();
+        let spec = model_spec_for(&engine, EngineAgentKind::Verifier, &is_builtin).unwrap();
         assert_eq!(spec.provider, "openrouter");
         assert_eq!(spec.model, "openai/gpt-5.5");
     }
@@ -932,7 +932,7 @@ mod tests {
     }
 
     #[test]
-    fn auto_judge_prefers_cross_family_then_price_then_list_order() {
+    fn auto_verifier_prefers_cross_family_then_price_then_list_order() {
         let engine = engine_from_json(
             r#"{"allowed_models": [
                 "zai/glm-5.2",
@@ -942,10 +942,10 @@ mod tests {
         );
         // Worker family zai → cross-family candidates are deepseek (1.10
         // output) and anthropic (15.00 output): price ranks Anthropic first.
-        let spec = auto_judge_spec(&engine, "zai", &|_| true).unwrap();
+        let spec = auto_verifier_spec(&engine, "zai", &|_| true).unwrap();
         assert_eq!(spec.provider, "anthropic");
         // Worker family anthropic → zai (2.20) beats deepseek (1.10).
-        let spec = auto_judge_spec(&engine, "anthropic", &|_| true).unwrap();
+        let spec = auto_verifier_spec(&engine, "anthropic", &|_| true).unwrap();
         assert_eq!(spec.provider, "zai");
         // Credentials filter: with anthropic unavailable, `anthropic/…` stops
         // parsing as a qualified spec (the prefix is no longer a configured
@@ -954,18 +954,18 @@ mod tests {
         // real wire name for the model — so the same model is still reachable
         // over a provider we DO hold a credential for, and price still ranks
         // it above deepseek. Losing the first-party key downgrades the route,
-        // not the judge.
-        let spec = auto_judge_spec(&engine, "zai", &|id| id != "anthropic").unwrap();
+        // not the verifier.
+        let spec = auto_verifier_spec(&engine, "zai", &|id| id != "anthropic").unwrap();
         assert_eq!(spec.provider, "openrouter");
         assert_eq!(spec.model, "anthropic/claude-fable-5");
         // With neither the vendor nor the gateway, deepseek is the fallback.
-        let spec = auto_judge_spec(&engine, "zai", &|id| {
+        let spec = auto_verifier_spec(&engine, "zai", &|id| {
             id != "anthropic" && id != "openrouter"
         })
         .unwrap();
         assert_eq!(spec.provider, "deepseek");
         // Nothing configured → None (caller falls back to normal routing).
-        assert!(auto_judge_spec(&engine, "zai", &|_| false).is_none());
+        assert!(auto_verifier_spec(&engine, "zai", &|_| false).is_none());
     }
 
     #[test]
@@ -973,17 +973,17 @@ mod tests {
         let engine = engine_from_json(
             r#"{"effort_auto": "on", "reasoning_auto": "on",
                 "agents": {"triage": {"effort": "max", "reasoning": "on"},
-                            "judge": {"prompt": "Judge hard."}}}"#,
+                            "verifier": {"prompt": "Verifier hard."}}}"#,
         );
         // Auto overrides the explicit triage settings (that's its contract).
         let triage = tuning_for(&engine, EngineAgentKind::Triage);
         assert_eq!(triage.effort, Some(ReasoningEffort::Low));
         assert_eq!(triage.reasoning, Some(false));
-        let judge = tuning_for(&engine, EngineAgentKind::Judge);
-        assert_eq!(judge.effort, Some(ReasoningEffort::High));
-        assert_eq!(judge.reasoning, Some(true));
+        let verifier = tuning_for(&engine, EngineAgentKind::Verifier);
+        assert_eq!(verifier.effort, Some(ReasoningEffort::High));
+        assert_eq!(verifier.reasoning, Some(true));
         // Prompts are never auto-managed.
-        assert_eq!(judge.prompt.as_deref(), Some("Judge hard."));
+        assert_eq!(verifier.prompt.as_deref(), Some("Verifier hard."));
 
         // Autos off → the per-agent settings answer.
         let engine =
@@ -1119,10 +1119,10 @@ mod tests {
     fn snapshot_roundtrips_through_the_tui_state() {
         let engine = engine_from_json(
             r#"{"default_model": "anthropic/claude-fable-5",
-                "pipeline_judge_model": "openrouter/openai/gpt-5.5",
+                "pipeline_verifier_model": "openrouter/openai/gpt-5.5",
                 "allowed_models": ["anthropic/claude-fable-5"],
                 "auto_mode": "off", "effort_auto": "on", "reasoning_auto": "off",
-                "agents": {"judge": {"provider": "openrouter", "effort": "high",
+                "agents": {"verifier": {"provider": "openrouter", "effort": "high",
                                       "reasoning": "on",
                                       "params": {"temperature": 0.2, "top_k": 40,
                                                   "verbosity": "low",
@@ -1136,31 +1136,31 @@ mod tests {
         );
         assert!(!state.auto_mode);
         assert!(state.effort_auto);
-        let judge = state.agent(EngineRole::Judge).expect("judge state");
-        assert_eq!(judge.model.as_deref(), Some("openrouter/openai/gpt-5.5"));
-        assert_eq!(judge.provider.as_deref(), Some("openrouter"));
-        assert_eq!(judge.effort.as_deref(), Some("high"));
-        assert_eq!(judge.reasoning, Some(true));
-        assert_eq!(judge.top_k, Some(40));
-        assert_eq!(judge.verbosity.as_deref(), Some("low"));
-        assert_eq!(judge.service_tier.as_deref(), Some("flex"));
+        let verifier = state.agent(EngineRole::Verifier).expect("verifier state");
+        assert_eq!(verifier.model.as_deref(), Some("openrouter/openai/gpt-5.5"));
+        assert_eq!(verifier.provider.as_deref(), Some("openrouter"));
+        assert_eq!(verifier.effort.as_deref(), Some("high"));
+        assert_eq!(verifier.reasoning, Some(true));
+        assert_eq!(verifier.top_k, Some(40));
+        assert_eq!(verifier.verbosity.as_deref(), Some("low"));
+        assert_eq!(verifier.service_tier.as_deref(), Some("flex"));
 
         let back = settings_from_state(&state);
         // Models land on the flat keys, agents.model stays clear.
         assert_eq!(
-            back.pipeline_judge_model.as_deref(),
+            back.pipeline_verifier_model.as_deref(),
             Some("openrouter/openai/gpt-5.5")
         );
         assert_eq!(
             back.default_model.as_deref(),
             Some("anthropic/claude-fable-5")
         );
-        let judge = back.agent(EngineAgentKind::Judge).expect("judge");
-        assert!(judge.model.is_none());
-        assert_eq!(judge.provider.as_deref(), Some("openrouter"));
-        assert_eq!(judge.effort, Some(ReasoningEffort::High));
-        assert_eq!(judge.reasoning, Some(Toggle::On));
-        let params = judge.params.expect("params");
+        let verifier = back.agent(EngineAgentKind::Verifier).expect("verifier");
+        assert!(verifier.model.is_none());
+        assert_eq!(verifier.provider.as_deref(), Some("openrouter"));
+        assert_eq!(verifier.effort, Some(ReasoningEffort::High));
+        assert_eq!(verifier.reasoning, Some(Toggle::On));
+        let params = verifier.params.expect("params");
         assert_eq!(params.temperature, Some(0.2));
         assert_eq!(params.service_tier, Some(ServiceTier::Flex));
         // The toggles are written explicitly (an "off" the user chose is

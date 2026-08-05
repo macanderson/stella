@@ -139,14 +139,14 @@ def test_cap_hit_and_zero_tool_flags_surface(tmp_path: Path) -> None:
         tmp_path,
         "j-armA",
         "regex-log",
-        events=[_CAP_STEP, {"type": "judge_verdict", "passed": False}, {"type": "complete"}],
+        events=[_CAP_STEP, {"type": "verdict", "passed": False}, {"type": "complete"}],
     )
     view = trial_view(trial, _EventsCache())
     assert view["status"] == "done"
     assert view["cap_hits"] == 1
     assert view["cap_hits_source"] == "inferred"
     assert view["tools"] == 0
-    assert view["judge_passed"] is False
+    assert view["verifier_passed"] is False
 
 
 def test_reported_finish_reason_beats_the_output_size_heuristic(tmp_path: Path) -> None:

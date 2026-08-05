@@ -16,7 +16,7 @@ use super::*;
 /// `catalog_ref` is the `(provider_id, model_id)` the catalog-based clamps
 /// below (context-window compaction budget, reasoning capability) are
 /// computed against — the model THIS kind's calls actually land on, not
-/// necessarily `cfg`'s. For `Default`/`Judge` that is `cfg.provider.id`/
+/// necessarily `cfg`'s. For `Default`/`Verifier` that is `cfg.provider.id`/
 /// `cfg.model_id`; for `Worker` it is the wiring's resolved worker model
 /// (issue #276 — honoring `pipeline_worker_model`/`agents.worker.*` must
 /// also clamp against the model it actually routes to, or a worker pinned to
@@ -33,12 +33,12 @@ fn tuned_engine_config(
         cwd: cfg.workspace_root.display().to_string(),
         // Every role gets the same turn budget: the deadline it guards is the
         // process's, not one agent's, so a worker that declines a continuation
-        // while a judge spends the remaining time past it would defeat the
+        // while a verifier spends the remaining time past it would defeat the
         // point. `None` unless `--turn-budget` was given.
         turn_budget: cfg.turn_budget,
         // Phase 2 (#713): the adaptive-context lifecycle switch, off by
         // default. Read here rather than at each receipt site so every engine
-        // this session builds — default, worker, judge — agrees on it.
+        // this session builds — default, worker, verifier — agrees on it.
         lifecycle_enabled: crate::memory::session_lifecycle_enabled(&cfg.workspace_root),
         // Durability, for every role at once. This is the single place an
         // engine is tuned in this crate, so attaching the sink here covers the
@@ -133,7 +133,7 @@ fn tuned_engine_config(
         engine.params = tuning.params;
         // The output cap's partner ceiling, and it is set here rather than
         // per-role for the reason the turn budget is: what it bounds belongs to
-        // the process, not to one agent. A judge left on the default while the
+        // the process, not to one agent. A verifier left on the default while the
         // worker's cap tripled would stop first on exactly the runs the raise
         // was for.
         //
@@ -160,7 +160,7 @@ fn tuned_engine_config(
     //
     // Applies to every role for the same reason the turn budget does: what it
     // bounds is the process's spend, not one agent's. Capping the worker while
-    // a judge kept the model's full ceiling would move the cost rather than
+    // a verifier kept the model's full ceiling would move the cost rather than
     // reduce it.
     //
     // Clamped to the model's own ceiling, like the per-model setting. The flag
@@ -248,7 +248,7 @@ pub(crate) fn approval_capability_for(
     }
 }
 
-/// Whether a TRUSTED engine posture explicitly names a witness/judge author
+/// Whether a TRUSTED engine posture explicitly names a witness/verifier author
 /// other than the worker's model — i.e. the posture's own hash claims the
 /// authored-witness arm, so a run that silently loses that author reports a
 /// number the posture misdescribes (#1147).
@@ -256,13 +256,13 @@ pub(crate) fn approval_capability_for(
 /// Three deliberate narrowings:
 ///
 /// * **Trusted postures only.** The settings scope chain keeps its soft
-///   degradation (a judge whose provider has no credential leaves a notice and
+///   degradation (a verifier whose provider has no credential leaves a notice and
 ///   rides the worker, exactly as [`EngineWiring`] documents). Nothing is
 ///   published about an ordinary session's wiring, so nothing about it can be
 ///   misdescribed.
-/// * **An EXPLICIT judge key only** — `agents.judge.model` or the flat
-///   `pipeline_judge_model`, never [`crate::settings::AgentEngineConfig::model_for`]'s
-///   fallback to `default_model`. The control arm reaches the judge role
+/// * **An EXPLICIT verifier key only** — `agents.verifier.model` or the flat
+///   `pipeline_verifier_model`, never [`crate::settings::AgentEngineConfig::model_for`]'s
+///   fallback to `default_model`. The control arm reaches the verifier role
 ///   through that fallback, and reading it here would arm the refusal on the
 ///   very arm that is *supposed* to run one model for every role.
 /// * **Compared as the caller wrote it.** The posture writes fully-qualified
@@ -281,12 +281,12 @@ pub(crate) fn trusted_posture_requires_independent_witness(
         return false;
     };
     engine
-        .agent(crate::settings::EngineAgentKind::Judge)
+        .agent(crate::settings::EngineAgentKind::Verifier)
         .and_then(|agent| agent.model.as_deref())
-        .or(engine.pipeline_judge_model.as_deref())
+        .or(engine.pipeline_verifier_model.as_deref())
         .map(str::trim)
-        .filter(|judge| !judge.is_empty())
-        .is_some_and(|judge| judge != worker_model.to_string())
+        .filter(|verifier| !verifier.is_empty())
+        .is_some_and(|verifier| verifier != worker_model.to_string())
 }
 
 /// Build the one-shot pipeline config from the host's approval capability.
@@ -362,18 +362,18 @@ pub(crate) fn apply_pipeline_tuning(cfg: &Config, mut config: PipelineConfig) ->
     // both `on` and `off` are explicit selections. Collapsing absent into
     // `false` here would silently pin every run that never mentioned the key
     // to whichever side this file happened to prefer.
-    if let Some(demand) = engine.pipeline_judge_evidence_demand {
-        config.judge_evidence_demand = demand.is_on();
+    if let Some(demand) = engine.pipeline_verifier_evidence_demand {
+        config.verifier_evidence_demand = demand.is_on();
     }
     config
 }
 
-/// EngineConfig for the goal loop's standalone judge engine — the JUDGE
+/// EngineConfig for the goal loop's standalone verifier engine — the VERIFIER
 /// agent's tuning.
-pub(crate) fn judge_engine_config_for(cfg: &Config) -> EngineConfig {
+pub(crate) fn verifier_engine_config_for(cfg: &Config) -> EngineConfig {
     tuned_engine_config(
         cfg,
-        crate::settings::EngineAgentKind::Judge,
+        crate::settings::EngineAgentKind::Verifier,
         (cfg.provider.id, &cfg.model_id),
     )
 }
@@ -526,7 +526,7 @@ fn pin_role(
             }
             // A profile for the routed provider keeps the router's provider
             // list honest (breaker bookkeeping, `providers()` introspection,
-            // and — critically — the router's own unpinned-judge cross-
+            // and — critically — the router's own unpinned-verifier cross-
             // family lookup, which matches `resolve(Worker)`'s result against
             // a profile's `worker_model` field) even though the pin itself
             // short-circuits normal tiered resolution.
@@ -571,28 +571,28 @@ fn pin_role(
 ///   (`cfg.model_pinned_by_flag`) suppresses that settings override
 ///   entirely — the flag exists to pin the worker for one invocation, so it
 ///   outranks the config file.
-/// - TRIAGE and JUDGE pins come from their configured model specs the same
+/// - TRIAGE and VERIFIER pins come from their configured model specs the same
 ///   way, but always fall back to the (possibly worker-overridden) worker
 ///   model on any failure — the pre-existing behavior.
-/// - `auto_mode: on` replaces the judge spec with
-///   [`crate::engine_config::auto_judge_spec`]'s pick from
+/// - `auto_mode: on` replaces the verifier spec with
+///   [`crate::engine_config::auto_verifier_spec`]'s pick from
 ///   `allowed_models` (cross-family from the ACTUAL worker model, then
 ///   price tier); when the allowed list yields nothing usable it falls back
-///   to the explicit judge spec, then to normal router degradation.
+///   to the explicit verifier spec, then to normal router degradation.
 /// - A pin equal to the session-default model needs no extra adapter — the
 ///   primary resolver entry already serves it.
 ///
 /// Pins deliberately bypass the circuit breaker (`RoleTable` semantics —
-/// an explicit pin wins unconditionally). If a pinned judge's provider
-/// fails, the pipeline's judge call degrades to its heuristic verdict,
-/// the same soft path an unreachable judge always took.
+/// an explicit pin wins unconditionally). If a pinned verifier's provider
+/// fails, the pipeline's verifier call degrades to its heuristic verdict,
+/// the same soft path an unreachable verifier always took.
 pub(crate) fn resolve_engine_wiring(
     cfg: &Config,
     worker_ref: &ModelRef,
     configured: &[crate::config::ConfiguredProvider],
 ) -> EngineWiring {
     use crate::engine_config::{
-        ModelSpec, auto_judge_spec, model_spec_for, spec_family, tuning_for,
+        ModelSpec, auto_verifier_spec, model_spec_for, spec_family, tuning_for,
     };
     use crate::settings::EngineAgentKind;
 
@@ -621,7 +621,7 @@ pub(crate) fn resolve_engine_wiring(
     let is_provider = |id: &str| configured.iter().any(|c| c.config.id == id);
 
     // Issue #276: resolve the WORKER's own override first, before anything
-    // that needs to know the worker's actual model (judge cross-family
+    // that needs to know the worker's actual model (verifier cross-family
     // selection, the capability clamp's "rides the worker" fallback below).
     // `Role::Plan` is pinned alongside `Role::Worker` to the same model —
     // unpinned, it shares the worker's tier (`resolve_tier` treats
@@ -634,7 +634,7 @@ pub(crate) fn resolve_engine_wiring(
     // must lose to it — otherwise the pin is not merely ignored but
     // unobservable: the run reports the model that was asked for while a
     // different one does the work and bills for it. Only the WORKER spec is
-    // suppressed; `pipeline_triage_model`/`pipeline_judge_model` still apply,
+    // suppressed; `pipeline_triage_model`/`pipeline_verifier_model` still apply,
     // since `--model` says nothing about those roles.
     let worker_spec = match model_spec_for(&engine, EngineAgentKind::Worker, &is_provider) {
         Some(spec) if cfg.model_pinned_by_flag => {
@@ -668,7 +668,7 @@ pub(crate) fn resolve_engine_wiring(
     wiring.worker_model = effective_worker_ref.clone();
 
     let triage_tuning = tuning_for(&engine, EngineAgentKind::Triage);
-    let judge_tuning = tuning_for(&engine, EngineAgentKind::Judge);
+    let verifier_tuning = tuning_for(&engine, EngineAgentKind::Verifier);
     wiring.role_overrides.triage = stella_pipeline::RoleCallOverrides {
         prompt: triage_tuning.prompt,
         effort: triage_tuning.effort,
@@ -677,29 +677,29 @@ pub(crate) fn resolve_engine_wiring(
         max_output_tokens: triage_tuning.max_output_tokens,
         params: triage_tuning.params,
     };
-    wiring.role_overrides.judge = stella_pipeline::RoleCallOverrides {
-        prompt: judge_tuning.prompt,
-        effort: judge_tuning.effort,
-        reasoning: judge_tuning.reasoning,
-        temperature: judge_tuning.temperature,
-        max_output_tokens: judge_tuning.max_output_tokens,
-        params: judge_tuning.params,
+    wiring.role_overrides.verifier = stella_pipeline::RoleCallOverrides {
+        prompt: verifier_tuning.prompt,
+        effort: verifier_tuning.effort,
+        reasoning: verifier_tuning.reasoning,
+        temperature: verifier_tuning.temperature,
+        max_output_tokens: verifier_tuning.max_output_tokens,
+        params: verifier_tuning.params,
     };
 
-    // The judge's cross-family preference must compare against the model the
+    // The verifier's cross-family preference must compare against the model the
     // worker ACTUALLY resolves to — comparing against the stale session
-    // default here would let auto-mode pick a judge that turns out to share
+    // default here would let auto-mode pick a verifier that turns out to share
     // the overridden worker's family (or vice versa), defeating the
     // bias-resistance the family comparison exists for.
     let worker_family = spec_family(&ModelSpec {
         provider: effective_worker_ref.provider.clone(),
         model: effective_worker_ref.model_id.clone(),
     });
-    let judge_spec = if engine.auto_mode_on() {
-        auto_judge_spec(&engine, &worker_family, &is_provider)
-            .or_else(|| model_spec_for(&engine, EngineAgentKind::Judge, &is_provider))
+    let verifier_spec = if engine.auto_mode_on() {
+        auto_verifier_spec(&engine, &worker_family, &is_provider)
+            .or_else(|| model_spec_for(&engine, EngineAgentKind::Verifier, &is_provider))
     } else {
-        model_spec_for(&engine, EngineAgentKind::Judge, &is_provider)
+        model_spec_for(&engine, EngineAgentKind::Verifier, &is_provider)
     };
     let triage_spec = model_spec_for(&engine, EngineAgentKind::Triage, &is_provider);
 
@@ -731,12 +731,12 @@ pub(crate) fn resolve_engine_wiring(
             }
         };
         clamp(&mut wiring.role_overrides.triage, triage_spec.as_ref());
-        clamp(&mut wiring.role_overrides.judge, judge_spec.as_ref());
+        clamp(&mut wiring.role_overrides.verifier, verifier_spec.as_ref());
     }
 
     let role_specs = [
         (Role::Triage, "triage", triage_spec),
-        (Role::Judge, "judge", judge_spec),
+        (Role::Verifier, "verifier", verifier_spec),
     ];
 
     for (role, label, spec) in role_specs {
@@ -805,7 +805,7 @@ pub(crate) fn build_provider(cfg: &Config) -> Result<Box<dyn Provider>, String> 
 
 /// The per-dialect provider factory, over already-resolved parts rather than
 /// a whole [`Config`]. Both the worker path ([`build_provider`]) and the
-/// goal loop's routed judge ([`resolve_cross_family_judge`]) go through this
+/// goal loop's routed verifier ([`resolve_cross_family_verifier`]) go through this
 /// one match, so the wire-dialect selection — and the anti-phantom-slug
 /// catalog check — live in exactly one place. `effective_base_url` is the
 /// base URL requests go to (override-or-default); `base_url_override` is the
@@ -879,11 +879,11 @@ fn build_provider_parts(
     .map_err(|error| error.to_string())
 }
 
-/// Cross-family grouping key for judge selection. Same-vendor providers must
-/// count as the SAME family so a routed judge is genuinely a different model,
-/// not the same weights behind a second endpoint: a Gemini judge assessing
+/// Cross-family grouping key for verifier selection. Same-vendor providers must
+/// count as the SAME family so a routed verifier is genuinely a different model,
+/// not the same weights behind a second endpoint: a Gemini verifier assessing
 /// Gemini-via-Vertex work carries the same bias, as does an Anthropic Claude
-/// judge over Bedrock Claude. Anything without a known sibling is its own
+/// verifier over Bedrock Claude. Anything without a known sibling is its own
 /// family (its id).
 pub(crate) fn provider_family(provider_id: &str) -> String {
     match provider_id {
@@ -902,22 +902,22 @@ fn profile_for(config: &crate::config::ProviderConfig) -> ProviderProfile {
         .with_family(provider_family(config.id))
 }
 
-/// Resolve the JUDGE role for the goal loop. Builds a role [`Router`] whose
+/// Resolve the VERIFIER role for the goal loop. Builds a role [`Router`] whose
 /// most-preferred provider is the active worker (`worker_id`/`worker_model`,
 /// so the `--model` pin is honored) followed by every OTHER configured
-/// provider, then resolves `Role::Judge`. The router prefers a healthy
-/// provider whose family differs from the worker's (`resolve_judge`), so:
+/// provider, then resolves `Role::Verifier`. The router prefers a healthy
+/// provider whose family differs from the worker's (`resolve_verifier`), so:
 ///
 /// - Only the worker's family configured → the router degrades to the worker
 ///   provider; `model_ref.provider == worker_id`, so we return `None` and no
 ///   second provider is built (behavior identical to before).
 /// - A distinct family is selected → the concrete `ModelRef` is returned.
 ///
-/// Returns `None` (→ caller reuses the worker as judge) on ANY failure —
-/// same-family degradation, a resolve error, an unknown judge provider, or a
-/// judge-adapter build failure — so judge routing can never break the loop.
-/// On success returns the built judge provider and its id (for the notice).
-pub(crate) fn resolve_cross_family_judge(
+/// Returns `None` (→ caller reuses the worker as verifier) on ANY failure —
+/// same-family degradation, a resolve error, an unknown verifier provider, or a
+/// verifier-adapter build failure — so verifier routing can never break the loop.
+/// On success returns the built verifier provider and its id (for the notice).
+pub(crate) fn resolve_cross_family_verifier(
     worker_id: &str,
     worker_model: &str,
     configured: &[crate::config::ConfiguredProvider],
@@ -944,7 +944,7 @@ pub(crate) fn resolve_cross_family_judge(
         profiles,
         CircuitBreaker::new(Box::new(SystemClock::new())),
     );
-    let decision = router.resolve(Role::Judge).ok()?;
+    let decision = router.resolve(Role::Verifier).ok()?;
 
     // Same provider as the worker → single-family/degraded: reuse the worker
     // provider directly, never build a duplicate.
@@ -952,12 +952,12 @@ pub(crate) fn resolve_cross_family_judge(
         return None;
     }
 
-    // Build the concrete judge from the discovered credential for the chosen
+    // Build the concrete verifier from the discovered credential for the chosen
     // provider. A missing entry or a build error falls back to the worker.
     let entry = configured
         .iter()
         .find(|c| c.config.id == decision.model_ref.provider)?;
-    let judge = build_provider_parts(
+    let verifier = build_provider_parts(
         &entry.config,
         &decision.model_ref.model_id,
         entry.api_key.clone(),
@@ -966,5 +966,5 @@ pub(crate) fn resolve_cross_family_judge(
         entry.aux.clone(),
     )
     .ok()?;
-    Some((judge, decision.model_ref.provider))
+    Some((verifier, decision.model_ref.provider))
 }

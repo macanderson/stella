@@ -191,7 +191,7 @@ benchmark run, not a missing warning.
 ### 4.1 Open the agent set
 
 Today `AgentEngineAgents` is a struct with four fields: `default`, `worker`,
-`judge`, `triage`. A misspelled agent key is silently ignored.
+`verifier`, `triage`. A misspelled agent key is silently ignored.
 
 Two things already exist that this closed set strands:
 
@@ -233,7 +233,7 @@ Three things must be true or this feature quietly corrupts the receipts:
    absorbed silently.
 3. **`on_exhausted` is explicit.** `fail` (default) ends the turn;
    `degrade` falls back to the default agent's model. `degrade` must be
-   opt-in — a judge silently dropping to a weaker model is worse than a
+   opt-in — a verifier silently dropping to a weaker model is worse than a
    clean failure, because the verdict still looks like a verdict.
 
 ### 4.3 `prompt_file`
@@ -248,7 +248,7 @@ not become the way around that check.
 the path resolves inside the workspace root; symlinks are refused (the same
 posture `settings/private.rs::reject_symlink` already takes on write); an
 unreadable path is a named error, never a silent fall-through to the built-in
-prompt — a judge quietly running the default prompt while the config says
+prompt — a verifier quietly running the default prompt while the config says
 otherwise is exactly the kind of invisible misconfiguration this system is
 supposed to make impossible.
 
@@ -272,7 +272,7 @@ test asserting the result is never more permissive than either input.
 ### 4.5 Pipeline stages
 
 Today the staged pipeline (triage → plan → witness → execute → verify →
-judge) is hard-coded in `stella-pipeline`, and `--no-pipeline` is the only
+verifier) is hard-coded in `stella-pipeline`, and `--no-pipeline` is the only
 control — it turns the whole thing off and drops to the raw step-loop.
 
 `[pipeline.stages.<name>]` gives each stage `enabled`, `on_disable`
@@ -290,7 +290,7 @@ a config-validation error at load, not a runtime surprise.
 **The stage vocabulary is not the six obvious ones.** `StageKind`
 (`crates/stella-protocol/src/event.rs`) has eleven variants: `Triage`,
 `ContextRecall`, `Plan`, `ScopeReview`, `Witness`, `Execute`, `Verify`,
-`Judge`, `Reflect`, `ContextWrite`, `Complete`. `stella.next.toml` shows six
+`Verifier`, `Reflect`, `ContextWrite`, `Complete`. `stella.next.toml` shows six
 for readability; the real block must be built against the enum, not against
 a hand-listed subset, or the two drift the first time a stage is added.
 
@@ -450,16 +450,16 @@ with a message naming the table they belong in.
 ### 6.4 Flattening `agents.agents.<name>`
 
 The JSON nests per-agent config one level below the flat model fields
-(`agent_engine_config.agents.judge`). Rendered literally that is
-`[agents.agents.judge]`, which reads badly.
+(`agent_engine_config.agents.verifier`). Rendered literally that is
+`[agents.agents.verifier]`, which reads badly.
 
-Flattening to `[agents.judge]` is safe **only while the agent set is closed**
+Flattening to `[agents.verifier]` is safe **only while the agent set is closed**
 — four struct fields cannot collide with a root field. §4.1 opens that set.
 
 **Decision:** flatten, and reserve the root field names as illegal agent
 names, enforced at load with a named error. The list is exactly
 `ENGINE_ROOT_FIELDS` minus `agents` (which disappears in the flattening):
-`default_model`, `pipeline_judge_model`, `pipeline_worker_model`,
+`default_model`, `pipeline_verifier_model`, `pipeline_worker_model`,
 `pipeline_triage_model`, `allowed_models`, `auto_mode`, `effort_auto`,
 `reasoning_auto`, `headless_scope_bypass`.
 

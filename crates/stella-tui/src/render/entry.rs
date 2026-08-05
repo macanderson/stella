@@ -583,7 +583,7 @@ fn entry_body(
                 out,
             );
         }
-        TranscriptEntry::JudgeVerdict {
+        TranscriptEntry::Verdict {
             passed,
             summary,
             deterministic,
@@ -599,7 +599,7 @@ fn entry_body(
             let tag = if *deterministic {
                 "deterministic"
             } else {
-                "model-judge"
+                "model-verifier"
             };
             push_note(
                 &format!("{glyph} verdict"),

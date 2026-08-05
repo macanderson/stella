@@ -390,7 +390,7 @@ step. Each committed Stella model call becomes one agent step containing:
 
 - concatenated `reasoning` deltas and authoritative output: the full `text`
   event for execute calls, or `step_usage.output_text` for non-user-facing
-  triage/plan/judge/guidance/compaction calls (`text_delta` previews are
+  triage/plan/verifier/guidance/compaction calls (`text_delta` previews are
   deliberately excluded);
 - the call purpose from `step_usage.purpose`, so public reviewers can
   distinguish management work from task execution;
@@ -440,7 +440,7 @@ For every selected model, the normalized posture is:
   "agents": {
     "default": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
     "worker": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
-    "judge": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
+    "verifier": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
     "triage": {"effort": "low", "reasoning": "off"}
   }
 }
@@ -495,7 +495,7 @@ Every result exposes manifest-ready metadata keys:
   agent never sees, and their disagreement (a task failed while reporting
   success) is invisible to the score. `deterministic` distinguishes a verdict
   the flip oracle decided from one a model opined; they are different
-  instruments and only the second is the judge's reliability.
+  instruments and only the second is the verifier's reliability.
   `not_reported` is a third state on purpose: a trial killed before the ladder
   closed made no claim, which is not the same datum as claiming failure.
 - `stella_workspace_git_baseline` — what the adapter did to the workspace
@@ -515,8 +515,8 @@ Every result exposes manifest-ready metadata keys:
 | `STELLA_SOURCE_COMMIT` | Development-only runs may omit it. The claim launcher requires an exact lowercase 40-hex value and verifies that it is the unique commit embedded by `STELLA_BUILD_GIT_SHA`. |
 | `STELLA_DISABLE_REFLECTION` | Disable post-turn reflection for ephemeral trials. The claim launcher requires exact `1`; development can explicitly set `0`/`false` to enable. |
 | `STELLA_CATALOG_AUTO_REFRESH` | Forced to `0` by the adapter so benchmark startup cannot make an unmetered model-list request or drift the frozen catalog. |
-| `STELLA_WITNESS_AUTHOR_MODEL` | Host-only. Unset = the control arm, in which every role inherits `--model` and the authored-witness tier cannot run. Set to a second `provider/model` **on the worker's provider** to run the witness arm; it reaches Stella only as `pipeline_judge_model` inside the hashed posture and is never forwarded into the container. An author equal to the worker, on another provider, or not a `provider/model` spec is refused fail-closed. The author must also be a slug Stella's **offline seed catalog** carries for that provider: `STELLA_CATALOG_AUTO_REFRESH` is forced to `0`, so an unlisted slug fails model validation and the judge pin is dropped. That used to leave the run executing the control arm under a witness-arm digest (#1147); since then a trusted posture naming a judge other than the worker refuses the run outright when no independent author resolves, so an unreachable author costs the trial rather than corrupting it. |
-| `STELLA_WORKER_EFFORT` | Host-only. Unset = `xhigh`. One of `high`, `xhigh`, `max`; anything else is refused rather than defaulted, because a typo silently promoted to the frozen default attributes the run to a tier nobody chose. Moves `agents.worker.effort` only — `default` and `judge` stay put, so an effort arm is one variable rather than two. |
+| `STELLA_WITNESS_AUTHOR_MODEL` | Host-only. Unset = the control arm, in which every role inherits `--model` and the authored-witness tier cannot run. Set to a second `provider/model` **on the worker's provider** to run the witness arm; it reaches Stella only as `pipeline_verifier_model` inside the hashed posture and is never forwarded into the container. An author equal to the worker, on another provider, or not a `provider/model` spec is refused fail-closed. The author must also be a slug Stella's **offline seed catalog** carries for that provider: `STELLA_CATALOG_AUTO_REFRESH` is forced to `0`, so an unlisted slug fails model validation and the verifier pin is dropped. That used to leave the run executing the control arm under a witness-arm digest (#1147); since then a trusted posture naming a verifier other than the worker refuses the run outright when no independent author resolves, so an unreachable author costs the trial rather than corrupting it. |
+| `STELLA_WORKER_EFFORT` | Host-only. Unset = `xhigh`. One of `high`, `xhigh`, `max`; anything else is refused rather than defaulted, because a typo silently promoted to the frozen default attributes the run to a tier nobody chose. Moves `agents.worker.effort` only — `default` and `verifier` stay put, so an effort arm is one variable rather than two. |
 | `STELLA_TRIAGE_MODEL` | Host-only. Unset = triage inherits `default_model` (the historical posture). Set to a `provider/model` **on the worker's provider** to pin a cheaper, faster author for the one role that never edits the workspace and never decides the outcome. Lands in the flat `pipeline_triage_model` and widens `allowed_models` — a pin outside that whitelist is refused at resolve time, which would bill the expensive model for the cheap role while the digest claimed otherwise. |
 | `STELLA_MAX_REVISIONS` | Host-only. Unset = the engine's own default (2), and the key is **omitted** from the posture rather than written at its default, so every digest recorded before this selector existed still reproduces byte-for-byte. `0`–`10`; empty or non-numeric is refused. Revisions are spent only on a verification that already failed, so raising it costs nothing on tasks that pass first time (#1211 §6.7). |
 | `STELLA_CANDIDATES` | Host-only, same omit-when-unset rule. `1`–`5`; `0` is refused because the pipeline floors it to 1 anyway, and accepting it would let two selector values describe the same run under two different digests. Unlike revisions this is paid **unconditionally** — `2` doubles execution cost across every task. Wants the git baseline below to be on, or candidate isolation has nothing to snapshot (#1211 §6.8). |

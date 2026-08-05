@@ -5,7 +5,7 @@
 //! `executions`, tool calls from `tool_calls`, and the verdict — when the work
 //! produced a pull request — from `pull_requests.status`.
 //!
-//! Nothing here judges anything. The rollup is arithmetic over recorded events,
+//! Nothing here verifiers anything. The rollup is arithmetic over recorded events,
 //! and the one subjective field is read from a PR that a human merged or closed.
 //!
 //! # What is deliberately absent

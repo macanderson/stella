@@ -119,7 +119,7 @@ pub struct TraceCall {
     pub turn_instance: u32,
     pub step: u64,
     pub call_seq: u64,
-    /// `ModelCallRole`, as its wire token ("worker", "judge", …).
+    /// `ModelCallRole`, as its wire token ("worker", "verifier", …).
     pub role: String,
     /// The pipeline stage active when this call was made, as its wire token
     /// ("execute", "witness", …). `None` for calls made before any stage
@@ -323,7 +323,7 @@ struct JournalFold {
     stage_by_call: HashMap<(u32, u64, u64), Option<String>>,
     usage_by_call: HashMap<(u32, u64, u64), UsageBits>,
     tools_by_call: HashMap<(u32, u64, u64), Vec<TraceToolUse>>,
-    /// The last `JudgeVerdict` the journal holds — the one that settled the
+    /// The last `Verdict` the journal holds — the one that settled the
     /// turn. Earlier verdicts are revision rounds, counted below.
     settlement: Option<Settlement>,
     /// How many verdicts the journal holds. `saturating_sub(1)` is the
@@ -410,7 +410,7 @@ fn fold_journal(events: &[stella_store::SessionEventRecord]) -> JournalFold {
                     entry.duration_ms = Some(*duration_ms);
                 }
             }
-            AgentEvent::JudgeVerdict { passed, evidence } => {
+            AgentEvent::Verdict { passed, evidence } => {
                 // Overwritten on every verdict, so the last one wins: that is
                 // the one that settled the turn, and the earlier ones are the
                 // revision rounds this counts.
@@ -534,7 +534,7 @@ pub fn append_trace(workspace_root: &Path, record: &TraceRecord) -> Result<PathB
 mod tests {
     use super::*;
     use stella_protocol::{
-        JudgeEvidence, LadderRung, LadderSnapshot, ModelCallRole, StageKind, ToolCall, ToolOutput,
+        LadderRung, LadderSnapshot, ModelCallRole, StageKind, ToolCall, ToolOutput, VerdictEvidence,
     };
     use stella_store::{ContextBlockRow, ManifestBlockRow, StepManifestRow};
 
@@ -764,7 +764,7 @@ mod tests {
         );
     }
 
-    /// One `JudgeVerdict` with a rung, and the trace carries the composite
+    /// One `Verdict` with a rung, and the trace carries the composite
     /// reward that rung earns — the #1043 acceptance shape at the trace seam.
     #[test]
     fn a_settled_verdict_becomes_a_reward_label() {
@@ -772,9 +772,9 @@ mod tests {
         let id = store
             .begin_execution("run", "fix the flake", "zai", "glm-5.2")
             .unwrap();
-        let verdict = |passed: bool, rung: LadderRung| AgentEvent::JudgeVerdict {
+        let verdict = |passed: bool, rung: LadderRung| AgentEvent::Verdict {
             passed,
-            evidence: JudgeEvidence {
+            evidence: VerdictEvidence {
                 summary: "FAIL — the diff does not address the goal".to_string(),
                 deterministic: false,
                 evidence_refs: Vec::new(),
@@ -810,12 +810,12 @@ mod tests {
         let reward = record.reward.reward.expect("scored");
         assert!((reward - 0.70).abs() < 1e-9, "got {reward}");
 
-        // The airlock at the trace seam: the judge's own sentence is in the
+        // The airlock at the trace seam: the verifier's own sentence is in the
         // journal this was folded from, and nowhere in the label.
         let label_json = serde_json::to_string(&record.reward).unwrap();
         assert!(
             !label_json.contains("does not address"),
-            "judge prose reached the label: {label_json}"
+            "verifier prose reached the label: {label_json}"
         );
     }
 
@@ -829,9 +829,9 @@ mod tests {
             .record_event(
                 id,
                 0,
-                &AgentEvent::JudgeVerdict {
+                &AgentEvent::Verdict {
                     passed: true,
-                    evidence: JudgeEvidence {
+                    evidence: VerdictEvidence {
                         summary: "UNVERIFIABLE — no channel could observe this turn".to_string(),
                         deterministic: false,
                         evidence_refs: Vec::new(),

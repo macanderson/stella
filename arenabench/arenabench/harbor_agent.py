@@ -44,7 +44,7 @@ ARENA_ENGINE_ENV = "ARENABENCH_ENGINE_JSON"
 _ENGINE_ROOT_FIELDS = frozenset(
     {
         "default_model",
-        "pipeline_judge_model",
+        "pipeline_verifier_model",
         "pipeline_worker_model",
         "pipeline_triage_model",
         "allowed_models",
@@ -60,7 +60,7 @@ _ENGINE_ROOT_FIELDS = frozenset(
 
 _ROLE_TO_ROOT_MODEL_KEY = {
     "worker": "pipeline_worker_model",
-    "judge": "pipeline_judge_model",
+    "verifier": "pipeline_verifier_model",
     "triage": "pipeline_triage_model",
 }
 
@@ -120,7 +120,7 @@ def arena_posture(
     }
 
     agents: dict[str, dict[str, Any]] = {}
-    for role in ("default", "worker", "judge", "triage"):
+    for role in ("default", "worker", "verifier", "triage"):
         override = engine.role(role)
         resolved = engine.effective_role(role)
         if role == "triage" and override.effort is None and override.reasoning is None:
@@ -221,23 +221,23 @@ class ArenaStellaAgent(_Base):  # type: ignore[misc,valid-type]
     """
 
     def _build_engine_posture(
-        self, model: str, *, witness_author: str | None
+        self, model: str, *, verifier: str | None
     ) -> tuple[dict[str, Any], str, str]:
         engine = _engine_from_env()
         if engine is None:
             # No arena config: defer to the frozen benchmark posture, so this
             # class is a no-op rather than a silent reconfiguration.
-            return super()._build_engine_posture(model, witness_author=witness_author)
+            return super()._build_engine_posture(model, verifier=verifier)
         posture, normalized, digest = arena_posture(model, engine)
-        if witness_author is not None:
-            # A witness author pinned by the host still wins the judge seat:
+        if verifier is not None:
+            # A witness author pinned by the host still wins the verifier seat:
             # it is the only way to run the authored-witness tier, and the base
             # adapter has already validated that it is a real, independent,
             # same-provider model.
-            posture["pipeline_judge_model"] = witness_author
+            posture["pipeline_verifier_model"] = verifier
             allowed = list(posture.get("allowed_models") or [])
-            if witness_author not in allowed:
-                allowed.append(witness_author)
+            if verifier not in allowed:
+                allowed.append(verifier)
             posture["allowed_models"] = allowed
             normalized, digest = _canonical(posture)
         return posture, normalized, digest

@@ -413,7 +413,7 @@ fn detaching_an_unattached_event_stream_is_a_no_op() {
 /// They travel different wires. The event goes to whatever channel a host
 /// attached; the count sits on the recorder. That gap is the bug — a verifier
 /// wrapping the *engine's* sender saw none of the six changes a real run made
-/// and told its judge `file_change_events=0`, which the judge read as "the file
+/// and told its verifier `file_change_events=0`, which the verifier read as "the file
 /// likely does not exist" while the file sat on disk. Reading the count instead
 /// only helps if the two provably agree, so: run a mixed batch of creates,
 /// edits, deletes and reads, and assert the delta equals the stream's mutating

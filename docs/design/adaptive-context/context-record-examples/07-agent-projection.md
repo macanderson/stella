@@ -159,7 +159,7 @@ With it, you get a clean deterministic negative:
 > → this record cost tokens and steered nothing.
 
 That is the signal worth acting on, and it is available without asking a model to
-judge anything.
+verifier anything.
 
 ## Where determinism stops
 

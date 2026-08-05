@@ -20,20 +20,20 @@ API key, no Docker). The third is bought deliberately.
 
 `crates/stella-pipeline/src/pipeline/tests/degradation_gate.rs` drives the **real
 pipeline** — triage, execution, witness plumbing, the verification ladder,
-the judge — over scripted model/test doubles, through a fixed matrix of
+the verifier — over scripted model/test doubles, through a fixed matrix of
 scenarios, and pins three things per scenario:
 
 1. **The decision.** A clean fail→pass flip fast-submits deterministically; a
    flaky flip escalates; a timed-out baseline never manufactures a flip; a
-   fresh lint error vetoes; a red suite revises without buying a judge.
+   fresh lint error vetoes; a red suite revises without buying a verifier.
 2. **The spend.** The exact number of model calls, by role, and the exact
    number of test-suite invocations. A change that leaves every verdict
-   intact but buys a judge call where the ladder used to decide for free is
+   intact but buys a verifier call where the ladder used to decide for free is
    a **cost regression**, and it fails here with a message naming the extra
    call.
 3. **The evidence.** Verdicts carry their ladder snapshot (provenance), and
-   the judge prompt carries the oracle trace — degradations in what the
-   judge is told are degradations in judge quality one step removed.
+   the verifier prompt carries the oracle trace — degradations in what the
+   verifier is told are degradations in verifier quality one step removed.
 
 What it proves: **the decision policy and its price did not drift.** What it
 cannot prove: that the policy is *good* — both sides of every assertion are

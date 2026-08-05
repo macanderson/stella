@@ -387,7 +387,7 @@ fn role_word(role: PipelineRole) -> &'static str {
     match role {
         PipelineRole::Triage => "triage",
         PipelineRole::Worker => "worker",
-        PipelineRole::Judge => "verify",
+        PipelineRole::Verifier => "verify",
     }
 }
 
@@ -421,7 +421,7 @@ fn stage_label_upper(stage: Option<stella_protocol::StageKind>) -> &'static str 
         Some(S::Witness) => "WITNESS",
         Some(S::Execute) => "EXECUTE",
         Some(S::Verify) => "VERIFY",
-        Some(S::Judge) => "JUDGE",
+        Some(S::Verdict) => "VERDICT",
         Some(S::Reflect) => "REFLECT",
         Some(S::ContextWrite) => "CONTEXT WRITE",
         Some(S::Complete) => "COMPLETE",
@@ -930,7 +930,7 @@ mod tests {
         assert_eq!(role_word(PipelineRole::Triage), "triage");
         assert_eq!(role_word(PipelineRole::Worker), "worker");
         // `Judge` reads "verify" — the stage word the stepper already uses.
-        assert_eq!(role_word(PipelineRole::Judge), "verify");
+        assert_eq!(role_word(PipelineRole::Verifier), "verify");
     }
 
     #[test]

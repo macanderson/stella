@@ -6,19 +6,19 @@
 //!
 //! Split out of [`crate::event`] (which carries the verdict *event*) because
 //! these types are the ladder's own contract and now have three readers rather
-//! than one: `replay` explains a past decision from them, an escalating judge
+//! than one: `replay` explains a past decision from them, an escalating verifier
 //! prompt renders them, and reward extraction (#1043) reads
 //! [`LadderSnapshot::rung`] to label a trajectory. Re-exported from the crate
 //! root, so `stella_protocol::LadderSnapshot` is unchanged.
 
 use serde::{Deserialize, Serialize};
 
-/// Which rung of the evidence ladder a `JudgeVerdict` actually came to rest
+/// Which rung of the evidence ladder a `Verdict` actually came to rest
 /// on (#1043).
 ///
 /// # Why the rung is on the wire instead of inferred
 ///
-/// `JudgeEvidence` already carries `passed` and `deterministic`, and for a
+/// `VerdictEvidence` already carries `passed` and `deterministic`, and for a
 /// while that looked like enough. It is not, and the gap is not academic:
 ///
 /// - `deterministic: true, passed: false` is emitted by **two** rungs — a red
@@ -30,14 +30,14 @@ use serde::{Deserialize, Serialize};
 ///   where the warrant found nothing to prove ([`LadderRung::Waived`]) — so a
 ///   reader inferring "deterministic pass" from those two flags would label a
 ///   turn nothing checked as the ladder's strongest possible result.
-/// - `deterministic: false` covers a real model judge, a heuristic verdict
-///   after the judge call *failed*, and the abstain rung. The first is soft
+/// - `deterministic: false` covers a real model verifier, a heuristic verdict
+///   after the verifier call *failed*, and the abstain rung. The first is soft
 ///   signal, the second is not signal at all, and the only thing separating
 ///   them in the old shape was the wording of a summary string.
 ///
 /// Re-deriving the rung by re-running the ladder over
 /// [`LadderSnapshot`] cannot close any of that: it reproduces the *decision*
-/// but not which of the three ways the judge arm resolved, and it silently
+/// but not which of the three ways the verifier arm resolved, and it silently
 /// disagrees with reality whenever the run's `veto_warnings` setting differed
 /// from the reader's assumption. So the pipeline states the rung it took.
 ///
@@ -49,10 +49,10 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum LadderRung {
     /// Deterministic pass: a fail→pass flip of the tracked command, touched
-    /// tests green, diff within budget, no fresh diagnostics. The judge was
+    /// tests green, diff within budget, no fresh diagnostics. The verifier was
     /// skipped because nothing was left to ask.
     SubmitFast,
-    /// Deterministic failure: the touched tests were red. No judge call — the
+    /// Deterministic failure: the touched tests were red. No verifier call — the
     /// failure was already conclusive.
     Revise,
     /// The turn dispatched no call capable of changing the workspace. A
@@ -62,11 +62,22 @@ pub enum LadderRung {
     /// Every evidence channel was blind, so the ladder abstained. Nothing is
     /// claimed about the work — in particular not that it failed.
     Unverifiable,
-    /// A model judge answered on genuinely inconclusive evidence.
-    ModelJudge,
-    /// The judge call itself failed or returned something unparseable, and the
-    /// conservative heuristic verdict stood in for it. A verdict about the
-    /// judge's availability, not about the work.
+    /// The verifier answered on genuinely inconclusive evidence. Named for
+    /// the *evidence class* — a model's opinion — not for the model: it is
+    /// deliberately not called `ModelVerifier`, because the whole ladder is
+    /// verification and this is the one rung that is only an opinion.
+    ///
+    /// The alias is what keeps this rename additive. This rung shipped as
+    /// `model_judge`, so every session already on disk spells it that way; a
+    /// bare rename would make those streams fail to parse — and this enum's
+    /// own contract is that an unknown rung fails the event rather than being
+    /// laundered, so the failure would be loud and total. New writes use
+    /// `model_verdict`; old reads still land.
+    #[serde(alias = "model_judge")]
+    ModelVerdict,
+    /// The verdict call itself failed or returned something unparseable, and
+    /// the conservative heuristic verdict stood in for it. A verdict about the
+    /// verifier's availability, not about the work.
     HeuristicFallback,
     /// No independent review was bought at all: triage waived it and the
     /// warrant agreed, or the change warranted no witness test. A pass
@@ -84,7 +95,7 @@ impl LadderRung {
             LadderRung::Revise => "revise",
             LadderRung::NothingAttempted => "nothing_attempted",
             LadderRung::Unverifiable => "unverifiable",
-            LadderRung::ModelJudge => "model_judge",
+            LadderRung::ModelVerdict => "model_verdict",
             LadderRung::HeuristicFallback => "heuristic_fallback",
             LadderRung::Waived => "waived",
         }
@@ -291,8 +302,8 @@ mod tests {
     #[test]
     fn with_rung_preserves_every_other_field() {
         let base = snapshot();
-        let stamped = base.with_rung(LadderRung::ModelJudge);
-        assert_eq!(stamped.rung, Some(LadderRung::ModelJudge));
+        let stamped = base.with_rung(LadderRung::ModelVerdict);
+        assert_eq!(stamped.rung, Some(LadderRung::ModelVerdict));
         assert_eq!(
             LadderSnapshot {
                 rung: None,
@@ -311,7 +322,7 @@ mod tests {
         for rung in [
             LadderRung::NothingAttempted,
             LadderRung::Unverifiable,
-            LadderRung::ModelJudge,
+            LadderRung::ModelVerdict,
             LadderRung::HeuristicFallback,
             LadderRung::Waived,
         ] {

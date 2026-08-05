@@ -1,0 +1,9 @@
+{
+  "task_id": "verifier_escalation_without_a_test_command",
+  "description": "A file-touching goal with no test command: the deterministic ladder cannot conclude, so the model verifier is consulted.",
+  "source": {
+    "kind": "rust_stack",
+    "recorded_by": "stella-pipeline::pipeline::tests::golden::verifier_escalation_without_a_test_command"
+  },
+  "event_count": 27
+}

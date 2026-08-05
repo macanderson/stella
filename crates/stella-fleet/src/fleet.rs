@@ -753,7 +753,7 @@ where
             // stranded-claim reports came from fleet runs.
             //
             // But never reap on a refusal we can already see is a sibling's:
-            // the reap is workspace-WIDE and judges liveness from the pid
+            // the reap is workspace-WIDE and verifiers liveness from the pid
             // embedded in each holder id, so a run id whose trailing digits
             // name a process that is not running (`release-2024`) makes it
             // read THIS run as dead too and release the live claims of every

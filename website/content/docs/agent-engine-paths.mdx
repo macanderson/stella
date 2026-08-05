@@ -45,7 +45,7 @@ came through:
   (`stella resume`).
 - **Per-role model routing applies.** The
   [agent engine config](/docs/configuration/agent-engine-config) pins models
-  per role (worker, triage, judge), and every path that uses those roles
+  per role (worker, triage, verifier), and every path that uses those roles
   honors the pins.
 
 ## The map
@@ -60,8 +60,8 @@ came through:
       { label: "Headless", value: "Yes — json / stream-json", mono: false },
     ]}
   >
-    Verified by the pipeline stages plus the judge. `--test-command` arms the
-    deterministic fail→pass oracle, and a clean flip can submit without a judge
+    Verified by the pipeline stages plus the verifier. `--test-command` arms the
+    deterministic fail→pass oracle, and a clean flip can submit without a verifier
     call at all.
   </SpecCard>
   <SpecCard
@@ -73,7 +73,7 @@ came through:
       { label: "Headless", value: "Yes", mono: false },
     ]}
   >
-    No stages, no judge — the model works until it decides it is done. You are
+    No stages, no verifier — the model works until it decides it is done. You are
     the verification.
   </SpecCard>
   <SpecCard
@@ -121,7 +121,7 @@ came through:
       { label: "Headless", value: "Yes", mono: false },
     ]}
   >
-    An independent judge assesses the goal from evidence, over a **read-only**
+    An independent verifier assesses the goal from evidence, over a **read-only**
     view of the tool stack. `--no-pipeline` makes each round a raw step-loop
     turn.
   </SpecCard>
@@ -134,7 +134,7 @@ came through:
       { label: "Headless", value: "Yes", mono: false },
     ]}
   >
-    The judge reads `ci_status` itself; only a fully green *latest* run for the
+    The verifier reads `ci_status` itself; only a fully green *latest* run for the
     target ends the loop. `target` defaults to `main`.
   </SpecCard>
   <SpecCard
@@ -159,7 +159,7 @@ stella run --test-command "cargo test -p stella-pipeline" \
   "make the witness tamper check reject a renamed test file"
 
 # One-shot, raw — a question, not a change.
-stella run --no-pipeline "what does resolve_engine_wiring do with an uncredentialed judge?"
+stella run --no-pipeline "what does resolve_engine_wiring do with an uncredentialed verifier?"
 
 # Interactive, tabbed.
 stella
@@ -187,16 +187,16 @@ back.
 
 **Pipeline (default).** The prompt runs the full
 [staged pipeline](/docs/inference-pipeline) — triage → recall → plan → scope
-review → witness → execute → verify → judge, with a bounded revise loop —
+review → witness → execute → verify → verdict, with a bounded revise loop —
 with per-role model routing and circuit-breaker fallback. Pass
 `--test-command "cargo test -p …"` and verification gets a
 deterministic oracle: a change that flips a failing test to passing can
-submit without spending a judge call. Headless formats (`--output-format
+submit without spending a verifier call. Headless formats (`--output-format
 json` for one final object, `stream-json` for a line per agent event) make
 it automation-grade — see [Scripting](/docs/scripting).
 
 **Raw (`--no-pipeline`).** Skips the stages and drives one plain step-loop
-turn. No triage, no judge — the model works until it decides it's done.
+turn. No triage, no verifier — the model works until it decides it's done.
 Cheapest and fastest; the right door for questions, small mechanical edits,
 and anything you'll eyeball anyway.
 
@@ -260,17 +260,17 @@ context.
 
 Goal mode inverts the contract: you state **what must be true when done**,
 not what to do. The engine works in rounds; after each round an
-**independent judge** — routed to a different model family than the worker
+**independent verifier** — routed to a different model family than the worker
 whenever possible, and holding a **read-only view** of the same tool stack —
 assesses the goal *from evidence* (running tests, reading CI, inspecting
-files), never from the worker's claims. Rounds continue until the judge
+files), never from the worker's claims. Rounds continue until the verifier
 confirms the goal, or a backstop (round cap, `--budget`, worker abort) ends
 the run honestly as *not met*.
 
 Each working round is a staged pipeline run by default; `--no-pipeline`
-makes rounds raw step-loop turns — double verification (pipeline judge *and*
-goal judge) is rigor you pay for, so drop the inner pipeline when the goal
-judge alone is enough.
+makes rounds raw step-loop turns — double verification (pipeline verifier *and*
+goal verifier) is rigor you pay for, so drop the inner pipeline when the goal
+verifier alone is enough.
 
 **Use it when** you can state the outcome crisply but not the steps —
 "the suite passes and clippy is clean", "the flaky test is fixed, proven by
@@ -311,9 +311,9 @@ differently:
     A file-change tap and a task tap on top: live FILES/DIFF tabs, the task
     board, sub-agent spawning — plus claim-on-first-write.
   </OptionCard>
-  <OptionCard name="Goal / pipeline judge">
+  <OptionCard name="Goal / pipeline verifier">
     A **read-only** view. Only tools marked `read_only: true` are visible or
-    executable, so a judge structurally cannot edit its way to a verdict.
+    executable, so a verifier structurally cannot edit its way to a verdict.
   </OptionCard>
   <OptionCard name="Fleet workers">
     Claim coordination in the shared tree; a private worktree when the task is
@@ -328,7 +328,7 @@ advertises only a lean core plus the discovery tools; see
 Two consequences worth knowing. First, `ask_user` degrades gracefully:
 headless paths (one-shot JSON formats, goal in CI) fail it loudly with
 guidance to proceed, rather than hanging on stdin. Second, because the
-discovery tools are read-only, even the judge can run `tool_search`,
+discovery tools are read-only, even the verifier can run `tool_search`,
 `skill_search`, and `mcp_search` — searching is never a side effect.
 
 ## Choosing a path
@@ -387,14 +387,14 @@ If you're changing engine behavior, these are the seams:
     title="Goal — raw rounds"
     meta={[
       { label: "Entry", value: "agent::goal::run_goal_cmd → run_goal_turn" },
-      { label: "Engine call", value: "Engine::run_goal with a judge", mono: false },
+      { label: "Engine call", value: "Engine::run_goal with a verifier", mono: false },
     ]}
   />
   <SpecCard
     title="Goal — pipeline rounds"
     meta={[
       { label: "Entry", value: "agent::goal::run_goal_cmd → run_goal_pipeline_turn" },
-      { label: "Engine call", value: "pipeline rounds + a judge engine over ReadOnlyTools", mono: false },
+      { label: "Engine call", value: "pipeline rounds + a verifier engine over ReadOnlyTools", mono: false },
     ]}
   />
   <SpecCard
@@ -429,7 +429,7 @@ sqlite3 .stella/private/store.db \
   territory, with deck keybindings and examples.
 - [Inference Pipeline](/docs/inference-pipeline) — inside a staged turn:
   triage → recall → plan → scope review → witness → execute → verify →
-  judge, with a bounded revise loop.
+  verifier, with a bounded revise loop.
 - [Agent Fleets](/docs/agent-fleets) — plan files, waves, claims in the
   shared tree, and opt-in isolated worktrees.
 - [Agent engine config](/docs/configuration/agent-engine-config) — per-role

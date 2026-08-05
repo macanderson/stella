@@ -60,7 +60,7 @@
 //! **Every seam the parent has, the child has** — except the one it must
 //! not. [`Engine::with_sleeper`] cannot carry `gate`/`steering`/`hooks`
 //! (they are builder-set private fields), which is precisely why
-//! `goal.rs::assess` silently dropped all three when it hand-rolled a judge
+//! `goal.rs::assess` silently dropped all three when it hand-rolled a verifier
 //! engine. Constructing the child here, in the same crate, carries them:
 //!
 //! - The pause gate propagates. A child that ignored it would keep spending
@@ -299,7 +299,7 @@ impl SubAgentSpec {
 ///
 /// `provider` is separate because a child is very often served by a
 /// *different* model than its parent — a cheap searcher, a cross-family
-/// judge — and taking it here keeps that a per-spawn decision instead of a
+/// verifier — and taking it here keeps that a per-spawn decision instead of a
 /// second engine the caller has to assemble.
 #[derive(Clone, Copy)]
 pub struct SubAgentHost<'a> {

@@ -34,7 +34,7 @@ fn a_toml_config_and_its_json_equivalent_produce_identical_settings() {
           },
           "agent_engine_config": {
             "default_model": "anthropic/claude-fable-5",
-            "pipeline_judge_model": "openrouter/openai/gpt-5.5",
+            "pipeline_verifier_model": "openrouter/openai/gpt-5.5",
             "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2"],
             "auto_mode": "off",
             "effort_auto": "on",
@@ -42,7 +42,7 @@ fn a_toml_config_and_its_json_equivalent_produce_identical_settings() {
             "pipeline_max_revisions": 4,
             "pipeline_candidates": 2,
             "agents": {
-              "judge": {
+              "verifier": {
                 "provider": "openrouter",
                 "model": "openai/gpt-5.5",
                 "effort": "high",
@@ -56,7 +56,7 @@ fn a_toml_config_and_its_json_equivalent_produce_identical_settings() {
           "enable_recap": "off",
           "trace_capture": "on",
           "ui": {"theme": "stella-dark"},
-          "reward": {"judge_weight": 0.25, "per_usd": 0.75},
+          "reward": {"verifier_weight": 0.25, "per_usd": 0.75},
           "mcp": {"registry_url": "https://registry.example"}
         }"#,
     );
@@ -73,7 +73,7 @@ recap = "off"
 trace_capture = "on"
 
 [reward]
-judge_weight = 0.25
+verifier_weight = 0.25
 per_usd = 0.75
 
 [providers.anthropic]
@@ -89,20 +89,20 @@ allowed = ["anthropic/claude-fable-5", "zai/glm-5.2"]
 
 [agents]
 default_model = "anthropic/claude-fable-5"
-pipeline_judge_model = "openrouter/openai/gpt-5.5"
+pipeline_verifier_model = "openrouter/openai/gpt-5.5"
 auto_mode = "off"
 effort_auto = "on"
 headless_scope_bypass = "off"
 pipeline_max_revisions = 4
 pipeline_candidates = 2
 
-[agents.judge]
+[agents.verifier]
 provider = "openrouter"
 model = "openai/gpt-5.5"
 effort = "high"
 reasoning = "on"
 
-[agents.judge.params]
+[agents.verifier.params]
 temperature = 0.2
 max_tokens = 4096
 service_tier = "priority"
@@ -145,7 +145,7 @@ registry_url = "https://registry.example"
     assert_eq!(
         from_toml.reward_policy().unwrap().outcome.judged,
         0.25,
-        "[reward].judge_weight resolves into the policy"
+        "[reward].verifier_weight resolves into the policy"
     );
     assert_eq!(
         from_toml.reward_policy().unwrap().outcome.deterministic,
@@ -155,13 +155,17 @@ registry_url = "https://registry.example"
     assert_eq!(from_json.mcp, from_toml.mcp, "mcp");
 }
 
-/// A workspace that distrusts its judge writes one key and inherits the rest.
+/// A workspace that distrusts its verifier writes one key and inherits the rest.
 /// The alternative — an absent key meaning `0.0` — would silently discard every
 /// judged turn for anyone who set only `per_step`.
 #[test]
 fn an_absent_reward_key_is_the_default_not_zero() {
     let dir = tempfile::tempdir().unwrap();
-    let path = write(dir.path(), "stella.toml", "[reward]\njudge_weight = 0.1\n");
+    let path = write(
+        dir.path(),
+        "stella.toml",
+        "[reward]\nverifier_weight = 0.1\n",
+    );
     let settings = load_toml(&path, ConfigScope::User).unwrap();
     let policy = settings.reward_policy().unwrap();
     assert_eq!(policy.outcome.judged, 0.1);
@@ -185,18 +189,22 @@ fn no_reward_block_is_exactly_the_defaults() {
     );
 }
 
-/// A judge weight above the deterministic one is refused at load, by name.
+/// A verifier weight above the deterministic one is refused at load, by name.
 /// Loud beats clamping: a silently-substituted weight produces correctly-shaped
 /// labels that mean something the operator never asked for.
 #[test]
-fn a_judge_weight_above_the_ceiling_fails_the_load_by_name() {
+fn a_verifier_weight_above_the_ceiling_fails_the_load_by_name() {
     let dir = tempfile::tempdir().unwrap();
-    let path = write(dir.path(), "stella.toml", "[reward]\njudge_weight = 2.0\n");
+    let path = write(
+        dir.path(),
+        "stella.toml",
+        "[reward]\nverifier_weight = 2.0\n",
+    );
     let settings = load_toml(&path, ConfigScope::User).unwrap();
     let error = settings
         .reward_policy()
-        .expect_err("a judge outranking a test must not load");
-    assert!(error.contains("judge_weight"), "{error}");
+        .expect_err("a verifier outranking a test must not load");
+    assert!(error.contains("verifier_weight"), "{error}");
     assert!(error.contains("deterministic_weight"), "{error}");
     // The message has to say what to do, not just that something is wrong.
     assert!(error.contains("Lower it"), "{error}");
@@ -434,10 +442,10 @@ allowed = ["a/b"]
 [agents]
 default_model = "a/b"
 
-[agents.judge]
+[agents.verifier]
 effort = "high"
 
-[agents.judge.params]
+[agents.verifier.params]
 temperature = 0.1
 
 [providers.anthropic]
@@ -533,7 +541,7 @@ fn the_document_round_trips_through_parse_without_losing_a_field() {
 [agents]
 default_model = "a/b"
 pipeline_worker_model = "c/d"
-pipeline_judge_model = "e/f"
+pipeline_verifier_model = "e/f"
 pipeline_triage_model = "g/h"
 auto_mode = "on"
 effort_auto = "off"
@@ -547,7 +555,7 @@ headless_scope_bypass = "on"
         .unwrap();
     assert_eq!(engine.default_model.as_deref(), Some("a/b"));
     assert_eq!(engine.pipeline_worker_model.as_deref(), Some("c/d"));
-    assert_eq!(engine.pipeline_judge_model.as_deref(), Some("e/f"));
+    assert_eq!(engine.pipeline_verifier_model.as_deref(), Some("e/f"));
     assert_eq!(engine.pipeline_triage_model.as_deref(), Some("g/h"));
     assert!(engine.auto_mode_on());
     assert!(!engine.effort_auto_on());
@@ -610,7 +618,7 @@ const RICH_SETTINGS: &str = r#"{
     "reasoning_auto": "on",
     "headless_scope_bypass": "off",
     "agents": {
-      "judge": {"effort": "high", "reasoning": "on",
+      "verifier": {"effort": "high", "reasoning": "on",
                 "params": {"temperature": 0.2, "top_p": 0.9, "max_tokens": 4096}},
       "triage": {"reasoning": "off"}
     }
@@ -699,7 +707,7 @@ fn a_widened_f32_is_written_back_at_f32_precision() {
     let json = write(
         dir.path(),
         "settings.json",
-        r#"{"agent_engine_config": {"agents": {"judge": {"params": {"temperature": 0.2}}}}}"#,
+        r#"{"agent_engine_config": {"agents": {"verifier": {"params": {"temperature": 0.2}}}}}"#,
     );
     let toml_path = dir.path().join("stella.toml");
     super::migrate::migrate_scope(&json, &toml_path, ConfigScope::User, false).unwrap();
@@ -740,7 +748,7 @@ fn nested_sections_render_as_tables_and_parents_stay_implicit() {
     let rendered = std::fs::read_to_string(&toml_path).unwrap();
 
     assert!(rendered.contains("[providers.anthropic]"), "{rendered}");
-    assert!(rendered.contains("[agents.judge.params]"), "{rendered}");
+    assert!(rendered.contains("[agents.verifier.params]"), "{rendered}");
     assert!(rendered.contains("[[hooks.PreToolUse]]"), "{rendered}");
     assert!(
         !rendered.contains("{ "),

@@ -815,7 +815,7 @@ pub fn stage_color(stage: stella_protocol::StageKind) -> Color {
     match stage {
         S::Triage | S::ContextRecall | S::Plan | S::ScopeReview | S::Witness => RUN,
         S::Execute => ACCENT,
-        S::Verify | S::Judge => TEAL,
+        S::Verify | S::Verdict => TEAL,
         S::Reflect | S::ContextWrite => MUTED,
         S::Complete => OK,
     }

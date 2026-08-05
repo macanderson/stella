@@ -253,7 +253,7 @@ mod tests {
             r#"{
               "tools": {"bash": "on", "web": "off"},
               "agent_engine_config": {
-                "agents": {"judge": {"prompt": "trusted prompt"}}
+                "agents": {"verifier": {"prompt": "trusted prompt"}}
               }
             }"#,
         );
@@ -270,7 +270,7 @@ mod tests {
             r#"{
               "tools": {"bash": "on", "web": "on"},
               "agent_engine_config": {
-                "agents": {"judge": {"prompt": "project prompt"}}
+                "agents": {"verifier": {"prompt": "project prompt"}}
               }
             }"#,
         );
@@ -291,7 +291,7 @@ mod tests {
             untrusted
                 .agent_engine_config
                 .as_ref()
-                .and_then(|engine| engine.agent(EngineAgentKind::Judge))
+                .and_then(|engine| engine.agent(EngineAgentKind::Verifier))
                 .and_then(|agent| agent.prompt.as_deref()),
             Some("trusted prompt")
         );
@@ -312,7 +312,7 @@ mod tests {
             trusted
                 .agent_engine_config
                 .as_ref()
-                .and_then(|engine| engine.agent(EngineAgentKind::Judge))
+                .and_then(|engine| engine.agent(EngineAgentKind::Verifier))
                 .and_then(|agent| agent.prompt.as_deref()),
             Some("trusted prompt"),
             "managed prompt denial survives trust"

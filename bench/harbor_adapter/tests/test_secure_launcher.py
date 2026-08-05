@@ -1943,7 +1943,7 @@ def test_claim_environment_rejects_control_drift_before_launch(
         _validate_claim_environment(_claim_environment(binary, **{name: value}))
 
 
-def test_claim_environment_refuses_an_ambient_witness_author(
+def test_claim_environment_refuses_an_ambient_verifier(
     tmp_path: Path,
 ) -> None:
     """The audited claim path is the witness-off arm, and must stay honest.
@@ -1956,7 +1956,7 @@ def test_claim_environment_refuses_an_ambient_witness_author(
     not be the measured one, which is exactly what #1007 closes.
     """
     binary = _write_claim_elf(tmp_path / "stella")
-    witness_env = launcher_module._witness_author_env_name()
+    witness_env = launcher_module._verifier_env_name()
     assert witness_env == stella_harbor._WITNESS_AUTHOR_ENV, (
         "the guard must watch the same variable the adapter reads"
     )

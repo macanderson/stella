@@ -99,8 +99,8 @@ fn hide_empty_parents(item: &mut Item) {
     }
 }
 
-/// Rewrite serde's inline tables (`judge = { effort = "high" }`) as real
-/// headered tables (`[agents.judge]`).
+/// Rewrite serde's inline tables (`verifier = { effort = "high" }`) as real
+/// headered tables (`[agents.verifier]`).
 ///
 /// Both are valid TOML and both round-trip, so this is purely about the file a
 /// person opens. serde's serializer emits every nested struct inline, which

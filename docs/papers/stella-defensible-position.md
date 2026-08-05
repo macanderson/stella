@@ -569,7 +569,7 @@ feature (tree-sitter-based). It is Stella's closest open-source peer.
 - **Stella's unique advantages**: Witness-test contract, budget enforcement
   at safe boundaries, zero Community/default telemetry egress (Aider has
   optional analytics), the governed Oxagen Enterprise exception, the Open
-  Context Protocol, and goal-mode with evidence-gathering judge.
+  Context Protocol, and goal-mode with evidence-gathering verifier.
 - **Aider's unique advantages**: Mature git-integration workflow (edit,
   commit, undo), broader language support in repo-map, larger community.
 

@@ -62,7 +62,7 @@ STYLES = {
     "tool_result": (SLATE, " ->"),
     "stage": (AMBER, "stage"),
     "error": (ROSE, "error"),
-    "verdict": (MINT, "judge"),
+    "verdict": (MINT, "verifier"),
     "complete": (MINT, "done"),
 }
 
@@ -313,7 +313,7 @@ class Renderer:
             self.model = str(event.get("model") or self.model)
         elif kind == "error":
             self.line("error", str(event.get("message") or ""))
-        elif kind == "judge_verdict":
+        elif kind == "verdict":
             self.line("verdict", "PASS" if event.get("passed") else "FAIL")
         elif kind == "complete":
             self.state = "done"

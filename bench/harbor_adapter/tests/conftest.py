@@ -5,7 +5,7 @@ does not recognize. That guard is deliberate and stays: a stray knob in
 someone's environment must never silently change what a benchmark measures.
 
 The cost is that the test suite inherits whatever the developer exports. A
-shell with `STELLA_JUDGE_MODEL` or `STELLA_TRIAGE_API` set — the posture
+shell with `STELLA_VERIFIER_MODEL` or `STELLA_TRIAGE_API` set — the posture
 variables `stella_harbor/posture.py` reads, which anyone running head-to-head
 arms has in their profile — turns 11 otherwise-unrelated tests red with
 `RuntimeError: claim benchmark environment contains unregistered STELLA_*

@@ -135,10 +135,10 @@ def slugify(text: str) -> str:
 EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
 
 #: The pipeline roles a contestant may configure independently. ``default`` is
-#: the interactive/step loop; ``worker`` does the task; ``judge`` verifies it;
+#: the interactive/step loop; ``worker`` does the task; ``verifier`` verifies it;
 #: ``triage`` classifies the request. Agents without a pipeline ignore all but
 #: ``default`` and say so in :attr:`AgentSpec.honours`.
-ROLES: tuple[str, ...] = ("default", "worker", "judge", "triage")
+ROLES: tuple[str, ...] = ("default", "worker", "verifier", "triage")
 
 
 @dataclass(frozen=True)
@@ -205,7 +205,7 @@ class Engine:
     The top-level ``api``/``model``/``reasoning``/``effort`` are the baseline
     every role inherits. ``roles`` then overrides individual pipeline stages,
     which is what makes a Stella contestant a *pipeline* configuration rather
-    than a single model choice: worker on one model at ``xhigh``, judge on a
+    than a single model choice: worker on one model at ``xhigh``, verifier on a
     different family for independence, triage cheap and thinking-off.
 
     Agents that are a single model loop simply have no role overrides, and the

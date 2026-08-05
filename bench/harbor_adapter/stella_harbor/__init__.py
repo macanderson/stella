@@ -91,7 +91,7 @@ from .posture import (
     _ASSURANCE_TIERS_VERSION,
     _CANDIDATES_ENV,
     _ENGINE_POSTURE_VERSION,
-    _JUDGE_EVIDENCE_DEMAND_ENV,
+    _VERIFIER_EVIDENCE_DEMAND_ENV,
     _MAX_REVISIONS_ENV,
     _MODEL_TIMEOUT_ENV,
     _TRIAGE_MODEL_ENV,
@@ -102,7 +102,7 @@ from .posture import (
     _benchmark_engine_posture,
     fold_witness_observations,
     resolve_candidates,
-    resolve_judge_evidence_demand,
+    resolve_verifier_evidence_demand,
     resolve_max_revisions,
     resolve_model_timeout,
     resolve_triage_model,
@@ -254,7 +254,7 @@ _HOST_ONLY_STELLA_ENV = frozenset(
         # unlisted selector refuses the run instead of enabling the arm.
         _MAX_REVISIONS_ENV,
         _CANDIDATES_ENV,
-        _JUDGE_EVIDENCE_DEMAND_ENV,
+        _VERIFIER_EVIDENCE_DEMAND_ENV,
         # The third coupled ceiling (#1211 §6.2). Same bucket again: read on the
         # host, reaching Stella only inside the hashed posture.
         _MODEL_TIMEOUT_ENV,
@@ -622,7 +622,7 @@ async def _secure_exec_with_credential_fd(
     command: list[str],
     env: dict[str, str],
     credentials: Sequence[str],
-    witness_author: str | None = None,
+    verifier: str | None = None,
     expected_posture_json: str | None = None,
     posture_builder: PostureBuilder | None = None,
 ) -> ExecResult:
@@ -659,7 +659,7 @@ async def _secure_exec_with_credential_fd(
         raise RuntimeError("secure benchmark runner requires a pinned --model") from exc
     # Recomputed here from the canonical builder rather than trusted from the
     # caller, so no future caller can append an override between collection and
-    # the process boundary. `witness_author` must ride along: recomputing
+    # the process boundary. `verifier` must ride along: recomputing
     # without it would rebuild the *control* posture and ship it to a trial
     # whose metadata records the treatment arm — a silently disabled tier,
     # which is the whole of #1007. The equality check makes that divergence a
@@ -672,7 +672,7 @@ async def _secure_exec_with_credential_fd(
     # trust a passed-in string" is untouched: the class pins the builder, and
     # the claim launcher pins the class.
     builder = posture_builder or _benchmark_engine_posture
-    _, normalized_posture, _ = builder(command_model, witness_author=witness_author)
+    _, normalized_posture, _ = builder(command_model, verifier=verifier)
     if (
         expected_posture_json is not None
         and normalized_posture != expected_posture_json
@@ -1296,7 +1296,7 @@ class StellaAgent(BaseInstalledAgent):
     _engine_posture: dict[str, Any]
     _engine_posture_json: str
     _engine_posture_sha256: str
-    _witness_author_model_value: str | None
+    _verifier_model_value: str | None
     _assurance_tiers: dict[str, Any]
     _assurance_tiers_json: str
     _assurance_tiers_sha256: str
@@ -1528,18 +1528,18 @@ class StellaAgent(BaseInstalledAgent):
         env = self._forwarded_env()
         self._disable_reflection = env["STELLA_DISABLE_REFLECTION"]
         self._budget_usd = self._configured_budget()
-        witness_author = self._witness_author_model()
-        self._witness_author_model_value = witness_author
+        verifier = self._verifier_model()
+        self._verifier_model_value = verifier
         (
             self._engine_posture,
             self._engine_posture_json,
             self._engine_posture_sha256,
-        ) = self._build_engine_posture(configured_model, witness_author=witness_author)
+        ) = self._build_engine_posture(configured_model, verifier=verifier)
         (
             self._assurance_tiers,
             self._assurance_tiers_json,
             self._assurance_tiers_sha256,
-        ) = _benchmark_assurance_tiers(configured_model, witness_author=witness_author)
+        ) = _benchmark_assurance_tiers(configured_model, verifier=verifier)
         # Highest precedence, after ambient and all Harbor extra env. A task
         # cannot replace this with its own routing or request-effort config.
         env[_ENGINE_CONFIG_ENV] = self._engine_posture_json
@@ -1583,7 +1583,7 @@ class StellaAgent(BaseInstalledAgent):
             command=command,
             env=env,
             credentials=tuple(selected.credentials.values()),
-            witness_author=witness_author,
+            verifier=verifier,
             expected_posture_json=self._engine_posture_json,
             posture_builder=self._build_engine_posture,
         )
@@ -1694,7 +1694,7 @@ class StellaAgent(BaseInstalledAgent):
         )
 
     def _build_engine_posture(
-        self, model: str, *, witness_author: str | None
+        self, model: str, *, verifier: str | None
     ) -> tuple[dict[str, Any], str, str]:
         """Return ``(posture, canonical_json, sha256)`` for this trial.
 
@@ -1717,7 +1717,7 @@ class StellaAgent(BaseInstalledAgent):
         """
         return _benchmark_engine_posture(
             model,
-            witness_author=witness_author,
+            verifier=verifier,
             worker_effort=resolve_worker_effort(
                 self._configured_value(_WORKER_EFFORT_ENV)
             ),
@@ -1728,16 +1728,16 @@ class StellaAgent(BaseInstalledAgent):
                 self._configured_value(_MAX_REVISIONS_ENV)
             ),
             candidates=resolve_candidates(self._configured_value(_CANDIDATES_ENV)),
-            judge_evidence_demand=resolve_judge_evidence_demand(
-                self._configured_value(_JUDGE_EVIDENCE_DEMAND_ENV)
+            verifier_evidence_demand=resolve_verifier_evidence_demand(
+                self._configured_value(_VERIFIER_EVIDENCE_DEMAND_ENV)
             ),
             model_timeout_secs=resolve_model_timeout(
                 self._configured_value(_MODEL_TIMEOUT_ENV)
             ),
         )
 
-    def _witness_author_model(self) -> str | None:
-        """Return the pinned witness/judge author, or ``None`` for the control arm.
+    def _verifier_model(self) -> str | None:
+        """Return the pinned witness/verifier author, or ``None`` for the control arm.
 
         Unset defaults to the control arm, which keeps every published number
         and every registered posture hash exactly as it was — the treatment arm
@@ -2058,7 +2058,7 @@ class StellaAgent(BaseInstalledAgent):
         engine_posture = getattr(self, "_engine_posture", None)
         engine_posture_json = getattr(self, "_engine_posture_json", None)
         engine_posture_sha256 = getattr(self, "_engine_posture_sha256", None)
-        witness_author_model = getattr(self, "_witness_author_model_value", None)
+        verifier_model = getattr(self, "_verifier_model_value", None)
         assurance_tiers = getattr(self, "_assurance_tiers", None)
         assurance_tiers_json = getattr(self, "_assurance_tiers_json", None)
         assurance_tiers_sha256 = getattr(self, "_assurance_tiers_sha256", None)
@@ -2073,7 +2073,7 @@ class StellaAgent(BaseInstalledAgent):
                     assurance_tiers_sha256,
                 ) = _benchmark_assurance_tiers(
                     self._effective_model(),
-                    witness_author=self._witness_author_model(),
+                    verifier=self._verifier_model(),
                 )
             except (ValueError, RuntimeError):
                 assurance_tiers = None
@@ -2154,7 +2154,7 @@ class StellaAgent(BaseInstalledAgent):
             "stella_assurance_tiers": assurance_tiers,
             "stella_assurance_tiers_json": assurance_tiers_json,
             "stella_assurance_tiers_sha256": assurance_tiers_sha256,
-            "stella_witness_author_model": witness_author_model,
+            "stella_verifier_model": verifier_model,
             "stella_witness_authored_state": witness_authored_state,
             "stella_self_verdict_state": self_verdict_state,
             "stella_workspace_git_baseline": workspace_git_baseline,
@@ -2213,7 +2213,7 @@ class StellaAgent(BaseInstalledAgent):
                 assurance_tiers=assurance_tiers,
                 assurance_tiers_json=assurance_tiers_json,
                 assurance_tiers_sha256=assurance_tiers_sha256,
-                witness_author_model=witness_author_model,
+                verifier_model=verifier_model,
                 witness_authored_state=witness_authored_state,
                 workspace_git_baseline=workspace_git_baseline,
             )

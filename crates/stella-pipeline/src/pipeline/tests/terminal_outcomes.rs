@@ -6,16 +6,16 @@
 
 use super::*;
 
-/// Every role resolves except the judge — "no independent witness author is
+/// Every role resolves except the verifier — "no independent witness author is
 /// available", stated by identity rather than by call count so the fixture
 /// survives a change in the order roles are resolved.
-struct NoJudgeProvider<'a> {
+struct NoVerifierProvider<'a> {
     provider: &'a ScriptedProvider,
 }
 
-impl ProviderResolver for NoJudgeProvider<'_> {
+impl ProviderResolver for NoVerifierProvider<'_> {
     fn provider_for(&self, model: &ModelRef) -> Option<&dyn Provider> {
-        (model.model_id != "judge").then_some(self.provider as &dyn Provider)
+        (model.model_id != "verifier").then_some(self.provider as &dyn Provider)
     }
 }
 
@@ -170,7 +170,7 @@ async fn enforced_budget_breach_in_triage_stops_before_the_next_paid_stage() {
     );
 }
 
-/// An unresolvable judge costs the run its authored witness, not the task.
+/// An unresolvable verifier costs the run its authored witness, not the task.
 /// The pipeline warns once and falls through to the unauthored verify ladder
 /// rather than aborting with no work done.
 #[tokio::test]
@@ -179,7 +179,7 @@ async fn unavailable_independent_witness_degrades_instead_of_aborting() {
         text_result("single"),
         text_result("TEST_COMMAND: cargo test --test witness witness -- --exact"),
     ]);
-    let resolver = NoJudgeProvider {
+    let resolver = NoVerifierProvider {
         provider: &provider,
     };
     let runner = ScriptedRunner::new(vec![false], "");

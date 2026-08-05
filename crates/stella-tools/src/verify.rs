@@ -39,7 +39,7 @@
 //! The shadow run's output tail is always included: a shadow failure that
 //! is a *compile error* (the test references symbols that don't exist on
 //! HEAD) is a much weaker witness than an assertion failure — the agent
-//! (and any judge) should check the tail for WHY the old code failed.
+//! (and any verifier) should check the tail for WHY the old code failed.
 
 use async_trait::async_trait;
 use serde_json::Value;

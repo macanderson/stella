@@ -1,6 +1,6 @@
 //! Witness authoring: the front half of deterministic verification (L-E11).
 //! When no `--test-command` is configured, the pipeline asks an independent
-//! model (the judge's resolution — witness ≠ worker, so the test that defines
+//! model (the verifier's resolution — witness ≠ worker, so the test that defines
 //! "done" is authored by the same independent role that enforces it) to write
 //! a **witness test**: a test that FAILS on the current code and will pass
 //! once the goal is met. Its command becomes the flip oracle's tracked
@@ -17,7 +17,7 @@
 //! when its bytes, type, mode, link count, and path remain unchanged at verify
 //! time ([`witness_identity_matches`] over the [`ArtifactIdentity`] recorded in
 //! [`Witness::files`]). A worker that edits, replaces, links, renames, or
-//! deletes the witness hard-fails the candidate; a model judge cannot override
+//! deletes the witness hard-fails the candidate; a model verifier cannot override
 //! that authority violation.
 //!
 //! # The pure/orchestration split
@@ -523,7 +523,7 @@ fn changed_paths(before: &HashMap<String, String>, after: &HashMap<String, Strin
 /// `src/backdoor_test.rs` as a witness artifact — after which
 /// [`validate_witness_invocation`]'s required `cargo test --test <stem>` can
 /// never pass, the flip never happens, the run burns its full revision
-/// budget, and a judge scoring the diff may still PASS, adopting the stray
+/// budget, and a verifier scoring the diff may still PASS, adopting the stray
 /// production file into the user's real tree. The other arms keep their
 /// filename forms because their runners genuinely collect by filename
 /// wherever the file sits (`pytest test_*.py`, `go test ./... _test.go`).

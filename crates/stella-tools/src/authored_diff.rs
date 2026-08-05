@@ -2,15 +2,15 @@
 //!
 //! `git diff` answers "how does the tree differ from a commit". That is the
 //! wrong question in two workspaces the agent is routinely run in, and the
-//! judge has been paying for it in both:
+//! verifier has been paying for it in both:
 //!
 //! * **No repository at all.** A Terminal-Bench task directory is a plain
 //!   directory, so the diff probe can only ever report that it could not look.
-//!   Every judge call on that benchmark has been handed a sentence of English
+//!   Every verifier call on that benchmark has been handed a sentence of English
 //!   where a diff belongs.
 //! * **A new file.** `git diff` cannot see an untracked path, so the single
 //!   most common shape of agent work — *create the file that solves the task* —
-//!   reaches the judge as a one-line marker naming the path and its length,
+//!   reaches the verifier as a one-line marker naming the path and its length,
 //!   carrying none of its content.
 //!
 //! Neither gap is a defect in git. They are the same category error twice:
@@ -38,7 +38,7 @@
 //! tree produced ~1,200 `Observed` creations in one turn, every one recorded
 //! as a full-content authored file. Rendering those as authored diff would
 //! bury the agent's actual three-line fix under a megabyte of upstream test
-//! fixtures, and would tell a judge that the turn wrote SQLite.
+//! fixtures, and would tell a verifier that the turn wrote SQLite.
 //!
 //! So the two render differently, on purpose: `Declared` entries render as a
 //! real unified diff with their content, and `Observed` entries render as
@@ -93,7 +93,7 @@ const MAX_TRACKED_PATHS: usize = 512;
 /// files nobody authored; the ~1,200-file extraction in the module docs above
 /// does the same thing twice over. The agent's actual three-line fix then
 /// arrives at slot 513 and becomes a `dropped` counter — the ledger reports
-/// *that* it stopped tracking, but the diff it exists to hand the judge is
+/// *that* it stopped tracking, but the diff it exists to hand the verifier is
 /// gone, on precisely the turns it was built to survive.
 ///
 /// So the rule [`AuthoredDiff::lines`] already states for the line budget — a
@@ -110,7 +110,7 @@ const MAX_TRACKED_OBSERVED: usize = 128;
 /// as a marker, never as silence.
 const MAX_RETAINED_BYTES: usize = 256 * 1024;
 
-/// Ceiling on the rendered text. The judge's context is finite and this is one
+/// Ceiling on the rendered text. The verifier's context is finite and this is one
 /// of several things competing for it; past this the render stops and says how
 /// many files it did not reach.
 const MAX_RENDER_BYTES: usize = 128 * 1024;
@@ -371,7 +371,7 @@ impl AuthoredDiffLedger {
         out.observed_files += self.observed_dropped;
 
         // Every bound this render hit, stated. A truncated diff that does not
-        // say it was truncated is read as a complete one, and a judge acting on
+        // say it was truncated is read as a complete one, and a verifier acting on
         // that is the failure this whole channel exists to prevent.
         if observed_elided > 0 {
             text.push_str(&format!(

@@ -117,8 +117,8 @@ lib.rs), never as a planning assumption.
 | [`src/glob.rs`](src/glob.rs), [`src/mining.rs`](src/mining.rs), [`src/summarize.rs`](src/summarize.rs) | Non-public shared helpers: the `*`-only glob matcher behind rule guards and hook matchers; the lexical mining primitives the rules and skills miners share (they were once two byte-identical copies); the overflow summarizer's prompt and span rendering. |
 | [`src/discovery.rs`](src/discovery.rs) | The ranker behind `tool_search`/`skill_search`/`mcp_search`: `select:` lookups, `+required` terms, field-weighted scoring. |
 | [`src/extensions.rs`](src/extensions.rs) | Custom commands and agents parsed from markdown, plus `plan_extension_sync` for adopting `.claude/`/`.agents/` definitions. |
-| [`src/subagent.rs`](src/subagent.rs) | `Engine::run_sub_agent` — a bounded child turn with its own carved budget and its own (discarded) transcript, returning only a capped summary. `goal.rs`'s judge is one. |
-| [`src/goal.rs`](src/goal.rs) | The goal loop: worker turn → judge verdict → feedback, bounded by round cap, budget and turn abort. The judge runs as a sub-agent. |
+| [`src/subagent.rs`](src/subagent.rs) | `Engine::run_sub_agent` — a bounded child turn with its own carved budget and its own (discarded) transcript, returning only a capped summary. `goal.rs`'s verifier is one. |
+| [`src/goal.rs`](src/goal.rs) | The goal loop: worker turn → verifier verdict → feedback, bounded by round cap, budget and turn abort. The verifier runs as a sub-agent. |
 | [`src/router.rs`](src/router.rs) | Role → model resolution over a caller-supplied `ProviderProfile`, plus the per-provider circuit breaker. |
 | [`src/tasks.rs`](src/tasks.rs) | `TaskBoard` — the transition rules behind the `task_*` tools; records `SpawnRequest`s rather than spawning. |
 | [`src/mcp_usage.rs`](src/mcp_usage.rs) | The MCP usage record/ledger types, homed here so `stella-mcp` and `stella-tools` need no edge between them. |

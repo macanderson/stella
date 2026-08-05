@@ -949,7 +949,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         }
         Command::Monitor { target } => {
             let target = target.unwrap_or_else(|| "main".to_string());
-            // Monitoring IS a goal: the judge (who can call ci_status
+            // Monitoring IS a goal: the verifier (who can call ci_status
             // itself) ends the loop only on a fully green latest run.
             let goal = format!(
                 "Drive CI for `{target}` to fully green. Use ci_status (wait: true) to watch \

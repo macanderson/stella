@@ -85,7 +85,7 @@ fn models_value(model: &WorkspaceModel) -> Vec<Span<'static>> {
             theme::accent(),
         ),
         Span::styled(" · ", dim),
-        Span::styled(format!("verify {}", slot(PipelineRole::Judge)), dim),
+        Span::styled(format!("verify {}", slot(PipelineRole::Verifier)), dim),
     ]
 }
 

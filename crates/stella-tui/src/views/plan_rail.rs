@@ -723,7 +723,7 @@ mod tests {
         let mut state = ProofState::default();
         state.apply(&ProofStep::Assurance {
             witness: false,
-            judge: false,
+            verifier: false,
         });
         state.finish();
         assert_eq!(

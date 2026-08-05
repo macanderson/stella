@@ -104,13 +104,13 @@ fn deterministic_floor_leaves_plain_prompts_at_lookup() {
 
 #[test]
 fn parses_the_structured_assurance_answer() {
-    let a = parse_triage_response("CLASS: single\nWITNESS: no\nJUDGE: yes")
+    let a = parse_triage_response("CLASS: single\nWITNESS: no\nVERIFIER: yes")
         .expect("a well-formed answer parses");
     assert_eq!(a.class, TaskClass::SingleTask);
     assert_eq!(a.require_witness, Some(false));
-    assert_eq!(a.require_judge, Some(true));
+    assert_eq!(a.require_verifier, Some(true));
     assert!(!a.wants_witness(), "an explicit no wins over the class");
-    assert!(a.wants_judge());
+    assert!(a.wants_verifier());
 }
 
 #[test]
@@ -120,22 +120,23 @@ fn a_bare_token_answer_still_classifies_and_claims_no_assurance_opinion() {
     let a = parse_triage_response("multi").expect("a bare token parses");
     assert_eq!(a.class, TaskClass::MultiStep);
     assert_eq!(a.require_witness, None);
-    assert_eq!(a.require_judge, None);
+    assert_eq!(a.require_verifier, None);
     assert!(a.wants_witness(), "class-derived default stands");
 }
 
 #[test]
 fn an_answer_with_no_class_keyword_is_not_a_guess() {
-    assert_eq!(parse_triage_response("WITNESS: no\nJUDGE: no"), None);
+    assert_eq!(parse_triage_response("WITNESS: no\nVERIFIER: no"), None);
     assert_eq!(parse_triage_response("hmm, hard to say"), None);
 }
 
 #[test]
 fn assurance_flags_tolerate_bullets_punctuation_and_case() {
-    let a = parse_triage_response("- CLASS: Multi\n- Witness: NO\n* judge : none").expect("parses");
+    let a =
+        parse_triage_response("- CLASS: Multi\n- Witness: NO\n* verifier : none").expect("parses");
     assert_eq!(a.class, TaskClass::MultiStep);
     assert_eq!(a.require_witness, Some(false));
-    assert_eq!(a.require_judge, Some(false));
+    assert_eq!(a.require_verifier, Some(false));
 }
 
 #[test]
@@ -143,8 +144,8 @@ fn a_chat_answer_parses_as_conversational_and_parks_the_class() {
     // The whole point: a greeting must have somewhere to land. A `chat`
     // CLASS carries no orchestration keyword, so the class parks at the
     // cheapest tier and the conversational flag is what the pipeline reads.
-    let a =
-        parse_triage_response("CLASS: chat\nWITNESS: no\nJUDGE: no").expect("a chat answer parses");
+    let a = parse_triage_response("CLASS: chat\nWITNESS: no\nVERIFIER: no")
+        .expect("a chat answer parses");
     assert!(a.conversational);
     assert_eq!(a.class, TaskClass::SimpleLookup);
 
@@ -172,7 +173,7 @@ fn classify_conversational_is_first_class_keyword_wins() {
 fn a_non_chat_answer_is_not_conversational() {
     assert!(!parse_triage_response("single").unwrap().conversational);
     assert!(
-        !parse_triage_response("CLASS: lookup\nWITNESS: no\nJUDGE: no")
+        !parse_triage_response("CLASS: lookup\nWITNESS: no\nVERIFIER: no")
             .unwrap()
             .conversational
     );
@@ -343,8 +344,8 @@ fn the_triage_prompt_does_not_frame_every_real_class_as_code() {
 }
 
 #[test]
-fn a_judge_opinion_is_required_to_skip_the_judge() {
-    // `wants_judge` is only consulted after the ladder came back
+fn a_verifier_opinion_is_required_to_skip_the_verifier() {
+    // `wants_verifier` is only consulted after the ladder came back
     // inconclusive, so silence must never mean "skip".
     for class in [
         TaskClass::SimpleLookup,
@@ -352,8 +353,8 @@ fn a_judge_opinion_is_required_to_skip_the_judge() {
         TaskClass::MultiStep,
     ] {
         assert!(
-            TaskAssessment::from_class(class).wants_judge(),
-            "{class:?} with no triage opinion must still reach the judge"
+            TaskAssessment::from_class(class).wants_verifier(),
+            "{class:?} with no triage opinion must still reach the verifier"
         );
     }
 }
@@ -363,7 +364,7 @@ fn triage_may_lower_the_floor_by_one_level_and_raise_it_without_bound() {
     // Floor says multi (markers present), triage says lookup → lands on
     // single: DAG planning is skipped, verification is kept. Triage read
     // the goal, but it is the weakest tier, so it does not get to strip
-    // planning, witness, and judge in one move.
+    // planning, witness, and verifier in one move.
     assert_eq!(
         resolve_task_class(
             Some(TaskClass::SimpleLookup),
@@ -505,13 +506,13 @@ fn the_labeled_class_line_outranks_justification_prose() {
     // answer — "task" here classified this multi answer as SINGLE…
     assert_eq!(
         classify_triage_response(
-            "This task spans several files.\nCLASS: multi\nWITNESS: yes\nJUDGE: yes"
+            "This task spans several files.\nCLASS: multi\nWITNESS: yes\nVERIFIER: yes"
         ),
         Some(TaskClass::MultiStep)
     );
     // …and "plan" classified this single answer as MULTI.
     assert_eq!(
-        classify_triage_response("No plan needed here.\nCLASS: single\nWITNESS: no\nJUDGE: no"),
+        classify_triage_response("No plan needed here.\nCLASS: single\nWITNESS: no\nVERIFIER: no"),
         Some(TaskClass::SingleTask)
     );
     // Chat on the labeled line wins over class words in the prose.
@@ -530,16 +531,16 @@ fn the_labeled_class_line_outranks_justification_prose() {
 
 #[test]
 fn flag_scan_survives_near_miss_lines() {
-    // `judgement…` is not the judge line (word boundary), and an
+    // `judgement…` is not the verifier line (word boundary), and an
     // unrecognized value on an early line must not end the scan before
     // the real answer further down is read.
     let a = parse_triage_response(
-        "CLASS: single\njudgement: seems fine\nwitness: probably\nWITNESS: no\nJUDGE: no",
+        "CLASS: single\njudgement: seems fine\nwitness: probably\nWITNESS: no\nVERIFIER: no",
     )
     .expect("parses");
     assert_eq!(a.class, TaskClass::SingleTask);
     assert_eq!(a.require_witness, Some(false));
-    assert_eq!(a.require_judge, Some(false));
+    assert_eq!(a.require_verifier, Some(false));
 }
 
 #[test]
@@ -596,10 +597,10 @@ fn requirement_bullets_do_not_floor_to_multi_step() {
 }
 
 #[test]
-fn the_judge_nudge_prefers_review_when_unsure() {
+fn the_verifier_nudge_prefers_review_when_unsure() {
     let p = triage_prompt("anything");
-    // The witness keeps its skip-nudge; the judge must not share it —
-    // the judge is only ever consulted when no test settled the outcome,
+    // The witness keeps its skip-nudge; the verifier must not share it —
+    // the verifier is only ever consulted when no test settled the outcome,
     // which is exactly when review has value.
     assert!(p.contains("when unsure, say yes"));
     assert!(!p.contains("Prefer `no` for both"));

@@ -13,7 +13,7 @@ stella run <prompt> [--no-pipeline] [--test-command <CMD>] [--keep-witness] [glo
 
 ## What it does
 
-By default `stella run` sends the prompt through the **staged pipeline** — triage, plan, execute, verify, judge — and exits when the task is done. There is no REPL and no prompt for further input; it is the non-interactive counterpart to [`stella chat`](/docs/commands/chat).
+By default `stella run` sends the prompt through the **staged pipeline** — triage, plan, execute, verify, verifier — and exits when the task is done. There is no REPL and no prompt for further input; it is the non-interactive counterpart to [`stella chat`](/docs/commands/chat).
 
 Pass `--no-pipeline` to fall back to the raw step loop instead: the model proposes tool calls, the tools execute, results feed back, and the loop repeats until the model stops proposing actions.
 
@@ -30,13 +30,13 @@ Because it is non-interactive, `stella run` is the natural place to combine `--o
 <CardGrid size="md">
   <OptionCard name="--no-pipeline">
     Use the raw step loop instead of the staged pipeline (triage, plan, execute, verify,
-    judge).
+    verifier).
   </OptionCard>
   <OptionCard name="--test-command <CMD>">
     The test command the pipeline's verify stage runs deterministically — e.g.
     `"cargo test -p my-crate"`. Arms the fail→pass flip oracle: a change that flips a
-    failing test to passing can submit without a model-judge call. Omitted, verification
-    always escalates to the judge.
+    failing test to passing can submit without a model-verifier call. Omitted, verification
+    always escalates to the verifier.
   </OptionCard>
   <OptionCard name="--keep-witness">
     Keep the authored witness test as a file in your working tree. By default the witness
@@ -93,7 +93,7 @@ stella --model local/llama3.3 --base-url http://localhost:11434/v1 \
 ```
 
 Hand the verify stage a deterministic oracle, so a fixed test can submit without a
-model-judge call:
+model-verifier call:
 
 ```bash
 stella run --test-command "cargo test -p stella-store" \

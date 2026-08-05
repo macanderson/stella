@@ -267,7 +267,7 @@ string (an absolute path would make the shadow copy truncate the real file).
 
 The staged pipeline enforces the same contract at runtime: when no
 `--test-command` is configured, its **witness stage** has an independent model
-(the judge's resolution, never the worker) author the failing witness test up
+(the verifier's resolution, never the worker) author the failing witness test up
 front, tracks its fail→pass flip in the flip oracle, and refuses to credit the
 flip if the worker modified the witness files (tamper exclusion). The witness
 is **scaffolding for that one run**: it lives in the candidate workspace and is
@@ -302,7 +302,7 @@ the files you must plan around (see below).
 | Persistence: executions, events, telemetry (SQLite) | [`stella-store`](crates/stella-store/README.md) | |
 | Retrieval: graph, embeddings, episodic memory | [`stella-context`](crates/stella-context/README.md) | |
 | Tree-sitter code indexing | [`stella-graph`](crates/stella-graph/README.md) | |
-| Triage → … → judge orchestration plane | [`stella-pipeline`](crates/stella-pipeline/README.md) | |
+| Triage → … → verifier orchestration plane | [`stella-pipeline`](crates/stella-pipeline/README.md) | |
 | MCP client (external tool servers) | [`stella-mcp`](crates/stella-mcp/README.md) | |
 | Multimodal generation | [`stella-media`](crates/stella-media/README.md) | |
 | Multi-agent fan-out, worktree isolation | [`stella-fleet`](crates/stella-fleet/README.md) | |
@@ -431,7 +431,7 @@ this before assuming two of them mean the same thing:
 | **session** | `SessionRecord::id` | `crates/stella-store/src/sessions.rs` | One run of the CLI, tracked in the cross-process registry under `~/.stella/sessions/`. Stamped onto `executions.session_id` (schema v8) so `Store::session_events` can reassemble a session's whole journal across its turns. |
 | **execution** | `execution_id` | `crates/stella-store/src/ddl.rs` | One row in the `executions` table — the store's unit of work (one goal/turn) with its prompt, provider/model, outcome and cost. The foreign key every child telemetry table hangs off. |
 | **turn** | `turn_instance` | `crates/stella-protocol/src/event.rs` | One `run_turn` — a prompt through the model/tool loop to an answer. Monotonic per session; groups the steps of that turn in `step_manifest`/`step_receipt`. In the store one turn is one execution. |
-| **step** | `(step, call_seq)` | `crates/stella-protocol/src/event.rs` | One iteration inside a turn: one model call plus the tools it requested. `call_seq` disambiguates the several calls that can share a `(turn_instance, step)` — the engine's worker call is 0, the overflow summarizer and the pipeline's triage/judge/plan/guidance roles take 1, 2, … |
+| **step** | `(step, call_seq)` | `crates/stella-protocol/src/event.rs` | One iteration inside a turn: one model call plus the tools it requested. `call_seq` disambiguates the several calls that can share a `(turn_instance, step)` — the engine's worker call is 0, the overflow summarizer and the pipeline's triage/verifier/plan/guidance roles take 1, 2, … |
 | **fleet run** | `run_id` | `crates/stella-fleet/src/ledger.rs` | One multi-agent fan-out, top of the fleet hierarchy: run → task → attempt → commits/spend. **Not** an `execution_id` and **not** a session. |
 | **task** | `TaskId` / `tasks` row | `crates/stella-fleet/src/plan.rs`, [`stella-store`](crates/stella-store/README.md) | Two things that share a word: in the fleet ledger, one unit of work dispatched to a worker within a run; in the store, one row of the agent's own task-board snapshot, keyed `(session, task id)` and mirrored from `TaskUpdate` events. |
 

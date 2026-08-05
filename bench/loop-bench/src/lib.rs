@@ -88,7 +88,7 @@ pub struct TrialReport {
     /// `None` is NOT zero: an unfinished trial must not read as a failure.
     pub reward: Option<f64>,
     /// `step_usage` events — one per *committed* model call, including the
-    /// non-worker (triage/plan/judge) ones. Retries do not add records: a
+    /// non-worker (triage/plan/verifier) ones. Retries do not add records: a
     /// retried call still emits a single `step_usage` carrying its own
     /// `retries` count. A call that failed after dispatch emits
     /// `usage_incomplete` instead and is NOT counted, so a turn whose every

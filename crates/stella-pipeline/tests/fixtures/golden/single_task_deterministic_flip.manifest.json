@@ -1,6 +1,6 @@
 {
   "task_id": "single_task_deterministic_flip",
-  "description": "A single-task goal whose test command flips fail->pass: deterministic verdict, model judge skipped.",
+  "description": "A single-task goal whose test command flips fail->pass: deterministic verdict, model verifier skipped.",
   "source": {
     "kind": "rust_stack",
     "recorded_by": "stella-pipeline::pipeline::tests::golden::single_task_deterministic_flip"

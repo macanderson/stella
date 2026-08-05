@@ -497,12 +497,12 @@ these kind-specific validated fields:
 | json_schema | path, schema_ref | expected_schema_hash |
 | markdown_sections | path, sections | match_mode: exact or case_insensitive |
 | command | argv, working_directory, timeout_ms, expected_exit_codes | environment_allowlist, output_limit_bytes |
-| semantic_judge | criterion, rubric_ref, judge_policy_ref | minimum_score |
+| semantic_verifier | criterion, rubric_ref, verifier_policy_ref | minimum_score |
 
 Core kinds are `file_exists`,
 `directory_exists`, `glob_min_count`, `mime_type`, `image_dimensions`,
 `file_size`, `json_schema`, `markdown_sections`, `command`, and
-`semantic_judge`. Optional `presentation` metadata does not alter validation.
+`semantic_verifier`. Optional `presentation` metadata does not alter validation.
 
 Normalize every path under output_root. argv is a nonempty string array, never
 an implicit shell. A contract containing command requires

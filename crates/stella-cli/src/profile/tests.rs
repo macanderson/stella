@@ -25,7 +25,7 @@ fn candidate(provider: &str, model: &str, family: &str, price: f64) -> Candidate
 }
 
 /// A spread of five models across four families, cheapest to priciest. The
-/// two same-family entries sit at opposite ends on purpose, so the judge's
+/// two same-family entries sit at opposite ends on purpose, so the verifier's
 /// independence rule has to reach past one of them.
 fn spread() -> Vec<Candidate> {
     vec![
@@ -91,7 +91,7 @@ fn rank_of(models: &[Candidate], plan: &Plan, kind: EngineAgentKind) -> usize {
 }
 
 #[test]
-fn triage_never_outspends_the_worker_and_the_judge_stays_within_one_rung() {
+fn triage_never_outspends_the_worker_and_the_verifier_stays_within_one_rung() {
     for profile in Profile::ALL {
         let models = spread();
         let p = plan(profile, &models);
@@ -106,40 +106,40 @@ fn triage_never_outspends_the_worker_and_the_judge_stays_within_one_rung() {
             "{}: triage outspent the worker",
             profile.name()
         );
-        // The judge may sit one rung below the worker, and only one — that is
+        // The verifier may sit one rung below the worker, and only one — that is
         // the price of keeping it independent when nothing stronger is. Two
-        // rungs down is an outmatched judge, and capability takes over.
+        // rungs down is an outmatched verifier, and capability takes over.
         let worker = rank_of(&models, &p, EngineAgentKind::Worker);
-        let judge = rank_of(&models, &p, EngineAgentKind::Judge);
+        let verifier = rank_of(&models, &p, EngineAgentKind::Verifier);
         assert!(
-            judge + 1 >= worker,
-            "{}: judge sat {} rungs below the worker",
+            verifier + 1 >= worker,
+            "{}: verifier sat {} rungs below the worker",
             profile.name(),
-            worker - judge
+            worker - verifier
         );
     }
 }
 
 #[test]
-fn the_judge_prefers_a_family_the_worker_is_not_in() {
+fn the_verifier_prefers_a_family_the_worker_is_not_in() {
     // Balanced puts the worker on `anthropic/claude-sonnet-5`; the only model
     // that is both stronger and from another family is `openai/gpt-5.5`.
     let p = plan(Profile::Balanced, &spread());
     let worker = p.pick(EngineAgentKind::Worker).unwrap();
-    let judge = p.pick(EngineAgentKind::Judge).unwrap();
+    let verifier = p.pick(EngineAgentKind::Verifier).unwrap();
     assert_ne!(
         worker.model.as_ref().unwrap().family,
-        judge.model.as_ref().unwrap().family,
-        "a judge in the worker's own family lets a shared blind spot pass twice"
+        verifier.model.as_ref().unwrap().family,
+        "a verifier in the worker's own family lets a shared blind spot pass twice"
     );
-    assert!(!p.judge_shares_worker_family);
+    assert!(!p.verifier_shares_worker_family);
 }
 
 #[test]
-fn a_judge_one_rung_below_the_worker_keeps_its_independence() {
+fn a_verifier_one_rung_below_the_worker_keeps_its_independence() {
     // Ultra puts the worker on the priciest model, so nothing is both stronger
     // AND independent. The strongest independent model is one rung down, which
-    // is a near miss rather than an outmatched judge — losing bias resistance
+    // is a near miss rather than an outmatched verifier — losing bias resistance
     // over a single rung would be overcorrection.
     let models = spread();
     let p = plan(Profile::Ultra, &models);
@@ -147,7 +147,7 @@ fn a_judge_one_rung_below_the_worker_keeps_its_independence() {
         model_of(&p, EngineAgentKind::Worker),
         "anthropic/claude-fable-5"
     );
-    assert_eq!(model_of(&p, EngineAgentKind::Judge), "openai/gpt-5.5");
+    assert_eq!(model_of(&p, EngineAgentKind::Verifier), "openai/gpt-5.5");
     assert_ne!(
         p.pick(EngineAgentKind::Worker)
             .unwrap()
@@ -155,7 +155,7 @@ fn a_judge_one_rung_below_the_worker_keeps_its_independence() {
             .as_ref()
             .unwrap()
             .family,
-        p.pick(EngineAgentKind::Judge)
+        p.pick(EngineAgentKind::Verifier)
             .unwrap()
             .model
             .as_ref()
@@ -163,13 +163,13 @@ fn a_judge_one_rung_below_the_worker_keeps_its_independence() {
             .family
     );
     assert!(
-        !p.judge_shares_worker_family,
+        !p.verifier_shares_worker_family,
         "independence was kept, so there is no compromise to report"
     );
 }
 
 #[test]
-fn a_judge_more_than_one_rung_below_loses_to_capability_and_is_recorded() {
+fn a_verifier_more_than_one_rung_below_loses_to_capability_and_is_recorded() {
     // One cheap outsider and a wall of same-family models. The only
     // independent option is three rungs down — far enough that it could not
     // follow the work — so capability takes over and the correlation is
@@ -182,21 +182,24 @@ fn a_judge_more_than_one_rung_below_loses_to_capability_and_is_recorded() {
     ];
     let p = plan(Profile::Ultra, &models);
     assert_eq!(model_of(&p, EngineAgentKind::Worker), "anthropic/claude-c");
-    assert_eq!(model_of(&p, EngineAgentKind::Judge), "anthropic/claude-c");
+    assert_eq!(
+        model_of(&p, EngineAgentKind::Verifier),
+        "anthropic/claude-c"
+    );
     assert!(
-        p.judge_shares_worker_family,
-        "a correlated judge must be reported, not absorbed"
+        p.verifier_shares_worker_family,
+        "a correlated verifier must be reported, not absorbed"
     );
 }
 
 #[test]
-fn a_single_reachable_family_still_yields_a_judge() {
+fn a_single_reachable_family_still_yields_a_verifier() {
     // One provider, one family — the cross-family preference has nothing to
-    // reach for and must not leave the judge unset.
+    // reach for and must not leave the verifier unset.
     let only = vec![candidate("anthropic", "claude-fable-5", "anthropic", 75.0)];
     let p = plan(Profile::Ultra, &only);
     assert_eq!(
-        model_of(&p, EngineAgentKind::Judge),
+        model_of(&p, EngineAgentKind::Verifier),
         "anthropic/claude-fable-5"
     );
     assert_eq!(p.ranked_count, 1);
@@ -263,17 +266,20 @@ fn effort_is_clamped_down_to_the_rungs_the_provider_exposes() {
     assert_eq!(pick.effort, Some(ReasoningEffort::High));
     assert_eq!(pick.effort_downgraded_from, Some(ReasoningEffort::Max));
 
-    // The OpenAI shapes stop at high, so `pro`'s xhigh judge lands on high.
+    // The OpenAI shapes stop at high, so `pro`'s xhigh verifier lands on high.
     let openai = vec![Candidate {
         effort_levels: OPENAI,
         ..candidate("openai", "gpt-5.5", "gpt", 10.0)
     }];
-    let judge = plan(Profile::Pro, &openai)
-        .pick(EngineAgentKind::Judge)
+    let verifier = plan(Profile::Pro, &openai)
+        .pick(EngineAgentKind::Verifier)
         .cloned()
         .unwrap();
-    assert_eq!(judge.effort, Some(ReasoningEffort::High));
-    assert_eq!(judge.effort_downgraded_from, Some(ReasoningEffort::Xhigh));
+    assert_eq!(verifier.effort, Some(ReasoningEffort::High));
+    assert_eq!(
+        verifier.effort_downgraded_from,
+        Some(ReasoningEffort::Xhigh)
+    );
 }
 
 #[test]
@@ -429,7 +435,7 @@ fn ranking_is_reproducible_when_two_models_cost_the_same() {
 
 #[test]
 fn applying_a_profile_turns_the_auto_switches_off() {
-    // `effort_auto: on` overrides every per-agent effort with judge=high /
+    // `effort_auto: on` overrides every per-agent effort with verifier=high /
     // worker=medium / triage=low. Left on, `/profile ultra` would print `max`
     // and run `medium` — the profile must be the authority.
     let mut engine = AgentEngineConfig {
@@ -478,7 +484,7 @@ fn applying_a_profile_writes_the_flat_model_keys_and_clears_per_agent_pins() {
         "the per-agent pin must be cleared so the flat key decides"
     );
     assert!(engine.default_model.is_some());
-    assert!(engine.pipeline_judge_model.is_some());
+    assert!(engine.pipeline_verifier_model.is_some());
     assert!(engine.pipeline_triage_model.is_some());
 }
 
@@ -488,7 +494,7 @@ fn applying_a_profile_preserves_what_it_does_not_own() {
         allowed_models: Some(vec!["anthropic/claude-fable-5".to_string()]),
         headless_scope_bypass: Some(Toggle::On),
         agents: Some(AgentEngineAgents {
-            judge: Some(AgentEngineAgent {
+            verifier: Some(AgentEngineAgent {
                 prompt: Some("You are a strict reviewer.".to_string()),
                 provider: Some("openrouter".to_string()),
                 params: Some(AgentEngineParams {
@@ -503,10 +509,13 @@ fn applying_a_profile_preserves_what_it_does_not_own() {
         ..AgentEngineConfig::default()
     };
     apply(&plan(Profile::Pro, &spread()), &mut engine);
-    let judge = engine.agents.as_ref().unwrap().judge.as_ref().unwrap();
-    assert_eq!(judge.prompt.as_deref(), Some("You are a strict reviewer."));
-    assert_eq!(judge.provider.as_deref(), Some("openrouter"));
-    let params = judge.params.as_ref().unwrap();
+    let verifier = engine.agents.as_ref().unwrap().verifier.as_ref().unwrap();
+    assert_eq!(
+        verifier.prompt.as_deref(),
+        Some("You are a strict reviewer.")
+    );
+    assert_eq!(verifier.provider.as_deref(), Some("openrouter"));
+    let params = verifier.params.as_ref().unwrap();
     assert_eq!(params.temperature, Some(0.2));
     assert_eq!(params.seed, Some(42));
     // The profile does own verbosity and service tier.
@@ -541,7 +550,7 @@ fn switching_profiles_fully_replaces_the_previous_ones_effort() {
     for agent in [
         &agents.default,
         &agents.worker,
-        &agents.judge,
+        &agents.verifier,
         &agents.triage,
     ] {
         let agent = agent.as_ref().unwrap();
@@ -656,7 +665,7 @@ fn restore_auto_leaves_model_choices_alone() {
     let models = (
         engine.default_model.clone(),
         engine.pipeline_worker_model.clone(),
-        engine.pipeline_judge_model.clone(),
+        engine.pipeline_verifier_model.clone(),
         engine.pipeline_triage_model.clone(),
     );
     restore_auto(&mut engine);
@@ -664,7 +673,7 @@ fn restore_auto_leaves_model_choices_alone() {
         (
             engine.default_model.clone(),
             engine.pipeline_worker_model.clone(),
-            engine.pipeline_judge_model.clone(),
+            engine.pipeline_verifier_model.clone(),
             engine.pipeline_triage_model.clone(),
         ),
         models
@@ -675,7 +684,7 @@ fn restore_auto_leaves_model_choices_alone() {
 fn restore_auto_preserves_a_custom_prompt_and_temperature() {
     let mut engine = AgentEngineConfig {
         agents: Some(AgentEngineAgents {
-            judge: Some(AgentEngineAgent {
+            verifier: Some(AgentEngineAgent {
                 prompt: Some("You are a strict reviewer.".to_string()),
                 params: Some(AgentEngineParams {
                     temperature: Some(0.2),
@@ -689,9 +698,12 @@ fn restore_auto_preserves_a_custom_prompt_and_temperature() {
     };
     apply(&plan(Profile::Pro, &spread()), &mut engine);
     restore_auto(&mut engine);
-    let judge = engine.agents.as_ref().unwrap().judge.as_ref().unwrap();
-    assert_eq!(judge.prompt.as_deref(), Some("You are a strict reviewer."));
-    assert_eq!(judge.params.as_ref().unwrap().temperature, Some(0.2));
+    let verifier = engine.agents.as_ref().unwrap().verifier.as_ref().unwrap();
+    assert_eq!(
+        verifier.prompt.as_deref(),
+        Some("You are a strict reviewer.")
+    );
+    assert_eq!(verifier.params.as_ref().unwrap().temperature, Some(0.2));
 }
 
 #[test]

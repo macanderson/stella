@@ -201,7 +201,7 @@ SWE-agent's key finding is that **ACI quality matters more than agent count.**
 A single agent with precise tools (read a specific line range, run a specific
 test, verify a specific change) handles complex tasks better than multiple
 agents with imprecise tools. Stella invests in ACI: workspace-root-pinned file
-tools, exact-substring edits, a witness-test gate, an evidence-gathering judge.
+tools, exact-substring edits, a witness-test gate, an evidence-gathering verifier.
 
 ### 5.2 Context compaction replaces context partitioning
 

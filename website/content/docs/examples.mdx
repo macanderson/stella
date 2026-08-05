@@ -15,7 +15,7 @@ run, an unfamiliar repository, a budget you have to hold — see the
 
 ## Pick a profile
 
-| Profile | Keys needed | Worker | Judge | Triage | Medium task |
+| Profile | Keys needed | Worker | Verifier | Triage | Medium task |
 | --- | --- | --- | --- | --- | --- |
 | [Single key](#single-key) | 1 | your model | same model | same model | varies |
 | [Dirt cheap](#dirt-cheap) | 2 | `deepseek-chat` | `glm-5.2` | `deepseek-chat` | $0.01 – $0.10 |
@@ -40,15 +40,15 @@ catalog list prices with prompt caching working normally. Your real numbers are 
 | Witness | ~1 engine turn | ~10–30k in, ~1–2k out | only without `--test-command` |
 | **Execute** | **5–40+ steps** | **~100–500k in (mostly cached), ~5–30k out** | **most of the bill** |
 | Verify | 0 | — | free (deterministic ladder) |
-| Judge | 0–1 per verification | ~3–10k in, ~0.5–1k out | cents |
+| Verifier | 0–1 per verification | ~3–10k in, ~0.5–1k out | cents |
 | Revise | 0–2 extra execute rounds | like Execute, smaller | proportional |
 
 Three consequences:
 
 1. **The worker's output price dominates.** Moving the worker from $15/Mtok output to
-   $2.20 (Fable 5 → GLM-5.2) changes the bill roughly 5–7×. Moving the judge barely
+   $2.20 (Fable 5 → GLM-5.2) changes the bill roughly 5–7×. Moving the verifier barely
    changes it at all.
-2. **A flagship judge is cheap insurance.** One judge call is a few thousand input tokens
+2. **A flagship verifier is cheap insurance.** One verifier call is a few thousand input tokens
    and under a thousand out — 1–2¢ on `gpt-5.5`, 2–3¢ on `claude-fable-5`. Make it a
    *different family* than the worker. Arm `--test-command` and many runs skip it.
 3. **Prompt caching does the heavy lifting.** Stella keeps the system prefix byte-stable
@@ -56,7 +56,7 @@ Three consequences:
    [context engine](/docs/context-engine).
 
 Multipliers: [goal mode](/docs/agent-modes#outcome-driven-goal-mode) repeats rounds until
-the judge signs off, up to 8. [Fleets](/docs/agent-fleets) run one pipeline per task, and
+the verifier signs off, up to 8. [Fleets](/docs/agent-fleets) run one pipeline per task, and
 `--budget` is enforced fleet-wide across the concurrency width. Cap either with
 `--budget <usd>`, a hard limit enforced between steps.
 
@@ -78,14 +78,14 @@ the same model, and the deterministic half of the
 Two habits make one-key runs materially better:
 
 ```bash
-# Arm the flip oracle — deterministic verification, judge often skipped entirely
+# Arm the flip oracle — deterministic verification, verifier often skipped entirely
 stella run --test-command "cargo test -p api" "add cursor pagination to /orders"
 
 # Cap the spend — enforced between steps, aborts cleanly
 stella --budget 2.00 goal "the linter passes and the snapshot tests are green"
 ```
 
-When every role is the same family, make the judge *behave* differently — strict prompt,
+When every role is the same family, make the verifier *behave* differently — strict prompt,
 high effort:
 
 ```json title="~/.stella/settings.json"
@@ -93,7 +93,7 @@ high effort:
   "agent_engine_config": {
     "default_model": "anthropic/claude-fable-5",
     "pipeline_worker_model": "anthropic/claude-fable-5",
-    "pipeline_judge_model": "anthropic/claude-fable-5",
+    "pipeline_verifier_model": "anthropic/claude-fable-5",
     "pipeline_triage_model": "anthropic/claude-fable-5",
 
     "allowed_models": ["anthropic/claude-fable-5"],
@@ -104,9 +104,9 @@ high effort:
 
     "agents": {
       "worker": { "effort": "high" },
-      "judge": {
+      "verifier": {
         "effort": "high",
-        "prompt": "You are a strict, evidence-first code judge. Claimed success without deterministic evidence is a FAIL."
+        "prompt": "You are a strict, evidence-first code verifier. Claimed success without deterministic evidence is a FAIL."
       },
       "triage": { "effort": "low" }
     }
@@ -114,7 +114,7 @@ high effort:
 }
 ```
 
-`reasoning_auto: "on"` puts thinking on for worker, judge, and default agents and off for
+`reasoning_auto: "on"` puts thinking on for worker, verifier, and default agents and off for
 triage, so per-agent `reasoning` is left out on purpose — the auto would override it.
 `effort_auto` stays off, which is what lets the per-agent `effort` values apply.
 
@@ -127,14 +127,14 @@ To use another provider, swap the four model strings and `allowed_models`:
 | Z.ai | `zai/glm-5.2` | 200k | 0.60 / 2.20 | **no — dropped on the wire** |
 | DeepSeek | `deepseek/deepseek-chat` | 128k | 0.27 / 1.10 | **no — dropped on the wire** |
 
-Where effort is dropped, differentiate the judge with its `prompt` instead. Only OpenAI
+Where effort is dropped, differentiate the verifier with its `prompt` instead. Only OpenAI
 puts `service_tier` on the wire, so `"params": { "service_tier": "priority" }` is worth
-adding to an OpenAI judge and inert everywhere else.
+adding to an OpenAI verifier and inert everywhere else.
 
 <Callout type="warn">
-  A same-family judge shares the worker's blind spots — it is real review, not independent
+  A same-family verifier shares the worker's blind spots — it is real review, not independent
   review. Compensate deterministically: arm `--test-command` wherever a test can express
-  "done", and treat the judge as a regression net rather than the main gate.
+  "done", and treat the verifier as a regression net rather than the main gate.
 </Callout>
 
 ## Dirt cheap
@@ -147,7 +147,7 @@ mechanical migrations.
 {
   "agent_engine_config": {
     "pipeline_worker_model": "deepseek/deepseek-chat",
-    "pipeline_judge_model": "zai/glm-5.2",
+    "pipeline_verifier_model": "zai/glm-5.2",
     "pipeline_triage_model": "deepseek/deepseek-chat",
     "default_model": "deepseek/deepseek-chat",
 
@@ -163,7 +163,7 @@ mechanical migrations.
         "reasoning": "off",
         "params": { "max_tokens": 8192 }
       },
-      "judge": { "effort": "medium", "reasoning": "on" },
+      "verifier": { "effort": "medium", "reasoning": "on" },
       "triage": { "reasoning": "off" }
     }
   }
@@ -172,7 +172,7 @@ mechanical migrations.
 
 ```bash
 export DEEPSEEK_API_KEY="sk-..."   # worker and triage
-export ZAI_API_KEY="..."           # judge
+export ZAI_API_KEY="..."           # verifier
 
 stella --budget 0.25 run "add docstrings to every public function in src/api/"
 stella stats --format table
@@ -180,7 +180,7 @@ stella stats --format table
 
 DeepSeek and Z.ai both drop `effort` on the wire, so the `effort` lines above record
 intent only — `reasoning: "off"` and `params.max_tokens` are what actually do the work.
-The judge stays a *different family* than the worker with thinking on; the whole judge
+The verifier stays a *different family* than the worker with thinking on; the whole verifier
 call costs a fraction of a cent.
 
 <Callout type="warn">
@@ -192,14 +192,14 @@ call costs a fraction of a cent.
 
 ## Balanced
 
-The daily driver. The worker emits ~85% of your tokens and the judge almost none, so
-spend down on the worker and keep a flagship judge as cheap insurance.
+The daily driver. The worker emits ~85% of your tokens and the verifier almost none, so
+spend down on the worker and keep a flagship verifier as cheap insurance.
 
 ```json title="~/.stella/settings.json"
 {
   "agent_engine_config": {
     "pipeline_worker_model": "zai/glm-5.2",
-    "pipeline_judge_model": "anthropic/claude-fable-5",
+    "pipeline_verifier_model": "anthropic/claude-fable-5",
     "pipeline_triage_model": "deepseek/deepseek-chat",
     "default_model": "zai/glm-5.2",
 
@@ -219,21 +219,21 @@ spend down on the worker and keep a flagship judge as cheap insurance.
 
 ```bash
 export ZAI_API_KEY="..."                # worker
-export ANTHROPIC_API_KEY="sk-ant-..."   # judge
+export ANTHROPIC_API_KEY="sk-ant-..."   # verifier
 export DEEPSEEK_API_KEY="sk-..."        # triage
 
 stella run "add pagination to the /orders endpoint and update its tests" \
   --test-command "pnpm test orders"
 ```
 
-The autos encode the sensible mapping — judge high, worker medium, triage low; thinking on
+The autos encode the sensible mapping — verifier high, worker medium, triage low; thinking on
 everywhere except triage — and they *override* any per-agent `effort`/`reasoning`, which
 is why this profile carries no `agents` block. Roughly 5–7× cheaper than
-[maximum quality](#maximum-quality) with the same class of judge watching the result.
+[maximum quality](#maximum-quality) with the same class of verifier watching the result.
 
 Swap the worker to `gemini/gemini-3-pro` when tasks need the 1M window; at $1.25/$10.00
 it is exactly `gpt-5.5`'s list price. For one hard task, `--model` outranks the settings
-for that invocation and leaves judge, triage, and autos in place:
+for that invocation and leaves verifier, triage, and autos in place:
 
 ```bash
 stella --model anthropic/claude-fable-5 run "the hard one"
@@ -241,14 +241,14 @@ stella --model anthropic/claude-fable-5 run "the hard one"
 
 ## Maximum quality
 
-The strongest worker, an equally serious judge from a *different family*, effort and
+The strongest worker, an equally serious verifier from a *different family*, effort and
 thinking high. For gnarly multi-file changes and unfamiliar codebases.
 
 ```json title="~/.stella/settings.json"
 {
   "agent_engine_config": {
     "pipeline_worker_model": "anthropic/claude-fable-5",
-    "pipeline_judge_model": "openai/gpt-5.5",
+    "pipeline_verifier_model": "openai/gpt-5.5",
     "pipeline_triage_model": "deepseek/deepseek-chat",
     "default_model": "anthropic/claude-fable-5",
 
@@ -265,10 +265,10 @@ thinking high. For gnarly multi-file changes and unfamiliar codebases.
 
     "agents": {
       "worker": { "effort": "xhigh", "reasoning": "on" },
-      "judge": {
+      "verifier": {
         "effort": "high",
         "reasoning": "on",
-        "prompt": "You are a strict, evidence-first code judge. Claimed success without deterministic evidence is a FAIL.",
+        "prompt": "You are a strict, evidence-first code verifier. Claimed success without deterministic evidence is a FAIL.",
         "params": { "service_tier": "priority" }
       },
       "triage": { "effort": "low", "reasoning": "off" }
@@ -279,7 +279,7 @@ thinking high. For gnarly multi-file changes and unfamiliar codebases.
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."   # worker
-export OPENAI_API_KEY="sk-..."          # judge
+export OPENAI_API_KEY="sk-..."          # verifier
 export DEEPSEEK_API_KEY="sk-..."        # triage
 
 stella --budget 8.00 run \
@@ -287,7 +287,7 @@ stella --budget 8.00 run \
   --test-command "cargo test -p auth"
 ```
 
-The judge is GPT-5.5 rather than another Claude because cross-family judging is the point.
+The verifier is GPT-5.5 rather than another Claude because cross-family judging is the point.
 `service_tier: "priority"` is only worth setting here — OpenAI's is the one dialect that
 puts it on the wire. Autos are off so the per-agent values stand.
 
@@ -312,7 +312,7 @@ Cross-family judging with one billing relationship instead of three.
     "reasoning_auto": "on",
 
     "agents": {
-      "judge":  { "provider": "openrouter", "model": "openai/gpt-5.5" },
+      "verifier":  { "provider": "openrouter", "model": "openai/gpt-5.5" },
       "triage": { "provider": "openrouter", "model": "deepseek/deepseek-chat" }
     }
   }
@@ -324,11 +324,11 @@ export OPENROUTER_API_KEY="sk-or-..."
 stella run "add cursor pagination to /orders" --test-command "pnpm test orders"
 ```
 
-Judge-diversity logic reads the routed slug's vendor prefix, so
+Verifier-diversity logic reads the routed slug's vendor prefix, so
 `openrouter/openai/gpt-5.5` counts as OpenAI and `auto_mode` works through the gateway.
 Gateway slugs are unpriced locally, so on an all-OpenRouter `allowed_models` list the
 price tier ties at zero and the choice comes down to family plus written order — put your
-preferred judge first. The [OpenRouter section](/docs/api-providers#openrouter) covers
+preferred verifier first. The [OpenRouter section](/docs/api-providers#openrouter) covers
 the first-slash split and the `openrouter/openrouter/auto` doubling.
 
 ## Local and air-gapped
@@ -357,15 +357,15 @@ scope** and it behaves like a built-in:
   },
   "agent_engine_config": {
     "default_model": "ollama/qwen2.5-coder:32b",
-    "pipeline_judge_model": "ollama/llama3.3",
+    "pipeline_verifier_model": "ollama/llama3.3",
     "agents": {
-      "judge": { "prompt": "You are a strict, evidence-first code judge." }
+      "verifier": { "prompt": "You are a strict, evidence-first code verifier." }
     }
   }
 }
 ```
 
-`effort` is dropped on local endpoints, so the judge is differentiated by its `prompt`.
+`effort` is dropped on local endpoints, so the verifier is differentiated by its `prompt`.
 The [local-server section](/docs/api-providers#local-servers) has the dialect and
 credential rules.
 
@@ -464,7 +464,7 @@ local state:
   "tools": { "web": "off" },
   "agent_engine_config": {
     "default_model": "zai/glm-5.2",
-    "pipeline_judge_model": "anthropic/claude-fable-5"
+    "pipeline_verifier_model": "anthropic/claude-fable-5"
   },
   "hooks": {
     "PreToolUse": [

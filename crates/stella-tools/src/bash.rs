@@ -229,7 +229,7 @@ impl Tool for Bash {
         };
         let timeout_secs = crate::exec::timeout_from(input, DEFAULT_TIMEOUT_SECS);
         // trace: true prefixes `set -x` so every executed line echoes to
-        // stderr — an execution trace a judge can demand as evidence.
+        // stderr — an execution trace a verifier can demand as evidence.
         let traced;
         let command = if input
             .get("trace")

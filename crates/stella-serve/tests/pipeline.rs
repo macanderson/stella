@@ -71,7 +71,7 @@ async fn a_pipeline_run_is_requestable_over_the_wire_and_its_approval_gate_round
                 // itself — six steps, the same count
                 // `interactive_scope_review_approve_proceeds_past_the_gate`
                 // uses to reliably cross the default scope thresholds.
-                // 3+: whatever the execute/witness/judge stages ask for; a
+                // 3+: whatever the execute/witness/verifier stages ask for; a
                 // plain "done" is not a meaningful answer to every one of
                 // them, but this test is not pinning the pipeline's internal
                 // verdict logic — only that the turn can be driven to a
@@ -190,7 +190,7 @@ async fn a_pipeline_run_is_requestable_over_the_wire_and_its_approval_gate_round
 }
 
 /// `pipeline` and `goal` are two different ways of driving a turn — the
-/// pipeline already loops internally and drives its own judge — so a request
+/// pipeline already loops internally and drives its own verifier — so a request
 /// naming both is refused at the route rather than silently picking one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pipeline_combined_with_goal_is_refused_at_the_route() {
@@ -200,7 +200,7 @@ async fn pipeline_combined_with_goal_is_refused_at_the_route() {
         "provider_id": "scripted",
         "messages": [],
         "pipeline": { "goal": "do the thing" },
-        "goal": { "goal": "also judge it" },
+        "goal": { "goal": "also verifier it" },
     })
     .to_string();
     let (status, body) = post_json(addr, "/v1/turns", Some(TOKEN), &create).await;

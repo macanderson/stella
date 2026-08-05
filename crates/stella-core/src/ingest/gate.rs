@@ -44,7 +44,7 @@ pub fn probe_honored(origin: Origin, kind: ProbeKind) -> bool {
 
 /// A conservative structural test for a compound statement.
 ///
-/// The model is the primary judge of atomicity; this is the deterministic
+/// The model is the primary verifier of atomicity; this is the deterministic
 /// backstop for the obvious case — an Oxford-comma enumeration of three or more
 /// independent assertions ("Deploys run from main, happen on Tuesdays, and are
 /// triggered with make ship"). It keys on `", and "` with at least two commas so

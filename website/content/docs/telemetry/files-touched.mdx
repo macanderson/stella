@@ -118,7 +118,7 @@ showing each path with its compact CRUD string (e.g. `src/router.rs  RU`).
 
 Which keys the final JSON object carries depends on which execution path ran:
 
-- **Default runs** go through the staged pipeline (triage, plan, execute, verify, judge).
+- **Default runs** go through the staged pipeline (triage, plan, execute, verify, verifier).
   The pipeline's summary object has `status`, `text`, `cost_usd`, `reason`, `task_class`,
   `verdict` (`passed` / `deterministic` / `summary`), `revisions`, `candidates_run`,
   `model`, `events`, and `reflection` — there is **no top-level `files_touched`**.
