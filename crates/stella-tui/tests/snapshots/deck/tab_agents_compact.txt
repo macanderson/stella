@@ -18,6 +18,7 @@
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
+│                                                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▸ stage  Refactor the automations store into a shared workspace package
@@ -26,4 +27,3 @@
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands              turn $0.0110  ·  1 line  ·  queue empty
  MODEL                   │ EXECUTE │ CPU         │ CONTEXT          │ SPEND          │ ENGINE   │ PR
  worker: zai/glm-5.2-air │ —       │ ▮▮▮▯▯▯  50% │ ▯▯▯▯▯▯ 5.1k/200k │ $0.05 of $7.50 │ 3 active │ ⇢ #981 open …
- MODELS  T·—  W·zai/glm-5.2-air  J·—

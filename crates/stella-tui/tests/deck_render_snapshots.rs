@@ -298,6 +298,9 @@ fn base_ui(tab: DeckTab) -> DeckUi {
     ui.splash.skip();
     ui.tab = tab;
     ui.graph = Some(demo_graph());
+    // The driver seeds this at session start, so every frame the real deck
+    // draws has it — including the one `/models` renders from.
+    ui.engine.pristine = Some(stella_tui::scenario::demo_engine_config());
     ui
 }
 

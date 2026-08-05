@@ -569,13 +569,10 @@ pub async fn run_deck_session(
         .with_pid(std::process::id());
     lead_meta.model = Some(format!("{}/{}", cfg.provider.id, cfg.model_id));
     let _ = in_tx.send(Inbound::Register(lead_meta));
-    // Name all three pipeline pins before the first turn. Without this the
-    // MODELS row fills in one role at a time as each is first reached, so the
-    // deck cannot answer "what is this session set up to run" until it has
-    // already run it.
-    let _ = in_tx.send(Inbound::ConfiguredRoles(model_cmd::configured_role_pins(
-        cfg,
-    )));
+    // Name all three pipeline pins before the first turn: without this the
+    // statline's MODEL cell can name nothing until a role has already served.
+    let pins = model_cmd::configured_role_pins(cfg);
+    let _ = in_tx.send(Inbound::ConfiguredRoles(pins));
     // Custom definitions that failed to load are reported in the startup
     // dialog — stdout belongs to the alternate screen, and a
     // silently-missing /command is otherwise undiagnosable. Session chrome:
@@ -3751,12 +3748,14 @@ fn engine_config_inbound(cfg: &Config, status: Option<String>) -> Inbound {
             model_efforts.insert(raw.clone(), levels.iter().map(|s| s.to_string()).collect());
         }
     }
+    let roles = crate::config_wiring::deck_rows(cfg, &providers);
     Inbound::EngineConfig {
         state: crate::engine_config::state_from_settings(
             &engine,
             providers,
             catalog_models,
             model_efforts,
+            roles,
         ),
         status,
     }

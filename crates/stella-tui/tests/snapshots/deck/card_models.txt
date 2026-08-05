@@ -23,23 +23,23 @@
 │3 steps  ·  ~11 files  ·  est. cost ~$0.42                                                                                                                    │
 │type approve  trim  xabort  ·  or what to change  —  then ⏎                                                                                                   │
 │                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ transcript · 21 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
-│● read_file    apps/app/automations/page.tsx                                                                          ││Refactor the automations store into a…│
-│  ⎿ 312 lines                                                                                                     42ms││○ 1 extract types                     │
-│                                                                                                                      ││○ 2 move hooks                        │
-│☰  plan  5/7  ·  Workflows canvas                                                                                     ││○ 3 update 9 imports                  │
-│                                                                                                                      │└────────────────────── /plan reads it ┘
-│⏸ plan  Refactor the automations store into a share┌ models  think · work · verify ──────────── esc close ┐           │┌ DONE VERIFICATION ───────────────────┐
-│                                                   │think   —                                   unassigned│           ││● flip ✓ red→green                    │
-└─────────────────────────────────────────── ↑ selec│work    zai/glm-5.2-air                         served│nd · /plan ┘└──────────────────────────────────────┘
-────────────────────────────────────────────────────│verify  —                                   unassigned│────────────────────────────────────────────────────
- ▸ stage  Refactor the automations store into a shar└──────────────────────────────────────────────────────┘
+│                                           ┌ models  resolved routing ───────────────────────────────── esc close ┐                                           │
+│                                           │session   glm-5.2                                                     │                                           │
+└───────────────────────────────────────────│auto      model off · effort on · thinking off                        │───────────────────────────────────────────┘
+┌ transcript · 21 lines · following ────────│                                                                      │───┐┌ PLAN ○ pending approval 0/3 ─────────┐
+│                                           │lead      zai/glm-5.2-air                                             │   ││Refactor the automations store into a…│
+│● read_file    apps/app/automations/page.ts│          medium · thinking on · from default_model                   │   ││○ 1 extract types                     │
+│  ⎿ 312 lines                              │think     z-ai/glm-5.2                                    unassigned  │2ms││○ 2 move hooks                        │
+│                                           │          low · thinking off · from agents.triage.model               │   ││○ 3 update 9 imports                  │
+│☰  plan  5/7  ·  Workflows canvas          │work      zai/glm-5.2-air                                     served  │   ││                                      │
+│                                           │          medium · thinking on · from default_model                   │   │└────────────────────── /plan reads it ┘
+│⏸ plan  Refactor the automations store into│verify    anthropic/claude-opus-5                         unassigned  │   │┌ DONE VERIFICATION ───────────────────┐
+│                                           │          high  (effort_auto replaced "max") · thinking on            │   ││● flip ✓ red→green                    │
+└───────────────────────────────────────────│          from pipeline_verifier_model                                │an ┘└──────────────────────────────────────┘
+────────────────────────────────────────────└──────────────────────────────────────────────────────────────────────┘────────────────────────────────────────────
+ ▸ stage  Refactor the automations store into a shared workspace package
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
 >>>
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
  MODEL                   │ EXECUTE     │ CONTEXT          │ SPEND
  worker: zai/glm-5.2-air │ Step 6 of 7 │ ▯▯▯▯▯▯ 8.2k/200k │ $0.05 of $7.50                                                                ↝ deterministic-first
- MODELS  T·—  W·zai/glm-5.2-air  J·—

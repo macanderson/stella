@@ -263,6 +263,49 @@ pub fn render(wiring: &[RoleWiring]) -> Vec<String> {
         .collect()
 }
 
+/// The same five cells [`rows`] renders, handed to the deck as the `/models`
+/// dialog's row type.
+///
+/// Resolved here rather than in the TUI on purpose: this module is the one
+/// place that mirrors the request path's precedence, so the dialog and
+/// `stella config` cannot give different answers to "what will the verifier
+/// run". `providers` is the caller's already-computed
+/// [`crate::config::discover_configured_providers`] id list — the same
+/// vocabulary `print_role_wiring` resolves a `provider/` prefix against.
+///
+/// Reads `cfg.engine_settings` (what THIS session resolved at start), not a
+/// fresh scope-chain load: a settings edit made mid-session applies to runs
+/// started from now on, and a dialog that showed it as though it were in
+/// force would misreport the very thing it exists to answer.
+pub fn deck_rows(
+    cfg: &crate::config::Config,
+    providers: &[String],
+) -> Vec<stella_tui::envelope::RoleWiringRow> {
+    let is_provider = |id: &str| providers.iter().any(|p| p == id);
+    let session = ModelSpec {
+        provider: cfg.provider.id.to_string(),
+        model: cfg.model_id.clone(),
+    };
+    let wiring = resolve(
+        cfg.engine_settings.as_ref(),
+        &session,
+        cfg.model_pinned_by_flag,
+        &is_provider,
+    );
+    rows(&wiring)
+        .into_iter()
+        .map(
+            |[role, model, effort, thinking, source]| stella_tui::envelope::RoleWiringRow {
+                role,
+                model,
+                effort,
+                thinking,
+                source,
+            },
+        )
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

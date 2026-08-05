@@ -1,12 +1,22 @@
 //! The statline: the deck's bottom band, **two rows** tall — a micro-label
 //! row sitting directly over its bright value row, cells split by a `│`
-//! hairline, with the ethos chip pinned right, over an always-on MODELS row:
+//! hairline, with the ethos chip pinned right:
 //!
 //! ```text
 //!  MODEL                          │ EXECUTE     │ CPU         │ CONTEXT         │ SPEND │ CACHE                │ SAVED  │ WARMTH │ ENGINE   │ PIPELINE │ INBOX
 //!  worker: anthropic/claude-fable-5 │ Step 4 of 5 │ ▮▮▮▮▮▮ 100% │ ▮▮▮▯▯▯ 91k/200k │ $3.77 │ 94% (7.0M rd · 0 wr) │ $18.80 │ cold   │ 0 active │ ON       │ ✉ 29
-//!  MODELS  T·z-ai/glm-5.2  W·moonshotai/kimi-k3  J·anthropic/claude-opus-5
 //! ```
+//!
+//! ## What is deliberately NOT here
+//!
+//! A third row used to pin all three role slugs as `T·… W·… J·…`. Permanent
+//! chrome has to earn its row on every frame and that one could not: on a
+//! single-agent session the three slugs never moved, the single-letter
+//! prefixes had to be learned before the row could be read at all, and the
+//! MODEL cell one row up already names the pin that is actually answering.
+//! Routing in full — every role, the effort and thinking riding with it, and
+//! the setting that decided each — is a thing you *ask for*, and `/models`
+//! answers it (see [`crate::views::models_card`]).
 //!
 //! ## Why two rows and not one
 //!
@@ -15,9 +25,9 @@
 //! redrawn beside the value on every frame, competing with it for the same
 //! scarce columns. Stacking the label *above* the value spends free vertical
 //! space instead of scarce horizontal space, and leaves the value row
-//! carrying information only. That is the room the CPU/CONTEXT meters, the
-//! CACHE read/write volumes and the MODELS pins occupy — none of which fit
-//! beside their own inline labels at ordinary deck widths.
+//! carrying information only. That is the room the CPU/CONTEXT meters and the
+//! CACHE read/write volumes occupy — neither of which fits beside its own
+//! inline label at ordinary deck widths.
 //!
 //! ## What leads the band
 //!
@@ -535,55 +545,6 @@ fn warmth_spans(remaining_secs: Option<u64>) -> Vec<Span<'static>> {
     )]
 }
 
-/// The MODELS row: the pin serving each of triage / worker / verifier, with
-/// the role that most recently served drawn in the brand accent.
-///
-/// Its own row because the cell row cannot hold it — three `provider/model`
-/// slugs measured 210 columns inside the cell row against the 160 the row is
-/// designed around, and the ethos chip is dropped before any data cell, so no
-/// cell priority could have saved it. A dedicated row is what makes all three
-/// visible at every width instead of none of them.
-///
-/// A role that has not served yet reads `—` rather than borrowing another
-/// role's pin. In a scored run "the verifier is pinned to X" and "the verifier
-/// ran on X" are different claims, and only the second is evidence.
-fn models_spans(model: &WorkspaceModel, highlight: bool) -> Vec<Span<'static>> {
-    let label = Style::new().fg(theme::TEXT_TERTIARY);
-    let val = Style::new().fg(theme::TEXT_PRIMARY);
-    let active = Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD);
-
-    let mut spans = vec![Span::styled(" MODELS  ", label)];
-    for (i, role) in PipelineRole::ORDER.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::styled("  ", label));
-        }
-        let is_active = highlight && model.active_role == Some(*role);
-        spans.push(Span::styled(
-            format!("{}·", role.initial()),
-            if is_active { active } else { label },
-        ));
-        match model.role_pins.get(role) {
-            Some(pin) => {
-                let style = if is_active {
-                    active
-                } else if pin.served {
-                    val
-                } else {
-                    // Configured but not yet reached. Drawn at label weight so
-                    // intent never reads as evidence — a verifier that has not
-                    // run must not look like one that has.
-                    label
-                };
-                // Same gateway-stripped form the MODEL cell uses, so the two
-                // surfaces name a pin identically.
-                spans.push(Span::styled(vendor_slug(pin), style));
-            }
-            None => spans.push(Span::styled("—", label)),
-        }
-    }
-    spans
-}
-
 /// Which card/overlay is on top, for the collapse rule — the card enum for
 /// the named contexts, with `None` standing in for "some other
 /// overlay" too (they share the quiet floor).
@@ -601,9 +562,9 @@ fn open_surface(ui: &DeckUi) -> Option<Option<Card>> {
     other_overlay.then_some(None)
 }
 
-/// Render the statline band: the label row over the value row, the always-on
-/// MODELS row beneath them, and the low-hit-rate diagnosis on a fourth row
-/// when one is earned and the band has the height.
+/// Render the statline band: the label row over the value row, and the
+/// low-hit-rate diagnosis on a third row when one is earned and the band has
+/// the height.
 pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     if area.height == 0 || area.width == 0 {
         return;
@@ -689,25 +650,16 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
         );
     }
 
-    // MODELS is permanent by design: which pins are serving triage, worker
-    // and verifier is the thing a scored run is read against, so it must never
-    // be the row that got dropped. Guarded on height so a caller handing this
-    // function a bare 2-row area gets the pair, not a clipped third row.
-    if area.height >= 3 {
-        Paragraph::new(Line::from(models_spans(model, model.active_count() > 0)))
-            .render(row(top_y + 2), buf);
-    }
-
     // The low-hit-rate diagnosis: full-sentence and byte-identical to what
     // `stella stats` prints for the same cause. Only present when the caller
     // reserved the row AND the focused agent earned it.
-    if area.height >= 4
+    if area.height >= 3
         && let Some(cause) = model
             .agents
             .get(ui.focused)
             .and_then(|a| a.cache_diagnosis(cache_panel::LOW_HIT_RATE_THRESHOLD))
     {
-        Paragraph::new(Line::from(cache_panel::diagnosis_spans(cause))).render(row(top_y + 3), buf);
+        Paragraph::new(Line::from(cache_panel::diagnosis_spans(cause))).render(row(top_y + 2), buf);
     }
 }
 

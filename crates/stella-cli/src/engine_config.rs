@@ -546,11 +546,17 @@ fn flat_model(engine: &AgentEngineConfig, kind: EngineAgentKind) -> Option<&str>
 /// Build the engine panel's snapshot from the merged settings plus the
 /// picker vocabularies the driver knows (provider ids, catalog slugs, and
 /// each slug's per-model effort vocabulary).
+///
+/// `roles` is the resolved per-role wiring the `/models` dialog prints
+/// ([`crate::config_wiring::deck_rows`]) — carried on the same snapshot
+/// because the deck already holds one from startup, so the dialog renders on
+/// the frame it opens rather than after a round-trip.
 pub fn state_from_settings(
     engine: &AgentEngineConfig,
     providers: Vec<String>,
     catalog_models: Vec<String>,
     model_efforts: std::collections::HashMap<String, Vec<String>>,
+    roles: Vec<stella_tui::envelope::RoleWiringRow>,
 ) -> EngineConfigState {
     let agents = EngineRole::ALL
         .iter()
@@ -594,6 +600,7 @@ pub fn state_from_settings(
         catalog_models,
         model_efforts,
         agents,
+        roles,
     }
 }
 
@@ -1133,6 +1140,7 @@ mod tests {
             vec!["zai".into()],
             vec!["zai/glm-5.2".into()],
             Default::default(),
+            Vec::new(),
         );
         assert!(!state.auto_mode);
         assert!(state.effort_auto);
@@ -1174,6 +1182,7 @@ mod tests {
             vec!["zai".into()],
             vec!["zai/glm-5.2".into()],
             Default::default(),
+            Vec::new(),
         );
         assert_eq!(state2.agents, state.agents);
         assert_eq!(state2.allowed_models, state.allowed_models);

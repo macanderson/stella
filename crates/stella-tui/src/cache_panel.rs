@@ -341,10 +341,9 @@ mod tests {
             a.cache_is_opt_in_provider = true;
         }
         let ui = DeckUi::default();
-        // Four rows: the label/value pair, the MODELS row, then the earned
-        // diagnosis — the same band `render_deck` reserves for a diagnosed
-        // agent.
-        let area = Rect::new(0, 0, 200, 4);
+        // Three rows: the label/value pair, then the earned diagnosis — the
+        // same band `render_deck` reserves for a diagnosed agent.
+        let area = Rect::new(0, 0, 200, 3);
         let mut buf = Buffer::empty(area);
         crate::statline::render(&m, &ui, area, &mut buf);
         let text = buffer_text(&buf);

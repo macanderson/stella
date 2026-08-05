@@ -346,7 +346,7 @@ pub struct WorkspaceModel {
     /// `None` until a PR has been seen this session.
     pub pr: Option<PrInfo>,
     /// Last pin observed serving each of the three pipeline roles — the
-    /// statline's `MODELS` cell. Folded from `AgentEvent::StepUsage`, which
+    /// statline's MODEL cell. Folded from `AgentEvent::StepUsage`, which
     /// carries the provider that actually served the call rather than the
     /// session's configured default, so this names what ran and not what was
     /// asked for.
@@ -356,9 +356,9 @@ pub struct WorkspaceModel {
     /// and showing a configured-but-unused pin as if it were live is how the
     /// triage/worker/verifier split gets misread in a head-to-head run.
     pub role_pins: BTreeMap<PipelineRole, RolePin>,
-    /// The role that most recently served a call. Highlighted in the `MODELS`
-    /// cell while any agent is active, which includes a lead that is only
-    /// monitoring subagents its own session spawned.
+    /// The role that most recently served a call. Named by the MODEL cell and
+    /// accented in the `/models` dialog while any agent is active, which
+    /// includes a lead only monitoring subagents its own session spawned.
     pub active_role: Option<PipelineRole>,
     /// The session-level spend cap, folded from the newest
     /// `AgentEvent::BudgetTick` that carried a `session_limit_usd`. `None`

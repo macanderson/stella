@@ -48,7 +48,7 @@ fn full_deck_frame_composes_every_band_at_80_cols() {
             "queue",    // footer / queue status
             "plan",     // progress stage labels (§3)
             "execute", "verify", // progress stage labels (§3)
-            "MODEL",  // the statline's leading cell, and its MODELS pins row
+            "MODEL",  // the statline's leading cell (§5)
         ] {
             assert!(
                 text.contains(needle),
@@ -692,7 +692,7 @@ fn a_panicking_deck_view_renders_an_error_card_and_the_session_survives() {
         text.contains("injected panic in band SESSION"),
         "the error card carries the panic message:\n{text}"
     );
-    for surviving in [">>>", "MODELS", "AGENTS"] {
+    for surviving in [">>>", "MODEL", "AGENTS"] {
         assert!(
             text.contains(surviving),
             "the surviving bands still rendered ({surviving:?} missing):\n{text}"
