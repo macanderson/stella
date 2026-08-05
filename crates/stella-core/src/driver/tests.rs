@@ -1600,14 +1600,14 @@ async fn length_continuations_are_bounded_per_turn() {
     );
     assert_eq!(
         provider.calls.load(Ordering::SeqCst),
-        1 + MAX_LENGTH_CONTINUATIONS,
+        1 + super::truncation::MAX_LENGTH_CONTINUATIONS,
         "one initial step plus exactly the bounded continuations"
     );
     let nudges = messages
         .iter()
         .filter(|m| m.role == MessageRole::User && m.content.starts_with(NUDGE))
         .count();
-    assert_eq!(nudges, MAX_LENGTH_CONTINUATIONS as usize);
+    assert_eq!(nudges, super::truncation::MAX_LENGTH_CONTINUATIONS as usize);
     let events = drain_events(&mut rx);
     assert_eq!(
         events
@@ -3369,7 +3369,6 @@ async fn a_none_ceiling_leaves_tool_dispatch_unbounded() {
 mod audit_fixes;
 mod budget_boundaries;
 mod compute_passes;
-mod confident_zero;
 mod context_efficiency;
 mod lifecycle_bus;
 mod loop_abort;

@@ -46,12 +46,29 @@
 //! - Only a turn that invested tool calls in looking around, produced no
 //!   artifact from any of them, and closes on a short line that reads as
 //!   narrated activity rather than a stated result is flagged.
+//!
+//! # Why the empty-response check lives here too
+//!
+//! [`check`] also carries the pre-existing "empty and not a deliberate
+//! out-of-time stop" abort that used to sit inline in `dispatch_completion`,
+//! immediately above where the confident-zero check landed. Both are the
+//! same category of decision — is a tool-less completing step actually a
+//! real answer? — made at the same call site, in the same order as before.
+//! Consolidating them here (rather than adding a second minimal call site to
+//! `driver.rs`) is what keeps this fix net-neutral on `driver.rs`'s line
+//! count: both `driver.rs` and `driver/tests.rs` sit exactly at their
+//! file-size ratchet ceiling, so new logic has to be paid for by moving an
+//! equivalent amount out — the same trade `driver::settlement` already made
+//! for the budget checks.
 
 use std::collections::HashSet;
 
-use stella_protocol::{CompletionMessage, MessageRole};
+use stella_protocol::{AgentEvent, CompletionMessage, FinishReason, MessageRole};
 
+use super::TurnOutcome;
 use super::loop_evidence::turn_start_index;
+use super::truncation::MAX_LENGTH_CONTINUATIONS;
+use crate::event_sender::EventSender;
 
 /// A completing step's text longer than this is never considered a stray
 /// thought, however it opens — a genuine orientation fragment is short by
@@ -132,11 +149,13 @@ fn is_orientation_fragment(text: &str) -> bool {
 
 /// Evidence backing a confident-zero verdict, carried back to the caller so
 /// its abort reason can cite the actual tally rather than a vague claim.
+/// Private to this module: only [`check`] (the `pub(super)` entry point)
+/// needs it outside the unit tests below.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct ConfidentZero {
+struct ConfidentZero {
     /// How many tool calls this turn made before trailing off — always
     /// `>= 1` (see module docs: zero tool calls never trips this).
-    pub(super) tool_calls: usize,
+    tool_calls: usize,
 }
 
 /// Decide whether a tool-less completing step is a confident zero: this
@@ -148,7 +167,7 @@ pub(super) struct ConfidentZero {
 /// message is appended (mirroring every other check in
 /// `driver::dispatch_completion`), so `text` is passed separately rather than
 /// read off the last message.
-pub(super) fn detect(
+fn detect(
     messages: &[CompletionMessage],
     read_only_tools: &HashSet<String>,
     text: &str,
@@ -161,6 +180,77 @@ pub(super) fn detect(
     } else {
         None
     }
+}
+
+/// The tool-less-completion legitimacy gate `dispatch_completion` calls
+/// before it is willing to build a `TurnOutcome::Completed`. Runs, in order:
+///
+/// 1. The empty-response abort: `text` is blank and this is not a
+///    deliberate out-of-time stop (`out_of_time`) — the model was cut off
+///    with nothing to show, and recording that as `Completed` is the "turn
+///    ends with no feedback" defect.
+/// 2. Skip confident-zero entirely when `finish_reason` is `Length`: a
+///    length-truncated non-empty answer is a distinct, already-honest "ran
+///    out of room" ending (`driver::truncation`), not a voluntary stop, and
+///    `dispatch_completion`'s own next block already tells the user so.
+/// 3. The confident-zero check ([`detect`], #1477).
+///
+/// `None` means dispatch should proceed to build `Completed` normally.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn check(
+    messages: &[CompletionMessage],
+    read_only_tools: &HashSet<String>,
+    text: &str,
+    finish_reason: Option<FinishReason>,
+    output_tokens: u64,
+    out_of_time: bool,
+    total_cost_usd: f64,
+    events: &EventSender,
+) -> Option<TurnOutcome> {
+    if text.trim().is_empty() && !out_of_time {
+        let reason = match finish_reason {
+            // Advised `/compact` until #712; no such command exists, and
+            // compaction is automatic every step anyway.
+            Some(FinishReason::Length) => format!(
+                "The model reached its output-token limit ({output_tokens} tokens) before \
+                 producing any visible response — its budget was spent on reasoning — and did \
+                 so on every one of its {MAX_LENGTH_CONTINUATIONS} continuations. Retry or raise \
+                 the output cap; context compacts automatically each step."
+            ),
+            _ => format!(
+                "The model returned an empty response this turn — no text and no tool call \
+                 ({output_tokens} output tokens). Retry, or switch to a different model."
+            ),
+        };
+        let _ = events.send(AgentEvent::Error {
+            message: reason.clone(),
+            retryable: true,
+        });
+        return Some(TurnOutcome::Aborted {
+            reason,
+            cost_usd: total_cost_usd,
+        });
+    }
+    if finish_reason == Some(FinishReason::Length) {
+        return None;
+    }
+    let zero = detect(messages, read_only_tools, text)?;
+    let reason = format!(
+        "the model ended this turn after {} tool call(s) that changed nothing in the workspace, \
+         closing on a line that narrates ongoing activity rather than stating a result (\"{}\") \
+         — this reads as an abandoned attempt, not a finished answer. Retry, or continue with \
+         more specific direction.",
+        zero.tool_calls,
+        text.trim(),
+    );
+    let _ = events.send(AgentEvent::Error {
+        message: reason.clone(),
+        retryable: true,
+    });
+    Some(TurnOutcome::Aborted {
+        reason,
+        cost_usd: total_cost_usd,
+    })
 }
 
 #[cfg(test)]
