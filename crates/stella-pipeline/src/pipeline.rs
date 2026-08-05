@@ -87,6 +87,7 @@ use stella_core::driver::TurnHalt;
 use stella_protocol::ToolOutput;
 
 use crate::flip_halt::{FlipHalt, command_of};
+use crate::management_prompt::ManagementPrompt;
 use crate::verify::coverage::DiffCoverage;
 use crate::verify::diff_render::DiffContext;
 use crate::verify::{
@@ -827,6 +828,15 @@ struct CandidateState {
     /// the verifier is stateless across rounds, so identical inputs are the
     /// same question, and paying twice buys only sampling noise.
     last_verdict: Option<(u64, crate::verify::Verdict)>,
+    /// The stripped diff text the model verifier last read on this candidate
+    /// — the delta-framing baseline (#1431), distinct from the whole-verdict
+    /// reuse pin above: reuse fires only on byte-identical *inputs*, while
+    /// this lets a round whose diff partially moved render the unchanged file
+    /// sections as stat lines instead of re-buying their bodies. `None` until
+    /// a model verdict has been bought, and never set by a heuristic
+    /// fallback: a verdict no model read must not let the next round claim
+    /// its diff was already reviewed.
+    last_verdict_diff: Option<String>,
 }
 
 impl CandidateState {
@@ -2136,6 +2146,7 @@ impl<'a> Pipeline<'a> {
             witness_paths: Vec::new(),
             failures: Vec::new(),
             last_verdict: None,
+            last_verdict_diff: None,
         };
 
         if let Err(reason) = self
@@ -2660,24 +2671,20 @@ impl<'a> Pipeline<'a> {
                         // verifier's own test is not part of it.
                         let stripped =
                             crate::verify::strip_witness_hunks(&state.diff_text, &witness_paths);
-                        match self
-                            .verifier_guidance(
-                                goal,
-                                &stripped.diff,
-                                &evidence.summary,
-                                // Guidance never carries a delta baseline: its
-                                // render is already evidence-scoped (#1432),
-                                // and "unchanged since a verdict round" is a
-                                // verdict-shaped claim.
-                                &DiffContext {
-                                    witness_paths: &witness_paths,
-                                    previous: None,
-                                },
-                                budget,
-                                total,
-                            )
-                            .await
-                        {
+                        let prompt = guidance_prompt(
+                            goal,
+                            &stripped.diff,
+                            &evidence.summary,
+                            // Guidance never carries a delta baseline: its
+                            // render is already evidence-scoped (#1432), and
+                            // "unchanged since a verdict round" is a
+                            // verdict-shaped claim.
+                            &DiffContext {
+                                witness_paths: &witness_paths,
+                                previous: None,
+                            },
+                        );
+                        match self.verifier_guidance(prompt, budget, total).await {
                             Ok(Some(guidance)) => {
                                 if let Some(text) =
                                     self.airlock_forward(&guidance, "distress_guidance", &sealed)
@@ -2858,43 +2865,53 @@ impl<'a> Pipeline<'a> {
                             );
                             verdict
                         }
-                        None => match self
-                            .verifier(
+                        None => {
+                            // Delta framing (#1431) rides the render context:
+                            // file sections byte-identical to what the
+                            // previous verdict read arrive as stat lines.
+                            // `previous` holds that round's STRIPPED diff —
+                            // the text a verdict actually read — so both
+                            // sides of the comparison are the same shape.
+                            let prompt = verifier_prompt(
                                 goal,
                                 &stripped.diff,
                                 &evidence_summary,
-                                &inputs,
-                                budget,
-                                total,
-                            )
-                            .await
-                        {
-                            Ok(verdict) => {
-                                // Only pin a real model verdict for reuse. A
-                                // heuristic fallback is a transient-outage
-                                // stand-in (unresolvable provider, unparseable
-                                // response, failed/timed-out call), not the
-                                // opinion this candidate bought: caching it
-                                // would suppress recovery on the next round
-                                // (the verifier may have come back) and graft
-                                // the "no new model call was made" reuse note
-                                // onto a fallback that never made one.
-                                if !verdict.heuristic {
-                                    state.last_verdict = Some((inputs_digest, verdict.clone()));
+                                &DiffContext {
+                                    witness_paths: &witness_paths,
+                                    previous: state.last_verdict_diff.as_deref(),
+                                },
+                            );
+                            match self.verifier(prompt, &inputs, budget, total).await {
+                                Ok(verdict) => {
+                                    // Only pin a real model verdict for reuse. A
+                                    // heuristic fallback is a transient-outage
+                                    // stand-in (unresolvable provider, unparseable
+                                    // response, failed/timed-out call), not the
+                                    // opinion this candidate bought: caching it
+                                    // would suppress recovery on the next round
+                                    // (the verifier may have come back) and graft
+                                    // the "no new model call was made" reuse note
+                                    // onto a fallback that never made one.
+                                    if !verdict.heuristic {
+                                        state.last_verdict = Some((inputs_digest, verdict.clone()));
+                                    }
+                                    verdict
                                 }
-                                verdict
+                                Err(abort) => {
+                                    return CandidateResult::aborted(state.messages, abort.reason);
+                                }
                             }
-                            Err(abort) => {
-                                return CandidateResult::aborted(state.messages, abort.reason);
-                            }
-                        },
+                        }
                     };
                     if !verdict.heuristic {
                         // The delta-framing baseline (#1431) advances only on
                         // a verdict a model actually answered: a heuristic
                         // fallback read nothing, and must not let the next
-                        // round stat-line text no model ever saw.
-                        state.last_verdict_diff = Some(state.diff_text.clone());
+                        // round stat-line text no model ever saw. It records
+                        // the STRIPPED diff — what the verdict actually read —
+                        // so the next round's per-section comparison holds
+                        // stripped text against stripped text.
+                        state.last_verdict_diff = Some(stripped.diff.clone());
                     }
                     let mut evidence = model_verdict_evidence(&verdict);
                     evidence.ladder = Some(Box::new(snapshot.with_rung(verdict.rung())));

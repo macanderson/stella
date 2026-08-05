@@ -12,16 +12,17 @@
 use super::*;
 
 impl<'a> Pipeline<'a> {
-    /// One distress-guidance call ([`guidance_prompt`]): best-effort and
-    /// never a verdict — the failure it reacts to is already deterministic,
-    /// so the verifier's job here is *steering*, not re-judging. A failed call
-    /// (or an unresolvable verifier) degrades to evidence-only revision.
+    /// One distress-guidance call: best-effort and never a verdict — the
+    /// failure it reacts to is already deterministic, so the verifier's job
+    /// here is *steering*, not re-judging. A failed call (or an unresolvable
+    /// verifier) degrades to evidence-only revision.
+    ///
+    /// Takes the built [`guidance_prompt`] rather than its ingredients: the
+    /// prompt is decision-shaped and lives in [`crate::verify`]; this module
+    /// is only the I/O seam (its own doc contract).
     pub(super) async fn verifier_guidance(
         &self,
-        goal: &str,
-        diff: &str,
-        evidence_summary: &str,
-        diff_ctx: &DiffContext<'_>,
+        prompt: ManagementPrompt,
         budget: &mut BudgetGuard,
         total: &mut f64,
     ) -> Result<Option<String>, PipelineBudgetAbort> {
@@ -36,7 +37,6 @@ impl<'a> Pipeline<'a> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Verdict,
         });
-        let prompt = guidance_prompt(goal, diff, evidence_summary, diff_ctx);
         let messages = prompt.into_messages();
         match self
             .metered_raw_call(
@@ -66,12 +66,13 @@ impl<'a> Pipeline<'a> {
         }
     }
 
+    /// One escalated-verdict call. Takes the built [`verifier_prompt`] for
+    /// the same reason [`Self::verifier_guidance`] does; `inputs` stays,
+    /// because the heuristic fallback is decided here, at the seam where the
+    /// call can fail.
     pub(super) async fn verifier(
         &self,
-        goal: &str,
-        diff: &str,
-        evidence_summary: &str,
-        diff_ctx: &DiffContext<'_>,
+        prompt: ManagementPrompt,
         inputs: &LadderInputs,
         budget: &mut BudgetGuard,
         total: &mut f64,
@@ -95,7 +96,6 @@ impl<'a> Pipeline<'a> {
         }
         self.warn_verifier_caveat(&resolved);
 
-        let prompt = verifier_prompt(goal, diff, evidence_summary, diff_ctx);
         let messages = prompt.into_messages();
         // Deterministic policy: a verifier call that fails must not hang; it falls
         // back to the heuristic verdict rather than retrying.
