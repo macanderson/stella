@@ -19,6 +19,15 @@ use crate::http;
 use crate::provider::{Provider, ToolCallObserver};
 use crate::sse::SseDecoder;
 
+mod effort;
+use effort::{xai_reasoning_effort, xai_supports_reasoning_effort, zai_reasoning_effort};
+// `map_zai_effort` is asserted on directly by the wire tests, which reach it
+// through this module's namespace like every other helper here. Its xAI sibling
+// is deliberately absent: nothing outside `effort.rs` calls it, and re-exporting
+// it unused fails clippy's `-D warnings`.
+#[cfg(test)]
+use effort::map_zai_effort;
+
 /// International endpoint. `open.bigmodel.cn` (mainland) is the same wire
 /// shape behind a different base URL — `with_base_url` covers both without
 /// a second adapter, as does the GLM Coding Plan endpoint
@@ -414,66 +423,6 @@ fn openrouter_reasoning(
     }
 }
 
-/// Whether an xAI model accepts the `reasoning_effort` parameter. Verified
-/// against xAI docs (2026-07): the ORIGINAL `grok-4` (and its dated snapshots,
-/// `grok-4-<date>`) reasons but rejects the param with a hard 400 ("does not
-/// support parameter reasoning_effort") — while grok-3-mini, the grok-4 point
-/// releases (`grok-4.1`/`.3`/`.5`), and the `grok-4-fast*` variants all accept
-/// it. Sending it to the original grok-4 (the currently-seeded xai default,
-/// deprecated and retiring 2026-08-15) would 400 every reasoning turn, so it is
-/// gated out here — grok-4 keeps the pre-wiring behavior (reasons at its own
-/// fixed depth, effort dropped) instead of erroring. Fail-safe direction is to
-/// send: the fleet has trended toward universal support, and only the retiring
-/// original is denied.
-fn xai_supports_reasoning_effort(model: &str) -> bool {
-    if model == "grok-4" {
-        return false;
-    }
-    // A dated snapshot of the original (`grok-4-0709`) is digits after the
-    // `grok-4-` stem; named variants (`grok-4-fast-reasoning`) are not, and the
-    // point releases (`grok-4.5`) don't match the `grok-4-` prefix at all.
-    if let Some(rest) = model.strip_prefix("grok-4-") {
-        let dated_snapshot_of_the_original =
-            !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit());
-        return !dated_snapshot_of_the_original;
-    }
-    true
-}
-
-/// Map the engine's one `ReasoningEffort` enum to xAI's chat-completions
-/// `reasoning_effort`, which documents `low`/`medium`/`high`. Same collapse
-/// posture as `openai.rs::map_reasoning_effort`: never drop the hint, never
-/// panic on a variant Grok doesn't model — the finer `xhigh`/`max` tiers are
-/// model-dependent on xAI, so they collapse to the universally-safe `high`.
-fn map_xai_effort(effort: ReasoningEffort) -> &'static str {
-    match effort {
-        ReasoningEffort::Low => "low",
-        ReasoningEffort::Medium => "medium",
-        ReasoningEffort::High | ReasoningEffort::Xhigh | ReasoningEffort::Max => "high",
-    }
-}
-
-/// Build xAI's `reasoning_effort` value from the request's reasoning/effort
-/// pair — the mirror of the OpenAI adapter's own reasoning match, since xAI's
-/// chat-completions dialect is OpenAI-compatible. Rules: an explicit off
-/// (`reasoning == Some(false)`) suppresses the field entirely even when an
-/// effort is pinned (an explicit off wins, and the docs' `none` value would
-/// 400 on always-reasoning Grok models); a pinned effort maps as
-/// [`map_xai_effort`]; a bare `Some(true)` with no effort turns thinking on at
-/// the middle tier; and neither set keeps the field off the wire (provider
-/// default, byte-stable with the pre-field body).
-fn xai_reasoning_effort(
-    reasoning: Option<bool>,
-    effort: Option<ReasoningEffort>,
-) -> Option<&'static str> {
-    match (reasoning, effort) {
-        (Some(false), _) => None,
-        (_, Some(effort)) => Some(map_xai_effort(effort)),
-        (Some(true), None) => Some("medium"),
-        (None, None) => None,
-    }
-}
-
 #[derive(Serialize)]
 struct ZaiUsageInclude {
     include: bool,
@@ -744,7 +693,7 @@ fn classify_zai_stream_error(err: &ZaiStreamError, label: &str) -> ProviderError
         || code == "503"
         || code == "529"
     {
-        ProviderError::Transport(detail)
+        ProviderError::transport(detail)
     } else if code == "429" || (haystack.contains("rate") && haystack.contains("limit")) {
         // A `code: 429` frame carries no "rate limit" prose on some gateways,
         // so the numeric status is the only signal that this is throttling
@@ -1105,16 +1054,30 @@ impl ZaiProvider {
             reasoning: (self.id == "openrouter" && !force_default_reasoning)
                 .then(|| openrouter_reasoning(req.reasoning, req.effort))
                 .flatten(),
-            // xAI's Grok reasoning models speak a top-level `reasoning_effort`
-            // (OpenAI-compatible), which the shared adapter used to drop
-            // silently for the xai identity. Gated exactly like `reasoning` is
-            // to openrouter: only the xai identity sends it, so no other
-            // OpenAI-compatible server sees a key it might reject — and, within
-            // xai, only for models that accept the param (the original grok-4
-            // 400s on it; see [`xai_supports_reasoning_effort`]).
-            reasoning_effort: (self.id == "xai" && xai_supports_reasoning_effort(&self.model))
-                .then(|| xai_reasoning_effort(req.reasoning, req.effort))
-                .flatten(),
+            // Two identities speak the top-level `reasoning_effort`, for
+            // different reasons, so they map through different tables:
+            //
+            // * xAI's Grok reasoning models take it as their ONLY reasoning
+            //   control, and only some of them accept it (the original grok-4
+            //   400s; see [`xai_supports_reasoning_effort`]).
+            // * Z.ai takes it as a *depth* control alongside the `thinking`
+            //   on/off object above. Verified live against `glm-5.2`
+            //   (2026-08-04): the field is honoured, not ignored — `minimal`
+            //   drives `reasoning_tokens` to 0. Without it the effort tier was
+            //   accepted, hashed into the published posture, and then dropped
+            //   on the floor, so a run pinned to `medium` silently reasoned at
+            //   GLM's own default depth. See [`zai_reasoning_effort`].
+            //
+            // Every other identity behind this shared adapter still sends
+            // nothing, so no server the user never opted into experimenting
+            // with sees a key it might reject.
+            reasoning_effort: match self.id.as_str() {
+                "xai" if xai_supports_reasoning_effort(&self.model) => {
+                    xai_reasoning_effort(req.reasoning, req.effort)
+                }
+                "zai" => zai_reasoning_effort(req.reasoning, req.effort),
+                _ => None,
+            },
             tools: to_zai_tools(req.tools),
             usage: self
                 .usage_accounting
@@ -1142,7 +1105,7 @@ impl ZaiProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| ProviderError::Transport(e.to_string()))?;
+            .map_err(|e| ProviderError::transport(e.to_string()))?;
 
         if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
             // Vendor pre-check ahead of the shared ladder — Z.ai overloads
@@ -1177,7 +1140,7 @@ impl ZaiProvider {
         }
 
         let (text, tool_calls, usage, finish_reason, reported_cost_usd) =
-            aggregate_zai_stream(response, &self.label, observer).await?;
+            aggregate_zai_stream(response, &self.label, observer, self.pricing.as_ref()).await?;
         // A gateway-reported cost (OpenRouter usage accounting) is
         // authoritative; catalog list pricing is the estimate for providers
         // that don't report one.
@@ -1261,6 +1224,7 @@ async fn aggregate_zai_stream(
     response: reqwest::Response,
     label: &str,
     observer: Option<&dyn ToolCallObserver>,
+    pricing: Option<&Pricing>,
 ) -> Result<
     (
         String,
@@ -1290,7 +1254,10 @@ async fn aggregate_zai_stream(
     let mut terminal_seen = false;
     let mut stream = response.bytes_stream();
 
-    while let Some(chunk) = http::next_with_timeout(&mut stream, http::STREAM_IDLE_TIMEOUT).await? {
+    while let Some(chunk) = http::next_with_timeout(&mut stream, http::STREAM_IDLE_TIMEOUT)
+        .await
+        .map_err(|e| http::attach_partial(e, &usage, &text, pricing))?
+    {
         decoder
             .push_bytes(&chunk)
             .map_err(|e| ProviderError::Malformed(e.to_string()))?;
@@ -1448,7 +1415,12 @@ async fn aggregate_zai_stream(
     // Transport, upholding the same "never a truncated Ok" promise as the
     // mid-stream error-frame path above.
     if !terminal_seen {
-        return Err(http::stream_ended_before_terminal(label, "[DONE]"));
+        return Err(http::attach_partial(
+            http::stream_ended_before_terminal(label, "[DONE]"),
+            &usage,
+            &text,
+            pricing,
+        ));
     }
 
     // Fallback terminator: a server that ends the stream without ever sending
@@ -1568,5 +1540,3 @@ async fn aggregate_zai_stream(
 
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-mod vision_tests;

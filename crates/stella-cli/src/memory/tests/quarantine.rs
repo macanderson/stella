@@ -1,4 +1,4 @@
-use super::*;
+use crate::memory::*;
 
 async fn memory_with_lesson(workspace_root: &Path, lesson: &str) -> SessionMemory {
     let memory = SessionMemory::open(workspace_root, false).expect("session memory");

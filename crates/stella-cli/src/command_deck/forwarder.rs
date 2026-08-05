@@ -64,6 +64,12 @@ pub(crate) fn spawn_forwarder(
 ) -> tokio::task::JoinHandle<bool> {
     tokio::spawn(async move {
         let mut seq = 0u64;
+        // Two independent latches, not one. A single shared flag meant an
+        // early usage gap — the benign, self-healing condition — silenced any
+        // later store-write failure, which is the one that actually points at
+        // a broken database. The less serious warning must never be able to
+        // suppress the more serious one.
+        let mut usage_warned = false;
         let mut store_warned = false;
         let mut persistence_complete = true;
         // The deck's half of the diagnostic timeline. The renderer covers the
@@ -91,13 +97,26 @@ pub(crate) fn spawn_forwarder(
                 let outcome = agent::persist_event_detailed(store, *id, seq, &event, &provider_id);
                 if !outcome.is_complete() {
                     persistence_complete = false;
-                    // One warning per turn, and it names the condition that
+                    // One warning per condition per turn, each naming what
                     // actually occurred: a failed INSERT points at the store,
                     // while unreported provider usage does not — conflating
                     // them sent users hunting for a database fault that was
                     // really a truncated model stream.
-                    if !store_warned && let Some(message) = outcome.message("this session") {
-                        store_warned = true;
+                    //
+                    // The scope word matters as much as the condition. A
+                    // usage gap is scoped to "one model call" because that is
+                    // all it ever was; saying "this session" turned a retried
+                    // network blip into what looked like a session-wide
+                    // accounting failure, and left that as the last word on
+                    // the deck for the rest of the run.
+                    let (warned, scope) = match outcome {
+                        crate::agent::PersistOutcome::StoreWriteFailed => {
+                            (&mut store_warned, "this session")
+                        }
+                        _ => (&mut usage_warned, "one model call"),
+                    };
+                    if !*warned && let Some(message) = outcome.message(scope) {
+                        *warned = true;
                         let _ = inbound.send(Inbound::Event {
                             agent: lane.clone(),
                             event: AgentEvent::Error {

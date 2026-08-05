@@ -84,7 +84,10 @@ fn clone_result(
 
 fn clone_provider_error(e: &ProviderError) -> ProviderError {
     match e {
-        ProviderError::Transport(m) => ProviderError::Transport(m.clone()),
+        ProviderError::Transport { message, partial } => ProviderError::Transport {
+            message: message.clone(),
+            partial: *partial,
+        },
         ProviderError::RateLimited {
             message,
             retry_after_ms,
@@ -515,7 +518,7 @@ impl Provider for FlakySpeculatingProvider {
                     self.executed.notified(),
                 )
                 .await;
-                Err(ProviderError::Transport("blip".into()))
+                Err(ProviderError::transport("blip"))
             }
             1 => {
                 observer.tool_call_streamed(&self.announce);
@@ -1678,8 +1681,8 @@ async fn retry_never_re_executes_a_tool_call() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
         script: TokioMutex::new(vec![
-            Err(ProviderError::Transport("blip".into())),
-            Err(ProviderError::Transport("blip again".into())),
+            Err(ProviderError::transport("blip")),
+            Err(ProviderError::transport("blip again")),
             Ok(tool_call_result("call_1", "bash")),
             Ok(text_result("done")),
         ]),
@@ -2109,7 +2112,7 @@ async fn run_synthetic_survival_turn(dialect: &str, id_style: fn(u32) -> String)
                 retry_after_ms: Some(1),
             })),
             // A transport-level "stream drop" — also retried.
-            7 => script.push(Err(ProviderError::Transport(format!(
+            7 => script.push(Err(ProviderError::transport(format!(
                 "{dialect} stream drop"
             )))),
             _ => {}

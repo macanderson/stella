@@ -87,7 +87,6 @@ pub mod syntax;
 pub mod theme;
 pub mod transcript_nav;
 pub mod views;
-pub mod vitals;
 
 pub use accessible::{FlushBlock, NOTICE_MARKER, Scrollback};
 pub use ansi::strip_ansi;

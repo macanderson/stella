@@ -1,7 +1,7 @@
 //! The Files tab's whole chain, end to end, in one test.
 //!
 //! Every link here was already covered — and the tab still went blank. The
-//! emitter's witnesses (`stella-tools`' `file_change_tests`) proved a real
+//! emitter's witnesses (`stella-tools`' `registry::tests::file_change`) proved a real
 //! `read_file` announces a `Read`; the view's witnesses
 //! (`stella-tui`'s `views::files::tests`) proved a populated ledger renders
 //! rows. Both suites passed, green, while a recorded session made 85 file-tool

@@ -81,7 +81,6 @@ use crate::store::{ContextStore, blob_to_vector, vector_to_blob};
 mod kmeans;
 
 #[cfg(test)]
-#[path = "ann/tests.rs"]
 mod tests;
 
 /// How many probed candidates recall over-fetches for every candidate it

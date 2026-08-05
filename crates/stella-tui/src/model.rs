@@ -1309,5 +1309,4 @@ fn summarize(text: &str) -> String {
 }
 
 #[cfg(test)]
-#[path = "model/tests.rs"]
 mod tests;

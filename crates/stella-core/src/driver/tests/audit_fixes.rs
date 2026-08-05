@@ -399,7 +399,7 @@ impl crate::retry::Sleeper for HangingSleeper {
 async fn hard_cancel_during_a_backoff_sleep_emits_no_phantom_cancelled_envelope() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
-        script: TokioMutex::new(vec![Err(ProviderError::Transport("blip".into()))]),
+        script: TokioMutex::new(vec![Err(ProviderError::transport("blip"))]),
         calls: Arc::new(AtomicU32::new(0)),
     };
     let tools = CountingTools {
@@ -471,7 +471,7 @@ async fn overflow_summarizer_retries_a_transient_error() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
         script: TokioMutex::new(vec![
-            Err(ProviderError::Transport("429 blip".into())),
+            Err(ProviderError::transport("429 blip")),
             Ok(text_result("SUMMARY")),
         ]),
         calls: Arc::new(AtomicU32::new(0)),
@@ -685,7 +685,7 @@ async fn overflow_summary_names_the_folded_tool_result_blocks() {
 async fn repeated_summarizer_failures_emit_events_and_latch() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
-        script: TokioMutex::new(vec![Err(ProviderError::Transport("down".into()))]),
+        script: TokioMutex::new(vec![Err(ProviderError::transport("down"))]),
         calls: Arc::new(AtomicU32::new(0)),
     };
     let calls = provider.calls.clone();

@@ -2,8 +2,8 @@
 //! read-only/speculation-safe schema claims, and per-tool dispatch.
 //!
 //! Split out of `registry.rs` so the module that ships the tools is not
-//! dominated by the module that checks them, joining the four sibling test
-//! files already here. No test changed in the move.
+//! dominated by the module that checks them. The submodules below cover one
+//! seam each and share this module's fixtures through `use super::*`.
 
 use super::*;
 
@@ -756,7 +756,7 @@ fn read_only_flags_partition_the_registry_correctly() {
 
 /// A baseline snapshot with the given tables in the implicit `sql`
 /// layer, `default` namespace — the shape `stella init` would seed.
-/// `pub(super)` so the batch-gate witnesses (`gate_batch_tests`) reuse
+/// `pub(super)` so the batch-gate witnesses (`gate_batch`) reuse
 /// the same fixture instead of growing a drifting copy.
 pub(super) fn seeded_snapshot(tables: &[&str]) -> stella_graph::StorageSnapshot {
     stella_graph::StorageSnapshot {
@@ -805,6 +805,11 @@ async fn exec_ok(reg: &ToolRegistry, name: &str, input: serde_json::Value) {
 }
 
 mod chain;
+mod fence;
+mod file_change;
+mod gate_batch;
+#[cfg(unix)]
+mod private_state;
 mod schema_gate;
 mod touch;
 
@@ -904,6 +909,92 @@ async fn one_agent_cannot_clobber_another_agents_edit() {
     assert_eq!(
         std::fs::read_to_string(&file).unwrap(),
         "A's work, rebased on B's\n"
+    );
+}
+
+/// A ranged read must not launder an unseen edit into belief.
+///
+/// The remembered digest is of the WHOLE file, but a read only shows what it
+/// was asked for. So a peek at a region someone else did not touch used to
+/// overwrite the belief with the current hash — telling the guard the agent
+/// had seen an edit that was never on its screen — and the next write sailed
+/// through clean. That is the silent case the guard exists to prevent: no
+/// refusal, no warning, and the other agent's work simply gone.
+///
+/// `read_file` windows at 2000 lines by default and `read_symbol` reads a
+/// span, so the partial read is the ordinary case, not an exotic one.
+#[tokio::test]
+async fn a_ranged_read_does_not_launder_an_unseen_edit_into_belief() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("shared.txt");
+    // Long enough that a limited read is genuinely a window onto part of it.
+    let original: String = (1..=40).map(|n| format!("line {n}\n")).collect();
+    std::fs::write(&file, &original).unwrap();
+
+    let agent_a = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+    let agent_b = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+
+    // A reads the whole file. This belief is honest — A has seen every line.
+    let read = agent_a
+        .execute(
+            "read_file",
+            &serde_json::json!({ "path": "shared.txt", "reason": "planning an edit" }),
+        )
+        .await;
+    assert!(!read.is_error(), "A reads the whole file: {read:?}");
+
+    // B rewrites the tail. B has never heard of A and takes no lock.
+    let mut edited: String = (1..=39).map(|n| format!("line {n}\n")).collect();
+    edited.push_str("line 40 — B's careful work\n");
+    let b_wrote = agent_b
+        .execute(
+            "write_file",
+            &serde_json::json!({
+                "path": "shared.txt",
+                "content": edited,
+                "reason": "B does its job",
+            }),
+        )
+        .await;
+    assert!(!b_wrote.is_error(), "B's write lands: {b_wrote:?}");
+
+    // A peeks at the HEAD of the file — a region B did not touch, so this read
+    // tells A nothing about B's edit. It must not count as having seen it.
+    let peek = agent_a
+        .execute(
+            "read_file",
+            &serde_json::json!({
+                "path": "shared.txt",
+                "offset": 1,
+                "limit": 3,
+                "reason": "checking the header",
+            }),
+        )
+        .await;
+    assert!(!peek.is_error(), "the ranged read succeeds: {peek:?}");
+
+    let a_wrote = agent_a
+        .execute(
+            "write_file",
+            &serde_json::json!({
+                "path": "shared.txt",
+                "content": original,
+                "reason": "A does its job",
+            }),
+        )
+        .await;
+    match &a_wrote {
+        ToolOutput::Error { message } => assert!(
+            message.contains("shared.txt"),
+            "the refusal names the file so the model can act on it: {message}"
+        ),
+        other => panic!("A's write over an edit it never saw must be refused, got {other:?}"),
+    }
+    assert!(
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("B's careful work"),
+        "B's work survives — a peek at another part of the file is not consent"
     );
 }
 

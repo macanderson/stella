@@ -4,6 +4,8 @@
 
 use thiserror::Error;
 
+use crate::completion::PartialUsage;
+
 /// An error from a model-provider call, always carrying a retry
 /// classification so `stella-core` never has to re-derive one downstream.
 ///
@@ -20,8 +22,23 @@ pub enum ProviderError {
     /// connection, or a client-side timeout — and, by adapter convention, a
     /// provider `5xx` (a response arrived, but the server failed transiently
     /// and the same request may yet succeed). Retryable.
-    #[error("provider transport error: {0}")]
-    Transport(String),
+    ///
+    /// This is the one variant that carries accounting, because it is the one
+    /// failure that can strike *after* the provider has begun reporting it. A
+    /// stream cut during generation has already delivered its input-token
+    /// frame; `partial` is where that survives instead of dying with the
+    /// adapter's stack frame. Build it with [`ProviderError::transport`] and
+    /// attach with [`ProviderError::with_partial`] rather than naming the
+    /// field, so the ~20 dispatch-time sites that have nothing to report stay
+    /// a single call.
+    #[error("provider transport error: {message}")]
+    Transport {
+        message: String,
+        /// Accounting observed before this attempt died, when any was.
+        /// `None` for a failure that never got far enough to learn anything —
+        /// DNS, connect, TLS, or a 5xx whose body never became a stream.
+        partial: Option<PartialUsage>,
+    },
 
     /// The provider refused the call for quota/rate reasons (HTTP 429 and its
     /// per-dialect equivalents). Retryable, and the only variant that can
@@ -78,6 +95,43 @@ pub enum ProviderError {
 }
 
 impl ProviderError {
+    /// A transport failure with no accounting to report — the shape of every
+    /// dispatch-time fault, and the default every call site should reach for.
+    pub fn transport(message: impl Into<String>) -> Self {
+        ProviderError::Transport {
+            message: message.into(),
+            partial: None,
+        }
+    }
+
+    /// Attach accounting that survived this failure.
+    ///
+    /// A no-op on every variant except [`ProviderError::Transport`], so an
+    /// adapter can pipe its dying stream's usage through `map_err` without
+    /// first proving which error class it is about to decorate. That matters
+    /// because the classification is made further down (a mid-stream
+    /// `error` frame can be terminal), and a partial hung on a terminal
+    /// failure would claim spend for a request the provider rejected outright.
+    #[must_use]
+    pub fn with_partial(self, partial: PartialUsage) -> Self {
+        match self {
+            ProviderError::Transport { message, .. } => ProviderError::Transport {
+                message,
+                partial: Some(partial),
+            },
+            other => other,
+        }
+    }
+
+    /// Accounting that survived this failure, if any reached us.
+    #[must_use]
+    pub fn partial_usage(&self) -> Option<&PartialUsage> {
+        match self {
+            ProviderError::Transport { partial, .. } => partial.as_ref(),
+            _ => None,
+        }
+    }
+
     /// Whether the step-driver should retry this call with backoff.
     /// Terminal on 4xx-class failures (auth, unknown model, malformed
     /// request); retryable on transport/rate-limit/5xx-class failures.
@@ -86,7 +140,7 @@ impl ProviderError {
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,
-            ProviderError::Transport(_) | ProviderError::RateLimited { .. }
+            ProviderError::Transport { .. } | ProviderError::RateLimited { .. }
         )
     }
 }
@@ -97,7 +151,7 @@ mod tests {
 
     #[test]
     fn transport_and_rate_limited_are_retryable() {
-        assert!(ProviderError::Transport("timeout".into()).is_retryable());
+        assert!(ProviderError::transport("timeout").is_retryable());
         assert!(
             ProviderError::RateLimited {
                 message: "429".into(),
@@ -118,6 +172,50 @@ mod tests {
         );
         assert!(!ProviderError::Malformed("bad json".into()).is_retryable());
         assert!(!ProviderError::Cancelled.is_retryable());
+    }
+
+    /// Witness for the accounting-loss defect: a stream that dies after the
+    /// provider reported its input tokens must carry those tokens out with
+    /// the error, not drop them at the `?`.
+    #[test]
+    fn transport_carries_partial_usage_out_of_a_dead_stream() {
+        let partial = PartialUsage {
+            usage: crate::completion::CompletionUsage {
+                input_tokens: 14_000,
+                cached_input_tokens: 12_000,
+                output_tokens: 130,
+                ..Default::default()
+            },
+            cost_usd: 0.021,
+            input_reported: true,
+        };
+        let err = ProviderError::transport("connection closed mid-response").with_partial(partial);
+        let recovered = err.partial_usage().expect("partial survives the error");
+        assert_eq!(recovered.usage.input_tokens, 14_000);
+        assert_eq!(recovered.cost_usd, 0.021);
+        // Still retryable — attaching accounting must not change the class.
+        assert!(err.is_retryable());
+    }
+
+    /// A partial hung on a terminal failure would claim spend for a request
+    /// the provider refused outright, so `with_partial` declines to decorate
+    /// anything but `Transport`.
+    #[test]
+    fn with_partial_is_inert_on_terminal_variants() {
+        let err = ProviderError::Auth("bad key".into()).with_partial(PartialUsage::default());
+        assert!(err.partial_usage().is_none());
+        assert!(matches!(err, ProviderError::Auth(_)));
+    }
+
+    /// A dispatch-time fault learned nothing, and must say so rather than
+    /// reporting a zeroed envelope that reads as "this call was free".
+    #[test]
+    fn a_plain_transport_error_reports_no_accounting() {
+        assert!(
+            ProviderError::transport("dns failure")
+                .partial_usage()
+                .is_none()
+        );
     }
 
     #[test]

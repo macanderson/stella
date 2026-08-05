@@ -360,8 +360,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     // shares a rendered row with the transcript.
     let subs_h = crate::views::subagents::band_height(model, ui);
 
-    let hud_h = crate::render::hud_height(area.height);
-    let vitals = crate::vitals::Vitals::read(model, agent);
+    let hud_h = crate::render::HUD_H;
 
     // PLAN and DONE VERIFICATION live in the right-hand rail
     // ([`crate::views::plan_rail`]) and are up for the whole session. Too
@@ -409,7 +408,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     if subs_h > 0 {
         crate::views::subagents::render(model, ui, bands[1], buf);
     }
-    render_hud(&sm.hud, Some(&vitals), bands[2], buf);
+    render_hud(&sm.hud, bands[2], buf);
     // `answered` flips the card to its "sent — awaiting engine…" form: the
     // pending gate clears only on the engine's follow-on event, and until
     // then the card must not keep advertising decision keys that would
@@ -1276,12 +1275,11 @@ mod tests {
             text.contains("waived"),
             "…and it says what triage decided:\n{text}"
         );
-        // header(1) + stat box(4, gauges included) = 5 of the 24 rows, and
-        // PLAN / DONE VERIFICATION cost COLUMNS rather than rows. Before this
-        // change the same turn spent 7 more rows on a band with nothing to
-        // report, and had no gauges to show for it.
+        // header(1) + stat box(3) = 4 of the 24 rows, and PLAN / DONE
+        // VERIFICATION cost COLUMNS rather than rows. Before this change the
+        // same turn spent 7 more rows on a band with nothing to report.
         assert_eq!(
-            ui.metrics.session_height, 17,
+            ui.metrics.session_height, 18,
             "the transcript must own every row the panels do not"
         );
     }

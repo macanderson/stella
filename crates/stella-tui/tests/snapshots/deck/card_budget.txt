@@ -17,7 +17,6 @@
      returns: watch CI + open PR → lead inbox
 ┌ stella ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │stage execute   model —   turn $0.0390 / $2.50  ·  observed                                                                                                   │
-│ctx ▱▱▱▱▱▱▱▱ 8k/200k   spend ▱▱▱▱▱▱▱▱ $0.04/$2.50   cache ▰▰▰▰▰▱▱▱ 63%   cpu ▰▰▰▰▱▱▱▱ 50%                                                                     │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ plan review ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Refactor the automations store into a shared workspace package                                                                                                │
@@ -28,18 +27,19 @@
 │                                                                                                                                                              │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ transcript · 21 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
-│                                                                                                                      ││○ 1 extract types                     │
-│● read_file    apps/app/automations/page.tsx                                                                          │└────────────────────── /plan reads it ┘
-│  ⎿ 312 lines                                                                                                     42ms│┌ DONE VERIFICATION ───────────────────┐
-│                                                                                                                      ││○ warrant  pending                    │
-│☰  plan  5/7  ·  Workflows canvas                  ┌ budget  session spend cap ⏎ set · ⌫ edit · esc close ┐           ││● witness  authored  apps/app/automat…│
-│                                                   │run     $0.05 of $7.50 ▰▱▱▱▱▱▱▱▱                      │           ││● oracle   ✗ fails on base → ✓ passes…│
-│⏸ plan  Refactor the automations store into a share│new cap $                                             │           ││○ tamper   pinned  sha256:9f3c1d2e4…  │
-│                                                   │the cap applies when the driver's budget stream folds │           ││○ verdict  pending                    │
-└─────────────────────────────────────────── ↑ selec└──────────────────────────────────────────────────────┘nd · /plan ┘└──────────────────────────────────────┘
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- ▸ stage  Refactor the automations store into a shared workspace package
+│● read_file    apps/app/automations/page.tsx                                                                          ││Refactor the automations store into a…│
+│  ⎿ 312 lines                                                                                                     42ms││○ 1 extract types                     │
+│                                                                                                                      ││○ 2 move hooks                        │
+│☰  plan  5/7  ·  Workflows canvas                                                                                     ││○ 3 update 9 imports                  │
+│                                                                                                                      │└────────────────────── /plan reads it ┘
+│⏸ plan  Refactor the automations store into a share┌ budget  session spend cap ⏎ set · ⌫ edit · esc close ┐           │┌ DONE VERIFICATION ───────────────────┐
+│                                                   │run     $0.05 of $7.50 ▰▱▱▱▱▱▱▱▱                      │           ││● flip ✓ red→green                    │
+└─────────────────────────────────────────── ↑ selec│new cap $                                             │nd · /plan ┘└──────────────────────────────────────┘
+────────────────────────────────────────────────────│the cap applies when the driver's budget stream folds │────────────────────────────────────────────────────
+ ▸ stage  Refactor the automations store into a shar└──────────────────────────────────────────────────────┘
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
 >>>
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
- ✦ lead · ● execute │ ctx 8.2k/200k │ run $0.05 of $7.50
+ MODEL                   │ EXECUTE     │ CONTEXT          │ SPEND
+ worker: zai/glm-5.2-air │ Step 6 of 7 │ ▯▯▯▯▯▯ 8.2k/200k │ $0.05 of $7.50                                                                ↝ deterministic-first
+ MODELS  T·—  W·zai/glm-5.2-air  J·—

@@ -93,6 +93,7 @@ use crate::agent::{
 };
 
 mod adopt;
+mod snapshot_gaps;
 mod witness_tools;
 use adopt::{attach_diffs, attach_numstat, conflict_paths_from_stderr, parse_name_status};
 use witness_tools::WitnessToolExecutor;
@@ -106,6 +107,28 @@ const SNAPSHOT_IDENT: [&str; 4] = [
     "user.name=stella-pipeline",
     "-c",
     "user.email=pipeline@stella.invalid",
+];
+
+/// Tool scratch directories that `adopt` never carries into the user's tree.
+///
+/// Deliberately short, and deliberately NOT build outputs (`target`, `dist`,
+/// `build`) — producing one of those is frequently the whole job, and the same
+/// reasoning keeps them out of `stella_tools::shell_touch::SKIP_DIRS`. What is
+/// listed here is scratch written by *running* code, which no task asks for.
+///
+/// The seal is a blanket `git add -A`, so anything a candidate's test run left
+/// behind is committed into `sealed`. That is right for the seal — it is a
+/// forensic record of the candidate — and wrong for adoption, which is the
+/// user's tree. It also closes a gap the withhold list cannot: withholding an
+/// authored witness does not withhold the `__pycache__/<witness>.cpython-*.pyc`
+/// that running it produced, so a run could ship the shadow of a file it had
+/// deliberately kept back.
+const ADOPT_CACHE_EXCLUDES: &[&str] = &[
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".tox",
 ];
 
 /// Shadow names carry pid + a process-wide counter (the `verify_done`
@@ -396,6 +419,7 @@ impl GitCandidateWorkspaces {
                 let tools: Box<dyn stella_core::ToolExecutor> = Box::new(
                     crate::agent::PolicyToolSet::new_owned(tools, self.policy.clone()),
                 );
+                let omitted = snapshot_gaps::omitted_ignored_paths(&toplevel, &root_rel).await;
                 Ok(GitCandidateWorkspace {
                     toplevel,
                     dir: dir.clone(),
@@ -415,6 +439,7 @@ impl GitCandidateWorkspaces {
                         ws_root,
                         overlay: overlay_untracked,
                     },
+                    omitted,
                 })
             }
             Err(reason) => {
@@ -606,6 +631,10 @@ pub(crate) struct GitCandidateWorkspace {
     diagnostics: GitDiagnosticRunner,
     tests: TypedTestRunner,
     repo_status: SnapshotRepoStatus,
+    /// Ignored paths present in the real tree and elided from this snapshot —
+    /// see [`snapshot_gaps`]. A display list for the candidate's context, not
+    /// a set anything branches on.
+    omitted: Vec<String>,
 }
 
 impl GitCandidateWorkspace {
@@ -701,10 +730,21 @@ impl GitCandidateWorkspace {
         // `literal` disables glob interpretation: a path is a path, never a
         // pattern, so a witness filename containing `*` or `[` cannot widen
         // the exclusion into production code.
-        let exclusions: Vec<String> = withhold
+        let mut exclusions: Vec<String> = withhold
             .iter()
             .map(|path| format!(":(exclude,literal){path}"))
             .collect();
+        // `glob`, not `literal`: these ARE patterns, and a leading `**/` is
+        // git's "in any directory", so a top-level `__pycache__/x.pyc` and a
+        // nested `a/b/__pycache__/x.pyc` both drop out. Appended to the same
+        // vec as the withheld paths, so they reach the name-status listing and
+        // the applied patch identically — the invariant above is what keeps the
+        // event stream from claiming a file the user's tree does not have.
+        exclusions.extend(
+            ADOPT_CACHE_EXCLUDES
+                .iter()
+                .map(|dir| format!(":(exclude,glob)**/{dir}/**")),
+        );
         let mut name_args = vec![
             "diff",
             "--name-status",
@@ -827,6 +867,10 @@ impl CandidateWorkspace for GitCandidateWorkspace {
 
     fn repo_status(&self) -> &dyn RepoStatusPort {
         &self.repo_status
+    }
+
+    fn omitted_paths(&self) -> &[String] {
+        &self.omitted
     }
 
     async fn seal(&self) -> Result<(), WorkspaceError> {

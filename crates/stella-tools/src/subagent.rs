@@ -317,5 +317,4 @@ fn slug(description: &str) -> String {
 }
 
 #[cfg(test)]
-#[path = "subagent/tests.rs"]
 mod tests;

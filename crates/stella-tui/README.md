@@ -122,7 +122,7 @@ escape hatch for an irreducible line (a module declaration in an oversized
 | [`src/views/*.rs`](src/views) | One module per deck tab (session · agents · installed · traces · graph · files · skills · mcp · issues · settings), each exposing `render(model, ui, area, buf)`. `engine` is the exception: the config editor SETTINGS hosts, with its own `render_panel` and key handler. |
 | [`src/diff.rs`](src/diff.rs), [`src/syntax.rs`](src/syntax.rs), [`src/markdown.rs`](src/markdown.rs), [`src/textline.rs`](src/textline.rs) | Shared text presentation — one implementation each of "how a diff looks", source coloring, markdown, and the event→wording table (also consumed by `stella-cli`'s plain renderer). |
 | [`src/theme.rs`](src/theme.rs), [`src/palette.rs`](src/palette.rs) | Every color and glyph. `palette.rs` mirrors the brand kit at `docs/brand/`; `theme.rs` is the only module allowed to reference it. |
-| [`src/statline.rs`](src/statline.rs) | The four-zone statline (identity │ resources │ money │ attention): `statline_items` is the one decision function — zone drops and the collapse-under-a-card rule included. |
+| [`src/statline.rs`](src/statline.rs) | The two-row statline: a micro-label row over its value row, led by `MODEL` (`worker: z-ai/glm-5.2` — the model's vendor, not the gateway) and the stage box (the live stage name over `Step 4 of 5`), then the CPU/CONTEXT meters and CACHE volumes, over the always-on MODELS pins row. `statline_items` is the one decision function — priority drops and the collapse-under-a-card rule included. |
 | [`src/progress.rs`](src/progress.rs), [`src/cache_panel.rs`](src/cache_panel.rs), [`src/splash.rs`](src/splash.rs) | Chrome widgets: the unified stage stepper + progress row, the cache formatters behind the statline/context overlay, and the launch mark held over session init. |
 | [`src/views/cards.rs`](src/views/cards.rs) + [`task_card`](src/views/task_card.rs) · [`scope_card`](src/views/scope_card.rs) · [`witness_card`](src/views/witness_card.rs) · [`models_card`](src/views/models_card.rs) · [`budget_card`](src/views/budget_card.rs) | The floating cards over one shared chrome; their modal key handlers live in [`src/deck_ui/cards.rs`](src/deck_ui/cards.rs). The witness panel is the staged pipeline's surface (`/pipeline` stays the toggle). |
 | [`src/views/subagents.rs`](src/views/subagents.rs) | The SESSION tab's nested `└─ ◆` subagent blocks under the lead's header. |
@@ -272,7 +272,7 @@ Adding a deck tab:
 2. Write `src/views/<tab>.rs` exposing
    `render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer)`,
    pulling every color from `theme` and recording viewport metrics onto
-   `ui.metrics`. Register it in [`src/views/mod.rs`](src/views/mod.rs).
+   `ui.metrics`. Register it in [`src/views.rs`](src/views.rs).
 3. Add the match arm in `render_deck` ([`src/deck_render.rs`](src/deck_render.rs)).
 4. Add a `handle_<tab>_key` in [`src/deck_ui.rs`](src/deck_ui.rs) and wire it
    into the per-tab dispatch, taking `composer_empty` and honoring the

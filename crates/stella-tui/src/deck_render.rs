@@ -70,16 +70,16 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     let text_w = (area.width as usize).saturating_sub(PROMPT_PREFIX_W + COMPOSER_GUTTER_W);
     let c_layout = composer_layout(&ui.composer, text_w.max(1));
     let composer_h = c_layout.rows.len().clamp(1, DECK_COMPOSER_MAX_ROWS) as u16;
-    // The statline is one zoned row (D1); it grows a second only when the
-    // focused agent has earned a low-hit-rate diagnosis (#267) — a session
-    // that needs the warning gets it without permanently taxing every other
-    // session's content area.
+    // 2 rows (labels over values) + the always-on MODELS row, and a fourth
+    // only when the focused agent earned a low-hit-rate diagnosis (#267).
+    // MODELS is permanent by design: which pins served triage, worker and
+    // judge is what a scored run is read against — never the dropped row.
     let has_diagnosis = model
         .agents
         .get(ui.focused)
         .and_then(|a| a.cache_diagnosis(cache_panel::LOW_HIT_RATE_THRESHOLD))
         .is_some();
-    let statline_h = if has_diagnosis { 2 } else { 1 };
+    let statline_h = if has_diagnosis { 4 } else { 3 };
     let bands = Layout::vertical([
         Constraint::Length(3),          // tab bar
         Constraint::Min(1),             // active view

@@ -59,26 +59,10 @@ pub(crate) fn inner_width(area: Rect) -> usize {
 
 // Panels
 
-/// Rows the stat box claims when it carries its vitals gauges: border, the
-/// stage line, the gauge row, border.
-pub(crate) const HUD_H_WITH_VITALS: u16 = 4;
-
-/// Rows it claims without them.
+/// Rows the stat box claims: border, the stage line, border.
 pub(crate) const HUD_H: u16 = 3;
 
-/// The stat box's height for a frame: it grows a row for the gauges when the
-/// frame can spare one. On a short terminal the stage line alone is what the
-/// box is for, and the statline still carries the same four figures as text.
-pub(crate) fn hud_height(frame_h: u16) -> u16 {
-    if frame_h >= 20 {
-        HUD_H_WITH_VITALS
-    } else {
-        HUD_H
-    }
-}
-
-/// The stat box: stage, model and the live cost of the turn, and — when the
-/// frame can spare the row — the vitals gauges under them.
+/// The stat box: stage, model and the live cost of the turn.
 ///
 /// Cost here reads *per turn*, matching the composer's cell and the `✓ cost`
 /// line — it used to print `hud.spent_usd` raw, which on the deck is the
@@ -86,16 +70,11 @@ pub(crate) fn hud_height(frame_h: u16) -> u16 {
 /// statline, and the `◇ spend` rows in the transcript were three different
 /// renderings of two different quantities under one word.
 ///
-/// The gauges are deliberately redundant with the statline's `ctx`/`cpu`/
-/// `cache` figures. Text is precise and answers *what*; a bar answers *is
-/// anything about to run out* without being read, which is the question a
-/// running agent actually gets glanced at with. See [`crate::vitals`].
-pub(crate) fn render_hud(
-    hud: &Hud,
-    vitals: Option<&crate::vitals::Vitals>,
-    area: Rect,
-    buf: &mut Buffer,
-) {
+/// The four resource readings — cpu, context, spend, cache — live on the
+/// statline's own meter row, not here. They were briefly duplicated in this
+/// box as a second set of gauges; two renderings of the same four numbers, in
+/// two different bar glyphs, on one frame is worse than either alone.
+pub(crate) fn render_hud(hud: &Hud, area: Rect, buf: &mut Buffer) {
     let label = Style::new().fg(theme::TEXT_TERTIARY);
     let mut spans: Vec<Span<'static>> = vec![
         Span::styled("stage ", label),
@@ -135,19 +114,9 @@ pub(crate) fn render_hud(
         .borders(Borders::ALL)
         .border_style(theme::rule())
         .title(" stella ");
-    let mut rows = vec![Line::from(spans)];
-    // The gauge row, when the box was given the height for it and the vitals
-    // have something to report. Dropped whole rather than squeezed: a box that
-    // renders a border around a blank row has spent a row saying nothing.
-    if area.height >= HUD_H_WITH_VITALS
-        && let Some(vitals) = vitals
-    {
-        let gauges = vitals.row(inner_width(area));
-        if !gauges.is_empty() {
-            rows.push(Line::from(gauges));
-        }
-    }
-    Paragraph::new(rows).block(block).render(area, buf);
+    Paragraph::new(Line::from(spans))
+        .block(block)
+        .render(area, buf);
 }
 
 /// [`render_transcript`] for a caller that already materialized just the

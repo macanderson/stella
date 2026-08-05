@@ -89,8 +89,12 @@ const RAIL_MIN_W: u16 = 24;
 /// to render whitespace.
 const RAIL_MAX_W: u16 = 44;
 
-/// Rows the verification panel always claims: five lights plus its border.
+/// Rows the verification panel claims when it can show every light.
 const VERIFY_H: u16 = proof::ROWS + 2;
+
+/// Rows PLAN keeps before verification may take any: its border plus two
+/// steps. Below this the panel is a bordered box with nothing readable in it.
+const PLAN_MIN_H: u16 = 4;
 
 /// Rows the PLAN panel claims when it is *stacked* above the transcript rather
 /// than in the rail (a narrow frame, or accessible mode).
@@ -374,10 +378,37 @@ pub fn render(sm: &SessionModel, area: Rect, buf: &mut Buffer) {
     if area.height < 3 || area.width < 4 {
         return;
     }
-    let verify_h = VERIFY_H.min(area.height);
+    let verify_h = verification_height(area.height);
     let bands = Layout::vertical([Constraint::Min(0), Constraint::Length(verify_h)]).split(area);
     render_plan(&sm.plan, bands[0], buf);
     render_verification(&sm.proof, bands[1], buf);
+}
+
+/// Rows to give the verification panel out of a rail `height` rows tall.
+///
+/// The five lights are a fixed-height panel by design — a light that moves is
+/// a light nobody learns to find — but taking those seven rows unconditionally
+/// meant that on a frame with a gate card up, verification claimed everything
+/// and **PLAN disappeared entirely**. Both panels are supposed to be up
+/// always, so the fixed height yields before the plan does:
+///
+/// | Rail height | Verification |
+/// |---|---|
+/// | ≥ `PLAN_MIN_H + VERIFY_H` | all five lights |
+/// | ≥ `PLAN_MIN_H + 3` | the one-line summary |
+/// | below that | nothing — the plan takes the rail |
+///
+/// The middle rung is the point: [`ProofState::summary`] already says in one
+/// line what the five rows say in five, so a squeezed rail loses detail rather
+/// than losing the surface.
+fn verification_height(height: u16) -> u16 {
+    if height >= PLAN_MIN_H + VERIFY_H {
+        VERIFY_H
+    } else if height >= PLAN_MIN_H + 3 {
+        3
+    } else {
+        0
+    }
 }
 
 /// The PLAN panel. Public so the narrow/accessible path can stack it.
@@ -427,9 +458,23 @@ pub fn render_verification(state: &ProofState, area: Rect, buf: &mut Buffer) {
         return;
     }
     let inner_w = area.width.saturating_sub(2) as usize;
-    let rows: Vec<Line<'static>> = verification_rows(state)
+    let capacity = (area.height as usize).saturating_sub(2);
+    // Too short for the full rail: one summary line rather than an arbitrary
+    // prefix of the five. A panel showing `warrant` and `witness` and silently
+    // dropping the verdict is worse than one that says where the proof stands.
+    let source = if capacity < proof::ROWS as usize {
+        let summary = state.summary();
+        let (glyph, ring) = verify_ring(summary.tone);
+        vec![Line::from(vec![
+            Span::styled(format!("{glyph} "), ring),
+            Span::styled(summary.value.clone(), proof::style_for(summary.tone)),
+        ])]
+    } else {
+        verification_rows(state)
+    };
+    let rows: Vec<Line<'static>> = source
         .into_iter()
-        .take((area.height as usize).saturating_sub(2))
+        .take(capacity)
         .map(|line| Line::from(truncate_spans(line.spans, inner_w)))
         .collect();
     Paragraph::new(rows)
@@ -719,6 +764,36 @@ mod tests {
         let area = Rect::new(0, 0, 30, 20);
         let text = rendered(area, |b| render(&sm, area, b));
         assert!(text.contains('…'), "no ellipsis marks the cut:\n{text}");
+    }
+
+    /// **The regression the merge with the two-row statline exposed.** A gate
+    /// card up top leaves the rail about nine rows; verification's fixed seven
+    /// took nearly all of them and PLAN — the panel this rail is named for —
+    /// rendered nothing at all.
+    #[test]
+    fn a_squeezed_rail_keeps_the_plan_and_shrinks_the_verification() {
+        let mut sm = SessionModel::default();
+        sm.plan.propose(&proposal(&["one", "two", "three"]));
+        sm.plan.approve();
+        let area = Rect::new(0, 0, 34, 9);
+        let text = rendered(area, |b| render(&sm, area, b));
+        assert!(
+            text.contains("PLAN"),
+            "the plan survives the squeeze:\n{text}"
+        );
+        assert!(text.contains("one"), "…with its steps:\n{text}");
+        assert!(
+            text.contains("DONE VERIFICATION"),
+            "…and verification is still present, just compact:\n{text}"
+        );
+    }
+
+    /// The three rungs of the yield, as heights.
+    #[test]
+    fn verification_yields_its_rows_before_the_plan_loses_its() {
+        assert_eq!(verification_height(PLAN_MIN_H + VERIFY_H), VERIFY_H);
+        assert_eq!(verification_height(PLAN_MIN_H + 3), 3, "the summary rung");
+        assert_eq!(verification_height(PLAN_MIN_H + 2), 0, "the plan takes it");
     }
 
     #[test]

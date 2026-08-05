@@ -753,12 +753,19 @@ mod tests {
     /// pointed the tab at a `settings.json` the CLI never opens.
     #[test]
     fn user_config_dir_mirrors_the_cli_settings_loader() {
-        // SAFETY: env mutation in a test — nothing else in this crate (tests
-        // or production code) reads STELLA_CONFIG_DIR, so no parallel test
-        // can observe the transient value.
+        // The old note here reasoned that no parallel test could observe the
+        // transient value because nothing else reads STELLA_CONFIG_DIR. That
+        // is an argument about one variable, and the hazard is the shared
+        // environment: this test also reads HOME, which other crates' tests
+        // override, and stella-store's `any_override_set` reads
+        // STELLA_CONFIG_DIR. Take the crate-wide lock like every other
+        // env-mutating test here (#1137).
+        let _env = crate::test_env::lock();
+        let _restore = crate::test_env::EnvRestore::capture(&["STELLA_CONFIG_DIR"]);
+        // SAFETY: the lock is held for the whole test, and `_restore` undoes
+        // this on drop — including if `user_config_dir` panics.
         unsafe { std::env::set_var("STELLA_CONFIG_DIR", "/tmp/elsewhere") };
         let resolved = user_config_dir();
-        unsafe { std::env::remove_var("STELLA_CONFIG_DIR") };
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .expect("HOME set");

@@ -1380,7 +1380,7 @@ async fn complete_maps_5xx_to_retryable_transport() {
     };
 
     let err = provider.complete(req).await.unwrap_err();
-    assert!(matches!(err, ProviderError::Transport(_)));
+    assert!(matches!(err, ProviderError::Transport { .. }));
     assert!(err.is_retryable(), "5xx/529 must be retryable");
 }
 
@@ -1415,7 +1415,7 @@ async fn complete_returns_err_on_mid_stream_error_event_not_truncated_ok() {
 
     let err = provider.complete(req).await.unwrap_err();
     // overloaded_error ⇒ retryable Transport.
-    assert!(matches!(err, ProviderError::Transport(_)));
+    assert!(matches!(err, ProviderError::Transport { .. }));
     assert!(err.is_retryable());
 }
 
@@ -1453,7 +1453,7 @@ async fn complete_returns_transport_err_on_clean_eof_without_message_stop() {
 
     let err = provider.complete(req).await.unwrap_err();
     assert!(
-        matches!(err, ProviderError::Transport(_)),
+        matches!(err, ProviderError::Transport { .. }),
         "expected Transport, got {err:?}"
     );
     assert!(err.is_retryable(), "a disconnect must be retryable");
@@ -1461,6 +1461,102 @@ async fn complete_returns_transport_err_on_clean_eof_without_message_stop() {
     assert!(
         msg.contains("message_stop"),
         "names the missing terminal event: {msg}"
+    );
+}
+
+/// Witness for the accounting-loss defect this fix exists for.
+///
+/// The exact shape a user hits when their connection drops mid-answer: the
+/// provider already told us in `message_start` what the prompt cost, text
+/// began arriving, then the stream ended without `message_stop`. The turn
+/// still fails — that part was always right — but the input tokens the
+/// provider had *already reported* must now come out with the error instead
+/// of dying at the `?`, or the attempt is recorded as though it were free.
+#[tokio::test]
+async fn a_dropped_stream_carries_out_the_usage_it_had_already_been_told() {
+    let server = MockServer::start().await;
+    let sse_body = concat!(
+        "event: message_start\n",
+        "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":2000,\
+         \"cache_read_input_tokens\":12000,\"cache_creation_input_tokens\":400}}}\n\n",
+        "event: content_block_delta\n",
+        "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\
+         \"text\":\"Hello there\"}}\n\n",
+    );
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+        .mount(&server)
+        .await;
+
+    let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-fable-5")
+        .with_base_url(server.uri());
+    let req = CompletionRequest {
+        messages: vec![CompletionMessage::user("hi")],
+        max_output_tokens: None,
+        temperature: None,
+        effort: None,
+        tools: vec![],
+        reasoning: None,
+        params: None,
+    };
+
+    let err = provider.complete(req).await.unwrap_err();
+    let partial = err
+        .partial_usage()
+        .expect("the reported input tokens must survive the disconnect");
+    // `input_tokens` is the provider's own figure, cache reads folded in the
+    // same way the success path folds them.
+    assert_eq!(partial.usage.input_tokens, 14_000);
+    assert_eq!(partial.usage.cached_input_tokens, 12_000);
+    assert_eq!(partial.usage.cache_write_tokens, 400);
+    assert!(
+        partial.input_reported,
+        "the input side came from the provider, not an estimate"
+    );
+    // No `message_delta` arrived, so the output side is estimated from the
+    // text that did — non-zero, because those tokens were generated and are
+    // billable.
+    assert!(
+        partial.usage.output_tokens > 0,
+        "streamed text must be counted, got {:?}",
+        partial.usage
+    );
+    // And it can never masquerade as settled accounting.
+    assert!(
+        !partial.usage.is_complete(),
+        "a partial must never pass is_complete"
+    );
+}
+
+/// The other half of the promise: a failure that learned nothing must SAY it
+/// learned nothing. A zeroed envelope here would read as "this call was free"
+/// and silently understate real spend.
+#[tokio::test]
+async fn a_failure_before_dispatch_reports_no_recovered_usage() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(529).set_body_string("overloaded"))
+        .mount(&server)
+        .await;
+
+    let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-fable-5")
+        .with_base_url(server.uri());
+    let req = CompletionRequest {
+        messages: vec![CompletionMessage::user("hi")],
+        max_output_tokens: None,
+        temperature: None,
+        effort: None,
+        tools: vec![],
+        reasoning: None,
+        params: None,
+    };
+
+    let err = provider.complete(req).await.unwrap_err();
+    assert!(
+        err.partial_usage().is_none(),
+        "a 529 with no stream has no accounting to report"
     );
 }
 
